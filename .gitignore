@@ -1,2 +1,11 @@
-# Optional: append these entries to your existing .gitignore if you want local-only Claude settings
-# .claude/settings.local.json
+/target
+**/node_modules
+/web/.next
+/web/out
+.env
+!deploy/compose/.env.example
+*.pem
+*.key
+.DS_Store
+# Optional local-only Claude settings
+.claude/settings.local.json

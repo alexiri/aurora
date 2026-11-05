@@ -1,0 +1,128 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/aurora-core",
+  "crates/aurora-config",
+  "crates/aurora-db",
+  "crates/aurora-crypto",
+  "crates/aurora-secrets",
+  "crates/aurora-policy",
+  "crates/aurora-registry",
+  "crates/aurora-llm",
+  "crates/aurora-summary",
+  "crates/aurora-protocol",
+  "crates/aurora-channels",
+  "crates/aurora-client",
+  "crates/aurora-connector-sdk",
+  "crates/aurora-testkit",
+  "services/aurora-api",
+  "services/aurora-gateway",
+  "services/aurora-hookhost",
+  "services/aurora-runner",
+  "services/aurora-supervisor",
+  "services/aurora-cli",
+  "connectors/fake",
+]
+# aurora-hook-wit and aurora-plugin-sdk (wasm32-wasip2 guest side) join the
+# workspace in M3; see docs/90-decisions.md I-02.
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+dbg_macro = "warn"
+todo = "warn"
+
+[workspace.dependencies]
+# internal
+aurora-core = { path = "crates/aurora-core" }
+aurora-config = { path = "crates/aurora-config" }
+aurora-db = { path = "crates/aurora-db" }
+aurora-crypto = { path = "crates/aurora-crypto" }
+aurora-secrets = { path = "crates/aurora-secrets" }
+aurora-policy = { path = "crates/aurora-policy" }
+aurora-registry = { path = "crates/aurora-registry" }
+aurora-llm = { path = "crates/aurora-llm" }
+aurora-summary = { path = "crates/aurora-summary" }
+aurora-protocol = { path = "crates/aurora-protocol" }
+aurora-channels = { path = "crates/aurora-channels" }
+aurora-client = { path = "crates/aurora-client" }
+aurora-connector-sdk = { path = "crates/aurora-connector-sdk" }
+aurora-testkit = { path = "crates/aurora-testkit" }
+
+# runtime / http
+tokio = { version = "1.50", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-util", "fs", "process"] }
+axum = { version = "0.8", features = ["macros"] }
+tower = { version = "0.5", features = ["util", "timeout", "limit"] }
+tower-http = { version = "0.6", features = ["trace", "request-id", "limit", "timeout", "sensitive-headers"] }
+hyper = { version = "1.8", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12", "logging"] }
+rustls-native-certs = "0.8"
+rcgen = "0.13"
+futures = "0.3"
+
+# data
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "chrono", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+schemars = { version = "1", features = ["uuid1", "chrono04"] }
+jsonschema = { version = "0.33", default-features = false }
+utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-axum = "0.2"
+uuid = { version = "1.22", features = ["v7", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+chrono-tz = "0.10"
+toml = "0.9"
+
+# crypto
+aws-lc-rs = "1.18"
+ed25519-dalek = { version = "2.2", features = ["rand_core", "zeroize"] }
+argon2 = "0.5"
+zeroize = { version = "1.8", features = ["derive"] }
+base64 = "0.22"
+hex = "0.4"
+
+# observability / errors / cli
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter", "fmt"] }
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.17", default-features = false }
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4.6", features = ["derive", "env"] }
+
+# tests
+proptest = "1"
+insta = { version = "1", features = ["json", "yaml"] }
+wiremock = "0.6"
+
+[profile.dev]
+# Disk is constrained on the dev host (docs/90-decisions.md I-03).
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = "debuginfo"

@@ -48,3 +48,19 @@ appended; superseded ones are marked, never deleted.
 | D-40 | **Layered governance that only tightens**: instance ceiling (config) → org governance (live document) → workspace policy → grants; LLM governance is a dedicated gateway step, not rules. | Compiling governance into derived rules | Rules can be reordered and loosened by authors; governance must not be. A dedicated step also gives precise error codes. |
 | D-41 | **Optional uncredentialed default-deny** (`credentialed_only` egress posture) with org and workspace allow-lists, applying to the open lane too. | OneCLI: default-deny only for credentialed traffic; open lane never default-denies | The only complete control against exfiltration and against models reached through unrecognized hosts; optional because it requires curating allow-lists. |
 | D-42 | Governed LLM hosts (endpoint hosts + known LLM hosts) can never be targeted by generic secrets or app connections. | Plugins barred only from endpoint hosts | Closes the "personal key as a custom secret" bypass. |
+
+## Implementation decisions (orchestrator, 2026-11-05)
+
+Decisions made while implementing the spec. They do not change product
+behaviour; they record environment and tooling choices.
+
+| Id | Decision | Rationale |
+|----|----------|-----------|
+| I-01 | Requirement traceability ids are `M<n>/<doc>§<section>` (milestone + owning section, e.g. `M0/03§1`) plus the `SEC-nn` invariants of `17`. | The spec has no per-requirement ids; milestones in `19` define acceptance. |
+| I-02 | Local toolchain is the system Rust (Arch, 1.99 stable, no rustup). `rust-toolchain.toml` pins `stable` + `wasm32-wasip2` for CI/rustup users, but the **wasm32-wasip2 target is not installed locally**: `aurora-hook-wit`, `aurora-plugin-sdk` and wasm fixture hooks join the workspace at M3 and need the target (rustup or the distro wasm target package). | Environment fact; blocks only M3 hook builds. |
+| I-03 | `profile.dev` uses `debug = "line-tables-only"` and no debuginfo for dependencies; one shared `target/`. | Dev host has ~39 GB free disk; wasmtime/aws-lc-rs/kube debug builds are large. |
+| I-04 | Version set pinned to the known-compatible line: axum 0.8, utoipa 5 + utoipa-axum 0.2, sqlx 0.8 (+ sqlx-cli 0.8.6), hyper 1, rustls 0.23 (aws-lc-rs), schemars 1. | Mutually compatible; newer majors (sqlx 0.9, utoipa 6) can be adopted later in one task. |
+| I-05 | sqlx compile-time checked macros run **online** against the dev database (`DATABASE_URL` in the gitignored `.env`, dev Postgres container `aurora-dev-pg` on `127.0.0.1:55432`); `cargo sqlx prepare --workspace` keeps `.sqlx/` committed so CI builds offline (`SQLX_OFFLINE=true`). | Spec pins compile-time checked queries; online locally, offline in CI. |
+| I-06 | Database tests use `#[sqlx::test(migrator = "aurora_db::MIGRATOR")]` (fresh database per test on the server named by `DATABASE_URL`); `aurora-testkit` wraps it and can start a podman Postgres when no server is configured. | Meets "one database per test" without bespoke harness code. |
+| I-07 | HTTP error envelope rendering for axum lives behind the `axum` cargo feature of `aurora-core` (the type itself is dependency-light). | Keeps `aurora-core` usable from non-HTTP crates without adding a crate outside the `02` layout. |
+| I-08 | `docs/API_CONTRACTS.md` indexes `05` (owning document for routes) and records the response/request **schemas** that `05` leaves implicit, defined per milestone before parallel backend/frontend work. The generated OpenAPI document (`/v1/openapi.json`, checked in as `web/openapi.json`) is the machine contract the dashboard client is generated from. | One source per fact; frontend never hand-writes API types. |
