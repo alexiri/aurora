@@ -990,7 +990,7 @@ fn check_governance(c: &mut Ctx, raw: &RawConfig) -> Option<Governance> {
         if !matches!(s.as_str(), "organization" | "workspace") {
             c.err(
                 format!("governance.llm.allowed_key_scopes[{i}]"),
-                format!("invalid scope `{s}`; expected organization, workspace or user"),
+                format!("invalid scope `{s}`; expected organization or workspace"),
             );
         }
     }
