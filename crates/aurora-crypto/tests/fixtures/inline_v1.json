@@ -1,0 +1,9 @@
+{
+  "keys": "k1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=,k2:ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=",
+  "active": "k1",
+  "purpose": "connection",
+  "org_id": "00000000-0000-0000-0000-000000000011",
+  "owner_id": "00000000-0000-0000-0000-000000000022",
+  "plaintext": "fixture-plaintext",
+  "sealed": "inline:v1:k1:PK8QNuTbcL8s3x8mDfEFdNdXJJSGTUvw5oN3aYDHoQmddDxRZo3w2KyW14ON"
+}
