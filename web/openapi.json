@@ -1,0 +1,25 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Aurora API (placeholder)", "version": "0.0.0" },
+  "paths": {
+    "/v1/instance": {
+      "get": {
+        "operationId": "getInstance",
+        "responses": {
+          "200": {
+            "description": "Instance information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["version"],
+                  "properties": { "version": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
