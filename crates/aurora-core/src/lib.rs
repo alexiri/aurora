@@ -9,6 +9,8 @@ pub mod ids;
 pub mod limits;
 pub mod sanitize;
 pub mod secret;
+#[cfg(feature = "service")]
+pub mod service;
 pub mod token;
 
 pub use error::{ApiError, FieldError};

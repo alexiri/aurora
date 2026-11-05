@@ -13,6 +13,15 @@ workspace = true
 default = []
 # Renders `ApiError` as an axum response (decision I-07).
 axum = ["dep:axum"]
+# Shared service bootstrap: JSON tracing, Prometheus, health router, shutdown (decision I-09).
+service = [
+  "axum",
+  "dep:tokio",
+  "dep:tracing",
+  "dep:tracing-subscriber",
+  "dep:metrics",
+  "dep:metrics-exporter-prometheus",
+]
 
 [dependencies]
 aws-lc-rs = { workspace = true }
@@ -24,6 +33,11 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
 axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+metrics = { workspace = true, optional = true }
+metrics-exporter-prometheus = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

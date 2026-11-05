@@ -14,3 +14,10 @@ name = "aurora-gateway"
 path = "src/main.rs"
 
 [dependencies]
+aurora-core = { workspace = true, features = ["service"] }
+aurora-config = { workspace = true }
+axum = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+sqlx = { workspace = true }

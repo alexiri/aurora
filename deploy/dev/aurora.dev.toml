@@ -1,0 +1,15 @@
+# Minimal development config. Secrets are NOT read from this file; supply them
+# via the environment (see deploy/dev/env.sh):
+#   AURORA_DATABASE_URL, AURORA_ENCRYPTION_KEYS (id:base64-32),
+#   AURORA_SIGNING_KEY, AURORA_INTERNAL_SECRET, AURORA_RUNNER_SESSION_KEY (base64),
+#   AURORA_RUNNER_TOKEN (aur_...), AURORA_CONNECTOR_TOKEN (aun_...)
+[server]
+external_url = "http://localhost:4101"
+bind = "127.0.0.1"
+
+[runner]
+backend = "fake"
+api_url = "http://localhost:4111"
+
+[telemetry]
+log_level = "info"
