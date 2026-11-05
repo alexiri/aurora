@@ -6,6 +6,7 @@
 pub mod bus;
 pub mod claim;
 mod error;
+pub mod grants;
 pub mod jobs;
 
 pub use error::DbError;
