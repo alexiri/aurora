@@ -312,9 +312,10 @@ supports, then greatest `activated_at`.
 ### `org_app_availability`
 | Column | Type | Notes |
 |---|---|---|
-| org_id | uuid FK→organizations (cascade) | pk part |
-| app_id | text | pk part |
+| org_id | uuid FK→organizations (cascade) | |
+| app_id | text | |
 | workspace_id | uuid null FK→workspaces (cascade) | null ⇒ whole org |
+| unique | (org_id, app_id, workspace_id) NULLS NOT DISTINCT | spec fix S-01 (was pk (org_id, app_id), contradicting `07 §App availability`) |
 
 Only consulted when `organizations.app_posture = 'restricted'`.
 

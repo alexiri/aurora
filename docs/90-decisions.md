@@ -64,3 +64,11 @@ behaviour; they record environment and tooling choices.
 | I-06 | Database tests use `#[sqlx::test(migrator = "aurora_db::MIGRATOR")]` (fresh database per test on the server named by `DATABASE_URL`); `aurora-testkit` wraps it and can start a podman Postgres when no server is configured. | Meets "one database per test" without bespoke harness code. |
 | I-07 | HTTP error envelope rendering for axum lives behind the `axum` cargo feature of `aurora-core` (the type itself is dependency-light). | Keeps `aurora-core` usable from non-HTTP crates without adding a crate outside the `02` layout. |
 | I-08 | `docs/API_CONTRACTS.md` indexes `05` (owning document for routes) and records the response/request **schemas** that `05` leaves implicit, defined per milestone before parallel backend/frontend work. The generated OpenAPI document (`/v1/openapi.json`, checked in as `web/openapi.json`) is the machine contract the dashboard client is generated from. | One source per fact; frontend never hand-writes API types. |
+| I-09 | Shared service bootstrap (JSON tracing with `service`/`instance`, Prometheus `/metrics`, health router, graceful shutdown) lives in `aurora-core` behind feature `service`. Health/metrics listeners: api 4101, gateway 4103 only (never the proxy port), hookhost 4104, runner ops port **4106** (not the sandbox-facing 4105), fake connector 4190. | Avoids six copies of bootstrap code without adding a crate; keeps metrics off agent-reachable ports (SEC-09 spirit). |
+
+## Spec fixes (contradictions found during implementation)
+
+| Id | Fix | Source of contradiction |
+|----|-----|-------------------------|
+| S-01 | `org_app_availability`: primary key `(org_id, app_id)` replaced by `UNIQUE NULLS NOT DISTINCT (org_id, app_id, workspace_id)`. | `07 §App availability` needs `(org, app, NULL)` and `(org, app, workspace)` rows simultaneously; the PK allowed one row per app. |
+| S-02 | Org-scope partial uniques with nullable `workspace_id` (e.g. `policy_generations` one draft/published per scope) use `NULLS NOT DISTINCT`. | `03` states the uniques but NULL workspace ids would never collide under default semantics. |
