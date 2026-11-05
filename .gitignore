@@ -1,0 +1,2 @@
+# Optional: append these entries to your existing .gitignore if you want local-only Claude settings
+# .claude/settings.local.json

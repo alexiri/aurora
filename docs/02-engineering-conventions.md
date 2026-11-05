@@ -1,0 +1,247 @@
+# 02 — Engineering Conventions
+
+This document tells implementers *how* to build Aurora: repository layout,
+crates, libraries, coding rules and the registry of constants.
+
+## Repository layout (implementation repository `aurora/`)
+
+```
+aurora/
+  Cargo.toml                  # cargo workspace; shared lints and dependency versions
+  rust-toolchain.toml         # pinned stable toolchain; wasm32-wasip2 target listed
+  crates/
+    aurora-core/              # ids, time, error envelope, sanitizers, limits registry, token gen/hash
+    aurora-config/            # layered config loading (TOML file + AURORA_* env), typed per service
+    aurora-db/                # sqlx pool, migrations (embedded), repositories, claim helpers, NOTIFY bus
+    aurora-crypto/            # AEAD envelope, keyring, HKDF purpose keys, ed25519 signing/verify
+    aurora-secrets/           # SecretStore trait, store registry, SecretRef, inline store (+ vault in phase 3)
+    aurora-policy/            # host/path matchers, GraphQL classifier, rule evaluator, injection selection
+    aurora-registry/          # plugin manifest types, validator/linter, package format, snapshot compiler + types
+    aurora-llm/               # LLM provider registry (litellm, anthropic, …)
+    aurora-summary/           # approval summary templates, decoders, generic redacting summarizer
+    aurora-protocol/          # every wire contract (runner, supervisor, connector, hookhost, gateway-internal) as serde types + JSON Schemas
+    aurora-channels/          # neutral content, card schema, action tokens, capability model
+    aurora-client/            # typed HTTP client for the management API (used by CLI, tests)
+    aurora-hook-wit/          # WIT package `aurora:plugin@1.0.0` (source of truth for hook bindings)
+    aurora-plugin-sdk/        # guest-side SDK for plugin authors (wasm32-wasip2): bindings, fetch/log helpers, test utils
+    aurora-connector-sdk/     # helper crate for connector authors: contract client, register/config/ops loops, conformance runner
+    aurora-testkit/           # shared test utilities: ephemeral Postgres, mock upstreams, mock OAuth server, fixtures
+  services/
+    aurora-api/               # bin: control plane (subcommands: serve, migrate, bootstrap-admin, secrets, plugins, openapi)
+    aurora-gateway/           # bin: gateway (subcommands: serve, generate-ca, check-snapshot)
+    aurora-hookhost/          # bin: hook host
+    aurora-runner/            # bin: runner (backends: podman, kubernetes, fake)
+    aurora-supervisor/        # bin: in-sandbox supervisor (subcommands: run, mcp-bridge)
+    aurora-cli/               # bin `aurora`: login, run, agents, approvals, plugin {build,validate,compile,test,sign,docs}
+  connectors/
+    fake/                     # bin: aurora-connector-fake (phase 0, tests and conformance)
+    mattermost/               # bin: aurora-connector-mattermost (phase 1)
+  plugins/
+    fixtures/                 # phase 0 fixture packages used by tests (see 09 §Fixture packages)
+    builtin/                  # phase 2: real app packages
+  web/                        # Next.js dashboard (pnpm)
+  images/
+    sandbox/                  # Containerfile for the agent sandbox image (base + app layer)
+    services/                 # Containerfiles for service images
+  deploy/
+    compose/                  # compose.yaml, Caddyfile, .env.example, setup script
+    helm/aurora/              # Helm chart
+  tests/
+    e2e-gateway/              # black-box gateway suite
+    e2e-hosted/               # black-box hosted-agent suite (real runner + podman)
+    conformance/              # harness, connector and plugin conformance suites
+  docs/                       # operator and developer docs (generated parts included)
+```
+
+Dependency rule: `services/*` depend on `crates/*`; crates never depend on
+services. `aurora-protocol`, `aurora-core` and `aurora-channels` MUST compile to
+`wasm32` where marked (they are shared with the plugin SDK only through
+`aurora-hook-wit`, so in practice only `aurora-plugin-sdk` targets wasm).
+`aurora-policy` MUST NOT depend on `aurora-db` (it evaluates in-memory inputs);
+loaders live in `aurora-db`.
+
+## Libraries (pinned choices)
+
+| Concern | Crate(s) |
+|---------|----------|
+| Async runtime | `tokio` (multi-thread) |
+| HTTP server | `axum` (+ `tower`, `tower-http`) |
+| HTTP client / proxy internals | `hyper` 1.x, `hyper-util`, `reqwest` (non-hot-path clients only) |
+| TLS | `rustls`, `tokio-rustls`, `rustls-native-certs`; certificate minting `rcgen` |
+| DNS (guarded resolver) | `hickory-resolver` |
+| Database | `sqlx` (Postgres, compile-time checked queries, `migrate`) |
+| Serialization | `serde`, `serde_json`, `serde_yaml` (manifests only) |
+| JSON Schema | `schemars` (generate), `jsonschema` (validate at receivers where serde alone is insufficient) |
+| OpenAPI | `utoipa` (+ `utoipa-axum`); the API serves `/v1/openapi.json` |
+| WebSocket | `tokio-tungstenite` |
+| Crypto | `aws-lc-rs` (AES-256-GCM, HKDF, HMAC, SHA-256), `ed25519-dalek` (package/manifest signatures), `argon2` (passwords) |
+| OIDC | `openidconnect` |
+| WebAssembly | `wasmtime` (component model, epoch interruption), `wit-bindgen` (guest SDK) |
+| Kubernetes | `kube`, `k8s-openapi` |
+| Podman | `bollard` against Podman's Docker-compatible API socket |
+| Cron | `croner`; timezones `chrono-tz`; time `chrono` (UTC everywhere internally) |
+| AWS signing (mechanism) | `aws-sigv4` |
+| GraphQL classification | `graphql-parser` |
+| Regex (path_regex recipes, validated, size-limited) | `regex` |
+| Public suffix list (zone validation) | `psl` |
+| Concurrency primitives | `arc-swap` (snapshot swaps), `dashmap`/`moka` (caches) |
+| MIME decoding (summaries) | `mail-parser` |
+| Postgres wire (phase 2 DB lane) | `pg_query` (statement classification), hand-written protocol framing |
+| Logging / tracing | `tracing`, `tracing-subscriber` (JSON), `opentelemetry-otlp` (optional) |
+| Metrics | `metrics` + `metrics-exporter-prometheus` |
+| Errors | `thiserror` in crates; `anyhow` only in `main` and tests |
+| CLI | `clap` (derive) |
+| Tests | `cargo nextest`, `insta` (snapshots), `wiremock`, `proptest` (matchers, sanitizers) |
+
+Dashboard: Next.js (App Router), TypeScript `strict`, pnpm, Tailwind CSS,
+shadcn/ui components, TanStack Query, `openapi-typescript` + `openapi-fetch`
+generated from the API's OpenAPI document, Playwright for end-to-end tests.
+
+## Coding rules
+
+- `#![forbid(unsafe_code)]` in every crate except where a dependency boundary
+  requires otherwise (none expected in phase 0). `clippy -D warnings`, `rustfmt`.
+- **Secret material** uses a `Secret<T>` wrapper (zeroize on drop, redacted
+  `Debug`/`Display`, no `Serialize`). Converting to bytes requires an explicit
+  `expose()` call; grep for `expose()` is a review checklist item.
+- **No panics on input.** All wire input paths return typed errors.
+- **Every wire type** lives in `aurora-protocol` (or `aurora-registry` for
+  manifests/snapshots), derives `Serialize`, `Deserialize`, `JsonSchema`, and
+  uses `#[serde(deny_unknown_fields)]` only where the spec says the vocabulary
+  is closed. Enumerations that are open vocabularies are modelled as
+  `enum Known { … } + Other(String)` with bounded string length.
+- **Database access** only through `aurora-db` repositories; SQL lives next to
+  repositories; every multi-row lifecycle step is a single statement or a
+  short transaction that never spans a network call.
+- **Time**: the database clock (`now()`) is truth for anything stored. Services
+  never write their own wall-clock into lifecycle columns.
+- **Configuration**: see `15 §Configuration`. Every service validates its
+  configuration completely at startup and refuses to start on any error.
+- **Logging**: structured JSON; every log line carries `service`, `instance`,
+  and when known `org_id`, `workspace_id`, `agent_id`, `conversation_id`,
+  `turn_id`, `request_id`. URLs are logged only through the redactor (query
+  values masked when the key looks credential-like: `token`, `key`, `secret`,
+  `password`, `sig`, `code`, `auth*`).
+
+## Error envelope (all HTTP surfaces, including gateway guidance)
+
+```json
+{ "error": { "code": "snake_case_code", "message": "Human/agent readable sentence.", "details": { } } }
+```
+
+- `code` is an open vocabulary string (≤64 chars, `[a-z0-9_]`).
+- `details` is optional, code-specific, documented with the code.
+- Validation errors use `code = "invalid_request"` and
+  `details.fields = [{ "path": "/name", "message": "…" }]`.
+- Status vocabulary: 400 validation, 401 unauthenticated, 403 forbidden,
+  404 not found, 409 conflict, 410 retired, 413 too large, 422 domain-rule
+  violation, 429 rate limited (with `retry-after`), 502/503/504 upstream or
+  dependency failures.
+- Definite verdicts from the gateway carry `x-should-retry: false`.
+
+## Identifiers and tokens
+
+- Row ids: UUIDv7, generated by the application (so AAD for encryption can be
+  computed before insert).
+- Slugs: `[a-z0-9][a-z0-9-]{1,47}`; handles (agent): `[a-z][a-z0-9-]{0,39}`.
+- Capability tokens: see `00 §Token prefixes`. Generation:
+  `prefix + base64url_nopad(32 bytes from OS CSPRNG)`. Storage: `sha256(token)`
+  as `bytea` plus a 12-char display prefix. Comparison by hash lookup only.
+
+## Untrusted text
+
+`aurora-core::sanitize` provides the only sanitizers. Use them whenever text from
+a model, user, plugin, connector or upstream is placed into platform voice,
+cards, one-line statuses, labels, notices or logs.
+
+| Function | Behaviour |
+|----------|-----------|
+| `one_line(s, max)` | Strip C0/C1 controls, bidi controls (U+202A–202E, U+2066–2069, U+200E/F, U+061C), invisible format chars (Unicode `Cf` incl. zero-width), collapse whitespace to single spaces, trim, clamp to `max` chars with `…`. |
+| `block(s, max)` | As `one_line` but keeps `\n` (collapses >2 consecutive), clamps by chars. |
+| `label(s)` | `one_line(s, 80)`; used for connection labels, secret names shown to agents, plugin-provided names. |
+| `markdown_as_data(s, max)` | `block` + escape so that the dashboard/connector renders it as text, never as active markup (no raw HTML, links shown with their target). |
+
+Dashboard rule: model/user/plugin text is rendered through a markdown renderer
+with raw HTML disabled and link targets displayed; never with
+`dangerouslySetInnerHTML`.
+
+## Limits registry
+
+All constants live in `aurora-core::limits` (a dependency-free module) and are
+referenced by name in code and in this spec. Values marked *config* can be
+overridden by the named configuration key (`15`).
+
+| Name | Value | Config key | Used in |
+|------|-------|-----------|---------|
+| `GATEWAY_RESOLVE_CACHE_TTL` | 60 s | `gateway.resolve_cache_ttl_secs` | 06 |
+| `APPROVAL_TIMEOUT` | 300 s | `approvals.timeout_secs` | 06, 07 |
+| `APPROVAL_BODY_PEEK` | 16 KiB | — | 06 |
+| `CONDITION_BODY_BUFFER` | 256 KiB (4 KiB–8 MiB) | `gateway.condition_body_bytes` | 07 |
+| `UPSTREAM_HEADER_TIMEOUT` | 300 s | `gateway.upstream_header_timeout_secs` | 06 |
+| `WEBSOCKET_IDLE_TIMEOUT` | 600 s | — | 06 |
+| `REQUEST_LOG_FLUSH` | 5 s or 500 rows | — | 06 |
+| `REQUEST_LOG_RETENTION` | 30 days | `retention.request_log_days` | 15 |
+| `BATCH_HEADER_MAX` | 128 chars | — | 06 |
+| `CONNECTION_CHOICE_MAX` | 20 entries | — | 06 |
+| `REFRESH_MARGIN` | 60 s | — | 08 |
+| `LLM_ORIGIN_RECHECK` | 1 h | `governance.llm.origin_recheck_secs` | 08 §11 |
+| `LLM_ORIGIN_CHECK_TIMEOUT` | 10 s | — | 08 §11 |
+| `EGRESS_ALLOWLIST_MAX` | 500 entries per org / workspace | — | 07, 08 §11 |
+| `REFRESH_LOCK_WAIT` | 10 s | — | 08 |
+| `OAUTH_STATE_TTL` | 10 min | — | 08, 09 |
+| `IDLE_STOP` | 30 min | `hosted.idle_stop_secs` | 11 |
+| `BACKGROUND_CAP` | 12 h | `hosted.background_cap_secs` | 11 |
+| `TURN_CEILING` | 6 h | `hosted.turn_ceiling_secs` | 10 |
+| `TURN_CEILING_WARNING` | 15 min | — | 10 |
+| `TURN_STALL` | 10 min | `hosted.turn_stall_secs` | 10 |
+| `TURN_PROGRESS_INTERVAL` | 60 s | — | 12 |
+| `STALE_DISPATCH` | 90 s | — | 10 |
+| `TOOL_CALL_TIMEOUT` | 25 s | — | 12 |
+| `TOOL_CONSECUTIVE_FAILURES` | 2 | — | 12 |
+| `WS_FRAME_MAX` | 256 KiB | — | 16 |
+| `HOME_SYNC_PART_MAX` | 200 KiB (UTF-8 bytes) | — | 12 |
+| `CONTEXT_CREDENTIAL_GRACE` | 5 min | — | 08 |
+| `TURN_TEXT_MAX` | 100 000 chars | — | 10 |
+| `MEMORY_MAX_PER_AGENT` | 100 | — | 10 |
+| `MEMORY_REVISIONS_KEPT` | 50 | — | 10 |
+| `MEMORY_TOOL_CONTENT_MAX` | 12 000 chars | — | 10 |
+| `MEMORY_CONTENT_MAX` | 100 000 chars | — | 10 |
+| `MEMORY_INDEX_MAX` | 6 000 chars | — | 10 |
+| `MEMORY_SNIPPETS` | 3 × 800 chars, score ≥ 0.1 | — | 10 |
+| `MEMORY_SEARCH_HITS` | 8 | — | 10 |
+| `SKILL_NAME_MAX` / `SKILL_DESCRIPTION_MAX` | 64 / 500 chars | — | 10 |
+| `SKILL_BODY_MAX` / `SKILL_TOTAL_MAX` | 24 000 / 32 000 chars | — | 10 |
+| `ATTACH_IN_FILE_MAX` / `ATTACH_IN_COUNT` | 10 MiB / 10 per message | — | 10 |
+| `ATTACH_OUT_FILE_MAX` / `ATTACH_OUT_COUNT` | 25 MiB / 10 per turn | — | 10 |
+| `ATTACH_OUT_DAILY_PER_CONVERSATION` | 200 MiB | — | 10 |
+| `ATTACH_CAPTION_MAX` | 500 chars | — | 10 |
+| `ATTACH_PENDING_TTL` | 24 h | — | 10 |
+| `SCHEDULE_FIRE_LEASE` | 5 min | — | 10 |
+| `SCHEDULE_FAILURE_DISABLE` | 5 consecutive | — | 10 |
+| `GATE_TIMEOUT` | 30 s | — | 12 |
+| `WEBHOOK_PAYLOAD_MAX` | 1 MiB | — | 10 |
+| `PROCESS_TAIL` | 4 KiB | — | 12 |
+| `WATCH_PATTERN_MAX` | 256 chars | — | 10 |
+| `RUNNER_POLL_WAIT` | 25 s | — | 11 |
+| `REPLICA_ONLINE_THRESHOLD` | 90 s | — | 11, 13 |
+| `RECONCILE_INTERVAL` | 60 s | `runner.reconcile_interval_secs` | 11 |
+| `ORPHAN_GRACE` | 1 h | `runner.orphan_grace_secs` | 11 |
+| `SANDBOX_DEFAULTS` | 2 GiB RAM, 1 CPU, 512 PIDs, 10 GiB home | `runner.sandbox_*` | 11 |
+| `RUNNER_MAX_SANDBOXES` | 4 | `runner.max_sandboxes` | 11 |
+| `CONNECTOR_OPS_WAIT` | 25 s | — | 13 |
+| `INBOX_LEASE` / `OP_LEASE` | 60 s / 60 s | — | 13 |
+| `OP_MAX_ATTEMPTS` | 10 (exponential backoff 2 s → 10 min) | — | 13 |
+| `CHANNEL_LEDGER_RETENTION` | 7 days | — | 13 |
+| `ACTION_TOKEN_TTL` | approval deadline, else 24 h | — | 13 |
+| `APP_TURN_CAP` | 5 consecutive bot-authored turns | — | 07 |
+| `PEER_TASK_BUDGET` / `PEER_TASK_TTL` | 20 messages / 24 h | — | 07 |
+| `SESSION_IDLE` / `SESSION_ABSOLUTE` | 14 days / 30 days | `auth.session_*` | 04 |
+| `HOOK_MEMORY` / `HOOK_OUTPUT` | 64 MiB / 256 KiB | — | 09 |
+| `HOOK_WALL` | 15 s (connect, mint) / 1 s (`approval.summarize`) | — | 09 |
+| `HOOK_FETCH_MAX` | 16 calls, 1 MiB response each, 10 s each | — | 09 |
+| `SUMMARY_LIMITS` | title 120, ≤12 fields, value 200, text 1 000 chars | — | 09 |
+| `PACKAGE_MAX` | 20 MiB archive, icon PNG ≤ 256 KiB, setup guide ≤ 64 KiB | — | 09 |
+| `AGENT_SNIPPET_MAX` | 2 000 chars per app | — | 09 |
+| `AVATAR_MAX` | 512 KiB (PNG/JPEG/WebP) | — | 10 |
+| `SSE_KEEPALIVE` | 15 s | — | 05 |
+| `LONG_POLL_MAX` | 30 s | — | 05 |
