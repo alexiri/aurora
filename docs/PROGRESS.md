@@ -1,6 +1,6 @@
 # Implementation progress
 
-Last updated: 2026-11-06 (afternoon, orchestrator)
+Last updated: 2026-11-06 (evening, orchestrator; reconciled with git through e65ec66d)
 
 Scope: **Phase 0 (M0–M7)**. Phases 1–4 are out of scope until phase 0 exits.
 Ids per decision I-01. Task briefs live in `docs/tasks/<ID>.md`. Milestones
@@ -9,48 +9,31 @@ their dependencies near completion (adaptive planning).
 
 ## Environment
 
-- **Concurrency**: owner raised the default to **3 concurrent implementation agents** (2026-11-06), still with disjoint file ownership per lane.
+- **Concurrency**: owner set **3 concurrent implementation lanes** (2026-11-06 evening; was 4). Lanes already running finish; no new lane starts while 3 are active.
 - **Worktrees** (2026-11-06, owner): implementation lanes that touch a crate another lane is editing (esp. `services/aurora-api`) run in their own git worktree (Orca worker `--worktree new-top-level --repo id:706ffb9e-ae8b-4f11-a841-518970480f40`, or Agent `isolation: worktree`) with a per-worktree `target/` (never a shared `CARGO_TARGET_DIR`: e2e scripts run `target/debug/<bin>`). Orchestrator merges each branch into `phase0` after review. Disk budget: ~15 GB per worktree build, so at most 3 worktrees while free space is under 100 GB; check `df -h /home` before starting one.
 
-- Rust 1.99 stable (system, no rustup) — **no `wasm32-wasip2` target** (I-02, blocks M3 hook builds only).
+- Rust 1.99 stable (system, no rustup); `wasm32-wasip2` installed (`rust-wasm`, I-02a).
 - Node 20.20, pnpm 10 (`~/.local/bin`), podman 5 (compose), psql client.
 - Dev Postgres 16: container `aurora-dev-pg`, `postgres://aurora:aurora@127.0.0.1:55432/aurora` (`.env`, I-05).
 - sqlx-cli 0.8.6 at `~/.cargo/bin/sqlx` (not on PATH; use full path).
-- Disk: ~39 GB free on `/home` — keep one `target/`, avoid duplicate container build caches (I-03).
+- Disk: ~130 GB free on `/home` (2026-11-06 evening, after `cargo clean` of the main tree). Each worktree has its own `target/`; remove worktrees after merge.
 
 ## Milestone status
 
 | Milestone | Status | Acceptance evidence |
 |---|---|---|
 | M0 | done (CI never executed on GitHub — no remote) | schema guard, compose up, guards, cargo-deny |
-| M1 | done except permission-matrix test (TEST-010 in progress) | `scripts/e2e/m1.sh` Playwright sign-up → workspace (Daneel) → invite → accept: pass; OIDC (BE-015) done |
+| M1 | done except permission-matrix defects (TEST-010 done; SEC-FIX-03 in progress, I-27) | `scripts/e2e/m1.sh` Playwright sign-up → workspace (Daneel) → invite → accept: pass; OIDC (BE-015) done; permission_matrix.rs |
 | M2 | done (core) — follow-ups FUP-M2 | `scripts/e2e/gateway.sh` 11 scenarios pass; governance SEC-35..39 service tests (GW-005, TEST-020); hold tests incl. two replicas |
 | M3 | done (core) — follow-ups FUP-M3 | plugin lifecycle/ingestion, apps/connect/grants, hook host + WIT + SDK, CLI plugin, fixtures 33/33 (`scripts/fixtures/build.sh`), e2e-gateway 15/15 incl. hooks |
-| M4 | done (core) — follow-ups FUP-M4 | `AURORA_TEST_PODMAN=1 bash scripts/e2e/hosted.sh` 9/9 (scenarios 1–8 + 8b SEC probes) after SEC-FIX-01/02 |
-| M5 | in progress: memory, skills, claude-code adapter, memory/skills UI done; schedules (BE-062), webhooks (BE-063) in progress; attachments, action approvals, agent links/peer tasks, app-turn cap, schedules/webhooks/peers UI, live conformance todo | — |
-| M6 | in progress: aurora-channels (CHAN-001), connector contract + SDK + fake connector (CON-001) done; channel core API, conformance, channel UI todo | — |
-| M7 | in progress: Helm chart (OPS-010) done; kubernetes backend (RUN-004) in progress; kind e2e blocked (no cluster on host); perf budgets, upgrade test, operator docs todo | — |
+| M4 | done (core) — follow-ups FUP-M4; sandbox env gap (FUP-M7 item from RUN-004) | `AURORA_TEST_PODMAN=1 bash scripts/e2e/hosted.sh` 9/9 (scenarios 1–8 + 8b SEC probes) after SEC-FIX-01/02 |
+| M5 | in progress: memory, skills, schedules, webhooks, processes/watches, claude-code adapter (offline), memory/skills UI done; attachments (BE-064, RUN-005) and action approvals/links/peer tasks/app-turn cap (BE-065) in progress; apps tools, schedules/webhooks/peers UI (FE-051), TEST-014 todo; live conformance blocked (no LiteLLM endpoint) | schedules 5, webhooks 11, memory 7, skills 5 |
+| M6 | in progress: aurora-channels (CHAN-001), connector contract + SDK + fake connector (CON-001), API-006 contract done; BE-070/071, TEST-015 briefed; BE-072..075, FE-060, TEST-016 todo | — |
+| M7 | in progress: Helm chart (OPS-010) and kubernetes backend (RUN-004, mock API only) done; kind e2e blocked (no cluster on host); perf budgets, upgrade test, operator docs todo | k8s_mock 15 |
 
 ## Requirement coverage
 
-| Requirement ID | Summary | Task IDs | Status | Evidence/gap |
-|---|---|---|---|---|
-| M0/02§layout | Workspace + layout | OPS-001 | done | `cargo check --workspace` ok (2026-11-05) |
-| M0/02§core | aurora-core | BE-001 | done | |
-| M0/15§config | aurora-config | BE-002 | done | |
-| M0/08§3-4 | aurora-crypto | BE-003 | done | |
-| M0/03 | aurora-db + all tables | BE-004, BE-005, TEST-001 | done | migrate from empty == 03 (introspection test) |
-| M0/16 | aurora-protocol skeleton | BE-006 | done | |
-| M0/18 | aurora-testkit | BE-007 | done | |
-| M0/15§obs | service binaries | BE-008 | done | |
-| M0/18§CI | CI stages 1–2 | OPS-002 | done | guards + cargo-deny pass locally; workflow not executed (no remote) |
-| M0/15§compose | compose skeleton | OPS-003 | done | images built (api 34.5 MB…web 271 MB); `podman compose up`: edge→api 404 envelope, edge→web 200, /metrics+/internal 404, gw 4102 503; runner/connector profiles not exercised |
-| M0/14 | dashboard scaffold | FE-001 | done | |
-| M1..M7 | see FEATURES.md | epics | todo | |
-| SEC-10 | tokens hashed at rest | BE-001 (gen/hash), M1 repos | planned | |
-| SEC-11 | SecretRef AAD binding | BE-003 (envelope AAD), M2 | planned | |
-| SEC-18 | untrusted-text sanitizers | BE-001 (sanitizers), M6 | planned | |
-| other SEC-nn | per milestone | — | todo | |
+Per-requirement status and evidence live in `docs/FEATURES.md` (reconciled 2026-11-06 evening). Final audit maps every requirement and SEC invariant to evidence.
 
 ## Task graph
 
@@ -71,7 +54,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | FE-010 | Auth pages + CSP proxy | Next.js | done | BE-011 | Sonnet | 22 vitest; CSP nonce/nosniff headers verified; /join on generated client |
 | FE-013 | Account, workspace settings, admin users | Next.js | done | BE-014, BE-016 | Sonnet | |
 | FE-012 | Org pages | Next.js | done | BE-013, FE-013 | Sonnet | |
-| TEST-010 | Permission-matrix test | Rust test | in-progress | BE-013..016 | haiku→Sonnet | |
+| TEST-010 | Permission-matrix test | Rust test | done (b6dfde39; defects → SEC-FIX-03) | BE-013..016 | haiku→Sonnet | ~169 routes × 13 principals; coverage test vs openapi.json |
 | TEST-011 | Playwright sign-up → workspace (Daneel) → invite → accept | e2e | done (`bash scripts/e2e/m1.sh` 1 passed, rerun by orchestrator) | FE-010..013 | nextjs-developer | |
 | BE-020 | aurora-policy | Rust | done | BE-001 | Sonnet | 10 + 30-case corpus |
 | BE-021 | aurora-secrets | Rust | done | BE-003 | Sonnet | 11 tests |
@@ -129,8 +112,8 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | BE-060 | Memory (API, revisions, redaction, language-aware search, recall, tools, harvest plane) | Rust | done | BE-053 | Sonnet | memory tests |
 | BE-061 | Skills (agent/org API, files, limits, tools, projection) | Rust | done | BE-053 | Sonnet | skills tests |
 | FE-050 | Memory + Skills tabs, org skills page | Next.js | done | BE-060/061 | Sonnet | vitest |
-| BE-062 | Schedules (API, cron, gates, tools, due-work arm) | Rust | in-progress | BE-052 | Sonnet | |
-| BE-063 | Webhooks (API, receive endpoint, deliveries, tools) | Rust | in-progress | BE-052 | Sonnet | |
+| BE-062 | Schedules (API, cron, gates, tools, due-work arm 9) | Rust | done (c519c441) | BE-052 | Sonnet | schedules 5; full api/db suite 215 tests |
+| BE-063 | Webhooks (API, receive endpoint, deliveries, tools) | Rust | done (c519c441) | BE-052 | Sonnet | webhooks 11 |
 | BE-064 | Attachments API side (BlobStore, routes, runner plane, delivery) | Rust | in-progress | BE-052 | Sonnet (worktree) | |
 | BE-065 | Action approvals, agent links, peer tasks, app-turn cap, agent tools | Rust | in-progress | BE-052 | Sonnet (worktree) | |
 | RUN-005 | Inbound attachments `file.in` (S-11) + `send_file` local tool | Rust | in-progress | S-11 | Sonnet (worktree) | |
@@ -151,7 +134,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | RUN-004 | Kubernetes backend (+ runner.k8s.core_namespace config fix) | Rust | done (e65ec66d) | RUN-003 | Sonnet (Orca worker, worktree) + Opus (kube → aws-lc-rs) | config 18, k8s unit 15, k8s_mock 15 (fake API server), runner 10; clippy; cargo deny ok; helm-rendered ConfigMap loads |
 | OPS-011 | kind e2e, perf budgets, upgrade test, operator docs | Ops | todo (kind blocked: no cluster) | RUN-004 | — | |
 
-## Open spec issues (resolve before M4 implementation; found by PROTO-001)
+## Open spec issues (found by PROTO-001; S-06..S-11 resolved)
 
 - (resolved S-06) `file.part` ≤ 144 KiB decoded.
 - (resolved S-07) deterministic UUIDv5 report ids from (boot_id, seq) — add `NAMESPACE_AURORA_REPORT` const in M4 runner task.
@@ -174,6 +157,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 
 ## Recently completed
 
-- 2026-11-06: BE-010..016 (except 015), FE-010/011, GW-001..004, REG-001/002, BE-020..022, API-002; spec fixes S-01..S-04; decisions I-01..I-16.
-
-- OPS-001, FE-001, API-001, BE-001..BE-006 (2026-11-05). Spec fixes S-01, S-02 recorded in 90-decisions.md.
+- 2026-11-06 evening: SEC-FIX-01/02 (SEC-34, SEC-09 closed), TEST-013 9/9, BE-062 schedules, BE-063 webhooks, TEST-010 permission matrix (defects → SEC-FIX-03), RUN-004 kubernetes backend; API-005 (M5) and API-006 (M6) contracts; decisions I-27, S-11; briefs BE-064/065, RUN-005, SEC-FIX-03, BE-070/071, TEST-015.
+- 2026-11-06 afternoon: M3 (BE-040..044, HOOK-001/002/004, CLI-002/003, FIX-001, FE-030..032), M4 (RUN-001..003, SUP-001..004, BE-050..053, FE-040/041, API-004), M5 memory/skills (BE-060/061, FE-050), M6 foundations (CHAN-001, CON-001), OPS-010 Helm.
+- 2026-11-06 morning: M1 (BE-010..016, FE-010..013, TEST-011), M2 (GW-001..005, BE-020..034, GOV-001, CLI-001, FE-020..024, TEST-012/020), REG-001..003.
+- 2026-11-05: OPS-001..003, FE-001, API-001, BE-001..008, TEST-001.
