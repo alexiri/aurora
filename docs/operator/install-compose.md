@@ -23,7 +23,7 @@ runner backend and `http://localhost:4000` as the public origin.
 | `deploy/compose/compose.yaml` | Services, networks, volumes, profiles |
 | `deploy/compose/aurora.toml` | Shared config, mounted at `/etc/aurora/aurora.toml` |
 | `deploy/compose/.env.example` | Template for `.env` (`AURORA_VERSION`, secrets, `COMPOSE_PROFILES`) |
-| `deploy/compose/setup.sh` | Idempotent setup: `.env`, secrets, `aurora-sandbox` network |
+| `deploy/compose/setup.sh` | Idempotent setup: `.env`, secrets, `aurora-sandbox` network, gateway CA |
 | `deploy/compose/Caddyfile` | Edge routing: `/v1/*` to the API (4101), everything else to the web app (4100) |
 
 ## 1. Generate secrets and the sandbox network
@@ -40,27 +40,29 @@ cd deploy/compose
   `AURORA_ENCRYPTION_ACTIVE_KEY` (`k1`), `AURORA_SIGNING_KEY`, `AURORA_INTERNAL_SECRET`,
   `AURORA_RUNNER_SESSION_KEY`, `AURORA_RUNNER_TOKEN` (`aur_…`) and `AURORA_CONNECTOR_TOKEN` (`aun_…`);
 - creates the `aurora-sandbox` network as `--internal --disable-dns --subnet 10.89.250.0/24`
-  if it does not exist.
+  if it does not exist;
+- mints the gateway CA into the `aurora-ca` volume if the volume has none (see [section 2](#2-create-the-gateway-ca)).
 
 Do not run `podman compose down -v` unless you intend to delete the Postgres and CA volumes.
 
 ## 2. Create the gateway CA
 
-`setup.sh` does not mint the gateway CA. Its own output says so
-(`TODO(M2)`). The gateway loads `ca.pem` and `ca.key` from `gateway.ca_dir`
-(`/var/lib/aurora/ca`, the `aurora-ca` volume) at startup and fails without them.
+`setup.sh` mints the gateway CA into the `aurora-ca` volume (`aurora-gateway generate-ca`)
+when the volume holds no CA. The gateway loads `ca.pem` and `ca.key` from `gateway.ca_dir`
+(`/var/lib/aurora/ca`, the `aurora-ca` volume) at startup and fails without them. The
+volume has a fixed name (`name: aurora-ca` in `compose.yaml`), so the command below and
+the gateway mount the same volume.
 
-The `setup.sh` message suggests `podman run --rm -v aurora-ca:/ca aurora-gateway generate-ca --out /ca`.
-Compose names project volumes with the project prefix (`name: aurora`), so that
-command may write to a different volume. The following uses the service's own mount.
-**Not run in this environment (no container runtime was exercised); check with `podman volume ls` after running it:**
+`setup.sh` runs this as part of its normal run, and running it again is safe: an existing CA is
+never touched. `generate-ca` writes `ca.pem` (0644) and `ca.key` (0600), and refuses to overwrite
+existing files (`services/aurora-gateway/src/ca.rs`). If only one of the two files exists,
+`setup.sh` stops with that error and changes nothing. Check with:
 
 ```bash
-podman compose -f compose.yaml run --rm --no-deps gateway generate-ca --out /var/lib/aurora/ca
+podman run --rm -v aurora-ca:/ca:ro --entrypoint /bin/sh docker.io/library/postgres:16 -c 'ls -l /ca'
 ```
 
-`generate-ca` writes `ca.pem` (0644) and `ca.key` (0600) and refuses to overwrite
-existing files (`services/aurora-gateway/src/ca.rs`).
+Back up `ca.key` with the other keys (see [backups.md](backups.md#keyring-signing-key-and-ca)).
 
 ## 3. Start the stack
 
@@ -153,9 +155,21 @@ podman compose -f deploy/compose/compose.yaml down
 
 ## Developer loop without containers
 
-`just dev` (mentioned in docs/15) does not exist in the `justfile`. What exists:
+`just dev` runs the loop in [docs/15 §Development](../15-deployment-operations.md#development-podman-compose-deploycompose):
 
-- `just dev-db`: starts Postgres 16 in podman on `127.0.0.1:55432`.
-- `just migrate`: runs `cargo run -p aurora-api -- migrate` with `deploy/dev/env.sh` sourced.
-- `deploy/dev/env.sh` sets throwaway secrets and `AURORA_CONFIG=deploy/dev/aurora.dev.toml`
-  (dev only; never reuse these values).
+```bash
+just dev
+```
+
+It does the following:
+
+1. `just dev-db` starts Postgres 16 in podman on `127.0.0.1:55432`, and `just migrate` applies migrations.
+2. It sources `deploy/dev/env.sh` (throwaway secrets, `AURORA_CONFIG=deploy/dev/aurora.dev.toml`).
+   Use these values for development only.
+3. On the first run it mints a dev gateway CA into `deploy/dev/ca/` (gitignored).
+4. It runs the API (4101 and 4111), the gateway (4102 and 4103), the hook host (4104) and the
+   web app (`pnpm --dir web dev`, port 4100) as host processes. Ctrl-C stops them all.
+
+The web app needs `pnpm install` in `web/` once. The runner is not started. The dev config
+uses the `fake` backend; to run hosted agents on the host, start `aurora-runner serve` yourself
+with the podman backend (see [runners.md](runners.md#podman-backend)).

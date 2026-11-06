@@ -165,4 +165,6 @@ networks:
 
 volumes:
   aurora-pg: {}
-  aurora-ca: {}
+  # Fixed name (not project-prefixed) so setup.sh mints the gateway CA into the volume the gateway mounts.
+  aurora-ca:
+    name: aurora-ca

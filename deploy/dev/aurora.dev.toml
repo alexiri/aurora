@@ -12,6 +12,16 @@ bind = "127.0.0.1"
 [gateway]
 # SEC-09: internal listener (:4103) never on a sandbox-reachable address.
 internal_bind = "127.0.0.1"
+# Minted by `just dev` (aurora-gateway generate-ca); gitignored.
+ca_dir = "deploy/dev/ca"
+hookhost_url = "http://127.0.0.1:4104"
+
+[api]
+# The API runs on the host, so reach the hook host on localhost (not the compose alias).
+hookhost_url = "http://127.0.0.1:4104"
+
+[hookhost]
+api_internal_url = "http://127.0.0.1:4111"
 
 [runner]
 ops_bind = "127.0.0.1"

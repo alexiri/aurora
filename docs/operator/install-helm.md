@@ -77,11 +77,19 @@ External PostgreSQL is expected in production.
 - `database.gatewayRole` sets `database.gateway_role`. `aurora-api migrate` applies the
   gateway-role grants when it is set (`services/aurora-api/src/main.rs`).
 - `database.cidrs` and `database.port` (default 5432) set the egress rule to the database in the NetworkPolicies.
-- Not implemented: `AURORA_GATEWAY_DATABASE_URL`. The values comment mentions it, but no code reads it. The gateway uses `AURORA_DATABASE_URL`.
+- No code reads `AURORA_GATEWAY_DATABASE_URL`. The gateway uses `AURORA_DATABASE_URL`, and
+  `database.gatewayRole` is the least-privilege switch.
 
-`postgres.enabled: true` renders a single-instance Postgres for evaluation. Its
-pre-install hook resources are not removed by `helm uninstall` (FUP-M7, and the
-template comment). Delete the StatefulSet and PVC by hand.
+`postgres.enabled: true` renders a single-instance Postgres for evaluation. Its StatefulSet,
+Service and PVC are pre-install hook resources, so `helm uninstall` leaves them and the data
+stays on the PVC (FUP-M7). Hook delete policies cannot cover uninstall, so the chart documents
+it instead (`NOTES.txt` prints the cleanup commands). Delete them by hand:
+
+```bash
+# Release "aurora" (fullname "aurora"); otherwise the names start with <fullname>-postgres
+kubectl -n aurora delete statefulset,service aurora-postgres
+kubectl -n aurora delete pvc data-aurora-postgres-0
+```
 
 ## Gateway CA
 
@@ -108,10 +116,30 @@ Chart defaults that you may set in `config`: `server.bind`, `server.trusted_prox
 `runner.ops_bind` (both `0.0.0.0`, acceptable only because the NetworkPolicies block
 sandbox ingress to 4103 and 4106), `hosted.enabled`, `telemetry.log_level`.
 
-Add `auth`, `llm`, `governance`, `secrets`, `email`, `plugins` and the other
-sections the same way. The values file says so, and [llm-endpoints.md](llm-endpoints.md)
-shows an example. The `plugins.dir` key is available in config, but the chart does not
-mount plugin packages (**not yet implemented**, see [plugins-and-connectors.md](plugins-and-connectors.md#plugins)).
+Add `auth`, `llm`, `governance`, `secrets`, `email` and the other sections the same way.
+The values file says so, and [llm-endpoints.md](llm-endpoints.md) shows an example.
+`plugins.dir` is set from the top-level `plugins.dir` value (default `/var/lib/aurora/plugins`),
+so do not set it in `config`. `runner.k8s.nodeSelector` and `runner.k8s.tolerations` are
+rendered into `[runner.k8s]` as `node_selector` and `tolerations`.
+
+### Plugin packages
+
+The API scans `plugins.dir` at startup and every 60 s (see [plugins-and-connectors.md](plugins-and-connectors.md#plugins)).
+`plugins.source` chooses where the packages come from, for the API pods only:
+
+| `plugins.source` | Set | What the chart does |
+|------------------|-----|---------------------|
+| `none` (default) | nothing | No package volume. Upload packages with the admin API instead. |
+| `configMap` | `plugins.configMapName` | Mounts the ConfigMap in an init container (`seed-plugins`), which copies each `*.aurora-plugin` key into an emptyDir at `plugins.dir`. The copy is needed because the scan skips symlinks, and ConfigMap files are symlinks. Packages must fit the 1 MiB ConfigMap limit (use `binaryData`). Restart the api pods after you change the ConfigMap. |
+| `pvc` | `plugins.pvcName` | Mounts an existing PersistentVolumeClaim read-only at `plugins.dir`. Each api replica scans it, so use a ReadWriteMany claim when `api.replicas` is greater than 1. |
+
+```yaml
+plugins:
+  source: configMap
+  configMapName: aurora-plugins   # kubectl -n aurora create configmap aurora-plugins --from-file=my-app-1.0.0.aurora-plugin
+```
+
+Packages still need approval in the admin API before they take effect.
 
 ## Workloads
 
@@ -233,9 +261,10 @@ not run here, and the image has no shell. The binary path is the image's `ENTRYP
 
 Then register a runner ([runners.md](runners.md#add-a-runner)).
 
-## Known issues in the chart
+## Known limits in the chart
 
-- `runner.k8s.nodeSelector` and `runner.k8s.tolerations` do not reach `aurora.toml`, so
-  sandbox pods do not get them (verified with `helm template`). See [README.md](README.md#known-gaps-checked-against-the-code).
-- `connectors[].port` in the values comment is ignored. Use `callbackPort`.
-- Plugin packages cannot be mounted from the chart (**not yet implemented**).
+- Changing a `plugins.configMapName` ConfigMap does not restart the API. Run
+  `kubectl -n aurora rollout restart deploy/aurora-api`.
+- The bundled `postgres.enabled` database is evaluation-only and leaves its resources behind
+  on uninstall (see [Database](#database)).
+- The chart has not been tested on a cluster; `helm lint` and `helm template` are the checks run.

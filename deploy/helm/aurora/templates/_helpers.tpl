@@ -111,6 +111,20 @@ spec:
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels: {{- include "aurora.selector" (dict "root" $r "component" .name) | nindent 14 }}
+      {{- if and .pluginsMount (eq $r.Values.plugins.source "configMap") }}
+      # ConfigMap keys are symlinks, which the plugin scan (scan.rs) skips, so copy them with cp -L.
+      initContainers:
+        - name: seed-plugins
+          image: {{ $r.Values.hookImage | quote }}
+          {{- include "aurora.containerSecurity" $r | nindent 10 }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              for f in /plugin-src/*.aurora-plugin; do [ -f "$f" ] || continue; cp -L "$f" /plugins/; done
+          volumeMounts:
+            - {name: plugin-src, mountPath: /plugin-src, readOnly: true}
+            - {name: plugins, mountPath: /plugins}
+      {{- end }}
       containers:
         - name: {{ .name }}
           image: {{ .image | quote }}
@@ -140,6 +154,9 @@ spec:
             {{- if .ca }}
             - {name: ca, mountPath: /var/lib/aurora/ca, readOnly: true}
             {{- end }}
+            {{- if and .pluginsMount (ne $r.Values.plugins.source "none") }}
+            - {name: plugins, mountPath: {{ $r.Values.plugins.dir | quote }}, readOnly: true}
+            {{- end }}
       volumes:
         - name: config
           configMap: {name: {{ $full }}-config}
@@ -148,6 +165,17 @@ spec:
         {{- if .ca }}
         - name: ca
           secret: {secretName: {{ include "aurora.caSecretName" $r }}, defaultMode: 0440}
+        {{- end }}
+        {{- if and .pluginsMount (ne $r.Values.plugins.source "none") }}
+        {{- if eq $r.Values.plugins.source "pvc" }}
+        - name: plugins
+          persistentVolumeClaim: {claimName: {{ $r.Values.plugins.pvcName | quote }}, readOnly: true}
+        {{- else }}
+        - name: plugins
+          emptyDir: {}
+        - name: plugin-src
+          configMap: {name: {{ $r.Values.plugins.configMapName | quote }}, defaultMode: 0444}
+        {{- end }}
         {{- end }}
 ---
 apiVersion: v1
