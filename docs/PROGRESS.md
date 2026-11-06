@@ -9,6 +9,8 @@ their dependencies near completion (adaptive planning).
 
 ## Environment
 
+- **Phase sequencing** (owner, 2026-11-06): phase 0 must land fully and be **merged to `master`** first. After that, phases **1 and 2 may overlap**. Phases **3 and 4** start once 1 and 2 are done.
+
 - **Concurrency**: owner set **3 concurrent implementation lanes** (2026-11-06 evening; was 4). Lanes already running finish; no new lane starts while 3 are active.
 - **Worktrees** (2026-11-06, owner): implementation lanes that touch a crate another lane is editing (esp. `services/aurora-api`) run in their own git worktree (Orca worker `--worktree new-top-level --repo id:706ffb9e-ae8b-4f11-a841-518970480f40`, or Agent `isolation: worktree`) with a per-worktree `target/` (never a shared `CARGO_TARGET_DIR`: e2e scripts run `target/debug/<bin>`). Orchestrator merges each branch into `phase0` after review. Disk budget: ~15 GB per worktree build, so at most 3 worktrees while free space is under 100 GB; check `df -h /home` before starting one.
 
@@ -141,7 +143,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | OPS-010 | Helm chart | Ops | done | — | Sonnet | `helm lint`, `helm template` |
 | RUN-004 | Kubernetes backend (+ runner.k8s.core_namespace config fix) | Rust | done (e65ec66d) | RUN-003 | Sonnet (Orca worker, worktree) + Opus (kube → aws-lc-rs) | config 18, k8s unit 15, k8s_mock 15 (fake API server), runner 10; clippy; cargo deny ok; helm-rendered ConfigMap loads |
 | OPS-011 | kind e2e (Helm from scratch, k8s backend, NetworkPolicy/SEC-02 probes) | Ops | todo (briefed; kind installed by owner) | RUN-004, OPS-013 | Sonnet (worktree) | |
-| TEST-017 | Scripted `aurora-mock-llm` behind real LiteLLM (I-30); live claude-code conformance + hosted CLI e2e | e2e | todo (briefed) | SUP-004, TEST-013 | Sonnet (worktree) | |
+| TEST-017 | VidaiMock (pinned, Aurora scenario files) behind real LiteLLM (I-30); live claude-code conformance + hosted CLI e2e | e2e | todo (briefed) | SUP-004, TEST-013 | Sonnet (worktree) | |
 | OPS-014 | Performance budgets + upgrade test | Ops | todo | OPS-011 | — | |
 
 ## Open spec issues (found by PROTO-001; S-06..S-11 resolved)
@@ -162,7 +164,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 ## Blockers
 
 - (resolved 2026-11-06) kind v0.33 + kubectl installed by the owner → OPS-011.
-- (resolved 2026-11-06) No real LiteLLM endpoint: owner chose a mock behind compose → I-30, TEST-017.
+- (resolved 2026-11-06) No real LiteLLM endpoint: owner chose a mock behind compose → I-30 (VidaiMock, owner-pointed), TEST-017.
 
 ## Standing notes (not blockers)
 
