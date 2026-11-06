@@ -2,12 +2,12 @@
 use std::collections::BTreeMap;
 
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_yaml::Value;
 
 use crate::template::Template;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub package: Package,
@@ -19,7 +19,7 @@ pub struct Manifest {
     pub apps: Vec<App>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Package {
     pub id: String,
@@ -33,7 +33,7 @@ pub struct Package {
     pub homepage: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Hook {
     #[serde(rename = "connect.authorize")]
     ConnectAuthorize,
@@ -45,7 +45,7 @@ pub enum Hook {
     ApprovalSummarize,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Permissions {
     #[serde(default)]
@@ -56,7 +56,7 @@ pub struct Permissions {
     pub context: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ClientAuth {
     #[default]
@@ -64,7 +64,7 @@ pub enum ClientAuth {
     Basic,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BodyFormat {
     #[default]
@@ -73,21 +73,21 @@ pub enum BodyFormat {
 }
 
 /// A fixed URL, or a template constrained to a zone.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum UrlOrTemplate {
     Url(String),
     Templated(ZonedTemplate),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ZonedTemplate {
     pub template: Template,
     pub zone: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientField {
     pub name: String,
@@ -96,7 +96,7 @@ pub struct ClientField {
     pub secret: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OauthClient {
     pub id: String,
@@ -113,7 +113,7 @@ pub struct OauthClient {
     pub setup_note: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct App {
     pub about: About,
@@ -133,7 +133,7 @@ pub struct App {
     pub database: Option<Database>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct About {
     pub id: String,
@@ -151,14 +151,14 @@ pub struct About {
     pub label_hint: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectNote {
     pub text: String,
     pub url: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialDecl {
     pub name: String,
@@ -168,13 +168,13 @@ pub struct CredentialDecl {
     pub optional: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MetadataDecl {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Connect {
     Oauth2(Oauth2Connect),
@@ -192,7 +192,7 @@ impl Connect {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Callback {
     #[default]
@@ -200,14 +200,14 @@ pub enum Callback {
     Fragment,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Access {
     Read,
     Write,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScopeDecl {
     pub scope: String,
@@ -215,7 +215,7 @@ pub struct ScopeDecl {
     pub access: Access,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccessLevel {
     pub id: String,
@@ -224,7 +224,7 @@ pub struct AccessLevel {
     pub authorize_params: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Oauth2Connect {
     pub id: String,
@@ -244,7 +244,7 @@ pub struct Oauth2Connect {
     pub probe: Option<Probe>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FieldsConnect {
     pub id: String,
@@ -252,7 +252,7 @@ pub struct FieldsConnect {
     pub probe: Option<Probe>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HookConnect {
     pub id: String,
@@ -262,7 +262,7 @@ pub struct HookConnect {
     pub fields: Vec<FormField>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FieldType {
     #[default]
@@ -273,7 +273,7 @@ pub enum FieldType {
     JsonFile,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Store {
     #[default]
@@ -282,7 +282,7 @@ pub enum Store {
     TenantHost,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SelectOption {
     pub value: String,
@@ -290,14 +290,14 @@ pub struct SelectOption {
     pub warning: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShowWhen {
     pub field: String,
     pub equals: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FormField {
     pub name: String,
@@ -317,7 +317,7 @@ pub struct FormField {
     pub json_map: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum ProbeMethod {
     #[default]
@@ -326,7 +326,7 @@ pub enum ProbeMethod {
     Post,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Probe {
     #[serde(default)]
@@ -343,7 +343,7 @@ fn default_status() -> Vec<u16> {
     vec![200]
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostMatch {
     pub host: String,
@@ -351,7 +351,7 @@ pub struct HostMatch {
 }
 
 /// Inject-stage mechanisms (09 §5). Unknown → deserialization error.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Inject {
     Bearer(Template),
@@ -379,7 +379,7 @@ pub enum Inject {
 }
 
 /// route stage: `rewrite_host: { template, zone }`
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RewriteHost {
     pub template: Template,
@@ -387,14 +387,14 @@ pub struct RewriteHost {
 }
 
 /// guard stage: `tenant: { field, zone }`
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tenant {
     pub field: String,
     pub zone: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AwsSigv4 {
     pub region: Template,
@@ -404,25 +404,25 @@ pub struct AwsSigv4 {
     pub session_token: Option<Template>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Finalize {
     AwsSigv4(AwsSigv4),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommitTrailer {
     pub trailer: Template,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Transform {
     GitCommitTrailer(CommitTrailer),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokenEndpoint {
     pub path: String,
@@ -434,20 +434,20 @@ fn post() -> String {
     "POST".to_owned()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Intercept {
     OauthTokenEndpoint(TokenEndpoint),
 }
 
 /// passthrough stage: `passthrough: [registry_token_challenge]`
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Passthrough {
     RegistryTokenChallenge,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostRule {
     #[serde(rename = "match")]
@@ -466,7 +466,7 @@ pub struct HostRule {
     pub passthrough: Vec<Passthrough>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TokenKind {
     #[default]
@@ -475,14 +475,14 @@ pub enum TokenKind {
     Hook,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StaleCode {
     pub status: u16,
     pub body_contains: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Token {
     #[serde(default)]
@@ -500,14 +500,14 @@ pub struct Token {
     pub reauth_codes: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tools {
     pub read: Option<ToolGroup>,
     pub write: Option<ToolGroup>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolGroup {
     pub wildcard: Option<Wildcard>,
@@ -515,28 +515,28 @@ pub struct ToolGroup {
     pub items: Vec<ToolItem>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Wildcard {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GraphqlKind {
     Query,
     Mutation,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GitKind {
     Fetch,
     Push,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolItem {
     pub id: String,
@@ -550,7 +550,7 @@ pub struct ToolItem {
     pub git: Option<GitKind>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Approval {
     pub title: String,
@@ -561,13 +561,13 @@ pub struct Approval {
     pub summarize: Option<SummarizeMode>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SummarizeMode {
     Hook,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummaryField {
     pub label: String,
     #[serde(flatten)]
@@ -575,7 +575,7 @@ pub struct SummaryField {
 }
 
 /// Summary value source (09 §3.4 `approvals`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum Source {
     Path {
@@ -593,19 +593,19 @@ pub enum Source {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GraphqlSelect {
     OperationName,
     FieldNames,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NoParams {}
 
 /// Core decoders (09 §5). Unknown → deserialization error.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Decoder {
     Json(String),
@@ -617,14 +617,14 @@ pub enum Decoder {
     MimeText(NoParams),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvVar {
     pub name: String,
     pub value: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stub {
     pub path: String,
@@ -633,7 +633,7 @@ pub struct Stub {
     pub content: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Agent {
     #[serde(default)]
@@ -646,7 +646,7 @@ pub struct Agent {
     pub default_blocklist: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Database {
     pub engine: String,
@@ -671,14 +671,18 @@ fn retag<T: DeserializeOwned>(v: Value) -> Result<T, serde_yaml::Error> {
     serde_yaml::from_value(v)
 }
 
-fn de_vec<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result<Vec<T>, D::Error> {
+pub(crate) fn de_vec<'de, D: Deserializer<'de>, T: DeserializeOwned>(
+    d: D,
+) -> Result<Vec<T>, D::Error> {
     Vec::<Value>::deserialize(d)?
         .into_iter()
         .map(|v| retag(v).map_err(serde::de::Error::custom))
         .collect()
 }
 
-fn de_opt<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result<Option<T>, D::Error> {
+pub(crate) fn de_opt<'de, D: Deserializer<'de>, T: DeserializeOwned>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
     Option::<Value>::deserialize(d)?
         .map(|v| retag(v).map_err(serde::de::Error::custom))
         .transpose()

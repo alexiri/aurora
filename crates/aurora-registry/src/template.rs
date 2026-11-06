@@ -1,7 +1,7 @@
 //! Template language (09 §4): literal text with `{namespace.name}` tokens.
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TemplateError {
@@ -114,6 +114,12 @@ pub const CONTEXT_VARS: &[&str] = &[
 pub struct Template {
     raw: String,
     parts: Vec<Part>,
+}
+
+impl Serialize for Template {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.raw)
+    }
 }
 
 impl Template {

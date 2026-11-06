@@ -3,10 +3,14 @@
 #![forbid(unsafe_code)]
 
 pub mod builder;
+pub mod claims;
+pub mod diff;
 pub mod digest;
+pub mod index;
 pub mod manifest;
 pub mod package;
 pub mod signature;
+pub mod snapshot;
 pub mod template;
 pub mod validate;
 
