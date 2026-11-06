@@ -10,3 +10,6 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+aurora-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

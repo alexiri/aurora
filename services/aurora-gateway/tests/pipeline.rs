@@ -264,6 +264,7 @@ async fn start(mk: impl FnOnce(&World, &SecretRef) -> Rows, llm: LlmSection) -> 
         plaintext,
         log: log.clone(),
         external_url: "https://aurora.test/".into(),
+        holds: None,
         touch_pool: None,
     }));
     let gw = ca::generate("gw").unwrap();

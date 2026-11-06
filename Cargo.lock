@@ -310,6 +310,7 @@ dependencies = [
  "aurora-llm",
  "aurora-policy",
  "aurora-secrets",
+ "aurora-summary",
  "aurora-testkit",
  "axum",
  "base64 0.22.1",
@@ -445,6 +446,11 @@ dependencies = [
 [[package]]
 name = "aurora-summary"
 version = "0.1.0"
+dependencies = [
+ "aurora-core",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "aurora-supervisor"

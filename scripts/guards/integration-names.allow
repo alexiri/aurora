@@ -6,3 +6,6 @@
 # LLM provider hosts are allowed by design (known_llm_hosts in aurora-llm/aurora-config).
 # (no entries yet; add e.g.)
 # ^crates/aurora-llm/.*:known_llm_hosts
+
+# Bundled top-10k common-password list (I-11) is data, not integration code.
+^services/aurora-api/data/common-passwords\.txt$:.*

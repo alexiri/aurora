@@ -233,6 +233,7 @@
       "approved_by",
       "device_code_hash",
       "expires_at",
+      "hostname",
       "id",
       "status",
       "user_code",

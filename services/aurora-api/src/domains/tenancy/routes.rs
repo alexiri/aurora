@@ -3,7 +3,7 @@ use super::service;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::agents::dto::Agent;
-use crate::http::auth::{Caller, SessionCaller, require_own};
+use crate::http::auth::{Caller, Principal, SessionCaller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, PageParams, Pagination};
@@ -590,7 +590,25 @@ async fn resolve(
 ) -> Result<Json<ResolveResponse>, ApiError> {
     let nf = || ApiError::not_found("Not found.");
     let (org_id, slug, name) = orgs::get_by_slug(&s.pool, &q.org).await?.ok_or_else(nf)?;
-    c.org(&s, org_id).await.map_err(|_| nf())?;
+    match &c.principal {
+        // A workspace key may resolve its own org (and, below, its own workspace).
+        Principal::ApiKey {
+            org_id: key_org,
+            workspace_id: Some(_),
+            ..
+        } => {
+            if *key_org != org_id
+                || !authz::org_membership(&s.pool, c.user_id, org_id)
+                    .await?
+                    .is_some_and(|m| m.is_active())
+            {
+                return Err(nf());
+            }
+        }
+        _ => {
+            c.org(&s, org_id).await.map_err(|_| nf())?;
+        }
+    }
     let workspace = match q.workspace {
         None => None,
         Some(slug) => {

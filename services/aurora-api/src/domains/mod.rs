@@ -5,6 +5,8 @@ pub mod admin;
 pub mod agents;
 pub mod audit;
 pub mod auth;
+pub mod cli_login;
 pub mod instance;
+pub mod keys;
 pub mod me;
 pub mod tenancy;

@@ -55,6 +55,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/api-keys/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke an API key (immediate). */
+        delete: operations["revokeApiKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/cli": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Begin a CLI device login. */
+        post: operations["startCliLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/cli/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve a CLI login for a workspace (session only). */
+        post: operations["approveCliLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/cli/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Poll for the API key; the key is returned exactly once. */
+        post: operations["pollCliLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/login": {
         parameters: {
             query?: never;
@@ -244,6 +312,23 @@ export interface paths {
         patch: operations["patchMe"];
         trace?: never;
     };
+    "/v1/me/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's own user-kind keys across organizations and workspaces. */
+        get: operations["listMyApiKeys"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs": {
         parameters: {
             query?: never;
@@ -279,6 +364,24 @@ export interface paths {
         head?: never;
         /** Update organization name, slug or settings (owner). */
         patch: operations["patchOrg"];
+        trace?: never;
+    };
+    "/v1/orgs/{org}/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List organization API keys. */
+        get: operations["listOrgApiKeys"];
+        put?: never;
+        /** Create an organization API key (`auo_`); the token is returned once. */
+        post: operations["createOrgApiKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/orgs/{org}/audit": {
@@ -439,6 +542,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List workspace API keys. */
+        get: operations["listWorkspaceApiKeys"];
+        put?: never;
+        /** Create a workspace API key (`auk_`); the token is returned once. */
+        post: operations["createWorkspaceApiKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/audit": {
         parameters: {
             query?: never;
@@ -501,6 +622,35 @@ export interface components {
             /** Format: uuid */
             workspace_id: string;
         };
+        ApiKey: {
+            /** Format: date-time */
+            created_at: string;
+            display_prefix: string;
+            /** Format: date-time */
+            expires_at?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** @description `user` | `service`. */
+            kind: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            name: string;
+            /** Format: uuid */
+            org_id: string;
+            owner: components["schemas"]["KeyOwner"];
+            /** Format: date-time */
+            revoked_at?: string | null;
+            /**
+             * Format: uuid
+             * @description `null` for organization keys (`auo_`).
+             */
+            workspace_id?: string | null;
+        };
+        ApproveRequest: {
+            user_code: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
         AuditEntry: {
             action: string;
             /** Format: uuid */
@@ -529,8 +679,26 @@ export interface components {
             current_password: string;
             new_password: string;
         };
+        CliWorkspace: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: uuid */
+            org_id: string;
+            org_slug: string;
+            slug: string;
+        };
         ConfirmRequest: {
             confirm: string;
+        };
+        CreateKeyRequest: {
+            /**
+             * Format: date-time
+             * @description Must be in the future.
+             */
+            expires_at?: string | null;
+            /** @description 1-80 characters. */
+            name: string;
         };
         CreateOrgRequest: {
             name: string;
@@ -550,6 +718,11 @@ export interface components {
         CreateWorkspaceResponse: {
             default_agent: components["schemas"]["Agent"];
             workspace: components["schemas"]["Workspace"];
+        };
+        CreatedKey: {
+            api_key: components["schemas"]["ApiKey"];
+            /** @description The token; shown only in this response. */
+            key: string;
         };
         DeleteMeRequest: {
             /** @description Required for accounts that have a password. */
@@ -586,6 +759,11 @@ export interface components {
             /** @description `open` | `invite_only` | `sso_jit`. */
             signup_mode: string;
             version: string;
+        };
+        KeyOwner: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
         };
         LoginRequest: {
             email: string;
@@ -712,6 +890,33 @@ export interface components {
                 updated_at: string;
                 /** Format: uuid */
                 workspace_id: string;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_ApiKey: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                display_prefix: string;
+                /** Format: date-time */
+                expires_at?: string | null;
+                /** Format: uuid */
+                id: string;
+                /** @description `user` | `service`. */
+                kind: string;
+                /** Format: date-time */
+                last_used_at?: string | null;
+                name: string;
+                /** Format: uuid */
+                org_id: string;
+                owner: components["schemas"]["KeyOwner"];
+                /** Format: date-time */
+                revoked_at?: string | null;
+                /**
+                 * Format: uuid
+                 * @description `null` for organization keys (`auo_`).
+                 */
+                workspace_id?: string | null;
             }[];
             next_cursor?: string | null;
         };
@@ -843,6 +1048,28 @@ export interface components {
             email: string;
             invitation_token?: string | null;
             password: string;
+        };
+        StartRequest: {
+            /** @description Client host name (sanitized; used to name the minted key). */
+            hostname?: string | null;
+        };
+        StartResponse: {
+            device_code: string;
+            /** Format: int32 */
+            expires_in: number;
+            /** Format: int32 */
+            interval: number;
+            /** @description `ABCD-EFGH`. */
+            user_code: string;
+            verification_url: string;
+        };
+        TokenRequest: {
+            device_code: string;
+        };
+        TokenResponse: {
+            /** @description Workspace API key (`auk_`); returned exactly once. */
+            api_key: string;
+            workspace: components["schemas"]["CliWorkspace"];
         };
         User: {
             /** Format: date-time */
@@ -993,6 +1220,151 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    revokeApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description API key id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    startCliLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartResponse"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    approveCliLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveRequest"];
+            };
+        };
+        responses: {
+            /** @description Approved */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    pollCliLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TokenRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1461,6 +1833,46 @@ export interface operations {
             };
         };
     };
+    listMyApiKeys: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ApiKey"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listOrgs: {
         parameters: {
             query?: {
@@ -1668,6 +2080,99 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listOrgApiKeys: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ApiKey"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createOrgApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateKeyRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedKey"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2275,6 +2780,99 @@ export interface operations {
                 };
             };
             /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWorkspaceApiKeys: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ApiKey"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createWorkspaceApiKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateKeyRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedKey"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;

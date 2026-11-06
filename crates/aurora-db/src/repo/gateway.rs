@@ -319,3 +319,115 @@ pub async fn insert_request_log(
     qb.build().execute(pool).await?;
     Ok(())
 }
+
+/// A new `pending` approval hold (docs/03 §approvals). `deadline` is
+/// `now() + timeout_secs` on the database clock.
+#[derive(Debug, Clone)]
+pub struct NewApproval {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub workspace_id: Uuid,
+    pub agent_id: Uuid,
+    pub conversation_id: Option<Uuid>,
+    pub turn_id: Option<Uuid>,
+    pub gateway_instance_id: Uuid,
+    pub method: String,
+    pub host: String,
+    pub path: String,
+    pub connection_id: Option<Uuid>,
+    pub rule_logical_id: Option<Uuid>,
+    pub rule_name: Option<String>,
+    pub summary: serde_json::Value,
+    pub batch_id: Option<String>,
+    pub batch_label: Option<String>,
+    pub batch_total: Option<i32>,
+    pub timeout_secs: f64,
+}
+
+pub async fn insert_approval<'e, E: PgExecutor<'e>>(
+    exec: E,
+    a: &NewApproval,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, turn_id, \
+         gateway_instance_id, method, host, path, connection_id, rule_logical_id, rule_name, \
+         summary, batch_id, batch_label, batch_total, status, deadline) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'pending', \
+                 now() + make_interval(secs => $18))",
+    )
+    .bind(a.id)
+    .bind(a.org_id)
+    .bind(a.workspace_id)
+    .bind(a.agent_id)
+    .bind(a.conversation_id)
+    .bind(a.turn_id)
+    .bind(a.gateway_instance_id)
+    .bind(&a.method)
+    .bind(&a.host)
+    .bind(&a.path)
+    .bind(a.connection_id)
+    .bind(a.rule_logical_id)
+    .bind(&a.rule_name)
+    .bind(&a.summary)
+    .bind(&a.batch_id)
+    .bind(&a.batch_label)
+    .bind(a.batch_total)
+    .bind(a.timeout_secs)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// Current status of the hold (`None` if the row is gone).
+pub async fn get_approval_status<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+) -> Result<Option<String>, DbError> {
+    Ok(
+        sqlx::query_scalar::<_, String>("SELECT status FROM approvals WHERE id = $1")
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
+}
+
+/// `pending` -> `expired`; true when this call made the transition.
+pub async fn expire_approval<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE approvals SET status = 'expired', decided_at = now(), updated_at = now() \
+         WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(id)
+    .execute(exec)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
+/// `pending` -> `abandoned` (client gone / gateway stopping); true on transition.
+pub async fn abandon_approval<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE approvals SET status = 'abandoned', updated_at = now() \
+         WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(id)
+    .execute(exec)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
+/// Abandons every pending hold of this gateway instance; returns the count.
+pub async fn abandon_approvals<'e, E: PgExecutor<'e>>(
+    exec: E,
+    instance_id: Uuid,
+) -> Result<u64, DbError> {
+    Ok(sqlx::query(
+        "UPDATE approvals SET status = 'abandoned', updated_at = now() \
+         WHERE gateway_instance_id = $1 AND status = 'pending'",
+    )
+    .bind(instance_id)
+    .execute(exec)
+    .await?
+    .rows_affected())
+}

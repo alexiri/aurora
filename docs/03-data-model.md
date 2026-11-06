@@ -155,7 +155,8 @@ Device-style CLI login.
 | status | text CHECK in (`pending`,`approved`,`denied`,`expired`,`consumed`) | |
 | approved_by | uuid null FK→users (cascade) | |
 | workspace_id | uuid null FK→workspaces (cascade) | chosen at approval |
-| api_key_id | uuid null FK→api_keys (cascade) | minted on approval, token returned once on consume |
+| api_key_id | uuid null FK→api_keys (cascade) | minted on consume (nothing reversible is stored), token returned once; spec fix S-04 |
+| hostname | text null | sanitized client hostname from `POST /v1/auth/cli` (key name `CLI on <hostname>`); spec fix S-04 |
 | expires_at | timestamptz | 10 min |
 
 ### `audit_log` — *no FKs*

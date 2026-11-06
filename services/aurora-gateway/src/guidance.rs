@@ -88,3 +88,15 @@ pub fn response(err: &ApiError) -> Response<Body> {
     }
     res
 }
+
+/// 503 `gateway_restarting` with `retry-after: 1` (held request at SIGTERM).
+pub fn restarting() -> Response<Body> {
+    let err = ApiError::unavailable(
+        "gateway_restarting",
+        "The gateway is restarting while this request awaited approval. Retry shortly.",
+    );
+    let mut res = response(&err);
+    res.headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from(1u64));
+    res
+}

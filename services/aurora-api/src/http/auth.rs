@@ -233,7 +233,7 @@ impl AuthCache {
             "session" => m.retain(
                 |_, (_, c)| !matches!(c.principal, Principal::Session { id: s } if s == id),
             ),
-            "key" => m.retain(
+            "api_key" | "key" => m.retain(
                 |_, (_, c)| !matches!(c.principal, Principal::ApiKey { id: k, .. } if k == id),
             ),
             "user" => m.retain(|_, (_, c)| c.user_id != id),

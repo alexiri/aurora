@@ -6,9 +6,11 @@
 
 use aurora_db::PgPool;
 use aurora_db::bus::{BusEvent, Channel, Listener};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,9 +77,62 @@ pub async fn stopped(rx: &mut tokio::sync::watch::Receiver<bool>) {
 pub struct Hub {
     caches: Mutex<Vec<Arc<dyn Invalidatable>>>,
     connected: AtomicBool,
+    /// Approval holds waiting for a `decided`/`expired` event, by approval id.
+    approval_waiters: Mutex<HashMap<Uuid, Arc<Notify>>>,
+}
+
+/// A registered wait on one approval; deregisters on drop. Wakeups carry no
+/// data: the waiter re-reads the row. `notify_one` stores a permit, so an event
+/// arriving before `wait` is not lost.
+pub struct ApprovalWaiter {
+    hub: Arc<Hub>,
+    id: Uuid,
+    notify: Arc<Notify>,
+}
+
+impl ApprovalWaiter {
+    pub async fn wait(&self) {
+        self.notify.notified().await;
+    }
+}
+
+impl Drop for ApprovalWaiter {
+    fn drop(&mut self) {
+        if let Ok(mut w) = self.hub.approval_waiters.lock() {
+            w.remove(&self.id);
+        }
+    }
 }
 
 impl Hub {
+    /// Registers interest in events for approval `id` (register before inserting
+    /// the row so nothing is missed).
+    pub fn approval_waiter(self: &Arc<Self>, id: Uuid) -> ApprovalWaiter {
+        let notify = Arc::new(Notify::new());
+        if let Ok(mut w) = self.approval_waiters.lock() {
+            w.insert(id, notify.clone());
+        }
+        ApprovalWaiter {
+            hub: self.clone(),
+            id,
+            notify,
+        }
+    }
+
+    fn wake_approvals(&self, only: Option<Uuid>) {
+        let Ok(w) = self.approval_waiters.lock() else {
+            return;
+        };
+        match only {
+            Some(id) => {
+                if let Some(n) = w.get(&id) {
+                    n.notify_one();
+                }
+            }
+            None => w.values().for_each(|n| n.notify_one()),
+        }
+    }
+
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
@@ -112,7 +167,23 @@ impl Hub {
     /// Handle one bus event.
     pub fn handle(&self, ev: BusEvent) {
         match ev {
-            BusEvent::Resync => self.flush_all(),
+            BusEvent::Resync => {
+                self.flush_all();
+                self.wake_approvals(None);
+            }
+            BusEvent::Notification {
+                channel: Channel::Approval,
+                payload,
+            } => {
+                let id = payload
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok());
+                let event = payload.get("event").and_then(|v| v.as_str());
+                if let (Some(id), Some("decided" | "expired")) = (id, event) {
+                    self.wake_approvals(Some(id));
+                }
+            }
             BusEvent::Notification { channel, payload } => match parse(channel, &payload) {
                 Some(Ok(ev)) => self.dispatch(&ev),
                 Some(Err(())) => {
@@ -131,7 +202,11 @@ impl Hub {
         pool: PgPool,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) {
-        let channels = [Channel::GatewayInvalidate, Channel::AuthRevoked];
+        let channels = [
+            Channel::GatewayInvalidate,
+            Channel::AuthRevoked,
+            Channel::Approval,
+        ];
         let mut backoff = Duration::from_millis(250);
         let mut listener = loop {
             let attempt = tokio::select! {

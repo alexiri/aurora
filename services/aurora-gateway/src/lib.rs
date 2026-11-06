@@ -6,6 +6,7 @@ pub mod ca;
 pub mod decide;
 pub mod guard;
 pub mod guidance;
+pub mod hold;
 pub mod hygiene;
 pub mod inject;
 pub mod instance;

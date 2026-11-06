@@ -6,6 +6,7 @@ use aurora_core::service::{self, exit_config, ready_check};
 use aurora_gateway::ca::{self, Ca};
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
 use aurora_gateway::guard::Guard;
+use aurora_gateway::hold::Holds;
 use aurora_gateway::instance;
 use aurora_gateway::invalidation::Hub;
 use aurora_gateway::plaintext::PlaintextCache;
@@ -118,19 +119,28 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let plaintext = Arc::new(PlaintextCache::new(vault));
     hub.register(plaintext.clone());
     let reqlog = RequestLog::new(Arc::new(DbWriter(pool.clone())));
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let instance_id = uuid::Uuid::now_v7();
+    let holds = Arc::new(Holds::new(
+        pool.clone(),
+        hub.clone(),
+        instance_id,
+        Duration::from_secs(cfg.approvals.timeout_secs),
+        Some(rx.clone()),
+    ));
     let handler = Arc::new(PolicyHandler::new(PolicyHandlerParts {
         resolver: policy_resolver,
         plaintext,
         log: reqlog.clone(),
         external_url: cfg.external_url.clone(),
+        holds: Some(holds.clone()),
         touch_pool: Some(pool.clone()),
     }));
-    let (tx, rx) = tokio::sync::watch::channel(false);
     let reqlog_task = tokio::spawn(reqlog.run(FLUSH_INTERVAL, rx.clone()));
     let hub_task = tokio::spawn(hub.clone().run(pool.clone(), rx.clone()));
     let instance_task = tokio::spawn(instance::run(
         pool.clone(),
-        uuid::Uuid::now_v7(),
+        instance_id,
         instance::HEARTBEAT_INTERVAL,
         rx.clone(),
     ));
@@ -205,6 +215,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             let _ = rx3.wait_for(|s| *s).await;
         })
         .await;
+    holds.abandon_all().await;
     internal_task.await??;
     let _ = hub_task.await;
     let _ = instance_task.await;

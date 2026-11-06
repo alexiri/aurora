@@ -25,6 +25,7 @@ aurora-crypto = { workspace = true }
 aurora-policy = { workspace = true }
 aurora-secrets = { workspace = true }
 aurora-llm = { workspace = true }
+aurora-summary = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }

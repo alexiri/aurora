@@ -6,6 +6,7 @@
 //! `MemoryCounter` (rate limits) and [`RequestLog`].
 
 use crate::auth::{CredentialKind, RequestIdentity as Ident};
+use crate::hold::{HoldOutcome, HoldRequest, Holds};
 use crate::inject::{self, Target};
 use crate::pipeline::{
     OpenLaneDecision, Outcome, PipelineRequest, PostHook, PreparedRequest, RequestHandler,
@@ -16,7 +17,7 @@ use crate::reqlog::{RequestLog, Row};
 use crate::resolve::{ResolvedHost, Resolver, SecretCand};
 use crate::{Body, BoxError, guidance};
 use aurora_core::ApiError;
-use aurora_core::limits::{CONDITION_BODY_BUFFER, CONNECTION_CHOICE_MAX};
+use aurora_core::limits::{APPROVAL_BODY_PEEK, CONDITION_BODY_BUFFER, CONNECTION_CHOICE_MAX};
 use aurora_policy::eval::{BlockReason, Decision, MemoryCounter, RateCounter, Verdict};
 use aurora_policy::facts::Level;
 use aurora_policy::{Credential, RequestFacts, RequestIdentity, evaluate, selected_candidates};
@@ -39,6 +40,7 @@ pub struct PolicyHandler {
     counters: Arc<MemoryCounter>,
     log: Arc<RequestLog>,
     external_url: String,
+    holds: Option<Arc<Holds>>,
     /// Churn column updates; `None` disables them (tests).
     touch_pool: Option<aurora_db::PgPool>,
     touched: Mutex<HashMap<Uuid, Instant>>,
@@ -49,6 +51,8 @@ pub struct PolicyHandlerParts {
     pub plaintext: Arc<PlaintextCache>,
     pub log: Arc<RequestLog>,
     pub external_url: String,
+    /// Approval holds; `None` fails needs-approval requests closed (503).
+    pub holds: Option<Arc<Holds>>,
     pub touch_pool: Option<aurora_db::PgPool>,
 }
 
@@ -291,6 +295,7 @@ impl PolicyHandler {
             counters: Arc::new(MemoryCounter::new()),
             log: p.log,
             external_url: p.external_url.trim_end_matches('/').to_owned(),
+            holds: p.holds,
             touch_pool: p.touch_pool,
             touched: Mutex::new(HashMap::new()),
         }
@@ -406,7 +411,7 @@ impl PolicyHandler {
                 Some((e, "rate_limited"))
             }
             Verdict::NeedsApproval => Some((
-                // TODO(GW-004): create an approval hold instead of failing closed.
+                // Reached only without a hold store (and on the open lane, which refuses).
                 ApiError::unavailable(
                     "approval_store_unavailable",
                     "This request needs manual approval, which is not available yet.",
@@ -482,13 +487,25 @@ impl RequestHandler for PolicyHandler {
             Pick::Refuse(e) => return Outcome::Respond(self.refuse(ctx, &e, "error")),
         };
         // 4. body prefix, only when a rule inspects the body.
-        let (body_prefix, truncated, body) = if rv.needs_body() {
-            let (p, t, b) = buffer_prefix(body, CONDITION_BODY_BUFFER).await;
+        let content_type = headers
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let may_hold = self.holds.is_some() && rv.all_rules().any(|r| r.require_approval);
+        let (body_prefix, truncated, body) = if rv.needs_body() || may_hold {
+            let limit = if rv.needs_body() {
+                CONDITION_BODY_BUFFER
+            } else {
+                APPROVAL_BODY_PEEK
+            };
+            let (p, t, b) = buffer_prefix(body, limit).await;
             (p.to_vec(), t, b)
         } else {
             (Vec::new(), false, body)
         };
         // 7. decision (nothing decrypted yet).
+        let peek = body_prefix[..body_prefix.len().min(APPROVAL_BODY_PEEK)].to_vec();
+        let peek_truncated = truncated || body_prefix.len() > APPROVAL_BODY_PEEK;
         let facts = RequestFacts {
             host: host.clone(),
             port,
@@ -512,7 +529,67 @@ impl RequestHandler for PolicyHandler {
         );
         ctx.secret_id = winner.as_ref().map(|c| c.id);
         ctx.rule = d.deciding_rule().map(|r| (r.logical_id, r.name.clone()));
-        if let Some((err, decision)) = self.verdict_error(&rv, &d, &ctx.method, &path, &host) {
+        if d.verdict == Verdict::NeedsApproval
+            && let Some(holds) = &self.holds
+        {
+            // 8. approval hold (nothing decrypted yet).
+            let red_path = crate::reqlog::redact_path(&path);
+            let summary = aurora_summary::generic(
+                &ctx.method,
+                &host,
+                &red_path,
+                query.as_deref(),
+                content_type.as_deref(),
+                &peek,
+                peek_truncated,
+            );
+            let outcome = holds
+                .hold(HoldRequest {
+                    identity: &identity,
+                    method: &ctx.method,
+                    host: &host,
+                    path: &red_path,
+                    rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
+                    batch: &aurora_headers,
+                    summary: &summary,
+                })
+                .await;
+            match outcome {
+                HoldOutcome::Approved => ctx.decision = "approved",
+                HoldOutcome::Denied(id) => {
+                    let err = ApiError::new(
+                        StatusCode::FORBIDDEN,
+                        "manual_approval_denied",
+                        "A reviewer denied this request. Do not retry it unchanged.",
+                    )
+                    .with_details(json!({ "approval_id": id }));
+                    return Outcome::Respond(self.refuse(ctx, &err, "approval_denied"));
+                }
+                HoldOutcome::Expired(id) => {
+                    let err = ApiError::new(
+                        StatusCode::FORBIDDEN,
+                        "manual_approval_expired",
+                        "No reviewer decided in time, so this request was not sent.",
+                    )
+                    .with_details(json!({ "approval_id": id }));
+                    return Outcome::Respond(self.refuse(ctx, &err, "approval_expired"));
+                }
+                HoldOutcome::Restarting => {
+                    ctx.decision = "error";
+                    self.log
+                        .record(ctx.row(503, None, Some("gateway_restarting")));
+                    return Outcome::Respond(guidance::restarting());
+                }
+                HoldOutcome::StoreUnavailable => {
+                    let err = ApiError::unavailable(
+                        "approval_store_unavailable",
+                        "The approval store is unavailable. Retry shortly.",
+                    );
+                    return Outcome::Respond(self.refuse(ctx, &err, "error"));
+                }
+            }
+        } else if let Some((err, decision)) = self.verdict_error(&rv, &d, &ctx.method, &path, &host)
+        {
             return Outcome::Respond(self.refuse(ctx, &err, decision));
         }
         self.apply_hits(&d);
