@@ -1,6 +1,6 @@
 # Implementation progress
 
-Last updated: 2026-11-06 10:55 (orchestrator)
+Last updated: 2026-11-06 (afternoon, orchestrator)
 
 Scope: **Phase 0 (M0–M7)**. Phases 1–4 are out of scope until phase 0 exits.
 Ids per decision I-01. Task briefs live in `docs/tasks/<ID>.md`. Milestones
@@ -53,10 +53,10 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | BE-015 | OIDC + mock IdP | Rust | ready (brief) | BE-011 | Sonnet | |
 | FE-011 | Dashboard shell | Next.js | done | BE-012 | Sonnet | 14 vitest; build; curl smoke |
 | FE-010 | Auth pages + CSP proxy | Next.js | done | BE-011 | Sonnet | 22 vitest; CSP nonce/nosniff headers verified; /join on generated client |
-| FE-013 | Account, workspace settings, admin users | Next.js | partial | BE-014, BE-016 | Sonnet | |
-| FE-012 | Org pages | Next.js | ready (brief) | BE-013, FE-013 | Sonnet | |
+| FE-013 | Account, workspace settings, admin users | Next.js | done | BE-014, BE-016 | Sonnet | |
+| FE-012 | Org pages | Next.js | done | BE-013, FE-013 | Sonnet | |
 | TEST-010 | Permission-matrix test | Rust test | todo | BE-013..016 | haiku-tester | |
-| TEST-011 | Playwright sign-up → workspace (Daneel) → invite → accept | e2e | todo | FE-010..013 | nextjs-developer | |
+| TEST-011 | Playwright sign-up → workspace (Daneel) → invite → accept | e2e | done (`bash scripts/e2e/m1.sh` 1 passed, rerun by orchestrator) | FE-010..013 | nextjs-developer | |
 | BE-020 | aurora-policy | Rust | done | BE-001 | Sonnet | 10 + 30-case corpus |
 | BE-021 | aurora-secrets | Rust | done | BE-003 | Sonnet | 11 tests |
 | BE-022 | aurora-llm providers | Rust | done | BE-002 | Sonnet | 19 tests |
@@ -65,15 +65,21 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | GW-003 | Resolution, decision, injection, guidance, request log | Rust | done | GW-002 | Sonnet | pipeline 8 + policy_db |
 | GW-004 | Approval holds + ApprovalSummary | Rust | done | GW-003 | Sonnet | hold 6 + summary 5 |
 | API-002 | M2 contract | contract | done | — | Opus | API_CONTRACTS.md M2 |
-| GOV-001 | Governance library | Rust | partial | BE-022 | Sonnet | |
-| GW-005 | Gateway governance enforcement | Rust | ready (brief) | GOV-001 | Sonnet | |
-| BE-031 | Secrets + LLM keys API | Rust | ready (brief) | GOV-001 | Sonnet | |
-| BE-032 | BYO agents API + credentials + container config | Rust | ready (brief) | BE-016 | Sonnet | |
-| BE-033 | Policy authoring, grants, simulate, effective | Rust | blocked | BE-031, BE-032 | Sonnet | |
+| GOV-001 | Governance library | Rust | done (15 tests; I-17; from_stored) | BE-022 | Sonnet | |
+| GW-005 | Gateway governance enforcement | Rust | done (15 governance tests + TEST-020 SEC-37/write-back) | GOV-001 | Sonnet | |
+| BE-031 | Secrets + LLM keys API | Rust | done (tests/secrets.rs 8) | GOV-001 | Sonnet | |
+| BE-032 | BYO agents API + credentials + container config | Rust | done (tests/agents.rs 5) | BE-016 | Sonnet | |
+| BE-033 | Policy authoring, grants, simulate, effective | Rust | in-progress | BE-031, BE-032 | Sonnet | |
 | BE-030 | Approvals API + SSE + jobs + activity | Rust | ready (brief) | GW-004 | Sonnet | |
 | BE-034 | Governance API | Rust | blocked | GOV-001, BE-031 | Sonnet | |
 | CLI-001 | aurora-client + CLI login/run/approvals watch | Rust | blocked | BE-030, BE-032 | Sonnet | |
-| FE-020..024 | M2 dashboard: credentials, policy editor, approvals, agents/BYO connect, governance | Next.js | todo (briefs after BE) | BE-030..034 | Sonnet | |
+| FE-020 | Credentials pages (secrets, LLM keys, proposals) | Next.js | done | BE-031 | Sonnet | 50 vitest; build |
+| FE-023 | Agents list/create, agent page, BYO Connect | Next.js | done | BE-032 | Sonnet | 44 vitest; m1 e2e green |
+| FE-021/022/024 | Policy editor + access tab; approvals page; governance pages | Next.js | todo | BE-033/030/034 | Sonnet | |
+| TEST-020 | Gateway SEC-37 + origin write-back tests | Rust test | done | GW-005 | haiku→Opus fix | 2 tests |
+| REG-003 | Snapshot compiler, claims, diff, index | Rust | done | REG-002 | Sonnet | 11 tests; I-18 |
+| GW-010 | Gateway apps: snapshot, candidates, mechanisms | Rust | done | REG-003 | Sonnet | tests/apps.rs 10; SigV4 vector (I-19) |
+| GW-011 | Token refresh/mint, reauth, stale retry, GW-010 follow-ups | Rust | in-progress | GW-010 | Sonnet | |
 | REG-001 | Manifest model + in-manifest validation | Rust | done | BE-020 | Sonnet | 37 rule fixtures |
 | REG-002 | Package format, signatures, remaining validation | Rust | done | REG-001 | Sonnet | 15 package tests |
 | M3 rest | snapshot compiler, lifecycle/ingestion API, connect flows, mechanisms in gateway, hook host + WIT + SDK (needs wasm32-wasip2), CLI plugin, fixtures | both | todo | M2 | — | |
