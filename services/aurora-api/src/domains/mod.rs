@@ -22,5 +22,7 @@ pub mod oauth_clients;
 pub mod oidc;
 pub mod plugins;
 pub mod policy;
+pub mod runner_plane;
+pub mod runners_admin;
 pub mod secrets;
 pub mod tenancy;

@@ -61,3 +61,21 @@ pub async fn delete_for_secret_grants<'e, E: PgExecutor<'e>>(
     .await?;
     Ok(())
 }
+
+/// Delete the rules of a source whose ordinal is not in `keep`.
+pub async fn delete_except<'e, E: PgExecutor<'e>>(
+    exec: E,
+    source_kind: &str,
+    source_id: Uuid,
+    keep: &[i32],
+) -> Result<(), DbError> {
+    sqlx::query(
+        "DELETE FROM derived_rules WHERE source_kind = $1 AND source_id = $2 AND NOT (ordinal = ANY($3))",
+    )
+    .bind(source_kind)
+    .bind(source_id)
+    .bind(keep)
+    .execute(exec)
+    .await?;
+    Ok(())
+}

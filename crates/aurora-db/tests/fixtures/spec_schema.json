@@ -597,6 +597,7 @@
       "resource_profile",
       "restart_requested_at",
       "runner_id",
+      "start_failures",
       "state",
       "stop_reason",
       "stop_requested_at"

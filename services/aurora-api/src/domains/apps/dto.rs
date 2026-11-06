@@ -128,6 +128,22 @@ pub struct CredentialInfo {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+pub struct OauthClientField {
+    pub name: String,
+    pub label: String,
+    pub secret: bool,
+}
+
+/// An OAuth client definition the app's connect methods use (bring-your-own-client forms).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AppOauthClient {
+    pub client_key: String,
+    pub fields: Vec<OauthClientField>,
+    pub setup_note: Option<String>,
+    pub redirect_uri: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AppDetail {
     pub app_id: String,
     pub package_id: String,
@@ -147,4 +163,5 @@ pub struct AppDetail {
     pub agent_instructions: Option<String>,
     pub credentials: Vec<CredentialInfo>,
     pub metadata: Vec<String>,
+    pub oauth_clients: Vec<AppOauthClient>,
 }

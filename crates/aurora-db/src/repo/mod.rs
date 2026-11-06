@@ -22,6 +22,8 @@ pub mod orgs;
 pub mod plugins;
 pub mod policy;
 pub mod request_log;
+pub mod runners;
+pub mod sandboxes;
 pub mod secrets;
 pub mod sessions;
 pub mod users;

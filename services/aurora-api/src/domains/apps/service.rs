@@ -163,7 +163,7 @@ fn method(c: &Connect) -> ConnectMethod {
     }
 }
 
-fn tools(a: &AppEntry) -> Vec<Tool> {
+pub fn tools(a: &AppEntry) -> Vec<Tool> {
     let mut out = Vec::new();
     let Some(t) = &a.tools else { return out };
     for (group, g) in [("read", &t.read), ("write", &t.write)] {
@@ -208,6 +208,45 @@ fn tools(a: &AppEntry) -> Vec<Tool> {
         }
     }
     out
+}
+
+/// Package OAuth clients referenced by the app's oauth2 connect methods.
+fn oauth_clients(
+    state: &AppState,
+    snap: &Snapshot,
+    a: &AppEntry,
+    p: &PackageEntry,
+) -> Vec<AppOauthClient> {
+    let keys: BTreeSet<&str> = a
+        .connect
+        .iter()
+        .filter_map(|c| match c {
+            Connect::Oauth2(o) => Some(o.client.as_str()),
+            _ => None,
+        })
+        .collect();
+    let redirect_uri = format!(
+        "{}/v1/oauth/callback",
+        state.config.external_url.trim_end_matches('/')
+    );
+    snap.oauth_clients
+        .iter()
+        .filter(|c| c.package_id == p.package_id && keys.contains(c.client_key.as_str()))
+        .map(|c| AppOauthClient {
+            client_key: c.client_key.clone(),
+            fields: c
+                .fields
+                .iter()
+                .map(|f| OauthClientField {
+                    name: f.name.clone(),
+                    label: f.label.clone(),
+                    secret: f.secret,
+                })
+                .collect(),
+            setup_note: c.setup_note.clone(),
+            redirect_uri: redirect_uri.clone(),
+        })
+        .collect()
 }
 
 pub async fn detail(
@@ -260,5 +299,6 @@ pub async fn detail(
             })
             .collect(),
         metadata: a.metadata.iter().map(|m| m.name.clone()).collect(),
+        oauth_clients: oauth_clients(state, snap, a, p),
     }
 }

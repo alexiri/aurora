@@ -2,6 +2,7 @@ use super::dto::*;
 use super::{effective, service};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::domains::connections::service as conn_service;
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path};
@@ -18,6 +19,8 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_grants))
         .routes(routes!(put_secret_grant, delete_secret_grant))
+        .routes(routes!(put_connection_grant, delete_connection_grant))
+        .routes(routes!(connection_grants))
         .routes(routes!(agent_effective))
 }
 
@@ -47,9 +50,10 @@ async fn list_grants(
 ) -> Result<Json<GrantsResponse>, ApiError> {
     let (a, _) = service::visible_agent(&caller, &state, agent).await?;
     let secrets = grants::list_secret_grants(&state.pool, a.id).await?;
+    let conns = grants::list_connection_grants(&state.pool, a.id).await?;
     Ok(Json(GrantsResponse {
         secrets: secrets.into_iter().map(Into::into).collect(),
-        connections: Vec::new(),
+        connections: conns.into_iter().map(Into::into).collect(),
     }))
 }
 
@@ -110,4 +114,96 @@ async fn agent_effective(
 ) -> Result<Json<Effective>, ApiError> {
     let (a, _) = service::visible_agent(&caller, &state, agent).await?;
     Ok(Json(effective::compute(&state, &a).await?))
+}
+
+fn record_conn(
+    state: &AppState,
+    caller: &Caller,
+    action: &str,
+    agent: &AgentRow,
+    connection: Uuid,
+    meta: serde_json::Value,
+) {
+    audit::record(
+        state,
+        AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
+            .org(agent.org_id)
+            .workspace(agent.workspace_id)
+            .target("agent", agent.id)
+            .metadata(
+                json!({"connection_id": connection, "agent_handle": agent.handle, "grant": meta}),
+            ),
+    );
+}
+
+/// Grant a connection to an agent, replacing any previous grant (`can_own`).
+#[utoipa::path(
+    put, path = "/agents/{agent}/grants/connections/{conn}", operation_id = "grantConnection", tag = "grants",
+    params(("agent" = Uuid, Path, description = "Agent id"), ("conn" = Uuid, Path, description = "Connection id")),
+    request_body = PutConnectionGrant,
+    responses((status = 200, description = "Grant", body = ConnectionGrant),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
+              (status = 404, description = "Agent, or connection not in the agent's workspace or org", body = ErrorEnvelope),
+              (status = 422, description = "grant_invalid (details.reason: empty_custom | tool_in_both | unknown_tool)", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn put_connection_grant(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path((agent, conn)): Path<(Uuid, Uuid)>,
+    Json(req): Json<PutConnectionGrant>,
+) -> Result<Json<ConnectionGrant>, ApiError> {
+    let (a, auth) = service::visible_agent(&caller, &state, agent).await?;
+    require_own(&auth)?;
+    let g = service::grant_connection(&state, &caller, &a, conn, req).await?;
+    record_conn(
+        &state,
+        &caller,
+        "grant.create",
+        &a,
+        conn,
+        json!({"mode": g.mode, "allow_tools": g.allow_tools, "ask_tools": g.ask_tools}),
+    );
+    Ok(Json(g))
+}
+
+/// Revoke a connection grant (`can_own`).
+#[utoipa::path(
+    delete, path = "/agents/{agent}/grants/connections/{conn}", operation_id = "revokeConnectionGrant", tag = "grants",
+    params(("agent" = Uuid, Path, description = "Agent id"), ("conn" = Uuid, Path, description = "Connection id")),
+    responses((status = 204, description = "Revoked"),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
+              (status = 404, description = "Not found", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn delete_connection_grant(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path((agent, conn)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    let (a, auth) = service::visible_agent(&caller, &state, agent).await?;
+    require_own(&auth)?;
+    service::revoke_connection(&state, &a, conn).await?;
+    record_conn(&state, &caller, "grant.delete", &a, conn, json!(null));
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Grants held on a connection.
+#[utoipa::path(
+    get, path = "/connections/{id}/grants", operation_id = "listConnectionGrants", tag = "grants",
+    params(("id" = Uuid, Path, description = "Connection id")),
+    responses((status = 200, description = "Grants", body = ConnectionGrantList),
+              (status = 404, description = "Not found", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn connection_grants(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ConnectionGrantList>, ApiError> {
+    let (row, _) = conn_service::visible(&caller, &state, id).await?;
+    let items = grants::list_for_connection(&state.pool, row.id).await?;
+    Ok(Json(ConnectionGrantList {
+        items: items.into_iter().map(Into::into).collect(),
+    }))
 }

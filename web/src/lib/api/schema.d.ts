@@ -177,6 +177,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/runners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List runners with replicas and capacity (instance administrators). */
+        get: operations["adminListRunners"];
+        put?: never;
+        /** Provision a runner; the `aur_` token is returned once. */
+        post: operations["adminCreateRunner"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/runners/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a runner (409 while it has running sandboxes). */
+        delete: operations["adminDeleteRunner"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/runners/{id}/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rotate the runner token; the new `aur_` token is returned once. */
+        post: operations["adminRotateRunnerToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/trusted-keys": {
         parameters: {
             query?: never;
@@ -345,6 +397,24 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/grants/connections/{conn}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Grant a connection to an agent, replacing any previous grant (`can_own`). */
+        put: operations["grantConnection"];
+        post?: never;
+        /** Revoke a connection grant (`can_own`). */
+        delete: operations["revokeConnectionGrant"];
         options?: never;
         head?: never;
         patch?: never;
@@ -813,6 +883,23 @@ export interface paths {
         head?: never;
         /** Rename, disable or re-enable a connection (`can_own` / owner-admin). */
         patch: operations["updateConnection"];
+        trace?: never;
+    };
+    "/v1/connections/{id}/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Grants held on a connection. */
+        get: operations["listConnectionGrants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/gateway/ca.pem": {
@@ -1928,12 +2015,20 @@ export interface components {
             label_hint?: string | null;
             metadata: string[];
             name: string;
+            oauth_clients: components["schemas"]["AppOauthClient"][];
             package_id: string;
             package_version: string;
             tools: components["schemas"]["Tool"][];
         };
         AppList: {
             items: components["schemas"]["AppSummary"][];
+        };
+        /** @description An OAuth client definition the app's connect methods use (bring-your-own-client forms). */
+        AppOauthClient: {
+            client_key: string;
+            fields: components["schemas"]["OauthClientField"][];
+            redirect_uri: string;
+            setup_note?: string | null;
         };
         AppSummary: {
             app_id: string;
@@ -2166,7 +2261,6 @@ export interface components {
             /** Format: uuid */
             workspace_id?: string | null;
         };
-        /** @description Connection grants arrive with M3; the list is empty until then. */
         ConnectionGrant: {
             /** Format: uuid */
             agent_id: string;
@@ -2179,6 +2273,9 @@ export interface components {
             /** Format: uuid */
             id: string;
             mode: components["schemas"]["GrantMode"];
+        };
+        ConnectionGrantList: {
+            items: components["schemas"]["ConnectionGrant"][];
         };
         ContainerConfig: {
             ca_path: string;
@@ -2252,6 +2349,10 @@ export interface components {
             org: components["schemas"]["Org"];
             workspace: components["schemas"]["Workspace"];
         };
+        CreateRunnerRequest: {
+            /** @description Unique runner name (1-64 chars). */
+            name: string;
+        };
         CreateSecretRequest: {
             host_pattern?: string | null;
             injection?: null | components["schemas"]["InjectionRecipe"];
@@ -2323,7 +2424,7 @@ export interface components {
         };
         Effective: {
             credentials: components["schemas"]["EffectiveCredential"][];
-            /** @description App tools (M3); empty until apps exist. */
+            /** @description Per tool of every granted connection. */
             tools: components["schemas"]["EffectiveTool"][];
         };
         EffectiveCredential: {
@@ -2363,7 +2464,17 @@ export interface components {
         };
         EffectiveTool: {
             app_id: string;
+            /**
+             * Format: uuid
+             * @description Connection the decision was computed for.
+             */
+            connection_id: string;
+            /**
+             * @description `allow` | `needs_approval` | `rate_limited` | `block`, or `inert` for a granted tool
+             *     that no longer exists in the app's catalogue.
+             */
             decision: string;
+            inert: boolean;
             org_ceiling?: string | null;
             tool_id: string;
         };
@@ -2660,6 +2771,11 @@ export interface components {
             updated_at: string;
             /** Format: uuid */
             workspace_id?: string | null;
+        };
+        OauthClientField: {
+            label: string;
+            name: string;
+            secret: boolean;
         };
         OidcProviderInfo: {
             display_name: string;
@@ -3333,6 +3449,11 @@ export interface components {
         PutAccessRequest: {
             role: components["schemas"]["WorkspaceRole"];
         };
+        PutConnectionGrant: {
+            allow_tools?: string[];
+            ask_tools?: string[];
+            mode: components["schemas"]["GrantMode"];
+        };
         PutGovernance: {
             document: Record<string, never>;
             /** Format: int64 */
@@ -3342,6 +3463,20 @@ export interface components {
             /** Format: int32 */
             count: number;
             per: components["schemas"]["Per"];
+        };
+        Replica: {
+            advertised_host: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_seen_at: string;
+            /** @description Seen within the online threshold and not retired. */
+            live: boolean;
+            /** Format: date-time */
+            retired_at?: string | null;
+            /** Format: date-time */
+            started_at: string;
+            version: string;
         };
         RequestLogEntry: {
             /** Format: uuid */
@@ -3423,6 +3558,38 @@ export interface components {
             rate_limit?: null | components["schemas"]["RateLimit"];
             require_approval?: boolean;
             targets?: components["schemas"]["Target"][];
+        };
+        RunnerList: {
+            items: components["schemas"]["RunnerSummary"][];
+        };
+        RunnerSummary: {
+            backend?: string | null;
+            /** @description Declared capabilities (opaque JSON), `null` until the first registration. */
+            capabilities?: Record<string, never> | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** @description First 16 hex of `sha256(token)`; labels every infrastructure object. */
+            installation_fingerprint: string;
+            /** Format: date-time */
+            last_registered_at?: string | null;
+            /** Format: int64 */
+            live_replicas: number;
+            /** Format: int64 */
+            max_sandboxes?: number | null;
+            name: string;
+            replicas: components["schemas"]["Replica"][];
+            /** Format: int64 */
+            running_sandboxes: number;
+            /** Format: int64 */
+            sandboxes: number;
+        };
+        /** @description Returned once on provisioning and rotation. */
+        RunnerWithToken: {
+            runner: components["schemas"]["RunnerSummary"];
+            /** @description `aur_…`, shown once. */
+            token: string;
         };
         ScopeInfo: {
             /** @description `read` | `write`. */
@@ -4336,6 +4503,162 @@ export interface operations {
             };
         };
     };
+    adminListRunners: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerList"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminCreateRunner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRunnerRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerWithToken"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminDeleteRunner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Runner id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminRotateRunnerToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Runner id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerWithToken"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminListTrustedKeys: {
         parameters: {
             query?: {
@@ -4839,6 +5162,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GrantsResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    grantConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description Connection id */
+                conn: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutConnectionGrant"];
+            };
+        };
+        responses: {
+            /** @description Grant */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionGrant"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Agent, or connection not in the agent's workspace or org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description grant_invalid (details.reason: empty_custom | tool_in_both | unknown_tool) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    revokeConnectionGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description Connection id */
+                conn: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */
@@ -6010,6 +6430,38 @@ export interface operations {
             };
             /** @description invalid_state */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listConnectionGrants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Connection id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Grants */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionGrantList"];
+                };
+            };
+            /** @description Not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

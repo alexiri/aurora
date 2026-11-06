@@ -150,6 +150,9 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     let ops = service::ops_router(metrics, vec![("database", db_check)]);
     let state = aurora_api::app::AppState::try_new(pool.clone(), cfg.clone())?;
     aurora_api::http::auth::spawn_revocation_listener(pool.clone(), state.session_cache.clone());
+    if let Err(e) = aurora_api::domains::runners_admin::service::bootstrap_default(&state).await {
+        tracing::warn!(error = %e, "bootstrap runner token not applied");
+    }
     aurora_api::jobs::spawn(pool, cfg.retention.request_log_days);
     aurora_api::domains::plugins::scan::spawn(state.clone());
     aurora_api::domains::plugins::registry::spawn_initial(state.clone());

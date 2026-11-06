@@ -96,6 +96,8 @@ pub struct OauthClientEntry {
     pub client_auth: ClientAuth,
     pub body_format: BodyFormat,
     pub fields: Vec<ClientField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -311,6 +313,7 @@ pub fn compile(
                 client_auth: c.client_auth,
                 body_format: c.body_format,
                 fields: c.fields.clone(),
+                setup_note: c.setup_note.clone(),
             });
         }
         for a in &m.apps {

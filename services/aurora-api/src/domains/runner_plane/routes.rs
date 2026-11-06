@@ -1,0 +1,115 @@
+use super::auth::{RunnerCtx, RunnerToken};
+use super::service;
+use crate::app::AppState;
+use crate::http::json::Json;
+use aurora_core::ApiError;
+use aurora_protocol::common::Validate;
+use aurora_protocol::runner::*;
+use axum::extract::State;
+use axum::routing::{get, post};
+use utoipa_axum::router::OpenApiRouter;
+
+/// Mounted under `/v1`; plain routes, so excluded from the dashboard OpenAPI document.
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .route("/runner/register", post(register))
+        .route("/runner/work", post(work))
+        .route("/runner/reports", post(reports))
+        .route("/runner/channel/claim", post(claim))
+        .route("/runner/channel/hold", post(hold))
+        .route("/runner/channel/release", post(release))
+        .route("/runner/tool-calls", post(placeholder))
+        .route("/runner/memory-writes", post(placeholder))
+        .route("/runner/attachments", post(placeholder))
+        .route("/runner/attachments/{id}", get(placeholder))
+        .route("/runner/sandboxes", get(sandboxes))
+        .route("/runner/sandboxes/check", post(check))
+        .route("/runner/strays", post(strays))
+        .route("/runner/retire", post(retire))
+}
+
+async fn register(
+    t: RunnerToken,
+    State(s): State<AppState>,
+    Json(req): Json<RegisterRequest>,
+) -> Result<Json<RegisterResponse>, ApiError> {
+    Ok(Json(service::register(&s, &t.0, req).await?))
+}
+
+async fn work(
+    c: RunnerCtx,
+    State(s): State<AppState>,
+    Json(req): Json<WorkRequest>,
+) -> Result<Json<WorkResponse>, ApiError> {
+    req.validate()
+        .map_err(|e| ApiError::invalid_request(e.to_string(), vec![]))?;
+    Ok(Json(
+        service::poll(&s, &c.runner, c.replica, req.wait_secs, req.capacity).await?,
+    ))
+}
+
+async fn reports(
+    c: RunnerCtx,
+    State(s): State<AppState>,
+    Json(req): Json<ReportsRequest>,
+) -> Result<Json<ReportsResponse>, ApiError> {
+    Ok(Json(service::reports(&s, &c.runner, c.replica, req).await?))
+}
+
+async fn claim(
+    c: RunnerCtx,
+    State(s): State<AppState>,
+    Json(req): Json<ChannelClaimRequest>,
+) -> Result<Json<ChannelClaimResponse>, ApiError> {
+    Ok(Json(service::channel_claim(&s, &c.runner, req).await?))
+}
+
+async fn hold(
+    c: RunnerCtx,
+    State(s): State<AppState>,
+    Json(req): Json<ChannelRef>,
+) -> Result<Json<OkResponse>, ApiError> {
+    service::channel_hold(&s, &c.runner, c.replica, req).await?;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn release(
+    c: RunnerCtx,
+    State(s): State<AppState>,
+    Json(req): Json<ChannelRef>,
+) -> Result<Json<OkResponse>, ApiError> {
+    service::channel_release(&s, &c.runner, c.replica, req).await?;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn placeholder(_c: RunnerCtx) -> Result<Json<OkResponse>, ApiError> {
+    Err(service::not_implemented())
+}
+
+async fn sandboxes(
+    c: RunnerCtx,
+    State(s): State<AppState>,
+) -> Result<Json<SandboxesResponse>, ApiError> {
+    Ok(Json(service::sandboxes_list(&s, &c.runner).await?))
+}
+
+async fn check(
+    _c: RunnerCtx,
+    State(s): State<AppState>,
+    Json(req): Json<SandboxesCheckRequest>,
+) -> Result<Json<SandboxesCheckResponse>, ApiError> {
+    Ok(Json(service::sandboxes_check(&s, req).await?))
+}
+
+async fn strays(
+    c: RunnerCtx,
+    Json(req): Json<StraysRequest>,
+) -> Result<Json<OkResponse>, ApiError> {
+    service::strays(&c.runner, &req);
+    Ok(Json(OkResponse { ok: true }))
+}
+
+async fn retire(c: RunnerCtx, State(s): State<AppState>) -> Result<Json<OkResponse>, ApiError> {
+    service::retire(&s, &c.runner, c.replica).await?;
+    Ok(Json(OkResponse { ok: true }))
+}

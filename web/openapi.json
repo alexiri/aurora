@@ -886,6 +886,225 @@
         ]
       }
     },
+    "/v1/admin/runners": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List runners with replicas and capacity (instance administrators).",
+        "operationId": "adminListRunners",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Provision a runner; the `aur_` token is returned once.",
+        "operationId": "adminCreateRunner",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRunnerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerWithToken"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/runners/{id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete a runner (409 while it has running sandboxes).",
+        "operationId": "adminDeleteRunner",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Runner id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/runners/{id}/token": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Rotate the runner token; the new `aur_` token is returned once.",
+        "operationId": "adminRotateRunnerToken",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Runner id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerWithToken"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/trusted-keys": {
       "get": {
         "tags": [
@@ -1634,6 +1853,159 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GrantsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/grants/connections/{conn}": {
+      "put": {
+        "tags": [
+          "grants"
+        ],
+        "summary": "Grant a connection to an agent, replacing any previous grant (`can_own`).",
+        "operationId": "grantConnection",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "conn",
+            "in": "path",
+            "description": "Connection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutConnectionGrant"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionGrant"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent, or connection not in the agent's workspace or org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "grant_invalid (details.reason: empty_custom | tool_in_both | unknown_tool)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "grants"
+        ],
+        "summary": "Revoke a connection grant (`can_own`).",
+        "operationId": "revokeConnectionGrant",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "conn",
+            "in": "path",
+            "description": "Connection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -3306,6 +3678,57 @@
           },
           "409": {
             "description": "invalid_state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/connections/{id}/grants": {
+      "get": {
+        "tags": [
+          "grants"
+        ],
+        "summary": "Grants held on a connection.",
+        "operationId": "listConnectionGrants",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Grants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionGrantList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -9424,7 +9847,8 @@
           "tools",
           "hosts",
           "credentials",
-          "metadata"
+          "metadata",
+          "oauth_clients"
         ],
         "properties": {
           "agent_instructions": {
@@ -9504,6 +9928,12 @@
           "name": {
             "type": "string"
           },
+          "oauth_clients": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppOauthClient"
+            }
+          },
           "package_id": {
             "type": "string"
           },
@@ -9529,6 +9959,35 @@
             "items": {
               "$ref": "#/components/schemas/AppSummary"
             }
+          }
+        }
+      },
+      "AppOauthClient": {
+        "type": "object",
+        "description": "An OAuth client definition the app's connect methods use (bring-your-own-client forms).",
+        "required": [
+          "client_key",
+          "fields",
+          "redirect_uri"
+        ],
+        "properties": {
+          "client_key": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OauthClientField"
+            }
+          },
+          "redirect_uri": {
+            "type": "string"
+          },
+          "setup_note": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -10389,7 +10848,6 @@
       },
       "ConnectionGrant": {
         "type": "object",
-        "description": "Connection grants arrive with M3; the list is empty until then.",
         "required": [
           "id",
           "agent_id",
@@ -10430,6 +10888,20 @@
           },
           "mode": {
             "$ref": "#/components/schemas/GrantMode"
+          }
+        }
+      },
+      "ConnectionGrantList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionGrant"
+            }
           }
         }
       },
@@ -10688,6 +11160,18 @@
           },
           "workspace": {
             "$ref": "#/components/schemas/Workspace"
+          }
+        }
+      },
+      "CreateRunnerRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Unique runner name (1-64 chars)."
           }
         }
       },
@@ -11003,7 +11487,7 @@
             "items": {
               "$ref": "#/components/schemas/EffectiveTool"
             },
-            "description": "App tools (M3); empty until apps exist."
+            "description": "Per tool of every granted connection."
           }
         }
       },
@@ -11155,16 +11639,27 @@
       "EffectiveTool": {
         "type": "object",
         "required": [
+          "connection_id",
           "app_id",
           "tool_id",
-          "decision"
+          "decision",
+          "inert"
         ],
         "properties": {
           "app_id": {
             "type": "string"
           },
+          "connection_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Connection the decision was computed for."
+          },
           "decision": {
-            "type": "string"
+            "type": "string",
+            "description": "`allow` | `needs_approval` | `rate_limited` | `block`, or `inert` for a granted tool\nthat no longer exists in the app's catalogue."
+          },
+          "inert": {
+            "type": "boolean"
           },
           "org_ceiling": {
             "type": [
@@ -12338,6 +12833,25 @@
               "null"
             ],
             "format": "uuid"
+          }
+        }
+      },
+      "OauthClientField": {
+        "type": "object",
+        "required": [
+          "name",
+          "label",
+          "secret"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "boolean"
           }
         }
       },
@@ -14918,6 +15432,30 @@
           }
         }
       },
+      "PutConnectionGrant": {
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "allow_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ask_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mode": {
+            "$ref": "#/components/schemas/GrantMode"
+          }
+        },
+        "additionalProperties": false
+      },
       "PutGovernance": {
         "type": "object",
         "required": [
@@ -14951,6 +15489,48 @@
           }
         },
         "additionalProperties": false
+      },
+      "Replica": {
+        "type": "object",
+        "required": [
+          "id",
+          "advertised_host",
+          "version",
+          "started_at",
+          "last_seen_at",
+          "live"
+        ],
+        "properties": {
+          "advertised_host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "live": {
+            "type": "boolean",
+            "description": "Seen within the online threshold and not retired."
+          },
+          "retired_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
       },
       "RequestLogEntry": {
         "type": "object",
@@ -15237,6 +15817,112 @@
           }
         },
         "additionalProperties": false
+      },
+      "RunnerList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunnerSummary"
+            }
+          }
+        }
+      },
+      "RunnerSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "installation_fingerprint",
+          "created_at",
+          "live_replicas",
+          "sandboxes",
+          "running_sandboxes",
+          "replicas"
+        ],
+        "properties": {
+          "backend": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "capabilities": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Declared capabilities (opaque JSON), `null` until the first registration."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "installation_fingerprint": {
+            "type": "string",
+            "description": "First 16 hex of `sha256(token)`; labels every infrastructure object."
+          },
+          "last_registered_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "live_replicas": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "max_sandboxes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "replicas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Replica"
+            }
+          },
+          "running_sandboxes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sandboxes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "RunnerWithToken": {
+        "type": "object",
+        "description": "Returned once on provisioning and rotation.",
+        "required": [
+          "runner",
+          "token"
+        ],
+        "properties": {
+          "runner": {
+            "$ref": "#/components/schemas/RunnerSummary"
+          },
+          "token": {
+            "type": "string",
+            "description": "`aur_…`, shown once."
+          }
+        }
       },
       "ScopeInfo": {
         "type": "object",

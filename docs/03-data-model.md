@@ -815,6 +815,7 @@ Phase 0 blob backend (`postgres`).
 | listening_ports | int[] not null default `{}` | churn column |
 | failure_code | text null; failure_message text null | |
 | resource_profile | jsonb null | effective profile of current boot |
+| start_failures | int not null default 0 | consecutive failed starts (backoff); reset on running; spec fix S-10 |
 
 ### `runtime_intervals` — *no FKs*
 | Column | Type | Notes |
