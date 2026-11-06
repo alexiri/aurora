@@ -20,12 +20,13 @@ use std::time::Duration;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-pub const ORIGIN: &str = "http://localhost:4101";
+pub const ORIGIN: &str = "http://localhost:4100";
 
 pub struct Harness {
     pub db: TestDb,
     pub state: AppState,
     pub app: Router,
+    pub mail: std::sync::Arc<aurora_api::domains::auth::mail::MemoryMailer>,
 }
 
 pub fn config(mutate: impl FnOnce(&mut aurora_config::ApiConfig)) -> aurora_config::ApiConfig {
@@ -48,7 +49,7 @@ pub fn config(mutate: impl FnOnce(&mut aurora_config::ApiConfig)) -> aurora_conf
     .collect();
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../deploy/dev/aurora.dev.toml"
+        "/tests/fixtures/aurora.test.toml"
     );
     let mut cfg = aurora_config::load(Some(std::path::Path::new(path)), env.into_iter())
         .unwrap()
@@ -65,9 +66,15 @@ impl Harness {
 
     pub async fn with_config(mutate: impl FnOnce(&mut aurora_config::ApiConfig)) -> Self {
         let db = TestDb::new().await;
-        let state = AppState::new(db.pool().clone(), config(mutate));
+        let mail = aurora_api::domains::auth::mail::MemoryMailer::new();
+        let state = AppState::new(db.pool().clone(), config(mutate)).with_mailer(mail.clone());
         let app = test_router(state.clone());
-        Harness { db, state, app }
+        Harness {
+            db,
+            state,
+            app,
+            mail,
+        }
     }
 
     pub fn pool(&self) -> &sqlx::PgPool {

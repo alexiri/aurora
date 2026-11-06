@@ -3,6 +3,7 @@
 pub mod agents;
 pub mod api_keys;
 pub mod audit;
+pub mod email_tokens;
 pub mod members;
 pub mod orgs;
 pub mod policy;

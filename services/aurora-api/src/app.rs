@@ -1,5 +1,6 @@
 //! Application state and router assembly.
 
+use crate::domains::auth::mail::Mailer;
 use crate::http::auth::AuthCache;
 use crate::http::client_ip::{self, Cidr};
 use crate::http::csrf::origin_of;
@@ -49,18 +50,28 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     pub session_cache: Arc<AuthCache>,
     pub net: Arc<NetPolicy>,
+    pub mailer: Arc<dyn Mailer>,
 }
 
 impl AppState {
     pub fn new(pool: PgPool, config: ApiConfig) -> Self {
         let net = Arc::new(NetPolicy::from_config(&config));
+        let mailer = crate::domains::auth::mail::from_config(&config);
         Self {
             pool,
             config: Arc::new(config),
             rate_limiter: Arc::new(RateLimiter::new()),
             session_cache: Arc::new(AuthCache::default()),
             net,
+            mailer,
         }
+    }
+
+    /// Replace the mailer (tests).
+    #[must_use]
+    pub fn with_mailer(mut self, mailer: Arc<dyn Mailer>) -> Self {
+        self.mailer = mailer;
+        self
     }
 }
 
@@ -68,6 +79,7 @@ impl AppState {
 pub fn v1_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .merge(domains::instance::router())
+        .merge(domains::auth::router())
         .merge(domains::tenancy::router())
         .merge(domains::agents::router())
 }

@@ -299,6 +299,8 @@ dependencies = [
  "async-trait",
  "aurora-config",
  "aurora-core",
+ "aurora-db",
+ "aurora-testkit",
  "axum",
  "base64 0.22.1",
  "bytes",
