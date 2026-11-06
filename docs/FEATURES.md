@@ -40,14 +40,14 @@ Last reconciled with git history: 2026-11-06 (after RUN-004 merge, e65ec66d).
 | M5/10§schedules | Schedules: cron (5-min floor), gates, fire lease, fire-time authority, tools | P0 | BE-062 | FE-051 | M4 | backend done; UI todo | schedules 5 |
 | M5/10§webhooks | Webhooks: receiver, verification, rate limit, idempotency, tools | P0 | BE-063 | FE-051 | M4 | backend done; UI todo | webhooks 11 |
 | M5/10§processes | Processes and watches (local tools, process.state, watch turns, parked/lost) | P0 | SUP-003, BE-052 | FE-041 (computer tab) | M4 | done | supervisor process tests; hosted tests |
-| M5/10§attachments | Attachments in/out (BlobStore, routes, `file.in` S-11, `send_file`) | P0 | BE-064, RUN-005 | composer upload (todo) | M4 | in-progress (RUN-005 done; BE-064 API side running) | runner inbound 3, supervisor inbound 9 |
+| M5/10§attachments | Attachments in/out (BlobStore, routes, `file.in` S-11, `send_file`) | P0 | BE-064, RUN-005 | composer upload (todo) | M4 | backend done (BE-064, RUN-005); composer UI and e2e todo | attachments 9; runner inbound 3, supervisor inbound 9 |
 | M5/07§actions | Action approvals, agent links, peer tasks, app-turn cap, agent tools | P0 | BE-065 | FE-051 | API-005 | in-progress | |
 | M5/12§catalogue | Full phase-0 platform tool catalogue | P0 | BE-060..065; apps tools `request_app_connection`, `propose_custom_connection` (task todo); messaging tools BE-075 | — | — | in-progress | |
 | M5/12§claude-code | `claude-code` adapter + conformance | P0 | SUP-004 | — | SUP-001 | done offline; live conformance **blocked** (no LiteLLM endpoint) | adapter tests |
 | M5/18 | Hosted M5 suites + dashboard tabs (schedules, webhooks, peers) | P0 | TEST-014 | FE-051 | M5 above | todo | |
 | M6/13§content | Neutral content, cards, action tokens, capabilities/fallbacks | P0 | CHAN-001 | — | — | done | channels tests; I-26 |
 | M6/13§contract | Connector contract v1 types, SDK, fake connector | P0 | CON-001 | — | CHAN-001 | done (FUP-M6) | connector tests |
-| M6/13§plane | Registration, approval, ownership, config feed, inbox, ops, correlated ops, files | P0 | BE-070, BE-071 | — | API-006 | planned | |
+| M6/13§plane | Registration, approval, ownership, config feed, inbox, ops, correlated ops, files | P0 | BE-070, BE-071 | — | API-006 | in-progress (BE-070) | |
 | M6/13§core | Inbox processing, routing, linking, reach, bindings, commands, mirror, cards, presence, messaging tools | P0 | BE-072..075 | FE-060 | BE-071 | todo | |
 | M6/13§7 | Conformance suite (fake core) + e2e channel scenario | P0 | TEST-015, TEST-016 | — | CON-001 / BE-075 | planned / todo | |
 | M7/11§k8s | Kubernetes runner backend | P0 | RUN-004 | — | RUN-003 | done (no cluster: mock API only) | k8s_mock 15, unit 15 |

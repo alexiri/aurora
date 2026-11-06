@@ -468,7 +468,7 @@ interface ModelOption { endpoint_id: string; provider: string; model_id: string;
 | GET `/v1/conversations/{id}` | S/K can_use | — | 200 `Conversation` | 404 |
 | GET `/v1/conversations/{id}/events` | S/K can_use | `?after_seq&limit` (≤500) | 200 `{ items: TranscriptEvent[], last_seq }` (durable only) | 404 |
 | GET `/v1/conversations/{id}/stream` | S/K can_use | `?after_seq` / `Last-Event-ID` | SSE (C-24) | 404 |
-| POST `/v1/conversations/{id}/messages` | S/K can_use | `{ text, attachment_ids? }` (≤ `TURN_TEXT_MAX`) | 202 (C-25) | 400; 413; 422 `hosted_disabled` |
+| POST `/v1/conversations/{id}/messages` | S/K can_use | `{ text, attachment_ids? }` (≤ `TURN_TEXT_MAX`) | 202 (C-25) | 400; 413; 422 `hosted_disabled`, `too_many_attachments` (C-30) |
 | POST `/v1/turns/{id}/abort`, `/v1/turns/{id}/send-now` | S/K can_use | — | 202 `Turn` | 404; 409 `turn_finished` |
 | GET `/v1/agents/{agent}/sandbox` | S/K can_use | — | 200 `SandboxView` | 404 |
 | POST `/v1/agents/{agent}/restart` | S/K can_use | — | 202 `SandboxView` | 404 |
@@ -482,7 +482,7 @@ Routes/auth: `05 §Conversations and turns` (attachments), `§Approvals` (action
 - C-27 App-turn cap reset: `POST /v1/conversations/{id}/continue` (S/K, `can_use`) sets `app_turn_streak = 0` and appends a durable `notice` (`code: "app_turn_cap_reset"`); 200 `Conversation`. Refused bot/agent turns append a durable `notice` with `code: "app_turn_cap_reached"`. `Conversation` gains `app_turn_streak: number` and `app_turn_capped: boolean`.
 - C-28 Action-approval decision body mirrors gateway approvals: `{ decision: "approve" | "deny" }`; deciding a non-`pending` row → 409 `already_decided`; unknown `action_key` at decide time → 500 `internal` + error log (07 "fail loud").
 - C-29 Link policy update: `PUT /v1/agent-links/{id}/policy` body `{ agent_id, policy: "ask" | "allow" | "blocked" }` sets **that agent's side**; caller needs `can_use` on that agent's workspace; the other side is read-only to them. Optimistic concurrency via `revision` (409 `stale_revision`).
-- C-30 Attachments: upload response and list items use `Attachment`; downloads are `application/octet-stream` + `Content-Disposition: attachment` + `nosniff` regardless of stored type.
+- C-30 Attachments: upload response and list items use `Attachment`; downloads are `application/octet-stream` + `Content-Disposition: attachment` + `nosniff` regardless of stored type. Error codes (BE-064): upload over `ATTACH_IN_FILE_MAX` → 413 `payload_too_large`; a message binding more than `ATTACH_IN_COUNT` attachments → 422 `too_many_attachments`; runner plane `POST /runner/attachments` over `ATTACH_OUT_FILE_MAX` → 413 `payload_too_large`, over `ATTACH_OUT_COUNT` per turn → 429 `attachment_count_exceeded`, over `ATTACH_OUT_DAILY_PER_CONVERSATION` → 429 `attachment_quota_exceeded`, stale boot → 409 `fenced`, turn not dispatched/running → 409 `turn_not_active`. Outbound attachments are stored as `application/octet-stream`.
 
 ```ts
 interface Attachment { id: Uuid; conversation_id: Uuid; turn_id: Uuid | null; direction: "in" | "out";
