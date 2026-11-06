@@ -106,13 +106,13 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 
 ## Decisions requiring user input
 
-- (none blocking yet) Installing the `wasm32-wasip2` target (rustup or distro package) will be needed before M3 hook work — I-02.
+- none
 
 ## Blockers
 
 - Sub-agent usage limit (Sonnet) until 14:20 Europe/Zurich: FE-013 and GOV-001 paused mid-task (resume, don't restart).
 - Workspace license in Cargo.toml is `GPL-3.0-or-later` (owner's choice; deny ignores private crates).
-- M3 hooks need the `wasm32-wasip2` target (I-02).
+- (resolved 2026-11-06) `wasm32-wasip2` installed by the owner (`rust-wasm`); component builds verified.
 
 ## Recently completed
 
