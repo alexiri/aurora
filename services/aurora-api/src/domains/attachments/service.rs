@@ -305,6 +305,31 @@ pub async fn sweep_pending(pool: &PgPool) -> Result<usize, aurora_core::ApiError
     }
 }
 
+/// Blobs younger than this are never treated as orphans: the upload paths `put` the blob and
+/// insert the attachment row in separate steps (not one transaction), so a fresh blob may simply
+/// not have its row committed yet.
+pub const ORPHAN_BLOB_MIN_AGE_SECS: f64 = 3600.0;
+
+/// Hourly job part 2: delete `postgres` blobs that no attachment row references any more
+/// (cascades from conversation/workspace/agent/org deletes remove rows but not blobs), so deleted
+/// content does not persist. Batched, `SKIP LOCKED`, idempotent across replicas. Returns the
+/// number of blobs removed.
+pub async fn sweep_orphan_blobs(pool: &PgPool) -> Result<usize, aurora_core::ApiError> {
+    let mut total = 0usize;
+    loop {
+        let n = aurora_db::repo::blobs::delete_unreferenced(
+            pool,
+            ORPHAN_BLOB_MIN_AGE_SECS,
+            SWEEP_BATCH,
+        )
+        .await?;
+        total += n as usize;
+        if (n as i64) < SWEEP_BATCH {
+            return Ok(total);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

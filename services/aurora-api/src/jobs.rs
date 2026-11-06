@@ -23,10 +23,13 @@ pub async fn sweep_approvals(pool: &PgPool) -> Result<(usize, usize), aurora_db:
     Ok((expired.len(), abandoned.len()))
 }
 
-/// Delete `pending` attachments older than `ATTACH_PENDING_TTL` with their blobs (idempotent,
-/// safe on every replica). Returns the number of rows removed.
+/// Delete `pending` attachments older than `ATTACH_PENDING_TTL` with their blobs, then blobs no
+/// attachment row references (older than 1 h). Idempotent, safe on every replica. Returns the
+/// number of rows plus orphan blobs removed.
 pub async fn sweep_attachments(pool: &PgPool) -> Result<usize, aurora_core::ApiError> {
-    crate::domains::attachments::sweep_pending(pool).await
+    let rows = crate::domains::attachments::sweep_pending(pool).await?;
+    let orphans = crate::domains::attachments::sweep_orphan_blobs(pool).await?;
+    Ok(rows + orphans)
 }
 
 /// Create upcoming partitions and drop expired ones (singleton). `Ok(false)` when

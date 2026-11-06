@@ -924,3 +924,99 @@ async fn sweep_removes_expired_pending_rows_and_blobs() {
         0
     );
 }
+
+#[tokio::test]
+async fn sweep_removes_blobs_orphaned_by_cascades_and_keeps_referenced_ones() {
+    let r = rig().await;
+    let a1 = r.agent("keeper").await;
+    let a2 = r.agent("doomed").await;
+    let keep_conv = r.direct(a1).await;
+    let gone_conv = r.direct(a2).await;
+    let (s, v) = r.upload(keep_conv, "keep.txt", b"keep").await;
+    assert_eq!(s, 201, "{v}");
+    let keep: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let (s, v) = r.upload(gone_conv, "gone.txt", b"gone").await;
+    assert_eq!(s, 201, "{v}");
+    let gone: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let key_of = |id: Uuid| {
+        let pool = r.h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT blob_key FROM attachments WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    let (keep_key, gone_key) = (key_of(keep).await, key_of(gone).await);
+    // A blob with no row at all (e.g. an earlier cascade), fresh and old copies.
+    for k in ["orphan-old", "orphan-fresh"] {
+        sqlx::query("INSERT INTO blobs (key, content) VALUES ($1, 'x')")
+            .bind(k)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+    }
+
+    // The conversation goes away; the cascade removes the attachment row but not the blob.
+    sqlx::query("DELETE FROM conversations WHERE id = $1")
+        .bind(gone_conv)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM attachments WHERE id = $1")
+        .bind(gone)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    let has = |k: String| {
+        let pool = r.h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM blobs WHERE key = $1")
+                .bind(k)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                == 1
+        }
+    };
+    assert!(has(gone_key.clone()).await, "cascade leaves the blob");
+
+    // Younger than the age guard: nothing is removed, orphan or not.
+    assert_eq!(
+        aurora_api::jobs::sweep_attachments(r.h.pool())
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(has(gone_key.clone()).await);
+
+    // Backdate everything past the guard: orphans go, the referenced blob stays.
+    sqlx::query(
+        "UPDATE blobs SET created_at = now() - interval '2 hours' WHERE key <> 'orphan-fresh'",
+    )
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        aurora_api::jobs::sweep_attachments(r.h.pool())
+            .await
+            .unwrap(),
+        2
+    );
+    assert!(!has(gone_key).await);
+    assert!(!has("orphan-old".into()).await);
+    assert!(
+        has("orphan-fresh".into()).await,
+        "still inside the age guard"
+    );
+    assert!(has(keep_key).await, "referenced blob survives");
+    // Idempotent.
+    assert_eq!(
+        aurora_api::jobs::sweep_attachments(r.h.pool())
+            .await
+            .unwrap(),
+        0
+    );
+}

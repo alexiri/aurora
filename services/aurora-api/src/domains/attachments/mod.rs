@@ -8,4 +8,4 @@ pub mod runner;
 pub mod service;
 
 pub use routes::router;
-pub use service::sweep_pending;
+pub use service::{sweep_orphan_blobs, sweep_pending};

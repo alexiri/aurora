@@ -29,3 +29,28 @@ pub async fn delete(exec: impl PgExecutor<'_>, key: &str) -> Result<(), DbError>
         .await?;
     Ok(())
 }
+
+/// Delete up to `limit` `postgres`-backend blobs older than `min_age_secs` that no `attachments`
+/// row references (rows removed by a conversation/workspace/agent/org cascade leave their blobs
+/// behind). `FOR UPDATE ... SKIP LOCKED` keeps concurrent sweeps on several replicas disjoint.
+/// Returns how many were deleted.
+pub async fn delete_unreferenced(
+    exec: impl PgExecutor<'_>,
+    min_age_secs: f64,
+    limit: i64,
+) -> Result<u64, DbError> {
+    Ok(sqlx::query(
+        "DELETE FROM blobs WHERE key IN (
+             SELECT b.key FROM blobs b
+             WHERE b.created_at < now() - make_interval(secs => $1)
+               AND NOT EXISTS (SELECT 1 FROM attachments a
+                               WHERE a.blob_backend = 'postgres' AND a.blob_key = b.key)
+             ORDER BY b.created_at LIMIT $2
+             FOR UPDATE OF b SKIP LOCKED)",
+    )
+    .bind(min_age_secs)
+    .bind(limit)
+    .execute(exec)
+    .await?
+    .rows_affected())
+}
