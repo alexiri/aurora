@@ -355,6 +355,7 @@ clients`, `07 §Grants`. Snapshot JSON: `09 §9` (I-14, I-18).
 - C-15 Connection credentials are never returned (SEC-12); `metadata` (non-secret, manifest-declared) and `scopes` are.
 - C-16 Plugin upload is `multipart/form-data` with one part `package` (≤ `PACKAGE_MAX`); validation failures still create a row with status `invalid` and `violations` (so admins see why), except signature/archive-corrupt failures which return 422 without a row.
 - C-17 Host-claim decisions are keyed by the **group** key and fingerprint of I-18.
+- C-21 `AppDetail` adds `oauth_clients: { client_key: string, fields: { name: string, label: string, secret: boolean }[], setup_note: string | null, redirect_uri: string }[]` (the package's `oauth_clients` entries used by this app; `redirect_uri` = `<external_url>/v1/oauth/callback`) so the dashboard renders BYOC forms from data (`14`: no app knowledge in the bundle).
 - C-20 `GET/PUT /v1/orgs/{org}/app-availability` body: `{ posture: "open" | "restricted", allow: { app_id: string, workspace_id: Uuid | null }[] }`; PUT replaces the whole list (S-01 rows) and publishes `aurora_gateway_invalidate {scope: org}`.
 
 #### Shared schemas (M3)
