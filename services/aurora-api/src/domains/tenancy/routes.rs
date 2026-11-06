@@ -481,10 +481,11 @@ async fn delete_workspace(
 
 // ---- access ----
 
-/// List workspace access bindings, including implicit org owners/admins.
+/// List workspace access bindings, including implicit org owners/admins (`can_own`; I-27).
 #[utoipa::path(get, path = "/workspaces/{ws}/access", operation_id = "listAccess", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id"), PageParams),
-    responses((status = 200, body = Page<AccessBinding>), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Page<AccessBinding>), (status = 403, body = ErrorEnvelope),
+              (status = 404, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_access(
     c: Caller,
@@ -493,7 +494,7 @@ async fn list_access(
     Query(q): Query<PageParams>,
 ) -> Result<Json<Page<AccessBinding>>, ApiError> {
     let p = q.resolve()?;
-    c.workspace(&s, ws).await?;
+    require_own(&c.workspace(&s, ws).await?)?;
     let rows = workspaces::list_access(&s.pool, ws, after(&p), p.fetch()).await?;
     Ok(Json(page_of(
         rows,

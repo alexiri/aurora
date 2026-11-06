@@ -8,13 +8,13 @@ import { OrgGate } from "@/components/org/org-gate";
 export default function Page() {
   const { org: slug } = useParams<{ org: string }>();
   return (
-    <OrgGate slug={slug} allow={["owner", "admin", "member"]}>
+    <OrgGate slug={slug} allow={["owner", "admin"]}>
       {(org) => (
         <CredentialsView
           title="Organization credentials"
           scope={{ kind: "organization", id: org.id }}
           orgId={org.id}
-          canOwn={org.my_role === "owner" || org.my_role === "admin"}
+          canOwn
         />
       )}
     </OrgGate>

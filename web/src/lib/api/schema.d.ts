@@ -530,7 +530,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Grants of an agent (`can_use`). */
+        /** Grants of an agent (`can_own`; I-27). Members see what they need via `/agents/{agent}/effective`. */
         get: operations["listAgentGrants"];
         put?: never;
         post?: never;
@@ -1275,7 +1275,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a connection. */
+        /**
+         * Get a connection (`can_own` / owner-admin; I-27; org-scope connections are also readable by
+         *     a `can_own` workspace owner of the org).
+         */
         get: operations["getConnection"];
         put?: never;
         post?: never;
@@ -1294,7 +1297,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Grants held on a connection. */
+        /** Grants held on a connection (`can_own` / owner-admin; I-27). */
         get: operations["listConnectionGrants"];
         put?: never;
         post?: never;
@@ -1716,7 +1719,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Posture and allow-list (org member). */
+        /** Posture and allow-list (owner/admin; I-27). */
         get: operations["getOrgAppAvailability"];
         /** Replace posture and allow-list (owner/admin). */
         put: operations["putOrgAppAvailability"];
@@ -1751,7 +1754,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List organization-scoped connections (org member). */
+        /**
+         * List organization-scoped connections (owner/admin, or `can_own` on a workspace of the org
+         *     so that org connections can be granted; metadata only; I-27).
+         */
         get: operations["listOrgConnections"];
         put?: never;
         post?: never;
@@ -1856,7 +1862,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List organization OAuth clients (org member). */
+        /** List organization OAuth clients (owner/admin; I-27). */
         get: operations["listOrgOauthClients"];
         put?: never;
         /** Create an organization OAuth client (owner/admin). */
@@ -1874,7 +1880,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read the organization policy (org member). */
+        /** Read the organization policy (owner/admin; I-27). */
         get: operations["getOrgPolicy"];
         put?: never;
         post?: never;
@@ -1908,7 +1914,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Organization policy history, newest first. */
+        /** Organization policy history, newest first (owner/admin; I-27). */
         get: operations["listOrgPolicyGenerations"];
         put?: never;
         post?: never;
@@ -1959,7 +1965,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Warnings for the organization draft. */
+        /** Warnings for the organization draft (owner/admin; I-27). */
         get: operations["getOrgPolicyWarnings"];
         put?: never;
         post?: never;
@@ -1976,7 +1982,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List organization-scoped secrets (org member). */
+        /**
+         * List organization-scoped secrets (owner/admin, or `can_own` on a workspace of the org so
+         *     that org secrets can be granted; metadata only; I-27).
+         */
         get: operations["listOrgSecrets"];
         put?: never;
         /** Create an organization secret (owner/admin). */
@@ -2117,7 +2126,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get one secret (metadata only). */
+        /**
+         * Get one secret (metadata only; `can_own` / owner-admin, I-27; org-scope secrets are also
+         *     readable by a `can_own` workspace owner of the org).
+         */
         get: operations["getSecret"];
         put?: never;
         post?: never;
@@ -2153,7 +2165,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Models available to an LLM secret (limited to the effective allow-list). */
+        /**
+         * Models available to an LLM secret (limited to the effective allow-list; `can_own` /
+         *     owner-admin, I-27). Agent model pickers use `GET /agents/{agent}/models` instead.
+         */
         get: operations["listSecretModels"];
         put?: never;
         post?: never;
@@ -2364,7 +2379,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List workspace access bindings, including implicit org owners/admins. */
+        /** List workspace access bindings, including implicit org owners/admins (`can_own`; I-27). */
         get: operations["listAccess"];
         put?: never;
         post?: never;
@@ -2503,7 +2518,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List workspace-scoped connections (`can_use`). */
+        /** List workspace-scoped connections (`can_own`; I-27). */
         get: operations["listWorkspaceConnections"];
         put?: never;
         post?: never;
@@ -2520,7 +2535,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List workspace OAuth clients (`can_use`). */
+        /** List workspace OAuth clients (`can_own`; I-27). */
         get: operations["listWorkspaceOauthClients"];
         put?: never;
         /** Create a workspace OAuth client (`can_own`). */
@@ -2538,7 +2553,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read the workspace policy (`can_use`). */
+        /** Read the workspace policy (`can_own`; I-27). */
         get: operations["getWorkspacePolicy"];
         put?: never;
         post?: never;
@@ -2572,7 +2587,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Workspace policy history, newest first. */
+        /** Workspace policy history, newest first (`can_own`; I-27). */
         get: operations["listWorkspacePolicyGenerations"];
         put?: never;
         post?: never;
@@ -2625,7 +2640,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Simulate a request for an agent against the published (or draft) policy (`can_use`). */
+        /**
+         * Simulate a request for an agent against the published (or draft) policy (`can_own`: the
+         *     trace discloses the policy rules, I-27).
+         */
         post: operations["simulatePolicy"];
         delete?: never;
         options?: never;
@@ -2640,7 +2658,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Warnings for the workspace draft. */
+        /** Warnings for the workspace draft (`can_own`; I-27). */
         get: operations["getWorkspacePolicyWarnings"];
         put?: never;
         post?: never;
@@ -2657,7 +2675,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List workspace-scoped secrets (`can_use`). */
+        /** List workspace-scoped secrets (`can_own`; I-27). */
         get: operations["listWorkspaceSecrets"];
         put?: never;
         /** Create a workspace secret (`can_own`). */
@@ -7225,6 +7243,15 @@ export interface operations {
                     "application/json": components["schemas"]["GrantsResponse"];
                 };
             };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -9182,6 +9209,15 @@ export interface operations {
                     "application/json": components["schemas"]["Connection"];
                 };
             };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -9314,6 +9350,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectionGrantList"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */
@@ -10538,6 +10583,15 @@ export interface operations {
                     "application/json": components["schemas"]["AppAvailability"];
                 };
             };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -10672,6 +10726,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_Connection"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */
@@ -11103,6 +11166,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_OAuthClient"];
                 };
             };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -11196,6 +11268,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PolicyDocument"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */
@@ -11305,6 +11386,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_PolicyGenerationSummary"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */
@@ -11438,6 +11528,15 @@ export interface operations {
                     "application/json": components["schemas"]["PolicyWarnings"];
                 };
             };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -11475,6 +11574,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_Secret"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */
@@ -11993,6 +12101,15 @@ export interface operations {
                     "application/json": components["schemas"]["Secret"];
                 };
             };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -12188,6 +12305,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Models"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */
@@ -13003,6 +13129,14 @@ export interface operations {
                     "application/json": components["schemas"]["Page_AccessBinding"];
                 };
             };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13493,6 +13627,15 @@ export interface operations {
                     "application/json": components["schemas"]["Page_Connection"];
                 };
             };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Not found */
             404: {
                 headers: {
@@ -13526,6 +13669,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_OAuthClient"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */
@@ -13621,6 +13773,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PolicyDocument"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */
@@ -13730,6 +13891,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_PolicyGenerationSummary"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */
@@ -13876,6 +14046,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Workspace or agent not found */
             404: {
                 headers: {
@@ -13906,6 +14085,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PolicyWarnings"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */
@@ -13945,6 +14133,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_Secret"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */

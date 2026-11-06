@@ -53,29 +53,34 @@ pub fn secret_err(e: SecretError) -> ApiError {
     }
 }
 
-/// Read needs `can_use` (workspace) or org membership; write needs `can_own` / owner-admin.
+/// Writes need `can_own` (workspace) or owner/admin (organization) (I-27). A caller who cannot
+/// see the scope gets 404; a visible caller with too low a role gets 403.
 pub async fn authorize(
     caller: &Caller,
     state: &AppState,
     org: Uuid,
     ws: Option<Uuid>,
-    write: bool,
 ) -> Result<(), ApiError> {
     match ws {
-        Some(ws) => {
-            let a = caller.workspace(state, ws).await?;
-            if write {
-                require_own(&a)?;
-            }
-        }
-        None => {
-            let o = caller.org(state, org).await?;
-            if write {
-                o.require_admin()?;
-            }
-        }
+        Some(ws) => require_own(&caller.workspace(state, ws).await?)?,
+        None => caller.org(state, org).await?.require_admin()?,
     }
     Ok(())
+}
+
+/// Reads: like [`authorize`], except that organization-scope metadata is also readable by an
+/// org member who is `can_own` on at least one workspace of the org (I-27 amendment: they
+/// discover org secrets to grant them to their agents). Values are never returned.
+pub async fn authorize_read(
+    caller: &Caller,
+    state: &AppState,
+    org: Uuid,
+    ws: Option<Uuid>,
+) -> Result<(), ApiError> {
+    match ws {
+        Some(_) => authorize(caller, state, org, ws).await,
+        None => caller.org_credential_reader(state, org).await.map(|_| ()),
+    }
 }
 
 pub async fn load(state: &AppState, id: Uuid) -> Result<SecretRow, ApiError> {
@@ -84,19 +89,26 @@ pub async fn load(state: &AppState, id: Uuid) -> Result<SecretRow, ApiError> {
         .ok_or_else(|| ApiError::not_found("Secret not found."))
 }
 
-/// Load and authorize; invisible secrets are 404.
+/// Load and authorize a write (`can_own` / owner-admin); invisible secrets are 404, visible but
+/// insufficient role 403.
 pub async fn load_authorized(
     caller: &Caller,
     state: &AppState,
     id: Uuid,
-    write: bool,
 ) -> Result<SecretRow, ApiError> {
     let row = load(state, id).await?;
-    // Visibility first so that a read-only caller gets 403 and an outsider 404.
-    authorize(caller, state, row.org_id, row.workspace_id, false).await?;
-    if write {
-        authorize(caller, state, row.org_id, row.workspace_id, true).await?;
-    }
+    authorize(caller, state, row.org_id, row.workspace_id).await?;
+    Ok(row)
+}
+
+/// Load and authorize a metadata read (see [`authorize_read`]).
+pub async fn load_readable(
+    caller: &Caller,
+    state: &AppState,
+    id: Uuid,
+) -> Result<SecretRow, ApiError> {
+    let row = load(state, id).await?;
+    authorize_read(caller, state, row.org_id, row.workspace_id).await?;
     Ok(row)
 }
 

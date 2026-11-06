@@ -291,19 +291,31 @@ async fn full_and_custom_grants_compile_exactly_and_validate() {
         .await;
     assert_eq!(w.rules(gid).await.len(), 1);
 
-    // listings
-    let (_, v) = w
+    // listings are `can_own` (I-27): a plain workspace member is denied, the owner reads
+    for uri in [
+        format!("/v1/agents/{}/grants", w.agent),
+        format!("/v1/connections/{conn}/grants"),
+    ] {
+        let (s, v) = w.call(&w.member, Method::GET, &uri, None).await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (403, Some("forbidden")),
+            "{uri}: {v}"
+        );
+    }
+    let (s, v) = w
         .call(
-            &w.member,
+            &w.owner,
             Method::GET,
             &format!("/v1/agents/{}/grants", w.agent),
             None,
         )
         .await;
+    assert_eq!(s, 200, "{v}");
     assert_eq!(v["connections"][0]["connection_id"], json!(conn));
     let (s, v) = w
         .call(
-            &w.member,
+            &w.owner,
             Method::GET,
             &format!("/v1/connections/{conn}/grants"),
             None,

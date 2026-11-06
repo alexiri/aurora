@@ -178,6 +178,31 @@ pub async fn can_own<'e, E: PgExecutor<'e>>(
         .is_some_and(|a| a.can_own()))
 }
 
+/// Does `user` hold `can_own` on at least one workspace of `org`? Org owners/admins qualify
+/// (they own every workspace implicitly); other active members need a `workspace_access` row
+/// with role `owner` on some workspace of the org. Suspended or non-members: `false`.
+/// Used for org-scope credential *discovery* (I-27 amendment): a workspace owner may list org
+/// secrets/connections to grant them to agents of their workspace.
+pub async fn owns_any_workspace<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    org: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM org_members m
+             WHERE m.org_id = $1 AND m.user_id = $2 AND m.status = 'active'
+               AND (m.role IN ('owner','admin')
+                    OR EXISTS (SELECT 1 FROM workspace_access a
+                               JOIN workspaces w ON w.id = a.workspace_id
+                               WHERE w.org_id = $1 AND a.user_id = $2 AND a.role = 'owner')))",
+    )
+    .bind(org)
+    .bind(user)
+    .fetch_one(exec)
+    .await?)
+}
+
 /// Org of a workspace regardless of caller (for key confinement checks).
 pub async fn workspace_org<'e, E: PgExecutor<'e>>(
     exec: E,

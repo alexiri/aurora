@@ -186,4 +186,29 @@ describe("AccessTab", () => {
     await waitFor(() => expect(calls).toEqual(["PUT"]));
     expect(await screen.findByText("selected")).toBeInTheDocument();
   });
+
+  it("offers org secrets to workspace owners (I-27 amendment)", async () => {
+    const ws = { id: "s1", name: "Stripe", scope: "workspace", kind: "generic", status: "active" };
+    const org = { id: "s2", name: "Shared LLM", scope: "organization", kind: "llm", status: "active" };
+    mockFetch({
+      "GET /v1/workspaces/w1/secrets": () => json(200, { items: [ws] }),
+      "GET /v1/orgs/o1/secrets": () => json(200, { items: [org] }),
+      "GET /v1/agents/a1/grants": () => json(200, { secrets: [], connections: [] }),
+      "GET /v1/agents/a1/effective": () => json(200, { credentials: [], tools: [] }),
+    });
+    wrap(<AccessTab agentId="a1" wsId="w1" orgId="o1" canOwn />);
+    expect(await screen.findByLabelText("Grant Stripe")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Grant Shared LLM")).toBeInTheDocument();
+  });
+
+  it("members only see effective access and never call the can_own lists", async () => {
+    const fn = mockFetch({
+      "GET /v1/agents/a1/effective": () => json(200, { credentials: [], tools: [] }),
+    });
+    wrap(<AccessTab agentId="a1" wsId="w1" orgId="o1" canOwn={false} />);
+    expect(await screen.findByText("No credentials are available to this agent.")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Grant /)).toBeNull();
+    const urls = fn.mock.calls.map((c) => (c[0] as Request).url);
+    expect(urls.some((u) => u.includes("/secrets") || u.includes("/grants"))).toBe(false);
+  });
 });

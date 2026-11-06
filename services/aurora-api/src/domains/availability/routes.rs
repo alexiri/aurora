@@ -15,11 +15,12 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().routes(routes!(get_availability, put_availability))
 }
 
-/// Posture and allow-list (org member).
+/// Posture and allow-list (owner/admin; I-27).
 #[utoipa::path(
     get, path = "/orgs/{org}/app-availability", operation_id = "getOrgAppAvailability", tag = "availability",
     params(("org" = Uuid, Path, description = "Organization id")),
     responses((status = 200, description = "Availability", body = AppAvailability),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -28,7 +29,7 @@ async fn get_availability(
     State(state): State<AppState>,
     Path(org): Path<Uuid>,
 ) -> Result<Json<AppAvailability>, ApiError> {
-    caller.org(&state, org).await?;
+    caller.org(&state, org).await?.require_admin()?;
     Ok(Json(service::get(&state, org).await?))
 }
 

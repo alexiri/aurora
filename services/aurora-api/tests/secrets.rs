@@ -266,9 +266,19 @@ async fn generic_crud_never_returns_values_and_audits() {
         "{v2}"
     );
 
-    // member: can read, cannot write
-    let (s, _) = w
+    // member: cannot read (I-27: reads follow the matrix), cannot write; the owner reads
+    let (s, v) = w
         .call(Method::GET, &format!("/v1/secrets/{id}"), &w.member, None)
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("forbidden")),
+        "{v}"
+    );
+    let (s, _) = w.call(Method::GET, &w.ws_url(), &w.member, None).await;
+    assert_eq!(s, 403);
+    let (s, _) = w
+        .call(Method::GET, &format!("/v1/secrets/{id}"), &w.owner, None)
         .await;
     assert_eq!(s, 200);
     let (s, _) = w
@@ -296,7 +306,7 @@ async fn generic_crud_never_returns_values_and_audits() {
         .call(
             Method::GET,
             &format!("{}?kind=generic", w.ws_url()),
-            &w.member,
+            &w.owner,
             None,
         )
         .await;
@@ -456,12 +466,22 @@ async fn llm_key_admission_validation_and_origin() {
     assert_eq!(v["injection"], json!({"kind": "bearer"}));
     let id = v["id"].as_str().unwrap().to_owned();
 
-    // models via the stored key
-    let (s, v) = w
+    // models via the stored key: `can_own` / owner-admin only (I-27); agent model pickers use
+    // `GET /v1/agents/{agent}/models`
+    let (s, _) = w
         .call(
             Method::GET,
             &format!("/v1/secrets/{id}/models"),
             &w.member,
+            None,
+        )
+        .await;
+    assert_eq!(s, 403);
+    let (s, v) = w
+        .call(
+            Method::GET,
+            &format!("/v1/secrets/{id}/models"),
+            &w.admin,
             None,
         )
         .await;
@@ -919,7 +939,18 @@ async fn org_secret_visibility_and_foreign_access() {
     assert_eq!(s, 201, "{v}");
     assert_eq!(v["scope"], "organization");
     let id = v["id"].as_str().unwrap();
-    let (s, _) = w.call(Method::GET, &w.org_url(), &w.member, None).await;
+    // org secrets are owner/admin only, for reads as for writes (I-27)
+    let (s, v) = w.call(Method::GET, &w.org_url(), &w.member, None).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("forbidden")),
+        "{v}"
+    );
+    let (s, _) = w
+        .call(Method::GET, &format!("/v1/secrets/{id}"), &w.member, None)
+        .await;
+    assert_eq!(s, 403);
+    let (s, _) = w.call(Method::GET, &w.org_url(), &w.admin, None).await;
     assert_eq!(s, 200);
     let (s, _) = w
         .call(
