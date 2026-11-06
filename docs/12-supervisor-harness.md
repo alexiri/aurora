@@ -173,6 +173,11 @@ conversation and current turn) → runner (stamps sandbox and boot) →
   agent's active turns).
 - Results are bounded (≤ 64 KiB serialized; larger results are truncated with
   a note).
+- Bridge ⇄ supervisor socket protocol (spec fix S-09): newline-delimited JSON.
+  Requests `{ "id": u64, "session": string, "method": "list" }` or
+  `{ "id", "session", "method": "call", "tool": string, "arguments": object }`;
+  responses `{ "id", "result": <list: [ToolDescriptor] | call: ToolResult> }` or
+  `{ "id", "error": { "code", "message" } }` (types from `aurora-protocol::tools`).
 
 ### Tool registry (API)
 
