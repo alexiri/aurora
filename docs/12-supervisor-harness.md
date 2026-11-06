@@ -270,7 +270,7 @@ next turn. Files stay in place until superseded by the canonical render.
 ## Outbound files
 
 `send_file`: the supervisor validates the path is inside `/workspace`, size ≤
-`ATTACH_OUT_FILE_MAX`, then uploads in `file.part` chunks (≤ 192 KiB) with a
+`ATTACH_OUT_FILE_MAX`, then uploads in `file.part` chunks (≤ 144 KiB (S-06)) with a
 final `file.commit`; the API enforces per-turn and per-conversation caps.
 
 ## Logging

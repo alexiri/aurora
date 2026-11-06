@@ -53,3 +53,36 @@ pub fn decode_basic(v: &str) -> String {
         .unwrap();
     String::from_utf8(b).unwrap()
 }
+
+/// Minimal temp dir (no `tempfile` in the workspace); removed on drop unless `keep`t.
+pub struct TempDir(std::path::PathBuf);
+
+impl TempDir {
+    pub fn new() -> Self {
+        let p = std::env::temp_dir().join(format!("aurora-sup-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&p).unwrap();
+        Self(p)
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    /// Leaks the directory (tests whose supervisor outlives the test body).
+    pub fn keep(self) -> std::path::PathBuf {
+        let p = self.0.clone();
+        std::mem::forget(self);
+        p
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        // Skills dirs are read-only (0555); make them writable before removal.
+        let _ = std::process::Command::new("chmod")
+            .args(["-R", "u+rwX"])
+            .arg(&self.0)
+            .status();
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}

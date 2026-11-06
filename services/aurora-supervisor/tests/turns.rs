@@ -111,7 +111,12 @@ impl Conn {
     async fn home_sync(&mut self) {
         self.send(
             "home.sync",
-            json!({"generation": 1, "part_index": 0, "part_count": 1, "part": {"kind": "final", "entries": []}}),
+            json!({"generation": 1, "part_index": 0, "part_count": 2, "part": {"kind": "manifest", "entries": []}}),
+        )
+        .await;
+        self.send(
+            "home.sync",
+            json!({"generation": 1, "part_index": 1, "part_count": 2, "part": {"kind": "final", "entries": []}}),
         )
         .await;
         self.next_of("home.synced").await;
@@ -127,6 +132,7 @@ async fn start(gateway: String) -> (Runner, Conn) {
     let chan = channel::spawn(cfg);
     let mut sc = SupervisorConfig::new(gateway, "aub_boot");
     sc.progress_interval = Duration::from_millis(100);
+    sc.working_dir = common::TempDir::new().keep();
     let sup = Supervisor::new(sc, chan.sender, Arc::new(FakeHarness));
     tokio::spawn(sup.run(chan.inbound));
     tokio::spawn(async move {
@@ -323,7 +329,7 @@ async fn replays_frames_unacked_by_runner() {
     let before = c.last_in;
     drop(c);
     // runner claims it only saw up to `before - 1` of the supervisor's frames: the last one is replayed
-    let mut c2 = r.accept(before - 1, 1, before - 1).await;
+    let mut c2 = r.accept(before - 1, 2, before - 1).await;
     let v = c2.next().await;
     assert_eq!(v["seq"].as_u64(), Some(before));
     // and the runner->supervisor direction works over the new connection (seq continues)

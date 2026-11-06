@@ -23,6 +23,8 @@ use crate::harness::{
     HarnessAdapter, HarnessCapabilities, HarnessEvent, HarnessSession, McpBridgeSpec,
     SessionOptions, SteerAck, SteerInput, TurnInput,
 };
+use crate::harvest::Harvester;
+use crate::home::{HomeConfig, HomeProjector, PartOutcome};
 use crate::proxy::{Credential, ProxyHandle, ProxyMode, spawn_proxy};
 
 const ABORT_GRACE: Duration = Duration::from_secs(5);
@@ -39,6 +41,7 @@ pub struct SupervisorConfig {
     pub shutdown_grace: Duration,
     pub version: String,
     pub mcp_bridge_command: Vec<String>,
+    pub harvest_interval: Duration,
 }
 
 impl SupervisorConfig {
@@ -52,6 +55,7 @@ impl SupervisorConfig {
             shutdown_grace: Duration::from_secs(5),
             version: env!("CARGO_PKG_VERSION").to_owned(),
             mcp_bridge_command: Vec::new(),
+            harvest_interval: Duration::from_secs(10),
         }
     }
 }
@@ -82,6 +86,13 @@ pub struct Supervisor {
     sessions: HashMap<Uuid, SessionEntry>,
     turns: HashMap<Uuid, TurnHandle>,
     ready: bool,
+    home: Arc<StdMutex<HomeCtl>>,
+}
+
+/// Home projection state: staged sync, plus the memory harvest bookkeeping.
+struct HomeCtl {
+    projector: HomeProjector,
+    harvester: Harvester,
 }
 
 /// Maps a terminal harness error code to a turn error code (`12 §Provider refusal classification`).
@@ -115,7 +126,16 @@ impl Supervisor {
         adapter: Arc<dyn HarnessAdapter>,
     ) -> Self {
         let caps = adapter.capabilities();
+        let home = Arc::new(StdMutex::new(HomeCtl {
+            projector: HomeProjector::new(HomeConfig {
+                root: cfg.working_dir.clone(),
+                skills_dir: caps.skills_dir.clone(),
+                instruction_files: caps.instruction_files.clone(),
+            }),
+            harvester: Harvester::new(&cfg.working_dir),
+        }));
         Self {
+            home,
             cfg,
             out,
             adapter,
@@ -143,8 +163,21 @@ impl Supervisor {
         };
         self.send(SupervisorToRunner::Ready(ready)).await;
         let (done_tx, mut done_rx) = mpsc::unbounded_channel::<Uuid>();
+        // Instruction files are a projection re-rendered on every boot.
+        let home = self.home.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Ok(h) = home.lock()
+                && let Err(e) = h.projector.render_installed()
+            {
+                tracing::warn!(error = %e, "boot render of instruction files failed");
+            }
+        })
+        .await;
+        let mut harvest_tick = interval(self.cfg.harvest_interval);
+        harvest_tick.tick().await;
         loop {
             tokio::select! {
+                _ = harvest_tick.tick() => { self.harvest().await; }
                 msg = inbound.recv() => {
                     let Some(msg) = msg else { break };
                     if let RunnerToSupervisor::Shutdown(s) = &msg {
@@ -205,19 +238,21 @@ impl Supervisor {
                     let _ = m.into_inner().release().await;
                 }
             }
-            RunnerToSupervisor::HomeSync(h) => {
-                // Home projection arrives with SUP-002; here only the readiness gate.
-                if h.part_index + 1 >= h.part_count {
-                    self.ready = true;
-                    self.send(SupervisorToRunner::HomeSynced(HomeSynced {
-                        generation: h.generation,
-                    }))
-                    .await;
+            RunnerToSupervisor::HomeSync(h) => self.home_sync(h).await,
+            RunnerToSupervisor::MemoryWriteResult(r) => {
+                if !r.ok
+                    && let Ok(mut h) = self.home.lock()
+                {
+                    let why = r.error.as_ref().map_or("rejected", |e| e.message.as_str());
+                    let why: String = why.chars().take(200).collect();
+                    h.harvester.push_notice(format!(
+                        "memory `{}` was not saved: {why}",
+                        r.key.chars().take(128).collect::<String>()
+                    ));
                 }
             }
             RunnerToSupervisor::TurnNotice(_)
             | RunnerToSupervisor::ToolResult(_)
-            | RunnerToSupervisor::MemoryWriteResult(_)
             | RunnerToSupervisor::FileResult(_) => {
                 tracing::debug!("frame handled by SUP-002; ignored");
             }
@@ -225,6 +260,61 @@ impl Supervisor {
             RunnerToSupervisor::Other(u) => {
                 tracing::warn!(kind = u.kind.as_str(), "unknown frame kind dropped");
             }
+        }
+    }
+
+    /// Scans `memory/` for agent edits and uploads them. Returns the number uploaded.
+    async fn harvest(&self) -> usize {
+        let home = self.home.clone();
+        let writes = tokio::task::spawn_blocking(move || {
+            home.lock()
+                .map(|mut h| h.harvester.scan())
+                .unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default();
+        let n = writes.len();
+        for w in writes {
+            self.send(SupervisorToRunner::MemoryWrite(w)).await;
+        }
+        n
+    }
+
+    async fn home_sync(&mut self, h: aurora_protocol::runner::HomeSync) {
+        let home = self.home.clone();
+        let hc = h.clone();
+        let staged = tokio::task::spawn_blocking(move || {
+            home.lock()
+                .map_err(|_| "home state poisoned".to_owned())
+                .and_then(|mut g| g.projector.apply_part(&hc).map_err(|e| e.to_string()))
+        })
+        .await;
+        let generation = match staged {
+            Ok(Ok(PartOutcome::Staged)) => return,
+            Ok(Ok(PartOutcome::ReadyToCommit(g))) => g,
+            Ok(Err(e)) => {
+                tracing::warn!(generation = h.generation, error = %e, "home sync part failed");
+                return;
+            }
+            Err(_) => return,
+        };
+        // Agent edits are uploaded before the canonical render supersedes them.
+        self.harvest().await;
+        let home = self.home.clone();
+        let committed = tokio::task::spawn_blocking(move || {
+            home.lock()
+                .map_err(|_| "home state poisoned".to_owned())
+                .and_then(|mut g| g.projector.commit(generation).map_err(|e| e.to_string()))
+        })
+        .await;
+        match committed {
+            Ok(Ok(())) => {
+                self.ready = true;
+                self.send(SupervisorToRunner::HomeSynced(HomeSynced { generation }))
+                    .await;
+            }
+            Ok(Err(e)) => tracing::warn!(generation, error = %e, "home sync commit failed"),
+            Err(_) => {}
         }
     }
 
@@ -309,7 +399,13 @@ impl Supervisor {
                             .join(format!(".aurora/inbox/{}/{}", d.turn_id, a.filename))
                     })
                     .collect(),
-                notices: d.input.notices,
+                notices: {
+                    let mut n = d.input.notices;
+                    if let Ok(mut h) = self.home.lock() {
+                        n.extend(h.harvester.take_notices());
+                    }
+                    n
+                },
             },
             session: handle.session.clone(),
             cred: entry.cred.clone(),
