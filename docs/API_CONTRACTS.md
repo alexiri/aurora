@@ -322,7 +322,7 @@ interface EffectiveGovernance {
 | GET `/v1/gateway/ca.pem` | S/K | — | 200 `application/x-pem-file` | 503 |
 | GET `/v1/agents/{agent}/grants` | S/K can_use | — | 200 `{ secrets: SecretGrant[], connections: ConnectionGrant[] }` | 404 |
 | PUT/DELETE `/v1/agents/{agent}/grants/secrets/{secret}` | S/K can_own | — | 200 `SecretGrant` / 204 | 404 (secret not in agent's workspace or its org) |
-| GET `/v1/agents/{agent}/effective` | S/K can_use | — | 200 `{ credentials: { kind, id, name, scope, selected: boolean, selected_by: Uuid[] }[], tools: { app_id, tool_id, decision: string, org_ceiling: string \| null }[] }` | 404 |
+| GET `/v1/agents/{agent}/effective` | S/K can_use | — | 200 `{ credentials: { kind, id, name, scope, selected: boolean, selected_by: Uuid[] }[], tools: { app_id, tool_id, connection_id: Uuid, decision: string, org_ceiling: string \| null, inert: boolean }[] }` (M3 additions: `connection_id`, `inert` for tools still in a grant but removed from the catalogue) | 404 |
 | GET `/v1/workspaces/{ws}/policy`, `/v1/orgs/{org}/policy` | S/K (read: can_use / member) | — | 200 `PolicyDocument` | 404 |
 | PUT `…/policy/draft` | S/K can_own / owner·admin | `{ revision, default_action, uncredentialed_default?, uncredentialed_allowlist?, rules: Omit<PolicyRule,"priority"\|"logical_id"> & {logical_id?}[] }` (C-08) | 200 `PolicyGeneration` (draft) | 409 `stale_revision`; 422 `policy_invalid` (`details.fields`) |
 | POST `…/policy/publish` | same | `{ revision }` | 200 `PolicyDocument` | 409 `stale_revision` |
@@ -428,6 +428,50 @@ interface TrustedKey { id: Uuid; publisher: string; name: string; public_key: st
 | GET `/v1/admin/registry/snapshot` | IA | — | 200 snapshot JSON + `x-snapshot-hash` | 404 |
 | GET `/internal/v1/registry/active?contract_max=` | internal secret (port 4111) | — | 200 body = the **canonical snapshot bytes** (`application/json`); headers `x-snapshot-hash: <sha256 hex of body>`, `x-snapshot-contract: <n>` (C-18) | 404 (none active) |
 | GET `/internal/v1/registry/blobs/{digest}` | internal secret | — | 200 `application/wasm` | 404 |
+
+### M4 — conversations, turns, transcript, sandbox (API-004)
+
+Routes/auth: `05 §Conversations and turns`, `§Agents and sandboxes` (sandbox, restart, models). Behaviour: `10 §Conversations`, `§Turns`, `§Transcript events`; SSE conventions `05 §Conventions`.
+
+**Contract decisions**
+- C-23 Transcript events are delivered as `{ seq: number | null, type, ts, payload }`: durable events (`10` table "Durable: yes") have `seq`; ephemeral (`text.delta`, `thinking.delta`, `activity`) have `seq: null` and are never returned by `/events`. Payloads are exactly the `10` table shapes (snake_case). Unknown types must be ignored by clients.
+- C-24 SSE `GET /v1/conversations/{id}/stream?after_seq=`: each event is `event: <type>`, `id: <seq>` for durable events only, `data: <TranscriptEvent JSON>`; keepalive comment every `SSE_KEEPALIVE`; resume with `Last-Event-ID` or `after_seq`. Clients: fetch `/events?after_seq=` first, then open the stream from the last seq; discard a turn's deltas once its durable `text` arrives (`14 §Key flows`).
+- C-25 `POST /v1/conversations/{id}/messages` returns 202 `{ turn: Turn }` or `{ followup: Followup }` (exactly one non-null).
+
+```ts
+type ConversationKind = "direct" | "group" | "schedule" | "webhook" | "watch" | "peer" | "api";
+interface Conversation { id: Uuid; agent_id: Uuid; kind: ConversationKind; external_ref: string; title: string | null;
+  direct_user_id: Uuid | null; origin_conversation_id: Uuid | null; last_seq: number;
+  active_turn: Turn | null; last_activity_at: Timestamp | null; created_at: Timestamp }
+type TurnStatus = "queued" | "dispatched" | "running" | "done" | "failed" | "aborted";
+interface Turn { id: Uuid; conversation_id: Uuid; status: TurnStatus; door: string /* dashboard|api|channel|schedule|webhook|watch|peer */;
+  speaker_label: string | null; text: string; attachment_ids: Uuid[]; error_code: string | null;
+  abort_requested: boolean; send_now_requested: boolean;
+  usage: { input_tokens: number; output_tokens: number; cache_read_tokens: number | null; cost_usd: number | null } | null;
+  created_at: Timestamp; started_at: Timestamp | null; finished_at: Timestamp | null }
+interface Followup { id: Uuid; parent_turn_id: Uuid; status: "joining" | "joined" | "promoted"; text: string; created_at: Timestamp }
+interface TranscriptEvent { seq: number | null; type: string; ts: Timestamp; payload: Record<string, unknown> }
+interface SandboxView { agent_id: Uuid; state: "unprovisioned" | "starting" | "running" | "stopping" | "stopped" | "failed";
+  boot_id: Uuid | null; runner_id: Uuid | null; image: string | null; started_at: Timestamp | null;
+  keep_awake_reasons: string[]; failure_code: string | null; failure_message: string | null;
+  processes: { id: string; name: string; state: string; busy: boolean; started_at: Timestamp | null }[];
+  ports: { port: number; protocol: string }[]; restart_to_update: boolean }
+interface ModelOption { endpoint_id: string; provider: string; model_id: string; display_name: string | null; dialects: string[] }
+```
+
+| Method & path | Auth | Request | 2xx response | Errors |
+|---|---|---|---|---|
+| GET `/v1/agents/{agent}/conversations` | S/K can_use | `?kind&limit&cursor` | 200 `Page<Conversation>` (ordered by last activity) | 404 |
+| POST `/v1/agents/{agent}/conversations/direct` | S can_use | — | 200 `Conversation` (get-or-create caller's direct) | 404 |
+| POST `/v1/agents/{agent}/conversations` | K | `{ external_ref, title? }` | 200/201 `Conversation` (kind api, get-or-create) | 400 |
+| GET `/v1/conversations/{id}` | S/K can_use | — | 200 `Conversation` | 404 |
+| GET `/v1/conversations/{id}/events` | S/K can_use | `?after_seq&limit` (≤500) | 200 `{ items: TranscriptEvent[], last_seq }` (durable only) | 404 |
+| GET `/v1/conversations/{id}/stream` | S/K can_use | `?after_seq` / `Last-Event-ID` | SSE (C-24) | 404 |
+| POST `/v1/conversations/{id}/messages` | S/K can_use | `{ text, attachment_ids? }` (≤ `TURN_TEXT_MAX`) | 202 (C-25) | 400; 413; 422 `hosted_disabled` |
+| POST `/v1/turns/{id}/abort`, `/v1/turns/{id}/send-now` | S/K can_use | — | 202 `Turn` | 404; 409 `turn_finished` |
+| GET `/v1/agents/{agent}/sandbox` | S/K can_use | — | 200 `SandboxView` | 404 |
+| POST `/v1/agents/{agent}/restart` | S/K can_use | — | 202 `SandboxView` | 404 |
+| GET `/v1/agents/{agent}/models` | S/K can_use | — | 200 `{ items: ModelOption[] }` (only usable keys and allowed models, `08 §Model selection`) | 404 |
 
 ### W9 hook-host JSON encoding (C-18, C-19)
 
