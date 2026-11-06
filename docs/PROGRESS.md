@@ -54,20 +54,26 @@ their dependencies near completion (adaptive planning).
 | OPS-002 | CI workflow + cargo-deny + arch-guard scripts | CI | done | BE-008, FE-001 | haiku-worker | `scripts/guards/run-all.sh` pass; `cargo deny check` all ok; ci.yml parses (5 jobs); CI itself not run (no remote) |
 | OPS-003 | compose skeleton + Containerfiles + Caddyfile + setup.sh | Ops | done | BE-008, FE-001 | rust-developer | `podman compose config`; up (disk permitting) |
 | API-001 | M1 contract schemas in API_CONTRACTS.md | Contract | done | — | Opus | review |
-| BE-010 | API foundation: state, errors, extractors, authn/CSRF/authz, OpenAPI, audit | Rust | in-progress | BE-008 | rust-developer | brief acceptance |
-| BE-012 | Tenancy: orgs/workspaces/members/access + creation txn + Daneel | Rust | planned (brief) | BE-010 | rust-developer | brief acceptance |
-| BE-011 | Auth flows: signup/login/verify/reset/change, mailer, password policy | Rust | todo | BE-012 | rust-developer | |
+| BE-010 | API foundation: state, errors, extractors, authn/CSRF/authz, OpenAPI, audit | Rust | done | BE-008 | rust-developer | 13 foundation tests (auth, CSRF, access law, confinement, pagination, rate limit, NOTIFY flush) + orchestrator regression (non-Bearer Authorization never falls back to cookie) |
+| BE-012 | Tenancy: orgs/workspaces/members/access + creation txn + Daneel | Rust | done | BE-010 | rust-developer | tests/tenancy.rs 5 scenario tests (creation txn w/ gens + Daneel, slugs, members/last owner, visibility, resolve, deletes); openapi drift ok |
+| BE-011 | Auth flows: signup/login/verify/reset/change, mailer, password policy | Rust | in-progress | BE-012 | rust-developer | |
 | BE-013 | Invitations | Rust | todo | BE-012 | rust-developer | |
 | BE-014 | API keys + CLI device flow + /v1/me/api-keys | Rust | todo | BE-010 | rust-developer | |
 | BE-015 | OIDC + mock IdP (testkit) | Rust | todo | BE-011, BE-003 | rust-developer | |
 | BE-016 | Instance admins, bootstrap-admin, admin users, /v1/me, deletion | Rust | todo | BE-011 | rust-developer | |
 | TEST-010 | Permission-matrix test (route × role) | Rust test | todo | BE-011..016 | haiku-tester | |
 | FE-010 | Auth pages (login, signup, forgot, reset, verify, join, cli, setup-error) | Next.js | todo | BE-011 | nextjs-developer | |
-| FE-011 | App shell: org/workspace nav, resolve, overview (agents), security headers | Next.js | todo | BE-012 | nextjs-developer | |
+| FE-011 | App shell: org/workspace nav, resolve, overview (agents), security headers | Next.js | in-progress | BE-012 | nextjs-developer | |
 | FE-012 | Org pages: workspaces, members, invitations, API keys, audit, settings | Next.js | todo | BE-012..014 | nextjs-developer | |
 | FE-013 | Account, workspace settings/access/keys, admin users | Next.js | todo | BE-014, BE-016 | nextjs-developer | |
 | TEST-011 | Playwright: sign-up → workspace (Daneel) → invite → accept | e2e | todo | FE-010..012 | haiku-tester→nextjs-developer | |
-| M2–M7 epics | see FEATURES.md | both | todo | per `19` graph | — | `19` acceptance |
+| BE-020 | aurora-policy: matchers, GraphQL/git, rules, selection, evaluator | Rust | done | BE-001 | rust-developer | 10 unit/prop + 30-case corpus; dep-graph guard ok |
+| BE-021 | aurora-secrets: SecretRef, store seam, registry, inline+memory, vault | Rust | done | BE-003 | rust-developer | 11 tests (AAD swap, rotation, reference mode, fail-closed) |
+| BE-022 | aurora-llm: providers LiteLLM+Anthropic, models, origin verification | Rust | done | BE-002 | rust-developer | 19 wiremock/unit tests; config endpoint fields fixed by orchestrator |
+| GW-001 | gateway transport: CA, proxy, lanes, MITM TLS, hygiene, guard, forward | Rust | in-progress | BE-008 | rust-developer | brief acceptance |
+| GW-002+ | gateway: DB credential resolver, ResolvedHost cache + NOTIFY, pipeline (policy, injection, guidance), request log, holds, governance | Rust | todo | GW-001, BE-020..022 | rust-developer | |
+| M2 API | secrets/LLM keys API, policy authoring, grants, approvals API+SSE, BYO agents, governance API | Rust | todo | M1 API tasks | rust-developer | |
+| M3–M7 epics | see FEATURES.md | both | todo | per `19` graph | — | `19` acceptance |
 
 ## Decisions requiring user input
 
