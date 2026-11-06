@@ -53,8 +53,8 @@ pub fn secret_err(e: SecretError) -> ApiError {
     }
 }
 
-/// Reads and writes alike need `can_own` (workspace) or owner/admin (organization) (I-27).
-/// A caller who cannot see the scope gets 404; a visible caller with too low a role gets 403.
+/// Writes need `can_own` (workspace) or owner/admin (organization) (I-27). A caller who cannot
+/// see the scope gets 404; a visible caller with too low a role gets 403.
 pub async fn authorize(
     caller: &Caller,
     state: &AppState,
@@ -68,13 +68,28 @@ pub async fn authorize(
     Ok(())
 }
 
+/// Reads: like [`authorize`], except that organization-scope metadata is also readable by an
+/// org member who is `can_own` on at least one workspace of the org (I-27 amendment: they
+/// discover org secrets to grant them to their agents). Values are never returned.
+pub async fn authorize_read(
+    caller: &Caller,
+    state: &AppState,
+    org: Uuid,
+    ws: Option<Uuid>,
+) -> Result<(), ApiError> {
+    match ws {
+        Some(_) => authorize(caller, state, org, ws).await,
+        None => caller.org_credential_reader(state, org).await.map(|_| ()),
+    }
+}
+
 pub async fn load(state: &AppState, id: Uuid) -> Result<SecretRow, ApiError> {
     repo::get(&state.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Secret not found."))
 }
 
-/// Load and authorize (`can_own` / owner-admin); invisible secrets are 404, visible but
+/// Load and authorize a write (`can_own` / owner-admin); invisible secrets are 404, visible but
 /// insufficient role 403.
 pub async fn load_authorized(
     caller: &Caller,
@@ -83,6 +98,17 @@ pub async fn load_authorized(
 ) -> Result<SecretRow, ApiError> {
     let row = load(state, id).await?;
     authorize(caller, state, row.org_id, row.workspace_id).await?;
+    Ok(row)
+}
+
+/// Load and authorize a metadata read (see [`authorize_read`]).
+pub async fn load_readable(
+    caller: &Caller,
+    state: &AppState,
+    id: Uuid,
+) -> Result<SecretRow, ApiError> {
+    let row = load(state, id).await?;
+    authorize_read(caller, state, row.org_id, row.workspace_id).await?;
     Ok(row)
 }
 

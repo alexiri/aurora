@@ -129,6 +129,28 @@ impl Caller {
     }
 }
 
+impl Caller {
+    /// Org-scope credential *metadata* reads (I-27 amendment): org owner/admin, or an active
+    /// org member who is `can_own` on at least one workspace of the org (so they can discover
+    /// org secrets/connections to grant to their agents). Same rules as [`Caller::org`] for
+    /// keys: a workspace key is 403 `forbidden`, an org key answers like its owner, another
+    /// org's key is 404. Plain members get 403 `forbidden`.
+    pub async fn org_credential_reader(
+        &self,
+        state: &AppState,
+        org: Uuid,
+    ) -> Result<OrgAuth, ApiError> {
+        let a = self.org(state, org).await?;
+        if a.role.is_admin() || authz::owns_any_workspace(&state.pool, self.user_id, org).await? {
+            Ok(a)
+        } else {
+            Err(ApiError::forbidden(
+                "Organization owner/admin or workspace owner role required.",
+            ))
+        }
+    }
+}
+
 fn not_found_ws() -> ApiError {
     ApiError::not_found("Workspace not found.")
 }

@@ -134,6 +134,9 @@ enum G {
     WsUse,
     /// Workspace owner: `can_own`.
     WsOwn,
+    /// Org-scope credential metadata (I-27 amendment): org owner/admin, or an org member who
+    /// is `can_own` on a workspace of the org (so org secrets/connections can be granted).
+    OrgCred,
     /// `can_use`, but only with an API key: sessions get 403 `forbidden` before the workspace
     /// is looked at (`POST /v1/agents/{agent}/conversations` creates `api` conversations).
     WsUseKeyOnly,
@@ -310,7 +313,7 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/orgs/{org}/app-availability", G::Admin, false),
     r("PUT", "/v1/orgs/{org}/app-availability", G::Admin, false),
     r("GET", "/v1/orgs/{org}/audit", G::Admin, false),
-    r("GET", "/v1/orgs/{org}/connections", G::Admin, false),
+    r("GET", "/v1/orgs/{org}/connections", G::OrgCred, false),
     r("GET", "/v1/orgs/{org}/governance", G::Admin, false),
     r("PUT", "/v1/orgs/{org}/governance", G::Admin, false),
     r("GET", "/v1/orgs/{org}/invitations", G::Admin, false),
@@ -329,7 +332,7 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/orgs/{org}/policy/publish", G::Admin, false),
     r("POST", "/v1/orgs/{org}/policy/rollback", G::Admin, false),
     r("GET", "/v1/orgs/{org}/policy/warnings", G::Admin, false),
-    r("GET", "/v1/orgs/{org}/secrets", G::Admin, false),
+    r("GET", "/v1/orgs/{org}/secrets", G::OrgCred, false),
     r("POST", "/v1/orgs/{org}/secrets", G::Admin, false),
     // ---- workspace-level ----
     r("GET", "/v1/workspaces/{ws}", G::WsUse, false),
@@ -543,7 +546,7 @@ fn want(g: G, so: bool, p: P) -> Want {
                 Deny(&[401, 403, 404], None)
             }
         }
-        G::Member | G::Admin | G::Owner => {
+        G::Member | G::Admin | G::Owner | G::OrgCred => {
             if p.is_ws_key() {
                 return Deny(&[403], Some("forbidden"));
             }
@@ -552,6 +555,7 @@ fn want(g: G, so: bool, p: P) -> Want {
                     let ok = match g {
                         G::Member => true,
                         G::Admin => role != "member",
+                        G::OrgCred => role != "member" || ws_access(p) == WsAccess::Owner,
                         _ => role == "owner",
                     };
                     if ok {
@@ -941,7 +945,11 @@ async fn coverage_every_openapi_route_is_listed() {
 /// Rows whose allowed outcome may change state for later principals: each principal runs
 /// against its own freshly seeded database.
 fn isolated(row: &Row) -> bool {
-    (row.m == "DELETE" && (seeded(row.p) || row.p == "/v1/me")) || row.p == "/v1/auth/logout"
+    (row.m == "DELETE" && (seeded(row.p) || row.p == "/v1/me"))
+        || row.p == "/v1/auth/logout"
+        // a successful create makes the creator an owner of the new workspace, which changes
+        // what they may read at org level (I-27 amendment) for every later row
+        || (row.m == "POST" && row.p == "/v1/orgs/{org}/workspaces")
 }
 
 #[tokio::test]
@@ -989,4 +997,92 @@ async fn permission_matrix_routes_by_principal() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+/// Org-scope single-resource reads (I-27 amendment): rows for `/v1/secrets/{id}` etc. use
+/// unseeded ids and only exercise workspace scope, so seed an org secret and an org connection
+/// and check the same principals against [`G::OrgCred`]. Writes stay owner/admin (rows above).
+#[tokio::test]
+async fn org_scope_credential_reads_by_principal() {
+    let h = Harness::new().await;
+    let fx = seed(&h, 0).await;
+    let (s, _, v) = h
+        .send(
+            Method::POST,
+            &format!("/v1/orgs/{}/secrets", fx.org),
+            &[
+                (
+                    "cookie",
+                    cookie(match &fx.auth[&P::Owner] {
+                        Auth::Cookie(t) => t,
+                        _ => unreachable!(),
+                    })
+                    .as_str(),
+                ),
+                ("origin", ORIGIN),
+            ],
+            Some(json!({"name": "org-key", "kind": "generic", "host_pattern": "api.example.com", "value": "v"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let secret: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let conn = Uuid::now_v7();
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,NULL,'acme_app','acme','1.0.0','c','active','x')")
+        .bind(conn)
+        .bind(fx.org)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let mut failures = Vec::new();
+    for (path, g) in [
+        (format!("/v1/secrets/{secret}"), G::OrgCred),
+        (format!("/v1/secrets/{secret}/models"), G::OrgCred),
+        (format!("/v1/connections/{conn}"), G::OrgCred),
+        // grants of an org connection name agents of every workspace: owner/admin only
+        (format!("/v1/connections/{conn}/grants"), G::Admin),
+    ] {
+        for p in ALL {
+            let (status, _, body) = {
+                let (c, b);
+                let headers: Vec<(&str, &str)> = match &fx.auth[&p] {
+                    Auth::Anon => vec![],
+                    Auth::Cookie(t) => {
+                        c = cookie(t);
+                        vec![("cookie", c.as_str()), ("origin", ORIGIN)]
+                    }
+                    Auth::Bearer(t) => {
+                        b = bearer(t);
+                        vec![("authorization", b.as_str())]
+                    }
+                };
+                h.send(Method::GET, &path, &headers, None).await
+            };
+            let status = status.as_u16();
+            let actual = body["error"]["code"].as_str().unwrap_or("");
+            let msg = |m: String| failures_push(&path, p, m);
+            match want(g, false, p) {
+                Want::Deny(set, code) => {
+                    if !set.contains(&status) || code.is_some_and(|c| c != actual) {
+                        failures.push(msg(format!(
+                            "status {status} '{actual}', expected {set:?} {code:?}"
+                        )));
+                    }
+                }
+                // The secret/connection exist; models may fail upstream (4xx/5xx other than
+                // auth) for a generic secret, so only the auth outcome is asserted.
+                _ => {
+                    if matches!(status, 401 | 403 | 404) {
+                        failures.push(msg(format!(
+                            "denied ({status} '{actual}'), expected allowed"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+fn failures_push(path: &str, p: P, m: String) -> String {
+    format!("GET {path} as {p:?}: {m}")
 }

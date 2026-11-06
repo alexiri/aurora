@@ -69,7 +69,8 @@ async fn list_ws_secrets(
     Ok(Json(service::list(&state, a.org_id, Some(ws), &q).await?))
 }
 
-/// List organization-scoped secrets (owner/admin; I-27).
+/// List organization-scoped secrets (owner/admin, or `can_own` on a workspace of the org so
+/// that org secrets can be granted; metadata only; I-27).
 #[utoipa::path(
     get, path = "/orgs/{org}/secrets", operation_id = "listOrgSecrets", tag = "secrets",
     params(("org" = Uuid, Path, description = "Organization id"), ListQuery),
@@ -84,7 +85,7 @@ async fn list_org_secrets(
     Path(org): Path<Uuid>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<Secret>>, ApiError> {
-    caller.org(&state, org).await?.require_admin()?;
+    caller.org_credential_reader(&state, org).await?;
     Ok(Json(service::list(&state, org, None, &q).await?))
 }
 
@@ -152,7 +153,8 @@ async fn create_org_secret(
     Ok((StatusCode::CREATED, Json(row.into())))
 }
 
-/// Get one secret (metadata only; `can_own` / owner-admin, I-27).
+/// Get one secret (metadata only; `can_own` / owner-admin, I-27; org-scope secrets are also
+/// readable by a `can_own` workspace owner of the org).
 #[utoipa::path(
     get, path = "/secrets/{id}", operation_id = "getSecret", tag = "secrets",
     params(("id" = Uuid, Path, description = "Secret id")),
@@ -167,7 +169,7 @@ async fn get_secret(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Secret>, ApiError> {
     Ok(Json(
-        service::load_authorized(&caller, &state, id).await?.into(),
+        service::load_readable(&caller, &state, id).await?.into(),
     ))
 }
 
@@ -415,7 +417,7 @@ async fn secret_models(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Models>, ApiError> {
-    let row = service::load_authorized(&caller, &state, id).await?;
+    let row = service::load_readable(&caller, &state, id).await?;
     Ok(Json(service::models(&state, &row).await?))
 }
 

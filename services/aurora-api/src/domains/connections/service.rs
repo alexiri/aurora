@@ -23,14 +23,28 @@ pub async fn visible(
         .ok_or_else(|| ApiError::not_found("Connection not found."))?;
     let access = match row.workspace_id {
         Some(ws) => Access::Workspace(caller.workspace(state, ws).await?),
-        None => Access::Org(caller.org(state, row.org_id).await?),
+        None => {
+            let org = caller.org(state, row.org_id).await?;
+            // org-scope metadata is also readable by `can_own` workspace owners (I-27 amendment)
+            let can_read = org.role.is_admin()
+                || aurora_db::authz::owns_any_workspace(&state.pool, caller.user_id, row.org_id)
+                    .await?;
+            Access::Org {
+                auth: org,
+                can_read,
+            }
+        }
     };
     Ok((row, access))
 }
 
 pub enum Access {
     Workspace(aurora_db::authz::WorkspaceAuth),
-    Org(crate::http::auth::OrgAuth),
+    Org {
+        auth: crate::http::auth::OrgAuth,
+        /// Owner/admin, or `can_own` on some workspace of the org.
+        can_read: bool,
+    },
 }
 
 impl Access {
@@ -38,7 +52,17 @@ impl Access {
     pub fn require_write(&self) -> Result<(), ApiError> {
         match self {
             Self::Workspace(a) => require_own(a),
-            Self::Org(a) => a.require_admin(),
+            Self::Org { auth, .. } => auth.require_admin(),
+        }
+    }
+
+    /// Metadata read: `can_own` (workspace); organization scope also admits a `can_own`
+    /// workspace owner of the org (so org connections can be granted to their agents).
+    pub fn require_read(&self) -> Result<(), ApiError> {
+        match self {
+            Self::Workspace(a) => require_own(a),
+            Self::Org { can_read: true, .. } => Ok(()),
+            Self::Org { auth, .. } => auth.require_admin(),
         }
     }
 }

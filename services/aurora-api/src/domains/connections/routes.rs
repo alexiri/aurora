@@ -62,7 +62,8 @@ async fn list_ws_connections(
     Ok(Json(service::list(&state, a.org_id, Some(ws), &q).await?))
 }
 
-/// List organization-scoped connections (owner/admin; I-27).
+/// List organization-scoped connections (owner/admin, or `can_own` on a workspace of the org
+/// so that org connections can be granted; metadata only; I-27).
 #[utoipa::path(
     get, path = "/orgs/{org}/connections", operation_id = "listOrgConnections", tag = "connections",
     params(("org" = Uuid, Path, description = "Organization id"), ListQuery),
@@ -77,11 +78,12 @@ async fn list_org_connections(
     Path(org): Path<Uuid>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<Connection>>, ApiError> {
-    caller.org(&state, org).await?.require_admin()?;
+    caller.org_credential_reader(&state, org).await?;
     Ok(Json(service::list(&state, org, None, &q).await?))
 }
 
-/// Get a connection (`can_own` / owner-admin; I-27).
+/// Get a connection (`can_own` / owner-admin; I-27; org-scope connections are also readable by
+/// a `can_own` workspace owner of the org).
 #[utoipa::path(
     get, path = "/connections/{id}", operation_id = "getConnection", tag = "connections",
     params(("id" = Uuid, Path, description = "Connection id")),
@@ -96,7 +98,7 @@ async fn get_connection(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Connection>, ApiError> {
     let (row, access) = service::visible(&caller, &state, id).await?;
-    access.require_write()?;
+    access.require_read()?;
     Ok(Json(service::view(&state, row).await?))
 }
 

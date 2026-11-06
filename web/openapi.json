@@ -4896,7 +4896,7 @@
         "tags": [
           "connections"
         ],
-        "summary": "Get a connection (`can_own` / owner-admin; I-27).",
+        "summary": "Get a connection (`can_own` / owner-admin; I-27; org-scope connections are also readable by\na `can_own` workspace owner of the org).",
         "operationId": "getConnection",
         "parameters": [
           {
@@ -6969,7 +6969,7 @@
         "tags": [
           "connections"
         ],
-        "summary": "List organization-scoped connections (owner/admin; I-27).",
+        "summary": "List organization-scoped connections (owner/admin, or `can_own` on a workspace of the org\nso that org connections can be granted; metadata only; I-27).",
         "operationId": "listOrgConnections",
         "parameters": [
           {
@@ -8336,7 +8336,7 @@
         "tags": [
           "secrets"
         ],
-        "summary": "List organization-scoped secrets (owner/admin; I-27).",
+        "summary": "List organization-scoped secrets (owner/admin, or `can_own` on a workspace of the org so\nthat org secrets can be granted; metadata only; I-27).",
         "operationId": "listOrgSecrets",
         "parameters": [
           {
@@ -9215,7 +9215,7 @@
         "tags": [
           "secrets"
         ],
-        "summary": "Get one secret (metadata only; `can_own` / owner-admin, I-27).",
+        "summary": "Get one secret (metadata only; `can_own` / owner-admin, I-27; org-scope secrets are also\nreadable by a `can_own` workspace owner of the org).",
         "operationId": "getSecret",
         "parameters": [
           {

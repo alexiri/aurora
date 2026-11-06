@@ -1118,7 +1118,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a connection (`can_own` / owner-admin; I-27). */
+        /**
+         * Get a connection (`can_own` / owner-admin; I-27; org-scope connections are also readable by
+         *     a `can_own` workspace owner of the org).
+         */
         get: operations["getConnection"];
         put?: never;
         post?: never;
@@ -1523,7 +1526,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List organization-scoped connections (owner/admin; I-27). */
+        /**
+         * List organization-scoped connections (owner/admin, or `can_own` on a workspace of the org
+         *     so that org connections can be granted; metadata only; I-27).
+         */
         get: operations["listOrgConnections"];
         put?: never;
         post?: never;
@@ -1748,7 +1754,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List organization-scoped secrets (owner/admin; I-27). */
+        /**
+         * List organization-scoped secrets (owner/admin, or `can_own` on a workspace of the org so
+         *     that org secrets can be granted; metadata only; I-27).
+         */
         get: operations["listOrgSecrets"];
         put?: never;
         /** Create an organization secret (owner/admin). */
@@ -1889,7 +1898,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get one secret (metadata only; `can_own` / owner-admin, I-27). */
+        /**
+         * Get one secret (metadata only; `can_own` / owner-admin, I-27; org-scope secrets are also
+         *     readable by a `can_own` workspace owner of the org).
+         */
         get: operations["getSecret"];
         put?: never;
         post?: never;
