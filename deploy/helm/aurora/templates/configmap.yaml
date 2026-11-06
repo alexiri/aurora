@@ -1,0 +1,23 @@
+{{- $full := include "aurora.fullname" . -}}
+{{- $cfg := deepCopy .Values.config -}}
+{{- $_ := set $cfg "server" (merge (dict "external_url" .Values.externalUrl) (default (dict) $cfg.server)) -}}
+{{- $k8s := dict "namespace" .Values.sandboxes.namespace "core_namespace" .Release.Namespace "gateway_service" (printf "%s-gateway-proxy" $full) "runner_service" (printf "%s-runner" $full) -}}
+{{- with .Values.runner.k8s.storageClass }}{{ $_ := set $k8s "storage_class" . }}{{ end -}}
+{{- with .Values.runner.k8s.runtimeClass }}{{ $_ := set $k8s "runtime_class" . }}{{ end -}}
+{{- $_ := set $cfg "runner" (merge (dict "backend" "kubernetes" "api_url" (printf "http://%s-api:4101" $full) "k8s" $k8s) (default (dict) $cfg.runner)) -}}
+{{- $_ := set $cfg "database" (merge (dict "max_connections" .Values.database.maxConnections.api) (default (dict) $cfg.database)) -}}
+{{- if .Values.database.gatewayRole }}{{ $_ := set $cfg.database "gateway_role" .Values.database.gatewayRole }}{{ end -}}
+{{- $_ := set $cfg "gateway" (merge (dict "ca_dir" "/var/lib/aurora/ca") (default (dict) $cfg.gateway)) -}}
+# Pre-install hook: the migrate job needs the config before regular resources exist.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-config
+  labels: {{- include "aurora.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-30"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  aurora.toml: |
+    {{- regexReplaceAll "(?m)= (-?[0-9]+)\\.0$" (toToml $cfg) "= ${1}" | nindent 4 }}

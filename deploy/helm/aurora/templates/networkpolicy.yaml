@@ -1,0 +1,210 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $full := include "aurora.fullname" . -}}
+{{- $ns := .Release.Namespace -}}
+{{- $sb := .Values.sandboxes.namespace -}}
+{{- $np := .Values.networkPolicy -}}
+{{- $inst := .Release.Name -}}
+# ---- core namespace: default deny ----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $full }}-default-deny, namespace: {{ $ns }}}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $full }}-allow-dns, namespace: {{ $ns }}}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {{- toYaml $np.dnsNamespaceSelector | nindent 14 }}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+# api: ingress from edge, web (SSR), runner, hookhost, connectors, gateway; 4111 internal from hookhost/gateway.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $full }}-api, namespace: {{ $ns }}}
+spec:
+  podSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "api") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml $np.edgeNamespaceSelector | nindent 14 }}
+        {{- include "aurora.peer" (dict "root" . "c" "web") | nindent 8 }}
+        {{- include "aurora.peer" (dict "root" . "c" "runner") | nindent 8 }}
+        {{- include "aurora.peer" (dict "root" . "c" "hookhost") | nindent 8 }}
+        {{- include "aurora.peer" (dict "root" . "c" "gateway") | nindent 8 }}
+        {{- range .Values.connectors }}
+        {{- include "aurora.peer" (dict "root" $ "c" (printf "connector-%s" .id)) | nindent 8 }}
+        {{- end }}
+      ports: [{protocol: TCP, port: 4101}]
+    - from:
+        {{- include "aurora.peer" (dict "root" . "c" "hookhost") | nindent 8 }}
+        {{- include "aurora.peer" (dict "root" . "c" "gateway") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4111}]
+  egress:
+    {{- include "aurora.dbEgress" . | nindent 4 }}
+    - to:
+        {{- include "aurora.peer" (dict "root" . "c" "hookhost") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4104}]
+    - to:
+        {{- include "aurora.peer" (dict "root" . "c" "gateway") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4103}]
+    {{- include "aurora.external" . | nindent 4 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $full }}-web, namespace: {{ $ns }}}
+spec:
+  podSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "web") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml $np.edgeNamespaceSelector | nindent 14 }}
+      ports: [{protocol: TCP, port: 4100}]
+  egress:
+    - to:
+        {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4101}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $full }}-gateway, namespace: {{ $ns }}}
+spec:
+  podSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "gateway") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ $sb }}}}
+        {{- if eq .Values.gateway.proxy.service.type "LoadBalancer" }}
+        - ipBlock: {cidr: 0.0.0.0/0}   # external BYO agents; restrict with loadBalancerSourceRanges
+        {{- end }}
+      ports: [{protocol: TCP, port: 4102}]
+    - from:
+        {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4103}]
+  egress:
+    {{- include "aurora.dbEgress" . | nindent 4 }}
+    - to:
+        {{- include "aurora.peer" (dict "root" . "c" "hookhost") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4104}]
+    - to:
+        {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4111}]
+    {{- include "aurora.external" . | nindent 4 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $full }}-hookhost, namespace: {{ $ns }}}
+spec:
+  podSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "hookhost") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
+        {{- include "aurora.peer" (dict "root" . "c" "gateway") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4104}]
+  egress:
+    - to:
+        {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4111}]
+    {{- include "aurora.external" . | nindent 4 }}
+{{- if .Values.runner.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $full }}-runner, namespace: {{ $ns }}}
+spec:
+  podSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "runner") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ $sb }}}}
+      ports: [{protocol: TCP, port: 4105}]
+  egress:
+    - to:
+        {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4101}]
+    - to:
+        {{- if .Values.networkPolicy.kubeApiCidrs }}
+        {{- range .Values.networkPolicy.kubeApiCidrs }}
+        - ipBlock: {cidr: {{ . }}}
+        {{- end }}
+        {{- else }}
+        - ipBlock: {cidr: 0.0.0.0/0}
+        {{- end }}
+      ports: [{protocol: TCP, port: 443}, {protocol: TCP, port: 6443}]
+{{- end }}
+{{- range .Values.connectors }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $full }}-connector-{{ .id }}, namespace: {{ $ns }}}
+spec:
+  podSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" $ "component" (printf "connector-%s" .id)) | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  {{- if and .callbackIngress .callbackIngress.enabled }}
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml $np.edgeNamespaceSelector | nindent 14 }}
+      ports: [{protocol: TCP, port: {{ default 4190 .callbackPort }}}]
+  {{- end }}
+  egress:
+    - to:
+        {{- include "aurora.peer" (dict "root" $ "c" "api") | nindent 8 }}
+      ports: [{protocol: TCP, port: 4101}]
+    {{- include "aurora.external" $ | nindent 4 }}
+{{- end }}
+{{- if .Values.postgres.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: {{ $full }}-postgres, namespace: {{ $ns }}}
+spec:
+  podSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "postgres") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
+        {{- include "aurora.peer" (dict "root" . "c" "gateway") | nindent 8 }}
+      ports: [{protocol: TCP, port: 5432}]
+{{- end }}
+---
+# ---- sandboxes namespace: default deny (no ingress, no DNS), egress only to gateway:4102 and runner:4105 ----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: {{ $sb }}}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-gateway-runner, namespace: {{ $sb }}}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ $ns }}}}
+          podSelector: {matchLabels: {app.kubernetes.io/instance: {{ $inst }}, app.kubernetes.io/component: gateway}}
+      ports: [{protocol: TCP, port: 4102}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ $ns }}}}
+          podSelector: {matchLabels: {app.kubernetes.io/instance: {{ $inst }}, app.kubernetes.io/component: runner}}
+      ports: [{protocol: TCP, port: 4105}]
+{{- end }}

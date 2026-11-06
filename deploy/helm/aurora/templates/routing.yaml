@@ -1,0 +1,56 @@
+{{- $full := include "aurora.fullname" . -}}
+{{- $host := default (include "aurora.host" .) .Values.ingress.host -}}
+{{- if .Values.ingress.enabled }}
+# Edge rules: /v1/* -> api:4101, everything else -> web:4100. /internal and /metrics are never routed to api.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $full }}
+  labels: {{- include "aurora.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.secretName }}
+  tls:
+    - hosts: [{{ $host | quote }}]
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: /v1
+            pathType: Prefix
+            backend: {service: {name: {{ $full }}-api, port: {number: 4101}}}
+          - path: /
+            pathType: Prefix
+            backend: {service: {name: {{ $full }}-web, port: {number: 4100}}}
+{{- end }}
+{{- if .Values.gatewayApi.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $full }}
+  labels: {{- include "aurora.labels" . | nindent 4 }}
+spec:
+  {{- with .Values.gatewayApi.parentRefs }}
+  parentRefs: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  hostnames: {{ toJson (default (list $host) .Values.gatewayApi.hostnames) }}
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /v1}
+      timeouts:
+        request: {{ .Values.gatewayApi.requestTimeout }}
+      backendRefs:
+        - {name: {{ $full }}-api, port: 4101}
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      backendRefs:
+        - {name: {{ $full }}-web, port: 4100}
+{{- end }}

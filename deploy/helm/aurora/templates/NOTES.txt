@@ -1,0 +1,3 @@
+Aurora {{ .Chart.AppVersion }} installed. Public URL: {{ .Values.externalUrl }}
+Upgrade order is enforced by the migrate hook (runs before any new api replica); roll api, hookhost, gateway, runner, web, connectors.
+Secrets: {{ include "aurora.secretName" . }} (generated once, never overwritten). Gateway CA: {{ include "aurora.caSecretName" . }}.
