@@ -17,12 +17,13 @@ pub struct ConversationRow {
     pub title: Option<String>,
     pub origin_conversation_id: Option<Uuid>,
     pub last_seq: i64,
+    pub app_turn_streak: i32,
     pub last_activity_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
 }
 
 const COLS: &str = "id, agent_id, workspace_id, kind, external_ref, direct_user_id, title, \
-    origin_conversation_id, last_seq, last_activity_at, created_at";
+    origin_conversation_id, last_seq, app_turn_streak, last_activity_at, created_at";
 
 pub struct NewConversation<'a> {
     pub agent_id: Uuid,
@@ -116,4 +117,29 @@ pub async fn lock(conn: &mut PgConnection, id: Uuid) -> Result<bool, DbError> {
             .fetch_optional(&mut *conn)
             .await?;
     Ok(r.is_some())
+}
+
+/// Reset the app-turn streak to zero (a person wrote, or an owner clicked "continue").
+/// Caller holds the conversation lock.
+pub async fn reset_app_turn_streak(conn: &mut PgConnection, id: Uuid) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE conversations SET app_turn_streak = 0, updated_at = now()
+         WHERE id = $1 AND app_turn_streak <> 0",
+    )
+    .bind(id)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Count one bot/agent turn. Caller holds the conversation lock and has checked the cap.
+pub async fn bump_app_turn_streak(conn: &mut PgConnection, id: Uuid) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE conversations SET app_turn_streak = app_turn_streak + 1, updated_at = now()
+         WHERE id = $1",
+    )
+    .bind(id)
+    .execute(conn)
+    .await?;
+    Ok(())
 }

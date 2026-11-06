@@ -62,6 +62,10 @@ pub struct Conversation {
     pub direct_user_id: Option<Uuid>,
     pub origin_conversation_id: Option<Uuid>,
     pub last_seq: i64,
+    /// Consecutive bot/agent turns since the last person-authored turn or `continue` (C-27).
+    pub app_turn_streak: i64,
+    /// The streak reached `APP_TURN_CAP`: further bot/agent turns are refused.
+    pub app_turn_capped: bool,
     pub active_turn: Option<Turn>,
     pub last_activity_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -185,6 +189,9 @@ impl Conversation {
             direct_user_id: c.direct_user_id,
             origin_conversation_id: c.origin_conversation_id,
             last_seq: c.last_seq,
+            app_turn_streak: i64::from(c.app_turn_streak),
+            app_turn_capped: u32::try_from(c.app_turn_streak)
+                .is_ok_and(|n| n >= aurora_core::limits::APP_TURN_CAP),
             active_turn: active.map(Turn::from),
             last_activity_at: Some(c.last_activity_at),
             created_at: c.created_at,

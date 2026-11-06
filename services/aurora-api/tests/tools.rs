@@ -189,7 +189,11 @@ async fn catalogue_lists_available_tools_with_schemas() {
             "schedule_list",
             "schedule_create",
             "schedule_update",
-            "schedule_delete"
+            "schedule_delete",
+            "message_agent",
+            "complete_task",
+            "list_peer_tasks",
+            "cancel_peer_task"
         ]
     );
     for t in &cat {

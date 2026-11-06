@@ -33,6 +33,7 @@ pub async fn finish(
     }
     crate::domains::schedules::fire::on_turn_finished(conn, &row).await?;
     crate::domains::webhooks::on_turn_finished(conn, &row).await?;
+    crate::domains::peer_tasks::service::on_turn_finished(conn, &row).await?;
     Ok(Some(row))
 }
 

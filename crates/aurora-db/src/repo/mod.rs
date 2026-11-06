@@ -1,6 +1,8 @@
 //! Repositories: all SQL lives here (docs/02 §Coding rules). One module per domain.
 
 pub mod account;
+pub mod action_approvals;
+pub mod agent_links;
 pub mod agents;
 pub mod api_keys;
 pub mod approvals;
@@ -22,6 +24,7 @@ pub mod members;
 pub mod memory;
 pub mod oauth_clients;
 pub mod orgs;
+pub mod peer_tasks;
 pub mod plugins;
 pub mod policy;
 pub mod request_log;

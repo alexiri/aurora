@@ -38,6 +38,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(post_message))
         .routes(routes!(abort_turn))
         .routes(routes!(send_now))
+        .routes(routes!(continue_conversation))
 }
 
 /// Conversations of an agent, most recently active first.
@@ -207,6 +208,19 @@ async fn send_now(
         StatusCode::ACCEPTED,
         Json(service::send_now(&s, &c, id).await?),
     ))
+}
+
+/// Reset the app-turn streak so bot/agent turns flow again (C-27).
+#[utoipa::path(post, path = "/conversations/{id}/continue", operation_id = "continueConversation", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Conversation id")),
+    responses((status = 200, body = Conversation), (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn continue_conversation(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Conversation>, ApiError> {
+    Ok(Json(service::continue_conversation(&s, &c, id).await?))
 }
 
 struct Stream_ {
