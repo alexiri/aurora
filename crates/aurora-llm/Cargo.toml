@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 aurora-config = { workspace = true }
 aurora-core = { workspace = true }
+aurora-policy = { workspace = true }
 async-trait = { workspace = true }
 http = { workspace = true }
 reqwest = { workspace = true }

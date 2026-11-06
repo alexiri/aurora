@@ -7,6 +7,7 @@
 mod anthropic;
 mod endpoint;
 mod error;
+pub mod governance;
 mod litellm;
 mod model;
 pub mod origin;

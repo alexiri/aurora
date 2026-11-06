@@ -360,6 +360,7 @@ dependencies = [
  "async-trait",
  "aurora-config",
  "aurora-core",
+ "aurora-policy",
  "http",
  "reqwest",
  "serde",
