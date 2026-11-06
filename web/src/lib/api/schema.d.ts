@@ -431,6 +431,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/llm/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** LLM providers and endpoints; with `org_id`, adds the caller's effective governance. */
+        get: operations["listLlmProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me": {
         parameters: {
             query?: never;
@@ -592,6 +609,24 @@ export interface paths {
         patch: operations["patchMember"];
         trace?: never;
     };
+    "/v1/orgs/{org}/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List organization-scoped secrets (org member). */
+        get: operations["listOrgSecrets"];
+        put?: never;
+        /** Create an organization secret (owner/admin). */
+        post: operations["createOrgSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/workspaces": {
         parameters: {
             query?: never;
@@ -621,6 +656,127 @@ export interface paths {
         get: operations["resolve"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/secret-stores": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Configured secret stores and their capabilities. */
+        get: operations["listSecretStores"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/secrets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one secret (metadata only). */
+        get: operations["getSecret"];
+        put?: never;
+        post?: never;
+        /** Delete a secret (grants and their derived rules go with it). */
+        delete: operations["deleteSecret"];
+        options?: never;
+        head?: never;
+        /** Update name / host / path / injection (generic secrets; LLM secrets: name only). */
+        patch: operations["updateSecret"];
+        trace?: never;
+    };
+    "/v1/secrets/{id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept an agent proposal: sets the value, activates it and grants it to the proposer. */
+        post: operations["acceptSecretProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/secrets/{id}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Models available to an LLM secret (limited to the effective allow-list). */
+        get: operations["listSecretModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/secrets/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject an agent proposal. */
+        post: operations["rejectSecretProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/secrets/{id}/value": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace the value (managed `value` or `reference`); bumps `value_version`, re-verifies LLM keys. */
+        put: operations["setSecretValue"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/secrets/{id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Re-verify the key and its origin (`can_own`). */
+        post: operations["verifySecret"];
         delete?: never;
         options?: never;
         head?: never;
@@ -734,6 +890,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List workspace-scoped secrets (`can_use`). */
+        get: operations["listWorkspaceSecrets"];
+        put?: never;
+        /** Create a workspace secret (`can_own`). */
+        post: operations["createWorkspaceSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -744,6 +918,9 @@ export interface components {
         AcceptInvitationResponse: {
             org: components["schemas"]["Org"];
             workspace_ids: string[];
+        };
+        AcceptRequest: {
+            value: string;
         };
         AccessBinding: {
             display_name: string;
@@ -923,6 +1100,18 @@ export interface components {
             org: components["schemas"]["Org"];
             workspace: components["schemas"]["Workspace"];
         };
+        CreateSecretRequest: {
+            host_pattern?: string | null;
+            injection?: null | components["schemas"]["InjectionRecipe"];
+            /** @description `generic` | `llm`. */
+            kind: string;
+            llm?: null | components["schemas"]["LlmSpec"];
+            name: string;
+            path_pattern?: string | null;
+            reference?: null | components["schemas"]["SecretReference"];
+            /** @description Managed value (exactly one of `value` / `reference`). */
+            value?: string | null;
+        };
         CreateWorkspaceRequest: {
             memory_language?: string | null;
             name: string;
@@ -938,6 +1127,11 @@ export interface components {
             container_config?: null | components["schemas"]["ContainerConfig"];
             /** @description BYO only; shown once. */
             token?: string | null;
+        };
+        CreatedBy: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
         };
         CreatedKey: {
             api_key: components["schemas"]["ApiKey"];
@@ -965,6 +1159,34 @@ export interface components {
         };
         ForgotRequest: {
             email: string;
+        };
+        /** @description Injection recipe (`08 §5`). */
+        InjectionRecipe: {
+            /** @enum {string} */
+            kind: "bearer";
+        } | {
+            format?: string;
+            /** @enum {string} */
+            kind: "header";
+            name: string;
+        } | {
+            format?: string;
+            /** @enum {string} */
+            kind: "query";
+            name: string;
+        } | {
+            /** @enum {string} */
+            kind: "basic";
+            username: string;
+        } | {
+            /** @enum {string} */
+            kind: "path_template";
+            prefix: string;
+        } | {
+            /** @enum {string} */
+            kind: "path_regex";
+            pattern: string;
+            replacement: string;
         };
         InstanceInfo: {
             default_agent_name: string;
@@ -1019,6 +1241,31 @@ export interface components {
             /** Format: uuid */
             id: string;
         };
+        LlmEndpointInfo: {
+            base_url: string;
+            dialects: string[];
+            display_name: string;
+            id: string;
+            key_scopes?: string[] | null;
+            origin_method?: string | null;
+            permitted?: boolean | null;
+            provider: string;
+        };
+        LlmProviderInfo: {
+            auth_modes: string[];
+            dialects: string[];
+            display_name: string;
+            id: string;
+        };
+        LlmProviders: {
+            endpoints: components["schemas"]["LlmEndpointInfo"][];
+            providers: components["schemas"]["LlmProviderInfo"][];
+        };
+        LlmSpec: {
+            /** @description Defaults to `api_key`. */
+            auth_mode?: string | null;
+            endpoint_id: string;
+        };
         LoginRequest: {
             email: string;
             password: string;
@@ -1055,6 +1302,13 @@ export interface components {
         };
         /** @enum {string} */
         MemberStatus: "active" | "suspended";
+        ModelItem: {
+            display_name?: string | null;
+            id: string;
+        };
+        Models: {
+            items: components["schemas"]["ModelItem"][];
+        };
         OidcProviderInfo: {
             display_name: string;
             id: string;
@@ -1248,6 +1502,43 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_Secret: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                created_by?: null | components["schemas"]["CreatedBy"];
+                host_pattern: string;
+                /** Format: uuid */
+                id: string;
+                injection: components["schemas"]["InjectionRecipe"];
+                /** @description `generic` | `llm`. */
+                kind: string;
+                /** Format: date-time */
+                last_used_at?: string | null;
+                llm?: null | components["schemas"]["SecretLlm"];
+                name: string;
+                /** Format: uuid */
+                org_id: string;
+                origin?: null | components["schemas"]["StoredOrigin"];
+                path_pattern?: string | null;
+                /** Format: uuid */
+                proposed_by_agent_id?: string | null;
+                reference?: null | components["schemas"]["SecretReference"];
+                /** @description `organization` | `workspace`. */
+                scope: string;
+                /** @description `active` | `proposed` | `rejected`. */
+                status: string;
+                /** Format: date-time */
+                updated_at: string;
+                /** @description `managed` | `reference`. */
+                value_source: string;
+                /** Format: int32 */
+                value_version: number;
+                /** Format: uuid */
+                workspace_id?: string | null;
+            }[];
+            next_cursor?: string | null;
+        };
         Page_Workspace: {
             items: {
                 /** Format: date-time */
@@ -1300,6 +1591,12 @@ export interface components {
             settings?: null | components["schemas"]["OrgSettingsPatch"];
             slug?: string | null;
         };
+        PatchSecretRequest: {
+            host_pattern?: string | null;
+            injection?: null | components["schemas"]["InjectionRecipe"];
+            name?: string | null;
+            path_pattern?: string | null;
+        };
         PatchWorkspaceRequest: {
             memory_language?: string | null;
             name?: string | null;
@@ -1326,6 +1623,62 @@ export interface components {
             /** Format: int64 */
             revoked: number;
         };
+        Secret: {
+            /** Format: date-time */
+            created_at: string;
+            created_by?: null | components["schemas"]["CreatedBy"];
+            host_pattern: string;
+            /** Format: uuid */
+            id: string;
+            injection: components["schemas"]["InjectionRecipe"];
+            /** @description `generic` | `llm`. */
+            kind: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            llm?: null | components["schemas"]["SecretLlm"];
+            name: string;
+            /** Format: uuid */
+            org_id: string;
+            origin?: null | components["schemas"]["StoredOrigin"];
+            path_pattern?: string | null;
+            /** Format: uuid */
+            proposed_by_agent_id?: string | null;
+            reference?: null | components["schemas"]["SecretReference"];
+            /** @description `organization` | `workspace`. */
+            scope: string;
+            /** @description `active` | `proposed` | `rejected`. */
+            status: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description `managed` | `reference`. */
+            value_source: string;
+            /** Format: int32 */
+            value_version: number;
+            /** Format: uuid */
+            workspace_id?: string | null;
+        };
+        SecretLlm: {
+            auth_mode: string;
+            endpoint_id: string;
+            provider: string;
+        };
+        SecretReference: {
+            field?: string | null;
+            path: string;
+            store_id: string;
+        };
+        SecretStoreInfo: {
+            capabilities: components["schemas"]["StoreCaps"];
+            id: string;
+            kind: string;
+        };
+        SecretStores: {
+            items: components["schemas"]["SecretStoreInfo"][];
+        };
+        SetValueRequest: {
+            reference?: null | components["schemas"]["SecretReference"];
+            value?: string | null;
+        };
         SignupRequest: {
             display_name: string;
             email: string;
@@ -1345,6 +1698,24 @@ export interface components {
             /** @description `ABCD-EFGH`. */
             user_code: string;
             verification_url: string;
+        };
+        StoreCaps: {
+            managed: boolean;
+            references: boolean;
+        };
+        StoredOrigin: {
+            /** Format: date-time */
+            checked_at?: string | null;
+            /** @description `endpoint` | `litellm_team` | `provider_account`. */
+            method?: string | null;
+            organization_id?: string | null;
+            /** @description `verified` | `mismatch` | `unverifiable` | `pending`. */
+            status: string;
+            team_id?: string | null;
+            user_id?: string | null;
+            /** Format: int64 */
+            value_version: number;
+            workspace_id?: string | null;
         };
         StubFile: {
             content: string;
@@ -1375,6 +1746,9 @@ export interface components {
         };
         VerifyEmailRequest: {
             token: string;
+        };
+        VerifyResult: {
+            origin: components["schemas"]["StoredOrigin"];
         };
         Workspace: {
             /** Format: date-time */
@@ -2439,6 +2813,38 @@ export interface operations {
             };
         };
     };
+    listLlmProviders: {
+        parameters: {
+            query?: {
+                /** @description Include the caller's effective governance for this organization. */
+                org_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Providers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LlmProviders"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getMe: {
         parameters: {
             query?: never;
@@ -3185,6 +3591,126 @@ export interface operations {
             };
         };
     };
+    listOrgSecrets: {
+        parameters: {
+            query?: {
+                /** @description `generic` | `llm`. */
+                kind?: string;
+                /** @description `active` | `proposed` | `rejected` (default: all but rejected). */
+                status?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Secrets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Secret"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createOrgSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Secret"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description llm_key_not_permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description name_taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description see workspace create */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description secret_store_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listWorkspaces: {
         parameters: {
             query?: {
@@ -3299,6 +3825,434 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listSecretStores: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stores */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecretStores"];
+                };
+            };
+        };
+    };
+    getSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Secret */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Secret"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    updateSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description Secret */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Secret"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description name_taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description llm_host_requires_llm_key | llm_secret_read_only */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    acceptSecretProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptRequest"];
+            };
+        };
+        responses: {
+            /** @description Secret */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Secret"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description not_proposed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listSecretModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Models */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Models"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description llm_endpoint_unreachable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    rejectSecretProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rejected */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description not_proposed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    setSecretValue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetValueRequest"];
+            };
+        };
+        responses: {
+            /** @description Secret */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Secret"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden / llm_key_not_permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description as create */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description secret_store_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    verifySecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Origin */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyResult"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description llm_key_invalid | llm_endpoint_unreachable | not_llm_secret */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3799,6 +4753,126 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWorkspaceSecrets: {
+        parameters: {
+            query?: {
+                /** @description `generic` | `llm`. */
+                kind?: string;
+                /** @description `active` | `proposed` | `rejected` (default: all but rejected). */
+                status?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Secrets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Secret"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createWorkspaceSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Secret"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description llm_key_not_permitted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description name_taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description llm_host_requires_llm_key | llm_key_invalid | llm_key_wrong_organization | llm_key_unverifiable | llm_endpoint_unreachable | reference_not_permitted */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description secret_store_unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -379,3 +379,23 @@ fn stored_origin_roundtrip() {
     assert_eq!(o.status, OriginStatus::Verified);
     assert_eq!(o.to_key_origin().organization_id.as_deref(), Some("o"));
 }
+
+#[test]
+fn stored_empty_document_means_instance_defaults() {
+    let inst = inst();
+    let doc = aurora_llm::governance::from_stored(&serde_json::json!({}), &inst).unwrap();
+    assert_eq!(doc, aurora_llm::governance::default_for_new_org(&inst));
+    let eff = aurora_llm::governance::effective(&inst, &doc);
+    assert!(
+        eff.endpoints.values().all(|e| e.permitted),
+        "all instance endpoints permitted by default"
+    );
+    // An explicit llm section keeps "absent endpoint = not permitted".
+    let explicit = aurora_llm::governance::from_stored(
+        &serde_json::json!({"llm": {"posture": "open", "endpoints": {}}}),
+        &inst,
+    )
+    .unwrap();
+    let eff = aurora_llm::governance::effective(&inst, &explicit);
+    assert!(eff.endpoints.values().all(|e| !e.permitted));
+}

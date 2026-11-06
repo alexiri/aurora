@@ -69,6 +69,24 @@ pub fn default_for_new_org(inst: &Instance) -> OrgGovernance {
     }
 }
 
+/// Interpret a **stored** `organizations.governance` document (`03`: `{}` =
+/// defaults derived from the instance). A missing `llm` or `egress` section takes
+/// the instance defaults (`default_for_new_org`); inside a present `llm` section,
+/// endpoints absent from `endpoints` stay not permitted (`08 §11.2`).
+pub fn from_stored(
+    raw: &serde_json::Value,
+    inst: &Instance,
+) -> Result<OrgGovernance, serde_json::Error> {
+    let mut doc = default_for_new_org(inst);
+    if let Some(llm) = raw.get("llm") {
+        doc.llm = serde_json::from_value(llm.clone())?;
+    }
+    if let Some(egress) = raw.get("egress") {
+        doc.egress = serde_json::from_value(egress.clone())?;
+    }
+    Ok(doc)
+}
+
 /// Validate a submitted document and return it normalized (defaults filled in, lists
 /// deduplicated, hosts lowercased) or every error found. `{}` yields the defaults.
 pub fn validate(

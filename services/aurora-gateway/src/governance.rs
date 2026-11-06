@@ -156,8 +156,8 @@ impl Governance {
             .org_governance(org)
             .await?
             .ok_or("organization not found")?;
-        let doc: OrgGovernance =
-            serde_json::from_value(raw).map_err(|e| format!("governance document: {e}"))?;
+        let doc: OrgGovernance = aurora_llm::governance::from_stored(&raw, &self.instance)
+            .map_err(|e| format!("governance document: {e}"))?;
         let value = Arc::new(effective(&self.instance, &doc));
         if let Ok(mut g) = self.cache.lock()
             && g.generation == gen_seen

@@ -51,20 +51,93 @@ pub struct AppState {
     pub session_cache: Arc<AuthCache>,
     pub net: Arc<NetPolicy>,
     pub mailer: Arc<dyn Mailer>,
+    /// Secret value store registry (built from `[secrets]`).
+    pub vault: Arc<aurora_secrets::SecretVault>,
+    /// Core LLM provider registry (built from `[llm]`).
+    pub llm: Arc<aurora_llm::ProviderRegistry>,
+    /// Instance governance ceiling (`[governance]` over the registry).
+    pub gov_instance: Arc<aurora_llm::governance::Instance>,
+    /// HTTP client for provider key validation / origin checks.
+    pub llm_http: reqwest::Client,
 }
 
 impl AppState {
-    pub fn new(pool: PgPool, config: ApiConfig) -> Self {
+    /// Build the state; fails on invalid `[secrets]` / `[llm]` configuration.
+    pub fn try_new(pool: PgPool, config: ApiConfig) -> Result<Self, String> {
         let net = Arc::new(NetPolicy::from_config(&config));
         let mailer = crate::domains::auth::mail::from_config(&config);
-        Self {
+        let keys = config
+            .keyring
+            .keys
+            .iter()
+            .map(|k| {
+                format!(
+                    "{}:{}",
+                    k.id,
+                    base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        k.key.expose()
+                    )
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let keyring = Arc::new(
+            aurora_crypto::Keyring::parse(&keys, &config.keyring.active)
+                .map_err(|e| format!("keyring: {e}"))?,
+        );
+        let vault = Arc::new(aurora_secrets::SecretVault::new(
+            aurora_secrets::StoreRegistry::from_config(&config.secrets, keyring)
+                .map_err(|e| format!("secrets: {e}"))?,
+        ));
+        let llm = Arc::new(
+            aurora_llm::ProviderRegistry::from_config(&config.llm)
+                .map_err(|e| format!("llm: {e}"))?,
+        );
+        let gov_instance = Arc::new(domains::secrets::gov::instance_from_config(
+            &config.governance,
+            &llm,
+        ));
+        let llm_http = reqwest::Client::builder()
+            .timeout(aurora_core::limits::LLM_ORIGIN_CHECK_TIMEOUT)
+            .build()
+            .map_err(|e| format!("http client: {e}"))?;
+        Ok(Self {
             pool,
             config: Arc::new(config),
             rate_limiter: Arc::new(RateLimiter::new()),
             session_cache: Arc::new(AuthCache::default()),
             net,
             mailer,
-        }
+            vault,
+            llm,
+            gov_instance,
+            llm_http,
+        })
+    }
+
+    /// Like [`Self::try_new`]; panics on invalid configuration (tests, fixed configs).
+    #[allow(clippy::expect_used)]
+    pub fn new(pool: PgPool, config: ApiConfig) -> Self {
+        Self::try_new(pool, config).expect("valid secrets/llm configuration")
+    }
+
+    /// Replace the secret vault (tests: preloaded memory store).
+    #[must_use]
+    pub fn with_vault(mut self, vault: Arc<aurora_secrets::SecretVault>) -> Self {
+        self.vault = vault;
+        self
+    }
+
+    /// Replace the provider registry and rebuild the governance instance (tests).
+    #[must_use]
+    pub fn with_llm(mut self, llm: Arc<aurora_llm::ProviderRegistry>) -> Self {
+        self.gov_instance = Arc::new(domains::secrets::gov::instance_from_config(
+            &self.config.governance,
+            &llm,
+        ));
+        self.llm = llm;
+        self
     }
 
     /// Replace the mailer (tests).
@@ -82,6 +155,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::auth::router())
         .merge(domains::tenancy::router())
         .merge(domains::agents::router())
+        .merge(domains::secrets::router())
         .merge(domains::me::router())
         .merge(domains::admin::router())
         .merge(domains::audit::router())

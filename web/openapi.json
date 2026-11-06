@@ -1416,6 +1416,57 @@
         ]
       }
     },
+    "/v1/llm/providers": {
+      "get": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "LLM providers and endpoints; with `org_id`, adds the caller's effective governance.",
+        "operationId": "listLlmProviders",
+        "parameters": [
+          {
+            "name": "org_id",
+            "in": "query",
+            "description": "Include the caller's effective governance for this organization.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Providers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmProviders"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/me": {
       "get": {
         "tags": [
@@ -2651,6 +2702,202 @@
         ]
       }
     },
+    "/v1/orgs/{org}/secrets": {
+      "get": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "List organization-scoped secrets (org member).",
+        "operationId": "listOrgSecrets",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`generic` | `llm`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`active` | `proposed` | `rejected` (default: all but rejected).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secrets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Secret"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "Create an organization secret (owner/admin).",
+        "operationId": "createOrgSecret",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "llm_key_not_permitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "name_taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "see workspace create",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "secret_store_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/orgs/{org}/workspaces": {
       "get": {
         "tags": [
@@ -2849,6 +3096,612 @@
           },
           "404": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/secret-stores": {
+      "get": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "Configured secret stores and their capabilities.",
+        "operationId": "listSecretStores",
+        "responses": {
+          "200": {
+            "description": "Stores",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretStores"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/secrets/{id}": {
+      "get": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "Get one secret (metadata only).",
+        "operationId": "getSecret",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Secret id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "Delete a secret (grants and their derived rules go with it).",
+        "operationId": "deleteSecret",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Secret id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "Update name / host / path / injection (generic secrets; LLM secrets: name only).",
+        "operationId": "updateSecret",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Secret id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "name_taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "llm_host_requires_llm_key | llm_secret_read_only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/secrets/{id}/accept": {
+      "post": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "Accept an agent proposal: sets the value, activates it and grants it to the proposer.",
+        "operationId": "acceptSecretProposal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Secret id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "not_proposed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/secrets/{id}/models": {
+      "get": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "Models available to an LLM secret (limited to the effective allow-list).",
+        "operationId": "listSecretModels",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Secret id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Models"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "llm_endpoint_unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/secrets/{id}/reject": {
+      "post": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "Reject an agent proposal.",
+        "operationId": "rejectSecretProposal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Secret id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Rejected"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "not_proposed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/secrets/{id}/value": {
+      "put": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "Replace the value (managed `value` or `reference`); bumps `value_version`, re-verifies LLM keys.",
+        "operationId": "setSecretValue",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Secret id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetValueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden / llm_key_not_permitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "as create",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "secret_store_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/secrets/{id}/verify": {
+      "post": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "Re-verify the key and its origin (`can_own`).",
+        "operationId": "verifySecret",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Secret id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "llm_key_invalid | llm_endpoint_unreachable | not_llm_secret",
             "content": {
               "application/json": {
                 "schema": {
@@ -3717,6 +4570,202 @@
           }
         ]
       }
+    },
+    "/v1/workspaces/{ws}/secrets": {
+      "get": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "List workspace-scoped secrets (`can_use`).",
+        "operationId": "listWorkspaceSecrets",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`generic` | `llm`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`active` | `proposed` | `rejected` (default: all but rejected).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secrets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Secret"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "secrets"
+        ],
+        "summary": "Create a workspace secret (`can_own`).",
+        "operationId": "createWorkspaceSecret",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "llm_key_not_permitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "name_taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "llm_host_requires_llm_key | llm_key_invalid | llm_key_wrong_organization | llm_key_unverifiable | llm_endpoint_unreachable | reference_not_permitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "secret_store_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -3750,6 +4799,18 @@
             }
           }
         }
+      },
+      "AcceptRequest": {
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "AccessBinding": {
         "type": "object",
@@ -4361,6 +5422,72 @@
           }
         }
       },
+      "CreateSecretRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "host_pattern": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "injection": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InjectionRecipe"
+              }
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`generic` | `llm`."
+          },
+          "llm": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LlmSpec"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "path_pattern": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reference": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SecretReference"
+              }
+            ]
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Managed value (exactly one of `value` / `reference`)."
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateWorkspaceRequest": {
         "type": "object",
         "required": [
@@ -4430,6 +5557,22 @@
               "null"
             ],
             "description": "BYO only; shown once."
+          }
+        }
+      },
+      "CreatedBy": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -4521,6 +5664,125 @@
             "type": "string"
           }
         }
+      },
+      "InjectionRecipe": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "bearer"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "format": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "header"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "name",
+              "kind"
+            ],
+            "properties": {
+              "format": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "query"
+                ]
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "username",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "basic"
+                ]
+              },
+              "username": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "prefix",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "path_template"
+                ]
+              },
+              "prefix": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "pattern",
+              "replacement",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "path_regex"
+                ]
+              },
+              "pattern": {
+                "type": "string"
+              },
+              "replacement": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "Injection recipe (`08 §5`)."
       },
       "InstanceInfo": {
         "type": "object",
@@ -4714,6 +5976,126 @@
           }
         }
       },
+      "LlmEndpointInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "display_name",
+          "base_url",
+          "dialects"
+        ],
+        "properties": {
+          "base_url": {
+            "type": "string"
+          },
+          "dialects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "key_scopes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "origin_method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "permitted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": "string"
+          }
+        }
+      },
+      "LlmProviderInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name",
+          "auth_modes",
+          "dialects"
+        ],
+        "properties": {
+          "auth_modes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dialects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "LlmProviders": {
+        "type": "object",
+        "required": [
+          "providers",
+          "endpoints"
+        ],
+        "properties": {
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LlmEndpointInfo"
+            }
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LlmProviderInfo"
+            }
+          }
+        }
+      },
+      "LlmSpec": {
+        "type": "object",
+        "required": [
+          "endpoint_id"
+        ],
+        "properties": {
+          "auth_mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Defaults to `api_key`."
+          },
+          "endpoint_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "LoginRequest": {
         "type": "object",
         "required": [
@@ -4844,6 +6226,37 @@
           "active",
           "suspended"
         ]
+      },
+      "ModelItem": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "Models": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelItem"
+            }
+          }
+        }
       },
       "OidcProviderInfo": {
         "type": "object",
@@ -5543,6 +6956,154 @@
           }
         }
       },
+      "Page_Secret": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "org_id",
+                "scope",
+                "name",
+                "kind",
+                "host_pattern",
+                "injection",
+                "value_source",
+                "status",
+                "value_version",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "created_by": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CreatedBy"
+                    }
+                  ]
+                },
+                "host_pattern": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "injection": {
+                  "$ref": "#/components/schemas/InjectionRecipe"
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "`generic` | `llm`."
+                },
+                "last_used_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "llm": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SecretLlm"
+                    }
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "org_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "origin": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/StoredOrigin"
+                    }
+                  ]
+                },
+                "path_pattern": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "proposed_by_agent_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "reference": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SecretReference"
+                    }
+                  ]
+                },
+                "scope": {
+                  "type": "string",
+                  "description": "`organization` | `workspace`."
+                },
+                "status": {
+                  "type": "string",
+                  "description": "`active` | `proposed` | `rejected`."
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "value_source": {
+                  "type": "string",
+                  "description": "`managed` | `reference`."
+                },
+                "value_version": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "workspace_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_Workspace": {
         "type": "object",
         "required": [
@@ -5752,6 +7313,40 @@
           }
         }
       },
+      "PatchSecretRequest": {
+        "type": "object",
+        "properties": {
+          "host_pattern": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "injection": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InjectionRecipe"
+              }
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path_pattern": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "PatchWorkspaceRequest": {
         "type": "object",
         "properties": {
@@ -5855,6 +7450,232 @@
           }
         }
       },
+      "Secret": {
+        "type": "object",
+        "required": [
+          "id",
+          "org_id",
+          "scope",
+          "name",
+          "kind",
+          "host_pattern",
+          "injection",
+          "value_source",
+          "status",
+          "value_version",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CreatedBy"
+              }
+            ]
+          },
+          "host_pattern": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "injection": {
+            "$ref": "#/components/schemas/InjectionRecipe"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`generic` | `llm`."
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "llm": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SecretLlm"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/StoredOrigin"
+              }
+            ]
+          },
+          "path_pattern": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proposed_by_agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "reference": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SecretReference"
+              }
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "description": "`organization` | `workspace`."
+          },
+          "status": {
+            "type": "string",
+            "description": "`active` | `proposed` | `rejected`."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "value_source": {
+            "type": "string",
+            "description": "`managed` | `reference`."
+          },
+          "value_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "SecretLlm": {
+        "type": "object",
+        "required": [
+          "provider",
+          "endpoint_id",
+          "auth_mode"
+        ],
+        "properties": {
+          "auth_mode": {
+            "type": "string"
+          },
+          "endpoint_id": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          }
+        }
+      },
+      "SecretReference": {
+        "type": "object",
+        "required": [
+          "store_id",
+          "path"
+        ],
+        "properties": {
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "store_id": {
+            "type": "string"
+          }
+        }
+      },
+      "SecretStoreInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "capabilities"
+        ],
+        "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/StoreCaps"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        }
+      },
+      "SecretStores": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecretStoreInfo"
+            }
+          }
+        }
+      },
+      "SetValueRequest": {
+        "type": "object",
+        "properties": {
+          "reference": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SecretReference"
+              }
+            ]
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "SignupRequest": {
         "type": "object",
         "required": [
@@ -5921,6 +7742,76 @@
           },
           "verification_url": {
             "type": "string"
+          }
+        }
+      },
+      "StoreCaps": {
+        "type": "object",
+        "required": [
+          "managed",
+          "references"
+        ],
+        "properties": {
+          "managed": {
+            "type": "boolean"
+          },
+          "references": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StoredOrigin": {
+        "type": "object",
+        "required": [
+          "status",
+          "value_version"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`endpoint` | `litellm_team` | `provider_account`."
+          },
+          "organization_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "`verified` | `mismatch` | `unverifiable` | `pending`."
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value_version": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -6025,6 +7916,17 @@
         "properties": {
           "token": {
             "type": "string"
+          }
+        }
+      },
+      "VerifyResult": {
+        "type": "object",
+        "required": [
+          "origin"
+        ],
+        "properties": {
+          "origin": {
+            "$ref": "#/components/schemas/StoredOrigin"
           }
         }
       },

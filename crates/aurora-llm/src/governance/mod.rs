@@ -10,4 +10,4 @@ pub use model::{
     AllowEntry, BELOW_MIN, EgressPosture, GovernanceError, INVALID, LlmPosture, OrgEgress,
     OrgEndpoint, OrgGovernance, OrgLlm, OrgOrigin, OriginStatus, StoredOrigin,
 };
-pub use validate::{default_for_new_org, validate};
+pub use validate::{default_for_new_org, from_stored, validate};

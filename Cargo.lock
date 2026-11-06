@@ -89,6 +89,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "arc-swap"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "380962b3d93b99642e50b9febf72c071e97e8b32d86eae9cf4ef582bb960ae6e"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "argon2"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -183,7 +192,11 @@ dependencies = [
  "async-trait",
  "aurora-config",
  "aurora-core",
+ "aurora-crypto",
  "aurora-db",
+ "aurora-llm",
+ "aurora-policy",
+ "aurora-secrets",
  "aurora-testkit",
  "aws-lc-rs",
  "axum",
@@ -195,6 +208,7 @@ dependencies = [
  "http",
  "http-body-util",
  "lettre",
+ "reqwest",
  "serde",
  "serde_json",
  "serde_path_to_error",
@@ -206,6 +220,7 @@ dependencies = [
  "utoipa",
  "utoipa-axum",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]
@@ -302,6 +317,7 @@ dependencies = [
 name = "aurora-gateway"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "aurora-config",
  "aurora-core",
@@ -309,6 +325,7 @@ dependencies = [
  "aurora-db",
  "aurora-llm",
  "aurora-policy",
+ "aurora-registry",
  "aurora-secrets",
  "aurora-summary",
  "aurora-testkit",
@@ -318,11 +335,13 @@ dependencies = [
  "chrono",
  "clap",
  "futures",
+ "hmac",
  "http",
  "http-body-util",
  "hyper",
  "hyper-util",
  "lru",
+ "metrics",
  "percent-encoding",
  "rcgen",
  "regex",

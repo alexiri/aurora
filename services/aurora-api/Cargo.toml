@@ -42,8 +42,15 @@ lettre = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 aws-lc-rs = { workspace = true }
+aurora-secrets = { workspace = true }
+aurora-llm = { workspace = true }
+aurora-policy = { workspace = true }
+aurora-crypto = { workspace = true }
+reqwest = { workspace = true }
 
 [dev-dependencies]
+aurora-secrets = { workspace = true, features = ["memory-store"] }
+wiremock = { workspace = true }
 aurora-testkit = { workspace = true }
 http-body-util = { workspace = true }
 tower = { workspace = true }

@@ -148,7 +148,7 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let ops = service::ops_router(metrics, vec![("database", db_check)]);
-    let state = aurora_api::app::AppState::new(pool.clone(), cfg.clone());
+    let state = aurora_api::app::AppState::try_new(pool.clone(), cfg.clone())?;
     aurora_api::http::auth::spawn_revocation_listener(pool, state.session_cache.clone());
     let public = aurora_api::app::router(state, ops);
     let internal = Router::new().fallback(service::not_found);
