@@ -1,7 +1,7 @@
 use super::dto::{Conversation, EventsPage, MessageAccepted, TranscriptEvent, Turn};
 use crate::app::AppState;
 use crate::http::auth::Caller;
-use aurora_core::limits::TURN_TEXT_MAX;
+use aurora_core::limits::{ATTACH_IN_COUNT, TURN_TEXT_MAX};
 use aurora_core::{ApiError, FieldError};
 use aurora_db::DbError;
 use aurora_db::bus::{self, Channel};
@@ -412,6 +412,12 @@ pub async fn post_message(
     let mut ids = attachment_ids.to_vec();
     ids.sort();
     ids.dedup();
+    if ids.len() > ATTACH_IN_COUNT as usize {
+        return Err(ApiError::unprocessable(
+            "too_many_attachments",
+            "Too many attachments on one message.",
+        ));
+    }
     let label = speaker_label(state, c).await?;
     let door = json!({"kind": if c.is_session() { "web" } else { "api" }});
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;

@@ -2,12 +2,17 @@ use super::auth::{RunnerCtx, RunnerToken};
 use super::service;
 use crate::app::AppState;
 use crate::http::json::Json;
+use crate::http::json::Path;
 use aurora_core::ApiError;
 use aurora_protocol::common::Validate;
 use aurora_protocol::runner::*;
+use axum::body::Body;
 use axum::extract::State;
+use axum::response::Response;
 use axum::routing::{get, post};
+use http::HeaderMap;
 use utoipa_axum::router::OpenApiRouter;
+use uuid::Uuid;
 
 /// Mounted under `/v1`; plain routes, so excluded from the dashboard OpenAPI document.
 pub fn router() -> OpenApiRouter<AppState> {
@@ -20,8 +25,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .route("/runner/channel/release", post(release))
         .route("/runner/tool-calls", post(tool_calls))
         .route("/runner/memory-writes", post(memory_writes))
-        .route("/runner/attachments", post(placeholder))
-        .route("/runner/attachments/{id}", get(placeholder))
+        .route("/runner/attachments", post(attachment_upload))
+        .route("/runner/attachments/{id}", get(attachment_download))
         .route("/runner/sandboxes", get(sandboxes))
         .route("/runner/sandboxes/check", post(check))
         .route("/runner/strays", post(strays))
@@ -102,8 +107,23 @@ async fn memory_writes(
     ))
 }
 
-async fn placeholder(_c: RunnerCtx) -> Result<Json<OkResponse>, ApiError> {
-    Err(service::not_implemented())
+async fn attachment_upload(
+    c: RunnerCtx,
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Json<AttachmentUploadResponse>, ApiError> {
+    Ok(Json(
+        crate::domains::attachments::runner::upload(&s, &c.runner, &headers, body).await?,
+    ))
+}
+
+async fn attachment_download(
+    c: RunnerCtx,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    crate::domains::attachments::runner::download(&s, &c.runner, id).await
 }
 
 async fn sandboxes(

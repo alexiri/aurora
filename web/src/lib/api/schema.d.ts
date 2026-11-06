@@ -870,6 +870,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/attachments/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * File bytes. Always `application/octet-stream` with `Content-Disposition: attachment` and
+         *     `nosniff`, whatever the stored type.
+         */
+        get: operations["downloadAttachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/cli": {
         parameters: {
             query?: never;
@@ -1158,6 +1178,26 @@ export interface paths {
         get: operations["getConversation"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload a file to a conversation (multipart part `file`); it stays `pending` until a message
+         *     references it.
+         */
+        post: operations["uploadAttachment"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2643,6 +2683,30 @@ export interface components {
             user_code: string;
             /** Format: uuid */
             workspace_id: string;
+        };
+        /** @description One attachment (API_CONTRACTS C-30). */
+        Attachment: {
+            caption?: string | null;
+            content_type: string;
+            /** Format: uuid */
+            conversation_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description `in` (people -> agent) | `out` (agent -> people) */
+            direction: string;
+            /** @description Sanitized to `[A-Za-z0-9._-]`, at most 128 characters. */
+            filename: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            size_bytes: number;
+            /** @description `pending` | `bound` | `failed` */
+            status: string;
+            /**
+             * Format: uuid
+             * @description Set once bound to a turn (outbound files: the turn that sent them).
+             */
+            turn_id?: string | null;
         };
         AuditEntry: {
             action: string;
@@ -4878,6 +4942,14 @@ export interface components {
             instructions?: string | null;
             name?: string | null;
             verification?: null | components["schemas"]["VerificationInput"];
+        };
+        /** @description `multipart/form-data` body of the upload route. */
+        UploadAttachmentRequest: {
+            /**
+             * Format: binary
+             * @description The file, at most 10 MiB.
+             */
+            file: string;
         };
         /** @description `multipart/form-data` body of the upload route. */
         UploadPluginRequest: {
@@ -7701,6 +7773,37 @@ export interface operations {
             };
         };
     };
+    downloadAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Attachment id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description File bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": number[];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     startCliLogin: {
         parameters: {
             query?: never;
@@ -8403,6 +8506,56 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    uploadAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["UploadAttachmentRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attachment"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };

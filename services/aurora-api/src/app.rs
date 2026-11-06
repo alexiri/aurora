@@ -219,6 +219,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::apps::router())
         .merge(domains::connections::router())
         .merge(domains::conversations::router())
+        .merge(domains::attachments::router())
         .merge(domains::hosted::router())
         .merge(domains::memory::router())
         .merge(domains::skills::router())

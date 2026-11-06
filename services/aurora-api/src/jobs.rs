@@ -11,6 +11,7 @@ pub const APPROVAL_EXPIRY_GRACE: Duration = Duration::from_secs(30);
 /// Pending rows of gateways unseen this long become `abandoned`.
 pub const GATEWAY_UNSEEN: Duration = Duration::from_secs(60);
 pub const APPROVAL_SWEEP_EVERY: Duration = Duration::from_secs(10);
+pub const ATTACHMENT_SWEEP_EVERY: Duration = Duration::from_secs(3600);
 pub const PARTITION_EVERY: Duration = Duration::from_secs(24 * 3600);
 pub const PARTITIONS_AHEAD: u32 = 2;
 const PARTITION_JOB: &str = "request_log_partitions";
@@ -20,6 +21,12 @@ pub async fn sweep_approvals(pool: &PgPool) -> Result<(usize, usize), aurora_db:
     let expired = approvals::expire_overdue(pool, APPROVAL_EXPIRY_GRACE.as_secs_f64()).await?;
     let abandoned = approvals::abandon_unseen(pool, GATEWAY_UNSEEN.as_secs_f64()).await?;
     Ok((expired.len(), abandoned.len()))
+}
+
+/// Delete `pending` attachments older than `ATTACH_PENDING_TTL` with their blobs (idempotent,
+/// safe on every replica). Returns the number of rows removed.
+pub async fn sweep_attachments(pool: &PgPool) -> Result<usize, aurora_core::ApiError> {
+    crate::domains::attachments::sweep_pending(pool).await
 }
 
 /// Create upcoming partitions and drop expired ones (singleton). `Ok(false)` when
@@ -55,6 +62,19 @@ pub fn spawn(pool: PgPool, retention_days: u32) {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "approval sweep failed"),
+            }
+        }
+    });
+    let p = pool.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(ATTACHMENT_SWEEP_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            match sweep_attachments(&p).await {
+                Ok(n) if n > 0 => tracing::info!(removed = n, "attachment pending sweep"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "attachment pending sweep failed"),
             }
         }
     });

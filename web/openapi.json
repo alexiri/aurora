@@ -4213,6 +4213,62 @@
         ]
       }
     },
+    "/v1/attachments/{id}/content": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "File bytes. Always `application/octet-stream` with `Content-Disposition: attachment` and\n`nosniff`, whatever the stored type.",
+        "operationId": "downloadAttachment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attachment id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File bytes",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/auth/cli": {
       "post": {
         "tags": [
@@ -5155,6 +5211,87 @@
             }
           },
           "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/conversations/{id}/attachments": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Upload a file to a conversation (multipart part `file`); it stays `pending` until a message\nreferences it.",
+        "operationId": "uploadAttachment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadAttachmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attachment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
             "description": "",
             "content": {
               "application/json": {
@@ -13260,6 +13397,67 @@
           "workspace_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "Attachment": {
+        "type": "object",
+        "description": "One attachment (API_CONTRACTS C-30).",
+        "required": [
+          "id",
+          "conversation_id",
+          "direction",
+          "status",
+          "filename",
+          "content_type",
+          "size_bytes",
+          "created_at"
+        ],
+        "properties": {
+          "caption": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "direction": {
+            "type": "string",
+            "description": "`in` (people -> agent) | `out` (agent -> people)"
+          },
+          "filename": {
+            "type": "string",
+            "description": "Sanitized to `[A-Za-z0-9._-]`, at most 128 characters."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "type": "string",
+            "description": "`pending` | `bound` | `failed`"
+          },
+          "turn_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Set once bound to a turn (outbound files: the turn that sent them)."
           }
         }
       },
@@ -21682,6 +21880,20 @@
           }
         },
         "additionalProperties": false
+      },
+      "UploadAttachmentRequest": {
+        "type": "object",
+        "description": "`multipart/form-data` body of the upload route.",
+        "required": [
+          "file"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "description": "The file, at most 10 MiB."
+          }
+        }
       },
       "UploadPluginRequest": {
         "type": "object",
