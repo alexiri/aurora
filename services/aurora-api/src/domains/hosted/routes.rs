@@ -5,11 +5,13 @@ use super::dto::{ModelOption, ModelOptions, SandboxPort, SandboxProcess, Sandbox
 use super::{lifecycle, model};
 use crate::app::AppState;
 use crate::domains::conversations::service::{self as conv, load_agent};
+use crate::domains::runner_plane::boot;
 use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path};
 use aurora_core::ApiError;
 use aurora_db::DbError;
+use aurora_db::repo::agents::AgentRow;
 use aurora_db::repo::{conversations as convs, hosted, secrets};
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -35,7 +37,8 @@ async fn hosted_agent(
     Ok(a)
 }
 
-async fn view(s: &AppState, agent: Uuid) -> Result<SandboxView, ApiError> {
+async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
+    let agent = a.id;
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     let Some(r) = hosted::sandbox_view(&mut conn, agent).await? else {
         return Ok(SandboxView {
@@ -57,6 +60,19 @@ async fn view(s: &AppState, agent: Uuid) -> Result<SandboxView, ApiError> {
     let processes = match (r.boot_id, running) {
         (Some(b), true) => hosted::processes_of_boot(&mut conn, r.id, b).await?,
         _ => vec![],
+    };
+    // Env/stub changes apply at the next boot: compare what a boot would get now with the hash
+    // recorded when the running boot started (boots before this was recorded never flag).
+    let restart_to_update = if running {
+        match hosted::boot_app_inputs_hash(&mut conn, agent).await? {
+            Some(booted) => {
+                drop(conn);
+                boot::app_boot_for(s, a).await?.hash != booted
+            }
+            None => false,
+        }
+    } else {
+        false
     };
     let mut reasons = Vec::new();
     if r.active_turn {
@@ -96,7 +112,7 @@ async fn view(s: &AppState, agent: Uuid) -> Result<SandboxView, ApiError> {
                 protocol: "tcp".into(),
             })
             .collect(),
-        restart_to_update: false,
+        restart_to_update,
     })
 }
 
@@ -110,8 +126,8 @@ async fn get_sandbox(
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
 ) -> Result<Json<SandboxView>, ApiError> {
-    hosted_agent(&s, &c, agent).await?;
-    Ok(Json(view(&s, agent).await?))
+    let a = hosted_agent(&s, &c, agent).await?;
+    Ok(Json(view(&s, &a).await?))
 }
 
 /// Restart the agent's computer; its active turns fail with `agent_restarted`.
@@ -124,7 +140,7 @@ async fn restart(
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
 ) -> Result<(StatusCode, Json<SandboxView>), ApiError> {
-    hosted_agent(&s, &c, agent).await?;
+    let a = hosted_agent(&s, &c, agent).await?;
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
     hosted::request_restart(&mut tx, agent).await?;
     let mut flush = Vec::new();
@@ -148,7 +164,7 @@ async fn restart(
     for (cid, turn) in flush {
         lifecycle::flush_deltas(&s, cid, turn).await;
     }
-    Ok((StatusCode::ACCEPTED, Json(view(&s, agent).await?)))
+    Ok((StatusCode::ACCEPTED, Json(view(&s, &a).await?)))
 }
 
 /// Models selectable for the agent: usable granted keys only, allowed models only.

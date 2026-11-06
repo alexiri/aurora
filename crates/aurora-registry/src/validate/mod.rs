@@ -42,6 +42,34 @@ const RESERVED_ENV: [&str; 16] = [
     "FTP_PROXY",
 ];
 
+/// Whether an `agent.env` name is reserved (09 §`agent`); shared with the boot path.
+#[must_use]
+pub fn env_name_reserved(name: &str) -> bool {
+    RESERVED_ENV.contains(&name.to_ascii_uppercase().as_str())
+        || ["AURORA_", "ANTHROPIC_", "OPENAI_"]
+            .iter()
+            .any(|p| name.starts_with(p))
+}
+
+/// Whether an `agent.env` name matches `[A-Z][A-Z0-9_]*`.
+#[must_use]
+pub fn env_name_valid(name: &str) -> bool {
+    let mut c = name.chars();
+    c.next().is_some_and(|f| f.is_ascii_uppercase())
+        && c.all(|x| x.is_ascii_uppercase() || x.is_ascii_digit() || x == '_')
+}
+
+/// Whether an `agent.stubs` path is relative, normalized and confined to the home.
+#[must_use]
+pub fn stub_path_ok(path: &str) -> bool {
+    !(path.is_empty()
+        || path.starts_with('/')
+        || path.contains(['\\', '\0'])
+        || path
+            .split('/')
+            .any(|c| c.is_empty() || c == "." || c == ".."))
+}
+
 fn re(cell: &'static OnceLock<Option<Regex>>, pat: &str) -> Option<&'static Regex> {
     cell.get_or_init(|| Regex::new(pat).ok()).as_ref()
 }
@@ -404,20 +432,14 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                 "instructions too long",
             );
         }
-        static R: OnceLock<Option<Regex>> = OnceLock::new();
         for (i, e) in ag.env.iter().enumerate() {
-            let up = e.name.to_ascii_uppercase();
-            let reserved = RESERVED_ENV.contains(&up.as_str())
-                || ["AURORA_", "ANTHROPIC_", "OPENAI_"]
-                    .iter()
-                    .any(|p| e.name.starts_with(p));
-            if reserved {
+            if env_name_reserved(&e.name) {
                 cx.v(
                     "env_name_reserved",
                     &format!("/agent/env/{i}/name"),
                     format!("`{}` is reserved", e.name),
                 );
-            } else if !re(&R, r"^[A-Z][A-Z0-9_]*$").is_some_and(|r| r.is_match(&e.name)) {
+            } else if !env_name_valid(&e.name) {
                 cx.v(
                     "env_name_invalid",
                     &format!("/agent/env/{i}/name"),
@@ -426,13 +448,7 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
             }
         }
         for (i, s) in ag.stubs.iter().enumerate() {
-            let bad = s.path.is_empty()
-                || s.path.starts_with('/')
-                || s.path.contains(['\\', '\0'])
-                || s.path
-                    .split('/')
-                    .any(|c| c.is_empty() || c == "." || c == "..");
-            if bad {
+            if !stub_path_ok(&s.path) {
                 cx.v(
                     "stub_path_invalid",
                     &format!("/agent/stubs/{i}/path"),

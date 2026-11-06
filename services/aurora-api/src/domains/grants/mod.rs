@@ -2,7 +2,7 @@
 //! Connection grants (M3) slot into `compile` and `GrantsResponse.connections`.
 pub mod compile;
 pub mod dto;
-mod effective;
+pub(crate) mod effective;
 mod routes;
 pub mod service;
 

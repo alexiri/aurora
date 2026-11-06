@@ -202,9 +202,14 @@ async fn mint_start(
         .harness
         .clone()
         .unwrap_or_else(|| s.config.hosted.default_harness.clone());
+    let agent_row = aurora_db::repo::agents::get(&mut *tx, c.agent_id)
+        .await?
+        .ok_or_else(|| ApiError::internal("sandbox agent vanished"))?;
+    let app_boot = boot::app_boot_for(s, &agent_row).await?;
     let profile = serde_json::json!({
         "cpu_millis": resources.cpu_millis, "memory_mib": resources.memory_mib,
         "pids": resources.pids, "home_gib": home_gib,
+        "app_inputs_hash": app_boot.hash,
     });
     let revoked = sandboxes::begin_boot(
         tx,
@@ -231,6 +236,7 @@ async fn mint_start(
             bootstrap_token: bootstrap.expose(),
             boot_token: boot_tok.expose(),
             ca_pem,
+            files: &app_boot.files,
         },
     )?;
     let labels = BTreeMap::from([
@@ -242,7 +248,7 @@ async fn mint_start(
         ("aurora.sandbox".to_owned(), c.sandbox_id.to_string()),
         ("aurora.boot".to_owned(), boot_id.to_string()),
     ]);
-    let spec = boot::spec(secret, home_ref, home_gib, resources, labels);
+    let spec = boot::spec(app_boot.env, secret, home_ref, home_gib, resources, labels);
     Ok((
         WorkItem {
             item_id: Uuid::now_v7(),
