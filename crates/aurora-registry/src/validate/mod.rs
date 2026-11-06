@@ -1,6 +1,11 @@
-//! In-manifest validation rules (09 §6). Package-level checks (archive,
-//! signature, PSL zone breadth, reserved hosts, cross-package duplicates, WIT)
-//! are REG-002; so is the group-wildcard superset proof.
+//! Validation rules (09 §6): in-manifest rules ([`manifest`]) and full package
+//! rules ([`package`]). WIT inspection of `hooks.wasm` is out of scope (I-02).
+mod package_rules;
+mod wildcard;
+
+pub use package_rules::{ValidationContext, package, zone_too_broad};
+pub use wildcard::wildcards;
+
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 

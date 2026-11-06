@@ -1,15 +1,18 @@
 //! aurora-registry — plugin manifest model, template language and linter
 //! (docs/09-app-plugins.md §3–§6).
-//!
-//! Known gap (REG-002): the group-wildcard "true superset" check needs matcher
-//! reasoning and is not implemented here.
 #![forbid(unsafe_code)]
 
+pub mod builder;
+pub mod digest;
 pub mod manifest;
+pub mod package;
+pub mod signature;
 pub mod template;
 pub mod validate;
 
 pub use manifest::Manifest;
+pub use package::{Limits, Package};
+pub use signature::{Signer, TrustStore, TrustedKey};
 pub use template::{Template, TemplateError};
 
 /// One lint finding. `path` is JSON-pointer-like (`/apps/0/hosts/1/inject/0`).
