@@ -126,6 +126,11 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 
 - none
 
+## Open security findings
+
+- **SEC-34** (TEST-013): supervisor child processes (harness, background processes, gates) did not get scrubbed environments ⇒ `AURORA_BOOT` (boot + bootstrap tokens) could reach agent processes. Fix in progress: SEC-FIX-01 (allow-list env spawn helper, enforced). Re-prove with TEST-013 s8.
+- **SEC-09** (TEST-013 s8b): gateway 4103 and runner 4106 listeners reachable from sandboxes (same bind as proxy/channel). Fix in progress: SEC-FIX-02 (separate binds, compose core-network IPs). Re-prove with TEST-013 s8b.
+
 ## Blockers
 
 - Sub-agent usage limit (Sonnet) until 14:20 Europe/Zurich: FE-013 and GOV-001 paused mid-task (resume, don't restart).
