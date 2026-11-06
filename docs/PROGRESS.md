@@ -140,8 +140,13 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | TEST-014 | M5 hosted suites (18) + live claude-code conformance (needs LiteLLM endpoint) | e2e | todo | M5 | Sonnet | |
 | CHAN-001 | aurora-channels (content, cards, action tokens, capabilities; I-26) | Rust | done | — | Sonnet | channels tests |
 | CON-001 | Connector contract W8 + SDK + fake connector | Rust | done | CHAN-001 | Sonnet | connector tests; FUP-M6 |
-| API-005 | M6 contract (channel management, connector plane) | contract | todo | — | Opus | |
-| BE-070+ | Channel core API (registration, inbox/ops, routing, linking, cards, presence, messaging tools), conformance, channel UI | both | todo | API-005 | — | |
+| API-006 | M6 contract (connector admin, integrations, presences, bindings, user links, DM defaults, reach; C-31..C-37) | contract | done | — | Opus | API_CONTRACTS.md M6 |
+| BE-070 | Connector registration, admin, ownership, config feed | Rust | todo (ready) | API-006 | Sonnet (worktree) | |
+| BE-071 | Inbox ingest, ops engine, correlated ops, connector files, link-start | Rust | todo | BE-070, BE-064 | Sonnet (worktree) | |
+| BE-072..075 | Inbox processing + mirror + commands; cards + clicker auth; management API; messaging tools | Rust | todo (briefs pending) | BE-071 | — | |
+| TEST-015 | Connector conformance suite (fake core) | Rust test | todo (ready) | CON-001 | Sonnet (worktree) | |
+| FE-060 | Channel pages, admin connectors, /link/channel | Next.js | todo | API-006 | — | |
+| TEST-016 | e2e-hosted M6 scenario (fake platform DM → Daneel → approve from card) | e2e | todo | BE-072..075 | — | |
 | OPS-010 | Helm chart | Ops | done | — | Sonnet | `helm lint`, `helm template` |
 | RUN-004 | Kubernetes backend (+ runner.k8s.core_namespace config fix) | Rust | done (e65ec66d) | RUN-003 | Sonnet (Orca worker, worktree) + Opus (kube → aws-lc-rs) | config 18, k8s unit 15, k8s_mock 15 (fake API server), runner 10; clippy; cargo deny ok; helm-rendered ConfigMap loads |
 | OPS-011 | kind e2e, perf budgets, upgrade test, operator docs | Ops | todo (kind blocked: no cluster) | RUN-004 | — | |
