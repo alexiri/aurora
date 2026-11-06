@@ -1,0 +1,29 @@
+package:
+  id: fixture-conflict
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Fixture Conflict
+  description: Phase 0 fixture whose host claim overlaps fixture-bearer
+apps:
+  - about:
+      id: conflict-demo
+      name: Conflict demo
+      description: Second app claiming the same host and path prefix as bearer-demo
+      category: testing
+    credentials:
+      - { name: api_token, secret: true }
+    connect:
+      - id: api_key
+        kind: fields
+        fields:
+          - { name: api_token, label: API token, type: secret, required: true }
+    hosts:
+      - match: { host: api.bearer.example.test, path_prefix: /rest/v2 }
+        inject:
+          - header: { name: x-conflict-token, value: "{credentials.api_token}" }
+    tools:
+      read:
+        items:
+          - { id: list_things, name: List things, host: api.bearer.example.test, path: /rest/v2/things, methods: [GET] }

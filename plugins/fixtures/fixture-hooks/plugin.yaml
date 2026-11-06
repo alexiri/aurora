@@ -1,0 +1,52 @@
+package:
+  id: fixture-hooks
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Fixture Hooks
+  description: Phase 0 fixture exercising every hook point
+permissions:
+  hooks: [connect.authorize, connect.exchange, token.mint, approval.summarize]
+  egress:
+    connect.exchange: [auth.hooks.example.test]
+    token.mint: [auth.hooks.example.test]
+  context: [org_id, instance_url]
+apps:
+  - about:
+      id: hooks-demo
+      name: Hooks demo
+      description: Service connected and minted entirely through plugin hooks
+      category: testing
+      web_hosts: [app.hooks.example.test]
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: installation_id }
+    metadata:
+      - { name: account }
+    connect:
+      - id: app_install
+        kind: hook
+        authorize: true
+        fields:
+          - { name: account, label: Account, type: text, store: metadata, required: true }
+    hosts:
+      - match: { host: api.hooks.example.test }
+        inject:
+          - bearer: "{credentials.access_token}"
+    token:
+      kind: hook
+      max_lifetime_secs: 3600
+    tools:
+      read:
+        items:
+          - { id: list_items, name: List items, host: api.hooks.example.test, path: /v1/items, methods: [GET] }
+      write:
+        items:
+          - { id: create_item, name: Create item, host: api.hooks.example.test, path: /v1/items, methods: [POST] }
+    approvals:
+      create_item:
+        title: Create item
+        fields:
+          - { label: Name, source: body, steps: [ { json: /name } ] }
+        summarize: hook

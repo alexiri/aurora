@@ -1,0 +1,28 @@
+# <source dir> <expected violation code> [xfail]
+# xfail = known tooling gap, reported but not failing the build.
+fixture-invalid-archive-symlink archive_link
+fixture-invalid-archive-traversal path_traversal
+fixture-invalid-archive-unknown-path path_unknown
+fixture-invalid-archive-duplicate path_duplicate
+fixture-invalid-icon-too-small icon_too_small
+fixture-invalid-guide-raw-html guide_raw_html
+fixture-invalid-signature-missing signature_missing
+fixture-invalid-signature-untrusted signature_untrusted
+fixture-invalid-signature-tampered digest_mismatch
+fixture-invalid-manifest-unknown-key unknown_field
+fixture-invalid-manifest-contract bad_contract
+fixture-invalid-manifest-min-core min_core_too_new
+fixture-invalid-template-undeclared-credential undeclared_credential
+fixture-invalid-host-pattern host_pattern_invalid
+fixture-invalid-tool-host-uncovered tool_host_uncovered
+fixture-invalid-duplicate-tool-id duplicate_tool_id
+fixture-invalid-wildcard-superset wildcard_not_superset
+fixture-invalid-zone-too-broad zone_too_broad
+fixture-invalid-reserved-host reserved_host xfail
+fixture-invalid-hooks-mismatch hooks_mismatch
+fixture-invalid-hooks-wasm-missing hooks_wasm_missing
+fixture-invalid-egress-summarize egress_summarize
+fixture-invalid-egress-private egress_private
+fixture-invalid-env-reserved env_name_reserved
+fixture-invalid-link-host-undeclared link_host_undeclared
+fixture-invalid-token-url-http token_url_not_https

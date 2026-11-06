@@ -1,0 +1,25 @@
+package:
+  id: fixture-invalid-duplicate-tool-id
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Invalid fixture
+  description: "Expected rejection: duplicate_tool_id"
+apps:
+  - about: { id: invalid-app, name: Invalid app, web_hosts: [app.invalid.example.test] }
+    credentials: [ { name: api_token, secret: true } ]
+    metadata: [ { name: org } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: API token, type: secret, required: true } ]
+    hosts:
+      - match: { host: api.invalid.example.test }
+        inject:
+          - bearer: "{credentials.api_token}"
+    tools:
+      read:
+        items:
+          - { id: list_things, name: List things, host: api.invalid.example.test, path: /v1/things, methods: [GET] }
+          - { id: list_things, name: List again, host: api.invalid.example.test, path: /v1/again, methods: [GET] }

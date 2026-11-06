@@ -1,0 +1,22 @@
+# The runner signs with the current clock, so the signature value itself is checked by the
+# gateway's SigV4 unit tests against the AWS vectors; here we check routing, the context
+# variable and that the finalizer runs without error (credentials available).
+- name: external id context variable is injected and signing succeeds
+  connection:
+    credentials: { access_key_id: "AKIDEXAMPLE", secret_access_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" }
+    metadata: { region: us-east-1 }
+    context: { org_external_id: "org-ext-123" }
+  request: { method: GET, url: "https://s3.us-east-1.store.example.test/bucket/key.txt" }
+  expect:
+    app: sigv4-store
+    tool: get_object
+    upstream:
+      url: "https://s3.us-east-1.store.example.test/bucket/key.txt"
+      headers: { x-external-id: "org-ext-123" }
+- name: put is a write tool
+  connection:
+    credentials: { access_key_id: "AKIDEXAMPLE", secret_access_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", session_token: "sess" }
+    metadata: { region: eu-west-1 }
+    context: { org_external_id: "org-ext-123" }
+  request: { method: PUT, url: "https://s3.eu-west-1.store.example.test/bucket/key.txt", body: "hello" }
+  expect: { tool: put_object }

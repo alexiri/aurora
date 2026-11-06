@@ -1,0 +1,59 @@
+package:
+  id: fixture-tenant
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Fixture Tenant
+  description: Phase 0 fixture, tenant-bound suffix host
+oauth_clients:
+  - id: tenantco
+    authorize_url: https://login.tenant.example.test/authorize
+    token_url: { template: "https://{connection.tenant_host}/oauth/token", zone: "*.tenant.example.test" }
+    pkce: true
+    fields:
+      - { name: client_id, label: Client ID }
+      - { name: client_secret, label: Client secret, secret: true }
+apps:
+  - about:
+      id: tenant-desk
+      name: Tenant desk
+      description: Help desk reached on a per-customer subdomain
+      category: testing
+      web_hosts: [www.tenant.example.test]
+    credentials:
+      - { name: api_token, secret: true }
+      - { name: access_token, secret: true, optional: true }
+    metadata:
+      - { name: email }
+    connect:
+      - id: api_key
+        kind: fields
+        fields:
+          - { name: subdomain, label: Host, type: text, store: tenant_host, required: true, placeholder: "acme.tenant.example.test" }
+          - { name: email, label: Email, type: text, store: metadata, required: true }
+          - { name: api_token, label: API token, type: secret, required: true }
+        probe:
+          url: "https://{connection.tenant_host}/api/v2/users/me"
+          label: /user/name
+      - id: oauth
+        kind: oauth2
+        client: tenantco
+        scopes:
+          - { scope: read, name: Read, access: read }
+        default_scopes: [read]
+        token_response: { access_token: /access_token }
+    hosts:
+      - match: { host: "*.tenant.example.test" }
+        tenant: { field: connection.tenant_host, zone: "*.tenant.example.test" }
+        inject:
+          - basic: { user: "{metadata.email}/token", password: "{credentials.api_token}" }
+          - header: { name: x-fixture, value: tenant }
+      - match: { host: "gw.tenant.example.test" }
+        rewrite_host: { template: "{connection.tenant_host}", zone: "*.tenant.example.test" }
+        inject:
+          - header: { name: x-via, value: gateway }
+    tools:
+      read:
+        items:
+          - { id: list_tickets, name: List tickets, host: "*.tenant.example.test", path: /api/v2/tickets, methods: [GET] }

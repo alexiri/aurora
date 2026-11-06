@@ -1,0 +1,61 @@
+# Cases with `hook:` are skipped by `aurora plugin test` until HOOK-004 wires the embedded
+# hook-host runner; the non-hook cases run in check-snapshot today.
+- name: api host injects the minted token
+  connection: { credentials: { access_token: "minted", installation_id: "7" } }
+  request: { method: GET, url: "https://api.hooks.example.test/v1/items" }
+  expect:
+    app: hooks-demo
+    tool: list_items
+    upstream: { headers: { authorization: "Bearer minted" } }
+- name: connect.authorize builds the install URL
+  request: { method: GET, url: "https://api.hooks.example.test/v1/items" }
+  hook:
+    point: connect.authorize
+    input: { app_id: hooks-demo, method_id: app_install, state: s1, redirect_uri: "https://aurora.example.test/v1/oauth/callback", fields: { account: acme } }
+    expect: { ok: true, url_contains: "account=acme", continuation: "account=acme" }
+- name: connect.authorize rejects a missing account
+  request: { method: GET, url: "https://api.hooks.example.test/v1/items" }
+  hook:
+    point: connect.authorize
+    input: { app_id: hooks-demo, method_id: app_install, state: s1, redirect_uri: "https://aurora.example.test/v1/oauth/callback", fields: {} }
+    expect: { error: invalid-input }
+- name: connect.exchange asks to continue then connects
+  request: { method: GET, url: "https://api.hooks.example.test/v1/items" }
+  hook:
+    point: connect.exchange
+    http_cassette:
+      - { request: { method: POST, url: "https://auth.hooks.example.test/token" }, response: { status: 200, body: "tok-1" } }
+    steps:
+      - input: { source: { oauth_callback: { installation_id: "7" } }, continuation: "account=acme" }
+        expect: { continue: { continuation: "stage=2;installation=7" } }
+      - input: { source: { oauth_callback: { installation_id: "7" } }, continuation: "stage=2;installation=7" }
+        expect: { connected: { credentials: { access_token: "tok-1", installation_id: "7" }, label: "installation 7" } }
+- name: connect.exchange egress outside the allow-list is denied
+  request: { method: GET, url: "https://api.hooks.example.test/v1/items" }
+  hook:
+    point: connect.exchange
+    egress_override: [other.example.test]
+    input: { source: { oauth_callback: { installation_id: "7" } }, continuation: "stage=2;installation=7" }
+    expect: { error: upstream, message_contains: "egress denied" }
+- name: token.mint returns a fresh token
+  request: { method: GET, url: "https://api.hooks.example.test/v1/items" }
+  hook:
+    point: token.mint
+    http_cassette:
+      - { request: { method: POST, url: "https://auth.hooks.example.test/mint" }, response: { status: 200, body: "tok-2" } }
+    input: { credentials: { installation_id: "7" } }
+    expect: { credentials: { access_token: "tok-2" } }
+- name: token.mint maps 401 to reauth-required
+  request: { method: GET, url: "https://api.hooks.example.test/v1/items" }
+  hook:
+    point: token.mint
+    http_cassette:
+      - { request: { method: POST, url: "https://auth.hooks.example.test/mint" }, response: { status: 401, body: "" } }
+    input: { credentials: { installation_id: "7" } }
+    expect: { error: reauth-required }
+- name: approval.summarize has no egress
+  request: { method: POST, url: "https://api.hooks.example.test/v1/items" }
+  hook:
+    point: approval.summarize
+    input: { tool_id: create_item, method: POST, host: api.hooks.example.test, path: /v1/items }
+    expect: { title: "Create item", fields: { Egress: denied } }

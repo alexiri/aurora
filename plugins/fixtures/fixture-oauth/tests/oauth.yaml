@@ -1,0 +1,25 @@
+- name: mail injects the access token
+  connection: { credentials: { access_token: "at-1", refresh_token: "rt-1" }, metadata: { email: "a@example.test" } }
+  request: { method: GET, url: "https://api.oauth.example.test/mail/v1/messages" }
+  expect:
+    app: oauth-mail
+    tool: list_messages
+    upstream: { headers: { authorization: "Bearer at-1" } }
+- name: send summary decodes the MIME headers
+  connection: { credentials: { access_token: "at-1" } }
+  request:
+    method: POST
+    url: "https://api.oauth.example.test/mail/v1/messages/send"
+    headers: { content-type: application/json }
+    # base64url of "To: bob@example.test\r\nSubject: Hello\r\n\r\nbody"
+    body: '{"raw":"VG86IGJvYkBleGFtcGxlLnRlc3QNClN1YmplY3Q6IEhlbGxvDQoNCmJvZHk"}'
+  expect:
+    tool: send_message
+    summary: { title: "Send email", fields: { To: "bob@example.test", Subject: "Hello" } }
+- name: second app of the same package injects its own token
+  connection: { credentials: { access_token: "at-2" } }
+  request: { method: GET, url: "https://cal.oauth.example.test/v1/events" }
+  expect:
+    app: oauth-cal
+    tool: list_events
+    upstream: { headers: { authorization: "Bearer at-2" } }

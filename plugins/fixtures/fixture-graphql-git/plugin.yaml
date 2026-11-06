@@ -1,0 +1,51 @@
+package:
+  id: fixture-graphql-git
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Fixture GraphQL and Git
+  description: Phase 0 fixture, GraphQL tools, git tools, commit trailer, registry challenge passthrough
+permissions:
+  context: [agent_name, agent_handle]
+apps:
+  - about:
+      id: forge-demo
+      name: Forge demo
+      description: Code forge with a GraphQL API and git smart HTTP
+      category: testing
+      web_hosts: [forge.example.test]
+    credentials:
+      - { name: token, secret: true }
+    connect:
+      - id: api_key
+        kind: fields
+        fields:
+          - { name: token, label: Access token, type: secret, required: true }
+    hosts:
+      - match: { host: api.forge.example.test }
+        inject:
+          - bearer: "{credentials.token}"
+        transform:
+          git_commit_trailer: { trailer: "Co-authored-by: {context.agent_name} <{context.agent_handle}@agents.example.test>" }
+      - match: { host: git.forge.example.test }
+        inject:
+          - basic: { user: x-access-token, password: "{credentials.token}" }
+      - match: { host: registry.forge.example.test }
+        inject: []
+        passthrough: [registry_token_challenge]
+    tools:
+      read:
+        items:
+          - { id: gql_query, name: GraphQL query, host: api.forge.example.test, path: /graphql, methods: [POST], graphql: query }
+          - { id: git_fetch, name: Fetch code, host: git.forge.example.test, path: "/*/*/**", methods: [GET, POST], git: fetch }
+      write:
+        items:
+          - { id: gql_mutation, name: GraphQL mutation, host: api.forge.example.test, path: /graphql, methods: [POST], graphql: mutation }
+          - { id: git_push, name: Push code, host: git.forge.example.test, path: "/*/*/**", methods: [GET, POST], git: push }
+    approvals:
+      gql_mutation:
+        title: GraphQL mutation
+        fields:
+          - { label: Operation, source: body, steps: [ { graphql: operation_name } ] }
+          - { label: Fields, source: body, steps: [ { graphql: field_names } ] }

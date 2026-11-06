@@ -1,0 +1,49 @@
+package:
+  id: fixture-sigv4
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Fixture SigV4
+  description: Phase 0 fixture, AWS SigV4 finalizer and org_external_id context
+permissions:
+  context: [org_external_id]
+apps:
+  - about:
+      id: sigv4-store
+      name: SigV4 store
+      description: Object store signed with AWS Signature Version 4
+      category: testing
+    credentials:
+      - { name: access_key_id, secret: true }
+      - { name: secret_access_key, secret: true }
+      - { name: session_token, secret: true, optional: true }
+    metadata:
+      - { name: region }
+      - { name: role_arn }
+    connect:
+      - id: keys
+        kind: fields
+        fields:
+          - { name: access_key_id, label: Access key id, type: secret, required: true }
+          - { name: secret_access_key, label: Secret access key, type: secret, required: true }
+          - { name: session_token, label: Session token, type: secret }
+          - { name: region, label: Region, type: text, store: metadata, required: true, placeholder: "us-east-1" }
+    hosts:
+      - match: { host: "s3.*.store.example.test" }
+        inject:
+          - header: { name: x-external-id, value: "{context.org_external_id}" }
+        finalize:
+          aws_sigv4:
+            region: "{metadata.region}"
+            service: s3
+            access_key: "{credentials.access_key_id}"
+            secret_key: "{credentials.secret_access_key}"
+            session_token: "{credentials.session_token}"
+    tools:
+      read:
+        items:
+          - { id: get_object, name: Get object, host: "s3.*.store.example.test", path: "/**", methods: [GET, HEAD] }
+      write:
+        items:
+          - { id: put_object, name: Put object, host: "s3.*.store.example.test", path: "/**", methods: [PUT, DELETE] }

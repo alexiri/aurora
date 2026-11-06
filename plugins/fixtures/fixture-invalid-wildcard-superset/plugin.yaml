@@ -1,0 +1,24 @@
+package:
+  id: fixture-invalid-wildcard-superset
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Invalid fixture
+  description: "Expected rejection: wildcard_not_superset"
+apps:
+  - about: { id: invalid-app, name: Invalid app, web_hosts: [app.invalid.example.test] }
+    credentials: [ { name: api_token, secret: true } ]
+    metadata: [ { name: org } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: API token, type: secret, required: true } ]
+    hosts:
+      - match: { host: api.invalid.example.test }
+        inject:
+          - bearer: "{credentials.api_token}"
+    tools:
+      write:
+        wildcard: { id: all_write, name: All write operations }
+        items: []
