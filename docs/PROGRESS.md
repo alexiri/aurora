@@ -15,6 +15,16 @@ their dependencies near completion (adaptive planning).
 - sqlx-cli 0.8.6 at `~/.cargo/bin/sqlx` (not on PATH; use full path).
 - Disk: ~39 GB free on `/home` — keep one `target/`, avoid duplicate container build caches (I-03).
 
+## Milestone status
+
+| Milestone | Status | Acceptance evidence |
+|---|---|---|
+| M0 | done (CI never executed on GitHub — no remote) | schema guard, compose up, guards, cargo-deny |
+| M1 | done except OIDC (BE-015 in progress) and permission-matrix test (TEST-010) | `scripts/e2e/m1.sh` Playwright sign-up → workspace (Daneel) → invite → accept: pass |
+| M2 | done (core) — follow-ups FUP-M2 | `scripts/e2e/gateway.sh` 11 scenarios pass; governance SEC-35..39 service tests (GW-005, TEST-020); hold tests incl. two replicas |
+| M3 | in progress: registry crate + gateway apps/mechanisms/refresh done; lifecycle API, connect flows, connection grants, apps UI, hook host/WIT/SDK (needs wasm32-wasip2), plugin CLI, fixtures todo | — |
+| M4–M7 | todo (wire types done) | — |
+
 ## Requirement coverage
 
 | Requirement ID | Summary | Task IDs | Status | Evidence/gap |
@@ -50,7 +60,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | BE-016 | /v1/me, admin users, audit lists, bootstrap-admin | Rust | done | BE-011 | Sonnet | tests me/admin/audit 9; CLI run by orchestrator |
 | BE-014 | API keys, CLI device flow, resolve fix | Rust | done | BE-012 | Sonnet | tests keys/cli; S-04 + revoke-kind fix by orchestrator |
 | BE-013 | Invitations | Rust | done | BE-011 | Sonnet | tests/invitations.rs 5 (token never in responses); checks by orchestrator |
-| BE-015 | OIDC + mock IdP | Rust | ready (brief) | BE-011 | Sonnet | |
+| BE-015 | OIDC + mock IdP | Rust | in-progress | BE-011 | Sonnet | |
 | FE-011 | Dashboard shell | Next.js | done | BE-012 | Sonnet | 14 vitest; build; curl smoke |
 | FE-010 | Auth pages + CSP proxy | Next.js | done | BE-011 | Sonnet | 22 vitest; CSP nonce/nosniff headers verified; /join on generated client |
 | FE-013 | Account, workspace settings, admin users | Next.js | done | BE-014, BE-016 | Sonnet | |
@@ -69,19 +79,22 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | GW-005 | Gateway governance enforcement | Rust | done (15 governance tests + TEST-020 SEC-37/write-back) | GOV-001 | Sonnet | |
 | BE-031 | Secrets + LLM keys API | Rust | done (tests/secrets.rs 8) | GOV-001 | Sonnet | |
 | BE-032 | BYO agents API + credentials + container config | Rust | done (tests/agents.rs 5) | BE-016 | Sonnet | |
-| BE-033 | Policy authoring, grants, simulate, effective | Rust | in-progress | BE-031, BE-032 | Sonnet | |
-| BE-030 | Approvals API + SSE + jobs + activity | Rust | ready (brief) | GW-004 | Sonnet | |
-| BE-034 | Governance API | Rust | blocked | GOV-001, BE-031 | Sonnet | |
-| CLI-001 | aurora-client + CLI login/run/approvals watch | Rust | blocked | BE-030, BE-032 | Sonnet | |
+| BE-033 | Policy authoring, grants, simulate, effective | Rust | done (tests/policy.rs 5) | BE-031, BE-032 | Sonnet | |
+| BE-030 | Approvals API + SSE + jobs + activity | Rust | done (approvals/activity/jobs tests) | GW-004 | Sonnet | |
+| BE-034 | Governance API | Rust | done (tests/governance.rs 3) | GOV-001, BE-031 | Sonnet | |
+| CLI-001 | aurora-client + CLI login/run/approvals watch | Rust | done (13 tests; token import design) | BE-030, BE-032 | Sonnet | |
 | FE-020 | Credentials pages (secrets, LLM keys, proposals) | Next.js | done | BE-031 | Sonnet | 50 vitest; build |
 | FE-023 | Agents list/create, agent page, BYO Connect | Next.js | done | BE-032 | Sonnet | 44 vitest; m1 e2e green |
-| FE-021/022/024 | Policy editor + access tab; approvals page; governance pages | Next.js | todo | BE-033/030/034 | Sonnet | |
+| FE-021/022/024 | Policy editor + access tab; approvals page; governance pages | Next.js | done (72 vitest; build; m1 e2e green) | BE-033/030/034 | Sonnet | |
 | TEST-020 | Gateway SEC-37 + origin write-back tests | Rust test | done | GW-005 | haiku→Opus fix | 2 tests |
 | REG-003 | Snapshot compiler, claims, diff, index | Rust | done | REG-002 | Sonnet | 11 tests; I-18 |
 | GW-010 | Gateway apps: snapshot, candidates, mechanisms | Rust | done | REG-003 | Sonnet | tests/apps.rs 10; SigV4 vector (I-19) |
-| GW-011 | Token refresh/mint, reauth, stale retry, GW-010 follow-ups | Rust | in-progress | GW-010 | Sonnet | |
+| GW-011 | Token refresh/mint, reauth, stale retry, GW-010 follow-ups | Rust | done (refresh/CAS/mint tests; I-20) | GW-010 | Sonnet | |
 | REG-001 | Manifest model + in-manifest validation | Rust | done | BE-020 | Sonnet | 37 rule fixtures |
 | REG-002 | Package format, signatures, remaining validation | Rust | done | REG-001 | Sonnet | 15 package tests |
+| PROTO-001 | W5/W6/W7 wire types | Rust | done (spec issues logged below) | BE-006 | Sonnet | 22 tests + schemas |
+| TEST-012 | e2e-gateway M2 acceptance (real API + 2 gateways) | e2e | done | M2 | Sonnet | `bash scripts/e2e/gateway.sh` 11 passed (orchestrator rerun) |
+| FUP-M2 | Follow-ups: OpenAPI schema for OrgGovernance document (currently untyped object); SSE stream not closed on session revocation; services bind fixed ports (configurable ports would ease e2e); API must activate an empty snapshot at startup (gateway readyz) — goes with M3 lifecycle; GW-011 real-DB ask-tool hold test | both | todo | — | — | |
 | M3 rest | snapshot compiler, lifecycle/ingestion API, connect flows, mechanisms in gateway, hook host + WIT + SDK (needs wasm32-wasip2), CLI plugin, fixtures | both | todo | M2 | — | |
 | M4–M7 | hosted runtime, hosted features, channels, k8s/Helm | both | todo | per 19 | — | |
 
