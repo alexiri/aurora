@@ -9,6 +9,8 @@ their dependencies near completion (adaptive planning).
 
 ## Environment
 
+- **Concurrency**: owner raised the default to **4 concurrent implementation agents** (2026-11-06), still with disjoint file ownership per lane.
+
 - Rust 1.99 stable (system, no rustup) — **no `wasm32-wasip2` target** (I-02, blocks M3 hook builds only).
 - Node 20.20, pnpm 10 (`~/.local/bin`), podman 5 (compose), psql client.
 - Dev Postgres 16: container `aurora-dev-pg`, `postgres://aurora:aurora@127.0.0.1:55432/aurora` (`.env`, I-05).
