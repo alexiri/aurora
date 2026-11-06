@@ -128,7 +128,10 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | API-006 | M6 contract (connector admin, integrations, presences, bindings, user links, DM defaults, reach; C-31..C-37) | contract | done | — | Opus | API_CONTRACTS.md M6 |
 | BE-070 | Connector registration, admin, ownership, config feed (I-28) | Rust | done (d4d04b36) | API-006 | Sonnet (worktree) | |
 | BE-071 | Inbox ingest, ops engine, correlated ops, connector files, link-start | Rust | in-progress | BE-070, BE-064 | Sonnet (worktree) | |
-| BE-072..075 | Inbox processing + mirror + commands; cards + clicker auth; management API; messaging tools | Rust | todo (briefs pending) | BE-071 | — | |
+| BE-074 | Channel management API (API-006) + shared channel repos | Rust | todo (briefed; next after BE-071) | BE-071 | Sonnet (worktree) | |
+| BE-072 | Inbox processing (13 §5.1), mirror (§5.2), commands (§5.4) | Rust | todo (briefed) | BE-071, BE-074 | Sonnet (worktree) | |
+| BE-073 | Cards, action tokens, clicker authorization, approval fan-out | Rust | todo (briefed) | BE-071, BE-074 | Sonnet (worktree) | |
+| BE-075 | Messaging tools + `send_message` action handler | Rust | todo (briefed) | BE-072, BE-074 | Sonnet (worktree) | |
 | TEST-015 | Connector conformance suite (fake core) | Rust test | done (872d94d3) | CON-001 | Sonnet (worktree) | 12/12 scenarios in-process and binary mode (`scripts/conformance.sh`); fake/SDK fixes; FUP-M6 closed |
 | FE-060 | Channel pages, admin connectors, /link/channel | Next.js | todo | API-006 | — | |
 | TEST-016 | e2e-hosted M6 scenario (fake platform DM → Daneel → approve from card) | e2e | todo | BE-072..075 | — | |
