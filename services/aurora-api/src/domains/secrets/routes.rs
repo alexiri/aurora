@@ -49,11 +49,12 @@ fn record(
     audit::record(state, ev);
 }
 
-/// List workspace-scoped secrets (`can_use`).
+/// List workspace-scoped secrets (`can_own`; I-27).
 #[utoipa::path(
     get, path = "/workspaces/{ws}/secrets", operation_id = "listWorkspaceSecrets", tag = "secrets",
     params(("ws" = Uuid, Path, description = "Workspace id"), ListQuery),
     responses((status = 200, description = "Secrets", body = Page<Secret>),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -64,14 +65,16 @@ async fn list_ws_secrets(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<Secret>>, ApiError> {
     let a = caller.workspace(&state, ws).await?;
+    crate::http::auth::require_own(&a)?;
     Ok(Json(service::list(&state, a.org_id, Some(ws), &q).await?))
 }
 
-/// List organization-scoped secrets (org member).
+/// List organization-scoped secrets (owner/admin; I-27).
 #[utoipa::path(
     get, path = "/orgs/{org}/secrets", operation_id = "listOrgSecrets", tag = "secrets",
     params(("org" = Uuid, Path, description = "Organization id"), ListQuery),
     responses((status = 200, description = "Secrets", body = Page<Secret>),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -81,7 +84,7 @@ async fn list_org_secrets(
     Path(org): Path<Uuid>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<Secret>>, ApiError> {
-    caller.org(&state, org).await?;
+    caller.org(&state, org).await?.require_admin()?;
     Ok(Json(service::list(&state, org, None, &q).await?))
 }
 
@@ -149,11 +152,12 @@ async fn create_org_secret(
     Ok((StatusCode::CREATED, Json(row.into())))
 }
 
-/// Get one secret (metadata only).
+/// Get one secret (metadata only; `can_own` / owner-admin, I-27).
 #[utoipa::path(
     get, path = "/secrets/{id}", operation_id = "getSecret", tag = "secrets",
     params(("id" = Uuid, Path, description = "Secret id")),
     responses((status = 200, description = "Secret", body = Secret),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -163,9 +167,7 @@ async fn get_secret(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Secret>, ApiError> {
     Ok(Json(
-        service::load_authorized(&caller, &state, id, false)
-            .await?
-            .into(),
+        service::load_authorized(&caller, &state, id).await?.into(),
     ))
 }
 
@@ -188,7 +190,7 @@ async fn patch_secret(
     Path(id): Path<Uuid>,
     Json(req): Json<PatchSecretRequest>,
 ) -> Result<Json<Secret>, ApiError> {
-    let row = service::load_authorized(&caller, &state, id, true).await?;
+    let row = service::load_authorized(&caller, &state, id).await?;
     let out = service::patch(&state, &row, req).await?;
     record(&state, &caller, "secret.update", &out, json!(null));
     Ok(Json(out.into()))
@@ -208,7 +210,7 @@ async fn delete_secret(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let row = service::load_authorized(&caller, &state, id, true).await?;
+    let row = service::load_authorized(&caller, &state, id).await?;
     service::delete(&state, &row).await?;
     record(&state, &caller, "secret.delete", &row, json!(null));
     Ok(StatusCode::NO_CONTENT)
@@ -233,7 +235,7 @@ async fn set_secret_value(
     Path(id): Path<Uuid>,
     Json(req): Json<SetValueRequest>,
 ) -> Result<Json<Secret>, ApiError> {
-    let row = service::load_authorized(&caller, &state, id, true).await?;
+    let row = service::load_authorized(&caller, &state, id).await?;
     let out = service::set_value(&state, &row, req).await?;
     record(
         &state,
@@ -262,7 +264,7 @@ async fn accept_secret(
     Path(id): Path<Uuid>,
     Json(req): Json<AcceptRequest>,
 ) -> Result<Json<Secret>, ApiError> {
-    let row = service::load_authorized(&caller, &state, id, true).await?;
+    let row = service::load_authorized(&caller, &state, id).await?;
     let out = service::accept(&state, &caller, &row, req.value).await?;
     record(
         &state,
@@ -289,7 +291,7 @@ async fn reject_secret(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let row = service::load_authorized(&caller, &state, id, true).await?;
+    let row = service::load_authorized(&caller, &state, id).await?;
     service::reject(&state, &row).await?;
     record(&state, &caller, "secret.reject", &row, json!(null));
     Ok(StatusCode::NO_CONTENT)
@@ -397,11 +399,13 @@ async fn list_llm_providers(
     }))
 }
 
-/// Models available to an LLM secret (limited to the effective allow-list).
+/// Models available to an LLM secret (limited to the effective allow-list; `can_own` /
+/// owner-admin, I-27). Agent model pickers use `GET /agents/{agent}/models` instead.
 #[utoipa::path(
     get, path = "/secrets/{id}/models", operation_id = "listSecretModels", tag = "secrets",
     params(("id" = Uuid, Path, description = "Secret id")),
     responses((status = 200, description = "Models", body = Models),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope),
               (status = 502, description = "llm_endpoint_unreachable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
@@ -411,7 +415,7 @@ async fn secret_models(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Models>, ApiError> {
-    let row = service::load_authorized(&caller, &state, id, false).await?;
+    let row = service::load_authorized(&caller, &state, id).await?;
     Ok(Json(service::models(&state, &row).await?))
 }
 
@@ -430,7 +434,7 @@ async fn verify_secret(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<VerifyResult>, ApiError> {
-    let row = service::load_authorized(&caller, &state, id, true).await?;
+    let row = service::load_authorized(&caller, &state, id).await?;
     let origin = service::verify(&state, &row).await?;
     record(
         &state,

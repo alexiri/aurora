@@ -35,11 +35,12 @@ fn record(state: &AppState, actor: AuditActor, action: &str, row: &ClientRow) {
     audit::record(state, ev);
 }
 
-/// List workspace OAuth clients (`can_use`).
+/// List workspace OAuth clients (`can_own`; I-27).
 #[utoipa::path(
     get, path = "/workspaces/{ws}/oauth-clients", operation_id = "listWorkspaceOauthClients", tag = "oauth-clients",
     params(("ws" = Uuid, Path, description = "Workspace id"), ListQuery),
     responses((status = 200, description = "Clients", body = Page<OAuthClient>),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -50,6 +51,7 @@ async fn list_ws_clients(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<OAuthClient>>, ApiError> {
     let a = caller.workspace(&state, ws).await?;
+    require_own(&a)?;
     let scope = Scope {
         org: Some(a.org_id),
         ws: Some(ws),
@@ -91,11 +93,12 @@ async fn create_ws_client(
     Ok((StatusCode::CREATED, Json(row.into())))
 }
 
-/// List organization OAuth clients (org member).
+/// List organization OAuth clients (owner/admin; I-27).
 #[utoipa::path(
     get, path = "/orgs/{org}/oauth-clients", operation_id = "listOrgOauthClients", tag = "oauth-clients",
     params(("org" = Uuid, Path, description = "Organization id"), ListQuery),
     responses((status = 200, description = "Clients", body = Page<OAuthClient>),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -105,7 +108,7 @@ async fn list_org_clients(
     Path(org): Path<Uuid>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<OAuthClient>>, ApiError> {
-    caller.org(&state, org).await?;
+    caller.org(&state, org).await?.require_admin()?;
     let scope = Scope {
         org: Some(org),
         ws: None,

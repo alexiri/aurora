@@ -15,7 +15,7 @@ import { KeysTab } from "./keys-tab";
 
 const TABS = [
   { id: "general", label: "General", ownerOnly: false },
-  { id: "access", label: "Access", ownerOnly: false },
+  { id: "access", label: "Access", ownerOnly: true },
   { id: "keys", label: "API keys", ownerOnly: true },
   { id: "audit", label: "Audit", ownerOnly: true },
   { id: "danger", label: "Danger zone", ownerOnly: true },
@@ -61,7 +61,7 @@ export function SettingsView({ org, ws }: { org: string; ws: string }) {
       </div>
       <div role="tabpanel" id="settings-panel" aria-labelledby={`tab-${tab}`} className="pt-2">
         {tab === "general" ? <GeneralTab key={w.updated_at} workspace={w} canOwn={canOwn} /> : null}
-        {tab === "access" ? <AccessTab wsId={w.id} orgId={w.org_id} canOwn={canOwn} /> : null}
+        {tab === "access" && canOwn ? <AccessTab wsId={w.id} orgId={w.org_id} canOwn={canOwn} /> : null}
         {tab === "keys" && canOwn ? <KeysTab wsId={w.id} /> : null}
         {tab === "audit" && canOwn ? <AuditTab wsId={w.id} /> : null}
         {tab === "danger" && canOwn ? (

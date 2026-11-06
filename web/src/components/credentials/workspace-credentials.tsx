@@ -16,12 +16,14 @@ export function WorkspaceCredentials() {
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
   if (workspace.isError) return <ErrorState error={workspace.error} onRetry={() => workspace.refetch()} />;
   if (!wsId || !workspace.data) return <ErrorState error={{ code: "not_found" }} />;
+  // Workspace credentials are `can_own` (I-27); members get the standard forbidden state.
+  if (workspace.data.my_role !== "owner") return <ErrorState error={{ code: "forbidden" }} />;
   return (
     <CredentialsView
       title="Credentials"
       scope={{ kind: "workspace", id: wsId }}
       orgId={workspace.data.org_id}
-      canOwn={workspace.data.my_role === "owner"}
+      canOwn
     />
   );
 }

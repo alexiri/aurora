@@ -2,7 +2,7 @@ use super::dto::*;
 use super::service;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
-use crate::http::auth::Caller;
+use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::Page;
@@ -42,11 +42,12 @@ fn record(
     audit::record(state, ev);
 }
 
-/// List workspace-scoped connections (`can_use`).
+/// List workspace-scoped connections (`can_own`; I-27).
 #[utoipa::path(
     get, path = "/workspaces/{ws}/connections", operation_id = "listWorkspaceConnections", tag = "connections",
     params(("ws" = Uuid, Path, description = "Workspace id"), ListQuery),
     responses((status = 200, description = "Connections", body = Page<Connection>),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -57,14 +58,16 @@ async fn list_ws_connections(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<Connection>>, ApiError> {
     let a = caller.workspace(&state, ws).await?;
+    require_own(&a)?;
     Ok(Json(service::list(&state, a.org_id, Some(ws), &q).await?))
 }
 
-/// List organization-scoped connections (org member).
+/// List organization-scoped connections (owner/admin; I-27).
 #[utoipa::path(
     get, path = "/orgs/{org}/connections", operation_id = "listOrgConnections", tag = "connections",
     params(("org" = Uuid, Path, description = "Organization id"), ListQuery),
     responses((status = 200, description = "Connections", body = Page<Connection>),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -74,15 +77,16 @@ async fn list_org_connections(
     Path(org): Path<Uuid>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<Connection>>, ApiError> {
-    caller.org(&state, org).await?;
+    caller.org(&state, org).await?.require_admin()?;
     Ok(Json(service::list(&state, org, None, &q).await?))
 }
 
-/// Get a connection.
+/// Get a connection (`can_own` / owner-admin; I-27).
 #[utoipa::path(
     get, path = "/connections/{id}", operation_id = "getConnection", tag = "connections",
     params(("id" = Uuid, Path, description = "Connection id")),
     responses((status = 200, description = "Connection", body = Connection),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -91,7 +95,8 @@ async fn get_connection(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Connection>, ApiError> {
-    let (row, _) = service::visible(&caller, &state, id).await?;
+    let (row, access) = service::visible(&caller, &state, id).await?;
+    access.require_write()?;
     Ok(Json(service::view(&state, row).await?))
 }
 

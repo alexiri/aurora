@@ -201,9 +201,23 @@ async fn draft_validation_stale_publish_rollback() {
 }
 
 #[tokio::test]
-async fn member_reads_and_simulates_but_cannot_edit() {
+async fn member_cannot_read_simulate_or_edit() {
+    // I-27: policy reads, generations, warnings and simulation (whose trace discloses the
+    // rules) follow the matrix: workspace `can_own`, org owner/admin.
     let w = world().await;
-    let (s, _) = w.call(Method::GET, &w.wsu(""), &w.member, None).await;
+    let (s, v) = w.call(Method::GET, &w.wsu(""), &w.member, None).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("forbidden")),
+        "{v}"
+    );
+    for tail in ["/generations", "/warnings"] {
+        let (s, _) = w.call(Method::GET, &w.wsu(tail), &w.member, None).await;
+        assert_eq!(s, 403, "ws {tail}");
+        let (s, _) = w.call(Method::GET, &w.orgu(tail), &w.member, None).await;
+        assert_eq!(s, 403, "org {tail}");
+    }
+    let (s, _) = w.call(Method::GET, &w.wsu(""), &w.owner, None).await;
     assert_eq!(s, 200);
     let (s, _) = w
         .call(
@@ -224,9 +238,13 @@ async fn member_reads_and_simulates_but_cannot_edit() {
         .await;
     assert_eq!(s, 403);
     let (s, _) = w.sim(&w.member, "https://api.example.com/x").await;
+    assert_eq!(s, 403);
+    let (s, _) = w.sim(&w.owner, "https://api.example.com/x").await;
     assert_eq!(s, 200);
-    // org policy: member reads, cannot write
+    // org policy: a plain member can neither read nor write
     let (s, _) = w.call(Method::GET, &w.orgu(""), &w.member, None).await;
+    assert_eq!(s, 403);
+    let (s, _) = w.call(Method::GET, &w.orgu(""), &w.owner, None).await;
     assert_eq!(s, 200);
     let (s, _) = w
         .call(
@@ -268,11 +286,21 @@ async fn secret_grant_derived_rule_and_simulate_granted_allow() {
     // member cannot grant
     let (s, _) = w.call(Method::PUT, &gurl, &w.member, None).await;
     assert_eq!(s, 403);
-    let (_, v) = w
+    // grants listing is `can_own` (I-27): members use `/effective` instead
+    let (s, _) = w
         .call(
             Method::GET,
             &format!("/v1/agents/{}/grants", w.agent),
             &w.member,
+            None,
+        )
+        .await;
+    assert_eq!(s, 403);
+    let (_, v) = w
+        .call(
+            Method::GET,
+            &format!("/v1/agents/{}/grants", w.agent),
+            &w.owner,
             None,
         )
         .await;
@@ -371,7 +399,7 @@ async fn simulate_org_block_over_workspace_allow_and_egress_default() {
     )
     .await;
     let (_, v) = w
-        .call(Method::GET, &w.wsu("/warnings"), &w.member, None)
+        .call(Method::GET, &w.wsu("/warnings"), &w.owner, None)
         .await;
     assert_eq!(v["items"][0]["code"], "overridden_by_org");
 

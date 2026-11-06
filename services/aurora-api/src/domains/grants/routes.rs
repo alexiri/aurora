@@ -35,11 +35,12 @@ fn record(state: &AppState, caller: &Caller, action: &str, agent: &AgentRow, sec
     );
 }
 
-/// Grants of an agent (`can_use`).
+/// Grants of an agent (`can_own`; I-27). Members see what they need via `/agents/{agent}/effective`.
 #[utoipa::path(
     get, path = "/agents/{agent}/grants", operation_id = "listAgentGrants", tag = "grants",
     params(("agent" = Uuid, Path, description = "Agent id")),
     responses((status = 200, description = "Grants", body = GrantsResponse),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -48,7 +49,8 @@ async fn list_grants(
     State(state): State<AppState>,
     Path(agent): Path<Uuid>,
 ) -> Result<Json<GrantsResponse>, ApiError> {
-    let (a, _) = service::visible_agent(&caller, &state, agent).await?;
+    let (a, auth) = service::visible_agent(&caller, &state, agent).await?;
+    require_own(&auth)?;
     let secrets = grants::list_secret_grants(&state.pool, a.id).await?;
     let conns = grants::list_connection_grants(&state.pool, a.id).await?;
     Ok(Json(GrantsResponse {
@@ -188,11 +190,12 @@ async fn delete_connection_grant(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Grants held on a connection.
+/// Grants held on a connection (`can_own` / owner-admin; I-27).
 #[utoipa::path(
     get, path = "/connections/{id}/grants", operation_id = "listConnectionGrants", tag = "grants",
     params(("id" = Uuid, Path, description = "Connection id")),
     responses((status = 200, description = "Grants", body = ConnectionGrantList),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -201,7 +204,8 @@ async fn connection_grants(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ConnectionGrantList>, ApiError> {
-    let (row, _) = conn_service::visible(&caller, &state, id).await?;
+    let (row, access) = conn_service::visible(&caller, &state, id).await?;
+    access.require_write()?;
     let items = grants::list_for_connection(&state.pool, row.id).await?;
     Ok(Json(ConnectionGrantList {
         items: items.into_iter().map(Into::into).collect(),

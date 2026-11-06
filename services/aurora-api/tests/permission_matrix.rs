@@ -12,8 +12,10 @@
 //! - workspace key on an org-level route => 403 `forbidden`
 //! - session-only route with an API key => 403 `session_required`
 //!
-//! Requests carry `{}` bodies on POST/PUT/PATCH, so an authorized request normally fails body
-//! validation (400/422/409) rather than mutating state. Authorization is what is asserted.
+//! Write requests carry a minimal syntactically valid body (see `body_for`; `{}` where every
+//! field is optional), so body extraction does not mask the authorization outcome. An
+//! authorized request then normally fails *semantic* validation (404/409/422) or succeeds.
+//! Authorization is what is asserted.
 //! Rows whose path uses only seeded ids (`org`, `ws`, `agent`, `user`) also assert that
 //! authorized principals are *not* denied. Other rows only assert the denial side.
 //! DELETE rows on seeded ids run every principal against a fresh database so that one
@@ -24,7 +26,7 @@ mod common;
 use common::*;
 use http::Method;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
 
 // ---- principals ------------------------------------------------------------
@@ -132,6 +134,9 @@ enum G {
     WsUse,
     /// Workspace owner: `can_own`.
     WsOwn,
+    /// `can_use`, but only with an API key: sessions get 403 `forbidden` before the workspace
+    /// is looked at (`POST /v1/agents/{agent}/conversations` creates `api` conversations).
+    WsUseKeyOnly,
 }
 
 #[derive(Clone, Copy)]
@@ -263,9 +268,10 @@ const ROWS: &[Row] = &[
     r("DELETE", "/v1/admin/trusted-keys/{id}", G::Inst, false),
     r("GET", "/v1/admin/users", G::Inst, false),
     r("PATCH", "/v1/admin/users/{id}", G::Inst, false),
-    r("GET", "/v1/governance/instance", G::Inst, false),
     r("POST", "/v1/orgs", G::Inst, false),
     // ---- any authenticated principal ----
+    // I-27: instance governance is config without secrets, readable by any signed-in user
+    r("GET", "/v1/governance/instance", G::Auth, false),
     r("GET", "/v1/me", G::Auth, false),
     r("PATCH", "/v1/me", G::Auth, false),
     r("DELETE", "/v1/me", G::Auth, true),
@@ -343,7 +349,7 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/workspaces/{ws}/api-keys", G::WsOwn, false),
     r("POST", "/v1/workspaces/{ws}/api-keys", G::WsOwn, true),
     r("GET", "/v1/workspaces/{ws}/approvals", G::WsUse, false),
-    r("GET", "/v1/workspaces/{ws}/audit", G::WsUse, false),
+    r("GET", "/v1/workspaces/{ws}/audit", G::WsOwn, false),
     r("GET", "/v1/workspaces/{ws}/connections", G::WsOwn, false),
     r("GET", "/v1/workspaces/{ws}/oauth-clients", G::WsOwn, false),
     r("POST", "/v1/workspaces/{ws}/oauth-clients", G::WsOwn, false),
@@ -386,7 +392,12 @@ const ROWS: &[Row] = &[
     r("PATCH", "/v1/agents/{agent}", G::WsUse, false),
     r("DELETE", "/v1/agents/{agent}", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/conversations", G::WsUse, false),
-    r("POST", "/v1/agents/{agent}/conversations", G::WsUse, false),
+    r(
+        "POST",
+        "/v1/agents/{agent}/conversations",
+        G::WsUseKeyOnly,
+        false,
+    ),
     r(
         "POST",
         "/v1/agents/{agent}/conversations/direct",
@@ -503,85 +514,6 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/secrets/{id}/models", G::WsOwn, false),
 ];
 
-/// Known authorization mismatches against docs/04 (production code is not changed by this task).
-/// A failure on a listed `(method, path)` is reported on stderr instead of failing the test.
-const EXPECTED_DEFECT: &[(&str, &str, &str)] = &[
-    (
-        "GET",
-        "/v1/governance/instance",
-        "instance governance readable by every authenticated principal; 04 lists instance rows as instance-admin",
-    ),
-    (
-        "GET",
-        "/v1/admin/registry/snapshot",
-        "instance admin gets 404 (possibly no active snapshot seeded); not conclusive",
-    ),
-    (
-        "GET",
-        "/v1/workspaces/{ws}/audit",
-        "workspace member (can_use) gets 403; 04 says workspace activity is can_use (audit vs activity ambiguous)",
-    ),
-    (
-        "GET",
-        "/v1/orgs/{org}/policy",
-        "plain org members / unbound / org member key read org policy (04: owner/admin)",
-    ),
-    ("GET", "/v1/orgs/{org}/policy/generations", "as above"),
-    ("GET", "/v1/orgs/{org}/policy/warnings", "as above"),
-    (
-        "GET",
-        "/v1/orgs/{org}/secrets",
-        "plain org members list org secrets (04: owner/admin)",
-    ),
-    (
-        "GET",
-        "/v1/orgs/{org}/connections",
-        "plain org members list org connections (04: owner/admin)",
-    ),
-    (
-        "GET",
-        "/v1/orgs/{org}/oauth-clients",
-        "plain org members list org OAuth clients (04: owner/admin)",
-    ),
-    (
-        "GET",
-        "/v1/orgs/{org}/app-availability",
-        "plain org members read app availability (04: owner/admin)",
-    ),
-    (
-        "GET",
-        "/v1/workspaces/{ws}/policy",
-        "workspace member (non-owner) reads workspace policy (04: can_own)",
-    ),
-    ("GET", "/v1/workspaces/{ws}/policy/generations", "as above"),
-    ("GET", "/v1/workspaces/{ws}/policy/warnings", "as above"),
-    (
-        "GET",
-        "/v1/workspaces/{ws}/secrets",
-        "workspace member lists workspace secrets (04: can_own)",
-    ),
-    (
-        "GET",
-        "/v1/workspaces/{ws}/connections",
-        "workspace member lists workspace connections (04: can_own)",
-    ),
-    (
-        "GET",
-        "/v1/workspaces/{ws}/oauth-clients",
-        "workspace member lists OAuth clients (04: can_own)",
-    ),
-    (
-        "GET",
-        "/v1/workspaces/{ws}/access",
-        "workspace member lists access bindings (04: can_own)",
-    ),
-    (
-        "GET",
-        "/v1/agents/{agent}/grants",
-        "workspace member lists agent grants (04: can_own)",
-    ),
-];
-
 // ---- expectations ----------------------------------------------------------
 
 #[derive(Debug)]
@@ -632,7 +564,10 @@ fn want(g: G, so: bool, p: P) -> Want {
                 _ => Deny(&[404], None),
             }
         }
-        G::WsUse | G::WsOwn => {
+        G::WsUse | G::WsOwn | G::WsUseKeyOnly => {
+            if matches!(g, G::WsUseKeyOnly) && !p.is_key() {
+                return Deny(&[403], Some("forbidden"));
+            }
             if p == P::WsKeyOther {
                 return Deny(&[403], Some("workspace_mismatch"));
             }
@@ -773,13 +708,14 @@ fn fill(path: &str, fx: &Fx) -> String {
         out.push_str(&rest[..i]);
         let j = rest[i..].find('}').unwrap() + i;
         let v = match &rest[i + 1..j] {
-            "org" => fx.org,
-            "ws" => fx.ws,
-            "agent" => fx.agent,
-            "user" => fx.victim,
-            _ => Uuid::now_v7(),
+            "org" => fx.org.to_string(),
+            "ws" => fx.ws.to_string(),
+            "agent" => fx.agent.to_string(),
+            "user" => fx.victim.to_string(),
+            "rev" => "1".to_owned(),
+            _ => Uuid::now_v7().to_string(),
         };
-        out.push_str(&v.to_string());
+        out.push_str(&v);
         rest = &rest[j + 1..];
     }
     out.push_str(rest);
@@ -800,10 +736,83 @@ fn norm(path: &str) -> String {
     out
 }
 
+/// Minimal syntactically valid body for a write row, so that body extraction succeeds and the
+/// authorization outcome (not a 400/422) is what is observed. Routes whose request type has only
+/// optional fields accept `{}`. Values need not be *semantically* acceptable: the handler may
+/// still answer 4xx (404 unknown id, 409, 422) after authorization, which counts as allowed.
+fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
+    match (method, path) {
+        ("PUT", "/v1/admin/host-claims/{group_key}") => {
+            json!({"winner_package_id": "x", "winner_app_id": "x", "fingerprint": "x"})
+        }
+        (
+            "POST",
+            "/v1/admin/oauth-clients"
+            | "/v1/orgs/{org}/oauth-clients"
+            | "/v1/workspaces/{ws}/oauth-clients",
+        ) => json!({"package_id": "x", "client_key": "x", "fields": {}}),
+        // wrong confirmation text: an authorized caller gets a validation error, nothing is deleted
+        ("DELETE", "/v1/orgs/{org}" | "/v1/workspaces/{ws}") => json!({"confirm": "not-the-slug"}),
+        ("POST", "/v1/orgs") => json!({"name": "Matrix second org"}),
+        ("POST", "/v1/admin/runners") => json!({"name": "matrix-runner"}),
+        ("POST", "/v1/admin/trusted-keys") => {
+            json!({"publisher": "x", "name": "x", "public_key": "x"})
+        }
+        ("POST", "/v1/agents/{agent}/conversations") => json!({"external_ref": "matrix"}),
+        ("PUT", "/v1/agents/{agent}/grants/connections/{conn}") => json!({"mode": "full"}),
+        ("POST", "/v1/agents/{agent}/memories") => json!({"key": "k", "content": "c"}),
+        ("PUT", "/v1/agents/{agent}/memories/{id}") => json!({"content": "c"}),
+        ("POST", "/v1/agents/{agent}/memories/{id}/restore") => json!({"revision": 1}),
+        ("POST", "/v1/agents/{agent}/schedules") => {
+            json!({"name": "s", "prompt": "p", "cron": "0 * * * *"})
+        }
+        ("POST", "/v1/agents/{agent}/skills" | "/v1/orgs/{org}/skills") => {
+            json!({"name": "s", "description": "d", "body": "b"})
+        }
+        ("POST", "/v1/agents/{agent}/webhooks") => json!({"name": "w", "instructions": "i"}),
+        ("POST", "/v1/approvals/{id}/decision") => json!({"decision": "deny"}),
+        ("POST", "/v1/approvals/batches/{batch_id}/decision") => {
+            json!({"decision": "deny", "agent_id": fx.agent})
+        }
+        ("POST", "/v1/conversations/{id}/messages") => json!({"text": "hi"}),
+        ("POST", "/v1/orgs/{org}/api-keys" | "/v1/workspaces/{ws}/api-keys") => {
+            json!({"name": "k"})
+        }
+        ("PUT", "/v1/orgs/{org}/app-availability") => json!({"posture": "open", "allow": []}),
+        ("PUT", "/v1/orgs/{org}/governance") => json!({"document": {}, "revision": 0}),
+        ("POST", "/v1/orgs/{org}/invitations") => json!({"email": "inv@x.io", "role": "member"}),
+        ("PUT", "/v1/orgs/{org}/policy/draft" | "/v1/workspaces/{ws}/policy/draft") => {
+            json!({"revision": 0, "default_action": "none", "rules": []})
+        }
+        ("POST", "/v1/orgs/{org}/policy/publish" | "/v1/workspaces/{ws}/policy/publish") => {
+            json!({"revision": 0})
+        }
+        ("POST", "/v1/orgs/{org}/policy/rollback" | "/v1/workspaces/{ws}/policy/rollback") => {
+            json!({"generation": 1})
+        }
+        ("POST", "/v1/orgs/{org}/secrets" | "/v1/workspaces/{ws}/secrets") => {
+            json!({"name": "matrix-secret", "kind": "generic"})
+        }
+        ("POST", "/v1/orgs/{org}/workspaces") => json!({"name": "Matrix extra"}),
+        ("POST", "/v1/secrets/{id}/accept") => json!({"value": "v"}),
+        ("PUT", "/v1/workspaces/{ws}/access/{user}") => json!({"role": "member"}),
+        ("POST", "/v1/workspaces/{ws}/agents") => json!({"name": "Matrix agent", "kind": "byo"}),
+        ("POST", "/v1/workspaces/{ws}/policy/simulate") => {
+            json!({"agent_id": fx.agent, "method": "GET", "url": "https://example.com/"})
+        }
+        _ => json!({}),
+    }
+}
+
 async fn fire(h: &Harness, fx: &Fx, row: &Row, p: P) -> (u16, Value) {
-    let uri = fill(row.p, fx);
+    let mut uri = fill(row.p, fx);
+    if row.p.ends_with("/memories/search") {
+        uri.push_str("?q=matrix");
+    }
     let method = Method::from_bytes(row.m.as_bytes()).unwrap();
-    let body = matches!(method, Method::POST | Method::PUT | Method::PATCH).then(|| json!({}));
+    let body = (matches!(method, Method::POST | Method::PUT | Method::PATCH)
+        || (method == Method::DELETE && matches!(row.p, "/v1/orgs/{org}" | "/v1/workspaces/{ws}")))
+    .then(|| body_for(row.m, row.p, fx));
     let c;
     let b;
     let headers: Vec<(&str, &str)> = match &fx.auth[&p] {
@@ -830,19 +839,19 @@ async fn fire(h: &Harness, fx: &Fx, row: &Row, p: P) -> (u16, Value) {
 }
 
 /// Returns a failure description, or `None` when the outcome matches the expectation.
-fn check(row: &Row, p: P, status: u16, body: &Value) -> Option<String> {
+fn check(
+    row: &Row,
+    p: P,
+    status: u16,
+    body: &Value,
+    inconclusive: &mut BTreeSet<String>,
+) -> Option<String> {
     let f = check_inner(row, p, status, body)?;
-    if let Some((_, _, why)) = EXPECTED_DEFECT
-        .iter()
-        .find(|(m, path, _)| *m == row.m && *path == row.p)
-    {
-        eprintln!("EXPECTED_DEFECT {f} [{why}]");
-        return None;
-    }
-    // Body extraction (`{}` is not a valid body) runs before authorization on many write
-    // routes, so a 400 there says nothing about the denial side.
+    // Body extraction can run before authorization, so a 400/422 on a denial-side request says
+    // nothing about the denial side. The row stays listed (with the bodies from `body_for`).
     if matches!(status, 400 | 422) && f.contains("expected [") {
         eprintln!("INCONCLUSIVE (validation before authz) {f}");
+        inconclusive.insert(format!("{} {}", row.m, row.p));
         return None;
     }
     Some(f)
@@ -938,8 +947,19 @@ fn isolated(row: &Row) -> bool {
 #[tokio::test]
 async fn permission_matrix_routes_by_principal() {
     let mut failures: Vec<String> = Vec::new();
+    let mut inconclusive: BTreeSet<String> = BTreeSet::new();
     // One shared database for all non-isolated rows (creating a migrated database is costly).
-    let shared = Harness::new().await;
+    // Agent creation reads the gateway CA to build the container config (503 without it).
+    let ca_dir = std::env::temp_dir().join(format!("aurora-ca-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&ca_dir).unwrap();
+    std::fs::write(ca_dir.join("ca.pem"), "-----BEGIN CERTIFICATE-----\nX\n").unwrap();
+    let ca = ca_dir.to_string_lossy().into_owned();
+    let shared = Harness::with_config(move |c| c.gateway_ca_dir = ca).await;
+    // The API activates an (empty) registry snapshot at startup; the harness does not, and
+    // `GET /v1/admin/registry/snapshot` is 404 without one.
+    aurora_api::domains::plugins::registry::ensure_initial(&shared.state)
+        .await
+        .unwrap();
     let shared_fx = seed(&shared, 0).await;
     let mut n = 0u32;
     for row in ROWS {
@@ -948,16 +968,21 @@ async fn permission_matrix_routes_by_principal() {
                 n += 1;
                 let fx = seed(&shared, n).await;
                 let (status, body) = fire(&shared, &fx, row, p).await;
-                failures.extend(check(row, p, status, &body));
+                failures.extend(check(row, p, status, &body, &mut inconclusive));
             }
         } else {
             for p in ALL {
                 let (status, body) = fire(&shared, &shared_fx, row, p).await;
-                failures.extend(check(row, p, status, &body));
+                failures.extend(check(row, p, status, &body, &mut inconclusive));
             }
         }
         eprintln!("checked {} {}", row.m, row.p);
     }
+    eprintln!(
+        "INCONCLUSIVE rows: {} {:?}",
+        inconclusive.len(),
+        inconclusive
+    );
     assert!(
         failures.is_empty(),
         "{} permission-matrix mismatches:\n{}",

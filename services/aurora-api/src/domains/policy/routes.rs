@@ -31,32 +31,19 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(simulate_policy))
 }
 
-async fn ws_scope(
-    caller: &Caller,
-    state: &AppState,
-    ws: Uuid,
-    write: bool,
-) -> Result<Scope, ApiError> {
+/// Workspace policy reads and writes alike need `can_own` (I-27).
+async fn ws_scope(caller: &Caller, state: &AppState, ws: Uuid) -> Result<Scope, ApiError> {
     let a = caller.workspace(state, ws).await?;
-    if write {
-        require_own(&a)?;
-    }
+    require_own(&a)?;
     Ok(Scope {
         org: a.org_id,
         ws: Some(ws),
     })
 }
 
-async fn org_scope(
-    caller: &Caller,
-    state: &AppState,
-    org: Uuid,
-    write: bool,
-) -> Result<Scope, ApiError> {
-    let a = caller.org(state, org).await?;
-    if write {
-        a.require_admin()?;
-    }
+/// Org policy reads and writes alike need owner/admin (I-27).
+async fn org_scope(caller: &Caller, state: &AppState, org: Uuid) -> Result<Scope, ApiError> {
+    caller.org(state, org).await?.require_admin()?;
     Ok(Scope { org, ws: None })
 }
 
@@ -110,11 +97,12 @@ async fn do_publish(
     Ok(Json(service::document(state, s).await?))
 }
 
-/// Read the workspace policy (`can_use`).
+/// Read the workspace policy (`can_own`; I-27).
 #[utoipa::path(
     get, path = "/workspaces/{ws}/policy", operation_id = "getWorkspacePolicy", tag = "policy",
     params(("ws" = Uuid, Path, description = "Workspace id")),
     responses((status = 200, description = "Published and draft", body = PolicyDocument),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -123,7 +111,7 @@ async fn get_ws_policy(
     State(state): State<AppState>,
     Path(ws): Path<Uuid>,
 ) -> Result<Json<PolicyDocument>, ApiError> {
-    let s = ws_scope(&caller, &state, ws, false).await?;
+    let s = ws_scope(&caller, &state, ws).await?;
     Ok(Json(service::document(&state, s).await?))
 }
 
@@ -146,7 +134,7 @@ async fn put_ws_draft(
     Path(ws): Path<Uuid>,
     Json(req): Json<DraftRequest>,
 ) -> Result<Json<PolicyGeneration>, ApiError> {
-    let s = ws_scope(&caller, &state, ws, true).await?;
+    let s = ws_scope(&caller, &state, ws).await?;
     do_put(&state, &caller, s, req).await
 }
 
@@ -167,7 +155,7 @@ async fn publish_ws(
     Path(ws): Path<Uuid>,
     Json(req): Json<PublishRequest>,
 ) -> Result<Json<PolicyDocument>, ApiError> {
-    let s = ws_scope(&caller, &state, ws, true).await?;
+    let s = ws_scope(&caller, &state, ws).await?;
     do_publish(
         &state,
         &caller,
@@ -195,7 +183,7 @@ async fn rollback_ws(
     Path(ws): Path<Uuid>,
     Json(req): Json<RollbackRequest>,
 ) -> Result<Json<PolicyDocument>, ApiError> {
-    let s = ws_scope(&caller, &state, ws, true).await?;
+    let s = ws_scope(&caller, &state, ws).await?;
     do_publish(
         &state,
         &caller,
@@ -207,11 +195,12 @@ async fn rollback_ws(
     .await
 }
 
-/// Workspace policy history, newest first.
+/// Workspace policy history, newest first (`can_own`; I-27).
 #[utoipa::path(
     get, path = "/workspaces/{ws}/policy/generations", operation_id = "listWorkspacePolicyGenerations", tag = "policy",
     params(("ws" = Uuid, Path, description = "Workspace id"), PageParams),
     responses((status = 200, description = "Generations", body = Page<PolicyGenerationSummary>),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -221,15 +210,16 @@ async fn ws_generations(
     Path(ws): Path<Uuid>,
     Query(q): Query<PageParams>,
 ) -> Result<Json<Page<PolicyGenerationSummary>>, ApiError> {
-    let s = ws_scope(&caller, &state, ws, false).await?;
+    let s = ws_scope(&caller, &state, ws).await?;
     Ok(Json(service::generations(&state, s, q.resolve()?).await?))
 }
 
-/// Warnings for the workspace draft.
+/// Warnings for the workspace draft (`can_own`; I-27).
 #[utoipa::path(
     get, path = "/workspaces/{ws}/policy/warnings", operation_id = "getWorkspacePolicyWarnings", tag = "policy",
     params(("ws" = Uuid, Path, description = "Workspace id")),
     responses((status = 200, description = "Warnings", body = PolicyWarnings),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -238,15 +228,16 @@ async fn ws_warnings(
     State(state): State<AppState>,
     Path(ws): Path<Uuid>,
 ) -> Result<Json<PolicyWarnings>, ApiError> {
-    let s = ws_scope(&caller, &state, ws, false).await?;
+    let s = ws_scope(&caller, &state, ws).await?;
     Ok(Json(warnings::compute(&state, s).await?))
 }
 
-/// Read the organization policy (org member).
+/// Read the organization policy (owner/admin; I-27).
 #[utoipa::path(
     get, path = "/orgs/{org}/policy", operation_id = "getOrgPolicy", tag = "policy",
     params(("org" = Uuid, Path, description = "Organization id")),
     responses((status = 200, description = "Published and draft", body = PolicyDocument),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -255,7 +246,7 @@ async fn get_org_policy(
     State(state): State<AppState>,
     Path(org): Path<Uuid>,
 ) -> Result<Json<PolicyDocument>, ApiError> {
-    let s = org_scope(&caller, &state, org, false).await?;
+    let s = org_scope(&caller, &state, org).await?;
     Ok(Json(service::document(&state, s).await?))
 }
 
@@ -278,7 +269,7 @@ async fn put_org_draft(
     Path(org): Path<Uuid>,
     Json(req): Json<DraftRequest>,
 ) -> Result<Json<PolicyGeneration>, ApiError> {
-    let s = org_scope(&caller, &state, org, true).await?;
+    let s = org_scope(&caller, &state, org).await?;
     do_put(&state, &caller, s, req).await
 }
 
@@ -299,7 +290,7 @@ async fn publish_org(
     Path(org): Path<Uuid>,
     Json(req): Json<PublishRequest>,
 ) -> Result<Json<PolicyDocument>, ApiError> {
-    let s = org_scope(&caller, &state, org, true).await?;
+    let s = org_scope(&caller, &state, org).await?;
     do_publish(
         &state,
         &caller,
@@ -327,7 +318,7 @@ async fn rollback_org(
     Path(org): Path<Uuid>,
     Json(req): Json<RollbackRequest>,
 ) -> Result<Json<PolicyDocument>, ApiError> {
-    let s = org_scope(&caller, &state, org, true).await?;
+    let s = org_scope(&caller, &state, org).await?;
     do_publish(
         &state,
         &caller,
@@ -339,11 +330,12 @@ async fn rollback_org(
     .await
 }
 
-/// Organization policy history, newest first.
+/// Organization policy history, newest first (owner/admin; I-27).
 #[utoipa::path(
     get, path = "/orgs/{org}/policy/generations", operation_id = "listOrgPolicyGenerations", tag = "policy",
     params(("org" = Uuid, Path, description = "Organization id"), PageParams),
     responses((status = 200, description = "Generations", body = Page<PolicyGenerationSummary>),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -353,15 +345,16 @@ async fn org_generations(
     Path(org): Path<Uuid>,
     Query(q): Query<PageParams>,
 ) -> Result<Json<Page<PolicyGenerationSummary>>, ApiError> {
-    let s = org_scope(&caller, &state, org, false).await?;
+    let s = org_scope(&caller, &state, org).await?;
     Ok(Json(service::generations(&state, s, q.resolve()?).await?))
 }
 
-/// Warnings for the organization draft.
+/// Warnings for the organization draft (owner/admin; I-27).
 #[utoipa::path(
     get, path = "/orgs/{org}/policy/warnings", operation_id = "getOrgPolicyWarnings", tag = "policy",
     params(("org" = Uuid, Path, description = "Organization id")),
     responses((status = 200, description = "Warnings", body = PolicyWarnings),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -370,17 +363,19 @@ async fn org_warnings(
     State(state): State<AppState>,
     Path(org): Path<Uuid>,
 ) -> Result<Json<PolicyWarnings>, ApiError> {
-    let s = org_scope(&caller, &state, org, false).await?;
+    let s = org_scope(&caller, &state, org).await?;
     Ok(Json(warnings::compute(&state, s).await?))
 }
 
-/// Simulate a request for an agent against the published (or draft) policy (`can_use`).
+/// Simulate a request for an agent against the published (or draft) policy (`can_own`: the
+/// trace discloses the policy rules, I-27).
 #[utoipa::path(
     post, path = "/workspaces/{ws}/policy/simulate", operation_id = "simulatePolicy", tag = "policy",
     params(("ws" = Uuid, Path, description = "Workspace id")),
     request_body = SimulateRequest,
     responses((status = 200, description = "Verdict and trace", body = Simulation),
               (status = 400, description = "Invalid", body = ErrorEnvelope),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
               (status = 404, description = "Workspace or agent not found", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
@@ -390,7 +385,7 @@ async fn simulate_policy(
     Path(ws): Path<Uuid>,
     Json(req): Json<SimulateRequest>,
 ) -> Result<Json<Simulation>, ApiError> {
-    let s = ws_scope(&caller, &state, ws, false).await?;
+    let s = ws_scope(&caller, &state, ws).await?;
     let agent = aurora_db::repo::agents::get(&state.pool, req.agent_id)
         .await?
         .filter(|a| a.workspace_id == ws)

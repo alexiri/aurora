@@ -2043,7 +2043,7 @@
         "tags": [
           "grants"
         ],
-        "summary": "Grants of an agent (`can_use`).",
+        "summary": "Grants of an agent (`can_own`; I-27). Members see what they need via `/agents/{agent}/effective`.",
         "operationId": "listAgentGrants",
         "parameters": [
           {
@@ -2064,6 +2064,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GrantsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -4886,7 +4896,7 @@
         "tags": [
           "connections"
         ],
-        "summary": "Get a connection.",
+        "summary": "Get a connection (`can_own` / owner-admin; I-27).",
         "operationId": "getConnection",
         "parameters": [
           {
@@ -4907,6 +4917,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Connection"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -5078,7 +5098,7 @@
         "tags": [
           "grants"
         ],
-        "summary": "Grants held on a connection.",
+        "summary": "Grants held on a connection (`can_own` / owner-admin; I-27).",
         "operationId": "listConnectionGrants",
         "parameters": [
           {
@@ -5099,6 +5119,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ConnectionGrantList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -6702,7 +6732,7 @@
         "tags": [
           "availability"
         ],
-        "summary": "Posture and allow-list (org member).",
+        "summary": "Posture and allow-list (owner/admin; I-27).",
         "operationId": "getOrgAppAvailability",
         "parameters": [
           {
@@ -6723,6 +6753,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AppAvailability"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -6929,7 +6969,7 @@
         "tags": [
           "connections"
         ],
-        "summary": "List organization-scoped connections (org member).",
+        "summary": "List organization-scoped connections (owner/admin; I-27).",
         "operationId": "listOrgConnections",
         "parameters": [
           {
@@ -6985,6 +7025,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Page_Connection"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -7662,7 +7712,7 @@
         "tags": [
           "oauth-clients"
         ],
-        "summary": "List organization OAuth clients (org member).",
+        "summary": "List organization OAuth clients (owner/admin; I-27).",
         "operationId": "listOrgOauthClients",
         "parameters": [
           {
@@ -7701,6 +7751,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Page_OAuthClient"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -7820,7 +7880,7 @@
         "tags": [
           "policy"
         ],
-        "summary": "Read the organization policy (org member).",
+        "summary": "Read the organization policy (owner/admin; I-27).",
         "operationId": "getOrgPolicy",
         "parameters": [
           {
@@ -7841,6 +7901,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PolicyDocument"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -7972,7 +8042,7 @@
         "tags": [
           "policy"
         ],
-        "summary": "Organization policy history, newest first.",
+        "summary": "Organization policy history, newest first (owner/admin; I-27).",
         "operationId": "listOrgPolicyGenerations",
         "parameters": [
           {
@@ -8013,6 +8083,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Page_PolicyGenerationSummary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -8195,7 +8275,7 @@
         "tags": [
           "policy"
         ],
-        "summary": "Warnings for the organization draft.",
+        "summary": "Warnings for the organization draft (owner/admin; I-27).",
         "operationId": "getOrgPolicyWarnings",
         "parameters": [
           {
@@ -8216,6 +8296,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PolicyWarnings"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -8246,7 +8336,7 @@
         "tags": [
           "secrets"
         ],
-        "summary": "List organization-scoped secrets (org member).",
+        "summary": "List organization-scoped secrets (owner/admin; I-27).",
         "operationId": "listOrgSecrets",
         "parameters": [
           {
@@ -8303,6 +8393,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Page_Secret"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -9115,7 +9215,7 @@
         "tags": [
           "secrets"
         ],
-        "summary": "Get one secret (metadata only).",
+        "summary": "Get one secret (metadata only; `can_own` / owner-admin, I-27).",
         "operationId": "getSecret",
         "parameters": [
           {
@@ -9136,6 +9236,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Secret"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -9395,7 +9505,7 @@
         "tags": [
           "secrets"
         ],
-        "summary": "Models available to an LLM secret (limited to the effective allow-list).",
+        "summary": "Models available to an LLM secret (limited to the effective allow-list; `can_own` /\nowner-admin, I-27). Agent model pickers use `GET /agents/{agent}/models` instead.",
         "operationId": "listSecretModels",
         "parameters": [
           {
@@ -9416,6 +9526,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Models"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -10660,7 +10780,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "List workspace access bindings, including implicit org owners/admins.",
+        "summary": "List workspace access bindings, including implicit org owners/admins (`can_own`; I-27).",
         "operationId": "listAccess",
         "parameters": [
           {
@@ -10701,6 +10821,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Page_AccessBinding"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -11497,7 +11627,7 @@
         "tags": [
           "connections"
         ],
-        "summary": "List workspace-scoped connections (`can_use`).",
+        "summary": "List workspace-scoped connections (`can_own`; I-27).",
         "operationId": "listWorkspaceConnections",
         "parameters": [
           {
@@ -11557,6 +11687,16 @@
               }
             }
           },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -11583,7 +11723,7 @@
         "tags": [
           "oauth-clients"
         ],
-        "summary": "List workspace OAuth clients (`can_use`).",
+        "summary": "List workspace OAuth clients (`can_own`; I-27).",
         "operationId": "listWorkspaceOauthClients",
         "parameters": [
           {
@@ -11622,6 +11762,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Page_OAuthClient"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -11741,7 +11891,7 @@
         "tags": [
           "policy"
         ],
-        "summary": "Read the workspace policy (`can_use`).",
+        "summary": "Read the workspace policy (`can_own`; I-27).",
         "operationId": "getWorkspacePolicy",
         "parameters": [
           {
@@ -11762,6 +11912,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PolicyDocument"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -11893,7 +12053,7 @@
         "tags": [
           "policy"
         ],
-        "summary": "Workspace policy history, newest first.",
+        "summary": "Workspace policy history, newest first (`can_own`; I-27).",
         "operationId": "listWorkspacePolicyGenerations",
         "parameters": [
           {
@@ -11934,6 +12094,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Page_PolicyGenerationSummary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -12116,7 +12286,7 @@
         "tags": [
           "policy"
         ],
-        "summary": "Simulate a request for an agent against the published (or draft) policy (`can_use`).",
+        "summary": "Simulate a request for an agent against the published (or draft) policy (`can_own`: the\ntrace discloses the policy rules, I-27).",
         "operationId": "simulatePolicy",
         "parameters": [
           {
@@ -12161,6 +12331,16 @@
               }
             }
           },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Workspace or agent not found",
             "content": {
@@ -12187,7 +12367,7 @@
         "tags": [
           "policy"
         ],
-        "summary": "Warnings for the workspace draft.",
+        "summary": "Warnings for the workspace draft (`can_own`; I-27).",
         "operationId": "getWorkspacePolicyWarnings",
         "parameters": [
           {
@@ -12208,6 +12388,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PolicyWarnings"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -12238,7 +12428,7 @@
         "tags": [
           "secrets"
         ],
-        "summary": "List workspace-scoped secrets (`can_use`).",
+        "summary": "List workspace-scoped secrets (`can_own`; I-27).",
         "operationId": "listWorkspaceSecrets",
         "parameters": [
           {
@@ -12295,6 +12485,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Page_Secret"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }

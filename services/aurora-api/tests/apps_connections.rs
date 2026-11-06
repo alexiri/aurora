@@ -200,7 +200,14 @@ async fn connection_patch_and_delete() {
         .bind(Uuid::now_v7()).bind(w.org).bind(w.ws).bind(id).bind(Uuid::now_v7())
         .execute(w.h.pool()).await.unwrap();
     let u = format!("/v1/connections/{id}");
+    // I-27: reads follow the matrix, so a plain workspace member cannot read the connection
     let (s, v) = w.call(&w.member, Method::GET, &u, None).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("forbidden")),
+        "{v}"
+    );
+    let (s, v) = w.call(&w.owner, Method::GET, &u, None).await;
     assert_eq!(
         (s, v["injecting"][0]["host"].as_str()),
         (200, Some("api.acme.example")),
