@@ -397,7 +397,7 @@ fn oversize_rejected() -> R {
         body: ReportBody::GateResult(GateResult {
             turn_id: uuid::Uuid::nil(),
             outcome: GateOutcome::Wake,
-            output: Some("x".repeat(5000)),
+            output: Some("x".repeat(aurora_protocol::runner::MAX_GATE_OUTPUT + 1)),
         }),
         ..report(1)
     };
