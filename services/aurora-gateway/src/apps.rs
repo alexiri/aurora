@@ -34,6 +34,8 @@ pub struct ConnCand {
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
     pub metadata: serde_json::Value,
     pub tenant_host: Option<String>,
+    /// `status = reauth_required`: refused with reconnect guidance after the decision.
+    pub reauth_required: bool,
 }
 
 impl ConnCand {
@@ -57,6 +59,7 @@ impl ConnCand {
             expires_at: r.credentials_expires_at,
             metadata: r.metadata,
             tenant_host: r.tenant_host,
+            reauth_required: r.status == "reauth_required",
         })
     }
 

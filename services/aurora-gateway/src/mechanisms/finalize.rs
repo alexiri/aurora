@@ -224,4 +224,56 @@ mod tests {
             "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"
         );
     }
+
+    const SK: &str = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
+    const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    fn suite(method: &Method, path: &str, query: Option<&str>) -> String {
+        sign(&SignParams {
+            method,
+            host_header: "example.amazonaws.com",
+            path,
+            query,
+            region: "us-east-1",
+            service: "service",
+            access_key: "AKIDEXAMPLE",
+            secret_key: SK,
+            session_token: None,
+            amz_date: "20150830T123600Z",
+            payload_hash: EMPTY,
+            sign_content_sha256: false,
+        })
+        .signature
+    }
+
+    /// AWS suite `get-vanilla-query` (empty query string).
+    #[test]
+    fn aws_suite_get_vanilla_query() {
+        assert_eq!(
+            suite(&Method::GET, "/", None),
+            "5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"
+        );
+    }
+
+    /// AWS suite `get-unreserved`: unreserved characters stay unescaped.
+    #[test]
+    fn aws_suite_get_unreserved() {
+        assert_eq!(
+            suite(
+                &Method::GET,
+                "/-._~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+                None
+            ),
+            "07ef7494c76fa4850883e2b006601f940f8a34d404d0cfa977f52a65bbf5f24f"
+        );
+    }
+
+    /// AWS suite `post-header-key-case`.
+    #[test]
+    fn aws_suite_post_header_key_case() {
+        assert_eq!(
+            suite(&Method::POST, "/", None),
+            "5da7c1a2acd57cee7505fc6676e4e544621c30862966e37dddb68e92efbe5d6b"
+        );
+    }
 }

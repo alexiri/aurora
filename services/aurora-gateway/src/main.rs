@@ -133,6 +133,18 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             .with_snapshots(snapshots.clone()),
     );
     hub.register(policy_resolver.cache());
+    // `gateway.hookhost_url` (docs/15); bearer = the configured internal secret (W9).
+    let hookhost_url = cfg.gateway.hookhost_url.clone();
+    let minter: Arc<dyn aurora_gateway::mint::Minter> =
+        Arc::new(aurora_gateway::mint::HttpMinter::new(
+            &hookhost_url,
+            &base64::engine::general_purpose::STANDARD.encode(cfg.internal_secret.expose()),
+        ));
+    let tokens = Arc::new(aurora_gateway::refresh::TokenManager::new(
+        pool.clone(),
+        vault.clone(),
+        Some(minter),
+    ));
     let plaintext = Arc::new(PlaintextCache::new(vault));
     hub.register(plaintext.clone());
     let reqlog = RequestLog::new(Arc::new(DbWriter(pool.clone())));
@@ -154,7 +166,8 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             holds: Some(holds.clone()),
             touch_pool: Some(pool.clone()),
         })
-        .with_governance(governance),
+        .with_governance(governance)
+        .with_tokens(tokens),
     );
     let reqlog_task = tokio::spawn(reqlog.run(FLUSH_INTERVAL, rx.clone()));
     let snapshot_task = tokio::spawn(snapshots.clone().run(pool.clone(), rx.clone()));

@@ -63,6 +63,17 @@ pub struct PreparedRequest {
     pub hook: Option<Box<dyn PostHook>>,
     /// Headers added to the response the client receives (`x-aurora-connections`).
     pub response_headers: HeaderMap,
+    /// Stale-token resend (step 14): body-less requests only.
+    pub retry: Option<Box<dyn Retry>>,
+}
+
+/// Rebuilds a request with fresh credentials after the upstream answered with a
+/// `token.stale_codes` match (docs/06 step 14); used at most once.
+#[async_trait::async_trait]
+pub trait Retry: Send + 'static {
+    fn stale_codes(&self) -> &[aurora_registry::manifest::StaleCode];
+    /// `None` when the credentials could not be refreshed (the first response stands).
+    async fn rebuild(self: Box<Self>) -> Option<PreparedRequest>;
 }
 
 /// Post-response hook (pipeline steps 14-15): guidance replacement and request log.
@@ -93,6 +104,7 @@ impl PipelineRequest {
             body: self.body,
             hook: None,
             response_headers: HeaderMap::new(),
+            retry: None,
         }
     }
 }

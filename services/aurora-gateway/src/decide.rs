@@ -12,15 +12,17 @@ use crate::hold::{HoldOutcome, HoldRequest, Holds};
 use crate::inject::{self, Target};
 use crate::mechanisms;
 use crate::pipeline::{
-    OpenLaneDecision, Outcome, PipelineRequest, PostHook, PreparedRequest, RequestHandler,
+    OpenLaneDecision, Outcome, PipelineRequest, PostHook, PreparedRequest, RequestHandler, Retry,
     TunnelReport,
 };
 use crate::plaintext::{PlaintextCache, PlaintextError};
+use crate::refresh::{RefreshError, TokenManager};
 use crate::reqlog::{RequestLog, Row};
 use crate::resolve::{ResolvedHost, Resolver, SecretCand};
 use crate::{Body, BoxError, guidance};
 use aurora_core::ApiError;
 use aurora_core::limits::{APPROVAL_BODY_PEEK, CONDITION_BODY_BUFFER};
+use aurora_db::repo::gateway as repo;
 use aurora_policy::eval::{BlockReason, Decision, MemoryCounter, RateCounter, Verdict};
 use aurora_policy::{Credential, RequestFacts, RequestIdentity, evaluate, selected_candidates};
 use bytes::{Bytes, BytesMut};
@@ -47,6 +49,7 @@ pub struct PolicyHandler {
     touch_pool: Option<aurora_db::PgPool>,
     touched: Mutex<HashMap<Uuid, Instant>>,
     governance: Option<Arc<Governance>>,
+    tokens: Option<Arc<TokenManager>>,
 }
 
 pub struct PolicyHandlerParts {
@@ -300,7 +303,14 @@ impl PolicyHandler {
             touch_pool: p.touch_pool,
             touched: Mutex::new(HashMap::new()),
             governance: None,
+            tokens: None,
         }
+    }
+
+    /// Enable token refresh / mint and stale-token retry for app connections.
+    pub fn with_tokens(mut self, t: Arc<TokenManager>) -> Self {
+        self.tokens = Some(t);
+        self
     }
 
     /// Enable origin preflight/backstop (the resolver carries the effective governance).
@@ -453,6 +463,7 @@ impl RequestHandler for PolicyHandler {
             upgrade,
             body,
         } = req;
+        let bodyless = hyper::body::Body::is_end_stream(&body);
         let mut ctx = Ctx {
             identity: identity.clone(),
             lane: "mitm",
@@ -725,6 +736,48 @@ impl RequestHandler for PolicyHandler {
                     }
                 }
             }
+            let pkg_ctx: &[String] = registry
+                .as_ref()
+                .and_then(|l| {
+                    l.snapshot
+                        .packages
+                        .iter()
+                        .find(|p| p.package_id == m.app.package_id)
+                })
+                .map_or(&[], |p| p.context.as_slice());
+            if conn.reauth_required {
+                return Outcome::Respond(self.refuse(
+                    ctx,
+                    &reauth_required(
+                        &conn.app_id,
+                        conn.id,
+                        &self.url(&rv, &format!("apps/{}", conn.app_id)),
+                    ),
+                    "error",
+                ));
+            }
+            let cmap = self.context_map(&identity, conn, pkg_ctx).await;
+            // 10. token freshness (after the decision): refresh / mint under the lock.
+            let refreshed;
+            let conn: &Arc<apps::ConnCand> = match (&self.tokens, &registry) {
+                (Some(t), Some(l)) if TokenManager::applies(m.app) => {
+                    match t.ensure_fresh(l, conn, &cmap, false).await {
+                        Ok(c) => {
+                            refreshed = Arc::new(c);
+                            &refreshed
+                        }
+                        Err(e) => {
+                            return Outcome::Respond(self.refuse(
+                                ctx,
+                                &self.refresh_error(&rv, conn, e),
+                                "error",
+                            ));
+                        }
+                    }
+                }
+                _ => conn,
+            };
+            ctx.connection_id = Some(conn.id);
             let raw = match self.plaintext.get_connection(conn).await {
                 Ok(v) => v,
                 Err(PlaintextError::StoreUnavailable(store_id)) => {
@@ -737,21 +790,7 @@ impl RequestHandler for PolicyHandler {
                 }
                 Err(PlaintextError::Unavailable) => return unavailable(self, ctx),
             };
-            let pkg_ctx: &[String] = registry
-                .as_ref()
-                .and_then(|l| {
-                    l.snapshot
-                        .packages
-                        .iter()
-                        .find(|p| p.package_id == m.app.package_id)
-                })
-                .map_or(&[], |p| p.context.as_slice());
-            let cmap = HashMap::from([
-                ("org_id".to_owned(), identity.org_id.to_string()),
-                ("workspace_id".to_owned(), identity.workspace_id.to_string()),
-                ("instance_url".to_owned(), self.external_url.clone()),
-            ]);
-            let Some(exec) = Exec::new(m.app, pkg_ctx, conn, raw.expose(), cmap) else {
+            let Some(exec) = Exec::new(m.app, pkg_ctx, conn, raw.expose(), cmap.clone()) else {
                 return unavailable(self, ctx);
             };
             // 9. token interception: answered locally, never forwarded.
@@ -771,24 +810,20 @@ impl RequestHandler for PolicyHandler {
             }
             // 11-12. inject, route, transform, finalize.
             let vars = exec.vars();
+            let pre = (self.stale_retry_eligible(m, bodyless, upgrade.is_some()))
+                .then(|| (headers.clone(), query.clone()));
             let mut new_path = path.clone();
             let mut up_host = host.clone();
-            let mut ok = mechanisms::inject::apply_all(
-                &m.entry.inject,
-                &vars,
-                &mut Target {
-                    headers: &mut headers,
-                    path: &mut new_path,
-                    query: &mut query,
-                },
-            )
-            .is_ok();
-            if ok && let Some(r) = &m.entry.rewrite_host {
-                match mechanisms::route::rewrite_host(r, &vars) {
-                    Ok(h) => up_host = h,
-                    Err(_) => ok = false,
-                }
-            }
+            let mut ok =
+                match inject_and_route(m.entry, &vars, &mut headers, &mut new_path, &mut query) {
+                    Ok(h) => {
+                        if let Some(h) = h {
+                            up_host = h;
+                        }
+                        true
+                    }
+                    Err(()) => false,
+                };
             if ok && let Some(mechanisms::Transform::GitCommitTrailer(t)) = &m.entry.transform {
                 match mechanisms::transform::git_commit_trailer(
                     t,
@@ -803,21 +838,17 @@ impl RequestHandler for PolicyHandler {
                     Err(_) => return unavailable(self, ctx),
                 }
             }
-            if ok && let Some(mechanisms::Finalize::AwsSigv4(f)) = &m.entry.finalize {
-                let host_hdr = if port == scheme.default_port() {
-                    up_host.clone()
-                } else {
-                    format!("{up_host}:{port}")
-                };
-                ok = mechanisms::finalize::finalize(
-                    f,
+            if ok {
+                ok = finalize_request(
+                    m.entry,
                     &vars,
                     &method,
-                    &host_hdr,
+                    &up_host,
+                    port,
+                    scheme,
                     &new_path,
                     query.as_deref(),
                     &mut headers,
-                    chrono::Utc::now(),
                 )
                 .is_ok();
             }
@@ -829,6 +860,31 @@ impl RequestHandler for PolicyHandler {
             let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
             let passthrough = pass_challenge(app_match.as_ref());
             let hook = self.hook(&rv, ctx, fb, passthrough, None);
+            let retry = match (pre, &self.tokens, &registry) {
+                (Some((h0, q0)), Some(t), Some(l)) => Some(Box::new(StaleRetry {
+                    tokens: t.clone(),
+                    plaintext: self.plaintext.clone(),
+                    loaded: l.clone(),
+                    conn: (**conn).clone(),
+                    entry: m.entry.clone(),
+                    codes: m
+                        .app
+                        .token
+                        .as_ref()
+                        .map(|t| t.stale_codes.clone())
+                        .unwrap_or_default(),
+                    pkg_ctx: pkg_ctx.to_vec(),
+                    context: cmap,
+                    scheme,
+                    up_host: up_host.clone(),
+                    port,
+                    method: method.clone(),
+                    path: path.clone(),
+                    query: q0,
+                    headers: h0,
+                }) as Box<dyn Retry>),
+                _ => None,
+            };
             return Outcome::Forward(PreparedRequest {
                 scheme,
                 host: up_host,
@@ -841,6 +897,7 @@ impl RequestHandler for PolicyHandler {
                 body,
                 hook: Some(hook),
                 response_headers,
+                retry,
             });
         }
         if let Some(Cand::Secret(c)) = &winner {
@@ -903,6 +960,7 @@ impl RequestHandler for PolicyHandler {
                 body,
                 hook: Some(hook),
                 response_headers,
+                retry: None,
             });
         }
         let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
@@ -920,6 +978,7 @@ impl RequestHandler for PolicyHandler {
             body,
             hook: Some(hook),
             response_headers,
+            retry: None,
         })
     }
 
@@ -1030,6 +1089,73 @@ impl RequestHandler for PolicyHandler {
 }
 
 impl PolicyHandler {
+    /// Body-less, non-upgrade app requests of a refreshing app may be resent once.
+    fn stale_retry_eligible(&self, m: &apps::AppMatch<'_>, bodyless: bool, upgrade: bool) -> bool {
+        self.tokens.is_some()
+            && bodyless
+            && !upgrade
+            && m.entry.transform.is_none()
+            && m.entry.intercept.is_none()
+            && TokenManager::applies(m.app)
+            && m.app
+                .token
+                .as_ref()
+                .is_some_and(|t| !t.stale_codes.is_empty())
+    }
+
+    /// Context variables of docs/09 §3.4 the package declared in `permissions.context`.
+    async fn context_map(
+        &self,
+        ident: &Ident,
+        conn: &apps::ConnCand,
+        allowed: &[String],
+    ) -> HashMap<String, String> {
+        let want = |k: &str| allowed.iter().any(|a| a == k);
+        let mut m = HashMap::new();
+        let mut put = |k: &str, v: String| {
+            if want(k) {
+                m.insert(k.to_owned(), v);
+            }
+        };
+        put("org_id", ident.org_id.to_string());
+        put(
+            "workspace_id",
+            conn.workspace_id.unwrap_or(ident.workspace_id).to_string(),
+        );
+        put("instance_url", self.external_url.clone());
+        if ["org_external_id", "agent_name", "agent_handle"]
+            .iter()
+            .any(|k| want(k))
+            && let Some(pool) = self
+                .touch_pool
+                .as_ref()
+                .or_else(|| self.tokens.as_ref().map(|t| t.pool()))
+            && let Ok(Some((ext, name, handle))) =
+                repo::context_names(pool, ident.org_id, ident.agent_id).await
+        {
+            put("org_external_id", ext);
+            put("agent_name", name);
+            put("agent_handle", handle);
+        }
+        m
+    }
+
+    fn refresh_error(&self, rv: &ResolvedHost, c: &apps::ConnCand, e: RefreshError) -> ApiError {
+        match e {
+            RefreshError::Reauth => reauth_required(
+                &c.app_id,
+                c.id,
+                &self.url(rv, &format!("apps/{}", c.app_id)),
+            ),
+            RefreshError::StoreUnavailable(store_id) => ApiError::unavailable(
+                "secret_store_unavailable",
+                "The secret store is unreachable. Retry shortly.",
+            )
+            .with_details(json!({ "store_id": store_id })),
+            RefreshError::Unavailable => credential_unavailable("connection"),
+        }
+    }
+
     fn fallback(
         &self,
         rv: &ResolvedHost,
@@ -1095,4 +1221,143 @@ fn credential_unavailable(kind: &str) -> ApiError {
         "A granted credential could not be produced. Retry later or contact a workspace admin.",
     )
     .with_details(json!({ "kind": kind }))
+}
+
+fn reauth_required(app_id: &str, connection_id: Uuid, connect_url: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "connection_reauth_required",
+        format!("The {app_id} connection must be reconnected by a user before it can be used. Reconnect it at {connect_url}"),
+    )
+    .with_details(json!({
+        "app_id": app_id, "connection_id": connection_id, "connect_url": connect_url
+    }))
+}
+
+/// Inject and `rewrite_host`; returns the rewritten upstream host, if any.
+fn inject_and_route(
+    entry: &aurora_registry::snapshot::HostEntry,
+    vars: &mechanisms::template::Vars<'_>,
+    headers: &mut HeaderMap,
+    path: &mut String,
+    query: &mut Option<String>,
+) -> Result<Option<String>, ()> {
+    mechanisms::inject::apply_all(
+        &entry.inject,
+        vars,
+        &mut Target {
+            headers,
+            path,
+            query,
+        },
+    )
+    .map_err(|_| ())?;
+    match &entry.rewrite_host {
+        Some(r) => mechanisms::route::rewrite_host(r, vars)
+            .map(Some)
+            .map_err(|_| ()),
+        None => Ok(None),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finalize_request(
+    entry: &aurora_registry::snapshot::HostEntry,
+    vars: &mechanisms::template::Vars<'_>,
+    method: &http::Method,
+    up_host: &str,
+    port: u16,
+    scheme: crate::pipeline::Scheme,
+    path: &str,
+    query: Option<&str>,
+    headers: &mut HeaderMap,
+) -> Result<(), ()> {
+    let Some(mechanisms::Finalize::AwsSigv4(f)) = &entry.finalize else {
+        return Ok(());
+    };
+    let host_hdr = if port == scheme.default_port() {
+        up_host.to_owned()
+    } else {
+        format!("{up_host}:{port}")
+    };
+    mechanisms::finalize::finalize(
+        f,
+        vars,
+        method,
+        &host_hdr,
+        path,
+        query,
+        headers,
+        chrono::Utc::now(),
+    )
+    .map_err(|_| ())
+}
+
+/// Resend of a body-less request with freshly refreshed credentials (step 14).
+struct StaleRetry {
+    tokens: Arc<TokenManager>,
+    plaintext: Arc<PlaintextCache>,
+    loaded: Arc<crate::snapshot::Loaded>,
+    conn: apps::ConnCand,
+    entry: aurora_registry::snapshot::HostEntry,
+    codes: Vec<aurora_registry::manifest::StaleCode>,
+    pkg_ctx: Vec<String>,
+    context: HashMap<String, String>,
+    scheme: crate::pipeline::Scheme,
+    up_host: String,
+    port: u16,
+    method: http::Method,
+    path: String,
+    query: Option<String>,
+    headers: HeaderMap,
+}
+
+#[async_trait::async_trait]
+impl Retry for StaleRetry {
+    fn stale_codes(&self) -> &[aurora_registry::manifest::StaleCode] {
+        &self.codes
+    }
+
+    async fn rebuild(self: Box<Self>) -> Option<PreparedRequest> {
+        let s = *self;
+        let conn = s
+            .tokens
+            .ensure_fresh(&s.loaded, &s.conn, &s.context, true)
+            .await
+            .ok()?;
+        let app = s.loaded.snapshot.app(&conn.app_id)?;
+        let raw = s.plaintext.get_connection(&conn).await.ok()?;
+        let exec = Exec::new(app, &s.pkg_ctx, &conn, raw.expose(), s.context.clone())?;
+        let vars = exec.vars();
+        let (mut headers, mut query, mut path) = (s.headers, s.query, s.path);
+        let rewritten =
+            inject_and_route(&s.entry, &vars, &mut headers, &mut path, &mut query).ok()?;
+        let up_host = rewritten.unwrap_or(s.up_host);
+        finalize_request(
+            &s.entry,
+            &vars,
+            &s.method,
+            &up_host,
+            s.port,
+            s.scheme,
+            &path,
+            query.as_deref(),
+            &mut headers,
+        )
+        .ok()?;
+        Some(PreparedRequest {
+            scheme: s.scheme,
+            host: up_host,
+            port: s.port,
+            method: s.method,
+            path,
+            query,
+            headers,
+            upgrade: None,
+            body: crate::empty_body(),
+            hook: None,
+            response_headers: HeaderMap::new(),
+            retry: None,
+        })
+    }
 }

@@ -24,6 +24,8 @@ use tokio::sync::{Notify, watch};
 pub use tunnel::bridge;
 
 /// In-flight work may finish for this long after SIGTERM.
+/// Response-body prefix inspected for `token.stale_codes.body_contains`.
+const STALE_BODY_PEEK: usize = 16 * 1024;
 pub const DRAIN_TIMEOUT: Duration = Duration::from_secs(25);
 
 pub struct ProxyParts {
@@ -170,8 +172,9 @@ impl Proxy {
         let mut prepared = prepared;
         let hook = prepared.hook.take();
         let response_headers = std::mem::take(&mut prepared.response_headers);
+        let retry = prepared.retry.take();
         // 13. forward
-        let mut resp = match self.upstream.send(prepared).await {
+        let resp = match self.upstream.send(prepared).await {
             Ok(r) => r,
             Err(e) => {
                 if let Some(h) = hook {
@@ -180,7 +183,70 @@ impl Proxy {
                 return guidance::response(&e);
             }
         };
-        // 14-15. guidance replacement and request log
+        // 14. stale token: refresh and resend a body-less request once.
+        if let Some(r) = retry
+            && r.stale_codes()
+                .iter()
+                .any(|c| c.status == resp.status().as_u16())
+        {
+            let status = resp.status();
+            let need_body = r
+                .stale_codes()
+                .iter()
+                .any(|c| c.status == status.as_u16() && c.body_contains.is_some());
+            let (parts, inc) = resp.into_parts();
+            let body: Body = inc.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync();
+            let (prefix, replay) = if need_body {
+                let (p, _, b) = crate::decide::buffer_prefix(body, STALE_BODY_PEEK).await;
+                (p, b)
+            } else {
+                (bytes::Bytes::new(), body)
+            };
+            let text = String::from_utf8_lossy(&prefix);
+            let stale = r.stale_codes().iter().any(|c| {
+                c.status == status.as_u16()
+                    && c.body_contains
+                        .as_ref()
+                        .is_none_or(|n| text.contains(n.as_str()))
+            });
+            if stale && let Some(next) = r.rebuild().await {
+                match self.upstream.send(next).await {
+                    Ok(r2) => {
+                        // The first response is dropped unread.
+                        drop(replay);
+                        return self.finish(r2, hook, response_headers, upgrade_fut);
+                    }
+                    Err(e) => {
+                        if let Some(h) = hook {
+                            h.on_error(&e);
+                        }
+                        return guidance::response(&e);
+                    }
+                }
+            }
+            let mut resp = Response::from_parts(parts, replay);
+            if let Some(h) = hook
+                && let Some(replacement) = h.on_response(resp.status(), resp.headers())
+            {
+                return replacement;
+            }
+            for (k, v) in &response_headers {
+                resp.headers_mut().insert(k.clone(), v.clone());
+            }
+            hygiene::strip_hop_by_hop(resp.headers_mut());
+            return resp;
+        }
+        self.finish(resp, hook, response_headers, upgrade_fut)
+    }
+
+    /// 14-15. guidance replacement, request log, upgrade bridging, response hygiene.
+    fn finish(
+        &self,
+        mut resp: Response<hyper::body::Incoming>,
+        hook: Option<Box<dyn crate::pipeline::PostHook>>,
+        response_headers: http::HeaderMap,
+        upgrade_fut: Option<hyper::upgrade::OnUpgrade>,
+    ) -> Response<Body> {
         if let Some(h) = hook {
             if let Some(replacement) = h.on_response(resp.status(), resp.headers()) {
                 return replacement;

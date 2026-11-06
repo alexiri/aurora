@@ -514,8 +514,9 @@ pub struct AppConnectionRow {
     pub tenant_host: Option<String>,
 }
 
-/// `active` and `disabled` connections of the organization (workspace NULL) and of the
-/// workspace for the given apps (`disabled` ones only feed guidance).
+/// `active`, `disabled` and `reauth_required` connections of the organization (workspace
+/// NULL) and of the workspace for the given apps (`disabled` ones only feed guidance;
+/// `reauth_required` ones are refused with reconnect guidance).
 pub async fn app_connections(
     pool: &sqlx::PgPool,
     org_id: Uuid,
@@ -527,7 +528,7 @@ pub async fn app_connections(
                 credentials_expires_at, metadata, tenant_host \
          FROM app_connections \
          WHERE org_id = $1 AND (workspace_id IS NULL OR workspace_id = $2) \
-           AND app_id = ANY($3) AND status IN ('active', 'disabled') \
+           AND app_id = ANY($3) AND status IN ('active', 'disabled', 'reauth_required') \
          ORDER BY created_at, id",
     )
     .bind(org_id)
@@ -562,4 +563,140 @@ pub async fn app_availability(
     .fetch_all(pool)
     .await?;
     Ok((true, ids))
+}
+
+// ---- token freshness (docs/08 §8) ----
+
+/// Mutable state of a connection, re-read under the refresh lock.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ConnectionState {
+    pub org_id: Uuid,
+    pub workspace_id: Option<Uuid>,
+    pub status: String,
+    pub credentials_ref: String,
+    pub credentials_version: i64,
+    pub credentials_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub oauth_client_id: Option<Uuid>,
+}
+
+pub async fn connection_state<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+) -> Result<Option<ConnectionState>, DbError> {
+    Ok(sqlx::query_as::<_, ConnectionState>(
+        "SELECT org_id, workspace_id, status, credentials_ref, credentials_version, \
+                credentials_expires_at, oauth_client_id \
+         FROM app_connections WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// Session-level advisory lock for one connection's refresh/mint; true when acquired.
+/// Must be released on the same connection with [`refresh_unlock`].
+pub async fn try_refresh_lock(
+    conn: &mut sqlx::PgConnection,
+    connection_id: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT pg_try_advisory_lock(hashtextextended('aurora:refresh:' || $1::text, 0))",
+    )
+    .bind(connection_id)
+    .fetch_one(conn)
+    .await?)
+}
+
+pub async fn refresh_unlock(
+    conn: &mut sqlx::PgConnection,
+    connection_id: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT pg_advisory_unlock(hashtextextended('aurora:refresh:' || $1::text, 0))",
+    )
+    .bind(connection_id)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// Compare-and-set persistence of refreshed credentials: succeeds only while the stored
+/// `credentials_version` is still the one the refresh was based on.
+pub async fn cas_connection_credentials<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    new_ref: &str,
+    read_version: i64,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE app_connections SET credentials_ref = $2, \
+                credentials_version = credentials_version + 1, \
+                credentials_expires_at = $4, updated_at = now() \
+         WHERE id = $1 AND credentials_version = $3 AND status = 'active'",
+    )
+    .bind(id)
+    .bind(new_ref)
+    .bind(read_version)
+    .bind(expires_at)
+    .execute(exec)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
+/// `active` -> `reauth_required`; only a user reconnect clears it.
+pub async fn mark_reauth_required<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    reason: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE app_connections SET status = 'reauth_required', status_reason = $2, \
+                reauth_required_at = now(), updated_at = now() \
+         WHERE id = $1 AND status = 'active'",
+    )
+    .bind(id)
+    .bind(reason)
+    .execute(exec)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OauthClientRow {
+    pub org_id: Option<Uuid>,
+    pub workspace_id: Option<Uuid>,
+    pub fields: serde_json::Value,
+    pub secret_ref: String,
+    pub enabled: bool,
+}
+
+pub async fn oauth_client<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+) -> Result<Option<OauthClientRow>, DbError> {
+    Ok(sqlx::query_as::<_, OauthClientRow>(
+        "SELECT org_id, workspace_id, fields, secret_ref, enabled \
+         FROM app_oauth_clients WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// `(org external_id, agent name, agent handle)` for template context variables.
+pub async fn context_names<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org_id: Uuid,
+    agent_id: Uuid,
+) -> Result<Option<(String, String, String)>, DbError> {
+    Ok(sqlx::query_as::<_, (String, String, String)>(
+        "SELECT o.external_id, a.name, a.handle FROM organizations o, agents a \
+         WHERE o.id = $1 AND a.id = $2",
+    )
+    .bind(org_id)
+    .bind(agent_id)
+    .fetch_optional(exec)
+    .await?)
 }
