@@ -95,6 +95,18 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | PROTO-001 | W5/W6/W7 wire types | Rust | done (spec issues logged below) | BE-006 | Sonnet | 22 tests + schemas |
 | TEST-012 | e2e-gateway M2 acceptance (real API + 2 gateways) | e2e | done | M2 | Sonnet | `bash scripts/e2e/gateway.sh` 11 passed (orchestrator rerun) |
 | FUP-M2 | Follow-ups: OpenAPI schema for OrgGovernance document (currently untyped object); SSE stream not closed on session revocation; services bind fixed ports (configurable ports would ease e2e); API must activate an empty snapshot at startup (gateway readyz) — goes with M3 lifecycle; GW-011 real-DB ask-tool hold test | both | todo | — | — | |
+| BE-040/041 | Plugin ingestion, trusted keys, approval, host claims, snapshot activation, internal routes | Rust | done | REG-003 | Sonnet | plugins 6 + lifecycle 5 (enable-requires-approval fix by orchestrator) |
+| BE-042 | Apps catalogue, connections, OAuth clients, availability (C-20) | Rust | done | BE-041 | Sonnet | apps_connections 3 |
+| HOOK-001/002 | WIT + SDK + component validation (I-22); hook host (wasmtime 50.0.1) | Rust | done | I-02a | Sonnet | hookhost 11; guest components |
+| SUM-001 | Summary templates + decoders (single impl) | Rust | done | — | Sonnet | 12 tests |
+| CLI-002/003 | aurora plugin subcommands, check-snapshot, reserved hosts, --pubkey | Rust | done | — | Sonnet/Haiku | fixtures 33/33 |
+| FIX-001 | Fixture packages (7 valid + 25 invalid) | fixtures | done | CLI-002 | Sonnet | `bash scripts/fixtures/build.sh` 33 pass |
+| HOOK-004 p1 | Gateway↔hookhost (summarize, mint) e2e | Rust/e2e | done | HOOK-002 | Sonnet | e2e-gateway 15/15 |
+| FE-031 | Admin plugins/host claims/trusted keys UI | Next.js | done | BE-041 | Sonnet | 76 vitest |
+| BE-043 | Connect flows (fields+probe, oauth2, callback, reconnect, blocklist) + API connect hooks | Rust | todo (next) | BE-042 | Sonnet | |
+| BE-044 | Connection grants + effective tools | Rust | todo | BE-042 | Sonnet | |
+| FE-030 | Apps catalogue, connect window, connections, OAuth clients, availability UI | Next.js | todo | BE-042/043 | Sonnet | |
+| FUP-M3 | Pre-warm hook modules on snapshot load; OpenAPI typing for governance document | — | todo | — | — | |
 | M3 rest | snapshot compiler, lifecycle/ingestion API, connect flows, mechanisms in gateway, hook host + WIT + SDK (needs wasm32-wasip2), CLI plugin, fixtures | both | todo | M2 | — | |
 | M4–M7 | hosted runtime, hosted features, channels, k8s/Helm | both | todo | per 19 | — | |
 
