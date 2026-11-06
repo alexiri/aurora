@@ -5,9 +5,15 @@ import { useEffect } from "react";
 
 import { ApiError } from "@/lib/api/client";
 
+/** Accept only same-origin absolute paths for `?next=`; anything else becomes `/`. */
+export function safeNext(next: string | null | undefined): string {
+  if (!next || !next.startsWith("/") || next.startsWith("//") || next.includes("\\")) return "/";
+  return next;
+}
+
 /** Build `/auth/login?next=<path>`; `next` is always a same-origin absolute path. */
 export function loginUrl(currentPath: string): string {
-  const safe = currentPath.startsWith("/") && !currentPath.startsWith("//") ? currentPath : "/";
+  const safe = safeNext(currentPath);
   return `/auth/login?next=${encodeURIComponent(safe)}`;
 }
 

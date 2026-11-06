@@ -8,6 +8,8 @@ import { unwrap } from "./unwrap";
 
 export type Org = components["schemas"]["Org"];
 export type Workspace = components["schemas"]["Workspace"];
+export type InstanceInfo = components["schemas"]["InstanceInfo"];
+export type Me = components["schemas"]["Me"];
 export type Agent = components["schemas"]["Agent"];
 export type CreateOrgRequest = components["schemas"]["CreateOrgRequest"];
 export type CreateWorkspaceRequest = components["schemas"]["CreateWorkspaceRequest"];
@@ -127,5 +129,25 @@ export function useMe() {
       return null;
     },
     retry: false,
+  });
+}
+
+/** `GET /v1/instance` (public). */
+export function useInstance(enabled = true) {
+  return useQuery({
+    queryKey: ["instance"] as const,
+    queryFn: () => unwrap(api.GET("/v1/instance")),
+    enabled,
+    retry,
+  });
+}
+
+/** `GET /v1/me`; unlike `useMe`, errors (401 = signed out) surface to the caller. */
+export function useSession() {
+  return useQuery({
+    queryKey: ["me", "session"] as const,
+    queryFn: () => unwrap(api.GET("/v1/me")),
+    retry: false,
+    staleTime: 0,
   });
 }

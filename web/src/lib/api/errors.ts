@@ -24,6 +24,15 @@ export const ERROR_MESSAGES: Record<string, string> = {
   invitation_expired: "This invitation has expired.",
   email_mismatch: "This invitation was sent to a different email address.",
   email_unverified: "Verify your email address first.",
+  invalid_token: "This link is invalid, has already been used, or has expired.",
+  already_verified: "Your email address is already verified.",
+  reauthentication_required: "Please confirm your password to continue.",
+  authorization_pending: "Waiting for approval.",
+  expired_token: "This code has expired. Start again from your terminal.",
+  access_denied: "The request was denied.",
+  oidc_state_invalid: "The single sign-on attempt expired or was invalid. Please try again.",
+  oidc_failed: "Single sign-on failed. Please try again or use another method.",
+  email_domain_not_allowed: "Your email domain is not allowed to sign in with this provider.",
   instance_admin_required: "This requires an instance administrator.",
 };
 

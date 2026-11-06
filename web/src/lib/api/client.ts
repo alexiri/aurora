@@ -3,8 +3,11 @@ import createClient from "openapi-fetch";
 import type { paths } from "./schema";
 
 export const api = createClient<paths>({
-  baseUrl: "",
+  // Same-origin; an absolute base keeps `Request` construction valid outside browsers (tests).
+  baseUrl: typeof window === "undefined" ? "" : window.location.origin,
   credentials: "same-origin",
+  // Resolve lazily so tests can stub `fetch`.
+  fetch: (req) => globalThis.fetch(req),
 });
 
 export interface ApiErrorEnvelope {
