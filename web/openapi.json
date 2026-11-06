@@ -1668,6 +1668,32 @@
         ]
       }
     },
+    "/v1/governance/instance": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Instance governance ceiling.",
+        "operationId": "getInstanceGovernance",
+        "responses": {
+          "200": {
+            "description": "Instance ceiling",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceGovernance"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/instance": {
       "get": {
         "tags": [
@@ -2711,6 +2737,217 @@
           },
           "404": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/governance": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Read the organization governance document (owner/admin).",
+        "operationId": "getOrgGovernance",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Document and revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GovernanceDocument"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Replace the governance document (owner/admin); re-evaluates stored LLM key origins.",
+        "operationId": "putOrgGovernance",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutGovernance"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GovernanceDocument"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "stale_revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "governance_invalid | governance_below_instance_minimum (details.fields)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/governance/effective": {
+      "get": {
+        "tags": [
+          "governance"
+        ],
+        "summary": "Effective governance (instance and org) with sources (any org member).",
+        "operationId": "getOrgEffectiveGovernance",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Effective governance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveGovernance"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -7718,6 +7955,112 @@
           }
         }
       },
+      "EffectiveEgress": {
+        "type": "object",
+        "required": [
+          "posture",
+          "org_allowlist",
+          "baseline_allowlist"
+        ],
+        "properties": {
+          "baseline_allowlist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AllowlistEntry"
+            }
+          },
+          "org_allowlist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AllowlistEntry"
+            }
+          },
+          "posture": {
+            "$ref": "#/components/schemas/Sourced_String"
+          }
+        }
+      },
+      "EffectiveEndpoint": {
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "display_name",
+          "permitted",
+          "key_scopes",
+          "allowed_models"
+        ],
+        "properties": {
+          "allowed_models": {
+            "$ref": "#/components/schemas/Sourced_Vec_String"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "key_scopes": {
+            "$ref": "#/components/schemas/Sourced_Vec_String"
+          },
+          "origin_rule": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OriginRule"
+              }
+            ]
+          },
+          "permitted": {
+            "$ref": "#/components/schemas/Sourced_bool"
+          },
+          "provider": {
+            "type": "string"
+          }
+        }
+      },
+      "EffectiveGovernance": {
+        "type": "object",
+        "required": [
+          "llm",
+          "egress",
+          "non_compliant_secrets"
+        ],
+        "properties": {
+          "egress": {
+            "$ref": "#/components/schemas/EffectiveEgress"
+          },
+          "llm": {
+            "$ref": "#/components/schemas/EffectiveLlm"
+          },
+          "non_compliant_secrets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NonCompliantSecret"
+            }
+          }
+        }
+      },
+      "EffectiveLlm": {
+        "type": "object",
+        "required": [
+          "posture",
+          "endpoints"
+        ],
+        "properties": {
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EffectiveEndpoint"
+            }
+          },
+          "posture": {
+            "$ref": "#/components/schemas/Sourced_String"
+          }
+        }
+      },
       "EffectiveTool": {
         "type": "object",
         "required": [
@@ -7811,6 +8154,23 @@
           "published",
           "superseded"
         ]
+      },
+      "GovernanceDocument": {
+        "type": "object",
+        "required": [
+          "document",
+          "revision"
+        ],
+        "properties": {
+          "document": {
+            "type": "object",
+            "description": "The `08 §11.2` organization governance document (normalized)."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       },
       "GrantMode": {
         "type": "string",
@@ -8001,6 +8361,75 @@
         ],
         "description": "Injection recipe (`08 §5`)."
       },
+      "InstanceEgress": {
+        "type": "object",
+        "required": [
+          "minimum_posture",
+          "baseline_allowlist"
+        ],
+        "properties": {
+          "baseline_allowlist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AllowlistEntry"
+            }
+          },
+          "minimum_posture": {
+            "type": "string"
+          }
+        }
+      },
+      "InstanceEndpoint": {
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "display_name",
+          "allowed_models"
+        ],
+        "properties": {
+          "allowed_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "key_origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OriginRule"
+              }
+            ]
+          },
+          "provider": {
+            "type": "string"
+          }
+        }
+      },
+      "InstanceGovernance": {
+        "type": "object",
+        "required": [
+          "llm",
+          "egress"
+        ],
+        "properties": {
+          "egress": {
+            "$ref": "#/components/schemas/InstanceEgress"
+          },
+          "llm": {
+            "$ref": "#/components/schemas/InstanceLlm"
+          }
+        }
+      },
       "InstanceInfo": {
         "type": "object",
         "required": [
@@ -8050,6 +8479,42 @@
           },
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "InstanceLlm": {
+        "type": "object",
+        "required": [
+          "allowed_key_scopes",
+          "minimum_posture",
+          "require_key_origin",
+          "known_llm_hosts",
+          "endpoints"
+        ],
+        "properties": {
+          "allowed_key_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstanceEndpoint"
+            }
+          },
+          "known_llm_hosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "minimum_posture": {
+            "type": "string"
+          },
+          "require_key_origin": {
+            "type": "boolean"
           }
         }
       },
@@ -8475,6 +8940,34 @@
           }
         }
       },
+      "NonCompliantSecret": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "`mismatch` | `unverifiable` | `not_permitted` | `pending`."
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
       "OidcProviderInfo": {
         "type": "object",
         "required": [
@@ -8607,6 +9100,38 @@
             "type": "string"
           },
           "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "OriginRule": {
+        "type": "object",
+        "required": [
+          "method",
+          "allowed_organization_ids",
+          "allowed_workspace_ids",
+          "allowed_team_ids"
+        ],
+        "properties": {
+          "allowed_organization_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowed_team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowed_workspace_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "method": {
             "type": "string"
           }
         }
@@ -10304,6 +10829,22 @@
           }
         }
       },
+      "PutGovernance": {
+        "type": "object",
+        "required": [
+          "document",
+          "revision"
+        ],
+        "properties": {
+          "document": {
+            "type": "object"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "RateLimit": {
         "type": "object",
         "required": [
@@ -11068,6 +11609,57 @@
                 "$ref": "#/components/schemas/WinningCredential"
               }
             ]
+          }
+        }
+      },
+      "Sourced_String": {
+        "type": "object",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "`instance` | `org`."
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "Sourced_Vec_String": {
+        "type": "object",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "`instance` | `org`."
+          },
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Sourced_bool": {
+        "type": "object",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "`instance` | `org`."
+          },
+          "value": {
+            "type": "boolean"
           }
         }
       },

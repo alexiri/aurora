@@ -10,6 +10,7 @@ pub mod credentials;
 pub mod derived_rules;
 pub mod email_tokens;
 pub mod gateway;
+pub mod governance;
 pub mod grants;
 pub mod invitations;
 pub mod members;

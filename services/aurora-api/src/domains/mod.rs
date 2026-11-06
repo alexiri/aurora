@@ -8,6 +8,7 @@ pub mod approvals;
 pub mod audit;
 pub mod auth;
 pub mod cli_login;
+pub mod governance;
 pub mod grants;
 pub mod instance;
 pub mod invitations;

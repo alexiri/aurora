@@ -483,6 +483,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/governance/instance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Instance governance ceiling. */
+        get: operations["getInstanceGovernance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/instance": {
         parameters: {
             query?: never;
@@ -668,6 +685,41 @@ export interface paths {
         };
         /** Organization audit log (owner/admin). */
         get: operations["listOrgAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/governance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the organization governance document (owner/admin). */
+        get: operations["getOrgGovernance"];
+        /** Replace the governance document (owner/admin); re-evaluates stored LLM key origins. */
+        put: operations["putOrgGovernance"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/governance/effective": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Effective governance (instance and org) with sources (any org member). */
+        get: operations["getOrgEffectiveGovernance"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1658,6 +1710,29 @@ export interface components {
             /** @description Logical ids of the allow rules that select it. */
             selected_by: string[];
         };
+        EffectiveEgress: {
+            baseline_allowlist: components["schemas"]["AllowlistEntry"][];
+            org_allowlist: components["schemas"]["AllowlistEntry"][];
+            posture: components["schemas"]["Sourced_String"];
+        };
+        EffectiveEndpoint: {
+            allowed_models: components["schemas"]["Sourced_Vec_String"];
+            display_name: string;
+            id: string;
+            key_scopes: components["schemas"]["Sourced_Vec_String"];
+            origin_rule?: null | components["schemas"]["OriginRule"];
+            permitted: components["schemas"]["Sourced_bool"];
+            provider: string;
+        };
+        EffectiveGovernance: {
+            egress: components["schemas"]["EffectiveEgress"];
+            llm: components["schemas"]["EffectiveLlm"];
+            non_compliant_secrets: components["schemas"]["NonCompliantSecret"][];
+        };
+        EffectiveLlm: {
+            endpoints: components["schemas"]["EffectiveEndpoint"][];
+            posture: components["schemas"]["Sourced_String"];
+        };
         EffectiveTool: {
             app_id: string;
             decision: string;
@@ -1684,6 +1759,12 @@ export interface components {
         };
         /** @enum {string} */
         GenerationStatus: "draft" | "published" | "superseded";
+        GovernanceDocument: {
+            /** @description The `08 §11.2` organization governance document (normalized). */
+            document: Record<string, never>;
+            /** Format: int64 */
+            revision: number;
+        };
         /** @enum {string} */
         GrantMode: "full" | "custom";
         GrantsResponse: {
@@ -1729,6 +1810,21 @@ export interface components {
             pattern: string;
             replacement: string;
         };
+        InstanceEgress: {
+            baseline_allowlist: components["schemas"]["AllowlistEntry"][];
+            minimum_posture: string;
+        };
+        InstanceEndpoint: {
+            allowed_models: string[];
+            display_name: string;
+            id: string;
+            key_origin?: null | components["schemas"]["OriginRule"];
+            provider: string;
+        };
+        InstanceGovernance: {
+            egress: components["schemas"]["InstanceEgress"];
+            llm: components["schemas"]["InstanceLlm"];
+        };
         InstanceInfo: {
             default_agent_name: string;
             /** @description `smtp` | `log`. */
@@ -1742,6 +1838,13 @@ export interface components {
             /** @description `open` | `invite_only` | `sso_jit`. */
             signup_mode: string;
             version: string;
+        };
+        InstanceLlm: {
+            allowed_key_scopes: string[];
+            endpoints: components["schemas"]["InstanceEndpoint"][];
+            known_llm_hosts: string[];
+            minimum_posture: string;
+            require_key_origin: boolean;
         };
         /** @description An invitation. The token is never part of any response. */
         Invitation: {
@@ -1850,6 +1953,15 @@ export interface components {
         Models: {
             items: components["schemas"]["ModelItem"][];
         };
+        NonCompliantSecret: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @description `mismatch` | `unverifiable` | `not_permitted` | `pending`. */
+            reason: string;
+            /** Format: uuid */
+            workspace_id?: string | null;
+        };
         OidcProviderInfo: {
             display_name: string;
             id: string;
@@ -1891,6 +2003,12 @@ export interface components {
             id: string;
             name: string;
             slug: string;
+        };
+        OriginRule: {
+            allowed_organization_ids: string[];
+            allowed_team_ids: string[];
+            allowed_workspace_ids: string[];
+            method: string;
         };
         Page_AccessBinding: {
             items: {
@@ -2331,6 +2449,11 @@ export interface components {
         PutAccessRequest: {
             role: components["schemas"]["WorkspaceRole"];
         };
+        PutGovernance: {
+            document: Record<string, never>;
+            /** Format: int64 */
+            revision: number;
+        };
         RateLimit: {
             /** Format: int32 */
             count: number;
@@ -2530,6 +2653,21 @@ export interface components {
             trace: components["schemas"]["SimTrace"];
             verdict: components["schemas"]["SimVerdict"];
             winning_credential?: null | components["schemas"]["WinningCredential"];
+        };
+        Sourced_String: {
+            /** @description `instance` | `org`. */
+            source: string;
+            value: string;
+        };
+        Sourced_Vec_String: {
+            /** @description `instance` | `org`. */
+            source: string;
+            value: string[];
+        };
+        Sourced_bool: {
+            /** @description `instance` | `org`. */
+            source: string;
+            value: boolean;
         };
         StartRequest: {
             /** @description Client host name (sanitized; used to name the minted key). */
@@ -3849,6 +3987,26 @@ export interface operations {
             };
         };
     };
+    getInstanceGovernance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Instance ceiling */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceGovernance"];
+                };
+            };
+        };
+    };
     getInstance: {
         parameters: {
             query?: never;
@@ -4526,6 +4684,151 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getOrgGovernance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Document and revision */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GovernanceDocument"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putOrgGovernance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutGovernance"];
+            };
+        };
+        responses: {
+            /** @description Stored document */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GovernanceDocument"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description stale_revision */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description governance_invalid | governance_below_instance_minimum (details.fields) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getOrgEffectiveGovernance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Effective governance */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EffectiveGovernance"];
+                };
+            };
+            /** @description Not found */
             404: {
                 headers: {
                     [name: string]: unknown;
