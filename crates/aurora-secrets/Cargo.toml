@@ -10,3 +10,21 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+aurora-config.workspace = true
+aurora-core.workspace = true
+aurora-crypto.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+percent-encoding.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[features]
+default = []
+# Test-only in-memory store (references = true).
+memory-store = []
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio.workspace = true
+base64.workspace = true
