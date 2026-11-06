@@ -9,9 +9,26 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "aurora-supervisor"
 path = "src/main.rs"
 
 [dependencies]
+aurora-protocol = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
 clap = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }
+rustix = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
