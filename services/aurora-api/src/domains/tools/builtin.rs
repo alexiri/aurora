@@ -10,6 +10,7 @@ pub fn tools() -> Vec<Box<dyn PlatformTool>> {
     v.extend(super::skills::tools());
     v.extend(super::webhooks::tools());
     v.extend(super::schedules::tools());
+    v.extend(super::agents::tools());
     v
 }
 

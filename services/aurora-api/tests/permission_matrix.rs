@@ -508,6 +508,23 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/secrets/{id}/verify", G::WsOwn, false),
     r("PUT", "/v1/secrets/{id}/value", G::WsOwn, false),
     r("GET", "/v1/secrets/{id}/models", G::WsOwn, false),
+    // BE-065 (M5): action approvals, agent links, peer tasks, app-turn cap reset.
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/action-approvals",
+        G::WsUse,
+        false,
+    ),
+    r(
+        "POST",
+        "/v1/action-approvals/{id}/decision",
+        G::WsUse,
+        false,
+    ),
+    r("GET", "/v1/agents/{agent}/links", G::WsUse, false),
+    r("PUT", "/v1/agent-links/{id}/policy", G::WsUse, false),
+    r("GET", "/v1/agents/{agent}/peer-tasks", G::WsUse, false),
+    r("POST", "/v1/conversations/{id}/continue", G::WsUse, false),
 ];
 
 /// Known authorization mismatches against docs/04 (production code is not changed by this task).

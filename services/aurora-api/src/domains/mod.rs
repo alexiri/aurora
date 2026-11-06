@@ -1,8 +1,10 @@
 //! Domain modules: each exposes `pub fn router() -> OpenApiRouter<AppState>` and keeps
 //! handlers (`routes.rs`) thin over `service.rs`; SQL lives in `aurora_db::repo`.
 
+pub mod action_approvals;
 pub mod activity;
 pub mod admin;
+pub mod agent_links;
 pub mod agents;
 pub mod approvals;
 pub mod apps;
@@ -24,6 +26,7 @@ pub mod me;
 pub mod memory;
 pub mod oauth_clients;
 pub mod oidc;
+pub mod peer_tasks;
 pub mod plugins;
 pub mod policy;
 pub mod runner_plane;

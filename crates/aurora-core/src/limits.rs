@@ -94,6 +94,8 @@ pub const APP_TURN_CAP: u32 = 5;
 /// messages.
 pub const PEER_TASK_BUDGET: u32 = 20;
 pub const PEER_TASK_TTL: Duration = Duration::from_secs(86400);
+/// pending action approvals expire after this (docs/03 `action_approvals.expires_at`: 24 h).
+pub const ACTION_APPROVAL_TTL: Duration = Duration::from_secs(86400);
 pub const SESSION_IDLE: Duration = Duration::from_secs(1209600);
 pub const SESSION_ABSOLUTE: Duration = Duration::from_secs(2592000);
 pub const HOOK_MEMORY: usize = 64 * MIB;

@@ -12,6 +12,8 @@ pub const APPROVAL_EXPIRY_GRACE: Duration = Duration::from_secs(30);
 pub const GATEWAY_UNSEEN: Duration = Duration::from_secs(60);
 pub const APPROVAL_SWEEP_EVERY: Duration = Duration::from_secs(10);
 pub const ATTACHMENT_SWEEP_EVERY: Duration = Duration::from_secs(3600);
+/// Action-approval and peer-task expiry (docs/05 §Background jobs).
+pub const ACTION_SWEEP_EVERY: Duration = Duration::from_secs(60);
 pub const PARTITION_EVERY: Duration = Duration::from_secs(24 * 3600);
 pub const PARTITIONS_AHEAD: u32 = 2;
 const PARTITION_JOB: &str = "request_log_partitions";
@@ -53,6 +55,24 @@ pub async fn maintain_request_log(
 
 /// Start all jobs on the current runtime. Tasks end with the runtime.
 pub fn spawn(pool: PgPool, retention_days: u32) {
+    let ap = pool.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(ACTION_SWEEP_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            match crate::domains::action_approvals::service::sweep(&ap).await {
+                Ok(n) if n > 0 => tracing::info!(expired = n, "action-approval sweep"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e.message(), "action-approval sweep failed"),
+            }
+            match crate::domains::peer_tasks::service::sweep(&ap).await {
+                Ok(n) if n > 0 => tracing::info!(closed = n, "peer-task sweep"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e.message(), "peer-task sweep failed"),
+            }
+        }
+    });
     let p = pool.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(APPROVAL_SWEEP_EVERY);

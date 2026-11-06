@@ -191,13 +191,56 @@ pub fn check_text(text: &str) -> Result<(), ApiError> {
 /// Create a turn (or a follow-up when one is active) inside the caller's transaction: lock the
 /// conversation, insert (the partial unique index arbitrates races), bind attachments, append the
 /// durable `turn.queued` event and `NOTIFY aurora_work` (both delivered on commit).
+///
+/// Bot/agent speakers are subject to the app-turn cap (07): use [`create_turn_capped`] for them
+/// so a refusal commits its durable notice. Here a refusal is a 409 `app_turn_cap_reached`
+/// (which rolls the transaction back), so only person/system speakers belong here.
 pub async fn create_turn_tx(
     conn: &mut PgConnection,
     conv: &ConversationRow,
     m: &NewMessage<'_>,
 ) -> Result<Created, ApiError> {
+    create_turn_capped(conn, conv, m).await?.ok_or_else(|| {
+        ApiError::conflict(
+            "app_turn_cap_reached",
+            "Too many consecutive automated turns; a person must continue the conversation.",
+        )
+    })
+}
+
+/// As [`create_turn_tx`], applying the app-turn cap (docs/07): a bot/agent turn increments
+/// `conversations.app_turn_streak`; at `APP_TURN_CAP` it is refused with a notice; a
+/// person-authored turn resets the streak. System turns neither count nor reset. `None`: the
+/// cap refused the turn (a durable `app_turn_cap_reached` notice was appended; no turn exists).
+pub async fn create_turn_capped(
+    conn: &mut PgConnection,
+    conv: &ConversationRow,
+    m: &NewMessage<'_>,
+) -> Result<Option<Created>, ApiError> {
     if !convs::lock(&mut *conn, conv.id).await? {
         return Err(conv_404());
+    }
+    match m.speaker_kind {
+        "person" => convs::reset_app_turn_streak(&mut *conn, conv.id).await?,
+        "bot" | "agent" => {
+            let streak = convs::get(&mut *conn, conv.id)
+                .await?
+                .map_or(0, |c| c.app_turn_streak);
+            if u32::try_from(streak).unwrap_or(0) >= aurora_core::limits::APP_TURN_CAP {
+                transcript::append_durable_event(
+                    &mut *conn,
+                    conv.id,
+                    None,
+                    "notice",
+                    &json!({"code": "app_turn_cap_reached",
+                        "text": "Automated messages were paused: too many consecutive bot or agent turns. A person must write or continue the conversation."}),
+                )
+                .await?;
+                return Ok(None);
+            }
+            convs::bump_app_turn_streak(&mut *conn, conv.id).await?;
+        }
+        _ => {}
     }
     let n = NewTurn {
         conversation_id: conv.id,
@@ -235,7 +278,7 @@ pub async fn create_turn_tx(
     transcript::append_durable_event(&mut *conn, conv.id, Some(row.id), "turn.queued", &payload)
         .await?;
     notify_work(&mut *conn).await?;
-    Ok(created)
+    Ok(Some(created))
 }
 
 /// `NOTIFY aurora_work` (delivered on commit when inside a transaction).
@@ -496,4 +539,32 @@ pub async fn send_now(state: &AppState, c: &Caller, id: Uuid) -> Result<Turn, Ap
     notify_work(&mut tx).await?;
     tx.commit().await.map_err(DbError::from)?;
     Ok(row.into())
+}
+
+/// `POST /conversations/{id}/continue` (C-27): reset the app-turn streak and append the durable
+/// `app_turn_cap_reset` notice.
+pub async fn continue_conversation(
+    state: &AppState,
+    c: &Caller,
+    id: Uuid,
+) -> Result<Conversation, ApiError> {
+    load_conversation(state, c, id).await?;
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    if !convs::lock(&mut tx, id).await? {
+        return Err(conv_404());
+    }
+    convs::reset_app_turn_streak(&mut tx, id).await?;
+    transcript::append_durable_event(
+        &mut tx,
+        id,
+        None,
+        "notice",
+        &json!({"code": "app_turn_cap_reset",
+            "text": "Automated messages were resumed by a person."}),
+    )
+    .await?;
+    let row = convs::get(&mut *tx, id).await?.ok_or_else(conv_404)?;
+    let active = turns::active_turn(&mut *tx, id).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(Conversation::from_row(row, active))
 }

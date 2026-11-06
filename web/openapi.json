@@ -10,6 +10,87 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/action-approvals/{id}/decision": {
+      "post": {
+        "tags": [
+          "action-approvals"
+        ],
+        "summary": "Approve or deny an action approval; the first decision wins.",
+        "operationId": "decideActionApproval",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Action approval id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionDecisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionApproval"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "already_decided",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/admin/host-claims": {
       "get": {
         "tags": [
@@ -1421,6 +1502,77 @@
         ]
       }
     },
+    "/v1/agent-links/{id}/policy": {
+      "put": {
+        "tags": [
+          "agent-links"
+        ],
+        "summary": "Set one agent's side of a link (`ask` | `allow` | `blocked`).",
+        "operationId": "setAgentLinkPolicy",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Link id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPolicyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentLink"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "stale_revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agent/container-config": {
       "get": {
         "tags": [
@@ -2375,6 +2527,57 @@
         ]
       }
     },
+    "/v1/agents/{agent}/links": {
+      "get": {
+        "tags": [
+          "agent-links"
+        ],
+        "summary": "Links of an agent, each seen from this agent's side.",
+        "operationId": "listAgentLinks",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentLinkList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/memories": {
       "get": {
         "tags": [
@@ -3023,6 +3226,94 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ModelOptions"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/peer-tasks": {
+      "get": {
+        "tags": [
+          "peer-tasks"
+        ],
+        "summary": "Peer tasks the agent requested or received, newest first.",
+        "operationId": "listPeerTasks",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`queued` | `open` | `completed` | `cancelled` | `expired`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PeerTask"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -5292,6 +5583,57 @@
             }
           },
           "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/conversations/{id}/continue": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Reset the app-turn streak so bot/agent turns flow again (C-27).",
+        "operationId": "continueConversation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -11026,6 +11368,103 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/action-approvals": {
+      "get": {
+        "tags": [
+          "action-approvals"
+        ],
+        "summary": "Action approvals of a workspace, newest first.",
+        "operationId": "listActionApprovals",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`pending` | `approved` | `executed` | `failed` | `rejected` | `expired`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ActionApproval"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/activity": {
       "get": {
         "tags": [
@@ -12662,6 +13101,130 @@
           "block"
         ]
       },
+      "ActionApproval": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "agent_id",
+          "action_key",
+          "summary",
+          "status",
+          "expires_at",
+          "created_at"
+        ],
+        "properties": {
+          "action_key": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "decided_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ActionApprovalDecider"
+              }
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "executed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "description": "`pending` | `approved` | `executed` | `failed` | `rejected` | `expired`"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Platform-composed one-liner; never raw model text."
+          },
+          "turn_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ActionApprovalDecider": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ActionDecision": {
+        "type": "string",
+        "enum": [
+          "approve",
+          "deny"
+        ]
+      },
+      "ActionDecisionBody": {
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/ActionDecision"
+          }
+        }
+      },
       "AdminUser": {
         "allOf": [
           {
@@ -12774,6 +13337,56 @@
           "workspace_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "AgentLink": {
+        "type": "object",
+        "description": "A link seen from one of its two agents.",
+        "required": [
+          "id",
+          "revision",
+          "self",
+          "peer",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "peer": {
+            "$ref": "#/components/schemas/LinkPeer"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "self": {
+            "$ref": "#/components/schemas/LinkSelf"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AgentLinkList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentLink"
+            }
           }
         }
       },
@@ -14154,6 +14767,8 @@
           "kind",
           "external_ref",
           "last_seq",
+          "app_turn_streak",
+          "app_turn_capped",
           "created_at"
         ],
         "properties": {
@@ -14170,6 +14785,15 @@
           "agent_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "app_turn_capped": {
+            "type": "boolean",
+            "description": "The streak reached `APP_TURN_CAP`: further bot/agent turns are refused."
+          },
+          "app_turn_streak": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Consecutive bot/agent turns since the last person-authored turn or `continue` (C-27)."
           },
           "created_at": {
             "type": "string",
@@ -15877,6 +16501,59 @@
           }
         }
       },
+      "LinkPeer": {
+        "type": "object",
+        "required": [
+          "agent_id",
+          "handle",
+          "name",
+          "workspace_id",
+          "policy"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/LinkPolicy"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "LinkPolicy": {
+        "type": "string",
+        "enum": [
+          "ask",
+          "allow",
+          "blocked"
+        ]
+      },
+      "LinkSelf": {
+        "type": "object",
+        "required": [
+          "agent_id",
+          "policy"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/LinkPolicy"
+          }
+        }
+      },
       "LlmEndpointInfo": {
         "type": "object",
         "required": [
@@ -16690,6 +17367,113 @@
           }
         }
       },
+      "Page_ActionApproval": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "workspace_id",
+                "agent_id",
+                "action_key",
+                "summary",
+                "status",
+                "expires_at",
+                "created_at"
+              ],
+              "properties": {
+                "action_key": {
+                  "type": "string"
+                },
+                "agent_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "conversation_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "decided_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "decided_by": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ActionApprovalDecider"
+                    }
+                  ]
+                },
+                "error": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "executed_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "expires_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "`pending` | `approved` | `executed` | `failed` | `rejected` | `expired`"
+                },
+                "summary": {
+                  "type": "string",
+                  "description": "Platform-composed one-liner; never raw model text."
+                },
+                "turn_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "workspace_id": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_AdminUser": {
         "type": "object",
         "required": [
@@ -17343,6 +18127,8 @@
                 "kind",
                 "external_ref",
                 "last_seq",
+                "app_turn_streak",
+                "app_turn_capped",
                 "created_at"
               ],
               "properties": {
@@ -17359,6 +18145,15 @@
                 "agent_id": {
                   "type": "string",
                   "format": "uuid"
+                },
+                "app_turn_capped": {
+                  "type": "boolean",
+                  "description": "The streak reached `APP_TURN_CAP`: further bot/agent turns are refused."
+                },
+                "app_turn_streak": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Consecutive bot/agent turns since the last person-authored turn or `continue` (C-27)."
                 },
                 "created_at": {
                   "type": "string",
@@ -17798,6 +18593,111 @@
                 },
                 "slug": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_PeerTask": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "link_id",
+                "from_agent_id",
+                "to_agent_id",
+                "direction",
+                "origin_conversation_id",
+                "task_conversation_id",
+                "status",
+                "messages_used",
+                "message_budget",
+                "expires_at",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "direction": {
+                  "type": "string",
+                  "description": "`outgoing` when the listed agent requested the task, `incoming` when it received it."
+                },
+                "expires_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "from_agent_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "link_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "message_budget": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "messages_used": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "origin_conversation_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "report": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "requester": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PeerTaskRequester"
+                    }
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "description": "`queued` | `open` | `completed` | `cancelled` | `expired`"
+                },
+                "task_conversation_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "to_agent_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
                 }
               }
             }
@@ -19096,6 +19996,110 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PeerTask": {
+        "type": "object",
+        "required": [
+          "id",
+          "link_id",
+          "from_agent_id",
+          "to_agent_id",
+          "direction",
+          "origin_conversation_id",
+          "task_conversation_id",
+          "status",
+          "messages_used",
+          "message_budget",
+          "expires_at",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "direction": {
+            "type": "string",
+            "description": "`outgoing` when the listed agent requested the task, `incoming` when it received it."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "from_agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "link_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "message_budget": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "messages_used": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "origin_conversation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "report": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requester": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PeerTaskRequester"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "`queued` | `open` | `completed` | `cancelled` | `expired`"
+          },
+          "task_conversation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "to_agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "PeerTaskRequester": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -20829,6 +21833,29 @@
           },
           "text": {
             "type": "string"
+          }
+        }
+      },
+      "SetPolicyBody": {
+        "type": "object",
+        "required": [
+          "agent_id",
+          "policy",
+          "revision"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The agent whose side is changed."
+          },
+          "policy": {
+            "$ref": "#/components/schemas/LinkPolicy"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `revision` the caller last saw (409 `stale_revision` on mismatch)."
           }
         }
       },

@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/v1/action-approvals/{id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve or deny an action approval; the first decision wins. */
+        post: operations["decideActionApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/host-claims": {
         parameters: {
             query?: never;
@@ -298,6 +315,23 @@ export interface paths {
         patch: operations["adminPatchUser"];
         trace?: never;
     };
+    "/v1/agent-links/{id}/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set one agent's side of a link (`ask` | `allow` | `blocked`). */
+        put: operations["setAgentLinkPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agent/container-config": {
         parameters: {
             query?: never;
@@ -473,6 +507,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Links of an agent, each seen from this agent's side. */
+        get: operations["listAgentLinks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/memories": {
         parameters: {
             query?: never;
@@ -587,6 +638,23 @@ export interface paths {
         };
         /** Models selectable for the agent: usable granted keys only, allowed models only. */
         get: operations["listAgentModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/peer-tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Peer tasks the agent requested or received, newest first. */
+        get: operations["listPeerTasks"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1198,6 +1266,23 @@ export interface paths {
          *     references it.
          */
         post: operations["uploadAttachment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}/continue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset the app-turn streak so bot/agent turns flow again (C-27). */
+        post: operations["continueConversation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2204,6 +2289,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/action-approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Action approvals of a workspace, newest first. */
+        get: operations["listActionApprovals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/activity": {
         parameters: {
             query?: never;
@@ -2492,6 +2594,43 @@ export interface components {
         };
         /** @enum {string} */
         Action: "allow" | "block";
+        ActionApproval: {
+            action_key: string;
+            /** Format: uuid */
+            agent_id: string;
+            /** Format: uuid */
+            conversation_id?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decided_at?: string | null;
+            decided_by?: null | components["schemas"]["ActionApprovalDecider"];
+            error?: string | null;
+            /** Format: date-time */
+            executed_at?: string | null;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            /** @description `pending` | `approved` | `executed` | `failed` | `rejected` | `expired` */
+            status: string;
+            /** @description Platform-composed one-liner; never raw model text. */
+            summary: string;
+            /** Format: uuid */
+            turn_id?: string | null;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        ActionApprovalDecider: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+        };
+        /** @enum {string} */
+        ActionDecision: "approve" | "deny";
+        ActionDecisionBody: {
+            decision: components["schemas"]["ActionDecision"];
+        };
         AdminUser: components["schemas"]["User"] & {
             /** Format: date-time */
             disabled_at?: string | null;
@@ -2523,6 +2662,22 @@ export interface components {
             updated_at: string;
             /** Format: uuid */
             workspace_id: string;
+        };
+        /** @description A link seen from one of its two agents. */
+        AgentLink: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            peer: components["schemas"]["LinkPeer"];
+            /** Format: int64 */
+            revision: number;
+            self: components["schemas"]["LinkSelf"];
+            /** Format: date-time */
+            updated_at: string;
+        };
+        AgentLinkList: {
+            items: components["schemas"]["AgentLink"][];
         };
         AgentToken: {
             container_config: components["schemas"]["ContainerConfig"];
@@ -2903,6 +3058,13 @@ export interface components {
             active_turn?: null | components["schemas"]["Turn"];
             /** Format: uuid */
             agent_id: string;
+            /** @description The streak reached `APP_TURN_CAP`: further bot/agent turns are refused. */
+            app_turn_capped: boolean;
+            /**
+             * Format: int64
+             * @description Consecutive bot/agent turns since the last person-authored turn or `continue` (C-27).
+             */
+            app_turn_streak: number;
             /** Format: date-time */
             created_at: string;
             /** Format: uuid */
@@ -3340,6 +3502,22 @@ export interface components {
             /** Format: uuid */
             id: string;
         };
+        LinkPeer: {
+            /** Format: uuid */
+            agent_id: string;
+            handle: string;
+            name: string;
+            policy: components["schemas"]["LinkPolicy"];
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        /** @enum {string} */
+        LinkPolicy: "ask" | "allow" | "blocked";
+        LinkSelf: {
+            /** Format: uuid */
+            agent_id: string;
+            policy: components["schemas"]["LinkPolicy"];
+        };
         LlmEndpointInfo: {
             base_url: string;
             dialects: string[];
@@ -3558,6 +3736,36 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_ActionApproval: {
+            items: {
+                action_key: string;
+                /** Format: uuid */
+                agent_id: string;
+                /** Format: uuid */
+                conversation_id?: string | null;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: date-time */
+                decided_at?: string | null;
+                decided_by?: null | components["schemas"]["ActionApprovalDecider"];
+                error?: string | null;
+                /** Format: date-time */
+                executed_at?: string | null;
+                /** Format: date-time */
+                expires_at: string;
+                /** Format: uuid */
+                id: string;
+                /** @description `pending` | `approved` | `executed` | `failed` | `rejected` | `expired` */
+                status: string;
+                /** @description Platform-composed one-liner; never raw model text. */
+                summary: string;
+                /** Format: uuid */
+                turn_id?: string | null;
+                /** Format: uuid */
+                workspace_id: string;
+            }[];
+            next_cursor?: string | null;
+        };
         Page_AdminUser: {
             items: (components["schemas"]["User"] & {
                 /** Format: date-time */
@@ -3731,6 +3939,13 @@ export interface components {
                 active_turn?: null | components["schemas"]["Turn"];
                 /** Format: uuid */
                 agent_id: string;
+                /** @description The streak reached `APP_TURN_CAP`: further bot/agent turns are refused. */
+                app_turn_capped: boolean;
+                /**
+                 * Format: int64
+                 * @description Consecutive bot/agent turns since the last person-authored turn or `continue` (C-27).
+                 */
+                app_turn_streak: number;
                 /** Format: date-time */
                 created_at: string;
                 /** Format: uuid */
@@ -3853,6 +4068,39 @@ export interface components {
                 name: string;
                 settings: components["schemas"]["OrgSettings"];
                 slug: string;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_PeerTask: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                /** @description `outgoing` when the listed agent requested the task, `incoming` when it received it. */
+                direction: string;
+                /** Format: date-time */
+                expires_at: string;
+                /** Format: uuid */
+                from_agent_id: string;
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                link_id: string;
+                /** Format: int32 */
+                message_budget: number;
+                /** Format: int32 */
+                messages_used: number;
+                /** Format: uuid */
+                origin_conversation_id: string;
+                report?: string | null;
+                requester?: null | components["schemas"]["PeerTaskRequester"];
+                /** @description `queued` | `open` | `completed` | `cancelled` | `expired` */
+                status: string;
+                /** Format: uuid */
+                task_conversation_id: string;
+                /** Format: uuid */
+                to_agent_id: string;
+                /** Format: date-time */
+                updated_at: string;
             }[];
             next_cursor?: string | null;
         };
@@ -4202,6 +4450,41 @@ export interface components {
             memory_language?: string | null;
             name?: string | null;
             timezone?: string | null;
+        };
+        PeerTask: {
+            /** Format: date-time */
+            created_at: string;
+            /** @description `outgoing` when the listed agent requested the task, `incoming` when it received it. */
+            direction: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            from_agent_id: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            link_id: string;
+            /** Format: int32 */
+            message_budget: number;
+            /** Format: int32 */
+            messages_used: number;
+            /** Format: uuid */
+            origin_conversation_id: string;
+            report?: string | null;
+            requester?: null | components["schemas"]["PeerTaskRequester"];
+            /** @description `queued` | `open` | `completed` | `cancelled` | `expired` */
+            status: string;
+            /** Format: uuid */
+            task_conversation_id: string;
+            /** Format: uuid */
+            to_agent_id: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        PeerTaskRequester: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
         };
         PendingList: {
             items: components["schemas"]["Approval"][];
@@ -4678,6 +4961,19 @@ export interface components {
             attachment_ids?: string[];
             text: string;
         };
+        SetPolicyBody: {
+            /**
+             * Format: uuid
+             * @description The agent whose side is changed.
+             */
+            agent_id: string;
+            policy: components["schemas"]["LinkPolicy"];
+            /**
+             * Format: int64
+             * @description The `revision` the caller last saw (409 `stale_revision` on mismatch).
+             */
+            revision: number;
+        };
         SetValueRequest: {
             reference?: null | components["schemas"]["SecretReference"];
             value?: string | null;
@@ -5088,6 +5384,57 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    decideActionApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Action approval id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActionDecisionBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionApproval"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description already_decided */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminListHostClaims: {
         parameters: {
             query?: never;
@@ -6024,6 +6371,49 @@ export interface operations {
             };
         };
     };
+    setAgentLinkPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Link id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetPolicyBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentLink"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description stale_revision */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getSelfContainerConfig: {
         parameters: {
             query?: never;
@@ -6648,6 +7038,36 @@ export interface operations {
             };
         };
     };
+    listAgentLinks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentLinkList"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listMemories: {
         parameters: {
             query?: never;
@@ -7027,6 +7447,49 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelOptions"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listPeerTasks: {
+        parameters: {
+            query?: {
+                /** @description `queued` | `open` | `completed` | `cancelled` | `expired` */
+                status?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_PeerTask"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             404: {
@@ -8556,6 +9019,36 @@ export interface operations {
                 };
             };
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    continueConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12173,6 +12666,50 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listActionApprovals: {
+        parameters: {
+            query?: {
+                /** @description `pending` | `approved` | `executed` | `failed` | `rejected` | `expired` */
+                status?: string;
+                agent_id?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ActionApproval"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
