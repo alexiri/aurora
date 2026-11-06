@@ -108,6 +108,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/effective": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Effective credentials of an agent (`can_use`). */
+        get: operations["getAgentEffective"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Grants of an agent (`can_use`). */
+        get: operations["listAgentGrants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/grants/secrets/{secret}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Grant a secret to an agent (`can_own`); idempotent. */
+        put: operations["grantSecret"];
+        post?: never;
+        /** Revoke a secret grant (`can_own`). */
+        delete: operations["revokeSecretGrant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/token": {
         parameters: {
             query?: never;
@@ -609,6 +661,108 @@ export interface paths {
         patch: operations["patchMember"];
         trace?: never;
     };
+    "/v1/orgs/{org}/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the organization policy (org member). */
+        get: operations["getOrgPolicy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/policy/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace the organization draft (owner/admin; C-08). */
+        put: operations["putOrgPolicyDraft"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/policy/generations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Organization policy history, newest first. */
+        get: operations["listOrgPolicyGenerations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/policy/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish the organization draft (owner/admin). */
+        post: operations["publishOrgPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/policy/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish a copy of an older organization generation (owner/admin). */
+        post: operations["rollbackOrgPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/policy/warnings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Warnings for the organization draft. */
+        get: operations["getOrgPolicyWarnings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/secrets": {
         parameters: {
             query?: never;
@@ -890,6 +1044,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the workspace policy (`can_use`). */
+        get: operations["getWorkspacePolicy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/policy/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace the workspace draft (`can_own`; C-08). */
+        put: operations["putWorkspacePolicyDraft"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/policy/generations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workspace policy history, newest first. */
+        get: operations["listWorkspacePolicyGenerations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/policy/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish the workspace draft (`can_own`). */
+        post: operations["publishWorkspacePolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/policy/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish a copy of an older workspace generation (`can_own`). */
+        post: operations["rollbackWorkspacePolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/policy/simulate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Simulate a request for an agent against the published (or draft) policy (`can_use`). */
+        post: operations["simulatePolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/policy/warnings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Warnings for the workspace draft. */
+        get: operations["getWorkspacePolicyWarnings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/secrets": {
         parameters: {
             query?: never;
@@ -931,6 +1204,8 @@ export interface components {
             /** Format: uuid */
             user_id: string;
         };
+        /** @enum {string} */
+        Action: "allow" | "block";
         AdminUser: components["schemas"]["User"] & {
             /** Format: date-time */
             disabled_at?: string | null;
@@ -966,6 +1241,10 @@ export interface components {
         AgentToken: {
             container_config: components["schemas"]["ContainerConfig"];
             token: string;
+        };
+        AllowlistEntry: {
+            host: string;
+            path?: string | null;
         };
         ApiKey: {
             /** Format: date-time */
@@ -1033,8 +1312,32 @@ export interface components {
             org_slug: string;
             slug: string;
         };
+        Condition: {
+            json_pointer?: string | null;
+            on: components["schemas"]["ConditionOn"];
+            op: components["schemas"]["ConditionOp"];
+            value: string;
+        };
+        /** @enum {string} */
+        ConditionOn: "body";
+        /** @enum {string} */
+        ConditionOp: "contains" | "not_contains" | "equals";
         ConfirmRequest: {
             confirm: string;
+        };
+        /** @description Connection grants arrive with M3; the list is empty until then. */
+        ConnectionGrant: {
+            /** Format: uuid */
+            agent_id: string;
+            allow_tools: string[];
+            ask_tools: string[];
+            /** Format: uuid */
+            connection_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            mode: components["schemas"]["GrantMode"];
         };
         ContainerConfig: {
             ca_path: string;
@@ -1138,9 +1441,44 @@ export interface components {
             /** @description The token; shown only in this response. */
             key: string;
         };
+        /** @enum {string} */
+        CredentialKind: "secret" | "connection";
+        /** @enum {string} */
+        DefaultAction: "none" | "allow" | "block";
         DeleteMeRequest: {
             /** @description Required for accounts that have a password. */
             password?: string | null;
+        };
+        DraftRequest: {
+            default_action: components["schemas"]["DefaultAction"];
+            /** Format: int64 */
+            revision: number;
+            rules: components["schemas"]["RuleInput"][];
+            uncredentialed_allowlist?: components["schemas"]["AllowlistEntry"][] | null;
+            uncredentialed_default?: null | components["schemas"]["UncredentialedDefault"];
+        };
+        Effective: {
+            credentials: components["schemas"]["EffectiveCredential"][];
+            /** @description App tools (M3); empty until apps exist. */
+            tools: components["schemas"]["EffectiveTool"][];
+        };
+        EffectiveCredential: {
+            /** Format: uuid */
+            id: string;
+            /** @description `secret` | `connection`. */
+            kind: string;
+            name: string;
+            /** @description `organization` | `workspace`. */
+            scope: string;
+            selected: boolean;
+            /** @description Logical ids of the allow rules that select it. */
+            selected_by: string[];
+        };
+        EffectiveTool: {
+            app_id: string;
+            decision: string;
+            org_ceiling?: string | null;
+            tool_id: string;
         };
         ErrorBody: {
             /** @description snake_case machine code. */
@@ -1159,6 +1497,25 @@ export interface components {
         };
         ForgotRequest: {
             email: string;
+        };
+        /** @enum {string} */
+        GenerationStatus: "draft" | "published" | "superseded";
+        /** @enum {string} */
+        GrantMode: "full" | "custom";
+        GrantsResponse: {
+            connections: components["schemas"]["ConnectionGrant"][];
+            secrets: components["schemas"]["SecretGrant"][];
+        };
+        Identity: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "agent";
+        } | {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "user";
         };
         /** @description Injection recipe (`08 §5`). */
         InjectionRecipe: {
@@ -1502,6 +1859,28 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_PolicyGenerationSummary: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                default_action: components["schemas"]["DefaultAction"];
+                /** Format: int64 */
+                draft_revision?: number | null;
+                /** Format: uuid */
+                id: string;
+                /** Format: int32 */
+                number: number;
+                /** Format: date-time */
+                published_at?: string | null;
+                published_by?: null | components["schemas"]["CreatedBy"];
+                /** Format: int64 */
+                rule_count: number;
+                status: components["schemas"]["GenerationStatus"];
+                uncredentialed_allowlist: components["schemas"]["AllowlistEntry"][];
+                uncredentialed_default: components["schemas"]["UncredentialedDefault"];
+            }[];
+            next_cursor?: string | null;
+        };
         Page_Secret: {
             items: {
                 /** Format: date-time */
@@ -1602,8 +1981,89 @@ export interface components {
             name?: string | null;
             timezone?: string | null;
         };
+        /** @enum {string} */
+        Per: "minute" | "hour" | "day";
+        PolicyDocument: {
+            draft: components["schemas"]["PolicyGeneration"];
+            published: components["schemas"]["PolicyGeneration"];
+            scope: components["schemas"]["ScopeName"];
+        };
+        PolicyGeneration: {
+            /** Format: date-time */
+            created_at: string;
+            default_action: components["schemas"]["DefaultAction"];
+            /**
+             * Format: int64
+             * @description Drafts only.
+             */
+            draft_revision?: number | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: int32 */
+            number: number;
+            /** Format: date-time */
+            published_at?: string | null;
+            published_by?: null | components["schemas"]["CreatedBy"];
+            rules: components["schemas"]["PolicyRule"][];
+            status: components["schemas"]["GenerationStatus"];
+            uncredentialed_allowlist: components["schemas"]["AllowlistEntry"][];
+            uncredentialed_default: components["schemas"]["UncredentialedDefault"];
+        };
+        /** @description A generation without its rules. */
+        PolicyGenerationSummary: {
+            /** Format: date-time */
+            created_at: string;
+            default_action: components["schemas"]["DefaultAction"];
+            /** Format: int64 */
+            draft_revision?: number | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: int32 */
+            number: number;
+            /** Format: date-time */
+            published_at?: string | null;
+            published_by?: null | components["schemas"]["CreatedBy"];
+            /** Format: int64 */
+            rule_count: number;
+            status: components["schemas"]["GenerationStatus"];
+            uncredentialed_allowlist: components["schemas"]["AllowlistEntry"][];
+            uncredentialed_default: components["schemas"]["UncredentialedDefault"];
+        };
+        PolicyRule: {
+            action: components["schemas"]["Action"];
+            conditions: components["schemas"]["Condition"][];
+            description?: string | null;
+            enabled: boolean;
+            identities: components["schemas"]["Identity"][];
+            /** Format: uuid */
+            logical_id: string;
+            name: string;
+            /** Format: int32 */
+            priority: number;
+            rate_limit?: null | components["schemas"]["RateLimit"];
+            require_approval: boolean;
+            targets: components["schemas"]["Target"][];
+        };
+        PolicyWarning: {
+            code: components["schemas"]["WarningCode"];
+            message: string;
+            /** Format: uuid */
+            rule_logical_id: string;
+        };
+        PolicyWarnings: {
+            items: components["schemas"]["PolicyWarning"][];
+        };
+        PublishRequest: {
+            /** Format: int64 */
+            revision: number;
+        };
         PutAccessRequest: {
             role: components["schemas"]["WorkspaceRole"];
+        };
+        RateLimit: {
+            /** Format: int32 */
+            count: number;
+            per: components["schemas"]["Per"];
         };
         ResetRequest: {
             password: string;
@@ -1622,6 +2082,35 @@ export interface components {
         RevokedResponse: {
             /** Format: int64 */
             revoked: number;
+        };
+        RollbackRequest: {
+            /**
+             * Format: int32
+             * @description Generation number to copy.
+             */
+            generation: number;
+        };
+        /** @description A rule in a draft body: no `priority` (array order), optional `logical_id` (C-08). */
+        RuleInput: {
+            action: components["schemas"]["Action"];
+            conditions?: components["schemas"]["Condition"][];
+            description?: string | null;
+            enabled?: boolean;
+            identities?: components["schemas"]["Identity"][];
+            /** Format: uuid */
+            logical_id?: string | null;
+            name: string;
+            rate_limit?: null | components["schemas"]["RateLimit"];
+            require_approval?: boolean;
+            targets?: components["schemas"]["Target"][];
+        };
+        /** @enum {string} */
+        ScopeName: "organization" | "workspace";
+        /** @enum {string} */
+        ScopeSel: "workspace" | "organization" | "any";
+        ScopeTrace: {
+            considered: components["schemas"]["TraceEntry"][];
+            verdict?: null | components["schemas"]["SimVerdict"];
         };
         Secret: {
             /** Format: date-time */
@@ -1657,6 +2146,18 @@ export interface components {
             /** Format: uuid */
             workspace_id?: string | null;
         };
+        SecretGrant: {
+            /** Format: uuid */
+            agent_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            secret_id: string;
+        };
+        /** @enum {string} */
+        SecretKindSel: "generic" | "llm";
         SecretLlm: {
             auth_mode: string;
             endpoint_id: string;
@@ -1684,6 +2185,38 @@ export interface components {
             email: string;
             invitation_token?: string | null;
             password: string;
+        };
+        SimCandidate: {
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["CredentialKind"];
+            name: string;
+            selected: boolean;
+        };
+        /** @enum {string} */
+        SimReason: "rule" | "default_denied" | "egress_denied" | "governance";
+        SimTrace: {
+            organization: components["schemas"]["ScopeTrace"];
+            workspace: components["schemas"]["ScopeTrace"];
+        };
+        /** @enum {string} */
+        SimVerdict: "allow" | "needs_approval" | "rate_limited" | "block";
+        SimulateRequest: {
+            /** Format: uuid */
+            agent_id: string;
+            /** @description Request body (UTF-8 text) for body conditions. */
+            body?: string | null;
+            method: string;
+            url: string;
+            use_draft?: boolean | null;
+        };
+        Simulation: {
+            candidates: components["schemas"]["SimCandidate"][];
+            guidance_code?: string | null;
+            reason?: null | components["schemas"]["SimReason"];
+            trace: components["schemas"]["SimTrace"];
+            verdict: components["schemas"]["SimVerdict"];
+            winning_credential?: null | components["schemas"]["WinningCredential"];
         };
         StartRequest: {
             /** @description Client host name (sanitized; used to name the minted key). */
@@ -1722,6 +2255,41 @@ export interface components {
             mode: string;
             path: string;
         };
+        /** @description Rule target (I-12: tagged with `type`). */
+        Target: {
+            app_id: string;
+            tools?: string[] | null;
+            /** @enum {string} */
+            type: "app";
+        } | {
+            /** Format: uuid */
+            id: string;
+            tools?: string[] | null;
+            /** @enum {string} */
+            type: "connection";
+        } | {
+            app_id: string;
+            scope: components["schemas"]["ScopeSel"];
+            tools?: string[] | null;
+            /** @enum {string} */
+            type: "app_connections";
+        } | {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            type: "secret";
+        } | {
+            kind?: null | components["schemas"]["SecretKindSel"];
+            scope: components["schemas"]["ScopeSel"];
+            /** @enum {string} */
+            type: "secrets";
+        } | {
+            host: string;
+            methods?: string[] | null;
+            path?: string | null;
+            /** @enum {string} */
+            type: "network";
+        };
         TokenRequest: {
             device_code: string;
         };
@@ -1730,6 +2298,18 @@ export interface components {
             api_key: string;
             workspace: components["schemas"]["CliWorkspace"];
         };
+        TraceEntry: {
+            matched: boolean;
+            reason: string;
+            /** Format: uuid */
+            rule_logical_id: string;
+            rule_name: string;
+            source: components["schemas"]["TraceSource"];
+        };
+        /** @enum {string} */
+        TraceSource: "hand" | "derived" | "default";
+        /** @enum {string} */
+        UncredentialedDefault: "none" | "block";
         User: {
             /** Format: date-time */
             created_at: string;
@@ -1749,6 +2329,14 @@ export interface components {
         };
         VerifyResult: {
             origin: components["schemas"]["StoredOrigin"];
+        };
+        /** @enum {string} */
+        WarningCode: "shadowed" | "inert" | "overridden_by_org";
+        WinningCredential: {
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["CredentialKind"];
+            name: string;
         };
         Workspace: {
             /** Format: date-time */
@@ -2105,6 +2693,154 @@ export interface operations {
             };
             /** @description gateway_ca_unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAgentEffective: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Effective view */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Effective"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listAgentGrants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Grants */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrantsResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    grantSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description Secret id */
+                secret: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Grant */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecretGrant"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Agent, or secret not in the agent's workspace or org */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    revokeSecretGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description Secret id */
+                secret: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3591,6 +4327,278 @@ export interface operations {
             };
         };
     };
+    getOrgPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Published and draft */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyDocument"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putOrgPolicyDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Draft */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyGeneration"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description stale_revision */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description policy_invalid (details.fields) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listOrgPolicyGenerations: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Generations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_PolicyGenerationSummary"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    publishOrgPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublishRequest"];
+            };
+        };
+        responses: {
+            /** @description Document */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyDocument"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description stale_revision */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    rollbackOrgPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RollbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Document */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyDocument"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getOrgPolicyWarnings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Warnings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyWarnings"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listOrgSecrets: {
         parameters: {
             query?: {
@@ -4752,6 +5760,323 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getWorkspacePolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Published and draft */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyDocument"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putWorkspacePolicyDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Draft */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyGeneration"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description stale_revision */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description policy_invalid (details.fields) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWorkspacePolicyGenerations: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Generations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_PolicyGenerationSummary"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    publishWorkspacePolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublishRequest"];
+            };
+        };
+        responses: {
+            /** @description Document */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyDocument"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description stale_revision */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    rollbackWorkspacePolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RollbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Document */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyDocument"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    simulatePolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SimulateRequest"];
+            };
+        };
+        responses: {
+            /** @description Verdict and trace */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Simulation"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Workspace or agent not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getWorkspacePolicyWarnings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Warnings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyWarnings"];
+                };
+            };
+            /** @description Not found */
             404: {
                 headers: {
                     [name: string]: unknown;

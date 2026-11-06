@@ -508,6 +508,241 @@
         ]
       }
     },
+    "/v1/agents/{agent}/effective": {
+      "get": {
+        "tags": [
+          "grants"
+        ],
+        "summary": "Effective credentials of an agent (`can_use`).",
+        "operationId": "getAgentEffective",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Effective view",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Effective"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/grants": {
+      "get": {
+        "tags": [
+          "grants"
+        ],
+        "summary": "Grants of an agent (`can_use`).",
+        "operationId": "listAgentGrants",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Grants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/grants/secrets/{secret}": {
+      "put": {
+        "tags": [
+          "grants"
+        ],
+        "summary": "Grant a secret to an agent (`can_own`); idempotent.",
+        "operationId": "grantSecret",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "secret",
+            "in": "path",
+            "description": "Secret id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Grant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretGrant"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent, or secret not in the agent's workspace or org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "grants"
+        ],
+        "summary": "Revoke a secret grant (`can_own`).",
+        "operationId": "revokeSecretGrant",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "secret",
+            "in": "path",
+            "description": "Secret id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/token": {
       "post": {
         "tags": [
@@ -2702,6 +2937,432 @@
         ]
       }
     },
+    "/v1/orgs/{org}/policy": {
+      "get": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "Read the organization policy (org member).",
+        "operationId": "getOrgPolicy",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Published and draft",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyDocument"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/policy/draft": {
+      "put": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "Replace the organization draft (owner/admin; C-08).",
+        "operationId": "putOrgPolicyDraft",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Draft",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyGeneration"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "stale_revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "policy_invalid (details.fields)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/policy/generations": {
+      "get": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "Organization policy history, newest first.",
+        "operationId": "listOrgPolicyGenerations",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Generations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PolicyGenerationSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/policy/publish": {
+      "post": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "Publish the organization draft (owner/admin).",
+        "operationId": "publishOrgPolicy",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyDocument"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "stale_revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/policy/rollback": {
+      "post": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "Publish a copy of an older organization generation (owner/admin).",
+        "operationId": "rollbackOrgPolicy",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RollbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyDocument"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/policy/warnings": {
+      "get": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "Warnings for the organization draft.",
+        "operationId": "getOrgPolicyWarnings",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Warnings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyWarnings"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/orgs/{org}/secrets": {
       "get": {
         "tags": [
@@ -4571,6 +5232,503 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/policy": {
+      "get": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "Read the workspace policy (`can_use`).",
+        "operationId": "getWorkspacePolicy",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Published and draft",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyDocument"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/policy/draft": {
+      "put": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "Replace the workspace draft (`can_own`; C-08).",
+        "operationId": "putWorkspacePolicyDraft",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Draft",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyGeneration"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "stale_revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "policy_invalid (details.fields)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/policy/generations": {
+      "get": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "Workspace policy history, newest first.",
+        "operationId": "listWorkspacePolicyGenerations",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Generations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PolicyGenerationSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/policy/publish": {
+      "post": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "Publish the workspace draft (`can_own`).",
+        "operationId": "publishWorkspacePolicy",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyDocument"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "stale_revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/policy/rollback": {
+      "post": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "Publish a copy of an older workspace generation (`can_own`).",
+        "operationId": "rollbackWorkspacePolicy",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RollbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyDocument"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/policy/simulate": {
+      "post": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "Simulate a request for an agent against the published (or draft) policy (`can_use`).",
+        "operationId": "simulatePolicy",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SimulateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Verdict and trace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Simulation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace or agent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/policy/warnings": {
+      "get": {
+        "tags": [
+          "policy"
+        ],
+        "summary": "Warnings for the workspace draft.",
+        "operationId": "getWorkspacePolicyWarnings",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Warnings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyWarnings"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/secrets": {
       "get": {
         "tags": [
@@ -4841,6 +5999,13 @@
           }
         }
       },
+      "Action": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "block"
+        ]
+      },
       "AdminUser": {
         "allOf": [
           {
@@ -4970,6 +6135,24 @@
             "type": "string"
           }
         }
+      },
+      "AllowlistEntry": {
+        "type": "object",
+        "required": [
+          "host"
+        ],
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "ApiKey": {
         "type": "object",
@@ -5180,6 +6363,46 @@
           }
         }
       },
+      "Condition": {
+        "type": "object",
+        "required": [
+          "on",
+          "op",
+          "value"
+        ],
+        "properties": {
+          "json_pointer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "on": {
+            "$ref": "#/components/schemas/ConditionOn"
+          },
+          "op": {
+            "$ref": "#/components/schemas/ConditionOp"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConditionOn": {
+        "type": "string",
+        "enum": [
+          "body"
+        ]
+      },
+      "ConditionOp": {
+        "type": "string",
+        "enum": [
+          "contains",
+          "not_contains",
+          "equals"
+        ]
+      },
       "ConfirmRequest": {
         "type": "object",
         "required": [
@@ -5188,6 +6411,52 @@
         "properties": {
           "confirm": {
             "type": "string"
+          }
+        }
+      },
+      "ConnectionGrant": {
+        "type": "object",
+        "description": "Connection grants arrive with M3; the list is empty until then.",
+        "required": [
+          "id",
+          "agent_id",
+          "connection_id",
+          "mode",
+          "allow_tools",
+          "ask_tools",
+          "created_at"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "allow_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ask_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "connection_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/GrantMode"
           }
         }
       },
@@ -5592,6 +6861,21 @@
           }
         }
       },
+      "CredentialKind": {
+        "type": "string",
+        "enum": [
+          "secret",
+          "connection"
+        ]
+      },
+      "DefaultAction": {
+        "type": "string",
+        "enum": [
+          "none",
+          "allow",
+          "block"
+        ]
+      },
       "DeleteMeRequest": {
         "type": "object",
         "properties": {
@@ -5601,6 +6885,135 @@
               "null"
             ],
             "description": "Required for accounts that have a password."
+          }
+        }
+      },
+      "DraftRequest": {
+        "type": "object",
+        "required": [
+          "revision",
+          "default_action",
+          "rules"
+        ],
+        "properties": {
+          "default_action": {
+            "$ref": "#/components/schemas/DefaultAction"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuleInput"
+            }
+          },
+          "uncredentialed_allowlist": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AllowlistEntry"
+            }
+          },
+          "uncredentialed_default": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UncredentialedDefault"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "Effective": {
+        "type": "object",
+        "required": [
+          "credentials",
+          "tools"
+        ],
+        "properties": {
+          "credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EffectiveCredential"
+            }
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EffectiveTool"
+            },
+            "description": "App tools (M3); empty until apps exist."
+          }
+        }
+      },
+      "EffectiveCredential": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "scope",
+          "selected",
+          "selected_by"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`secret` | `connection`."
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "description": "`organization` | `workspace`."
+          },
+          "selected": {
+            "type": "boolean"
+          },
+          "selected_by": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Logical ids of the allow rules that select it."
+          }
+        }
+      },
+      "EffectiveTool": {
+        "type": "object",
+        "required": [
+          "app_id",
+          "tool_id",
+          "decision"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "org_ceiling": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tool_id": {
+            "type": "string"
           }
         }
       },
@@ -5664,6 +7077,84 @@
             "type": "string"
           }
         }
+      },
+      "GenerationStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "published",
+          "superseded"
+        ]
+      },
+      "GrantMode": {
+        "type": "string",
+        "enum": [
+          "full",
+          "custom"
+        ]
+      },
+      "GrantsResponse": {
+        "type": "object",
+        "required": [
+          "secrets",
+          "connections"
+        ],
+        "properties": {
+          "connections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionGrant"
+            }
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecretGrant"
+            }
+          }
+        }
+      },
+      "Identity": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "agent"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "user"
+                ]
+              }
+            }
+          }
+        ]
       },
       "InjectionRecipe": {
         "oneOf": [
@@ -6956,6 +8447,94 @@
           }
         }
       },
+      "Page_PolicyGenerationSummary": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A generation without its rules.",
+              "required": [
+                "id",
+                "number",
+                "status",
+                "default_action",
+                "uncredentialed_default",
+                "uncredentialed_allowlist",
+                "rule_count",
+                "created_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "default_action": {
+                  "$ref": "#/components/schemas/DefaultAction"
+                },
+                "draft_revision": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int64"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "number": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "published_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "published_by": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CreatedBy"
+                    }
+                  ]
+                },
+                "rule_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "status": {
+                  "$ref": "#/components/schemas/GenerationStatus"
+                },
+                "uncredentialed_allowlist": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AllowlistEntry"
+                  }
+                },
+                "uncredentialed_default": {
+                  "$ref": "#/components/schemas/UncredentialedDefault"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_Secret": {
         "type": "object",
         "required": [
@@ -7370,6 +8949,294 @@
           }
         }
       },
+      "Per": {
+        "type": "string",
+        "enum": [
+          "minute",
+          "hour",
+          "day"
+        ]
+      },
+      "PolicyDocument": {
+        "type": "object",
+        "required": [
+          "scope",
+          "published",
+          "draft"
+        ],
+        "properties": {
+          "draft": {
+            "$ref": "#/components/schemas/PolicyGeneration"
+          },
+          "published": {
+            "$ref": "#/components/schemas/PolicyGeneration"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeName"
+          }
+        }
+      },
+      "PolicyGeneration": {
+        "type": "object",
+        "required": [
+          "id",
+          "number",
+          "status",
+          "default_action",
+          "uncredentialed_default",
+          "uncredentialed_allowlist",
+          "rules",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "default_action": {
+            "$ref": "#/components/schemas/DefaultAction"
+          },
+          "draft_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Drafts only."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "published_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "published_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CreatedBy"
+              }
+            ]
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyRule"
+            }
+          },
+          "status": {
+            "$ref": "#/components/schemas/GenerationStatus"
+          },
+          "uncredentialed_allowlist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AllowlistEntry"
+            }
+          },
+          "uncredentialed_default": {
+            "$ref": "#/components/schemas/UncredentialedDefault"
+          }
+        }
+      },
+      "PolicyGenerationSummary": {
+        "type": "object",
+        "description": "A generation without its rules.",
+        "required": [
+          "id",
+          "number",
+          "status",
+          "default_action",
+          "uncredentialed_default",
+          "uncredentialed_allowlist",
+          "rule_count",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "default_action": {
+            "$ref": "#/components/schemas/DefaultAction"
+          },
+          "draft_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "published_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "published_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CreatedBy"
+              }
+            ]
+          },
+          "rule_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "$ref": "#/components/schemas/GenerationStatus"
+          },
+          "uncredentialed_allowlist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AllowlistEntry"
+            }
+          },
+          "uncredentialed_default": {
+            "$ref": "#/components/schemas/UncredentialedDefault"
+          }
+        }
+      },
+      "PolicyRule": {
+        "type": "object",
+        "required": [
+          "logical_id",
+          "priority",
+          "name",
+          "enabled",
+          "identities",
+          "targets",
+          "action",
+          "require_approval",
+          "conditions"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/Action"
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Condition"
+            }
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Identity"
+            }
+          },
+          "logical_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "rate_limit": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RateLimit"
+              }
+            ]
+          },
+          "require_approval": {
+            "type": "boolean"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Target"
+            }
+          }
+        }
+      },
+      "PolicyWarning": {
+        "type": "object",
+        "required": [
+          "code",
+          "rule_logical_id",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/WarningCode"
+          },
+          "message": {
+            "type": "string"
+          },
+          "rule_logical_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "PolicyWarnings": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyWarning"
+            }
+          }
+        }
+      },
+      "PublishRequest": {
+        "type": "object",
+        "required": [
+          "revision"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
       "PutAccessRequest": {
         "type": "object",
         "required": [
@@ -7380,6 +9247,24 @@
             "$ref": "#/components/schemas/WorkspaceRole"
           }
         }
+      },
+      "RateLimit": {
+        "type": "object",
+        "required": [
+          "count",
+          "per"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "per": {
+            "$ref": "#/components/schemas/Per"
+          }
+        },
+        "additionalProperties": false
       },
       "ResetRequest": {
         "type": "object",
@@ -7447,6 +9332,123 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "RollbackRequest": {
+        "type": "object",
+        "required": [
+          "generation"
+        ],
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Generation number to copy."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleInput": {
+        "type": "object",
+        "description": "A rule in a draft body: no `priority` (array order), optional `logical_id` (C-08).",
+        "required": [
+          "name",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/Action"
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Condition"
+            }
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Identity"
+            }
+          },
+          "logical_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "rate_limit": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RateLimit"
+              }
+            ]
+          },
+          "require_approval": {
+            "type": "boolean"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Target"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScopeName": {
+        "type": "string",
+        "enum": [
+          "organization",
+          "workspace"
+        ]
+      },
+      "ScopeSel": {
+        "type": "string",
+        "enum": [
+          "workspace",
+          "organization",
+          "any"
+        ]
+      },
+      "ScopeTrace": {
+        "type": "object",
+        "required": [
+          "considered"
+        ],
+        "properties": {
+          "considered": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TraceEntry"
+            }
+          },
+          "verdict": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SimVerdict"
+              }
+            ]
           }
         }
       },
@@ -7581,6 +9583,40 @@
           }
         }
       },
+      "SecretGrant": {
+        "type": "object",
+        "required": [
+          "id",
+          "agent_id",
+          "secret_id",
+          "created_at"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "secret_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "SecretKindSel": {
+        "type": "string",
+        "enum": [
+          "generic",
+          "llm"
+        ]
+      },
       "SecretLlm": {
         "type": "object",
         "required": [
@@ -7698,6 +9734,145 @@
           },
           "password": {
             "type": "string"
+          }
+        }
+      },
+      "SimCandidate": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "selected"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CredentialKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "selected": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SimReason": {
+        "type": "string",
+        "enum": [
+          "rule",
+          "default_denied",
+          "egress_denied",
+          "governance"
+        ]
+      },
+      "SimTrace": {
+        "type": "object",
+        "required": [
+          "organization",
+          "workspace"
+        ],
+        "properties": {
+          "organization": {
+            "$ref": "#/components/schemas/ScopeTrace"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/ScopeTrace"
+          }
+        }
+      },
+      "SimVerdict": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "needs_approval",
+          "rate_limited",
+          "block"
+        ]
+      },
+      "SimulateRequest": {
+        "type": "object",
+        "required": [
+          "agent_id",
+          "method",
+          "url"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Request body (UTF-8 text) for body conditions."
+          },
+          "method": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "use_draft": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "Simulation": {
+        "type": "object",
+        "required": [
+          "verdict",
+          "candidates",
+          "trace"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimCandidate"
+            }
+          },
+          "guidance_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SimReason"
+              }
+            ]
+          },
+          "trace": {
+            "$ref": "#/components/schemas/SimTrace"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/SimVerdict"
+          },
+          "winning_credential": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WinningCredential"
+              }
+            ]
           }
         }
       },
@@ -7834,6 +10009,177 @@
           }
         }
       },
+      "Target": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "app_id",
+              "type"
+            ],
+            "properties": {
+              "app_id": {
+                "type": "string"
+              },
+              "tools": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "app"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "tools": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "connection"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "app_id",
+              "scope",
+              "type"
+            ],
+            "properties": {
+              "app_id": {
+                "type": "string"
+              },
+              "scope": {
+                "$ref": "#/components/schemas/ScopeSel"
+              },
+              "tools": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "app_connections"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "secret"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "scope",
+              "type"
+            ],
+            "properties": {
+              "kind": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SecretKindSel"
+                  }
+                ]
+              },
+              "scope": {
+                "$ref": "#/components/schemas/ScopeSel"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "secrets"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "host",
+              "type"
+            ],
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "methods": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              },
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "network"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Rule target (I-12: tagged with `type`)."
+      },
       "TokenRequest": {
         "type": "object",
         "required": [
@@ -7860,6 +10206,49 @@
             "$ref": "#/components/schemas/CliWorkspace"
           }
         }
+      },
+      "TraceEntry": {
+        "type": "object",
+        "required": [
+          "rule_logical_id",
+          "rule_name",
+          "source",
+          "matched",
+          "reason"
+        ],
+        "properties": {
+          "matched": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "rule_logical_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "rule_name": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/TraceSource"
+          }
+        }
+      },
+      "TraceSource": {
+        "type": "string",
+        "enum": [
+          "hand",
+          "derived",
+          "default"
+        ]
+      },
+      "UncredentialedDefault": {
+        "type": "string",
+        "enum": [
+          "none",
+          "block"
+        ]
       },
       "User": {
         "type": "object",
@@ -7927,6 +10316,34 @@
         "properties": {
           "origin": {
             "$ref": "#/components/schemas/StoredOrigin"
+          }
+        }
+      },
+      "WarningCode": {
+        "type": "string",
+        "enum": [
+          "shadowed",
+          "inert",
+          "overridden_by_org"
+        ]
+      },
+      "WinningCredential": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CredentialKind"
+          },
+          "name": {
+            "type": "string"
           }
         }
       },

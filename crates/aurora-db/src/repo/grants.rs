@@ -36,3 +36,34 @@ pub async fn upsert_secret_grant<'e, E: PgExecutor<'e>>(
     .fetch_one(exec)
     .await?)
 }
+
+/// Secret grants of one agent, oldest first.
+pub async fn list_secret_grants<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent_id: Uuid,
+) -> Result<Vec<SecretGrantRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, workspace_id, agent_id, secret_id, created_at FROM grants \
+         WHERE agent_id = $1 AND secret_id IS NOT NULL ORDER BY created_at, id",
+    )
+    .bind(agent_id)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Delete the `(agent, secret)` grant; returns its id when it existed.
+pub async fn delete_secret_grant<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent_id: Uuid,
+    secret_id: Uuid,
+) -> Result<Option<Uuid>, DbError> {
+    Ok(
+        sqlx::query_scalar(
+            "DELETE FROM grants WHERE agent_id = $1 AND secret_id = $2 RETURNING id",
+        )
+        .bind(agent_id)
+        .bind(secret_id)
+        .fetch_optional(exec)
+        .await?,
+    )
+}

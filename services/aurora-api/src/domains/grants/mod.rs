@@ -1,3 +1,9 @@
-//! Grants: compilation of secret grants into derived rules (BE-031 stub; BE-033 completes
-//! the routes and connection grants).
+//! Grants (BE-033): secret grants compiled into derived rules, and the effective view.
+//! Connection grants (M3) slot into `compile` and `GrantsResponse.connections`.
 pub mod compile;
+pub mod dto;
+mod effective;
+mod routes;
+pub mod service;
+
+pub use routes::router;
