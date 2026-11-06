@@ -1,0 +1,4 @@
+description: Default Rule block does not apply to LLM hosts
+workspace: {default_action: block}
+facts: {host: llm.example.com, port: 443, path: /v1/chat, method: POST, is_llm_host: true, winning_credential: {type: secret, id: 00000000-0000-0000-0000-000000000051, kind: llm, scope: workspace}, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: allow}

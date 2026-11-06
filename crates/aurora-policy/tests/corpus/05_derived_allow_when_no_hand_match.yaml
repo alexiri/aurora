@@ -1,0 +1,9 @@
+description: hand rule for another tool does not match; disabled rules skipped; derived allow applies
+workspace:
+  default_action: block
+  ordered_rules:
+    - {logical_id: 00000000-0000-0000-0000-0000000000a1, name: hand-other, action: block, targets: [{type: app, app_id: gh, tools: [other]}]}
+    - {logical_id: 00000000-0000-0000-0000-0000000000a3, name: hand-disabled, action: block, enabled: false}
+    - {logical_id: 00000000-0000-0000-0000-0000000000a2, name: derived-allow, action: allow, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, app_id: gh, tool_id: t1, winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: gh, scope: workspace}, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: allow, workspace_rule: derived-allow}

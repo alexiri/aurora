@@ -1,0 +1,15 @@
+description: app and network targets, empty targets, block/disabled rules and identity mismatches never select
+workspace:
+  ordered_rules:
+    - {logical_id: 00000000-0000-0000-0000-0000000000a1, name: app, action: allow, targets: [{type: app, app_id: gh}]}
+    - {logical_id: 00000000-0000-0000-0000-0000000000a2, name: net, action: allow, targets: [{type: network, host: '*'}]}
+    - {logical_id: 00000000-0000-0000-0000-0000000000a3, name: everything, action: allow}
+    - {logical_id: 00000000-0000-0000-0000-0000000000a4, name: blocked, action: block, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}
+    - {logical_id: 00000000-0000-0000-0000-0000000000a5, name: disabled, action: allow, enabled: false, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}
+    - {logical_id: 00000000-0000-0000-0000-0000000000a6, name: other-agent, action: allow, identities: [{kind: agent, id: 00000000-0000-0000-0000-0000000000ff}], targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+select:
+  candidates:
+    - {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: gh, scope: workspace}
+    - {type: secret, id: 00000000-0000-0000-0000-000000000051, kind: generic, scope: workspace}
+  expect: []

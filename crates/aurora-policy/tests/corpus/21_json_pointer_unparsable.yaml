@@ -1,0 +1,4 @@
+description: unparsable JSON with json_pointer is unknown; restrictive rule matches
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, conditions: [{on: body, op: equals, value: danger, json_pointer: /op}]}]}
+facts: {host: api.example.com, port: 443, path: /q, method: POST, body: 'not json', identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: block, reason: rule}

@@ -1,0 +1,6 @@
+description: truncated body makes a plain allow condition unknown, which does not match
+workspace:
+  default_action: block
+  ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: al, action: allow, conditions: [{on: body, op: contains, value: SAFE}]}]
+facts: {host: api.example.com, port: 443, path: /q, method: POST, body: 'abc', truncated: true, winning_credential: {type: secret, id: 00000000-0000-0000-0000-000000000051, kind: generic, scope: workspace}, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: block, reason: default_denied}

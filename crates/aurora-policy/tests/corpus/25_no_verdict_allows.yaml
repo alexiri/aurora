@@ -1,0 +1,3 @@
+description: no rule, no default in either scope - allow
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: allow}

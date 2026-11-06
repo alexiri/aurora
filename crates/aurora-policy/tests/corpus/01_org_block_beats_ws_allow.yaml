@@ -1,0 +1,5 @@
+description: workspace allow cannot loosen an org block
+org: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: org-block, action: block, targets: [{type: network, host: '*.example.com'}]}]}
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: ws-allow, action: allow, targets: [{type: network, host: api.example.com}]}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: block, reason: rule, org_rule: org-block, workspace_rule: ws-allow}

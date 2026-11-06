@@ -1,0 +1,4 @@
+description: truncated graphql body on a graphql tool is a mutation; mutation tool is blocked
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: no-mutations, action: block, targets: [{type: app, app_id: gh, tools: [graphql.mutate]}]}]}
+facts: {host: api.github.com, port: 443, path: /graphql, method: POST, app_id: gh, tool_id: graphql.mutate, tool_tags: {graphql: true}, body: '{"query":"{ viewer { id } }"', truncated: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: block, graphql: mutation}

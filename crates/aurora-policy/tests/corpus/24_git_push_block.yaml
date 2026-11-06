@@ -1,0 +1,4 @@
+description: git push classification and block rule on the push tool
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: no-push, action: block, targets: [{type: app, app_id: git, tools: [git.push]}]}]}
+facts: {host: github.com, port: 443, path: /o/r.git/info/refs, query: 'service=git-receive-pack', method: GET, app_id: git, tool_id: git.push, tool_tags: {git: true}, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: block, reason: rule, git: push}

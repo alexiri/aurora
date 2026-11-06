@@ -1,0 +1,7 @@
+description: user identity matches via principals; agent identity mismatch does not
+workspace:
+  ordered_rules:
+    - {logical_id: 00000000-0000-0000-0000-0000000000a1, name: for-other-agent, action: block, identities: [{kind: agent, id: 00000000-0000-0000-0000-0000000000ff}]}
+    - {logical_id: 00000000-0000-0000-0000-0000000000a2, name: for-user, action: block, identities: [{kind: user, id: 00000000-0000-0000-0000-000000000002}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001, principals: [00000000-0000-0000-0000-000000000002]}}
+expect: {verdict: block, workspace_rule: for-user}
