@@ -6,13 +6,15 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { cn } from "@/lib/utils";
 import { useSecrets, type SecretScope } from "@/lib/api/secrets";
 
+import { AppsTab } from "@/components/apps/apps-tab";
+import { ConnectionsTab } from "@/components/apps/connections-tab";
+import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import { GenericSecretForm } from "./generic-form";
 import { LlmKeyForm } from "./llm-form";
 import { ProposalsList } from "./proposals";
 import { SecretRow } from "./secret-row";
 
-type Tab = "secrets" | "llm" | "proposals";
-const M3_TABS = ["Apps", "Connections", "OAuth clients"];
+type Tab = "secrets" | "llm" | "proposals" | "apps" | "connections" | "oauth";
 
 export function CredentialsView({
   scope,
@@ -32,7 +34,9 @@ export function CredentialsView({
   const tabs: { id: Tab; label: string }[] = [
     { id: "secrets", label: "Secrets" },
     { id: "llm", label: "LLM keys" },
-    ...(scope.kind === "workspace" ? [{ id: "proposals" as Tab, label: "Proposals" }] : []),
+    ...(scope.kind === "workspace" ? [{ id: "proposals" as Tab, label: "Proposals" }, { id: "apps" as Tab, label: "Apps" }] : []),
+    { id: "connections", label: "Connections" },
+    { id: "oauth", label: "OAuth clients" },
   ];
 
   const list = (kind: "generic" | "llm") => {
@@ -66,13 +70,6 @@ export function CredentialsView({
             {t.label}
           </button>
         ))}
-        {scope.kind === "workspace"
-          ? M3_TABS.map((t) => (
-              <button key={t} role="tab" type="button" disabled aria-selected={false} className="cursor-not-allowed px-3 py-2 text-sm text-neutral-400">
-                {t}
-              </button>
-            ))
-          : null}
       </div>
       <div role="tabpanel" className="space-y-4">
         {tab === "secrets" ? (
@@ -97,6 +94,9 @@ export function CredentialsView({
             {list("llm")}
           </>
         ) : null}
+        {tab === "apps" && scope.kind === "workspace" ? <AppsTab workspaceId={scope.id} canOwn={canOwn} /> : null}
+        {tab === "connections" ? <ConnectionsTab scope={scope} canOwn={canOwn} /> : null}
+        {tab === "oauth" ? <OAuthClientsPanel scope={scope} canOwn={canOwn} /> : null}
         {tab === "proposals" ? (
           secrets.isPending ? <Loading /> : secrets.isError ? <ErrorState error={secrets.error} /> : <ProposalsList scope={scope} items={items} canOwn={canOwn} />
         ) : null}

@@ -11,6 +11,7 @@ const LINKS = [
   { href: "/admin/users", label: "Users" },
   { href: "/admin/plugins", label: "Plugins" },
   { href: "/admin/host-claims", label: "Host claims" },
+  { href: "/admin/oauth-clients", label: "OAuth clients" },
   { href: "/admin/trusted-keys", label: "Trusted keys" },
 ];
 
