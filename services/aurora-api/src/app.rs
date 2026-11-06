@@ -66,7 +66,10 @@ impl AppState {
 
 /// All `/v1` domain routers merged. Add new domains here.
 pub fn v1_router() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().merge(domains::instance::router())
+    OpenApiRouter::new()
+        .merge(domains::instance::router())
+        .merge(domains::tenancy::router())
+        .merge(domains::agents::router())
 }
 
 /// Public API router (without ops endpoints) and its OpenAPI document.
