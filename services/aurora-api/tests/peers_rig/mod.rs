@@ -166,6 +166,7 @@ impl Rig {
             conversation_id: conv,
             turn_id: turn,
             call_id: "c1".into(),
+            state: self.h.state.clone(),
         };
         registry()
             .call(&ctx, name, args, Duration::from_secs(20))

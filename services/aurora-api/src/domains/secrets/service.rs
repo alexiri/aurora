@@ -9,6 +9,7 @@ use aurora_db::{DbError, conflict_code};
 use aurora_policy::{HostPattern, PathPattern};
 use aurora_secrets::{Purpose, SealContext, SecretError, SecretRef, ValueSource};
 use serde_json::Value;
+use sqlx::PgConnection;
 use uuid::Uuid;
 
 use repo::SecretRow;
@@ -801,4 +802,81 @@ pub async fn reject(state: &AppState, row: &SecretRow) -> Result<(), ApiError> {
         ));
     }
     Ok(())
+}
+
+/// Placeholder `value_ref` of a proposal until the person accepts it (docs/08 §Agent-proposed).
+const PENDING_REF: &str = "pending:";
+
+/// Pending proposals one agent may hold at once (docs/08 §Agent-proposed custom secrets).
+pub const PROPOSAL_LIMIT: i64 = 5;
+
+/// An agent's proposal of a generic secret. It never carries a value.
+pub struct Proposal<'a> {
+    pub org: Uuid,
+    pub ws: Uuid,
+    pub agent: Uuid,
+    pub name: &'a str,
+    pub host: &'a str,
+    pub path: Option<&'a str>,
+    pub injection: &'a InjectionRecipe,
+}
+
+/// Insert a `proposed` generic secret in the agent's workspace, validated exactly like a generic
+/// create (`recipe_json`, `validate_generic_target`). Runs on the caller's connection so the
+/// proposal and its conversation notice commit together. The agent row lock serializes the
+/// pending-count check.
+pub async fn propose(
+    state: &AppState,
+    conn: &mut PgConnection,
+    p: Proposal<'_>,
+) -> Result<Uuid, ApiError> {
+    let name = clean_name(p.name)?;
+    let injection = recipe_json(p.injection)?;
+    validate_generic_target(state, p.host, p.path)?;
+    sqlx::query("SELECT id FROM agents WHERE id = $1 FOR UPDATE")
+        .bind(p.agent)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(DbError::from)?;
+    let (pending,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM secrets WHERE proposed_by_agent_id = $1 AND status = 'proposed'",
+    )
+    .bind(p.agent)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(DbError::from)?;
+    if pending >= PROPOSAL_LIMIT {
+        return Err(ApiError::conflict(
+            "proposal_limit",
+            format!(
+                "You already have {PROPOSAL_LIMIT} pending secret proposals; wait for the person to accept or reject one."
+            ),
+        ));
+    }
+    let id = Uuid::now_v7();
+    repo::insert(
+        &mut *conn,
+        &repo::NewSecret {
+            id,
+            org_id: p.org,
+            workspace_id: Some(p.ws),
+            name: &name,
+            kind: "generic",
+            llm_provider: None,
+            llm_auth_mode: None,
+            llm_endpoint_id: None,
+            host_pattern: p.host,
+            path_pattern: p.path,
+            injection: &injection,
+            value_source: "managed",
+            value_ref: PENDING_REF,
+            status: "proposed",
+            origin: None,
+            proposed_by_agent_id: Some(p.agent),
+            created_by: None,
+        },
+    )
+    .await
+    .map_err(|e| conflict_code(e, &[(repo::NAME_CONSTRAINT, "name_taken")]))?;
+    Ok(id)
 }
