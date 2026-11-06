@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use aurora_connector_sdk::EventAck;
 use aurora_protocol::connector::*;
-use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::extract::{Path, Query, State};
+use axum::http::{StatusCode, header};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::connector::{FakeConnector, now};
-use crate::platform::{Failures, FakeSpace, FakeUser, PostedMessage};
+use crate::platform::{Failures, FakeFile, FakeSpace, FakeUser, PostedMessage};
 
 type Ctl = State<Arc<FakeConnector>>;
 type Reply = (StatusCode, Json<Value>);
@@ -61,6 +61,10 @@ pub fn router(f: Arc<FakeConnector>) -> Router {
         .route("/fake/bot/added", post(bot_added))
         .route("/fake/bot/removed", post(bot_removed))
         .route("/fake/presence-removed", post(presence_removed))
+        .route("/fake/files", post(put_file))
+        .route("/fake/attachments/{message_ref}/{name}", get(attachment))
+        .route("/fake/status", get(status))
+        .route("/fake/link-start", post(link_start))
         .route("/fake/posted", get(posted))
         .route("/fake/failures", post(set_failures))
         .route("/fake/reset", post(reset))
@@ -90,6 +94,13 @@ struct InjectMessage {
     text: String,
     #[serde(default)]
     files: Vec<FileRef>,
+    /// Platform event id; omitted = a fresh one. Reusing an id redelivers the event.
+    #[serde(default)]
+    event_id: Option<String>,
+    /// Platform message ref; omitted = a fresh one. A ref that already exists is
+    /// a redelivery: the platform message is not duplicated.
+    #[serde(default)]
+    message_ref: Option<String>,
 }
 
 async fn inject_message(State(f): Ctl, Json(m): Json<InjectMessage>) -> Reply {
@@ -105,7 +116,10 @@ async fn inject_message(State(f): Ctl, Json(m): Json<InjectMessage>) -> Reply {
         let Some(space) = p.spaces.get(&space_ref).cloned() else {
             return bad("unknown space");
         };
-        let message_ref = p.next_id("m");
+        let message_ref = match &m.message_ref {
+            Some(r) => r.clone(),
+            None => p.next_id("m"),
+        };
         let mut mentions = vec![];
         let mut rest = m.text.as_str();
         while let Some(i) = rest.find("<@") {
@@ -171,24 +185,36 @@ async fn inject_message(State(f): Ctl, Json(m): Json<InjectMessage>) -> Reply {
             addressed_bot_ref: addressed,
             files: m.files.clone(),
         };
-        p.messages.push(PostedMessage {
-            message_ref: message_ref.clone(),
-            space_ref,
-            thread_ref: m.thread_ref.clone().unwrap_or_default(),
-            author_ref: m.author_ref.clone(),
-            text: m.text.clone(),
-            card: None,
-            ephemeral_to: None,
-            op_marker: None,
-            files: m.files.iter().map(|x| x.name.clone()).collect(),
-            deleted: false,
-            reactions: vec![],
-            at: now(),
-        });
+        if !p.messages.iter().any(|x| x.message_ref == message_ref) {
+            p.messages.push(PostedMessage {
+                message_ref: message_ref.clone(),
+                space_ref,
+                thread_ref: m.thread_ref.clone().unwrap_or_default(),
+                author_ref: m.author_ref.clone(),
+                text: m.text.clone(),
+                card: None,
+                ephemeral_to: None,
+                op_marker: None,
+                files: m.files.iter().map(|x| x.name.clone()).collect(),
+                deleted: false,
+                reactions: vec![],
+                at: now(),
+            });
+        }
         (payload, message_ref)
     };
-    let (status, Json(mut body)) =
-        emit(&f, m.integration_id, EventKind::MessagePosted, &payload).await;
+    let (status, Json(mut body)) = match f
+        .post_event_with_id(
+            m.integration_id,
+            EventKind::MessagePosted,
+            &payload,
+            m.event_id.clone(),
+        )
+        .await
+    {
+        Ok(a) => (StatusCode::OK, Json(ack_json(&a))),
+        Err(e) => (StatusCode::CONFLICT, Json(json!({"error": e}))),
+    };
     body["message_ref"] = json!(message_ref);
     (status, Json(body))
 }
@@ -340,4 +366,79 @@ async fn set_failures(State(f): Ctl, Json(x): Json<Failures>) -> Reply {
 async fn reset(State(f): Ctl) -> Reply {
     *lock(&f.platform) = Default::default();
     (StatusCode::OK, Json(json!({"ok": true})))
+}
+
+#[derive(Deserialize)]
+struct PutFile {
+    #[serde(rename = "ref")]
+    reference: String,
+    name: String,
+    #[serde(default = "octet")]
+    content_type: String,
+    /// File content as UTF-8 text.
+    content: String,
+}
+
+fn octet() -> String {
+    "application/octet-stream".into()
+}
+
+/// Registers a file hosted by the simulated platform (`file.fetch` downloads it).
+async fn put_file(State(f): Ctl, Json(x): Json<PutFile>) -> Reply {
+    lock(&f.platform).files.insert(
+        x.reference,
+        FakeFile {
+            name: x.name,
+            content_type: x.content_type,
+            bytes: x.content.into_bytes(),
+        },
+    );
+    (StatusCode::OK, Json(json!({"ok": true})))
+}
+
+/// Raw bytes of a file attached to a message the connector posted.
+async fn attachment(
+    State(f): Ctl,
+    Path((message_ref, name)): Path<(String, String)>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match lock(&f.platform).attachments.get(&(message_ref, name)) {
+        Some(b) => (
+            [(header::CONTENT_TYPE, "application/octet-stream")],
+            b.clone(),
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// Readiness and declared capabilities: `{ready, integrations, capabilities}`.
+async fn status(State(f): Ctl) -> Reply {
+    let open = f.open_integrations();
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ready": !open.is_empty(),
+            "integrations": open,
+            "capabilities": f.capability_names(),
+        })),
+    )
+}
+
+#[derive(Deserialize)]
+struct LinkReq {
+    #[serde(default)]
+    integration_id: Option<Uuid>,
+    platform_user_ref: String,
+}
+
+/// The connector asks the core for a sign-in link (`POST /v1/connector/link-start`).
+async fn link_start(State(f): Ctl, Json(r): Json<LinkReq>) -> Reply {
+    match f.link_start(r.integration_id, &r.platform_user_ref).await {
+        Ok(l) => (
+            StatusCode::OK,
+            Json(json!({"url": l.url, "expires_at": l.expires_at})),
+        ),
+        Err(e) => (StatusCode::CONFLICT, Json(json!({"error": e}))),
+    }
 }

@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
 use aurora_channels::{Capability, CapabilitySet, Content, FallbackContext, render_card};
-use aurora_connector_sdk::{Connector, ConnectorError, EventAck, EventSink, IntegrationHandle};
+use aurora_connector_sdk::{
+    ClientError, Connector, ConnectorError, CoreClient, EventAck, EventSink, IntegrationHandle,
+};
 use aurora_protocol::common::Validate;
 use aurora_protocol::connector::*;
 use serde_json::{Value, json};
@@ -41,6 +43,7 @@ pub struct FakeConnector {
     names: Vec<String>,
     caps: CapabilitySet,
     sinks: Arc<Mutex<BTreeMap<Uuid, EventSink>>>,
+    core: Mutex<Option<Arc<CoreClient>>>,
 }
 
 impl Default for FakeConnector {
@@ -58,7 +61,19 @@ impl FakeConnector {
             names: names.iter().map(|s| (*s).to_owned()).collect(),
             caps,
             sinks: Arc::new(Mutex::new(BTreeMap::new())),
+            core: Mutex::new(None),
         }
+    }
+
+    /// The names this connector declares as capabilities.
+    pub fn capability_names(&self) -> &[String] {
+        &self.names
+    }
+
+    fn core_client(&self) -> Result<Arc<CoreClient>, OpError> {
+        lock(&self.core)
+            .clone()
+            .ok_or_else(|| OpError::new(ErrorCode::Unavailable, "not connected to a core"))
     }
 
     /// Posts an inbound event through the SDK sink of `integration` (or the
@@ -69,6 +84,19 @@ impl FakeConnector {
         kind: EventKind,
         payload: &T,
     ) -> Result<EventAck, String> {
+        self.post_event_with_id(integration, kind, payload, None)
+            .await
+    }
+
+    /// Like [`Self::post_event`] with a caller-chosen platform event id (a
+    /// redelivered platform event carries the same id).
+    pub async fn post_event_with_id<T: serde::Serialize>(
+        &self,
+        integration: Option<Uuid>,
+        kind: EventKind,
+        payload: &T,
+        event_id: Option<String>,
+    ) -> Result<EventAck, String> {
         let (id, sink) = {
             let g = lock(&self.sinks);
             let pick = match integration {
@@ -77,13 +105,37 @@ impl FakeConnector {
             };
             pick.ok_or("no open integration")?
         };
-        let event_id = {
-            let mut p = lock(&self.platform);
-            p.next_id("fake-ev-")
+        let event_id = match event_id {
+            Some(id) => id,
+            None => lock(&self.platform).next_id("fake-ev-"),
         };
         let ev =
             InboundEvent::new(event_id, id, kind, now(), payload).map_err(|e| e.to_string())?;
         sink.post(ev).await.map_err(|e| e.to_string())
+    }
+
+    /// A platform-side "link my account" action: asks the core for a sign-in
+    /// link for `user_ref` (`POST /link-start`) on `integration` (or the first open one).
+    pub async fn link_start(
+        &self,
+        integration: Option<Uuid>,
+        user_ref: &str,
+    ) -> Result<LinkStartResponse, String> {
+        let id = match integration {
+            Some(i) => i,
+            None => *lock(&self.sinks)
+                .keys()
+                .next()
+                .ok_or("no open integration")?,
+        };
+        let client = lock(&self.core).clone().ok_or("not connected to a core")?;
+        client
+            .link_start(&LinkStartRequest {
+                integration_id: id,
+                platform_user_ref: user_ref.to_owned(),
+            })
+            .await
+            .map_err(|e| e.to_string())
     }
 
     pub fn open_integrations(&self) -> Vec<Uuid> {
@@ -147,7 +199,7 @@ impl FakeConnector {
                 }
                 text.push_str(&to_platform_text(&extra, p));
             }
-            card = r.card;
+            card = r.card.map(|c| defuse_card(c, p));
         }
         if text.chars().count() > MESSAGE_MAX_CHARS as usize {
             return Err(OpError::new(ErrorCode::TooLarge, "message too long"));
@@ -156,7 +208,11 @@ impl FakeConnector {
     }
 
     /// Runs one op against the platform. `Ok(None)` = effect applied but the result is lost.
-    fn run(&self, op: &Operation) -> Result<Option<Value>, OpError> {
+    fn run(
+        &self,
+        op: &Operation,
+        downloads: Vec<(String, Vec<u8>)>,
+    ) -> Result<Option<Value>, OpError> {
         let payload = op
             .parse()
             .map_err(|e| OpError::new(ErrorCode::Invalid, e.to_string()))?;
@@ -214,6 +270,9 @@ impl FakeConnector {
                     Sender::Presence { presence_id } => format!("presence-{presence_id}"),
                     Sender::Shared(_) => "shared-bot".to_owned(),
                 };
+                for (name, bytes) in downloads {
+                    p.attachments.insert((message_ref.clone(), name), bytes);
+                }
                 p.messages.push(PostedMessage {
                     message_ref: message_ref.clone(),
                     space_ref,
@@ -277,9 +336,10 @@ impl FakeConnector {
                 self.need(Capability::NativeStatus)?;
                 ok(json!({}))
             }
+            // Handled asynchronously in `execute` (needs the core client).
             OpPayload::FileFetch(_) => Err(OpError::new(
-                ErrorCode::Unsupported,
-                "file.fetch is not simulated by this fake yet",
+                ErrorCode::Invalid,
+                "file.fetch is executed asynchronously",
             )),
             OpPayload::UserLookup(l) => {
                 let users: Vec<Value> = p
@@ -497,10 +557,155 @@ impl Connector for FakeConnector {
     }
 
     async fn execute(&self, op: Operation) -> OpResult {
-        match self.run(&op) {
+        if op.kind == OpKind::FileFetch {
+            return match self.file_fetch(&op).await {
+                Ok(data) => OpResult::ok(op.op_id, data),
+                Err(e) => OpResult::err(op.op_id, e),
+            };
+        }
+        let downloads = match self.download_outbound(&op).await {
+            Ok(d) => d,
+            Err(e) => return OpResult::err(op.op_id, e),
+        };
+        match self.run(&op, downloads) {
             Ok(Some(data)) => OpResult::ok(op.op_id, data),
             Ok(None) => std::future::pending().await,
             Err(e) => OpResult::err(op.op_id, e),
         }
     }
+
+    fn attach_core_client(&self, client: Arc<CoreClient>) {
+        *lock(&self.core) = Some(client);
+    }
+}
+
+fn map_client_error(e: &ClientError) -> OpError {
+    let code = match e.status() {
+        Some(404) => ErrorCode::NotFound,
+        Some(413) => ErrorCode::TooLarge,
+        Some(400 | 422) => ErrorCode::Invalid,
+        Some(403) => ErrorCode::Forbidden,
+        _ => ErrorCode::Unavailable,
+    };
+    OpError::new(code, e.to_string())
+}
+
+impl FakeConnector {
+    /// `file.fetch`: reads the platform file and uploads it to `PUT /files/{op_id}`.
+    async fn file_fetch(&self, op: &Operation) -> Result<Value, OpError> {
+        let OpPayload::FileFetch(f) = op
+            .parse()
+            .map_err(|e| OpError::new(ErrorCode::Invalid, e.to_string()))?
+        else {
+            return Err(OpError::new(ErrorCode::Invalid, "not a file.fetch payload"));
+        };
+        self.need(Capability::Files)?;
+        let file = {
+            let mut p = lock(&self.platform);
+            if let Some(e) = self.fail(&mut p, &op.kind) {
+                return Err(e);
+            }
+            p.files
+                .get(&f.file_ref)
+                .cloned()
+                .ok_or_else(|| OpError::new(ErrorCode::NotFound, "no such file"))?
+        };
+        if file.bytes.len() as u64 > f.max_bytes {
+            return Err(OpError::new(
+                ErrorCode::TooLarge,
+                "file exceeds the operation's max_bytes",
+            ));
+        }
+        let client = self.core_client()?;
+        let r = client
+            .put_file(op.op_id, &file.name, &file.content_type, file.bytes)
+            .await
+            .map_err(|e| map_client_error(&e))?;
+        Ok(json!(FileFetchResult {
+            upload_url_used: true,
+            attachment_id: r.attachment_id,
+        }))
+    }
+
+    /// Downloads the outbound files of a `message.post` from `GET /files/{id}`.
+    async fn download_outbound(&self, op: &Operation) -> Result<Vec<(String, Vec<u8>)>, OpError> {
+        if op.kind != OpKind::MessagePost {
+            return Ok(vec![]);
+        }
+        let Ok(OpPayload::MessagePost(m)) = op.parse() else {
+            return Ok(vec![]);
+        };
+        if m.files.is_empty() {
+            return Ok(vec![]);
+        }
+        self.need(Capability::Files)?;
+        let client = self.core_client()?;
+        let mut out = Vec::with_capacity(m.files.len());
+        for f in &m.files {
+            let bytes = client
+                .get_file(f.attachment_id)
+                .await
+                .map_err(|e| map_client_error(&e))?;
+            out.push((f.name.clone(), bytes.to_vec()));
+        }
+        Ok(out)
+    }
+}
+
+/// Defuses platform broadcast syntax in every text of a card.
+fn defuse_card(card: aurora_channels::Card, p: &Platform) -> aurora_channels::Card {
+    use aurora_channels::Block;
+    let t = |s: String| to_platform_text(&s, p);
+    let blocks = card
+        .blocks
+        .into_iter()
+        .map(|b| match b {
+            Block::Header { text } => Block::Header { text: t(text) },
+            Block::Text { text } => Block::Text { text: t(text) },
+            Block::Context { text } => Block::Context { text: t(text) },
+            Block::Fields { pairs } => Block::Fields {
+                pairs: pairs
+                    .into_iter()
+                    .map(|mut f| {
+                        f.label = t(f.label);
+                        f.value = t(f.value);
+                        f
+                    })
+                    .collect(),
+            },
+            Block::Link { label, url } => Block::Link {
+                label: t(label),
+                url,
+            },
+            Block::Buttons { items } => Block::Buttons {
+                items: items
+                    .into_iter()
+                    .map(|mut i| {
+                        i.label = t(i.label);
+                        i
+                    })
+                    .collect(),
+            },
+            Block::Select {
+                placeholder,
+                options,
+                token,
+            } => Block::Select {
+                placeholder: t(placeholder),
+                options: options
+                    .into_iter()
+                    .map(|mut o| {
+                        o.label = t(o.label);
+                        o
+                    })
+                    .collect(),
+                token,
+            },
+            Block::Input { label, token } => Block::Input {
+                label: t(label),
+                token,
+            },
+        })
+        .collect();
+    aurora_channels::Card { blocks }
 }

@@ -347,6 +347,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-conformance-connector"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "aurora-channels",
+ "aurora-connector-fake",
+ "aurora-connector-sdk",
+ "aurora-protocol",
+ "axum",
+ "bytes",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "aurora-connector-fake"
 version = "0.1.0"
 dependencies = [

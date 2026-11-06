@@ -26,6 +26,7 @@ members = [
   "connectors/fake",
   "tests/e2e-gateway",
   "tests/e2e-hosted",
+  "tests/conformance/connector",
 ]
 
 [workspace.package]
