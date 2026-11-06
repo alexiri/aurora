@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
-import { logout, useMe, useOrgs, useResolve, useWorkspaces } from "@/lib/api/queries";
+import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspaces } from "@/lib/api/queries";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { cn } from "@/lib/utils";
 
@@ -112,6 +112,39 @@ function UserMenu() {
   );
 }
 
+const ORG_LINKS = [
+  { path: "members", label: "Members" },
+  { path: "api-keys", label: "API keys" },
+  { path: "audit", label: "Audit log" },
+  { path: "settings", label: "Settings" },
+];
+
+function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
+  const resolved = useResolve(orgSlug);
+  const org = useOrg(resolved.data?.org.id);
+  const role = org.data?.my_role;
+  const admin = role === "owner" || role === "admin";
+  const base = `/o/${orgSlug}`;
+  const link = (href: string, label: string, active: boolean) => (
+    <li key={href}>
+      <Link
+        href={href}
+        aria-current={active ? "page" : undefined}
+        className={cn("block rounded px-2 py-1.5", active ? "bg-neutral-100 font-medium" : "hover:bg-neutral-50")}>
+        {label}
+      </Link>
+    </li>
+  );
+  return (
+    <nav aria-label="Organization" className="w-48 border-r border-neutral-200 p-3">
+      <ul className="space-y-1 text-sm">
+        {link(base, "Workspaces", pathname === base)}
+        {admin ? ORG_LINKS.map((l) => link(`${base}/${l.path}`, l.label, pathname.startsWith(`${base}/${l.path}`))) : null}
+      </ul>
+    </nav>
+  );
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   useUnauthorizedRedirect();
   const params = useParams<{ org?: string; ws?: string }>();
@@ -176,6 +209,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               </li>
             </ul>
           </nav>
+        ) : orgSlug ? (
+          <OrgNav orgSlug={orgSlug} pathname={pathname} />
         ) : null}
         <main className="flex-1 p-6">{children}</main>
       </div>
