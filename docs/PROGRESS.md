@@ -23,12 +23,12 @@ their dependencies near completion (adaptive planning).
 | Milestone | Status | Acceptance evidence |
 |---|---|---|
 | M0 | done (CI never executed on GitHub — no remote) | schema guard, compose up, guards, cargo-deny |
-| M1 | done except permission-matrix defects (TEST-010 done; SEC-FIX-03 in progress, I-27) | `scripts/e2e/m1.sh` Playwright sign-up → workspace (Daneel) → invite → accept: pass; OIDC (BE-015) done; permission_matrix.rs |
+| M1 | done | permission matrix enforced on reads (SEC-FIX-03, I-27 + grant-candidate exception); 0 inconclusive rows; `scripts/e2e/m1.sh` Playwright sign-up → workspace (Daneel) → invite → accept: pass; OIDC (BE-015) done; permission_matrix.rs |
 | M2 | done (core) — follow-ups FUP-M2 | `scripts/e2e/gateway.sh` 11 scenarios pass; governance SEC-35..39 service tests (GW-005, TEST-020); hold tests incl. two replicas |
 | M3 | done (core) — follow-ups FUP-M3 | plugin lifecycle/ingestion, apps/connect/grants, hook host + WIT + SDK, CLI plugin, fixtures 33/33 (`scripts/fixtures/build.sh`), e2e-gateway 15/15 incl. hooks |
 | M4 | done (core) — follow-ups FUP-M4; sandbox env gap (FUP-M7 item from RUN-004) | `AURORA_TEST_PODMAN=1 bash scripts/e2e/hosted.sh` 9/9 (scenarios 1–8 + 8b SEC probes) after SEC-FIX-01/02 |
-| M5 | in progress: memory, skills, schedules, webhooks, processes/watches, claude-code adapter (offline), memory/skills UI done; attachments (BE-064, RUN-005) and action approvals/links/peer tasks/app-turn cap (BE-065) in progress; apps tools, schedules/webhooks/peers UI (FE-051), TEST-014 todo; live conformance blocked (no LiteLLM endpoint) | schedules 5, webhooks 11, memory 7, skills 5 |
-| M6 | in progress: aurora-channels (CHAN-001), connector contract + SDK + fake connector (CON-001), API-006 contract done; BE-070/071, TEST-015 briefed; BE-072..075, FE-060, TEST-016 todo | — |
+| M5 | in progress: all backend features done (memory, skills, schedules, webhooks, processes/watches, attachments, action approvals, links, peer tasks, app-turn cap) and their UI (FE-050/051); sandbox env/stubs (FIX-002) in progress; apps tools, TEST-014 todo; live conformance blocked (no LiteLLM endpoint) | schedules 5, webhooks 11, memory 7, skills 5 |
+| M6 | in progress: aurora-channels (CHAN-001), connector contract + SDK + fake connector (CON-001), API-006 contract done; BE-070 done, BE-071 in progress, TEST-015 conformance done; BE-072..075, FE-060, TEST-016 todo | — |
 | M7 | in progress: Helm chart (OPS-010) and kubernetes backend (RUN-004, mock API only) done; kind e2e blocked (no cluster on host); perf budgets, upgrade test, operator docs todo | k8s_mock 15 |
 
 ## Requirement coverage
@@ -117,16 +117,17 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | BE-064 | Attachments API side (BlobStore, routes, runner plane, delivery, pending + orphan-blob sweeps) | Rust | done (8aa7ea19) | BE-052 | Sonnet (worktree) | |
 | BE-065 | Action approvals, agent links, peer tasks, app-turn cap, agent tools | Rust | done (2b58ee61) | BE-052 | Sonnet (worktree) | |
 | RUN-005 | Inbound attachments `file.in` (S-11) + `send_file` local tool | Rust | done (2e799b23) | S-11 | Sonnet (worktree) | protocol/runner/supervisor 24 binaries, 155 tests pass on phase0; inbound tests (runner 3, supervisor 9); API side pending BE-064 |
-| SEC-FIX-03 | Permission matrix on reads (I-27 + grant-candidate exception, TEST-010 findings) | Rust | in-progress (amendment) | TEST-010 | Sonnet (worktree) | |
+| SEC-FIX-03 | Permission matrix on reads (I-27 + grant-candidate exception, TEST-010 findings) | Rust | done (8132a630) | TEST-010 | Sonnet (worktree) | |
 | API-005 | M5 contract (attachments, action approvals, links, peer tasks; C-27..C-30) | contract | done | — | Opus | API_CONTRACTS.md M5 |
 | FIX-002 | Sandbox env (`AURORA_AGENT_HANDLE`, app `agent.env`) + app stub files at boot; `restart_to_update` | Rust | in-progress | — | Sonnet (worktree) | |
-| FE-051 | Schedules, webhooks, peers tabs | Next.js | todo | BE-062/063/065 | Sonnet | |
+| OPS-012 | Operator documentation (`docs/operator/`) | Docs | in-progress | OPS-010, RUN-004 | Haiku (worktree) | |
+| FE-051 | Schedules, webhooks, peers tabs; action approvals; chat attachments; app-turn Continue | Next.js | done (55480baf) | BE-062..065 | Sonnet (worktree) | web 17 files / 123 tests; typecheck, lint (0 errors), build |
 | TEST-014 | M5 hosted suites (18) + live claude-code conformance (needs LiteLLM endpoint) | e2e | todo | M5 | Sonnet | |
 | CHAN-001 | aurora-channels (content, cards, action tokens, capabilities; I-26) | Rust | done | — | Sonnet | channels tests |
 | CON-001 | Connector contract W8 + SDK + fake connector | Rust | done | CHAN-001 | Sonnet | connector tests; FUP-M6 |
 | API-006 | M6 contract (connector admin, integrations, presences, bindings, user links, DM defaults, reach; C-31..C-37) | contract | done | — | Opus | API_CONTRACTS.md M6 |
-| BE-070 | Connector registration, admin, ownership, config feed | Rust | in-progress | API-006 | Sonnet (worktree) | |
-| BE-071 | Inbox ingest, ops engine, correlated ops, connector files, link-start | Rust | todo | BE-070, BE-064 | Sonnet (worktree) | |
+| BE-070 | Connector registration, admin, ownership, config feed (I-28) | Rust | done (d4d04b36) | API-006 | Sonnet (worktree) | |
+| BE-071 | Inbox ingest, ops engine, correlated ops, connector files, link-start | Rust | in-progress | BE-070, BE-064 | Sonnet (worktree) | |
 | BE-072..075 | Inbox processing + mirror + commands; cards + clicker auth; management API; messaging tools | Rust | todo (briefs pending) | BE-071 | — | |
 | TEST-015 | Connector conformance suite (fake core) | Rust test | done (872d94d3) | CON-001 | Sonnet (worktree) | 12/12 scenarios in-process and binary mode (`scripts/conformance.sh`); fake/SDK fixes; FUP-M6 closed |
 | FE-060 | Channel pages, admin connectors, /link/channel | Next.js | todo | API-006 | — | |
@@ -147,7 +148,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 
 ## Open security findings
 
-- **I-27 member-read defects** (TEST-010): org/workspace policy, secrets, connections, OAuth clients, availability, access, grants readable below the matrix role → SEC-FIX-03 in progress.
+- I-27 member-read defects (TEST-010) fixed by SEC-FIX-03 (8132a630).
 - SEC-34 fixed by SEC-FIX-01 (9b61c0f1) and SEC-09 by SEC-FIX-02 (f9130aa3); TEST-013 s8b passes. TEST-013 should gain a `process_start` env probe for SEC-34 now that `process_*` tools are listed (follow-up).
 
 ## Blockers
@@ -161,6 +162,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 
 ## Recently completed
 
+- 2026-11-06 night: BE-070 connector plane registration (I-28), SEC-FIX-03 (matrix on reads), FE-051 M5 dashboard; 195 leaked testkit containers removed (worktrees lacked `.env`; spec template now copies it).
 - 2026-11-06 late: RUN-005 (file.in, send_file; `.aurora/` excluded per owner), BE-064 attachments (+ orphan-blob sweep), BE-065 action approvals/links/peer tasks/app-turn cap, TEST-015 conformance 12/12; guards fixed (no platform names in core) and now run at every merge; I-27 grant-candidate exception.
 - 2026-11-06 evening: SEC-FIX-01/02 (SEC-34, SEC-09 closed), TEST-013 9/9, BE-062 schedules, BE-063 webhooks, TEST-010 permission matrix (defects → SEC-FIX-03), RUN-004 kubernetes backend; API-005 (M5) and API-006 (M6) contracts; decisions I-27, S-11; briefs BE-064/065, RUN-005, SEC-FIX-03, BE-070/071, TEST-015.
 - 2026-11-06 afternoon: M3 (BE-040..044, HOOK-001/002/004, CLI-002/003, FIX-001, FE-030..032), M4 (RUN-001..003, SUP-001..004, BE-050..053, FE-040/041, API-004), M5 memory/skills (BE-060/061, FE-050), M6 foundations (CHAN-001, CON-001), OPS-010 Helm.
