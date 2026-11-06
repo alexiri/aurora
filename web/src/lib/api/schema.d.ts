@@ -194,6 +194,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/approvals/batches/{batch_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decide all pending approvals of a batch for one agent that the caller may decide. */
+        post: operations["decideApprovalBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/approvals/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pending approvals the caller may decide; `wait` (<=30 s) long-polls for a new one. */
+        get: operations["listPendingApprovals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/approvals/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Server-sent events `approval` (`created` | `decided` | `expired`), no SSE ids (C-10). */
+        get: operations["streamApprovals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/approvals/{id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decide one approval; first decision wins. */
+        post: operations["decideApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/cli": {
         parameters: {
             query?: never;
@@ -991,6 +1059,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gateway request log of a workspace, newest first. */
+        get: operations["listWorkspaceActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/agents": {
         parameters: {
             query?: never;
@@ -1021,6 +1106,23 @@ export interface paths {
         put?: never;
         /** Create a workspace API key (`auk_`); the token is returned once. */
         post: operations["createWorkspaceApiKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Approvals of a workspace, newest first. */
+        get: operations["listApprovals"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1270,6 +1372,74 @@ export interface components {
              */
             workspace_id?: string | null;
         };
+        Approval: {
+            agent?: null | components["schemas"]["ApprovalAgent"];
+            app_id?: string | null;
+            batch?: null | components["schemas"]["ApprovalBatch"];
+            /** Format: uuid */
+            connection_id?: string | null;
+            /** Format: uuid */
+            conversation_id?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            deadline: string;
+            /** Format: date-time */
+            decided_at?: string | null;
+            decided_by?: null | components["schemas"]["ApprovalDecider"];
+            /** @description `dashboard` | `api` | `channel` */
+            decided_via?: string | null;
+            host: string;
+            /** Format: uuid */
+            id: string;
+            method: string;
+            /** Format: uuid */
+            org_id: string;
+            path: string;
+            /** Format: uuid */
+            rule_logical_id?: string | null;
+            rule_name?: string | null;
+            /** @description `pending` | `approved` | `denied` | `expired` | `abandoned` */
+            status: string;
+            summary: components["schemas"]["ApprovalSummary"];
+            tool_id?: string | null;
+            /** Format: uuid */
+            turn_id?: string | null;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        ApprovalAgent: {
+            handle: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        ApprovalBatch: {
+            id: string;
+            label?: string | null;
+            /** Format: int32 */
+            total?: number | null;
+        };
+        ApprovalDecider: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+        };
+        /** @description SSE `data:` payload of `event: approval` (C-10). */
+        ApprovalEvent: {
+            approval: components["schemas"]["Approval"];
+            /** @description `created` | `decided` | `expired` */
+            event: string;
+        };
+        ApprovalSummary: {
+            fields: components["schemas"]["SummaryField"][];
+            group?: string | null;
+            link?: string | null;
+            /** @description `template` | `hook` | `generic` */
+            source: string;
+            text?: string | null;
+            title: string;
+        };
         ApproveRequest: {
             user_code: string;
             /** Format: uuid */
@@ -1298,6 +1468,15 @@ export interface components {
             target_kind?: string | null;
             /** Format: uuid */
             workspace_id?: string | null;
+        };
+        BatchDecided: {
+            /** Format: int32 */
+            decided: number;
+        };
+        BatchDecisionBody: {
+            /** Format: uuid */
+            agent_id: string;
+            decision: components["schemas"]["Decision"];
         };
         ChangePasswordRequest: {
             current_password: string;
@@ -1443,6 +1622,11 @@ export interface components {
         };
         /** @enum {string} */
         CredentialKind: "secret" | "connection";
+        /** @enum {string} */
+        Decision: "approve" | "deny";
+        DecisionBody: {
+            decision: components["schemas"]["Decision"];
+        };
         /** @enum {string} */
         DefaultAction: "none" | "allow" | "block";
         DeleteMeRequest: {
@@ -1785,6 +1969,45 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_Approval: {
+            items: {
+                agent?: null | components["schemas"]["ApprovalAgent"];
+                app_id?: string | null;
+                batch?: null | components["schemas"]["ApprovalBatch"];
+                /** Format: uuid */
+                connection_id?: string | null;
+                /** Format: uuid */
+                conversation_id?: string | null;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: date-time */
+                deadline: string;
+                /** Format: date-time */
+                decided_at?: string | null;
+                decided_by?: null | components["schemas"]["ApprovalDecider"];
+                /** @description `dashboard` | `api` | `channel` */
+                decided_via?: string | null;
+                host: string;
+                /** Format: uuid */
+                id: string;
+                method: string;
+                /** Format: uuid */
+                org_id: string;
+                path: string;
+                /** Format: uuid */
+                rule_logical_id?: string | null;
+                rule_name?: string | null;
+                /** @description `pending` | `approved` | `denied` | `expired` | `abandoned` */
+                status: string;
+                summary: components["schemas"]["ApprovalSummary"];
+                tool_id?: string | null;
+                /** Format: uuid */
+                turn_id?: string | null;
+                /** Format: uuid */
+                workspace_id: string;
+            }[];
+            next_cursor?: string | null;
+        };
         Page_AuditEntry: {
             items: {
                 action: string;
@@ -1878,6 +2101,51 @@ export interface components {
                 status: components["schemas"]["GenerationStatus"];
                 uncredentialed_allowlist: components["schemas"]["AllowlistEntry"][];
                 uncredentialed_default: components["schemas"]["UncredentialedDefault"];
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_RequestLogEntry: {
+            items: {
+                /** Format: uuid */
+                agent_id: string;
+                app_id?: string | null;
+                /** Format: int64 */
+                bytes_down: number;
+                /** Format: int64 */
+                bytes_up: number;
+                /** Format: uuid */
+                connection_id?: string | null;
+                /** Format: uuid */
+                conversation_id?: string | null;
+                /** @description `agent` | `boot` | `context` */
+                credential_kind: string;
+                decision: string;
+                error_code?: string | null;
+                host: string;
+                /** Format: uuid */
+                id: string;
+                /** Format: int32 */
+                injected: number;
+                /** @description `mitm` | `open` | `db` */
+                lane: string;
+                /** Format: int32 */
+                latency_ms: number;
+                method: string;
+                path: string;
+                /** Format: uuid */
+                rule_logical_id?: string | null;
+                rule_name?: string | null;
+                /** Format: uuid */
+                secret_id?: string | null;
+                /** Format: int32 */
+                status: number;
+                tool_id?: string | null;
+                /** Format: date-time */
+                ts: string;
+                /** Format: uuid */
+                turn_id?: string | null;
+                /** Format: int32 */
+                upstream_status?: number | null;
             }[];
             next_cursor?: string | null;
         };
@@ -1981,6 +2249,9 @@ export interface components {
             name?: string | null;
             timezone?: string | null;
         };
+        PendingList: {
+            items: components["schemas"]["Approval"][];
+        };
         /** @enum {string} */
         Per: "minute" | "hour" | "day";
         PolicyDocument: {
@@ -2064,6 +2335,48 @@ export interface components {
             /** Format: int32 */
             count: number;
             per: components["schemas"]["Per"];
+        };
+        RequestLogEntry: {
+            /** Format: uuid */
+            agent_id: string;
+            app_id?: string | null;
+            /** Format: int64 */
+            bytes_down: number;
+            /** Format: int64 */
+            bytes_up: number;
+            /** Format: uuid */
+            connection_id?: string | null;
+            /** Format: uuid */
+            conversation_id?: string | null;
+            /** @description `agent` | `boot` | `context` */
+            credential_kind: string;
+            decision: string;
+            error_code?: string | null;
+            host: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: int32 */
+            injected: number;
+            /** @description `mitm` | `open` | `db` */
+            lane: string;
+            /** Format: int32 */
+            latency_ms: number;
+            method: string;
+            path: string;
+            /** Format: uuid */
+            rule_logical_id?: string | null;
+            rule_name?: string | null;
+            /** Format: uuid */
+            secret_id?: string | null;
+            /** Format: int32 */
+            status: number;
+            tool_id?: string | null;
+            /** Format: date-time */
+            ts: string;
+            /** Format: uuid */
+            turn_id?: string | null;
+            /** Format: int32 */
+            upstream_status?: number | null;
         };
         ResetRequest: {
             password: string;
@@ -2254,6 +2567,10 @@ export interface components {
             content: string;
             mode: string;
             path: string;
+        };
+        SummaryField: {
+            label: string;
+            value: string;
         };
         /** @description Rule target (I-12: tagged with `type`). */
         Target: {
@@ -2919,6 +3236,147 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    decideApprovalBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Batch id */
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchDecisionBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchDecided"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listPendingApprovals: {
+        parameters: {
+            query?: {
+                /** @description Long-poll seconds (0..=30, default 0). */
+                wait?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingList"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    streamApprovals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["ApprovalEvent"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    decideApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Approval id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecisionBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5533,6 +5991,44 @@ export interface operations {
             };
         };
     };
+    listWorkspaceActivity: {
+        parameters: {
+            query?: {
+                agent_id?: string;
+                conversation_id?: string;
+                decision?: string;
+                host?: string;
+                app_id?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_RequestLogEntry"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listAgents: {
         parameters: {
             query?: {
@@ -5714,6 +6210,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listApprovals: {
+        parameters: {
+            query?: {
+                /** @description `pending` | `approved` | `denied` | `expired` | `abandoned` */
+                status?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Approval"];
                 };
             };
             404: {

@@ -1,0 +1,71 @@
+//! Background jobs run by every API replica (docs/05 §Background jobs).
+//! Idempotent jobs run everywhere; singleton jobs take an advisory lock per run.
+
+use aurora_db::PgPool;
+use aurora_db::repo::{approvals, request_log};
+use chrono::Utc;
+use std::time::Duration;
+
+/// `pending` past `deadline + APPROVAL_EXPIRY_GRACE` becomes `expired`.
+pub const APPROVAL_EXPIRY_GRACE: Duration = Duration::from_secs(30);
+/// Pending rows of gateways unseen this long become `abandoned`.
+pub const GATEWAY_UNSEEN: Duration = Duration::from_secs(60);
+pub const APPROVAL_SWEEP_EVERY: Duration = Duration::from_secs(10);
+pub const PARTITION_EVERY: Duration = Duration::from_secs(24 * 3600);
+pub const PARTITIONS_AHEAD: u32 = 2;
+const PARTITION_JOB: &str = "request_log_partitions";
+
+/// One approval sweep; returns `(expired, abandoned)` counts.
+pub async fn sweep_approvals(pool: &PgPool) -> Result<(usize, usize), aurora_db::DbError> {
+    let expired = approvals::expire_overdue(pool, APPROVAL_EXPIRY_GRACE.as_secs_f64()).await?;
+    let abandoned = approvals::abandon_unseen(pool, GATEWAY_UNSEEN.as_secs_f64()).await?;
+    Ok((expired.len(), abandoned.len()))
+}
+
+/// Create upcoming partitions and drop expired ones (singleton). `Ok(false)` when
+/// another replica holds the lock.
+pub async fn maintain_request_log(
+    pool: &PgPool,
+    retention_days: u32,
+) -> Result<bool, aurora_db::DbError> {
+    let ran = aurora_db::jobs::try_singleton(pool, PARTITION_JOB, || async {
+        let now = Utc::now();
+        request_log::ensure_partitions(pool, now, PARTITIONS_AHEAD).await?;
+        request_log::drop_expired(pool, now, retention_days).await?;
+        Ok::<_, aurora_db::DbError>(())
+    })
+    .await?;
+    match ran {
+        None => Ok(false),
+        Some(r) => r.map(|()| true),
+    }
+}
+
+/// Start all jobs on the current runtime. Tasks end with the runtime.
+pub fn spawn(pool: PgPool, retention_days: u32) {
+    let p = pool.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(APPROVAL_SWEEP_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            match sweep_approvals(&p).await {
+                Ok((e, a)) if e + a > 0 => {
+                    tracing::info!(expired = e, abandoned = a, "approval sweep")
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "approval sweep failed"),
+            }
+        }
+    });
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(PARTITION_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            if let Err(e) = maintain_request_log(&pool, retention_days).await {
+                tracing::warn!(error = %e, "request-log maintenance failed");
+            }
+        }
+    });
+}

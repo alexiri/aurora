@@ -59,6 +59,10 @@ pub struct AppState {
     pub gov_instance: Arc<aurora_llm::governance::Instance>,
     /// HTTP client for provider key validation / origin checks.
     pub llm_http: reqwest::Client,
+    /// Shared `aurora_approval` fan-out (SSE, long-poll).
+    pub approval_bus: Arc<crate::domains::approvals::bus::ApprovalBus>,
+    /// SSE keepalive interval.
+    pub sse_keepalive: std::time::Duration,
 }
 
 impl AppState {
@@ -113,6 +117,8 @@ impl AppState {
             llm,
             gov_instance,
             llm_http,
+            approval_bus: Arc::default(),
+            sse_keepalive: aurora_core::limits::SSE_KEEPALIVE,
         })
     }
 
@@ -140,6 +146,13 @@ impl AppState {
         self
     }
 
+    /// Override the SSE keepalive interval (tests).
+    #[must_use]
+    pub fn with_sse_keepalive(mut self, d: std::time::Duration) -> Self {
+        self.sse_keepalive = d;
+        self
+    }
+
     /// Replace the mailer (tests).
     #[must_use]
     pub fn with_mailer(mut self, mailer: Arc<dyn Mailer>) -> Self {
@@ -155,6 +168,8 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::auth::router())
         .merge(domains::tenancy::router())
         .merge(domains::agents::router())
+        .merge(domains::approvals::router())
+        .merge(domains::activity::router())
         .merge(domains::secrets::router())
         .merge(domains::grants::router())
         .merge(domains::policy::router())

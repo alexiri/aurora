@@ -5,4 +5,5 @@ pub mod app;
 pub mod audit;
 pub mod domains;
 pub mod http;
+pub mod jobs;
 pub mod openapi;

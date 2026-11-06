@@ -3,6 +3,7 @@
 pub mod account;
 pub mod agents;
 pub mod api_keys;
+pub mod approvals;
 pub mod audit;
 pub mod cli_logins;
 pub mod credentials;
@@ -14,6 +15,7 @@ pub mod invitations;
 pub mod members;
 pub mod orgs;
 pub mod policy;
+pub mod request_log;
 pub mod secrets;
 pub mod sessions;
 pub mod users;

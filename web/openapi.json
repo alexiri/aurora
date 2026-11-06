@@ -855,6 +855,235 @@
         ]
       }
     },
+    "/v1/approvals/batches/{batch_id}/decision": {
+      "post": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "Decide all pending approvals of a batch for one agent that the caller may decide.",
+        "operationId": "decideApprovalBatch",
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "path",
+            "description": "Batch id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchDecisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchDecided"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/approvals/pending": {
+      "get": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "Pending approvals the caller may decide; `wait` (<=30 s) long-polls for a new one.",
+        "operationId": "listPendingApprovals",
+        "parameters": [
+          {
+            "name": "wait",
+            "in": "query",
+            "description": "Long-poll seconds (0..=30, default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/approvals/stream": {
+      "get": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "Server-sent events `approval` (`created` | `decided` | `expired`), no SSE ids (C-10).",
+        "operationId": "streamApprovals",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalEvent"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/approvals/{id}/decision": {
+      "post": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "Decide one approval; first decision wins.",
+        "operationId": "decideApproval",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Approval id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Approval"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/auth/cli": {
       "post": {
         "tags": [
@@ -4818,6 +5047,117 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/activity": {
+      "get": {
+        "tags": [
+          "activity"
+        ],
+        "summary": "Gateway request log of a workspace, newest first.",
+        "operationId": "listWorkspaceActivity",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "conversation_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "decision",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "host",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "app_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_RequestLogEntry"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/agents": {
       "get": {
         "tags": [
@@ -5131,6 +5471,84 @@
         "security": [
           {
             "session": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/approvals": {
+      "get": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "Approvals of a workspace, newest first.",
+        "operationId": "listApprovals",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`pending` | `approved` | `denied` | `expired` | `abandoned`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Approval"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
           }
         ]
       }
@@ -6222,6 +6640,267 @@
           }
         }
       },
+      "Approval": {
+        "type": "object",
+        "required": [
+          "id",
+          "org_id",
+          "workspace_id",
+          "method",
+          "host",
+          "path",
+          "summary",
+          "status",
+          "deadline",
+          "created_at"
+        ],
+        "properties": {
+          "agent": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApprovalAgent"
+              }
+            ]
+          },
+          "app_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "batch": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApprovalBatch"
+              }
+            ]
+          },
+          "connection_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "decided_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApprovalDecider"
+              }
+            ]
+          },
+          "decided_via": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`dashboard` | `api` | `channel`"
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "method": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          },
+          "rule_logical_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "rule_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "`pending` | `approved` | `denied` | `expired` | `abandoned`"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ApprovalSummary"
+          },
+          "tool_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "turn_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ApprovalAgent": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "handle"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ApprovalBatch": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "ApprovalDecider": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ApprovalEvent": {
+        "type": "object",
+        "description": "SSE `data:` payload of `event: approval` (C-10).",
+        "required": [
+          "event",
+          "approval"
+        ],
+        "properties": {
+          "approval": {
+            "$ref": "#/components/schemas/Approval"
+          },
+          "event": {
+            "type": "string",
+            "description": "`created` | `decided` | `expired`"
+          }
+        }
+      },
+      "ApprovalSummary": {
+        "type": "object",
+        "required": [
+          "title",
+          "fields",
+          "source"
+        ],
+        "properties": {
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SummaryField"
+            }
+          },
+          "group": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "link": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "description": "`template` | `hook` | `generic`"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
       "ApproveRequest": {
         "type": "object",
         "required": [
@@ -6316,6 +6995,35 @@
               "null"
             ],
             "format": "uuid"
+          }
+        }
+      },
+      "BatchDecided": {
+        "type": "object",
+        "required": [
+          "decided"
+        ],
+        "properties": {
+          "decided": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "BatchDecisionBody": {
+        "type": "object",
+        "required": [
+          "decision",
+          "agent_id"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
           }
         }
       },
@@ -6867,6 +7575,24 @@
           "secret",
           "connection"
         ]
+      },
+      "Decision": {
+        "type": "string",
+        "enum": [
+          "approve",
+          "deny"
+        ]
+      },
+      "DecisionBody": {
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          }
+        }
       },
       "DefaultAction": {
         "type": "string",
@@ -8165,6 +8891,166 @@
           }
         }
       },
+      "Page_Approval": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "org_id",
+                "workspace_id",
+                "method",
+                "host",
+                "path",
+                "summary",
+                "status",
+                "deadline",
+                "created_at"
+              ],
+              "properties": {
+                "agent": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApprovalAgent"
+                    }
+                  ]
+                },
+                "app_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "batch": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApprovalBatch"
+                    }
+                  ]
+                },
+                "connection_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "conversation_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "deadline": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "decided_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "decided_by": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApprovalDecider"
+                    }
+                  ]
+                },
+                "decided_via": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "`dashboard` | `api` | `channel`"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "method": {
+                  "type": "string"
+                },
+                "org_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "rule_logical_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "rule_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "description": "`pending` | `approved` | `denied` | `expired` | `abandoned`"
+                },
+                "summary": {
+                  "$ref": "#/components/schemas/ApprovalSummary"
+                },
+                "tool_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "turn_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "workspace_id": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_AuditEntry": {
         "type": "object",
         "required": [
@@ -8523,6 +9409,162 @@
                 },
                 "uncredentialed_default": {
                   "$ref": "#/components/schemas/UncredentialedDefault"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_RequestLogEntry": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "ts",
+                "agent_id",
+                "credential_kind",
+                "lane",
+                "method",
+                "host",
+                "path",
+                "decision",
+                "status",
+                "injected",
+                "latency_ms",
+                "bytes_up",
+                "bytes_down"
+              ],
+              "properties": {
+                "agent_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "app_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "bytes_down": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "bytes_up": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "connection_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "conversation_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "credential_kind": {
+                  "type": "string",
+                  "description": "`agent` | `boot` | `context`"
+                },
+                "decision": {
+                  "type": "string"
+                },
+                "error_code": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "host": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "injected": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "lane": {
+                  "type": "string",
+                  "description": "`mitm` | `open` | `db`"
+                },
+                "latency_ms": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "method": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "rule_logical_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "rule_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "secret_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "status": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "tool_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "ts": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "turn_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "upstream_status": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int32"
                 }
               }
             }
@@ -8949,6 +9991,20 @@
           }
         }
       },
+      "PendingList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Approval"
+            }
+          }
+        }
+      },
       "Per": {
         "type": "string",
         "enum": [
@@ -9265,6 +10321,145 @@
           }
         },
         "additionalProperties": false
+      },
+      "RequestLogEntry": {
+        "type": "object",
+        "required": [
+          "id",
+          "ts",
+          "agent_id",
+          "credential_kind",
+          "lane",
+          "method",
+          "host",
+          "path",
+          "decision",
+          "status",
+          "injected",
+          "latency_ms",
+          "bytes_up",
+          "bytes_down"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "app_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bytes_down": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "bytes_up": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "connection_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "credential_kind": {
+            "type": "string",
+            "description": "`agent` | `boot` | `context`"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "injected": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "lane": {
+            "type": "string",
+            "description": "`mitm` | `open` | `db`"
+          },
+          "latency_ms": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "method": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "rule_logical_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "rule_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secret_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "tool_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ts": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "turn_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "upstream_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
       },
       "ResetRequest": {
         "type": "object",
@@ -10005,6 +11200,21 @@
             "type": "string"
           },
           "path": {
+            "type": "string"
+          }
+        }
+      },
+      "SummaryField": {
+        "type": "object",
+        "required": [
+          "label",
+          "value"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
             "type": "string"
           }
         }
