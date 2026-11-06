@@ -98,6 +98,11 @@ graphql-parser = "0.4"
 regex = "1"
 percent-encoding = "2"
 async-trait = "0.1"
+flate2 = "1"
+tar = "0.4"
+psl = "2"
+pulldown-cmark = { version = "0.13", default-features = false }
+sha2 = "0.10"
 
 # crypto
 aws-lc-rs = "1.18"
