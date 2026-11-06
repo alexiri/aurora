@@ -101,7 +101,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | FUP-M4 | From BE-052: (1) answer text buffered in memory on the API — durable `text` must come from the supervisor's answer-rule events or a persisted buffer so a channel move mid-turn loses nothing; (2) harness capabilities stored in `sandboxes.resource_profile` and `steer_delivered_at` reused as send-now marker — give them proper homes (spec fix with migration); (3) `gate.result` handling (M5 schedules); (4) model-list 10-min cache; (5) render inputs: plugin snippets/env/stubs, channels, peers, recall snippets (M5/M6) | Rust | todo | BE-052 | — | |
 | FUP-M5 | Memory recall uses `websearch_to_tsquery` (AND) over the whole message — consider OR semantics for recall to get useful snippets (BE-060); cross-crate checksum-trailer test (API render vs supervisor harvest) | Rust | todo | BE-060 | — | |
 | FUP-M6 | (closed by TEST-015: `Connector::attach_core_client` hook; fake `file.fetch` + outbound download) | Rust | done | CON-001 | — | |
-| FUP-M7 | From BE-064: `attachments.blob_key` has no index (orphan-blob sweep scans; add with the next migration). From RUN-004: API's `SandboxSpec.env` is empty, so `AURORA_AGENT_HANDLE` and snapshot app `env` (11 §The boot document) never reach sandboxes on any backend; k8s pod name falls back to sandbox id; no `imagePullSecrets` config key; per-pod pids limit not enforceable on k8s; `/run/aurora` emptyDir cannot be `noexec`. Helm: evaluation Postgres rendered as hook resources (not removed on uninstall — document or move to a subchart); hook jobs **and the API `seed-plugins` init container (OPS-013)** use the third-party `alpine/k8s` image (pin a digest or build an Aurora tools image); kind e2e not run (no cluster) | Ops | todo | OPS-010 | — | |
+| FUP-M7 | From FIX-002: a granted-but-disabled connection still contributes app env/stubs (non-secret); boots before FIX-002 never flag `restart_to_update`; stubs capped at 32 KiB total (boot doc ≤ 64 KiB). Flaky under load: `auth::login_rate_limited`. From BE-064: `attachments.blob_key` has no index (orphan-blob sweep scans; add with the next migration). From RUN-004: API's `SandboxSpec.env` is empty, so `AURORA_AGENT_HANDLE` and snapshot app `env` (11 §The boot document) never reach sandboxes on any backend; k8s pod name falls back to sandbox id; no `imagePullSecrets` config key; per-pod pids limit not enforceable on k8s; `/run/aurora` emptyDir cannot be `noexec`. Helm: evaluation Postgres rendered as hook resources (not removed on uninstall — document or move to a subchart); hook jobs **and the API `seed-plugins` init container (OPS-013)** use the third-party `alpine/k8s` image (pin a digest or build an Aurora tools image); kind e2e not run (no cluster) | Ops | todo | OPS-010 | — | |
 | API-004 | M4 contract (conversations, turns, transcript, SSE, sandbox, models; C-23..C-26) | contract | done | — | Opus | API_CONTRACTS.md M4 |
 | RUN-001/002/003 | Runner core, supervisor channel server, podman backend + sandbox images | Rust | done | PROTO-001 | Sonnet | runner tests; S-07/S-08 |
 | SUP-001..004 | Supervisor core, home projection/harvest, MCP bridge + tools socket + process manager, claude-code adapter + conformance | Rust | done | PROTO-001 | Sonnet | supervisor tests; I-23 |
@@ -121,19 +121,19 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | RUN-005 | Inbound attachments `file.in` (S-11) + `send_file` local tool | Rust | done (2e799b23) | S-11 | Sonnet (worktree) | protocol/runner/supervisor 24 binaries, 155 tests pass on phase0; inbound tests (runner 3, supervisor 9); API side pending BE-064 |
 | SEC-FIX-03 | Permission matrix on reads (I-27 + grant-candidate exception, TEST-010 findings) | Rust | done (8132a630) | TEST-010 | Sonnet (worktree) | |
 | API-005 | M5 contract (attachments, action approvals, links, peer tasks; C-27..C-30) | contract | done | — | Opus | API_CONTRACTS.md M5 |
-| FIX-002 | Sandbox env (`AURORA_AGENT_HANDLE`, app `agent.env`) + app stub files at boot; `restart_to_update` | Rust | in-progress | — | Sonnet (worktree) | |
+| FIX-002 | Sandbox env (`AURORA_AGENT_HANDLE`, app `agent.env`) + app stub files at boot; `restart_to_update` | Rust | done (ecbd49fc) | — | Sonnet (worktree) | |
 | OPS-012 | Operator documentation (`docs/operator/`) | Docs | done (e771adda) | OPS-010, RUN-004 | Haiku (worktree) | 8 pages; keys/commands cross-checked against code; 13 known gaps listed |
 | OPS-013 | Deployment gaps from OPS-012 (Helm nodeSelector/tolerations, plugin mount, compose CA, just dev, comments, eval Postgres) | Ops | done | OPS-012 | Haiku (worktree) | helm lint; aurora-config 20 (helm-render, dev-config); setup.sh CA idempotent (run twice); compose config |
 | FIX-003 | Unused config wired (condition_body_bytes, resolve cache TTL, held_awake_ceiling), connector bootstrap tokens + allow_unsigned, OTLP export | Rust | todo (after BE-071) | BE-070 | Sonnet (worktree) | |
-| BE-066 | Apps tools `request_app_connection` (I-29), `propose_custom_connection` (08 §Agent-proposed) | Rust | in-progress | BE-031, BE-042 | Haiku (worktree) | |
+| BE-066 | Apps tools `request_app_connection` (I-29), `propose_custom_connection` (08 §Agent-proposed) | Rust | done (73dab75f) | BE-031, BE-042 | Haiku (worktree) | |
 | FE-051 | Schedules, webhooks, peers tabs; action approvals; chat attachments; app-turn Continue | Next.js | done (55480baf) | BE-062..065 | Sonnet (worktree) | web 17 files / 123 tests; typecheck, lint (0 errors), build |
 | TEST-014 | M5 hosted suites (18) + live claude-code conformance (needs LiteLLM endpoint) | e2e | todo | M5 | Sonnet | |
 | CHAN-001 | aurora-channels (content, cards, action tokens, capabilities; I-26) | Rust | done | — | Sonnet | channels tests |
 | CON-001 | Connector contract W8 + SDK + fake connector | Rust | done | CHAN-001 | Sonnet | connector tests; FUP-M6 |
 | API-006 | M6 contract (connector admin, integrations, presences, bindings, user links, DM defaults, reach; C-31..C-37) | contract | done | — | Opus | API_CONTRACTS.md M6 |
 | BE-070 | Connector registration, admin, ownership, config feed (I-28) | Rust | done (d4d04b36) | API-006 | Sonnet (worktree) | |
-| BE-071 | Inbox ingest, ops engine, correlated ops, connector files, link-start | Rust | in-progress | BE-070, BE-064 | Sonnet (worktree) | |
-| BE-074 | Channel management API (API-006) + shared channel repos | Rust | todo (briefed; next after BE-071) | BE-071 | Sonnet (worktree) | |
+| BE-071 | Inbox ingest, ops engine, correlated ops, connector files, link-start | Rust | done (6fff9b52) | BE-070, BE-064 | Sonnet (worktree) | |
+| BE-074 | Channel management API (API-006) + shared channel repos | Rust | in-progress | BE-071 | Sonnet (worktree) | |
 | BE-072 | Inbox processing (13 §5.1), mirror (§5.2), commands (§5.4) | Rust | todo (briefed) | BE-071, BE-074 | Sonnet (worktree) | |
 | BE-073 | Cards, action tokens, clicker authorization, approval fan-out | Rust | todo (briefed) | BE-071, BE-074 | Sonnet (worktree) | |
 | BE-075 | Messaging tools + `send_message` action handler | Rust | todo (briefed) | BE-072, BE-074 | Sonnet (worktree) | |
@@ -142,8 +142,8 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | TEST-016 | e2e-hosted M6 scenario (fake platform DM → Daneel → approve from card) | e2e | todo | BE-072..075 | — | |
 | OPS-010 | Helm chart | Ops | done | — | Sonnet | `helm lint`, `helm template` |
 | RUN-004 | Kubernetes backend (+ runner.k8s.core_namespace config fix) | Rust | done (e65ec66d) | RUN-003 | Sonnet (Orca worker, worktree) + Opus (kube → aws-lc-rs) | config 18, k8s unit 15, k8s_mock 15 (fake API server), runner 10; clippy; cargo deny ok; helm-rendered ConfigMap loads |
-| OPS-011 | kind e2e (Helm from scratch, k8s backend, NetworkPolicy/SEC-02 probes) | Ops | todo (briefed; kind installed by owner) | RUN-004, OPS-013 | Sonnet (worktree) | |
-| TEST-017 | VidaiMock (pinned, Aurora scenario files) behind real LiteLLM (I-30); live claude-code conformance + hosted CLI e2e | e2e | todo (briefed) | SUP-004, TEST-013 | Sonnet (worktree) | |
+| OPS-011 | kind e2e (Helm from scratch, k8s backend, NetworkPolicy/SEC-02 probes) | Ops | in-progress | RUN-004, OPS-013 | Sonnet (worktree) | |
+| TEST-017 | VidaiMock (pinned, Aurora scenario files) behind real LiteLLM (I-30); live claude-code conformance + hosted CLI e2e | e2e | in-progress | SUP-004, TEST-013 | Sonnet (worktree) | |
 | OPS-014 | Performance budgets + upgrade test | Ops | todo | OPS-011 | — | |
 
 ## Open spec issues (found by PROTO-001; S-06..S-11 resolved)
@@ -172,6 +172,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 
 ## Recently completed
 
+- 2026-11-07 early: BE-071 (inbox/ops engine), FIX-002 (sandbox env + stubs), BE-066 (apps tools), OPS-012/013 (operator docs + deployment gaps); I-29, I-30 (VidaiMock), C-38; phase sequencing rule.
 - 2026-11-06 night: BE-070 connector plane registration (I-28), SEC-FIX-03 (matrix on reads), FE-051 M5 dashboard; 195 leaked testkit containers removed (worktrees lacked `.env`; spec template now copies it).
 - 2026-11-06 late: RUN-005 (file.in, send_file; `.aurora/` excluded per owner), BE-064 attachments (+ orphan-blob sweep), BE-065 action approvals/links/peer tasks/app-turn cap, TEST-015 conformance 12/12; guards fixed (no platform names in core) and now run at every merge; I-27 grant-candidate exception.
 - 2026-11-06 evening: SEC-FIX-01/02 (SEC-34, SEC-09 closed), TEST-013 9/9, BE-062 schedules, BE-063 webhooks, TEST-010 permission matrix (defects → SEC-FIX-03), RUN-004 kubernetes backend; API-005 (M5) and API-006 (M6) contracts; decisions I-27, S-11; briefs BE-064/065, RUN-005, SEC-FIX-03, BE-070/071, TEST-015.

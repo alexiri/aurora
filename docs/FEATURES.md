@@ -5,7 +5,7 @@ invariants `SEC-nn` (`17`). Phase 0 = M0–M7 (in scope now). Phase 1–4 are ou
 of scope until phase 0 exits (`MASTER_SPEC` "Phases are real").
 
 Status: `todo` · `planned` (briefs written) · `in-progress` · `done` (acceptance evidence in PROGRESS.md) · `blocked`.
-Last reconciled with git history: 2026-11-06 night (after FE-051 merge, 55480baf).
+Last reconciled with git history: 2026-11-07 (after BE-066 merge, 73dab75f).
 
 | Requirement ID | Feature | Priority | Backend tasks | Frontend tasks | Dependencies | Status | Evidence |
 |---|---|---|---|---|---|---|---|
@@ -34,7 +34,7 @@ Last reconciled with git history: 2026-11-06 night (after FE-051 merge, 55480baf
 | M3/09§hooks | Hooks: WIT, SDK, hook host (wasmtime), gateway summarize/mint, CLI plugin | P0 | HOOK-001/002/004, SUM-001, CLI-002/003, FIX-001 | — | I-02a | done | hookhost 11; e2e-gateway 15/15 |
 | M4/11 | Runner core, channel server, fake + podman backends, sandbox images | P0 | RUN-001..003 | — | PROTO-001 | done | runner tests; TEST-013 |
 | M4/12 | Supervisor: boot doc, channel, loopback proxy, home projection, harvest, MCP bridge, process manager, scrubbed spawns | P0 | SUP-001..003, SEC-FIX-01 | — | PROTO-001 | done | supervisor tests; spawn_env |
-| M4/10 | Conversations, turns, transcript/SSE, due-work engine, context credentials, tool registry, models | P0 | BE-050..053, FIX-002 | FE-040, FE-041 | M2 | done (FUP-M4 open; sandbox env/stubs gap → FIX-002 in progress) | hosted 7, runner_plane 10; TEST-013 9/9 |
+| M4/10 | Conversations, turns, transcript/SSE, due-work engine, context credentials, tool registry, models | P0 | BE-050..053, FIX-002 | FE-040, FE-041 | M2 | done (FUP-M4 open; sandbox env/stubs fixed by FIX-002) | hosted 7, runner_plane 10; TEST-013 9/9 |
 | M5/10§memory | Memory (+language), search, recall, harvest, tools, UI | P0 | BE-060 | FE-050 | M4 | done (FUP-M5) | memory 7 |
 | M5/10§skills | Skills (agent/org), files, limits, projection, tools, UI | P0 | BE-061 | FE-050 | M4 | done | skills 5 |
 | M5/10§schedules | Schedules: cron (5-min floor), gates, fire lease, fire-time authority, tools | P0 | BE-062 | FE-051 | M4 | done | schedules 5; web m5-tabs |
@@ -42,12 +42,12 @@ Last reconciled with git history: 2026-11-06 night (after FE-051 merge, 55480baf
 | M5/10§processes | Processes and watches (local tools, process.state, watch turns, parked/lost) | P0 | SUP-003, BE-052 | FE-041 (computer tab) | M4 | done | supervisor process tests; hosted tests |
 | M5/10§attachments | Attachments in/out (BlobStore, routes, `file.in` S-11, `send_file`) | P0 | BE-064, RUN-005 | FE-051 | M4 | done; e2e todo (TEST-014) | attachments 9; runner inbound 3, supervisor inbound 9 |
 | M5/07§actions | Action approvals, agent links, peer tasks, app-turn cap, agent tools | P0 | BE-065 | FE-051 | API-005 | done | action_approvals 10, peer_tasks 12 |
-| M5/12§catalogue | Full phase-0 platform tool catalogue | P0 | BE-060..065; apps tools BE-066 (in progress); messaging tools BE-075 | — | — | in-progress | |
+| M5/12§catalogue | Full phase-0 platform tool catalogue | P0 | BE-060..065; apps tools BE-066 (done); messaging tools BE-075 | — | — | in-progress | |
 | M5/12§claude-code | `claude-code` adapter + conformance | P0 | SUP-004 | — | SUP-001 | done offline; live conformance via LiteLLM + scripted mock (I-30, TEST-017) todo | adapter tests |
 | M5/18 | Hosted M5 suites (18) | P0 | TEST-014 | — | M5 above, FIX-002 | todo | |
 | M6/13§content | Neutral content, cards, action tokens, capabilities/fallbacks | P0 | CHAN-001 | — | — | done | channels tests; I-26 |
 | M6/13§contract | Connector contract v1 types, SDK, fake connector | P0 | CON-001, TEST-015 fixes | — | CHAN-001 | done | connector tests; FUP-M6 closed |
-| M6/13§plane | Registration, approval, ownership, config feed, inbox, ops, correlated ops, files | P0 | BE-070, BE-071 | — | API-006 | in-progress (BE-070 done, BE-071 running) | connectors 12 |
+| M6/13§plane | Registration, approval, ownership, config feed, inbox, ops, correlated ops, files | P0 | BE-070, BE-071 | — | API-006 | done (BE-070, BE-071) | connectors 12, connector_ops 11 |
 | M6/13§core | Inbox processing, routing, linking, reach, bindings, commands, mirror, cards, presence, messaging tools | P0 | BE-072..075 | FE-060 | BE-071 | todo | |
 | M6/13§7 | Conformance suite (fake core) + e2e channel scenario | P0 | TEST-015, TEST-016 | — | CON-001 / BE-075 | conformance done (12/12); e2e todo | `scripts/conformance.sh` |
 | M7/11§k8s | Kubernetes runner backend | P0 | RUN-004 | — | RUN-003 | done (no cluster: mock API only) | k8s_mock 15, unit 15 |
