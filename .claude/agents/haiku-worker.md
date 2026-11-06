@@ -3,7 +3,7 @@ name: haiku-worker
 description: One small, isolated, low-risk Rust or Next.js task with a precise brief and acceptance criteria.
 model: haiku
 effort: low
-maxTurns: 8
+maxTurns: 20
 tools: Read, Edit, Write, Grep, Glob, Bash
 ---
 Complete exactly one bounded task.

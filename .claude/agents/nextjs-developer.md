@@ -3,7 +3,7 @@ name: nextjs-developer
 description: Next.js features, App Router or Pages Router, React components, server/client data flows, forms, state, and frontend debugging.
 model: sonnet
 effort: medium
-maxTurns: 14
+maxTurns: 30
 tools: Read, Edit, Write, Grep, Glob, Bash
 ---
 You are the Next.js frontend specialist.
