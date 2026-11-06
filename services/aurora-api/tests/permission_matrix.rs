@@ -480,6 +480,13 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/conversations/{id}/events", G::WsUse, false),
     r("GET", "/v1/conversations/{id}/stream", G::WsUse, false),
     r("POST", "/v1/conversations/{id}/messages", G::WsUse, false),
+    r(
+        "POST",
+        "/v1/conversations/{id}/attachments",
+        G::WsUse,
+        false,
+    ),
+    r("GET", "/v1/attachments/{id}/content", G::WsUse, false),
     r("POST", "/v1/turns/{id}/abort", G::WsUse, false),
     r("POST", "/v1/turns/{id}/send-now", G::WsUse, false),
     r("POST", "/v1/approvals/{id}/decision", G::WsUse, false),
