@@ -281,24 +281,37 @@ async fn login_logout_and_errors() {
 
 #[tokio::test]
 async fn login_rate_limited() {
+    // Token bucket 5/min/email (04 §Rate limits): one token refills every 12 s. Each attempt pays
+    // the password-hash cost, so under load the sequence can span a refill; allow exactly the
+    // refills that elapsed, never more.
+    const CAPACITY: u32 = 5;
+    const REFILL_SECS: u64 = 12;
     let h = open().await;
-    for _ in 0..5 {
-        let (s, _, _) = post(
+    let start = std::time::Instant::now();
+    let mut accepted = 0u32;
+    let (s, hd, v) = loop {
+        let (s, hd, v) = post(
             &h,
             "/v1/auth/login",
             json!({"email":"a@example.com","password":"x"}),
             None,
         )
         .await;
-        assert_eq!(s, StatusCode::UNAUTHORIZED);
-    }
-    let (s, hd, v) = post(
-        &h,
-        "/v1/auth/login",
-        json!({"email":"a@example.com","password":"x"}),
-        None,
-    )
-    .await;
+        if s != StatusCode::UNAUTHORIZED {
+            break (s, hd, v);
+        }
+        accepted += 1;
+        let refills = u32::try_from(start.elapsed().as_secs() / REFILL_SECS).unwrap();
+        assert!(
+            accepted <= CAPACITY + refills,
+            "{accepted} attempts accepted within {:?} (capacity {CAPACITY} + {refills} refills)",
+            start.elapsed()
+        );
+    };
+    assert!(
+        accepted >= CAPACITY,
+        "limited after only {accepted} attempts"
+    );
     assert_eq!(s, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(v["error"]["code"], "rate_limited");
     assert!(hd.get("retry-after").is_some());
