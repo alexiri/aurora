@@ -295,3 +295,20 @@ pub async fn record_upload<'e, E: PgExecutor<'e>>(
     .await?;
     Ok(())
 }
+
+/// Blank the payload of finished `credentials.validate` ops of a connector so the plaintext
+/// credentials sent for validation do not stay at rest. Idempotent; unfinished ops are untouched.
+pub async fn scrub_validate_payloads<'e, E: PgExecutor<'e>>(
+    exec: E,
+    connector_id: &str,
+) -> Result<u64, DbError> {
+    Ok(sqlx::query(
+        "UPDATE channel_ops SET payload='{}'::jsonb, updated_at=now()
+          WHERE connector_id=$1 AND kind='credentials.validate'
+            AND status IN ('done','failed','dropped') AND payload <> '{}'::jsonb",
+    )
+    .bind(connector_id)
+    .execute(exec)
+    .await?
+    .rows_affected())
+}

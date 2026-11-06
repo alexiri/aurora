@@ -466,8 +466,11 @@ async fn delete_workspace(
     if req.confirm != w.slug {
         return Err(service::confirmation_mismatch());
     }
-    // M6: enqueue channel-presence deprovisioning before the delete.
-    workspaces::delete(&s.pool, ws).await?;
+    // Dedicated channel presences are deprovisioned through connector ops before the cascade.
+    let mut tx = s.pool.begin().await.map_err(aurora_db::DbError::from)?;
+    crate::domains::channels::presences::enqueue_deprovision_for_workspace(&mut tx, ws).await?;
+    workspaces::delete(&mut *tx, ws).await?;
+    tx.commit().await.map_err(aurora_db::DbError::from)?;
     audit::record(
         &s,
         event(&c, "workspace.delete")

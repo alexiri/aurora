@@ -328,8 +328,7 @@ fn backoff_secs(attempts: i32) -> f64 {
         .min(OP_BACKOFF_MAX.as_secs_f64())
 }
 
-/// What the core knows when a connector reports a dead credential (hook point; BE-074 notifies
-/// the affected agents' operators from here, inside the same transaction).
+/// What the core knows when a connector reports a dead credential.
 pub struct CredentialDead<'a> {
     pub connector_id: &'a str,
     pub op_id: Uuid,
@@ -339,10 +338,10 @@ pub struct CredentialDead<'a> {
 }
 
 /// Notice hook for `credential_dead`; the presence/integration is already `disabled` when it
-/// runs. Currently only logs.
-#[allow(clippy::unused_async)]
+/// runs (same transaction). Operators are told through the channels domain.
 pub async fn on_credential_dead(
-    _tx: &mut PgConnection,
+    s: &AppState,
+    tx: &mut PgConnection,
     ev: &CredentialDead<'_>,
 ) -> Result<(), ApiError> {
     tracing::warn!(
@@ -350,7 +349,14 @@ pub async fn on_credential_dead(
         integration_id = ?ev.integration_id, presence_id = ?ev.presence_id,
         "connector reported a dead credential"
     );
-    Ok(())
+    crate::domains::channels::presences::on_credential_dead(
+        tx,
+        s,
+        ev.integration_id,
+        ev.presence_id,
+        ev.connector_id,
+    )
+    .await
 }
 
 async fn apply_result(s: &AppState, c: &ConnectorCtx, r: OpResult) -> Result<(), ApiError> {
@@ -371,6 +377,12 @@ async fn apply_result(s: &AppState, c: &ConnectorCtx, r: OpResult) -> Result<(),
         (Outcome::Ok, _) => {
             let data = r.data.unwrap_or_else(|| json!({}));
             ops::finish(&mut *tx, op.id, "done", Some(&data), None).await?;
+            if op.kind == "presence.provision"
+                && let Some(p) = op.presence_id
+            {
+                crate::domains::channels::presences::on_provision_done(s, &mut tx, p, &data)
+                    .await?;
+            }
             notify(&mut tx, Channel::OpResult, &json!({"op_id": op.id})).await?;
         }
         (Outcome::Error, None) => return Err(invalid("error required when outcome is error")),
@@ -415,6 +427,7 @@ async fn apply_result(s: &AppState, c: &ConnectorCtx, r: OpResult) -> Result<(),
                             .await?;
                     }
                     on_credential_dead(
+                        s,
                         &mut tx,
                         &CredentialDead {
                             connector_id: &op.connector_id,
@@ -435,6 +448,12 @@ async fn apply_result(s: &AppState, c: &ConnectorCtx, r: OpResult) -> Result<(),
                 ),
             }
             if let Some(status) = terminal {
+                if op.kind == "presence.provision"
+                    && let Some(p) = op.presence_id
+                {
+                    crate::domains::channels::presences::on_provision_failed(&mut tx, p, &code)
+                        .await?;
+                }
                 ops::finish(
                     &mut *tx,
                     op.id,

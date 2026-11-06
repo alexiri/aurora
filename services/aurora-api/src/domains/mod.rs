@@ -12,6 +12,7 @@ pub mod attachments;
 pub mod audit;
 pub mod auth;
 pub mod availability;
+pub mod channels;
 pub mod cli_login;
 pub mod connect;
 pub mod connections;
