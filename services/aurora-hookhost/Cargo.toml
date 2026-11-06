@@ -20,3 +20,24 @@ axum = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+aurora-hook-wit = { workspace = true }
+aurora-registry = { workspace = true }
+aurora-summary = { workspace = true }
+aurora-policy = { workspace = true }
+wasmtime = { workspace = true, features = ["component-model", "cranelift", "runtime", "async", "std"] }
+wasmtime-wasi = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+anyhow = { workspace = true }
+metrics = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+wiremock = { workspace = true }
+tower = { workspace = true }
+http-body-util = { workspace = true }
