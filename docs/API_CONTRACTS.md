@@ -341,6 +341,91 @@ interface EffectiveGovernance {
 | GET `/v1/governance/instance` | S | — | 200 `{ llm: { allowed_key_scopes, minimum_posture, require_key_origin, known_llm_hosts: string[], endpoints: {id, provider, display_name, allowed_models, key_origin}[] }, egress: { minimum_posture, baseline_allowlist } }` | — |
 | GET `/v1/workspaces/{ws}/activity` | S/K can_use | `?agent_id&conversation_id&decision&host&app_id&limit&cursor` | 200 `Page<RequestLogEntry>` (`ts desc`) | 404 |
 
+### M3 — apps, connections, OAuth clients, connection grants, plugin administration (API-003)
+
+Routes/auth: `05 §Apps, connections, OAuth clients`, `§Grants and effective views`
+(connection grants), `§Instance administration` (plugins, host claims, trusted keys,
+instance OAuth clients, registry snapshot), internal routes `05 §Authentication
+surfaces` (`/internal/v1/registry/*`). Behaviour: `09 §7, §9–§11`, `08 §8 OAuth
+clients`, `07 §Grants`. Snapshot JSON: `09 §9` (I-14, I-18).
+
+**Contract decisions**
+- C-13 App catalogue/detail data come from the **active snapshot** (no second catalogue); human strings are already sanitized there. `GET /v1/apps/{app}/icon` returns the stored PNG (re-encoded on ingest is out of scope; serve as `image/png`, `nosniff`).
+- C-14 Connect responses: `{ kind: "redirect", url }` or `{ kind: "connected", connection: Connection, missing_scopes: string[] }`. The OAuth callback answers a tiny HTML page (no inline script beyond a nonce'd `postMessage({type:"aurora:connected", connection_id})` to `window.opener` with target origin = external origin, then `window.close()`), or on error a page carrying `error=<code>`.
+- C-15 Connection credentials are never returned (SEC-12); `metadata` (non-secret, manifest-declared) and `scopes` are.
+- C-16 Plugin upload is `multipart/form-data` with one part `package` (≤ `PACKAGE_MAX`); validation failures still create a row with status `invalid` and `violations` (so admins see why), except signature/archive-corrupt failures which return 422 without a row.
+- C-17 Host-claim decisions are keyed by the **group** key and fingerprint of I-18.
+
+#### Shared schemas (M3)
+
+```ts
+interface FormField { name: string; label: string; type: "text" | "secret" | "select" | "file" | "json_file";
+  store: "credentials" | "metadata" | "tenant_host"; required: boolean; placeholder: string | null; help_url: string | null;
+  options: { value: string; label: string; warning: string | null }[] | null;
+  show_when: { field: string; equals: string } | null }
+interface ConnectMethod { id: string; kind: "oauth2" | "fields" | "hook";
+  fields: FormField[]; scopes: { scope: string; name: string; access: "read" | "write" }[]; default_scopes: string[];
+  access_levels: { id: string; label: string }[]; client_key: string | null; callback: "query" | "fragment" | null }
+interface Tool { id: string; name: string; description: string | null; group: "read" | "write"; wildcard: boolean;
+  host: string; path: string; methods: string[]; graphql: "query" | "mutation" | null; git: "push" | "fetch" | null }
+interface AppSummary { app_id: string; package_id: string; package_version: string; name: string; description: string;
+  category: string | null; available: boolean; connection_count: number; has_dark_icon: boolean }
+interface AppDetail extends AppSummary { api_docs: string | null; connect_note: { text: string; url: string | null } | null;
+  label_hint: string | null; connect: ConnectMethod[]; tools: Tool[]; hosts: { host: string; path_prefix: string | null; claim_status: "active" | "lost" }[];
+  agent_instructions: string | null; credentials: { name: string; optional: boolean }[]; metadata: string[] }
+interface Connection { id: Uuid; org_id: Uuid; workspace_id: Uuid | null; scope: "organization" | "workspace";
+  app_id: string; package_id: string; app_version: string; label: string;
+  status: "active" | "reauth_required" | "disabled" | "orphaned"; status_reason: string | null;
+  scopes: string[]; metadata: Record<string, string>; tenant_host: string | null; oauth_client_id: Uuid | null;
+  credentials_expires_at: Timestamp | null; connected_by: { id: Uuid; display_name: string } | null;
+  last_used_at: Timestamp | null; created_at: Timestamp; updated_at: Timestamp;
+  injecting: { host: string; lost_to_app_id: string | null }[] }
+interface OAuthClient { id: Uuid; scope: "instance" | "organization" | "workspace"; org_id: Uuid | null; workspace_id: Uuid | null;
+  package_id: string; client_key: string; fields: Record<string, string> /* non-secret only */; enabled: boolean;
+  connection_count: number; created_at: Timestamp; updated_at: Timestamp }
+// ConnectionGrant is defined in M2 shared schemas.
+interface PluginPackage { id: Uuid; package_id: string; version: string; contract: number; publisher: string; digest: string;
+  signer: { kind: "builtin" | "trusted_key" | "unsigned"; key_id: string | null; name: string | null };
+  source: "builtin" | "directory" | "upload"; status: "pending_approval" | "active" | "superseded" | "rejected" | "disabled" | "invalid";
+  status_reason: string | null; violations: { code: string; path: string; message: string }[];
+  apps: { app_id: string; name: string }[]; permissions: { hooks: string[]; egress: Record<string, string[]>; context: string[] };
+  host_claims: { claim_key: string; host: string; path_prefix: string | null; app_id: string }[];
+  widenings: { kind: "hook" | "egress" | "context" | "host_claim" | "zone"; detail: string }[] /* vs previously approved version */;
+  approved_by: { id: Uuid; display_name: string } | null; approved_at: Timestamp | null; created_at: Timestamp }
+interface HostClaimConflict { group_key: string; fingerprint: string;
+  claims: { package_id: string; app_id: string; claim_key: string }[];
+  decision: { winner_package_id: string; winner_app_id: string; decided_by: { id: Uuid; display_name: string } | null; stale: boolean } | null }
+interface TrustedKey { id: Uuid; publisher: string; name: string; public_key: string; revoked_at: Timestamp | null; created_at: Timestamp }
+```
+
+#### Endpoints (M3)
+
+| Method & path | Auth | Request | 2xx response | Errors |
+|---|---|---|---|---|
+| GET `/v1/apps?workspace_id=` | S/K | — | 200 `{ items: AppSummary[] }` | 404 |
+| GET `/v1/apps/{app}` | S/K | `?workspace_id` | 200 `AppDetail` | 404 |
+| GET `/v1/apps/{app}/icon?variant=light\|dark`, `/v1/apps/{app}/guide` | S/K | — | 200 `image/png` / `text/markdown` | 404 |
+| POST `/v1/apps/{app}/connect` | S (workspace: can_own; org: owner·admin) | `{ scope, workspace_id?, method_id, fields?, oauth_client_id?, access_level?, reconnect_connection_id? }` | 200 C-14 | 403 `app_unavailable`; 404; 400 `invalid_request` (fields); 422 `connect_probe_failed` (`details.upstream_status`) \| `oauth_client_required` \| `connect_hook_failed` |
+| GET `/v1/oauth/callback` | P | provider params + state | 200 HTML (C-14) | HTML with `error` (`oauth_state_invalid`, `oauth_exchange_failed`, `connect_probe_failed`) |
+| GET `/v1/workspaces/{ws}/connections`, `/v1/orgs/{org}/connections` | S/K | `?app_id&status` | 200 `Page<Connection>` | 404 |
+| GET/PATCH/DELETE `/v1/connections/{id}` | S/K (write: can_own / owner·admin) | PATCH `{ label?, status?: "active" \| "disabled" }` | 200 `Connection` / 204 | 404; 409 |
+| GET/POST `/v1/workspaces/{ws}/oauth-clients`, `/v1/orgs/{org}/oauth-clients` | S/K | POST `{ package_id, client_key, fields: Record<string,string> /* incl. secret fields; secret ones sealed */ }` | 200 `Page<OAuthClient>` / 201 `OAuthClient` | 400 (schema of manifest `fields`); 409 `conflict` |
+| PATCH/DELETE `/v1/oauth-clients/{id}` | S/K (IA for instance clients) | PATCH `{ fields?, enabled? }` | 200 / 204 | 409 `client_in_use` |
+| GET/POST `/v1/admin/oauth-clients` | IA | as above | instance clients | — |
+| PUT/DELETE `/v1/agents/{agent}/grants/connections/{conn}` | S/K can_own | `{ mode: "full" \| "custom", allow_tools?: string[], ask_tools?: string[] }` | 200 `ConnectionGrant` / 204 | 422 `grant_invalid` (`details.reason`: `empty_custom` \| `tool_in_both` \| `unknown_tool`) |
+| GET `/v1/connections/{id}/grants` | S/K | — | 200 `{ items: ConnectionGrant[] }` | 404 |
+| GET `/v1/admin/plugins` | IA | `?status` | 200 `Page<PluginPackage>` | — |
+| POST `/v1/admin/plugins` | IA | multipart `package` (C-16) | 201 `PluginPackage` | 413; 422 `package_invalid` (`details.violations`) |
+| GET `/v1/admin/plugins/{id}` | IA | — | 200 `PluginPackage` | 404 |
+| POST `/v1/admin/plugins/{id}/approve` \| `reject` \| `disable` \| `enable` | IA | `{ reason? }` | 200 `PluginPackage` | 409 `invalid_state`; 409 `claim_conflict_unresolved` |
+| DELETE `/v1/admin/plugins/{id}?force=` | IA | — | 204 | 409 `live_connections` (`details.count`) unless `force` (connections → `orphaned`) |
+| GET `/v1/admin/host-claims` | IA | — | 200 `{ items: HostClaimConflict[] }` | — |
+| PUT `/v1/admin/host-claims/{group_key}` | IA | `{ winner_package_id, winner_app_id, fingerprint }` | 200 `HostClaimConflict` | 409 `stale_fingerprint` |
+| GET/POST `/v1/admin/trusted-keys`; DELETE `/v1/admin/trusted-keys/{id}` | IA | POST `{ publisher, name, public_key }` | 200 `Page<TrustedKey>` / 201 / 204 (revoke: disables signed packages) | 400; 409 |
+| GET `/v1/admin/registry/snapshot` | IA | — | 200 snapshot JSON + `x-snapshot-hash` | 404 |
+| GET `/internal/v1/registry/active?contract_max=` | internal secret (port 4111) | — | 200 `{ hash, contract, snapshot }` | 404 |
+| GET `/internal/v1/registry/blobs/{digest}` | internal secret | — | 200 `application/wasm` | 404 |
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._
