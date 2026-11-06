@@ -59,6 +59,21 @@ pub struct PreparedRequest {
     pub headers: HeaderMap,
     pub upgrade: Option<HeaderValue>,
     pub body: Body,
+    /// Step 14/15 callback, invoked once with the upstream outcome.
+    pub hook: Option<Box<dyn PostHook>>,
+}
+
+/// Post-response hook (pipeline steps 14-15): guidance replacement and request log.
+pub trait PostHook: Send + 'static {
+    /// Upstream answered. Return `Some` to replace the response (status is the
+    /// caller's to preserve).
+    fn on_response(
+        self: Box<Self>,
+        status: http::StatusCode,
+        headers: &HeaderMap,
+    ) -> Option<Response<Body>>;
+    /// The upstream exchange failed with this refusal.
+    fn on_error(self: Box<Self>, err: &ApiError);
 }
 
 impl PipelineRequest {
@@ -74,6 +89,7 @@ impl PipelineRequest {
             headers: self.headers,
             upgrade: self.upgrade,
             body: self.body,
+            hook: None,
         }
     }
 }

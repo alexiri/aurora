@@ -3,13 +3,18 @@
 
 pub mod auth;
 pub mod ca;
+pub mod decide;
 pub mod guard;
 pub mod guidance;
 pub mod hygiene;
+pub mod inject;
 pub mod instance;
 pub mod invalidation;
 pub mod pipeline;
+pub mod plaintext;
 pub mod proxy;
+pub mod reqlog;
+pub mod resolve;
 pub mod resolver;
 pub mod upstream;
 

@@ -305,6 +305,7 @@ dependencies = [
  "async-trait",
  "aurora-config",
  "aurora-core",
+ "aurora-crypto",
  "aurora-db",
  "aurora-llm",
  "aurora-policy",

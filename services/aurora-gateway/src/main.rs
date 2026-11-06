@@ -4,12 +4,16 @@
 use aurora_config::GatewayConfig;
 use aurora_core::service::{self, exit_config, ready_check};
 use aurora_gateway::ca::{self, Ca};
+use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
 use aurora_gateway::guard::Guard;
 use aurora_gateway::instance;
 use aurora_gateway::invalidation::Hub;
-use aurora_gateway::pipeline::PassThrough;
+use aurora_gateway::plaintext::PlaintextCache;
 use aurora_gateway::proxy::{Proxy, ProxyParts};
+use aurora_gateway::reqlog::{DbWriter, FLUSH_INTERVAL, RequestLog};
+use aurora_gateway::resolve::{DbSource, Resolver};
 use aurora_gateway::resolver::DbCredentialResolver;
+use base64::Engine;
 use clap::{Parser, Subcommand};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::net::{IpAddr, SocketAddr};
@@ -91,7 +95,38 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let hub = Hub::new();
     let resolver = Arc::new(DbCredentialResolver::new(pool.clone()));
     hub.register(resolver.cache());
+    let llm = Arc::new(aurora_llm::ProviderRegistry::from_config(&cfg.llm)?);
+    let keys = cfg
+        .keyring
+        .keys
+        .iter()
+        .map(|k| {
+            format!(
+                "{}:{}",
+                k.id,
+                base64::engine::general_purpose::STANDARD.encode(k.key.expose())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let keyring = Arc::new(aurora_crypto::Keyring::parse(&keys, &cfg.keyring.active)?);
+    let vault = Arc::new(aurora_secrets::SecretVault::new(
+        aurora_secrets::StoreRegistry::from_config(&cfg.secrets, keyring)?,
+    ));
+    let policy_resolver = Arc::new(Resolver::new(Arc::new(DbSource(pool.clone())), llm));
+    hub.register(policy_resolver.cache());
+    let plaintext = Arc::new(PlaintextCache::new(vault));
+    hub.register(plaintext.clone());
+    let reqlog = RequestLog::new(Arc::new(DbWriter(pool.clone())));
+    let handler = Arc::new(PolicyHandler::new(PolicyHandlerParts {
+        resolver: policy_resolver,
+        plaintext,
+        log: reqlog.clone(),
+        external_url: cfg.external_url.clone(),
+        touch_pool: Some(pool.clone()),
+    }));
     let (tx, rx) = tokio::sync::watch::channel(false);
+    let reqlog_task = tokio::spawn(reqlog.run(FLUSH_INTERVAL, rx.clone()));
     let hub_task = tokio::spawn(hub.clone().run(pool.clone(), rx.clone()));
     let instance_task = tokio::spawn(instance::run(
         pool.clone(),
@@ -144,7 +179,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let proxy = Proxy::new(ProxyParts {
         ca,
         resolver,
-        handler: Arc::new(PassThrough),
+        handler,
         guard,
         header_timeout: Duration::from_secs(cfg.gateway.upstream_header_timeout_secs),
         extra_ca_pem,
@@ -173,5 +208,6 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     internal_task.await??;
     let _ = hub_task.await;
     let _ = instance_task.await;
+    let _ = reqlog_task.await;
     Ok(())
 }

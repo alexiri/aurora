@@ -167,11 +167,24 @@ impl Proxy {
             Outcome::Respond(r) => return r,
             Outcome::Forward(p) => p,
         };
+        let mut prepared = prepared;
+        let hook = prepared.hook.take();
         // 13. forward
         let mut resp = match self.upstream.send(prepared).await {
             Ok(r) => r,
-            Err(e) => return guidance::response(&e),
+            Err(e) => {
+                if let Some(h) = hook {
+                    h.on_error(&e);
+                }
+                return guidance::response(&e);
+            }
         };
+        // 14-15. guidance replacement and request log
+        if let Some(h) = hook {
+            if let Some(replacement) = h.on_response(resp.status(), resp.headers()) {
+                return replacement;
+            }
+        }
         if resp.status() == http::StatusCode::SWITCHING_PROTOCOLS {
             if let Some(client_up) = upgrade_fut {
                 let upstream_up = hyper::upgrade::on(&mut resp);
