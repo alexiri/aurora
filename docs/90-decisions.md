@@ -72,3 +72,10 @@ behaviour; they record environment and tooling choices.
 |----|-----|-------------------------|
 | S-01 | `org_app_availability`: primary key `(org_id, app_id)` replaced by `UNIQUE NULLS NOT DISTINCT (org_id, app_id, workspace_id)`. | `07 §App availability` needs `(org, app, NULL)` and `(org, app, workspace)` rows simultaneously; the PK allowed one row per app. |
 | S-02 | Org-scope partial uniques with nullable `workspace_id` (e.g. `policy_generations` one draft/published per scope) use `NULLS NOT DISTINCT`. | `03` states the uniques but NULL workspace ids would never collide under default semantics. |
+
+### Implementation decisions (continued)
+
+| Id | Decision | Rationale |
+|----|----------|-----------|
+| I-10 | SMTP delivery uses `lettre` (tokio + rustls, no native-tls); unset `email.smtp_url` ⇒ log-only mailer (`04 §Email and password`). | `02` pins no mail library; lettre is the standard async SMTP client. |
+| I-11 | The common-password list is SecLists `Passwords/Common-Credentials/10k-most-common.txt` (MIT), vendored at `services/aurora-api/data/common-passwords.txt` and embedded with `include_str!`. | `04` requires a bundled top-10k list. |
