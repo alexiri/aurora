@@ -231,12 +231,30 @@ version = "0.1.0"
 name = "aurora-cli"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "aurora-client",
+ "base64 0.22.1",
  "clap",
+ "rustls-native-certs",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "wiremock",
 ]
 
 [[package]]
 name = "aurora-client"
 version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml",
+ "uuid",
+ "wiremock",
+]
 
 [[package]]
 name = "aurora-config"
@@ -408,10 +426,12 @@ dependencies = [
 name = "aurora-protocol"
 version = "0.1.0"
 dependencies = [
+ "aurora-core",
  "schemars",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]

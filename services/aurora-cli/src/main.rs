@@ -1,12 +1,266 @@
-//! aurora: operator CLI skeleton (`--version` only in this milestone).
+//! aurora: operator / developer CLI (docs/16 §W12).
 #![forbid(unsafe_code)]
 
-use clap::Parser;
+mod approvals;
+mod run;
+mod token;
+
+use std::io::{IsTerminal, Write};
+use std::time::Duration;
+
+use anyhow::{Context, Result, anyhow, bail};
+use aurora_client::Client;
+use aurora_client::config::{self, Config};
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "aurora", version, about = "Aurora command-line client")]
-struct Cli {}
+struct Cli {
+    #[command(subcommand)]
+    cmd: Cmd,
+}
 
-fn main() {
-    let _ = Cli::parse();
+#[derive(Subcommand)]
+enum Cmd {
+    /// Log in with the device flow and store an API key.
+    Login {
+        /// Aurora external URL (default: the stored one).
+        #[arg(long, env = "AURORA_URL")]
+        url: Option<String>,
+        /// Hostname shown on the approval page (default: this machine).
+        #[arg(long)]
+        hostname: Option<String>,
+    },
+    /// Remove the stored credentials.
+    Logout,
+    /// Show the authenticated identity.
+    Whoami,
+    /// Manage agents.
+    Agents {
+        #[command(subcommand)]
+        cmd: AgentsCmd,
+    },
+    /// Run a command with an agent's proxy and CA environment.
+    Run {
+        #[arg(long)]
+        agent: String,
+        /// Environment variable holding the agent token.
+        #[arg(long, default_value = token::TOKEN_ENV)]
+        token_env: String,
+        #[arg(trailing_var_arg = true, required = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+    /// Approvals.
+    Approvals {
+        #[command(subcommand)]
+        cmd: ApprovalsCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentsCmd {
+    List,
+    /// Store a BYO agent token copied from the dashboard ("Connect" tab).
+    /// Reads stdin (no echo on a terminal) or `--from-env`.
+    Token {
+        handle: String,
+        /// Read the token from `$AURORA_AGENT_TOKEN`.
+        #[arg(long)]
+        from_env: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ApprovalsCmd {
+    Watch {
+        /// Only this workspace (slug in your org).
+        #[arg(long)]
+        workspace: Option<String>,
+        /// Stream JSON lines instead of prompting.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+fn load() -> Result<(Config, std::path::PathBuf)> {
+    let p = config::default_path()?;
+    Ok((Config::load(&p)?, p))
+}
+
+fn default_hostname() -> Option<String> {
+    std::env::var("HOSTNAME")
+        .ok()
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+#[tokio::main]
+async fn main() {
+    let code = match real_main().await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e:#}");
+            1
+        }
+    };
+    std::process::exit(code);
+}
+
+async fn real_main() -> Result<i32> {
+    match Cli::parse().cmd {
+        Cmd::Login { url, hostname } => {
+            let path = config::default_path()?;
+            let url = match url {
+                Some(u) => u,
+                None => Config::load(&path)
+                    .map(|c| c.url)
+                    .map_err(|_| anyhow!("pass --url <external_url> (or set AURORA_URL)"))?,
+            };
+            let url = url.trim_end_matches('/').to_string();
+            let client = Client::new(&url, None)?;
+            let host = hostname.or_else(default_hostname);
+            let st = client.auth_cli_start(host.as_deref()).await?;
+            println!(
+                "Open {} and enter the code:\n\n    {}\n",
+                st.verification_url, st.user_code
+            );
+            println!("Waiting for approval...");
+            let t = client
+                .poll_cli_token(
+                    &st.device_code,
+                    Duration::from_secs(st.interval.max(1)),
+                    Duration::from_secs(5),
+                    Duration::from_secs(st.expires_in),
+                )
+                .await?;
+            let agents = Config::load(&path).map(|c| c.agents).unwrap_or_default();
+            Config {
+                url,
+                api_key: t.api_key,
+                workspace: t.workspace.clone(),
+                agents,
+            }
+            .save(&path)?;
+            println!(
+                "Logged in to workspace {}/{}",
+                t.workspace.org_slug, t.workspace.slug
+            );
+            Ok(0)
+        }
+        Cmd::Logout => {
+            let p = config::default_path()?;
+            match std::fs::remove_file(&p) {
+                Ok(()) => println!("Logged out."),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => println!("Not logged in."),
+                Err(e) => return Err(e.into()),
+            }
+            Ok(0)
+        }
+        Cmd::Whoami => {
+            let (cfg, _) = load()?;
+            let me = Client::new(&cfg.url, Some(cfg.api_key.clone()))?
+                .me()
+                .await?;
+            println!(
+                "user:      {}",
+                me.user.email.as_deref().unwrap_or(&me.user.id)
+            );
+            println!("url:       {}", cfg.url);
+            println!(
+                "workspace: {}/{} ({})",
+                cfg.workspace.org_slug, cfg.workspace.slug, cfg.workspace.id
+            );
+            Ok(0)
+        }
+        Cmd::Agents {
+            cmd: AgentsCmd::List,
+        } => {
+            let (cfg, _) = load()?;
+            let client = Client::new(&cfg.url, Some(cfg.api_key.clone()))?;
+            for a in client.list_agents(&cfg.workspace.id).await? {
+                let tok = if cfg.agents.contains_key(&a.handle) {
+                    "token stored"
+                } else {
+                    "-"
+                };
+                println!("{:<24} {:<7} {:<14} {}", a.handle, a.kind, tok, a.name);
+            }
+            Ok(0)
+        }
+        Cmd::Agents {
+            cmd: AgentsCmd::Token { handle, from_env },
+        } => {
+            let (mut cfg, path) = load()?;
+            let tok = if from_env {
+                std::env::var(token::TOKEN_ENV)
+                    .map_err(|_| anyhow!("{} is not set", token::TOKEN_ENV))?
+            } else {
+                token::read_token_interactive()?
+            };
+            token::store(&mut cfg, &path, &handle, tok.trim()).await?;
+            println!(
+                "Token for `{handle}` verified and stored in {}.",
+                path.display()
+            );
+            Ok(0)
+        }
+        Cmd::Run {
+            agent,
+            token_env,
+            command,
+        } => {
+            let (cfg, _) = load()?;
+            let tok = token::resolve_for_run(std::env::var(&token_env).ok(), &cfg, &agent)?;
+            let cc = Client::new(&cfg.url, Some(tok.clone()))?
+                .agent_container_config()
+                .await?;
+            let dir = run::make_temp_dir()?;
+            let result = (|| -> Result<i32> {
+                let env = run::build_env(&cc, Some(&tok), &dir, &run::system_roots_pem())?;
+                let (prog, args) = command.split_first().context("no command")?;
+                let status = std::process::Command::new(prog)
+                    .args(args)
+                    .envs(&env)
+                    .status()
+                    .with_context(|| format!("failed to run `{prog}`"))?;
+                Ok(run::exit_code(status))
+            })();
+            let _ = std::fs::remove_dir_all(&dir);
+            result
+        }
+        Cmd::Approvals {
+            cmd: ApprovalsCmd::Watch { workspace, json },
+        } => {
+            let (cfg, _) = load()?;
+            let client = Client::new(&cfg.url, Some(cfg.api_key.clone()))?;
+            let workspace_id = match workspace {
+                Some(slug) => {
+                    let r = client.resolve(&cfg.workspace.org_slug, Some(&slug)).await?;
+                    Some(
+                        r.workspace
+                            .ok_or_else(|| anyhow!("workspace `{slug}` not found"))?
+                            .id,
+                    )
+                }
+                None => None,
+            };
+            if !json && !std::io::stdin().is_terminal() {
+                bail!("interactive mode needs a terminal; use --json for streaming");
+            }
+            let opts = approvals::WatchOpts {
+                json,
+                workspace_id,
+                max_rounds: None,
+                wait_secs: 25,
+                retry_delay: Duration::from_secs(3),
+            };
+            let stdin = std::io::stdin();
+            let mut input = stdin.lock();
+            let mut out = std::io::stdout();
+            approvals::watch(&client, &opts, &mut input, &mut out).await?;
+            out.flush()?;
+            Ok(0)
+        }
+    }
 }
