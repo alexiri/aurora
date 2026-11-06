@@ -3,7 +3,7 @@
 //! `std::env::remove_var` is `unsafe` in edition 2024 and this crate forbids unsafe code, so the
 //! variable is not removed from the process environment; instead the process is made
 //! non-dumpable (same-uid processes cannot read `/proc/self/environ`) and every child is spawned
-//! through [`scrub_command`], which removes it. The supervisor never passes it on.
+//! through [`crate::spawn`], which removes it. The supervisor never passes it on.
 
 use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
@@ -136,16 +136,6 @@ pub fn make_non_dumpable() -> std::io::Result<()> {
 /// Whether the process is currently dumpable.
 pub fn is_dumpable() -> std::io::Result<bool> {
     Ok(rustix::process::dumpable_behavior()? != rustix::process::DumpableBehavior::NotDumpable)
-}
-
-/// Remove boot material from a child's environment. Call on every spawned command.
-pub fn scrub_command(cmd: &mut std::process::Command) -> &mut std::process::Command {
-    cmd.env_remove(BOOT_ENV)
-}
-
-/// Tokio variant of [`scrub_command`].
-pub fn scrub_tokio_command(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
-    cmd.env_remove(BOOT_ENV)
 }
 
 fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> BootError + '_ {

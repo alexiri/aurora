@@ -5,7 +5,8 @@
 //! `{id, result}` or `{id, error: {code, message}}`. `session` is the conversation id. The socket
 //! is not a trust boundary: identity comes from the runner (sandbox/boot) and the API (turn check).
 //!
-//! `list` answers from the synced catalogue (`.aurora/tools.json`). `call` is executed locally for
+//! `list` answers with the local `process_*` descriptors merged with the synced remote catalogue
+//! (`.aurora/tools.json`, which holds remote tools only). `call` is executed locally for
 //! the `process_*` family, otherwise relayed as a `tool.call` frame stamped with the conversation and
 //! its current turn, bounded by `TOOL_CALL_TIMEOUT`. After `TOOL_CONSECUTIVE_FAILURES` transport
 //! failures in a session the hub answers "platform tools temporarily unavailable" immediately; one
@@ -200,7 +201,8 @@ impl ToolHub {
         }
     }
 
-    pub fn catalogue(&self) -> Vec<ToolDescriptor> {
+    /// Remote tools from `.aurora/tools.json` (the API catalogue never holds `process_*`).
+    fn remote_catalogue(&self) -> Vec<ToolDescriptor> {
         let Ok(bytes) = std::fs::read(&self.catalogue) else {
             return Vec::new();
         };
@@ -210,7 +212,15 @@ impl ToolHub {
         items
             .into_iter()
             .filter_map(|v| serde_json::from_value::<ToolDescriptor>(v).ok())
+            .filter(|t| !ProcessManager::is_local_tool(&t.name))
             .collect()
+    }
+
+    /// What `list` answers: the remote catalogue plus the local `process_*` descriptors.
+    pub fn catalogue(&self) -> Vec<ToolDescriptor> {
+        let mut all = self.remote_catalogue();
+        all.extend(ProcessManager::local_descriptors());
+        all
     }
 
     /// Breaker gate: `true` when the call may proceed (closed, or an allowed probe).

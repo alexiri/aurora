@@ -140,6 +140,20 @@ async fn bridge_supervisor_runner_round_trip() {
         list["result"]["tools"][0]["inputSchema"],
         json!({"type":"object"})
     );
+    let names: Vec<&str> = list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    for n in [
+        "process_start",
+        "process_status",
+        "process_stop",
+        "process_watch",
+    ] {
+        assert!(names.contains(&n), "tools/list lacks {n}: {names:?}");
+    }
 
     cw.write_all(&rpc(json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"memory_save","arguments":{"key":"k"}}}))).await.unwrap();
     let SupervisorToRunner::ToolCall(call) = next_matching(&mut out_rx, |m| {

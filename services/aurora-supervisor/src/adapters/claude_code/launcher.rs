@@ -6,7 +6,6 @@ use std::process::Stdio;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot};
 
 use super::config::LaunchSpec;
@@ -28,7 +27,7 @@ pub trait Launcher: Send + Sync {
     async fn launch(&self, spec: LaunchSpec) -> Result<ChildIo, HarnessError>;
 }
 
-/// Spawns the real CLI with a cleared environment (only `PATH`, `HOME` and the session env).
+/// Spawns the real CLI through [`crate::spawn`] (allow-listed environment plus the session env).
 #[derive(Debug, Clone)]
 pub struct ProcessLauncher {
     pub program: PathBuf,
@@ -46,20 +45,14 @@ impl Default for ProcessLauncher {
 #[async_trait]
 impl Launcher for ProcessLauncher {
     async fn launch(&self, spec: LaunchSpec) -> Result<ChildIo, HarnessError> {
-        let mut cmd = Command::new(&self.program);
+        let mut cmd =
+            crate::spawn::tokio_command(&self.program, spec.env.iter().map(|(k, v)| (k, v)));
         cmd.args(&spec.args)
-            .env_clear()
             .current_dir(&spec.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        for k in ["PATH", "HOME", "LANG"] {
-            if let Some(v) = std::env::var_os(k) {
-                cmd.env(k, v);
-            }
-        }
-        cmd.envs(spec.env.iter().map(|(k, v)| (k, v)));
         let mut child = cmd.spawn().map_err(|e| {
             HarnessError::new(
                 "harness_failed",

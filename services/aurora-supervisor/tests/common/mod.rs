@@ -79,7 +79,7 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         // Skills dirs are read-only (0555); make them writable before removal.
-        let _ = std::process::Command::new("chmod")
+        let _ = aurora_supervisor::spawn::command("chmod", std::iter::empty::<(&str, &str)>())
             .args(["-R", "u+rwX"])
             .arg(&self.0)
             .status();

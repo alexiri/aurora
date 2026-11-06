@@ -19,5 +19,6 @@ pub mod mcp_bridge;
 pub mod outbound;
 pub mod process;
 pub mod proxy;
+pub mod spawn;
 pub mod supervisor;
 pub mod tools;

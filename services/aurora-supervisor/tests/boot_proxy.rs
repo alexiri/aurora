@@ -130,9 +130,7 @@ fn boot_document_files_env_and_dumpable() {
     assert!(BootDocument::parse("not base64!").is_err());
 
     // children never receive the boot document
-    let mut cmd = std::process::Command::new("env");
-    cmd.env(boot::BOOT_ENV, "secret");
-    boot::scrub_command(&mut cmd);
+    let mut cmd = aurora_supervisor::spawn::command("env", [(boot::BOOT_ENV, "secret")]);
     let out = String::from_utf8(cmd.output().unwrap().stdout).unwrap();
     assert!(!out.contains("AURORA_BOOT") && !out.contains("secret"));
 

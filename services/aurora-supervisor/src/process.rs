@@ -43,7 +43,7 @@ pub struct ProcessConfig {
     pub working_dir: PathBuf,
     /// Run children as this uid/gid, only effective when the supervisor itself is root.
     pub uid: Option<u32>,
-    /// Extra env (machine proxy); the supervisor's own env is inherited.
+    /// Extra env (machine proxy, app env) added to the allow-listed container env.
     pub env: Vec<(String, String)>,
     pub tail: usize,
     pub debounce: Duration,
@@ -143,11 +143,10 @@ fn signal_group(pid: i32, sig: Signal) {
 
 /// Builds `sh -c <command>` with the shared posture (own group, uid, container env).
 fn shell(cfg: &ProcessConfig, command: &str, cwd: &Path) -> Command {
-    let mut c = Command::new("sh");
+    let mut c = crate::spawn::tokio_command("sh", cfg.env.iter().map(|(k, v)| (k, v)));
     c.arg("-c")
         .arg(command)
         .current_dir(cwd)
-        .envs(cfg.env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::null())
         .process_group(0);
     if let Some(uid) = cfg.uid
@@ -565,6 +564,47 @@ impl ProcessManager {
             }
             _ => Err("unknown process tool".into()),
         }
+    }
+
+    /// Descriptors of the local `process_*` tools (merged into `tools/list`; the API catalogue
+    /// holds remote tools only).
+    pub fn local_descriptors() -> Vec<aurora_protocol::tools::ToolDescriptor> {
+        let d = |name: &str, description: &str, input_schema: Value| {
+            aurora_protocol::tools::ToolDescriptor {
+                name: name.to_owned(),
+                description: Some(description.to_owned()),
+                input_schema,
+            }
+        };
+        vec![
+            d(
+                "process_start",
+                "Start a background process (`sh -c command`) in the workspace; returns its id.",
+                json!({"type":"object","additionalProperties":false,"required":["name","command"],"properties":{
+                    "name":{"type":"string","maxLength":MAX_NAME},
+                    "command":{"type":"string","maxLength":MAX_COMMAND},
+                    "cwd":{"type":"string","description":"Directory inside the workspace"}}}),
+            ),
+            d(
+                "process_status",
+                "Status and output tail of one background process, or of all when `id` is omitted.",
+                json!({"type":"object","additionalProperties":false,"properties":{"id":{"type":"string"}}}),
+            ),
+            d(
+                "process_stop",
+                "Stop a background process (SIGTERM, then SIGKILL after a grace period).",
+                json!({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}}),
+            ),
+            d(
+                "process_watch",
+                "Wake the agent when a process prints a pattern, is silent for a while, or exits. Fires once.",
+                json!({"type":"object","additionalProperties":false,"required":["id","kind"],"properties":{
+                    "id":{"type":"string"},
+                    "kind":{"type":"string","enum":["pattern","silence","exit"]},
+                    "pattern":{"type":"string","maxLength":MAX_PATTERN},
+                    "silence_secs":{"type":"integer","minimum":1}}}),
+            ),
+        ]
     }
 
     pub fn is_local_tool(name: &str) -> bool {
