@@ -732,6 +732,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/presences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Presences of an agent (`can_use`). */
+        get: operations["listAgentPresences"];
+        put?: never;
+        /**
+         * Attach an agent to an integration as `shared` (immediately active) or `dedicated`
+         *     (`pending_setup` + provisioning, or validated manual fields) (C-34).
+         */
+        post: operations["attachAgentPresence"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/reach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reach grants of an agent (`can_use`). */
+        get: operations["listAgentReach"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/restart": {
         parameters: {
             query?: never;
@@ -796,6 +834,23 @@ export interface paths {
         put?: never;
         /** Create an agent-tier skill; 409 `skill_exists`. */
         post: operations["createAgentSkill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/space-bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Space bindings of an agent (`can_own`). */
+        get: operations["listAgentSpaceBindings"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1268,6 +1323,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/channel-integrations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one integration (org owner/admin). Credentials are never returned. */
+        get: operations["getChannelIntegration"];
+        put?: never;
+        post?: never;
+        /** Delete an integration; dedicated presences are deprovisioned through connector operations. */
+        delete: operations["deleteChannelIntegration"];
+        options?: never;
+        head?: never;
+        /** Replace config/credentials (re-validated) or set `status` to `active` | `disabled`. */
+        patch: operations["patchChannelIntegration"];
+        trace?: never;
+    };
+    "/v1/channel-integrations/{id}/user-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the user links of an integration (org owner/admin). */
+        get: operations["listIntegrationUserLinks"];
+        put?: never;
+        /** Link a platform user to an Aurora user (org owner/admin). 409 `already_linked`. */
+        post: operations["createIntegrationUserLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/channel-links/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm a sign-in link token for the signed-in user (C-36). Session only. */
+        post: operations["confirmChannelLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/connections/{id}": {
         parameters: {
             query?: never;
@@ -1622,6 +1731,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/channel-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's own channel links. */
+        get: operations["listMyChannelLinks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/channel-links/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove one of the caller's own channel links. */
+        delete: operations["deleteMyChannelLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/dm-defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** DM defaults for every platform user linked to the caller. */
+        get: operations["listDmDefaults"];
+        /** Set the agent that answers the caller's DMs with an integration's shared bot (C-37). */
+        put: operations["setDmDefault"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/oauth-clients/{id}": {
         parameters: {
             query?: never;
@@ -1741,6 +1902,27 @@ export interface paths {
         get: operations["listOrgAudit"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/channel-integrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the organization's channel integrations (org owner/admin). */
+        get: operations["listChannelIntegrations"];
+        put?: never;
+        /**
+         * Create an integration: credentials are sealed and validated synchronously by the connector
+         *     (C-33). 409 `tenant_already_bound`, 422 `credentials_invalid`, 503 `connector_unavailable`.
+         */
+        post: operations["createChannelIntegration"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2032,6 +2214,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/presences/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Detach a presence (dedicated bots are deprovisioned best-effort). */
+        delete: operations["detachPresence"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/presences/{id}/reattach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Re-run provisioning/validation. The body is optional (`fields` for manual setup). */
+        post: operations["reattachPresence"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/reach-grants/{id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve or block a reach grant (`can_own`); 409 `stale_revision`. */
+        post: operations["decideReachGrant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/resolve": {
         parameters: {
             query?: never;
@@ -2266,6 +2499,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/space-bindings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a binding (`can_own`). */
+        delete: operations["deleteSpaceBinding"];
+        options?: never;
+        head?: never;
+        /** Edit a binding (`can_own`). */
+        patch: operations["patchSpaceBinding"];
+        trace?: never;
+    };
     "/v1/turns/{id}/abort": {
         parameters: {
             query?: never;
@@ -2295,6 +2546,23 @@ export interface paths {
         /** Ask the harness to move a blocking tool to the background. */
         post: operations["sendNowTurn"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/user-links/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a user link (org owner/admin). */
+        delete: operations["deleteUserLink"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2964,6 +3232,15 @@ export interface components {
             /** Format: uuid */
             workspace_id: string;
         };
+        AttachPresenceRequest: {
+            /** @description Values for the connector's `presence_setup.dedicated.fields` (manual setup). */
+            fields?: {
+                [key: string]: string;
+            } | null;
+            /** Format: uuid */
+            integration_id: string;
+            mode: components["schemas"]["PresenceMode"];
+        };
         /** @description One attachment (API_CONTRACTS C-30). */
         Attachment: {
             caption?: string | null;
@@ -3025,6 +3302,27 @@ export interface components {
             current_password: string;
             new_password: string;
         };
+        ChannelIntegration: {
+            /**
+             * @description Connector configuration without credentials; `_capabilities` holds the narrowing
+             *     reported by the connector.
+             */
+            config: Record<string, never>;
+            connector_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            shared_bot?: null | components["schemas"]["SharedBotInfo"];
+            status: components["schemas"]["IntegrationStatus"];
+            status_reason?: string | null;
+            tenant_label: string;
+            tenant_ref: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         CliWorkspace: {
             /** Format: uuid */
             id: string;
@@ -3044,6 +3342,10 @@ export interface components {
         ConditionOn: "body";
         /** @enum {string} */
         ConditionOp: "contains" | "not_contains" | "equals";
+        ConfirmLinkRequest: {
+            /** @description The `aui_…` token from the sign-in link. */
+            token: string;
+        };
         ConfirmRequest: {
             confirm: string;
         };
@@ -3282,6 +3584,13 @@ export interface components {
             /** @description Connector id: `[a-z][a-z0-9-]{1,31}`. */
             id: string;
         };
+        CreateIntegrationRequest: {
+            /** @description Non-secret settings from the connector's `integration_setup` form. */
+            config?: Record<string, never>;
+            connector_id: string;
+            /** @description Platform credentials. Write-only: never returned. */
+            credentials: Record<string, never>;
+        };
         CreateInvitationRequest: {
             email: string;
             role: components["schemas"]["InvitedRole"];
@@ -3360,6 +3669,11 @@ export interface components {
             public_key: string;
             publisher: string;
         };
+        CreateUserLinkRequest: {
+            platform_user_ref: string;
+            /** Format: uuid */
+            user_id: string;
+        };
         CreateWebhookRequest: {
             instructions: string;
             name: string;
@@ -3407,6 +3721,16 @@ export interface components {
         DeleteMeRequest: {
             /** @description Required for accounts that have a password. */
             password?: string | null;
+        };
+        DmDefault: {
+            /** Format: uuid */
+            agent_id?: string | null;
+            /** Format: uuid */
+            integration_id: string;
+            platform_user_ref: string;
+        };
+        DmDefaultList: {
+            items: components["schemas"]["DmDefault"][];
         };
         DraftRequest: {
             default_action: components["schemas"]["DefaultAction"];
@@ -3647,6 +3971,8 @@ export interface components {
             minimum_posture: string;
             require_key_origin: boolean;
         };
+        /** @enum {string} */
+        IntegrationStatus: "validating" | "active" | "needs_attention" | "disabled";
         /** @description An invitation. The token is never part of any response. */
         Invitation: {
             /** Format: date-time */
@@ -3686,6 +4012,8 @@ export interface components {
             /** Format: uuid */
             id: string;
         };
+        /** @enum {string} */
+        LinkMethod: "verified_email" | "sign_in_link" | "admin";
         LinkPeer: {
             /** Format: uuid */
             agent_id: string;
@@ -3702,6 +4030,8 @@ export interface components {
             agent_id: string;
             policy: components["schemas"]["LinkPolicy"];
         };
+        /** @enum {string} */
+        Listen: "mentions" | "all";
         LlmEndpointInfo: {
             base_url: string;
             dialects: string[];
@@ -4081,6 +4411,30 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_ChannelIntegration: {
+            items: {
+                /**
+                 * @description Connector configuration without credentials; `_capabilities` holds the narrowing
+                 *     reported by the connector.
+                 */
+                config: Record<string, never>;
+                connector_id: string;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                org_id: string;
+                shared_bot?: null | components["schemas"]["SharedBotInfo"];
+                status: components["schemas"]["IntegrationStatus"];
+                status_reason?: string | null;
+                tenant_label: string;
+                tenant_ref: string;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+            next_cursor?: string | null;
+        };
         Page_Connection: {
             items: {
                 app_id: string;
@@ -4339,6 +4693,31 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_ReachGrant: {
+            items: {
+                /** Format: uuid */
+                agent_id: string;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: date-time */
+                decided_at?: string | null;
+                decided_by?: null | components["schemas"]["UserRef"];
+                /** Format: date-time */
+                expires_at?: string | null;
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                integration_id: string;
+                listen: components["schemas"]["Listen"];
+                /** Format: int64 */
+                revision: number;
+                state: components["schemas"]["ReachState"];
+                subject_kind: components["schemas"]["SubjectKind"];
+                subject_label: string;
+                subject_ref: string;
+            }[];
+            next_cursor?: string | null;
+        };
         Page_RequestLogEntry: {
             items: {
                 /** Format: uuid */
@@ -4515,6 +4894,22 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_UserLink: {
+            items: {
+                connector_id: string;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                integration_id: string;
+                method: components["schemas"]["LinkMethod"];
+                platform_user_ref: string;
+                tenant_label: string;
+                user: components["schemas"]["UserRef"];
+            }[];
+            next_cursor?: string | null;
+        };
         Page_Webhook: {
             items: {
                 /** Format: uuid */
@@ -4594,10 +4989,21 @@ export interface components {
             /** @description Instance admins only. */
             resource_overrides?: Record<string, never> | null;
         };
+        PatchBindingRequest: {
+            followups_need_mention?: boolean | null;
+            listen?: null | components["schemas"]["Listen"];
+        };
         PatchConnectionRequest: {
             label?: string | null;
             /** @description `active` | `disabled`. */
             status?: string | null;
+        };
+        PatchIntegrationRequest: {
+            /** @description Replaces the whole config (re-validated). */
+            config?: Record<string, never> | null;
+            /** @description Replaces the credentials (re-validated). Write-only. */
+            credentials?: Record<string, never> | null;
+            status?: null | components["schemas"]["SettableStatus"];
         };
         PatchMeRequest: {
             /**
@@ -4813,6 +5219,29 @@ export interface components {
         PolicyWarnings: {
             items: components["schemas"]["PolicyWarning"][];
         };
+        Presence: {
+            /** Format: uuid */
+            agent_id: string;
+            connector_id: string;
+            /** Format: date-time */
+            created_at: string;
+            handle?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            integration_id: string;
+            mode: components["schemas"]["PresenceMode"];
+            status: components["schemas"]["PresenceStatus"];
+            status_reason?: string | null;
+            tenant_label: string;
+        };
+        PresenceList: {
+            items: components["schemas"]["Presence"][];
+        };
+        /** @enum {string} */
+        PresenceMode: "dedicated" | "shared";
+        /** @enum {string} */
+        PresenceStatus: "pending_setup" | "active" | "disabled" | "needs_attention";
         PublishRequest: {
             /** Format: int64 */
             revision: number;
@@ -4840,6 +5269,44 @@ export interface components {
             /** Format: int32 */
             count: number;
             per: components["schemas"]["Per"];
+        };
+        /** @enum {string} */
+        ReachDecision: "approve" | "block";
+        ReachDecisionRequest: {
+            decision: components["schemas"]["ReachDecision"];
+            listen?: null | components["schemas"]["Listen"];
+            /** Format: int64 */
+            revision: number;
+        };
+        ReachGrant: {
+            /** Format: uuid */
+            agent_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decided_at?: string | null;
+            decided_by?: null | components["schemas"]["UserRef"];
+            /** Format: date-time */
+            expires_at?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            integration_id: string;
+            listen: components["schemas"]["Listen"];
+            /** Format: int64 */
+            revision: number;
+            state: components["schemas"]["ReachState"];
+            subject_kind: components["schemas"]["SubjectKind"];
+            subject_label: string;
+            subject_ref: string;
+        };
+        /** @enum {string} */
+        ReachState: "pending" | "approved" | "blocked" | "left" | "expired";
+        ReattachRequest: {
+            /** @description Values for the connector's `presence_setup.dedicated.fields` (manual setup). */
+            fields?: {
+                [key: string]: string;
+            } | null;
         };
         Replica: {
             advertised_host: string;
@@ -5152,6 +5619,12 @@ export interface components {
             attachment_ids?: string[];
             text: string;
         };
+        SetDmDefaultRequest: {
+            /** Format: uuid */
+            agent_id: string;
+            /** Format: uuid */
+            integration_id: string;
+        };
         SetPolicyBody: {
             /**
              * Format: uuid
@@ -5168,6 +5641,12 @@ export interface components {
         SetValueRequest: {
             reference?: null | components["schemas"]["SecretReference"];
             value?: string | null;
+        };
+        /** @enum {string} */
+        SettableStatus: "active" | "disabled";
+        SharedBotInfo: {
+            display_name: string;
+            handle: string;
         };
         ShowWhen: {
             equals: string;
@@ -5254,6 +5733,25 @@ export interface components {
             source: string;
             value: boolean;
         };
+        SpaceBinding: {
+            active: boolean;
+            /** Format: uuid */
+            agent_id: string;
+            bound_by?: null | components["schemas"]["UserRef"];
+            /** Format: date-time */
+            created_at: string;
+            followups_need_mention: boolean;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            integration_id: string;
+            listen: components["schemas"]["Listen"];
+            space_label: string;
+            space_ref: string;
+        };
+        SpaceBindingList: {
+            items: components["schemas"]["SpaceBinding"][];
+        };
         StartRequest: {
             /** @description Client host name (sanitized; used to name the minted key). */
             hostname?: string | null;
@@ -5291,6 +5789,8 @@ export interface components {
             mode: string;
             path: string;
         };
+        /** @enum {string} */
+        SubjectKind: "space" | "person";
         SummaryField: {
             label: string;
             value: string;
@@ -5466,6 +5966,27 @@ export interface components {
             /** Format: uuid */
             id: string;
             is_instance_admin: boolean;
+        };
+        UserLink: {
+            connector_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            integration_id: string;
+            method: components["schemas"]["LinkMethod"];
+            platform_user_ref: string;
+            tenant_label: string;
+            user: components["schemas"]["UserRef"];
+        };
+        UserLinkList: {
+            items: components["schemas"]["UserLink"][];
+        };
+        UserRef: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
         };
         UserResponse: {
             user: components["schemas"]["User"];
@@ -7908,6 +8429,137 @@ export interface operations {
             };
         };
     };
+    listAgentPresences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresenceList"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    attachAgentPresence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttachPresenceRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Presence"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listAgentReach: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ReachGrant"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     restartAgent: {
         parameters: {
             query?: never;
@@ -8119,6 +8771,44 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listAgentSpaceBindings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceBindingList"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9188,6 +9878,294 @@ export interface operations {
             };
         };
     };
+    getChannelIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Integration id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelIntegration"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteChannelIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Integration id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    patchChannelIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Integration id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchIntegrationRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelIntegration"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listIntegrationUserLinks: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Integration id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_UserLink"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createIntegrationUserLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Integration id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateUserLinkRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserLink"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    confirmChannelLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmLinkRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserLink"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getConnection: {
         parameters: {
             query?: never;
@@ -10124,6 +11102,111 @@ export interface operations {
             };
         };
     };
+    listMyChannelLinks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserLinkList"];
+                };
+            };
+        };
+    };
+    deleteMyChannelLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Link id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listDmDefaults: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DmDefaultList"];
+                };
+            };
+        };
+    };
+    setDmDefault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetDmDefaultRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DmDefault"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     deleteOauthClient: {
         parameters: {
             query?: never;
@@ -10692,6 +11775,123 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listChannelIntegrations: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ChannelIntegration"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createChannelIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateIntegrationRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelIntegration"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11858,6 +13058,135 @@ export interface operations {
             };
         };
     };
+    detachPresence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Presence id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    reattachPresence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Presence id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Optional */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReattachRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Presence"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    decideReachGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Grant id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReachDecisionRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReachGrant"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     resolve: {
         parameters: {
             query: {
@@ -12733,6 +14062,84 @@ export interface operations {
             };
         };
     };
+    deleteSpaceBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Binding id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    patchSpaceBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Binding id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchBindingRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceBinding"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     abortTurn: {
         parameters: {
             query?: never;
@@ -12802,6 +14209,42 @@ export interface operations {
             };
             /** @description turn_finished */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteUserLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Link id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

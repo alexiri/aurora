@@ -384,3 +384,154 @@ pub async fn active_bindings<'e, E: PgExecutor<'e>>(
     .fetch_all(exec)
     .await?)
 }
+
+// ------------------------------------------------------- management (BE-074)
+
+pub struct NewIntegration<'a> {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub connector_id: &'a str,
+    /// Placeholder until `credentials.validate` answers (`UNIQUE (connector_id, tenant_ref)`).
+    pub tenant_ref: &'a str,
+    pub config: &'a serde_json::Value,
+    pub credentials_ref: &'a str,
+    pub created_by: Option<Uuid>,
+}
+
+/// Insert a `validating` integration.
+pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewIntegration<'_>) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO channel_integrations (id, org_id, connector_id, tenant_ref, tenant_label,
+             config, credentials_ref, status, created_by)
+         VALUES ($1,$2,$3,$4,'',$5,$6,'validating',$7)",
+    )
+    .bind(n.id)
+    .bind(n.org_id)
+    .bind(n.connector_id)
+    .bind(n.tenant_ref)
+    .bind(n.config)
+    .bind(n.credentials_ref)
+    .bind(n.created_by)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// Keyset page of an org's integrations, newest first.
+pub async fn page_for_org<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    after: Option<(DateTime<Utc>, Uuid)>,
+    limit: i64,
+) -> Result<Vec<IntegrationRow>, DbError> {
+    let (t, id) = after.unzip();
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM channel_integrations
+          WHERE org_id=$1 AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
+          ORDER BY created_at DESC, id DESC LIMIT $4"
+    ))
+    .bind(org)
+    .bind(t)
+    .bind(id)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// `FOR UPDATE` read inside a transaction.
+pub async fn get_for_update(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<IntegrationRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM channel_integrations WHERE id=$1 FOR UPDATE"
+    ))
+    .bind(id)
+    .fetch_optional(conn)
+    .await?)
+}
+
+/// Record the outcome of a successful validation: tenant identity, shared bot, config and
+/// `active` status. Unique violation `channel_integrations_connector_id_tenant_ref_key` means
+/// the tenant is already bound.
+pub async fn complete_validation<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    tenant_ref: &str,
+    tenant_label: &str,
+    config: &serde_json::Value,
+    shared_bot: Option<&serde_json::Value>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE channel_integrations
+            SET tenant_ref=$2, tenant_label=$3, config=$4, shared_bot=$5,
+                status='active', status_reason=NULL, updated_at=now()
+          WHERE id=$1",
+    )
+    .bind(id)
+    .bind(tenant_ref)
+    .bind(tenant_label)
+    .bind(config)
+    .bind(shared_bot)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// Replace config, shared bot and credentials after a successful re-validation. Returns the
+/// replaced sealed credential reference (to discard).
+pub async fn replace_settings<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    tenant_label: &str,
+    config: &serde_json::Value,
+    shared_bot: Option<&serde_json::Value>,
+    credentials_ref: Option<&str>,
+) -> Result<Option<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "UPDATE channel_integrations n
+            SET tenant_label=$2, config=$3, shared_bot=$4,
+                credentials_ref = COALESCE($5, n.credentials_ref),
+                credentials_version = n.credentials_version + CASE WHEN $5::text IS NULL THEN 0 ELSE 1 END,
+                status = CASE WHEN n.status IN ('needs_attention') OR (n.status='disabled' AND n.status_reason='credential_dead')
+                              THEN 'active' ELSE n.status END,
+                status_reason = CASE WHEN n.status IN ('needs_attention') OR (n.status='disabled' AND n.status_reason='credential_dead')
+                              THEN NULL ELSE n.status_reason END,
+                updated_at=now()
+           FROM (SELECT id, credentials_ref AS old_ref FROM channel_integrations WHERE id=$1 FOR UPDATE) o
+          WHERE n.id = o.id
+          RETURNING o.old_ref",
+    )
+    .bind(id)
+    .bind(tenant_label)
+    .bind(config)
+    .bind(shared_bot)
+    .bind(credentials_ref)
+    .fetch_optional(exec)
+    .await?)
+}
+
+pub async fn delete<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query("DELETE FROM channel_integrations WHERE id=$1")
+        .bind(id)
+        .execute(exec)
+        .await?
+        .rows_affected()
+        > 0)
+}
+
+/// Sealed credential references of an integration and its presences (to discard on delete).
+pub async fn sealed_refs<'e, E: PgExecutor<'e>>(
+    exec: E,
+    integration: Uuid,
+) -> Result<Vec<(Option<Uuid>, String)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT NULL::uuid, credentials_ref FROM channel_integrations WHERE id=$1
+         UNION ALL
+         SELECT id, credentials_ref FROM channel_presences
+          WHERE integration_id=$1 AND credentials_ref IS NOT NULL",
+    )
+    .bind(integration)
+    .fetch_all(exec)
+    .await?)
+}

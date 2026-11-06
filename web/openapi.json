@@ -3643,6 +3643,227 @@
         ]
       }
     },
+    "/v1/agents/{agent}/presences": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Presences of an agent (`can_use`).",
+        "operationId": "listAgentPresences",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresenceList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Attach an agent to an integration as `shared` (immediately active) or `dedicated`\n(`pending_setup` + provisioning, or validated manual fields) (C-34).",
+        "operationId": "attachAgentPresence",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachPresenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Presence"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/reach": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Reach grants of an agent (`can_use`).",
+        "operationId": "listAgentReach",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ReachGrant"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/restart": {
       "post": {
         "tags": [
@@ -3985,6 +4206,67 @@
             }
           },
           "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/space-bindings": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Space bindings of an agent (`can_own`).",
+        "operationId": "listAgentSpaceBindings",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceBindingList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -5532,6 +5814,454 @@
         ]
       }
     },
+    "/v1/channel-integrations/{id}": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Get one integration (org owner/admin). Credentials are never returned.",
+        "operationId": "getChannelIntegration",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Integration id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelIntegration"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Delete an integration; dedicated presences are deprovisioned through connector operations.",
+        "operationId": "deleteChannelIntegration",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Integration id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Replace config/credentials (re-validated) or set `status` to `active` | `disabled`.",
+        "operationId": "patchChannelIntegration",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Integration id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchIntegrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelIntegration"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/channel-integrations/{id}/user-links": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "List the user links of an integration (org owner/admin).",
+        "operationId": "listIntegrationUserLinks",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Integration id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_UserLink"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Link a platform user to an Aurora user (org owner/admin). 409 `already_linked`.",
+        "operationId": "createIntegrationUserLink",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Integration id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserLink"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/channel-links/confirm": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Confirm a sign-in link token for the signed-in user (C-36). Session only.",
+        "operationId": "confirmChannelLink",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserLink"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/connections/{id}": {
       "get": {
         "tags": [
@@ -6940,6 +7670,153 @@
         ]
       }
     },
+    "/v1/me/channel-links": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "The caller's own channel links.",
+        "operationId": "listMyChannelLinks",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserLinkList"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/me/channel-links/{id}": {
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Remove one of the caller's own channel links.",
+        "operationId": "deleteMyChannelLink",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Link id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/me/dm-defaults": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "DM defaults for every platform user linked to the caller.",
+        "operationId": "listDmDefaults",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DmDefaultList"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Set the agent that answers the caller's DMs with an integration's shared bot (C-37).",
+        "operationId": "setDmDefault",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetDmDefaultRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DmDefault"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/oauth-clients/{id}": {
       "delete": {
         "tags": [
@@ -7811,6 +8688,196 @@
             }
           },
           "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/channel-integrations": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "List the organization's channel integrations (org owner/admin).",
+        "operationId": "listChannelIntegrations",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ChannelIntegration"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Create an integration: credentials are sealed and validated synchronously by the connector\n(C-33). 409 `tenant_already_bound`, 422 `credentials_invalid`, 503 `connector_unavailable`.",
+        "operationId": "createChannelIntegration",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateIntegrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelIntegration"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
             "description": "",
             "content": {
               "application/json": {
@@ -9704,6 +10771,213 @@
         ]
       }
     },
+    "/v1/presences/{id}": {
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Detach a presence (dedicated bots are deprovisioned best-effort).",
+        "operationId": "detachPresence",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Presence id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/presences/{id}/reattach": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Re-run provisioning/validation. The body is optional (`fields` for manual setup).",
+        "operationId": "reattachPresence",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Presence id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReattachRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Presence"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/reach-grants/{id}/decision": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Approve or block a reach grant (`can_own`); 409 `stale_revision`.",
+        "operationId": "decideReachGrant",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Grant id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReachDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReachGrant"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/resolve": {
       "get": {
         "tags": [
@@ -11041,6 +12315,129 @@
         ]
       }
     },
+    "/v1/space-bindings/{id}": {
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Remove a binding (`can_own`).",
+        "operationId": "deleteSpaceBinding",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Binding id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Edit a binding (`can_own`).",
+        "operationId": "patchSpaceBinding",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Binding id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchBindingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceBinding"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/turns/{id}/abort": {
       "post": {
         "tags": [
@@ -11144,6 +12541,60 @@
           },
           "409": {
             "description": "turn_finished",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/user-links/{id}": {
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Remove a user link (org owner/admin).",
+        "operationId": "deleteUserLink",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Link id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -14613,6 +16064,35 @@
           }
         }
       },
+      "AttachPresenceRequest": {
+        "type": "object",
+        "required": [
+          "integration_id",
+          "mode"
+        ],
+        "properties": {
+          "fields": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Values for the connector's `presence_setup.dedicated.fields` (manual setup).",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "integration_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PresenceMode"
+          }
+        }
+      },
       "Attachment": {
         "type": "object",
         "description": "One attachment (API_CONTRACTS C-30).",
@@ -14799,6 +16279,70 @@
           }
         }
       },
+      "ChannelIntegration": {
+        "type": "object",
+        "required": [
+          "id",
+          "org_id",
+          "connector_id",
+          "tenant_ref",
+          "tenant_label",
+          "config",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "config": {
+            "type": "object",
+            "description": "Connector configuration without credentials; `_capabilities` holds the narrowing\nreported by the connector."
+          },
+          "connector_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "shared_bot": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SharedBotInfo"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/IntegrationStatus"
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenant_label": {
+            "type": "string"
+          },
+          "tenant_ref": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "CliWorkspace": {
         "type": "object",
         "required": [
@@ -14867,6 +16411,18 @@
           "not_contains",
           "equals"
         ]
+      },
+      "ConfirmLinkRequest": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "The `aui_…` token from the sign-in link."
+          }
+        }
       },
       "ConfirmRequest": {
         "type": "object",
@@ -15728,6 +17284,26 @@
           }
         }
       },
+      "CreateIntegrationRequest": {
+        "type": "object",
+        "required": [
+          "connector_id",
+          "credentials"
+        ],
+        "properties": {
+          "config": {
+            "type": "object",
+            "description": "Non-secret settings from the connector's `integration_setup` form."
+          },
+          "connector_id": {
+            "type": "string"
+          },
+          "credentials": {
+            "type": "object",
+            "description": "Platform credentials. Write-only: never returned."
+          }
+        }
+      },
       "CreateInvitationRequest": {
         "type": "object",
         "required": [
@@ -16027,6 +17603,22 @@
         },
         "additionalProperties": false
       },
+      "CreateUserLinkRequest": {
+        "type": "object",
+        "required": [
+          "platform_user_ref",
+          "user_id"
+        ],
+        "properties": {
+          "platform_user_ref": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "CreateWebhookRequest": {
         "type": "object",
         "required": [
@@ -16214,6 +17806,43 @@
               "null"
             ],
             "description": "Required for accounts that have a password."
+          }
+        }
+      },
+      "DmDefault": {
+        "type": "object",
+        "required": [
+          "integration_id",
+          "platform_user_ref"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "integration_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "platform_user_ref": {
+            "type": "string"
+          }
+        }
+      },
+      "DmDefaultList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DmDefault"
+            }
           }
         }
       },
@@ -17170,6 +18799,15 @@
           }
         }
       },
+      "IntegrationStatus": {
+        "type": "string",
+        "enum": [
+          "validating",
+          "active",
+          "needs_attention",
+          "disabled"
+        ]
+      },
       "Invitation": {
         "type": "object",
         "description": "An invitation. The token is never part of any response.",
@@ -17310,6 +18948,14 @@
           }
         }
       },
+      "LinkMethod": {
+        "type": "string",
+        "enum": [
+          "verified_email",
+          "sign_in_link",
+          "admin"
+        ]
+      },
       "LinkPeer": {
         "type": "object",
         "required": [
@@ -17362,6 +19008,13 @@
             "$ref": "#/components/schemas/LinkPolicy"
           }
         }
+      },
+      "Listen": {
+        "type": "string",
+        "enum": [
+          "mentions",
+          "all"
+        ]
       },
       "LlmEndpointInfo": {
         "type": "object",
@@ -18775,6 +20428,87 @@
           }
         }
       },
+      "Page_ChannelIntegration": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "org_id",
+                "connector_id",
+                "tenant_ref",
+                "tenant_label",
+                "config",
+                "status",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "config": {
+                  "type": "object",
+                  "description": "Connector configuration without credentials; `_capabilities` holds the narrowing\nreported by the connector."
+                },
+                "connector_id": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "org_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "shared_bot": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SharedBotInfo"
+                    }
+                  ]
+                },
+                "status": {
+                  "$ref": "#/components/schemas/IntegrationStatus"
+                },
+                "status_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "tenant_label": {
+                  "type": "string"
+                },
+                "tenant_ref": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_Connection": {
         "type": "object",
         "required": [
@@ -19731,6 +21465,99 @@
           }
         }
       },
+      "Page_ReachGrant": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "agent_id",
+                "integration_id",
+                "subject_kind",
+                "subject_ref",
+                "subject_label",
+                "state",
+                "listen",
+                "revision",
+                "created_at"
+              ],
+              "properties": {
+                "agent_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "decided_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "decided_by": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UserRef"
+                    }
+                  ]
+                },
+                "expires_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "integration_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "listen": {
+                  "$ref": "#/components/schemas/Listen"
+                },
+                "revision": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "state": {
+                  "$ref": "#/components/schemas/ReachState"
+                },
+                "subject_kind": {
+                  "$ref": "#/components/schemas/SubjectKind"
+                },
+                "subject_label": {
+                  "type": "string"
+                },
+                "subject_ref": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_RequestLogEntry": {
         "type": "object",
         "required": [
@@ -20357,6 +22184,65 @@
           }
         }
       },
+      "Page_UserLink": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "integration_id",
+                "connector_id",
+                "tenant_label",
+                "platform_user_ref",
+                "user",
+                "method",
+                "created_at"
+              ],
+              "properties": {
+                "connector_id": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "integration_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "method": {
+                  "$ref": "#/components/schemas/LinkMethod"
+                },
+                "platform_user_ref": {
+                  "type": "string"
+                },
+                "tenant_label": {
+                  "type": "string"
+                },
+                "user": {
+                  "$ref": "#/components/schemas/UserRef"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_Webhook": {
         "type": "object",
         "required": [
@@ -20635,6 +22521,27 @@
         },
         "additionalProperties": false
       },
+      "PatchBindingRequest": {
+        "type": "object",
+        "properties": {
+          "followups_need_mention": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "listen": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Listen"
+              }
+            ]
+          }
+        }
+      },
       "PatchConnectionRequest": {
         "type": "object",
         "properties": {
@@ -20653,6 +22560,35 @@
           }
         },
         "additionalProperties": false
+      },
+      "PatchIntegrationRequest": {
+        "type": "object",
+        "properties": {
+          "config": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Replaces the whole config (re-validated)."
+          },
+          "credentials": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Replaces the credentials (re-validated). Write-only."
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SettableStatus"
+              }
+            ]
+          }
+        }
       },
       "PatchMeRequest": {
         "type": "object",
@@ -21465,6 +23401,91 @@
           }
         }
       },
+      "Presence": {
+        "type": "object",
+        "required": [
+          "id",
+          "agent_id",
+          "integration_id",
+          "connector_id",
+          "tenant_label",
+          "mode",
+          "status",
+          "created_at"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "connector_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "handle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "integration_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PresenceMode"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PresenceStatus"
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenant_label": {
+            "type": "string"
+          }
+        }
+      },
+      "PresenceList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Presence"
+            }
+          }
+        }
+      },
+      "PresenceMode": {
+        "type": "string",
+        "enum": [
+          "dedicated",
+          "shared"
+        ]
+      },
+      "PresenceStatus": {
+        "type": "string",
+        "enum": [
+          "pending_setup",
+          "active",
+          "disabled",
+          "needs_attention"
+        ]
+      },
       "PublishRequest": {
         "type": "object",
         "required": [
@@ -21570,6 +23591,144 @@
           }
         },
         "additionalProperties": false
+      },
+      "ReachDecision": {
+        "type": "string",
+        "enum": [
+          "approve",
+          "block"
+        ]
+      },
+      "ReachDecisionRequest": {
+        "type": "object",
+        "required": [
+          "decision",
+          "revision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/ReachDecision"
+          },
+          "listen": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Listen",
+                "description": "Defaults to the grant's current listen mode."
+              }
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ReachGrant": {
+        "type": "object",
+        "required": [
+          "id",
+          "agent_id",
+          "integration_id",
+          "subject_kind",
+          "subject_ref",
+          "subject_label",
+          "state",
+          "listen",
+          "revision",
+          "created_at"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "decided_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UserRef"
+              }
+            ]
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "integration_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "listen": {
+            "$ref": "#/components/schemas/Listen"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReachState"
+          },
+          "subject_kind": {
+            "$ref": "#/components/schemas/SubjectKind"
+          },
+          "subject_label": {
+            "type": "string"
+          },
+          "subject_ref": {
+            "type": "string"
+          }
+        }
+      },
+      "ReachState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "approved",
+          "blocked",
+          "left",
+          "expired"
+        ]
+      },
+      "ReattachRequest": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Values for the connector's `presence_setup.dedicated.fields` (manual setup).",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
       },
       "Replica": {
         "type": "object",
@@ -22666,6 +24825,23 @@
           }
         }
       },
+      "SetDmDefaultRequest": {
+        "type": "object",
+        "required": [
+          "integration_id",
+          "agent_id"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "integration_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "SetPolicyBody": {
         "type": "object",
         "required": [
@@ -22710,6 +24886,28 @@
           }
         },
         "additionalProperties": false
+      },
+      "SettableStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "disabled"
+        ]
+      },
+      "SharedBotInfo": {
+        "type": "object",
+        "required": [
+          "handle",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          }
+        }
       },
       "ShowWhen": {
         "type": "object",
@@ -23031,6 +25229,77 @@
           }
         }
       },
+      "SpaceBinding": {
+        "type": "object",
+        "required": [
+          "id",
+          "integration_id",
+          "space_ref",
+          "space_label",
+          "agent_id",
+          "listen",
+          "followups_need_mention",
+          "active",
+          "created_at"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "bound_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UserRef"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "followups_need_mention": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "integration_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "listen": {
+            "$ref": "#/components/schemas/Listen"
+          },
+          "space_label": {
+            "type": "string"
+          },
+          "space_ref": {
+            "type": "string"
+          }
+        }
+      },
+      "SpaceBindingList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SpaceBinding"
+            }
+          }
+        }
+      },
       "StartRequest": {
         "type": "object",
         "properties": {
@@ -23163,6 +25432,13 @@
             "type": "string"
           }
         }
+      },
+      "SubjectKind": {
+        "type": "string",
+        "enum": [
+          "space",
+          "person"
+        ]
       },
       "SummaryField": {
         "type": "object",
@@ -23830,6 +26106,78 @@
           },
           "is_instance_admin": {
             "type": "boolean"
+          }
+        }
+      },
+      "UserLink": {
+        "type": "object",
+        "required": [
+          "id",
+          "integration_id",
+          "connector_id",
+          "tenant_label",
+          "platform_user_ref",
+          "user",
+          "method",
+          "created_at"
+        ],
+        "properties": {
+          "connector_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "integration_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "method": {
+            "$ref": "#/components/schemas/LinkMethod"
+          },
+          "platform_user_ref": {
+            "type": "string"
+          },
+          "tenant_label": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserRef"
+          }
+        }
+      },
+      "UserLinkList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserLink"
+            }
+          }
+        }
+      },
+      "UserRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },

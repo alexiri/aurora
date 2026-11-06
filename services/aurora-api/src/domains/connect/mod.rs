@@ -2,7 +2,7 @@
 //! methods (W9 client), callback, reconnect, scope diff, blocklist rules (09 §11).
 pub mod dto;
 pub mod env;
-mod fields;
+pub(crate) mod fields;
 mod flow;
 mod hooks;
 mod page;

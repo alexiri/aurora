@@ -271,7 +271,7 @@ pub async fn patch(
             "Only instance administrators can set resource overrides.",
         ));
     }
-    Ok(agents::update(
+    let updated = agents::update(
         &state.pool,
         id,
         &AgentPatch {
@@ -285,13 +285,21 @@ pub async fn patch(
             resource_overrides: req.resource_overrides.as_ref(),
         },
     )
-    .await?)
+    .await?;
+    if let Some(n) = &name {
+        // Dedicated channel bots follow the agent's name (best effort: the patch succeeded).
+        if let Err(e) = crate::domains::channels::presences::on_agent_renamed(state, id, n).await {
+            tracing::warn!(error = %e.message(), agent_id = %id, "presence.rename not queued");
+        }
+    }
+    Ok(updated)
 }
 
 pub async fn delete(state: &AppState, id: Uuid) -> Result<(), ApiError> {
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     credentials::revoke_for_agent(&mut *tx, id, true).await?;
-    // Connector deprovisioning of dedicated presences is added with M6.
+    // Dedicated channel presences are deprovisioned before the cascade removes them.
+    crate::domains::channels::presences::enqueue_deprovision_for_agent(&mut tx, id).await?;
     agents::delete(&mut *tx, id).await?;
     credentials::notify_gateway_invalidate(&mut *tx, "agent", id).await?;
     tx.commit().await.map_err(DbError::from)?;

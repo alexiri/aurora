@@ -26,3 +26,41 @@ pub async fn insert<'e, E: PgExecutor<'e>>(
     .fetch_one(exec)
     .await?)
 }
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct LinkRequestRow {
+    pub id: Uuid,
+    pub integration_id: Uuid,
+    pub platform_user_ref: String,
+    pub expired: bool,
+    pub used: bool,
+}
+
+/// Lock the request with this token hash (confirm flow).
+pub async fn get_for_update_by_hash(
+    conn: &mut sqlx::PgConnection,
+    token_hash: &[u8],
+) -> Result<Option<LinkRequestRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, integration_id, platform_user_ref, expires_at <= now() AS expired,
+                used_at IS NOT NULL AS used
+           FROM link_requests WHERE token_hash=$1 FOR UPDATE",
+    )
+    .bind(token_hash)
+    .fetch_optional(conn)
+    .await?)
+}
+
+/// Consume a request for `user` (single use).
+pub async fn mark_used<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    user: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE link_requests SET used_at=now(), user_id=$2, updated_at=now() WHERE id=$1")
+        .bind(id)
+        .bind(user)
+        .execute(exec)
+        .await?;
+    Ok(())
+}

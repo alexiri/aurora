@@ -306,6 +306,7 @@ pub fn confirmation_mismatch() -> ApiError {
 
 pub async fn delete_org(pool: &PgPool, org_id: Uuid) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
+    crate::domains::channels::presences::enqueue_deprovision_for_org(&mut tx, org_id).await?;
     orgs::delete_cascade(&mut tx, org_id).await?;
     tx.commit().await.map_err(aurora_db::DbError::from)?;
     Ok(())

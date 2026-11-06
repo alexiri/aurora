@@ -546,6 +546,49 @@ const ROWS: &[Row] = &[
     r("PUT", "/v1/agent-links/{id}/policy", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/peer-tasks", G::WsUse, false),
     r("POST", "/v1/conversations/{id}/continue", G::WsUse, false),
+    // BE-074 (M6): channel management.
+    r(
+        "GET",
+        "/v1/orgs/{org}/channel-integrations",
+        G::Admin,
+        false,
+    ),
+    r(
+        "POST",
+        "/v1/orgs/{org}/channel-integrations",
+        G::Admin,
+        false,
+    ),
+    r("GET", "/v1/channel-integrations/{id}", G::Admin, false),
+    r("PATCH", "/v1/channel-integrations/{id}", G::Admin, false),
+    r("DELETE", "/v1/channel-integrations/{id}", G::Admin, false),
+    r(
+        "GET",
+        "/v1/channel-integrations/{id}/user-links",
+        G::Admin,
+        false,
+    ),
+    r(
+        "POST",
+        "/v1/channel-integrations/{id}/user-links",
+        G::Admin,
+        false,
+    ),
+    r("DELETE", "/v1/user-links/{id}", G::Admin, false),
+    r("GET", "/v1/agents/{agent}/presences", G::WsUse, false),
+    r("POST", "/v1/agents/{agent}/presences", G::WsUse, false),
+    r("DELETE", "/v1/presences/{id}", G::WsUse, false),
+    r("POST", "/v1/presences/{id}/reattach", G::WsUse, false),
+    r("GET", "/v1/agents/{agent}/space-bindings", G::WsOwn, false),
+    r("PATCH", "/v1/space-bindings/{id}", G::WsOwn, false),
+    r("DELETE", "/v1/space-bindings/{id}", G::WsOwn, false),
+    r("GET", "/v1/me/channel-links", G::Auth, true),
+    r("DELETE", "/v1/me/channel-links/{id}", G::Auth, true),
+    r("POST", "/v1/channel-links/confirm", G::Auth, true),
+    r("GET", "/v1/me/dm-defaults", G::Auth, true),
+    r("PUT", "/v1/me/dm-defaults", G::Auth, true),
+    r("GET", "/v1/agents/{agent}/reach", G::WsUse, false),
+    r("POST", "/v1/reach-grants/{id}/decision", G::WsOwn, false),
 ];
 
 // ---- expectations ----------------------------------------------------------
@@ -835,6 +878,21 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ("POST", "/v1/workspaces/{ws}/policy/simulate") => {
             json!({"agent_id": fx.agent, "method": "GET", "url": "https://example.com/"})
         }
+        ("POST", "/v1/orgs/{org}/channel-integrations") => {
+            json!({"connector_id": "matrix-none", "config": {}, "credentials": {"token": "x"}})
+        }
+        ("PATCH", "/v1/channel-integrations/{id}") => json!({"status": "disabled"}),
+        ("POST", "/v1/channel-integrations/{id}/user-links") => {
+            json!({"platform_user_ref": "U1", "user_id": fx.victim})
+        }
+        ("POST", "/v1/agents/{agent}/presences") => {
+            json!({"integration_id": Uuid::now_v7(), "mode": "shared"})
+        }
+        ("POST", "/v1/channel-links/confirm") => json!({"token": "aui_matrix"}),
+        ("PUT", "/v1/me/dm-defaults") => {
+            json!({"integration_id": Uuid::now_v7(), "agent_id": fx.agent})
+        }
+        ("POST", "/v1/reach-grants/{id}/decision") => json!({"decision": "block", "revision": 0}),
         _ => json!({}),
     }
 }
