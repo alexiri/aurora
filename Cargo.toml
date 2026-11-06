@@ -89,7 +89,7 @@ openidconnect = { version = "4.1", default-features = false, features = ["reqwes
 # containers (podman API)
 bollard = { version = "0.21", default-features = false, features = ["pipe"] }
 # Kubernetes (RUN-004): rustls only (no openssl). kube 4 keeps MSRV 1.88; k8s-openapi `earliest` = oldest API the chart supports.
-kube = { version = "4.0", default-features = false, features = ["client", "rustls-tls", "ring"] }
+kube = { version = "4.0", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs"] }
 k8s-openapi = { version = "0.28", default-features = false, features = ["earliest"] }
 
 # data
