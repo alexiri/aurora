@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -13,10 +13,16 @@ export function OneTimeKeyDialog({
   secret,
   name,
   onClose,
+  title = "Copy your new API key",
+  description,
+  children,
 }: {
   secret: string | null;
   name?: string;
   onClose: () => void;
+  title?: string;
+  description?: string;
+  children?: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -30,8 +36,11 @@ export function OneTimeKeyDialog({
       }}
     >
       <DialogContent
-        title="Copy your new API key"
-        description={`Key${name ? ` "${name}"` : ""} created. You won't see it again, so store it somewhere safe now.`}
+        title={title}
+        description={
+          description ??
+          `Key${name ? ` "${name}"` : ""} created. You won't see it again, so store it somewhere safe now.`
+        }
       >
         {secret !== null ? (
           <div className="space-y-4">
@@ -65,6 +74,7 @@ export function OneTimeKeyDialog({
                 I have saved it
               </Button>
             </div>
+            {children}
           </div>
         ) : null}
       </DialogContent>

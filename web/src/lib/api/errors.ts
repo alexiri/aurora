@@ -34,6 +34,12 @@ export const ERROR_MESSAGES: Record<string, string> = {
   oidc_failed: "Single sign-on failed. Please try again or use another method.",
   email_domain_not_allowed: "Your email domain is not allowed to sign in with this provider.",
   cannot_modify_self: "You cannot change your own administrator status or disable your own account.",
+  handle_taken: "That handle is already used by another agent in this workspace.",
+  hosted_disabled: "Hosted agents are not enabled on this instance.",
+  agent_limit_reached: "The agent limit for this organization has been reached.",
+  hosted_agent_token_hidden: "Hosted agents do not expose a token.",
+  gateway_ca_unavailable:
+    "The gateway CA certificate is not available. Ask your operator to enable the gateway and its CA.",
   instance_admin_required: "This requires an instance administrator.",
 };
 

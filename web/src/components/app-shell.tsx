@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuTrigger } from "./ui/menu";
 
-const SECTIONS = ["Conversations", "Memory", "Connections", "Keys", "Members"];
+const SECTIONS = ["Conversations", "Memory", "Connections", "Keys"];
 
 function SwitcherButton({ label, value }: { label: string; value: string }) {
   return (
@@ -145,6 +145,49 @@ function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
   );
 }
 
+export function WorkspaceNav({
+  base,
+  orgSlug,
+  pathname,
+}: {
+  base: string;
+  orgSlug: string;
+  pathname: string;
+}) {
+  const resolved = useResolve(orgSlug);
+  const org = useOrg(resolved.data?.org.id);
+  const role = org.data?.my_role;
+  const admin = role === "owner" || role === "admin";
+  const link = (href: string, label: string, active: boolean) => (
+    <li key={href}>
+      <Link
+        href={href}
+        aria-current={active ? "page" : undefined}
+        className={cn("block rounded px-2 py-1.5", active ? "bg-neutral-100 font-medium" : "hover:bg-neutral-50")}
+      >
+        {label}
+      </Link>
+    </li>
+  );
+  return (
+    <nav aria-label="Workspace" className="w-48 border-r border-neutral-200 p-3">
+      <ul className="space-y-1 text-sm">
+        {link(base, "Overview", pathname === base)}
+        {link(`${base}/agents`, "Agents", pathname.startsWith(`${base}/agents`))}
+        {SECTIONS.map((s) => (
+          <li key={s}>
+            <span aria-disabled="true" className="block cursor-not-allowed rounded px-2 py-1.5 text-neutral-400">
+              {s} <span className="text-xs">(coming soon)</span>
+            </span>
+          </li>
+        ))}
+        {admin ? link(`/o/${orgSlug}/members`, "Members", false) : null}
+        {link(`${base}/settings`, "Settings", pathname.startsWith(`${base}/settings`))}
+      </ul>
+    </nav>
+  );
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   useUnauthorizedRedirect();
   const params = useParams<{ org?: string; ws?: string }>();
@@ -169,46 +212,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
       <div className="flex flex-1">
         {base ? (
-          <nav aria-label="Workspace" className="w-48 border-r border-neutral-200 p-3">
-            <ul className="space-y-1 text-sm">
-              <li>
-                <Link
-                  href={base}
-                  aria-current={pathname === base ? "page" : undefined}
-                  className={cn(
-                    "block rounded px-2 py-1.5",
-                    pathname === base ? "bg-neutral-100 font-medium" : "hover:bg-neutral-50",
-                  )}
-                >
-                  Overview
-                </Link>
-              </li>
-              {SECTIONS.map((s) => (
-                <li key={s}>
-                  <span
-                    aria-disabled="true"
-                    className="block cursor-not-allowed rounded px-2 py-1.5 text-neutral-400"
-                  >
-                    {s} <span className="text-xs">(coming soon)</span>
-                  </span>
-                </li>
-              ))}
-              <li>
-                <Link
-                  href={`${base}/settings`}
-                  aria-current={pathname.startsWith(`${base}/settings`) ? "page" : undefined}
-                  className={cn(
-                    "block rounded px-2 py-1.5",
-                    pathname.startsWith(`${base}/settings`)
-                      ? "bg-neutral-100 font-medium"
-                      : "hover:bg-neutral-50",
-                  )}
-                >
-                  Settings
-                </Link>
-              </li>
-            </ul>
-          </nav>
+          <WorkspaceNav base={base} orgSlug={orgSlug!} pathname={pathname} />
         ) : orgSlug ? (
           <OrgNav orgSlug={orgSlug} pathname={pathname} />
         ) : null}

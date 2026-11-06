@@ -27,7 +27,7 @@ export default function WorkspaceOverviewPage() {
         </h2>
         {agents.isPending ? <Loading /> : null}
         {agents.isError ? <ErrorState error={agents.error} onRetry={() => agents.refetch()} /> : null}
-        {agents.data ? <AgentsList agents={agents.data.items} /> : null}
+        {agents.data ? <AgentsList agents={agents.data.items} base={`/o/${org}/w/${ws}/agents`} /> : null}
       </section>
       <section aria-labelledby="first-run-h" className="space-y-2">
         <h2 id="first-run-h" className="text-sm font-medium text-neutral-600">
