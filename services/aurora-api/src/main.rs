@@ -35,6 +35,22 @@ enum Command {
     },
     /// Apply database migrations (and gateway-role grants if configured).
     Migrate,
+    /// Create (or promote) a verified instance admin and print a one-time password-set link.
+    BootstrapAdmin {
+        #[arg(long)]
+        email: String,
+    },
+    /// Instance-admin management.
+    Admin {
+        #[command(subcommand)]
+        command: AdminCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum AdminCommand {
+    /// Clear the instance-admin flag of a user.
+    Revoke { email: String },
 }
 
 #[tokio::main]
@@ -64,6 +80,10 @@ async fn main() -> ExitCode {
     let result = match cli.command {
         Command::Serve => serve(cfg).await,
         Command::Migrate => migrate(cfg).await,
+        Command::BootstrapAdmin { email } => bootstrap_admin(cfg, &email).await,
+        Command::Admin {
+            command: AdminCommand::Revoke { email },
+        } => revoke_admin(cfg, &email).await,
         Command::Openapi { .. } => Ok(()),
     };
     match result {
@@ -84,6 +104,28 @@ async fn migrate(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
         aurora_db::grants::apply_gateway_grants(&pool, role).await?;
         tracing::info!(role, "gateway grants applied");
     }
+    Ok(())
+}
+
+async fn bootstrap_admin(cfg: ApiConfig, email: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = aurora_db::connect(cfg.database_url.expose(), 2).await?;
+    let link =
+        aurora_api::domains::admin::service::bootstrap_admin(&pool, &cfg.external_url, email)
+            .await
+            .map_err(|e| e.message().to_owned())?;
+    println!("{link}");
+    Ok(())
+}
+
+async fn revoke_admin(cfg: ApiConfig, email: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = aurora_db::connect(cfg.database_url.expose(), 2).await?;
+    let found = aurora_api::domains::admin::service::revoke_admin(&pool, email)
+        .await
+        .map_err(|e| e.message().to_owned())?;
+    if !found {
+        return Err(format!("no user with email {email}").into());
+    }
+    println!("instance-admin flag cleared for {email}");
     Ok(())
 }
 

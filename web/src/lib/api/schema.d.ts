@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/v1/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List all users (instance administrators). */
+        get: operations["adminListUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/users/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Grant/revoke instance-admin, disable/enable a user. */
+        patch: operations["adminPatchUser"];
+        trace?: never;
+    };
     "/v1/agents/{agent}": {
         parameters: {
             query?: never;
@@ -191,6 +225,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The signed-in user with memberships and usable workspaces. */
+        get: operations["getMe"];
+        put?: never;
+        post?: never;
+        /** Delete the caller's own account. */
+        delete: operations["deleteMe"];
+        options?: never;
+        head?: never;
+        /** Update display name and/or default organization. */
+        patch: operations["patchMe"];
+        trace?: never;
+    };
     "/v1/orgs": {
         parameters: {
             query?: never;
@@ -226,6 +279,23 @@ export interface paths {
         head?: never;
         /** Update organization name, slug or settings (owner). */
         patch: operations["patchOrg"];
+        trace?: never;
+    };
+    "/v1/orgs/{org}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Organization audit log (owner/admin). */
+        get: operations["listOrgAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/orgs/{org}/members": {
@@ -369,6 +439,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workspace audit log (workspace owners). */
+        get: operations["listWorkspaceAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -381,6 +468,12 @@ export interface components {
             role: components["schemas"]["WorkspaceRole"];
             /** Format: uuid */
             user_id: string;
+        };
+        AdminUser: components["schemas"]["User"] & {
+            /** Format: date-time */
+            disabled_at?: string | null;
+            /** Format: date-time */
+            last_login_at?: string | null;
         };
         Agent: {
             brief: string;
@@ -408,6 +501,30 @@ export interface components {
             /** Format: uuid */
             workspace_id: string;
         };
+        AuditEntry: {
+            action: string;
+            /** Format: uuid */
+            actor_id?: string | null;
+            /** @description `user` | `service` | `agent` | `system` | `instance_admin` */
+            actor_kind: string;
+            actor_label: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            ip?: string | null;
+            metadata: unknown;
+            /** Format: uuid */
+            org_id?: string | null;
+            /** @description `success` | `failure` | `denied` */
+            outcome: string;
+            /** @description `dashboard` | `api` | `cli` | `channel` | `system` */
+            source: string;
+            target_id?: string | null;
+            target_kind?: string | null;
+            /** Format: uuid */
+            workspace_id?: string | null;
+        };
         ChangePasswordRequest: {
             current_password: string;
             new_password: string;
@@ -433,6 +550,10 @@ export interface components {
         CreateWorkspaceResponse: {
             default_agent: components["schemas"]["Agent"];
             workspace: components["schemas"]["Workspace"];
+        };
+        DeleteMeRequest: {
+            /** @description Required for accounts that have a password. */
+            password?: string | null;
         };
         ErrorBody: {
             /** @description snake_case machine code. */
@@ -469,6 +590,26 @@ export interface components {
         LoginRequest: {
             email: string;
             password: string;
+        };
+        Me: {
+            /** Format: uuid */
+            default_org_id?: string | null;
+            memberships: components["schemas"]["MeMembership"][];
+            user: components["schemas"]["User"];
+        };
+        MeMembership: {
+            org: components["schemas"]["OrgSummary"];
+            role: components["schemas"]["OrgRole"];
+            status: components["schemas"]["MemberStatus"];
+            /** @description Workspaces the user can use; empty while the membership is suspended. */
+            workspaces: components["schemas"]["MeWorkspace"][];
+        };
+        MeWorkspace: {
+            /** Format: uuid */
+            id: string;
+            my_role: components["schemas"]["WorkspaceRole"];
+            name: string;
+            slug: string;
         };
         Member: {
             /** Format: date-time */
@@ -536,6 +677,15 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_AdminUser: {
+            items: (components["schemas"]["User"] & {
+                /** Format: date-time */
+                disabled_at?: string | null;
+                /** Format: date-time */
+                last_login_at?: string | null;
+            })[];
+            next_cursor?: string | null;
+        };
         Page_Agent: {
             items: {
                 brief: string;
@@ -562,6 +712,33 @@ export interface components {
                 updated_at: string;
                 /** Format: uuid */
                 workspace_id: string;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_AuditEntry: {
+            items: {
+                action: string;
+                /** Format: uuid */
+                actor_id?: string | null;
+                /** @description `user` | `service` | `agent` | `system` | `instance_admin` */
+                actor_kind: string;
+                actor_label: string;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                ip?: string | null;
+                metadata: unknown;
+                /** Format: uuid */
+                org_id?: string | null;
+                /** @description `success` | `failure` | `denied` */
+                outcome: string;
+                /** @description `dashboard` | `api` | `cli` | `channel` | `system` */
+                source: string;
+                target_id?: string | null;
+                target_kind?: string | null;
+                /** Format: uuid */
+                workspace_id?: string | null;
             }[];
             next_cursor?: string | null;
         };
@@ -612,6 +789,19 @@ export interface components {
                 updated_at: string;
             }[];
             next_cursor?: string | null;
+        };
+        PatchAdminUserRequest: {
+            disabled?: boolean | null;
+            is_instance_admin?: boolean | null;
+        };
+        PatchMeRequest: {
+            /**
+             * Format: uuid
+             * @description Must be an organization where the caller is an active member.
+             */
+            default_org_id?: string | null;
+            /** @description 1 to 80 characters. */
+            display_name?: string | null;
         };
         PatchMemberRequest: {
             role?: null | components["schemas"]["OrgRole"];
@@ -698,6 +888,88 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    adminListUsers: {
+        parameters: {
+            query?: {
+                /** @description Case-insensitive substring of email or display name. */
+                q?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AdminUser"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPatchUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description User id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchAdminUserRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUser"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getAgent: {
         parameters: {
             query?: never;
@@ -1085,6 +1357,110 @@ export interface operations {
             };
         };
     };
+    getMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteMeRequest"];
+            };
+        };
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    patchMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchMeRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listOrgs: {
         parameters: {
             query?: {
@@ -1292,6 +1668,50 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listOrgAudit: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+                /** @description Exact action, e.g. `org.create`. */
+                action?: string;
+                actor_id?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AuditEntry"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1855,6 +2275,50 @@ export interface operations {
                 };
             };
             /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWorkspaceAudit: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+                /** @description Exact action, e.g. `org.create`. */
+                action?: string;
+                actor_id?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AuditEntry"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;

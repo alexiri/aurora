@@ -82,6 +82,9 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::auth::router())
         .merge(domains::tenancy::router())
         .merge(domains::agents::router())
+        .merge(domains::me::router())
+        .merge(domains::admin::router())
+        .merge(domains::audit::router())
 }
 
 /// Public API router (without ops endpoints) and its OpenAPI document.
