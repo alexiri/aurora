@@ -328,3 +328,15 @@ pub async fn active_snapshot(
         body,
     }))
 }
+
+/// The active snapshot parsed into its typed view (`None` when nothing is active).
+pub async fn active_typed(
+    state: &AppState,
+) -> Result<Option<aurora_registry::snapshot::Snapshot>, ApiError> {
+    let Some(s) = active_snapshot(state, CONTRACT).await? else {
+        return Ok(None);
+    };
+    aurora_registry::snapshot::Snapshot::from_slice(&s.body)
+        .map(Some)
+        .map_err(|e| ApiError::internal(format!("active snapshot unreadable: {e}")))
+}

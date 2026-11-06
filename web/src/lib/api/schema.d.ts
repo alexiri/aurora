@@ -38,6 +38,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/oauth-clients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List instance OAuth clients (instance admin). */
+        get: operations["listInstanceOauthClients"];
+        put?: never;
+        /** Create an instance OAuth client (instance admin). */
+        post: operations["createInstanceOauthClient"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/plugins": {
         parameters: {
             query?: never;
@@ -452,6 +470,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** App catalogue from the active registry snapshot, with availability and connection counts. */
+        get: operations["listApps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** App detail: connect methods, scopes, tools, hosts and agent documentation. */
+        get: operations["getApp"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app}/guide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Setup guide (`text/markdown`). */
+        get: operations["getAppGuide"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/apps/{app}/icon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** App icon (`image/png`). */
+        get: operations["getAppIcon"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/cli": {
         parameters: {
             query?: never;
@@ -693,6 +779,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/connections/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a connection. */
+        get: operations["getConnection"];
+        put?: never;
+        post?: never;
+        /** Delete a connection, its grants and derived rules (`can_own` / owner-admin). */
+        delete: operations["deleteConnection"];
+        options?: never;
+        head?: never;
+        /** Rename, disable or re-enable a connection (`can_own` / owner-admin). */
+        patch: operations["updateConnection"];
+        trace?: never;
+    };
     "/v1/gateway/ca.pem": {
         parameters: {
             query?: never;
@@ -848,6 +953,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/oauth-clients/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete an OAuth client; refused while connections use it. */
+        delete: operations["deleteOauthClient"];
+        options?: never;
+        head?: never;
+        /** Update fields or the enabled flag of an OAuth client. */
+        patch: operations["updateOauthClient"];
+        trace?: never;
+    };
     "/v1/orgs": {
         parameters: {
             query?: never;
@@ -903,6 +1026,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{org}/app-availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Posture and allow-list (org member). */
+        get: operations["getOrgAppAvailability"];
+        /** Replace posture and allow-list (owner/admin). */
+        put: operations["putOrgAppAvailability"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/audit": {
         parameters: {
             query?: never;
@@ -912,6 +1053,23 @@ export interface paths {
         };
         /** Organization audit log (owner/admin). */
         get: operations["listOrgAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List organization-scoped connections (org member). */
+        get: operations["listOrgConnections"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1006,6 +1164,24 @@ export interface paths {
         head?: never;
         /** Change a member's role or status (owner/admin). */
         patch: operations["patchMember"];
+        trace?: never;
+    };
+    "/v1/orgs/{org}/oauth-clients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List organization OAuth clients (org member). */
+        get: operations["listOrgOauthClients"];
+        put?: never;
+        /** Create an organization OAuth client (owner/admin). */
+        post: operations["createOrgOauthClient"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/orgs/{org}/policy": {
@@ -1425,6 +1601,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List workspace-scoped connections (`can_use`). */
+        get: operations["listWorkspaceConnections"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/oauth-clients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List workspace OAuth clients (`can_use`). */
+        get: operations["listWorkspaceOauthClients"];
+        put?: never;
+        /** Create a workspace OAuth client (`can_own`). */
+        post: operations["createWorkspaceOauthClient"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/policy": {
         parameters: {
             query?: never;
@@ -1585,6 +1796,10 @@ export interface components {
             /** Format: uuid */
             user_id: string;
         };
+        AccessLevel: {
+            id: string;
+            label: string;
+        };
         /** @enum {string} */
         Action: "allow" | "block";
         AdminUser: components["schemas"]["User"] & {
@@ -1623,6 +1838,12 @@ export interface components {
             container_config: components["schemas"]["ContainerConfig"];
             token: string;
         };
+        /** @description One allow-list row; a null workspace allows the app for the whole organization. */
+        AllowEntry: {
+            app_id: string;
+            /** Format: uuid */
+            workspace_id?: string | null;
+        };
         AllowlistEntry: {
             host: string;
             path?: string | null;
@@ -1650,6 +1871,47 @@ export interface components {
              * @description `null` for organization keys (`auo_`).
              */
             workspace_id?: string | null;
+        };
+        AppAvailability: {
+            allow: components["schemas"]["AllowEntry"][];
+            /** @description `open` | `restricted`. */
+            posture: string;
+        };
+        AppDetail: {
+            agent_instructions?: string | null;
+            api_docs?: string | null;
+            app_id: string;
+            available: boolean;
+            category?: string | null;
+            connect: components["schemas"]["ConnectMethod"][];
+            connect_note?: null | components["schemas"]["ConnectNote"];
+            /** Format: int64 */
+            connection_count: number;
+            credentials: components["schemas"]["CredentialInfo"][];
+            description: string;
+            has_dark_icon: boolean;
+            hosts: components["schemas"]["HostInfo"][];
+            label_hint?: string | null;
+            metadata: string[];
+            name: string;
+            package_id: string;
+            package_version: string;
+            tools: components["schemas"]["Tool"][];
+        };
+        AppList: {
+            items: components["schemas"]["AppSummary"][];
+        };
+        AppSummary: {
+            app_id: string;
+            available: boolean;
+            category?: string | null;
+            /** Format: int64 */
+            connection_count: number;
+            description: string;
+            has_dark_icon: boolean;
+            name: string;
+            package_id: string;
+            package_version: string;
         };
         Approval: {
             agent?: null | components["schemas"]["ApprovalAgent"];
@@ -1783,6 +2045,62 @@ export interface components {
         ConfirmRequest: {
             confirm: string;
         };
+        ConnectMethod: {
+            access_levels: components["schemas"]["AccessLevel"][];
+            /** @description `query` | `fragment` (OAuth only). */
+            callback?: string | null;
+            client_key?: string | null;
+            default_scopes: string[];
+            fields: components["schemas"]["FormField"][];
+            id: string;
+            /** @description `oauth2` | `fields` | `hook`. */
+            kind: string;
+            scopes: components["schemas"]["ScopeInfo"][];
+        };
+        ConnectNote: {
+            text: string;
+            url?: string | null;
+        };
+        ConnectedBy: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+        };
+        /** @description A connection. Credentials are never returned (SEC-12). */
+        Connection: {
+            app_id: string;
+            app_version: string;
+            connected_by?: null | components["schemas"]["ConnectedBy"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            credentials_expires_at?: string | null;
+            /** Format: uuid */
+            id: string;
+            injecting: components["schemas"]["Injecting"][];
+            label: string;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            metadata: {
+                [key: string]: string;
+            };
+            /** Format: uuid */
+            oauth_client_id?: string | null;
+            /** Format: uuid */
+            org_id: string;
+            package_id: string;
+            /** @description `organization` | `workspace`. */
+            scope: string;
+            scopes: string[];
+            /** @description `active` | `reauth_required` | `disabled` | `orphaned`. */
+            status: string;
+            status_reason?: string | null;
+            tenant_host?: string | null;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: uuid */
+            workspace_id?: string | null;
+        };
         /** @description Connection grants arrive with M3; the list is empty until then. */
         ConnectionGrant: {
             /** Format: uuid */
@@ -1852,6 +2170,14 @@ export interface components {
             /** @description 1-80 characters. */
             name: string;
         };
+        CreateOAuthClientRequest: {
+            client_key: string;
+            /** @description Values for every field the manifest declares, secret ones included (sealed on write). */
+            fields: {
+                [key: string]: string;
+            };
+            package_id: string;
+        };
         CreateOrgRequest: {
             name: string;
             slug?: string | null;
@@ -1904,6 +2230,10 @@ export interface components {
             api_key: components["schemas"]["ApiKey"];
             /** @description The token; shown only in this response. */
             key: string;
+        };
+        CredentialInfo: {
+            name: string;
+            optional: boolean;
         };
         /** @enum {string} */
         CredentialKind: "secret" | "connection";
@@ -1990,6 +2320,19 @@ export interface components {
         ForgotRequest: {
             email: string;
         };
+        FormField: {
+            help_url?: string | null;
+            label: string;
+            name: string;
+            options?: components["schemas"]["SelectOption"][] | null;
+            placeholder?: string | null;
+            required: boolean;
+            show_when?: null | components["schemas"]["ShowWhen"];
+            /** @description `credentials` | `metadata` | `tenant_host`. */
+            store: string;
+            /** @description `text` | `secret` | `select` | `file` | `json_file`. */
+            type: string;
+        };
         /** @enum {string} */
         GenerationStatus: "draft" | "published" | "superseded";
         GovernanceDocument: {
@@ -2029,6 +2372,12 @@ export interface components {
             claim_key: string;
             package_id: string;
         };
+        HostInfo: {
+            /** @description `active` | `lost`. */
+            claim_status: string;
+            host: string;
+            path_prefix?: string | null;
+        };
         Identity: {
             /** Format: uuid */
             id: string;
@@ -2039,6 +2388,10 @@ export interface components {
             id: string;
             /** @enum {string} */
             kind: "user";
+        };
+        Injecting: {
+            host: string;
+            lost_to_app_id?: string | null;
         };
         /** @description Injection recipe (`08 §5`). */
         InjectionRecipe: {
@@ -2217,6 +2570,29 @@ export interface components {
             name: string;
             /** @description `mismatch` | `unverifiable` | `not_permitted` | `pending`. */
             reason: string;
+            /** Format: uuid */
+            workspace_id?: string | null;
+        };
+        /** @description An OAuth client. `fields` carries non-secret fields only; secret values are sealed. */
+        OAuthClient: {
+            client_key: string;
+            /** Format: int64 */
+            connection_count: number;
+            /** Format: date-time */
+            created_at: string;
+            enabled: boolean;
+            fields: {
+                [key: string]: string;
+            };
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id?: string | null;
+            package_id: string;
+            /** @description `instance` | `organization` | `workspace`. */
+            scope: string;
+            /** Format: date-time */
+            updated_at: string;
             /** Format: uuid */
             workspace_id?: string | null;
         };
@@ -2411,6 +2787,43 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_Connection: {
+            items: {
+                app_id: string;
+                app_version: string;
+                connected_by?: null | components["schemas"]["ConnectedBy"];
+                /** Format: date-time */
+                created_at: string;
+                /** Format: date-time */
+                credentials_expires_at?: string | null;
+                /** Format: uuid */
+                id: string;
+                injecting: components["schemas"]["Injecting"][];
+                label: string;
+                /** Format: date-time */
+                last_used_at?: string | null;
+                metadata: {
+                    [key: string]: string;
+                };
+                /** Format: uuid */
+                oauth_client_id?: string | null;
+                /** Format: uuid */
+                org_id: string;
+                package_id: string;
+                /** @description `organization` | `workspace`. */
+                scope: string;
+                scopes: string[];
+                /** @description `active` | `reauth_required` | `disabled` | `orphaned`. */
+                status: string;
+                status_reason?: string | null;
+                tenant_host?: string | null;
+                /** Format: date-time */
+                updated_at: string;
+                /** Format: uuid */
+                workspace_id?: string | null;
+            }[];
+            next_cursor?: string | null;
+        };
         Page_Invitation: {
             items: {
                 /** Format: date-time */
@@ -2439,6 +2852,31 @@ export interface components {
                 status: components["schemas"]["MemberStatus"];
                 /** Format: uuid */
                 user_id: string;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_OAuthClient: {
+            items: {
+                client_key: string;
+                /** Format: int64 */
+                connection_count: number;
+                /** Format: date-time */
+                created_at: string;
+                enabled: boolean;
+                fields: {
+                    [key: string]: string;
+                };
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                org_id?: string | null;
+                package_id: string;
+                /** @description `instance` | `organization` | `workspace`. */
+                scope: string;
+                /** Format: date-time */
+                updated_at: string;
+                /** Format: uuid */
+                workspace_id?: string | null;
             }[];
             next_cursor?: string | null;
         };
@@ -2639,6 +3077,11 @@ export interface components {
             /** @description Instance admins only. */
             resource_overrides?: Record<string, never> | null;
         };
+        PatchConnectionRequest: {
+            label?: string | null;
+            /** @description `active` | `disabled`. */
+            status?: string | null;
+        };
         PatchMeRequest: {
             /**
              * Format: uuid
@@ -2651,6 +3094,13 @@ export interface components {
         PatchMemberRequest: {
             role?: null | components["schemas"]["OrgRole"];
             status?: null | components["schemas"]["MemberStatus"];
+        };
+        PatchOAuthClientRequest: {
+            enabled?: boolean | null;
+            /** @description Fields to replace; omitted fields keep their value. */
+            fields?: {
+                [key: string]: string;
+            } | null;
         };
         PatchOrgRequest: {
             name?: string | null;
@@ -2909,6 +3359,12 @@ export interface components {
             require_approval?: boolean;
             targets?: components["schemas"]["Target"][];
         };
+        ScopeInfo: {
+            /** @description `read` | `write`. */
+            access: string;
+            name: string;
+            scope: string;
+        };
         /** @enum {string} */
         ScopeName: "organization" | "workspace";
         /** @enum {string} */
@@ -2981,9 +3437,18 @@ export interface components {
         SecretStores: {
             items: components["schemas"]["SecretStoreInfo"][];
         };
+        SelectOption: {
+            label: string;
+            value: string;
+            warning?: string | null;
+        };
         SetValueRequest: {
             reference?: null | components["schemas"]["SecretReference"];
             value?: string | null;
+        };
+        ShowWhen: {
+            equals: string;
+            field: string;
         };
         SignupRequest: {
             display_name: string;
@@ -3121,6 +3586,21 @@ export interface components {
             /** @description Workspace API key (`auk_`); returned exactly once. */
             api_key: string;
             workspace: components["schemas"]["CliWorkspace"];
+        };
+        Tool: {
+            description?: string | null;
+            /** @description `push` | `fetch`. */
+            git?: string | null;
+            /** @description `query` | `mutation`. */
+            graphql?: string | null;
+            /** @description `read` | `write`. */
+            group: string;
+            host: string;
+            id: string;
+            methods: string[];
+            name: string;
+            path: string;
+            wildcard: boolean;
         };
         TraceEntry: {
             matched: boolean;
@@ -3283,6 +3763,89 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listInstanceOauthClients: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Clients */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_OAuthClient"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createInstanceOauthClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateOAuthClientRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthClient"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description conflict */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4527,6 +5090,149 @@ export interface operations {
             };
         };
     };
+    listApps: {
+        parameters: {
+            query?: {
+                /** @description Workspace whose availability and connection counts apply. */
+                workspace_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Apps */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppList"];
+                };
+            };
+            /** @description Workspace not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getApp: {
+        parameters: {
+            query?: {
+                /** @description Workspace whose availability and connection counts apply. */
+                workspace_id?: string;
+            };
+            header?: never;
+            path: {
+                /** @description App id */
+                app: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description App */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppDetail"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAppGuide: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description App id */
+                app: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Markdown */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/markdown": string;
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAppIcon: {
+        parameters: {
+            query?: {
+                /** @description `light` (default) or `dark`. */
+                variant?: string;
+            };
+            header?: never;
+            path: {
+                /** @description App id */
+                app: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description PNG */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": number[];
+                };
+            };
+            /** @description Invalid variant */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     startCliLogin: {
         parameters: {
             query?: never;
@@ -5042,6 +5748,140 @@ export interface operations {
             };
         };
     };
+    getConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Connection id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Connection"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Connection id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    updateConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Connection id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchConnectionRequest"];
+            };
+        };
+        responses: {
+            /** @description Connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Connection"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description invalid_state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getGatewayCa: {
         parameters: {
             query?: never;
@@ -5425,6 +6265,108 @@ export interface operations {
             };
         };
     };
+    deleteOauthClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description OAuth client id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description client_in_use */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    updateOauthClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description OAuth client id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchOAuthClientRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthClient"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listOrgs: {
         parameters: {
             query?: {
@@ -5734,6 +6676,92 @@ export interface operations {
             };
         };
     };
+    getOrgAppAvailability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Availability */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAvailability"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putOrgAppAvailability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppAvailability"];
+            };
+        };
+        responses: {
+            /** @description Availability */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppAvailability"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listOrgAudit: {
         parameters: {
             query?: {
@@ -5768,6 +6796,44 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listOrgConnections: {
+        parameters: {
+            query?: {
+                app_id?: string;
+                /** @description `active` | `reauth_required` | `disabled` | `orphaned`. */
+                status?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Connections */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Connection"];
+                };
+            };
+            /** @description Not found */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6162,6 +7228,104 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listOrgOauthClients: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Clients */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_OAuthClient"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createOrgOauthClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateOAuthClientRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthClient"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description conflict */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -7679,6 +8843,142 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWorkspaceConnections: {
+        parameters: {
+            query?: {
+                app_id?: string;
+                /** @description `active` | `reauth_required` | `disabled` | `orphaned`. */
+                status?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Connections */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Connection"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWorkspaceOauthClients: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Clients */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_OAuthClient"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createWorkspaceOauthClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateOAuthClientRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthClient"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -133,6 +133,126 @@
         ]
       }
     },
+    "/v1/admin/oauth-clients": {
+      "get": {
+        "tags": [
+          "oauth-clients"
+        ],
+        "summary": "List instance OAuth clients (instance admin).",
+        "operationId": "listInstanceOauthClients",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Clients",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_OAuthClient"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "oauth-clients"
+        ],
+        "summary": "Create an instance OAuth client (instance admin).",
+        "operationId": "createInstanceOauthClient",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOAuthClientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthClient"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/plugins": {
       "get": {
         "tags": [
@@ -2013,6 +2133,241 @@
         ]
       }
     },
+    "/v1/apps": {
+      "get": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "App catalogue from the active registry snapshot, with availability and connection counts.",
+        "operationId": "listApps",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "description": "Workspace whose availability and connection counts apply.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Apps",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/apps/{app}": {
+      "get": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "App detail: connect methods, scopes, tools, hosts and agent documentation.",
+        "operationId": "getApp",
+        "parameters": [
+          {
+            "name": "app",
+            "in": "path",
+            "description": "App id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "query",
+            "description": "Workspace whose availability and connection counts apply.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "App",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/apps/{app}/guide": {
+      "get": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "Setup guide (`text/markdown`).",
+        "operationId": "getAppGuide",
+        "parameters": [
+          {
+            "name": "app",
+            "in": "path",
+            "description": "App id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Markdown",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/apps/{app}/icon": {
+      "get": {
+        "tags": [
+          "apps"
+        ],
+        "summary": "App icon (`image/png`).",
+        "operationId": "getAppIcon",
+        "parameters": [
+          {
+            "name": "app",
+            "in": "path",
+            "description": "App id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "variant",
+            "in": "query",
+            "description": "`light` (default) or `dark`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PNG",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid variant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/auth/cli": {
       "post": {
         "tags": [
@@ -2681,6 +3036,198 @@
         ]
       }
     },
+    "/v1/connections/{id}": {
+      "get": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "Get a connection.",
+        "operationId": "getConnection",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Connection"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "Delete a connection, its grants and derived rules (`can_own` / owner-admin).",
+        "operationId": "deleteConnection",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "Rename, disable or re-enable a connection (`can_own` / owner-admin).",
+        "operationId": "updateConnection",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Connection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "invalid_state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/gateway/ca.pem": {
       "get": {
         "tags": [
@@ -3220,6 +3767,149 @@
         ]
       }
     },
+    "/v1/oauth-clients/{id}": {
+      "delete": {
+        "tags": [
+          "oauth-clients"
+        ],
+        "summary": "Delete an OAuth client; refused while connections use it.",
+        "operationId": "deleteOauthClient",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "OAuth client id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "client_in_use",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "oauth-clients"
+        ],
+        "summary": "Update fields or the enabled flag of an OAuth client.",
+        "operationId": "updateOauthClient",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "OAuth client id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchOAuthClientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthClient"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/orgs": {
       "get": {
         "tags": [
@@ -3711,6 +4401,136 @@
         ]
       }
     },
+    "/v1/orgs/{org}/app-availability": {
+      "get": {
+        "tags": [
+          "availability"
+        ],
+        "summary": "Posture and allow-list (org member).",
+        "operationId": "getOrgAppAvailability",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Availability",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppAvailability"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "availability"
+        ],
+        "summary": "Replace posture and allow-list (owner/admin).",
+        "operationId": "putOrgAppAvailability",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppAvailability"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Availability",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppAvailability"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/orgs/{org}/audit": {
       "get": {
         "tags": [
@@ -3789,6 +4609,92 @@
           },
           "404": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/connections": {
+      "get": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "List organization-scoped connections (org member).",
+        "operationId": "listOrgConnections",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "app_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`active` | `reauth_required` | `disabled` | `orphaned`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Connection"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -4436,6 +5342,164 @@
           },
           "409": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/oauth-clients": {
+      "get": {
+        "tags": [
+          "oauth-clients"
+        ],
+        "summary": "List organization OAuth clients (org member).",
+        "operationId": "listOrgOauthClients",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Clients",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_OAuthClient"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "oauth-clients"
+        ],
+        "summary": "Create an organization OAuth client (owner/admin).",
+        "operationId": "createOrgOauthClient",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOAuthClientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthClient"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "conflict",
             "content": {
               "application/json": {
                 "schema": {
@@ -6939,6 +8003,250 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/connections": {
+      "get": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "List workspace-scoped connections (`can_use`).",
+        "operationId": "listWorkspaceConnections",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "app_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`active` | `reauth_required` | `disabled` | `orphaned`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Connection"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/oauth-clients": {
+      "get": {
+        "tags": [
+          "oauth-clients"
+        ],
+        "summary": "List workspace OAuth clients (`can_use`).",
+        "operationId": "listWorkspaceOauthClients",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Clients",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_OAuthClient"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "oauth-clients"
+        ],
+        "summary": "Create a workspace OAuth client (`can_own`).",
+        "operationId": "createWorkspaceOauthClient",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOAuthClientRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthClient"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/policy": {
       "get": {
         "tags": [
@@ -7706,6 +9014,21 @@
           }
         }
       },
+      "AccessLevel": {
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
       "Action": {
         "type": "string",
         "enum": [
@@ -7843,6 +9166,26 @@
           }
         }
       },
+      "AllowEntry": {
+        "type": "object",
+        "description": "One allow-list row; a null workspace allows the app for the whole organization.",
+        "required": [
+          "app_id"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
       "AllowlistEntry": {
         "type": "object",
         "required": [
@@ -7926,6 +9269,195 @@
             ],
             "format": "uuid",
             "description": "`null` for organization keys (`auo_`)."
+          }
+        }
+      },
+      "AppAvailability": {
+        "type": "object",
+        "required": [
+          "posture",
+          "allow"
+        ],
+        "properties": {
+          "allow": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AllowEntry"
+            }
+          },
+          "posture": {
+            "type": "string",
+            "description": "`open` | `restricted`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AppDetail": {
+        "type": "object",
+        "required": [
+          "app_id",
+          "package_id",
+          "package_version",
+          "name",
+          "description",
+          "available",
+          "connection_count",
+          "has_dark_icon",
+          "connect",
+          "tools",
+          "hosts",
+          "credentials",
+          "metadata"
+        ],
+        "properties": {
+          "agent_instructions": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "api_docs": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "app_id": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "connect": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectMethod"
+            }
+          },
+          "connect_note": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ConnectNote"
+              }
+            ]
+          },
+          "connection_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CredentialInfo"
+            }
+          },
+          "description": {
+            "type": "string"
+          },
+          "has_dark_icon": {
+            "type": "boolean"
+          },
+          "hosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostInfo"
+            }
+          },
+          "label_hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "package_id": {
+            "type": "string"
+          },
+          "package_version": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Tool"
+            }
+          }
+        }
+      },
+      "AppList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppSummary"
+            }
+          }
+        }
+      },
+      "AppSummary": {
+        "type": "object",
+        "required": [
+          "app_id",
+          "package_id",
+          "package_version",
+          "name",
+          "description",
+          "available",
+          "connection_count",
+          "has_dark_icon"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "connection_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "description": {
+            "type": "string"
+          },
+          "has_dark_icon": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "package_id": {
+            "type": "string"
+          },
+          "package_version": {
+            "type": "string"
           }
         }
       },
@@ -8411,6 +9943,224 @@
           }
         }
       },
+      "ConnectMethod": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "fields",
+          "scopes",
+          "default_scopes",
+          "access_levels"
+        ],
+        "properties": {
+          "access_levels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccessLevel"
+            }
+          },
+          "callback": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`query` | `fragment` (OAuth only)."
+          },
+          "client_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FormField"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`oauth2` | `fields` | `hook`."
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopeInfo"
+            }
+          }
+        }
+      },
+      "ConnectNote": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ConnectedBy": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "Connection": {
+        "type": "object",
+        "description": "A connection. Credentials are never returned (SEC-12).",
+        "required": [
+          "id",
+          "org_id",
+          "scope",
+          "app_id",
+          "package_id",
+          "app_version",
+          "label",
+          "status",
+          "scopes",
+          "metadata",
+          "created_at",
+          "updated_at",
+          "injecting"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "app_version": {
+            "type": "string"
+          },
+          "connected_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ConnectedBy"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "credentials_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "injecting": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Injecting"
+            }
+          },
+          "label": {
+            "type": "string"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "oauth_client_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "package_id": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "description": "`organization` | `workspace`."
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string",
+            "description": "`active` | `reauth_required` | `disabled` | `orphaned`."
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenant_host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
       "ConnectionGrant": {
         "type": "object",
         "description": "Connection grants arrive with M3; the list is empty until then.",
@@ -8652,6 +10402,33 @@
           }
         }
       },
+      "CreateOAuthClientRequest": {
+        "type": "object",
+        "required": [
+          "package_id",
+          "client_key",
+          "fields"
+        ],
+        "properties": {
+          "client_key": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "object",
+            "description": "Values for every field the manifest declares, secret ones included (sealed on write).",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "package_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateOrgRequest": {
         "type": "object",
         "required": [
@@ -8876,6 +10653,21 @@
           "key": {
             "type": "string",
             "description": "The token; shown only in this response."
+          }
+        }
+      },
+      "CredentialInfo": {
+        "type": "object",
+        "required": [
+          "name",
+          "optional"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "optional": {
+            "type": "boolean"
           }
         }
       },
@@ -9220,6 +11012,66 @@
           }
         }
       },
+      "FormField": {
+        "type": "object",
+        "required": [
+          "name",
+          "label",
+          "type",
+          "store",
+          "required"
+        ],
+        "properties": {
+          "help_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "options": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SelectOption"
+            }
+          },
+          "placeholder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "show_when": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ShowWhen"
+              }
+            ]
+          },
+          "store": {
+            "type": "string",
+            "description": "`credentials` | `metadata` | `tenant_host`."
+          },
+          "type": {
+            "type": "string",
+            "description": "`text` | `secret` | `select` | `file` | `json_file`."
+          }
+        }
+      },
       "GenerationStatus": {
         "type": "string",
         "enum": [
@@ -9387,6 +11239,28 @@
           }
         }
       },
+      "HostInfo": {
+        "type": "object",
+        "required": [
+          "host",
+          "claim_status"
+        ],
+        "properties": {
+          "claim_status": {
+            "type": "string",
+            "description": "`active` | `lost`."
+          },
+          "host": {
+            "type": "string"
+          },
+          "path_prefix": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Identity": {
         "oneOf": [
           {
@@ -9428,6 +11302,23 @@
             }
           }
         ]
+      },
+      "Injecting": {
+        "type": "object",
+        "required": [
+          "host"
+        ],
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "lost_to_app_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       },
       "InjectionRecipe": {
         "oneOf": [
@@ -10155,6 +12046,75 @@
           }
         }
       },
+      "OAuthClient": {
+        "type": "object",
+        "description": "An OAuth client. `fields` carries non-secret fields only; secret values are sealed.",
+        "required": [
+          "id",
+          "scope",
+          "package_id",
+          "client_key",
+          "fields",
+          "enabled",
+          "connection_count",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "client_key": {
+            "type": "string"
+          },
+          "connection_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "fields": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "org_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "package_id": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "description": "`instance` | `organization` | `workspace`."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
       "OidcProviderInfo": {
         "type": "object",
         "required": [
@@ -10861,6 +12821,151 @@
           }
         }
       },
+      "Page_Connection": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A connection. Credentials are never returned (SEC-12).",
+              "required": [
+                "id",
+                "org_id",
+                "scope",
+                "app_id",
+                "package_id",
+                "app_version",
+                "label",
+                "status",
+                "scopes",
+                "metadata",
+                "created_at",
+                "updated_at",
+                "injecting"
+              ],
+              "properties": {
+                "app_id": {
+                  "type": "string"
+                },
+                "app_version": {
+                  "type": "string"
+                },
+                "connected_by": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectedBy"
+                    }
+                  ]
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "credentials_expires_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "injecting": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Injecting"
+                  }
+                },
+                "label": {
+                  "type": "string"
+                },
+                "last_used_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "metadata": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  }
+                },
+                "oauth_client_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "org_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "package_id": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string",
+                  "description": "`organization` | `workspace`."
+                },
+                "scopes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "status": {
+                  "type": "string",
+                  "description": "`active` | `reauth_required` | `disabled` | `orphaned`."
+                },
+                "status_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "tenant_host": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "workspace_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_Invitation": {
         "type": "object",
         "required": [
@@ -10973,6 +13078,92 @@
                 },
                 "user_id": {
                   "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_OAuthClient": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "An OAuth client. `fields` carries non-secret fields only; secret values are sealed.",
+              "required": [
+                "id",
+                "scope",
+                "package_id",
+                "client_key",
+                "fields",
+                "enabled",
+                "connection_count",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "client_key": {
+                  "type": "string"
+                },
+                "connection_count": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "fields": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  }
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "org_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "package_id": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string",
+                  "description": "`instance` | `organization` | `workspace`."
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "workspace_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
                   "format": "uuid"
                 }
               }
@@ -11751,6 +13942,25 @@
         },
         "additionalProperties": false
       },
+      "PatchConnectionRequest": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`active` | `disabled`."
+          }
+        },
+        "additionalProperties": false
+      },
       "PatchMeRequest": {
         "type": "object",
         "properties": {
@@ -11795,6 +14005,31 @@
             ]
           }
         }
+      },
+      "PatchOAuthClientRequest": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "fields": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Fields to replace; omitted fields keep their value.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "PatchOrgRequest": {
         "type": "object",
@@ -12777,6 +15012,26 @@
         },
         "additionalProperties": false
       },
+      "ScopeInfo": {
+        "type": "object",
+        "required": [
+          "scope",
+          "name",
+          "access"
+        ],
+        "properties": {
+          "access": {
+            "type": "string",
+            "description": "`read` | `write`."
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          }
+        }
+      },
       "ScopeName": {
         "type": "string",
         "enum": [
@@ -13054,6 +15309,27 @@
           }
         }
       },
+      "SelectOption": {
+        "type": "object",
+        "required": [
+          "value",
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "warning": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "SetValueRequest": {
         "type": "object",
         "properties": {
@@ -13075,6 +15351,21 @@
           }
         },
         "additionalProperties": false
+      },
+      "ShowWhen": {
+        "type": "object",
+        "required": [
+          "field",
+          "equals"
+        ],
+        "properties": {
+          "equals": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          }
+        }
       },
       "SignupRequest": {
         "type": "object",
@@ -13634,6 +15925,65 @@
           },
           "workspace": {
             "$ref": "#/components/schemas/CliWorkspace"
+          }
+        }
+      },
+      "Tool": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "group",
+          "wildcard",
+          "host",
+          "path",
+          "methods"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "git": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`push` | `fetch`."
+          },
+          "graphql": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`query` | `mutation`."
+          },
+          "group": {
+            "type": "string",
+            "description": "`read` | `write`."
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "wildcard": {
+            "type": "boolean"
           }
         }
       },
