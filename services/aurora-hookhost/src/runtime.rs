@@ -5,7 +5,6 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::anyhow;
 use aurora_core::limits::{HOOK_FETCH_MAX, HOOK_FETCH_TIMEOUT, HOOK_MEMORY};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, ResourceLimiter, Store, Trap, UpdateDeadline};
@@ -84,10 +83,10 @@ impl ResourceLimiter for Limiter {
         _current: usize,
         desired: usize,
         _maximum: Option<usize>,
-    ) -> anyhow::Result<bool> {
+    ) -> wasmtime::Result<bool> {
         if desired > HOOK_MEMORY {
             self.exceeded = true;
-            return Err(anyhow!("hook memory limit exceeded"));
+            return Err(wasmtime::format_err!("hook memory limit exceeded"));
         }
         Ok(true)
     }
@@ -96,10 +95,10 @@ impl ResourceLimiter for Limiter {
         _current: usize,
         desired: usize,
         _maximum: Option<usize>,
-    ) -> anyhow::Result<bool> {
+    ) -> wasmtime::Result<bool> {
         if desired > 100_000 {
             self.exceeded = true;
-            return Err(anyhow!("hook table limit exceeded"));
+            return Err(wasmtime::format_err!("hook table limit exceeded"));
         }
         Ok(true)
     }
@@ -251,10 +250,9 @@ impl Drop for Runtime {
 
 impl Runtime {
     /// Must be called inside a tokio runtime (starts the epoch ticker).
-    pub fn new(policy: FetchPolicy) -> anyhow::Result<Self> {
+    pub fn new(policy: FetchPolicy) -> wasmtime::Result<Self> {
         let mut cfg = Config::new();
         cfg.wasm_component_model(true);
-        cfg.async_support(true);
         cfg.epoch_interruption(true);
         cfg.max_wasm_stack(512 * 1024);
         let engine = Engine::new(&cfg)?;
@@ -279,7 +277,7 @@ impl Runtime {
     }
 
     /// CPU-heavy; call from `spawn_blocking`.
-    pub fn compile(&self, bytes: &[u8]) -> anyhow::Result<Module> {
+    pub fn compile(&self, bytes: &[u8]) -> wasmtime::Result<Module> {
         let component = Component::new(&self.engine, bytes)?;
         PluginPre::new(self.linker.instantiate_pre(&component)?)
     }
@@ -402,7 +400,7 @@ async fn run_hook(
     module: &Module,
     store: &mut Store<Ctx>,
     inv: Invocation,
-) -> anyhow::Result<Result<Outcome, types::HookError>> {
+) -> wasmtime::Result<Result<Outcome, types::HookError>> {
     let instance = module.instantiate_async(&mut *store).await?;
     let h = instance.aurora_plugin_hooks();
     Ok(match inv {
@@ -424,14 +422,12 @@ async fn run_hook(
 
 /// Link only the WASI 0.2 interfaces permitted by I-22 (`cli/*` stdio and env,
 /// `io/*`, `clocks/*`, `random/random`). No filesystem, no sockets.
-fn link_wasi(l: &mut Linker<Ctx>) -> anyhow::Result<()> {
+fn link_wasi(l: &mut Linker<Ctx>) -> wasmtime::Result<()> {
     use wasmtime_wasi::cli::{WasiCli, WasiCliView};
     use wasmtime_wasi::p2::bindings::cli;
     // io + clocks + random + stdin/stdout/stderr
     wasmtime_wasi::p2::add_to_linker_proxy_interfaces_async(l)?;
-    let mut opts = wasmtime_wasi::p2::bindings::LinkOptions::default();
-    opts.cli_exit_with_code(true);
-    cli::exit::add_to_linker::<Ctx, WasiCli>(l, &(&opts).into(), Ctx::cli)?;
+    cli::exit::add_to_linker::<Ctx, WasiCli>(l, Ctx::cli)?;
     cli::environment::add_to_linker::<Ctx, WasiCli>(l, Ctx::cli)?;
     cli::terminal_input::add_to_linker::<Ctx, WasiCli>(l, Ctx::cli)?;
     cli::terminal_output::add_to_linker::<Ctx, WasiCli>(l, Ctx::cli)?;

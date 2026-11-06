@@ -132,8 +132,8 @@ clap = { version = "4.6", features = ["derive", "env"] }
 # wasm components (HOOK-001; wit-bindgen guest side, wasmtime pinned for the hook host, HOOK-002)
 wit-bindgen = { version = "0.46", default-features = false, features = ["macros", "realloc"] }
 wasmparser = "0.239"
-wasmtime = { version = "38", default-features = false }
-wasmtime-wasi = { version = "38", default-features = false }
+wasmtime = { version = "50", default-features = false }
+wasmtime-wasi = { version = "50", default-features = false }
 
 # tests
 proptest = "1"
