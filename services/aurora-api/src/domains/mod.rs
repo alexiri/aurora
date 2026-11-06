@@ -13,6 +13,7 @@ pub mod availability;
 pub mod cli_login;
 pub mod connect;
 pub mod connections;
+pub mod connectors;
 pub mod conversations;
 pub mod governance;
 pub mod grants;

@@ -4,6 +4,75 @@
  */
 
 export interface paths {
+    "/v1/admin/connectors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List connectors with replicas, integration counts and widening reasons (instance administrators). */
+        get: operations["adminListConnectors"];
+        put?: never;
+        /** Provision a connector; the `aun_` token is returned once. */
+        post: operations["adminCreateConnector"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/connectors/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a connector (409 `connector_in_use` while integrations exist). */
+        delete: operations["adminDeleteConnector"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/connectors/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve exactly the announced manifest (409 `stale_manifest` if it changed). */
+        post: operations["adminApproveConnector"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/connectors/{id}/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rotate the connector token; the new `aun_` token is returned once. */
+        post: operations["adminRotateConnectorToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/host-claims": {
         parameters: {
             query?: never;
@@ -1159,6 +1228,40 @@ export interface paths {
         };
         /** Grants held on a connection. */
         get: operations["listConnectionGrants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/connectors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Active connectors available for integrations. */
+        get: operations["listConnectors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/connectors/{id}/icon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Connector icon (`image/png`). */
+        get: operations["getConnectorIcon"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2679,6 +2782,10 @@ export interface components {
             text?: string | null;
             title: string;
         };
+        ApproveConnectorRequest: {
+            /** @description Digest of exactly the manifest being approved (`manifest_digest` of the connector). */
+            manifest_digest: string;
+        };
         ApproveRequest: {
             user_code: string;
             /** Format: uuid */
@@ -2870,6 +2977,59 @@ export interface components {
         ConnectionGrantList: {
             items: components["schemas"]["ConnectionGrant"][];
         };
+        ConnectorAdmin: {
+            /** Format: date-time */
+            approved_at?: string | null;
+            approved_manifest_digest?: string | null;
+            /** Format: int32 */
+            contract?: number | null;
+            /** Format: date-time */
+            created_at: string;
+            display_name: string;
+            id: string;
+            /** Format: int64 */
+            integration_count: number;
+            /** @description The announced manifest (opaque JSON), `null` until the first registration. */
+            manifest?: Record<string, never> | null;
+            manifest_digest?: string | null;
+            /** @description Live (not retired, recently seen) replicas. */
+            replicas: components["schemas"]["ReplicaInfo"][];
+            status: components["schemas"]["ConnectorStatus"];
+            version?: string | null;
+            /** @description Human-readable reasons approval is required (empty unless `pending_approval`). */
+            widening: string[];
+        };
+        ConnectorAdminList: {
+            items: components["schemas"]["ConnectorAdmin"][];
+        };
+        ConnectorInfo: {
+            capabilities: Record<string, never>;
+            display_name: string;
+            icon_url: string;
+            id: string;
+            /** @description `{ fields: FormField[] }`. */
+            integration_setup: Record<string, never>;
+            /** @description `{ dedicated?: { fields: FormField[] } }`. */
+            presence_setup: Record<string, never>;
+            /** @description Raw markdown; render client-side with the safe markdown renderer. */
+            setup_guide_md?: string | null;
+        };
+        ConnectorInfoList: {
+            items: components["schemas"]["ConnectorInfo"][];
+        };
+        /** @enum {string} */
+        ConnectorStatus: "awaiting_registration" | "pending_approval" | "active" | "disabled";
+        /** @description Returned once on rotation. */
+        ConnectorToken: {
+            /** @description `aun_…`, shown once. */
+            token: string;
+        };
+        /** @description Returned once on provisioning. */
+        ConnectorWithToken: {
+            connector: components["schemas"]["ConnectorAdmin"];
+            /** @description `aun_…`, shown once. */
+            token: string;
+        };
         ContainerConfig: {
             ca_path: string;
             ca_pem: string;
@@ -2935,6 +3095,12 @@ export interface components {
         CreateApiConversation: {
             external_ref: string;
             title?: string | null;
+        };
+        CreateConnectorRequest: {
+            /** @description Name shown to administrators (1-80 chars). */
+            display_name: string;
+            /** @description Connector id: `[a-z][a-z0-9-]{1,31}`. */
+            id: string;
         };
         CreateInvitationRequest: {
             email: string;
@@ -4388,6 +4554,13 @@ export interface components {
             started_at: string;
             version: string;
         };
+        ReplicaInfo: {
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_seen_at: string;
+            version: string;
+        };
         RequestLogEntry: {
             /** Format: uuid */
             agent_id: string;
@@ -5088,6 +5261,212 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    adminListConnectors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorAdminList"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminCreateConnector: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateConnectorRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorWithToken"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminDeleteConnector: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Connector id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminApproveConnector: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Connector id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveConnectorRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorAdmin"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminRotateConnectorToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Connector id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorToken"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminListHostClaims: {
         parameters: {
             query?: never;
@@ -8475,6 +8854,64 @@ export interface operations {
                 };
             };
             /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listConnectors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorInfoList"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getConnectorIcon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Connector id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description PNG */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": number[];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;

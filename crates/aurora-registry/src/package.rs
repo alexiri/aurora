@@ -238,7 +238,7 @@ impl Package {
 
 const PNG_SIG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 
-fn check_png(path: &str, b: &[u8], max: usize, out: &mut Vec<Violation>) {
+pub fn check_png(path: &str, b: &[u8], max: usize, out: &mut Vec<Violation>) {
     if b.len() > max {
         out.push(v(
             "icon_too_large",
@@ -270,7 +270,7 @@ fn check_png(path: &str, b: &[u8], max: usize, out: &mut Vec<Violation>) {
     }
 }
 
-fn check_guide(b: &[u8], max: usize, out: &mut Vec<Violation>) {
+pub fn check_guide(b: &[u8], max: usize, out: &mut Vec<Violation>) {
     if b.len() > max {
         out.push(v(
             "guide_too_large",

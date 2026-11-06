@@ -103,6 +103,13 @@ impl PackageBuilder {
         self.set_file("SIGNATURE", text.as_bytes())
     }
 
+    /// `SIGNATURE` text (`aurora-sig-v1\n<key_id>\n<b64>\n`) signing a raw 32-byte `digest`
+    /// (used for connector manifests, whose digest is sha256 of the canonical JSON).
+    pub fn sign_digest(key: &SigningKey, key_id: &str, digest: &[u8; 32]) -> String {
+        let sig = ed25519_dalek::Signer::sign(key, digest).to_bytes();
+        format!("{MAGIC}\n{key_id}\n{}\n", STANDARD.encode(sig))
+    }
+
     /// Base64 public key id for `key`.
     pub fn key_id(key: &SigningKey) -> String {
         STANDARD.encode(key.verifying_key().to_bytes())
