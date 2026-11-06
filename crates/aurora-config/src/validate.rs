@@ -146,6 +146,8 @@ pub struct GatewayConfig {
     pub llm: LlmSection,
     pub governance: Governance,
     pub gateway: GatewaySection,
+    /// Resolved `gateway.internal_bind` (defaults to `server.bind`).
+    pub internal_bind: String,
     pub advertised_proxy_url: String,
     pub approvals: ApprovalsSection,
     pub tls: TlsSection,
@@ -164,6 +166,8 @@ pub struct HookhostConfig {
 #[derive(Debug, Clone)]
 pub struct RunnerConfig {
     pub server: ServerSection,
+    /// Resolved `runner.ops_bind` (defaults to `server.bind`).
+    pub ops_bind: String,
     pub api_url: String,
     pub backend: RunnerBackend,
     pub token: Redacted<String>,
@@ -293,6 +297,12 @@ impl RawConfig {
         check_llm(&mut c, &self.llm, &self.governance);
         let governance = check_governance(&mut c, self);
         let g = &self.gateway;
+        let internal_bind = resolve_bind(
+            &mut c,
+            "gateway.internal_bind",
+            g.internal_bind.as_deref(),
+            &self.server.bind,
+        );
         if !(4096..=8 * 1024 * 1024).contains(&g.condition_body_bytes) {
             c.err(
                 "gateway.condition_body_bytes",
@@ -340,6 +350,7 @@ impl RawConfig {
             llm: self.llm.clone(),
             governance: governance.unwrap_or_else(|| resolve_governance_lossy(self)),
             gateway: g.clone(),
+            internal_bind,
             advertised_proxy_url,
             approvals: self.approvals.clone(),
             tls: self.tls.clone(),
@@ -442,8 +453,15 @@ impl RawConfig {
             c.err("runner.sandbox_network", "must not be empty");
         }
         check_common(&mut c, &self.tls, &self.telemetry);
+        let ops_bind = resolve_bind(
+            &mut c,
+            "runner.ops_bind",
+            r.ops_bind.as_deref(),
+            &self.server.bind,
+        );
         c.finish()?;
         Ok(RunnerConfig {
+            ops_bind,
             server: self.server.clone(),
             api_url: api_url.unwrap_or_default(),
             backend: backend.unwrap_or(RunnerBackend::Fake),
@@ -725,6 +743,38 @@ fn check_url(c: &mut Ctx, key: &str, v: Option<&str>) {
         && let Err(m) = parse_url(v, &["http", "https"])
     {
         c.err(key, m);
+    }
+}
+
+/// Resolve an optional secondary bind address, validating it when present.
+fn resolve_bind(c: &mut Ctx, key: &str, v: Option<&str>, fallback: &str) -> String {
+    match v {
+        None => fallback.to_string(),
+        Some(b) => {
+            if !is_bind_addr(b) {
+                c.err(key, format!("`{b}` is not an IP address"));
+            }
+            b.trim_start_matches('[').trim_end_matches(']').to_string()
+        }
+    }
+}
+
+/// SEC-09 defence in depth: a message when the internal/ops listener can be
+/// reached through the same address as the sandbox-facing listener.
+pub fn bind_overlap_warning(sandbox_facing: &str, internal: &str) -> Option<&'static str> {
+    let strip = |s: &str| s.trim_start_matches('[').trim_end_matches(']').to_string();
+    let (a, b) = (
+        strip(sandbox_facing).parse::<std::net::IpAddr>().ok()?,
+        strip(internal).parse::<std::net::IpAddr>().ok()?,
+    );
+    // An unspecified internal bind covers every address, including the sandbox-facing one.
+    if a == b || b.is_unspecified() {
+        Some(
+            "SEC-09: internal listener shares an address with the sandbox-facing listener; \
+             bind it to a core-network-only address or isolate it with NetworkPolicy",
+        )
+    } else {
+        None
     }
 }
 

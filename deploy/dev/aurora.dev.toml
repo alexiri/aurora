@@ -9,7 +9,12 @@
 external_url = "http://localhost:4100"
 bind = "127.0.0.1"
 
+[gateway]
+# SEC-09: internal listener (:4103) never on a sandbox-reachable address.
+internal_bind = "127.0.0.1"
+
 [runner]
+ops_bind = "127.0.0.1"
 backend = "fake"
 api_url = "http://localhost:4101"
 

@@ -6,6 +6,10 @@ bind = "0.0.0.0"
 # Caddy (edge) is on the core network; trust its X-Forwarded-For.
 trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 
+# SEC-09: gateway :4103 and runner :4106 are bound to their static core-network
+# IPs (compose.yaml sets AURORA__GATEWAY__INTERNAL_BIND / AURORA__RUNNER__OPS_BIND)
+# so they are never listening on the sandbox network. `bind` above only serves
+# the sandbox-facing :4102 / :4105.
 [runner]
 backend = "fake"
 api_url = "http://aurora-api:4101"

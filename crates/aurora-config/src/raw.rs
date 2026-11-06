@@ -342,6 +342,10 @@ impl Default for ApiSection {
 pub struct GatewaySection {
     /// Default: derived from the external host plus `:4102`.
     pub advertised_proxy_url: Option<String>,
+    /// Address for the internal listener (4103: health, metrics, status).
+    /// Must NOT be reachable from sandboxes (SEC-09). Default: `server.bind`
+    /// (startup logs a warning when it overlaps the proxy listener).
+    pub internal_bind: Option<String>,
     pub allowed_private: Vec<String>,
     pub egress_proxy: Option<String>,
     pub condition_body_bytes: u64,
@@ -354,6 +358,7 @@ impl Default for GatewaySection {
     fn default() -> Self {
         Self {
             advertised_proxy_url: None,
+            internal_bind: None,
             allowed_private: vec![],
             egress_proxy: None,
             condition_body_bytes: 262_144,
@@ -408,6 +413,10 @@ impl Default for HookhostSection {
 #[serde(default, deny_unknown_fields)]
 pub struct RunnerSection {
     pub api_url: Option<String>,
+    /// Address for the ops listener (4106: health, metrics). Must NOT be
+    /// reachable from sandboxes (SEC-09). Default: `server.bind` (startup logs
+    /// a warning when it overlaps the sandbox channel listener).
+    pub ops_bind: Option<String>,
     /// `podman`, `kubernetes` or `fake`; required for the runner.
     pub backend: Option<String>,
     pub image: String,
@@ -435,6 +444,7 @@ impl Default for RunnerSection {
     fn default() -> Self {
         Self {
             api_url: None,
+            ops_bind: None,
             backend: None,
             image: concat!("aurora-sandbox:", env!("CARGO_PKG_VERSION")).into(),
             advertised_host: None,

@@ -54,6 +54,8 @@ Setup tooling generates every secret and **never overwrites** an existing one.
 |-------------|---------|----------|---------|
 | `server.external_url` | — (required) | api, web, gateway | public origin, e.g. `https://aurora.example.org` |
 | `server.bind` | `0.0.0.0` | all | listen address |
+| `gateway.internal_bind` | `server.bind` | gateway | address for the internal listener :4103; must not be sandbox-reachable (SEC-09); startup warns if it overlaps `server.bind` |
+| `runner.ops_bind` | `server.bind` | runner | address for the ops listener :4106; same rule |
 | `server.trusted_proxies` | `[]` | api | CIDRs whose `X-Forwarded-For` is trusted |
 | `database.max_connections` | 20 (api), 10 (gateway) | api, gateway | pool size |
 | `database.gateway_role` | — | api (migrations) | role to grant gateway privileges (`03`) |

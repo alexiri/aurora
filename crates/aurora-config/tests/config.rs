@@ -303,3 +303,37 @@ fn oidc_provider_defaults_alias_and_domain_validation() {
     let err = bad.api_config().unwrap_err().to_string();
     assert!(err.contains("allowed_email_domains"), "{err}");
 }
+
+#[test]
+fn internal_and_ops_bind_resolve_and_validate() {
+    // Defaults fall back to server.bind.
+    let raw = load_with(BASE, &[]).unwrap();
+    assert_eq!(raw.gateway_config().unwrap().internal_bind, "0.0.0.0");
+    let toml = format!(
+        "{BASE}bind = \"127.0.0.2\"\n[gateway]\ninternal_bind = \"127.0.0.3\"\n[runner]\nbackend = \"fake\"\napi_url = \"http://a:1\"\nops_bind = \"127.0.0.3\"\n"
+    );
+    let raw = load_with(&toml, &[]).unwrap();
+    assert_eq!(raw.gateway_config().unwrap().internal_bind, "127.0.0.3");
+    assert_eq!(raw.runner_config().unwrap().ops_bind, "127.0.0.3");
+
+    let bad = format!(
+        "{BASE}[gateway]\ninternal_bind = \"not-an-ip\"\n[runner]\nbackend = \"fake\"\napi_url = \"http://a:1\"\nops_bind = \"nope\"\n"
+    );
+    let raw = load_with(&bad, &[]).unwrap();
+    assert!(
+        raw.gateway_config()
+            .unwrap_err()
+            .has_key("gateway.internal_bind")
+    );
+    assert!(raw.runner_config().unwrap_err().has_key("runner.ops_bind"));
+}
+
+#[test]
+fn overlap_warning_logic() {
+    assert!(bind_overlap_warning("0.0.0.0", "0.0.0.0").is_some());
+    assert!(bind_overlap_warning("10.0.0.1", "10.0.0.1").is_some());
+    assert!(bind_overlap_warning("10.0.0.1", "0.0.0.0").is_some());
+    assert!(bind_overlap_warning("10.89.250.2", "10.89.249.2").is_none());
+    assert!(bind_overlap_warning("127.0.0.2", "127.0.0.3").is_none());
+    assert!(bind_overlap_warning("0.0.0.0", "127.0.0.1").is_none());
+}

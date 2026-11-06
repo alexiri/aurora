@@ -48,6 +48,12 @@ config:
   server:
     bind: 0.0.0.0
     trusted_proxies: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]  # edge/ingress pod CIDRs
+  # SEC-09: 0.0.0.0 is acceptable here only because the NetworkPolicies deny sandbox
+  # ingress to gateway :4103 and runner :4106 (the startup overlap warning is expected).
+  gateway:
+    internal_bind: 0.0.0.0
+  runner:
+    ops_bind: 0.0.0.0
   hosted:
     enabled: true
   telemetry:

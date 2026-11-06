@@ -62,7 +62,10 @@ async fn serve(cfg: &RunnerConfig) -> std::io::Result<()> {
         .map_err(std::io::Error::other)?;
     let metrics = service::install_metrics(SERVICE);
     let app = service::ops_router(metrics, vec![]);
-    let listener = service::bind(cfg.server.bind.as_str(), OPS_PORT).await?;
+    if let Some(w) = aurora_config::bind_overlap_warning(&cfg.server.bind, &cfg.ops_bind) {
+        tracing::warn!(channel_bind = %cfg.server.bind, ops_bind = %cfg.ops_bind, "{w}");
+    }
+    let listener = service::bind(cfg.ops_bind.as_str(), OPS_PORT).await?;
 
     // Supervisor channel (W6) on the sandbox-facing port.
     let channel_listener = service::bind(cfg.server.bind.as_str(), CHANNEL_PORT).await?;

@@ -251,10 +251,15 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     );
     let ca = Arc::new(Ca::load(Path::new(&cfg.gateway.ca_dir))?);
     let bind = cfg.server.bind.as_str();
+    let internal_bind = cfg.internal_bind.as_str();
     let bind_ip: IpAddr = bind.parse()?;
+    let internal_ip: IpAddr = internal_bind.parse()?;
+    if let Some(w) = aurora_config::bind_overlap_warning(bind, internal_bind) {
+        tracing::warn!(proxy_bind = bind, internal_bind, "{w}");
+    }
     let mut own = vec![
         SocketAddr::new(bind_ip, PROXY_PORT),
-        SocketAddr::new(bind_ip, INTERNAL_PORT),
+        SocketAddr::new(internal_ip, INTERNAL_PORT),
     ];
     let db: PgConnectOptions = cfg.database_url.expose().parse()?;
     if let Ok(addrs) = tokio::net::lookup_host((db.get_host(), db.get_port())).await {
@@ -275,7 +280,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         egress_proxy: cfg.gateway.egress_proxy.clone(),
     })?;
     let proxy_listener = service::bind(bind, PROXY_PORT).await?;
-    let internal_listener = service::bind(bind, INTERNAL_PORT).await?;
+    let internal_listener = service::bind(internal_bind, INTERNAL_PORT).await?;
     tokio::spawn(async move {
         service::shutdown_signal().await;
         let _ = tx.send(true);

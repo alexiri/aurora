@@ -66,12 +66,16 @@ services:
     image: aurora-gateway:${AURORA_VERSION:-dev}
     build: { context: ../.., dockerfile: images/services/Containerfile, target: gateway }
     command: ["serve"]
-    environment: *aurora-env
+    # SEC-09: :4103 listens only on the core-network IP, never on the sandbox network.
+    environment:
+      <<: *aurora-env
+      AURORA__GATEWAY__INTERNAL_BIND: 10.89.249.2
     volumes:
       - ./aurora.toml:/etc/aurora/aurora.toml:ro
       - aurora-ca:/var/lib/aurora/ca
     networks:
       core:
+        ipv4_address: 10.89.249.2
         aliases: [aurora-gateway]
       sandbox:
         ipv4_address: 10.89.250.2
@@ -119,13 +123,17 @@ services:
     image: aurora-runner:${AURORA_VERSION:-dev}
     build: { context: ../.., dockerfile: images/services/Containerfile, target: runner }
     command: ["serve"]
-    environment: *aurora-env
+    # SEC-09: :4106 listens only on the core-network IP, never on the sandbox network.
+    environment:
+      <<: *aurora-env
+      AURORA__RUNNER__OPS_BIND: 10.89.249.3
     volumes:
       - ./aurora.toml:/etc/aurora/aurora.toml:ro
       - ${XDG_RUNTIME_DIR:-/run/user/1000}/podman/podman.sock:/run/podman/podman.sock
     security_opt: [label=disable]
     networks:
-      core: {}
+      core:
+        ipv4_address: 10.89.249.3
       sandbox:
         ipv4_address: 10.89.250.3
     depends_on:
@@ -147,7 +155,10 @@ services:
     restart: unless-stopped
 
 networks:
-  core: {}
+  core:
+    ipam:
+      config:
+        - subnet: 10.89.249.0/24
   sandbox:
     external: true
     name: aurora-sandbox
