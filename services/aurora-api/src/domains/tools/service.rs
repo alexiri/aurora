@@ -90,5 +90,6 @@ async fn identity(
         conversation_id: req.call.conversation_id,
         turn_id: req.call.turn_id,
         call_id: req.call.call_id.clone(),
+        state: s.clone(),
     })
 }

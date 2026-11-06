@@ -193,7 +193,9 @@ async fn catalogue_lists_available_tools_with_schemas() {
             "message_agent",
             "complete_task",
             "list_peer_tasks",
-            "cancel_peer_task"
+            "cancel_peer_task",
+            "propose_custom_connection",
+            "request_app_connection"
         ]
     );
     for t in &cat {
@@ -368,6 +370,7 @@ async fn registry_timeout_unavailable_and_completeness() {
         conversation_id: b.conv,
         turn_id: Some(b.turn),
         call_id: "k".into(),
+        state: r.h.state.clone(),
     };
     let reg = Registry::new(vec![Box::new(Slow), Box::new(Echo(false))]).unwrap();
     let res = reg

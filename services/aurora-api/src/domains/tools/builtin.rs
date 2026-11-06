@@ -1,4 +1,4 @@
-//! M4 built-in tools: `list_agents`, `list_apps`.
+//! M4 built-in tools: `list_agents`, `list_apps` (plus the Phase 0 families registered below).
 use super::registry::{PlatformTool, ToolCallContext, ToolContext, ToolError};
 use aurora_db::repo::{agents, connections, grants};
 use aurora_protocol::tools::{JsonContent, ToolContent};
@@ -11,6 +11,7 @@ pub fn tools() -> Vec<Box<dyn PlatformTool>> {
     v.extend(super::webhooks::tools());
     v.extend(super::schedules::tools());
     v.extend(super::agents::tools());
+    v.extend(super::apps::tools());
     v
 }
 

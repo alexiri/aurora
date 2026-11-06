@@ -1,3 +1,4 @@
+use crate::app::AppState;
 use aurora_core::{ApiError, limits};
 use aurora_db::DbError;
 use aurora_protocol::runner::Code;
@@ -30,6 +31,9 @@ pub struct ToolCallContext {
     pub conversation_id: Uuid,
     pub turn_id: Option<Uuid>,
     pub call_id: String,
+    /// Full app state for tools that need the app catalogue, governance or secrets validation.
+    /// Prefer `agent.pool` for plain database access.
+    pub state: AppState,
 }
 
 /// Tool failure; becomes an in-band `ok: false` result the model can read.
