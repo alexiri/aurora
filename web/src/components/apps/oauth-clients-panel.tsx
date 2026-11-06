@@ -8,7 +8,6 @@ import { Field, inputClass } from "@/components/ui/field";
 import { errorMessage } from "@/lib/api/errors";
 import {
   buildClientPatchFields,
-  isSecretFieldName,
   useApps,
   useCreateOAuthClient,
   useDeleteOAuthClient,
@@ -16,58 +15,21 @@ import {
   usePatchOAuthClient,
   type CredScope,
   type OAuthClient,
+  type OAuthClientDefinition,
 } from "@/lib/api/apps";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
 import { unwrap } from "@/lib/api/unwrap";
 
-interface Row { name: string; value: string }
-
-/** Names of the fields a client has (non-secret ones are returned by the API; secrets are write-only). */
-function FieldInputs({ rows, onChange, existing }: { rows: Row[]; onChange: (r: Row[]) => void; existing?: boolean }) {
-  return (
-    <div className="space-y-2">
-      {rows.map((r, i) => {
-        const secret = isSecretFieldName(r.name);
-        const id = `ocf-${i}`;
-        return (
-          <div key={i} className="flex gap-2">
-            <input
-              aria-label={`Field name ${i + 1}`}
-              className={inputClass}
-              value={r.name}
-              readOnly={existing}
-              onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
-            />
-            <input
-              id={id}
-              aria-label={`Value of ${r.name || `field ${i + 1}`}`}
-              className={inputClass}
-              type={secret ? "password" : "text"}
-              autoComplete="off"
-              placeholder={existing && secret ? "Leave blank to keep the stored value" : ""}
-              value={r.value}
-              onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))}
-            />
-            {!existing ? (
-              <Button type="button" size="sm" variant="outline" aria-label={`Remove field ${i + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== i))}>×</Button>
-            ) : null}
-          </div>
-        );
-      })}
-      {!existing ? (
-        <Button type="button" size="sm" variant="outline" onClick={() => onChange([...rows, { name: "", value: "" }])}>Add field</Button>
-      ) : null}
-    </div>
-  );
+interface Definition {
+  package_id: string;
+  app_name: string;
+  def: OAuthClientDefinition;
 }
 
-function CreateForm({ scope, onDone }: { scope: CredScope; onDone: () => void }) {
-  const create = useCreateOAuthClient(scope);
+/** Definitions (fields, setup note, redirect URI) come from AppDetail.oauth_clients; no app knowledge lives in the bundle. */
+function useDefinitions(scope: CredScope) {
   const apps = useApps(scope.kind === "workspace" ? scope.id : undefined);
-  const [choice, setChoice] = useState("");
-  const [rows, setRows] = useState<Row[]>([{ name: "client_id", value: "" }, { name: "client_secret", value: "" }]);
-  // Catalogue of (package, client_key) pairs; no app knowledge lives in the bundle.
   const detailQueries = useQueries({
     queries: (apps.data?.items ?? []).map((a) => ({
       queryKey: ["app", a.app_id, ""],
@@ -75,19 +37,82 @@ function CreateForm({ scope, onDone }: { scope: CredScope; onDone: () => void })
       retry: false,
     })),
   });
-  const options = new Map<string, { package_id: string; client_key: string; label: string }>();
+  const defs = new Map<string, Definition>();
   for (const q of detailQueries)
-    for (const m of q.data?.connect ?? [])
-      if (m.client_key) options.set(`${q.data!.package_id}|${m.client_key}`, { package_id: q.data!.package_id, client_key: m.client_key, label: `${q.data!.name} (${m.client_key})` });
+    for (const d of q.data?.oauth_clients ?? [])
+      defs.set(`${q.data!.package_id}|${d.client_key}`, { package_id: q.data!.package_id, app_name: q.data!.name, def: d });
+  return defs;
+}
+
+function RedirectUri({ uri }: { uri: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="font-medium">Redirect URI:</span>
+      <code className="break-all rounded bg-neutral-100 px-1.5 py-0.5">{uri}</code>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => {
+          void navigator.clipboard?.writeText(uri).then(() => setCopied(true));
+        }}
+      >
+        {copied ? "Copied" : "Copy"}
+      </Button>
+    </div>
+  );
+}
+
+/** One input per manifest-defined field; secrets are password inputs and never prefilled. */
+function DefinitionInputs({
+  def,
+  values,
+  onChange,
+  existing,
+}: {
+  def: OAuthClientDefinition;
+  values: Record<string, string>;
+  onChange: (v: Record<string, string>) => void;
+  existing?: boolean;
+}) {
+  return (
+    <div className="space-y-2">
+      {def.setup_note ? <p className="text-sm text-neutral-600">{def.setup_note}</p> : null}
+      <RedirectUri uri={def.redirect_uri} />
+      {def.fields.map((f) => {
+        const id = `ocf-${def.client_key}-${f.name}`;
+        return (
+          <Field key={f.name} id={id} label={f.label}>
+            <input
+              id={id}
+              className={inputClass}
+              type={f.secret ? "password" : "text"}
+              autoComplete="off"
+              placeholder={existing && f.secret ? "Leave blank to keep the stored value" : ""}
+              value={values[f.name] ?? ""}
+              onChange={(e) => onChange({ ...values, [f.name]: e.target.value })}
+            />
+          </Field>
+        );
+      })}
+    </div>
+  );
+}
+
+function CreateForm({ scope, onDone, defs }: { scope: CredScope; onDone: () => void; defs: Map<string, Definition> }) {
+  const create = useCreateOAuthClient(scope);
+  const [choice, setChoice] = useState("");
+  const [values, setValues] = useState<Record<string, string>>({});
+  const selected = defs.get(choice);
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const o = options.get(choice);
-    if (!o) return;
+    if (!selected) return;
     const fields: Record<string, string> = {};
-    for (const r of rows) if (r.name.trim() && r.value !== "") fields[r.name.trim()] = r.value;
+    for (const f of selected.def.fields) if ((values[f.name] ?? "") !== "") fields[f.name] = values[f.name];
     try {
-      await create.mutateAsync({ package_id: o.package_id, client_key: o.client_key, fields });
-      setRows((rs) => rs.map((r) => ({ ...r, value: "" })));
+      await create.mutateAsync({ package_id: selected.package_id, client_key: selected.def.client_key, fields });
+      setValues({});
       onDone();
     } catch {
       // shown below
@@ -96,40 +121,52 @@ function CreateForm({ scope, onDone }: { scope: CredScope; onDone: () => void })
   return (
     <form onSubmit={(e) => void submit(e)} className="space-y-3 rounded-md border border-neutral-200 p-3" aria-label="Add OAuth client">
       <Field id="oc-app" label="App">
-        <select id="oc-app" className={inputClass} value={choice} onChange={(e) => setChoice(e.target.value)} required>
+        <select
+          id="oc-app"
+          className={inputClass}
+          value={choice}
+          onChange={(e) => {
+            setChoice(e.target.value);
+            setValues({});
+          }}
+          required
+        >
           <option value="">Select…</option>
-          {[...options.entries()].map(([k, o]) => (
-            <option key={k} value={k}>{o.label}</option>
+          {[...defs.entries()].map(([k, o]) => (
+            <option key={k} value={k}>{`${o.app_name} (${o.def.client_key})`}</option>
           ))}
         </select>
       </Field>
-      <FieldInputs rows={rows} onChange={setRows} />
+      {selected ? <DefinitionInputs def={selected.def} values={values} onChange={setValues} /> : null}
       {create.error ? <p role="alert" className="text-sm text-red-700">{errorMessage(create.error)}</p> : null}
       <div className="flex gap-2">
-        <Button type="submit" size="sm" disabled={create.isPending || !choice}>Add</Button>
+        <Button type="submit" size="sm" disabled={create.isPending || !selected}>Add</Button>
         <Button type="button" size="sm" variant="outline" onClick={onDone}>Cancel</Button>
       </div>
     </form>
   );
 }
 
-function ClientRow({ scope, c, canOwn }: { scope: CredScope; c: OAuthClient; canOwn: boolean }) {
+function ClientRow({ scope, c, canOwn, def }: { scope: CredScope; c: OAuthClient; canOwn: boolean; def?: OAuthClientDefinition }) {
   const patch = usePatchOAuthClient(scope);
   const del = useDeleteOAuthClient(scope);
   const [mode, setMode] = useState<"none" | "edit" | "delete">("none");
-  const [rows, setRows] = useState<Row[]>([]);
+  const [edits, setEdits] = useState<Record<string, string>>({});
   // A client only owns rows at its own scope (inherited ones are read-only here).
   const mine = c.scope === scope.kind;
   function startEdit() {
-    setRows(Object.keys(c.fields).map((k) => ({ name: k, value: c.fields[k] })));
+    // Non-secret values are prefilled from the API; secrets are write-only and start blank.
+    const init: Record<string, string> = {};
+    for (const f of def?.fields ?? []) init[f.name] = f.secret ? "" : (c.fields[f.name] ?? "");
+    setEdits(init);
     setMode("edit");
   }
   async function save(e: FormEvent) {
     e.preventDefault();
-    const edits: Record<string, string> = {};
-    for (const r of rows) if (r.value !== c.fields[r.name]) edits[r.name] = r.value;
+    const changed: Record<string, string> = {};
+    for (const [k, v] of Object.entries(edits)) if (v !== (c.fields[k] ?? "")) changed[k] = v;
     try {
-      await patch.mutateAsync({ id: c.id, fields: buildClientPatchFields(edits) });
+      await patch.mutateAsync({ id: c.id, fields: buildClientPatchFields(changed) });
       setMode("none");
     } catch {
       // shown below
@@ -157,7 +194,11 @@ function ClientRow({ scope, c, canOwn }: { scope: CredScope; c: OAuthClient; can
       </dl>
       {mode === "edit" ? (
         <form onSubmit={(e) => void save(e)} aria-label={`Edit ${c.client_key}`} className="space-y-2">
-          <FieldInputs rows={rows} onChange={setRows} existing />
+          {def ? (
+            <DefinitionInputs def={def} values={edits} onChange={setEdits} existing />
+          ) : (
+            <p className="text-sm text-neutral-600">No field definition is available for this client.</p>
+          )}
           <p className="text-xs text-neutral-500">Secret values are never shown. Enter a new value to replace one.</p>
           {patch.error ? <p role="alert" className="text-sm text-red-700">{errorMessage(patch.error)}</p> : null}
           <div className="flex gap-2">
@@ -182,6 +223,7 @@ function ClientRow({ scope, c, canOwn }: { scope: CredScope; c: OAuthClient; can
 
 export function OAuthClientsPanel({ scope, canOwn }: { scope: CredScope; canOwn: boolean }) {
   const list = useOAuthClients(scope);
+  const defs = useDefinitions(scope);
   const [adding, setAdding] = useState(false);
   if (list.isPending) return <Loading />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => list.refetch()} />;
@@ -189,7 +231,7 @@ export function OAuthClientsPanel({ scope, canOwn }: { scope: CredScope; canOwn:
     <div className="space-y-3">
       {canOwn ? (
         adding ? (
-          <CreateForm scope={scope} onDone={() => setAdding(false)} />
+          <CreateForm scope={scope} defs={defs} onDone={() => setAdding(false)} />
         ) : (
           <button type="button" className="text-sm underline" onClick={() => setAdding(true)}>Add an OAuth client</button>
         )
@@ -199,7 +241,7 @@ export function OAuthClientsPanel({ scope, canOwn }: { scope: CredScope; canOwn:
       ) : (
         <ul className="space-y-2" aria-label="OAuth clients">
           {list.data.items.map((c) => (
-            <ClientRow key={c.id} scope={scope} c={c} canOwn={canOwn} />
+            <ClientRow key={c.id} scope={scope} c={c} canOwn={canOwn} def={defs.get(`${c.package_id}|${c.client_key}`)?.def} />
           ))}
         </ul>
       )}

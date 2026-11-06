@@ -114,16 +114,27 @@ describe("oauth client secrets", () => {
   it("omits untouched secrets on patch", () => {
     expect(buildClientPatchFields({ client_secret: "", client_id: "n" })).toEqual({ client_id: "n" });
   });
-  it("edit form never prefills secret inputs and renders them as password", async () => {
+  it("edit form is built from the definition; secrets are password inputs, never prefilled", async () => {
+    const detail = {
+      app_id: "a1", package_id: "p", name: "App", connect: [],
+      oauth_clients: [{ client_key: "main", setup_note: "Create an app first.", redirect_uri: "https://x.test/v1/oauth/callback",
+        fields: [{ name: "client_id", label: "Client ID", secret: false }, { name: "client_secret", label: "Client secret", secret: true }] }],
+    };
     vi.stubGlobal("fetch", vi.fn(async (input: Request) => {
       const u = new URL(input.url);
       if (u.pathname === "/v1/workspaces/w1/oauth-clients") return json(200, { items: [{ ...client, fields: { client_id: "abc", client_secret: "" } }] });
+      if (u.pathname === "/v1/apps") return json(200, { items: [{ app_id: "a1", package_id: "p" }] });
+      if (u.pathname === "/v1/apps/a1") return json(200, detail);
       return json(200, { items: [] });
     }));
     wrap(<OAuthClientsPanel scope={{ kind: "workspace", id: "w1" }} canOwn />);
-    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-    const secret = screen.getByLabelText("Value of client_secret");
+    await screen.findByText("main", { exact: false });
+    await waitFor(() => fireEvent.click(screen.getByRole("button", { name: "Edit" })));
+    const secret = await screen.findByLabelText("Client secret");
     expect(secret).toHaveAttribute("type", "password");
     expect(secret).toHaveValue("");
+    expect(screen.getByLabelText("Client ID")).toHaveValue("abc");
+    expect(screen.getByText("Create an app first.")).toBeInTheDocument();
+    expect(screen.getByText("https://x.test/v1/oauth/callback")).toBeInTheDocument();
   });
 });

@@ -176,30 +176,12 @@ export function usePutAppAvailability(orgId: string) {
 
 // ---- connect (C-14) ----
 
-export interface ConnectRequest {
-  scope: "organization" | "workspace";
-  workspace_id?: string;
-  method_id: string;
-  fields?: Record<string, string>;
-  oauth_client_id?: string;
-  access_level?: string;
-  reconnect_connection_id?: string;
-}
-export type ConnectResult =
-  | { kind: "redirect"; url: string }
-  | { kind: "connected"; connection: Connection; missing_scopes: string[] };
+export type ConnectRequest = components["schemas"]["ConnectRequest"];
+export type ConnectResult = components["schemas"]["ConnectResponse"];
+export type OAuthClientDefinition = components["schemas"]["AppOauthClient"];
 
-// TODO(FE-030): replace with the generated `/v1/apps/{app}/connect` operation once BE-043 lands in schema.d.ts.
-export async function connectApp(app: string, body: ConnectRequest): Promise<ConnectResult> {
-  const res = await fetch(`/v1/apps/${encodeURIComponent(app)}/connect`, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const json: unknown = await res.json().catch(() => null);
-  if (!res.ok) throw ApiError.fromBody(json, res.status);
-  return json as ConnectResult;
+export function connectApp(app: string, body: ConnectRequest): Promise<ConnectResult> {
+  return unwrap(api.POST("/v1/apps/{app}/connect", { params: { path: { app } }, body }));
 }
 
 export const CONNECT_MESSAGE = "aurora:connected";
@@ -290,11 +272,6 @@ export function toggleAllow(allow: AppAvailability["allow"], appId: string, work
   return allow.some(same)
     ? allow.filter((e) => !same(e))
     : [...allow, workspaceId ? { app_id: appId, workspace_id: workspaceId } : { app_id: appId }];
-}
-
-/** Secret fields of an OAuth client are write-only: names that look secret render as password inputs and are never prefilled. */
-export function isSecretFieldName(name: string): boolean {
-  return /secret|token|password|private/i.test(name);
 }
 
 /** On PATCH only changed/non-empty fields are sent, so untouched secrets keep their stored value. */
