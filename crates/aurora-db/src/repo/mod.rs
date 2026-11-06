@@ -7,6 +7,7 @@ pub mod audit;
 pub mod cli_logins;
 pub mod email_tokens;
 pub mod gateway;
+pub mod invitations;
 pub mod members;
 pub mod orgs;
 pub mod policy;

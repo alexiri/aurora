@@ -86,6 +86,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::admin::router())
         .merge(domains::audit::router())
         .merge(domains::keys::router())
+        .merge(domains::invitations::router())
         .merge(domains::cli_login::router())
 }
 

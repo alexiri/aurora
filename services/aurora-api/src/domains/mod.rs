@@ -7,6 +7,7 @@ pub mod audit;
 pub mod auth;
 pub mod cli_login;
 pub mod instance;
+pub mod invitations;
 pub mod keys;
 pub mod me;
 pub mod tenancy;
