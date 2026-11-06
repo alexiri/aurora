@@ -43,7 +43,7 @@ Last reconciled with git history: 2026-11-06 night (after FE-051 merge, 55480baf
 | M5/10§attachments | Attachments in/out (BlobStore, routes, `file.in` S-11, `send_file`) | P0 | BE-064, RUN-005 | FE-051 | M4 | done; e2e todo (TEST-014) | attachments 9; runner inbound 3, supervisor inbound 9 |
 | M5/07§actions | Action approvals, agent links, peer tasks, app-turn cap, agent tools | P0 | BE-065 | FE-051 | API-005 | done | action_approvals 10, peer_tasks 12 |
 | M5/12§catalogue | Full phase-0 platform tool catalogue | P0 | BE-060..065; apps tools BE-066 (in progress); messaging tools BE-075 | — | — | in-progress | |
-| M5/12§claude-code | `claude-code` adapter + conformance | P0 | SUP-004 | — | SUP-001 | done offline; live conformance **blocked** (no LiteLLM endpoint) | adapter tests |
+| M5/12§claude-code | `claude-code` adapter + conformance | P0 | SUP-004 | — | SUP-001 | done offline; live conformance via LiteLLM + scripted mock (I-30, TEST-017) todo | adapter tests |
 | M5/18 | Hosted M5 suites (18) | P0 | TEST-014 | — | M5 above, FIX-002 | todo | |
 | M6/13§content | Neutral content, cards, action tokens, capabilities/fallbacks | P0 | CHAN-001 | — | — | done | channels tests; I-26 |
 | M6/13§contract | Connector contract v1 types, SDK, fake connector | P0 | CON-001, TEST-015 fixes | — | CHAN-001 | done | connector tests; FUP-M6 closed |
@@ -52,7 +52,7 @@ Last reconciled with git history: 2026-11-06 night (after FE-051 merge, 55480baf
 | M6/13§7 | Conformance suite (fake core) + e2e channel scenario | P0 | TEST-015, TEST-016 | — | CON-001 / BE-075 | conformance done (12/12); e2e todo | `scripts/conformance.sh` |
 | M7/11§k8s | Kubernetes runner backend | P0 | RUN-004 | — | RUN-003 | done (no cluster: mock API only) | k8s_mock 15, unit 15 |
 | M7/15§helm | Helm chart (jobs, policies, namespaces, RBAC, routing) | P0 | OPS-010 | — | — | done (FUP-M7) | `helm lint`, `helm template`; ConfigMap loads (RUN-004) |
-| M7/18 | kind e2e, SEC-02 on k8s, performance budgets, upgrade test | P0 | OPS-011 | — | RUN-004 | **blocked** for kind (no cluster on host); rest todo | |
+| M7/18 | kind e2e, SEC-02 on k8s, performance budgets, upgrade test | P0 | OPS-011 | — | RUN-004 | todo: kind e2e (OPS-011, kind installed), perf + upgrade (OPS-014) | |
 | M7/15§docs | Operator docs (install, LLM endpoints, runners, plugins, backups) | P0 | OPS-012 (+ OPS-013, FIX-003 for the gaps it found) | — | — | done (docs); gap fixes in progress | `docs/operator/` |
 | SEC-01..39 | Security invariants, each with a proving test (`17`) | P0 | per milestone | — | — | in-progress | proven so far: SEC-01/02/09/24/25/26/34 (TEST-013), SEC-35..39 (GW-005, TEST-020), CSRF (BE-010); full map at final audit |
 | P1/20 | Mattermost connector | P1 (later phase) | — | — | Phase 0 exit | out of scope now | |

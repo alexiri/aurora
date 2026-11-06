@@ -140,7 +140,9 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | TEST-016 | e2e-hosted M6 scenario (fake platform DM → Daneel → approve from card) | e2e | todo | BE-072..075 | — | |
 | OPS-010 | Helm chart | Ops | done | — | Sonnet | `helm lint`, `helm template` |
 | RUN-004 | Kubernetes backend (+ runner.k8s.core_namespace config fix) | Rust | done (e65ec66d) | RUN-003 | Sonnet (Orca worker, worktree) + Opus (kube → aws-lc-rs) | config 18, k8s unit 15, k8s_mock 15 (fake API server), runner 10; clippy; cargo deny ok; helm-rendered ConfigMap loads |
-| OPS-011 | kind e2e, perf budgets, upgrade test, operator docs | Ops | todo (kind blocked: no cluster) | RUN-004 | — | |
+| OPS-011 | kind e2e (Helm from scratch, k8s backend, NetworkPolicy/SEC-02 probes) | Ops | todo (briefed; kind installed by owner) | RUN-004, OPS-013 | Sonnet (worktree) | |
+| TEST-017 | Scripted `aurora-mock-llm` behind real LiteLLM (I-30); live claude-code conformance + hosted CLI e2e | e2e | todo (briefed) | SUP-004, TEST-013 | Sonnet (worktree) | |
+| OPS-014 | Performance budgets + upgrade test | Ops | todo | OPS-011 | — | |
 
 ## Open spec issues (found by PROTO-001; S-06..S-11 resolved)
 
@@ -159,8 +161,8 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 
 ## Blockers
 
-- No Kubernetes cluster (kind/kubectl not installed) → kind e2e and SEC-02-on-k8s probes cannot run on this host.
-- No LiteLLM endpoint configured → M5 live claude-code conformance cannot run.
+- (resolved 2026-11-06) kind v0.33 + kubectl installed by the owner → OPS-011.
+- (resolved 2026-11-06) No real LiteLLM endpoint: owner chose a mock behind compose → I-30, TEST-017.
 
 ## Standing notes (not blockers)
 
