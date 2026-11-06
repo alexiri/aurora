@@ -621,6 +621,20 @@ pub struct SandboxViewRow {
     pub armed_watch: bool,
 }
 
+/// The env/files hash recorded when the agent's current boot started (`resource_profile`).
+pub async fn boot_app_inputs_hash(
+    conn: &mut PgConnection,
+    agent: Uuid,
+) -> Result<Option<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT resource_profile->>'app_inputs_hash' FROM sandboxes WHERE agent_id = $1",
+    )
+    .bind(agent)
+    .fetch_optional(conn)
+    .await?
+    .flatten())
+}
+
 pub async fn sandbox_view(
     conn: &mut PgConnection,
     agent: Uuid,

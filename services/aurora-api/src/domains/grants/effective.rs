@@ -11,9 +11,18 @@ use aurora_policy::eval::{MemoryCounter, ScopePolicy, Verdict, evaluate};
 use aurora_policy::facts::{Level, SecretKind};
 use aurora_policy::rule::Action;
 use aurora_policy::{Credential, RequestIdentity};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 pub async fn compute(state: &AppState, agent: &AgentRow) -> Result<Effective, ApiError> {
+    Ok(compute_with_apps(state, agent).await?.0)
+}
+
+/// The effective view plus the ids of the apps with at least one selected (granted) connection.
+pub async fn compute_with_apps(
+    state: &AppState,
+    agent: &AgentRow,
+) -> Result<(Effective, BTreeSet<String>), ApiError> {
+    let mut granted_apps = BTreeSet::new();
     let org: ScopePolicy =
         to_scope_policy(policy::load_scope_rows(&state.pool, agent.org_id, None, false).await?)?;
     let ws: ScopePolicy = to_scope_policy(
@@ -95,6 +104,9 @@ pub async fn compute(state: &AppState, agent: &AgentRow) -> Result<Effective, Ap
                 .map(|r| r.logical_id)
                 .collect();
             let selected = !selected_by.is_empty();
+            if selected {
+                granted_apps.insert(c.app_id.clone());
+            }
             credentials.push(EffectiveCredential {
                 kind: "connection".into(),
                 id: c.id,
@@ -165,7 +177,7 @@ pub async fn compute(state: &AppState, agent: &AgentRow) -> Result<Effective, Ap
             }
         }
     }
-    Ok(Effective { credentials, tools })
+    Ok((Effective { credentials, tools }, granted_apps))
 }
 
 fn verdict_str(v: Verdict) -> &'static str {

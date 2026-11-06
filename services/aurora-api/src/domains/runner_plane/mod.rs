@@ -5,7 +5,7 @@
 //! deliberately **not** part of the dashboard OpenAPI document (routes are added with
 //! `OpenApiRouter::route`, which carries no schema).
 mod auth;
-mod boot;
+pub(crate) mod boot;
 mod routes;
 pub mod service;
 mod work;

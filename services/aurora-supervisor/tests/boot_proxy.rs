@@ -102,7 +102,7 @@ fn boot_document_files_env_and_dumpable() {
 
     let doc = BootDocument::parse(&boot_json(&dir)).unwrap();
     assert_eq!(doc.agent.handle, "daneel");
-    let skipped = boot::write_boot_files(&doc, &dir.join("ca.pem")).unwrap();
+    let skipped = boot::write_boot_files_in(&doc, &dir.join("ca.pem"), &dir).unwrap();
     assert_eq!(skipped, [dir.join("a/user.conf")]);
     assert_eq!(
         std::fs::read_to_string(dir.join("a/user.conf")).unwrap(),
@@ -142,4 +142,46 @@ fn boot_document_files_env_and_dumpable() {
         assert!(l.trim_end().ends_with('0'));
     }
     std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn boot_files_are_confined_to_the_home() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+    let root = std::env::temp_dir().join(format!("aurora-sup-{}", uuid::Uuid::now_v7()));
+    let home = root.join("home");
+    let outside = root.join("outside");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, home.join("link")).unwrap();
+    let doc = |path: &std::path::Path| {
+        let d = json!({
+            "v": 1,
+            "sandbox_id": "00000000-0000-0000-0000-000000000001",
+            "boot_id": "00000000-0000-0000-0000-000000000002",
+            "agent": {"id": "00000000-0000-0000-0000-000000000003", "handle": "d", "name": "D"},
+            "runner_url": "ws://r:4105/v1/supervisor", "bootstrap_token": "aup_x",
+            "gateway": {"proxy": "g:4102", "boot_token": "aub_x"}, "ca_pem": "PEM",
+            "files": [{"path": path, "mode": "0600", "content_b64": b64("x"), "only_if_absent_or_sentinel": true}],
+            "harness": {"id": "fake"}
+        });
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(d.to_string())
+    };
+    let ca = root.join("ca.pem");
+    // inside the home: written with the mode, parents created
+    let ok = BootDocument::parse(&doc(&home.join(".config/app/c.json"))).unwrap();
+    boot::write_boot_files_in(&ok, &ca, &home).unwrap();
+    let m = std::fs::metadata(home.join(".config/app/c.json")).unwrap();
+    assert_eq!(m.permissions().mode() & 0o777, 0o600);
+    // `..` is refused at parse time
+    assert!(BootDocument::parse(&doc(&home.join("../outside/x"))).is_err());
+    // an absolute path outside the home, and a symlinked directory leading out, are refused
+    for p in [outside.join("x"), home.join("link/x")] {
+        let d = BootDocument::parse(&doc(&p)).unwrap();
+        assert!(boot::write_boot_files_in(&d, &ca, &home).is_err(), "{p:?}");
+        assert!(!outside.join("x").exists());
+    }
+    // the default home is /workspace
+    let d = BootDocument::parse(&doc(&outside.join("y"))).unwrap();
+    assert!(boot::write_boot_files(&d, &ca).is_err());
 }

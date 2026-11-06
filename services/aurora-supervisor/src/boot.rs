@@ -18,6 +18,8 @@ pub const BOOT_ENV: &str = "AURORA_BOOT";
 pub const MAX_BOOT_BYTES: usize = 64 * 1024;
 pub const SENTINEL: &str = "aurora-managed";
 pub const DEFAULT_CA_PATH: &str = "/run/aurora/ca.pem";
+/// Boot `files` are confined to the sandbox home.
+pub const HOME_DIR: &str = "/workspace";
 
 #[derive(Debug, thiserror::Error)]
 pub enum BootError {
@@ -117,6 +119,12 @@ impl BootDocument {
             if !f.path.is_absolute() {
                 return Err(BootError::Invalid("file path must be absolute"));
             }
+            if f.path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                return Err(BootError::Invalid("file path must not contain `..`"));
+            }
         }
         Ok(())
     }
@@ -155,9 +163,54 @@ fn write_file(path: &Path, content: &[u8], mode: u32) -> Result<(), BootError> {
     f.write_all(content).map_err(io_err(path))
 }
 
-/// Write boot `files` and the CA bundle. Returns the paths skipped because they exist without the
-/// `aurora-managed` sentinel (`only_if_absent_or_sentinel`).
+/// Refuse `path` unless it is inside `home` (lexically, and after resolving the deepest existing
+/// ancestor, so a symlink inside the home cannot lead out of it) and is not itself a symlink.
+fn confine(path: &Path, home: &Path) -> Result<(), BootError> {
+    let escape = || BootError::Invalid("file path escapes the home");
+    if !path.starts_with(home)
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(escape());
+    }
+    let real_home = home.canonicalize().map_err(io_err(home))?;
+    let mut anc = path.parent();
+    while let Some(a) = anc {
+        if a.symlink_metadata().is_ok() {
+            let real = a.canonicalize().map_err(io_err(a))?;
+            if !real.starts_with(&real_home) {
+                return Err(escape());
+            }
+            break;
+        }
+        anc = a.parent();
+    }
+    if path
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        return Err(escape());
+    }
+    Ok(())
+}
+
+/// Write boot `files` (confined to [`HOME_DIR`]) and the CA bundle. Returns the paths skipped
+/// because they exist without the `aurora-managed` sentinel (`only_if_absent_or_sentinel`).
 pub fn write_boot_files(doc: &BootDocument, ca_path: &Path) -> Result<Vec<PathBuf>, BootError> {
+    write_boot_files_in(doc, ca_path, Path::new(HOME_DIR))
+}
+
+/// [`write_boot_files`] with an explicit home directory.
+pub fn write_boot_files_in(
+    doc: &BootDocument,
+    ca_path: &Path,
+    home: &Path,
+) -> Result<Vec<PathBuf>, BootError> {
+    // Validate every path before writing anything.
+    for f in &doc.files {
+        confine(&f.path, home)?;
+    }
     write_file(ca_path, doc.ca_pem.as_bytes(), 0o644)?;
     let mut skipped = Vec::new();
     for f in &doc.files {
