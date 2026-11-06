@@ -6,8 +6,14 @@
 //!   (`plane.rs`, `auth.rs`; machine plane, excluded from the dashboard OpenAPI document).
 mod admin;
 mod auth;
+pub mod bus;
 mod dto;
+mod files;
+pub mod inbox;
+mod ingest;
+mod link;
 mod manifest;
+pub mod ops;
 mod plane;
 mod routes;
 
@@ -21,6 +27,10 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .merge(routes::router())
         .merge(plane::router())
+        .merge(ingest::router())
+        .merge(ops::router())
+        .merge(files::router())
+        .merge(link::router())
 }
 
 /// Seal context of an integration's platform credentials.

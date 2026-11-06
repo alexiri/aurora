@@ -11,6 +11,8 @@ pub const APPROVAL_EXPIRY_GRACE: Duration = Duration::from_secs(30);
 /// Pending rows of gateways unseen this long become `abandoned`.
 pub const GATEWAY_UNSEEN: Duration = Duration::from_secs(60);
 pub const APPROVAL_SWEEP_EVERY: Duration = Duration::from_secs(10);
+/// Lapsed connector-op lease sweep (BE-071).
+pub const OP_LEASE_SWEEP_EVERY: Duration = Duration::from_secs(10);
 pub const ATTACHMENT_SWEEP_EVERY: Duration = Duration::from_secs(3600);
 /// Action-approval and peer-task expiry (docs/05 §Background jobs).
 pub const ACTION_SWEEP_EVERY: Duration = Duration::from_secs(60);
@@ -70,6 +72,19 @@ pub fn spawn(pool: PgPool, retention_days: u32) {
                 Ok(n) if n > 0 => tracing::info!(closed = n, "peer-task sweep"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e.message(), "peer-task sweep failed"),
+            }
+        }
+    });
+    let cp = pool.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(OP_LEASE_SWEEP_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            match crate::domains::connectors::ops::sweep_lapsed(&cp).await {
+                Ok(n) if n > 0 => tracing::info!(moved = n, "connector op lease sweep"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e.message(), "connector op lease sweep failed"),
             }
         }
     });

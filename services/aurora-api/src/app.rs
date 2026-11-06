@@ -63,6 +63,8 @@ pub struct AppState {
     pub approval_bus: Arc<crate::domains::approvals::bus::ApprovalBus>,
     /// Shared `aurora_conversation`/`aurora_delta` fan-out (transcript SSE) and delta coalescer.
     pub conversation_bus: Arc<crate::domains::conversations::bus::ConversationBus>,
+    /// Shared `aurora_ops`/`aurora_op_result`/`aurora_inbox` fan-out (connector plane).
+    pub connector_bus: Arc<crate::domains::connectors::bus::ConnectorBus>,
     /// HKDF-derived keys (OIDC state, ...).
     pub derived: Arc<aurora_crypto::DerivedKeys>,
     /// OIDC discovery cache and HTTP client.
@@ -138,6 +140,7 @@ impl AppState {
             llm_http,
             approval_bus: Arc::default(),
             conversation_bus: Arc::default(),
+            connector_bus: Arc::default(),
             derived,
             oidc,
             connect,
