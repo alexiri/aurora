@@ -1,8 +1,10 @@
 //! Validation rules (09 §6): in-manifest rules ([`manifest`]) and full package
-//! rules ([`package`]). WIT inspection of `hooks.wasm` is out of scope (I-02).
+//! rules ([`package`]). `hooks.wasm` world-shape checks: [`hooks_component`].
+mod hooks_component;
 mod package_rules;
 mod wildcard;
 
+pub use hooks_component::hooks_component;
 pub use package_rules::{ValidationContext, package, zone_too_broad};
 pub use wildcard::wildcards;
 
@@ -254,14 +256,14 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
     }
     // token
     if let Some(t) = &app.token {
-        if let Some(c) = &t.client {
-            if !clients.contains(c.as_str()) {
-                cx.v(
-                    "unknown_oauth_client",
-                    "/token/client",
-                    format!("no oauth client `{c}`"),
-                );
-            }
+        if let Some(c) = &t.client
+            && !clients.contains(c.as_str())
+        {
+            cx.v(
+                "unknown_oauth_client",
+                "/token/client",
+                format!("no oauth client `{c}`"),
+            );
         }
         if t.kind == TokenKind::Hook {
             used.insert(Hook::TokenMint);
@@ -280,14 +282,14 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
         let mut ids = BTreeSet::new();
         for (gname, g) in [("read", &t.read), ("write", &t.write)] {
             let Some(g) = g else { continue };
-            if let Some(w) = &g.wildcard {
-                if !ids.insert(w.id.as_str()) {
-                    cx.v(
-                        "duplicate_tool_id",
-                        &format!("/tools/{gname}/wildcard/id"),
-                        format!("duplicate tool id `{}`", w.id),
-                    );
-                }
+            if let Some(w) = &g.wildcard
+                && !ids.insert(w.id.as_str())
+            {
+                cx.v(
+                    "duplicate_tool_id",
+                    &format!("/tools/{gname}/wildcard/id"),
+                    format!("duplicate tool id `{}`", w.id),
+                );
             }
             for (j, it) in g.items.iter().enumerate() {
                 let p = format!("/tools/{gname}/items/{j}");
@@ -379,14 +381,14 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                     &format!("{p}/link"),
                     "approval link must be https",
                 );
-            } else if let Some(h) = url_host(raw).filter(|h| !h.contains('{')) {
-                if !cx.host_declared(h) {
-                    cx.v(
-                        "link_host_undeclared",
-                        &format!("{p}/link"),
-                        format!("link host `{h}` is not declared"),
-                    );
-                }
+            } else if let Some(h) = url_host(raw).filter(|h| !h.contains('{'))
+                && !cx.host_declared(h)
+            {
+                cx.v(
+                    "link_host_undeclared",
+                    &format!("{p}/link"),
+                    format!("link host `{h}` is not declared"),
+                );
             }
         }
         if a.summarize.is_some() {
@@ -439,14 +441,14 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
             }
         }
     }
-    if let Some(d) = &app.database {
-        if d.engine != "postgres" {
-            cx.v(
-                "database_engine",
-                "/database/engine",
-                "only postgres is supported",
-            );
-        }
+    if let Some(d) = &app.database
+        && d.engine != "postgres"
+    {
+        cx.v(
+            "database_engine",
+            "/database/engine",
+            "only postgres is supported",
+        );
     }
 }
 

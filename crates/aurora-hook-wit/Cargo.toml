@@ -1,0 +1,11 @@
+[package]
+name = "aurora-hook-wit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Normative WIT world (aurora:plugin@1.0.0) for app-plugin hooks"
+
+[lints]
+workspace = true

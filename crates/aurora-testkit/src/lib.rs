@@ -138,18 +138,18 @@ async fn drop_database(server_url: &str, name: &str) -> anyhow::Result<()> {
 /// Resolve the server URL: env var, then `.env`, then the podman fallback.
 async fn server_url() -> anyhow::Result<String> {
     for key in [TEST_DB_ENV, "DATABASE_URL"] {
-        if let Ok(v) = std::env::var(key) {
-            if !v.is_empty() {
-                return Ok(v);
-            }
+        if let Ok(v) = std::env::var(key)
+            && !v.is_empty()
+        {
+            return Ok(v);
         }
     }
     let env = read_dotenv()?;
     for key in [TEST_DB_ENV, "DATABASE_URL"] {
-        if let Some(v) = env.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()) {
-            if !v.is_empty() {
-                return Ok(v);
-            }
+        if let Some(v) = env.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+            && !v.is_empty()
+        {
+            return Ok(v);
         }
     }
     container_url().await

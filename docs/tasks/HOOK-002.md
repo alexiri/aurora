@@ -13,3 +13,7 @@
 - [ ] `cargo test -p aurora-hookhost`, clippy, fmt, guards (wasmtime only in hookhost/registry dev paths).
 
 ## Dependencies: HOOK-001, BE-041 (internal routes; mockable). Agent: rust-developer (Sonnet).
+
+## Hand-off from HOOK-001 (must do)
+- Decision I-22: link the allowed WASI 0.2 interfaces with empty sandboxes (wasmtime-wasi `WasiCtxBuilder` with no env/args/preopens, stdin closed, stdout/stderr captured into the capped redacted log); never link filesystem/sockets.
+- `wasmtime = { version = "38", default-features = false }` is pinned in root deps — enable the features you need in hookhost's Cargo.toml (`component-model`, `cranelift`, `runtime`, plus `wasmtime-wasi` matching version). Guests for tests: follow `crates/aurora-registry/tests/guest_components.rs` (standalone cargo projects built with `--target wasm32-wasip2` into `target/hook-guests`); SDK: `aurora-plugin-sdk` (`Hooks` trait + `export_hooks!`).

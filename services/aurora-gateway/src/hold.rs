@@ -5,18 +5,82 @@
 //! deadline passes, the client goes away or the gateway stops. The row is the
 //! source of truth; NOTIFY events only shorten the wait (2 s poll fallback).
 
+use crate::apps::AppMatch;
 use crate::auth::RequestIdentity;
 use crate::hygiene::AuroraHeaders;
 use crate::invalidation::{Hub, stopped};
+use crate::snapshot::Loaded;
 use aurora_db::PgPool;
 use aurora_db::bus::{Channel, notify};
 use aurora_db::repo::gateway::{self as repo, NewApproval};
 use aurora_summary::ApprovalSummary;
+use aurora_summary::template;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
 use uuid::Uuid;
+
+/// Request facts for [`build_summary`].
+pub struct SummaryRequest<'a> {
+    pub method: &'a str,
+    pub host: &'a str,
+    /// Redacted, without query.
+    pub path: &'a str,
+    pub query: Option<&'a str>,
+    pub content_type: Option<&'a str>,
+    /// Case-insensitive request header lookup.
+    pub header: &'a dyn Fn(&str) -> Option<String>,
+    pub body_prefix: &'a [u8],
+    pub truncated: bool,
+}
+
+/// The one approval-summary entry point (live holds and `check-snapshot`): the tool's
+/// template when the app declares one, else the generic redacting summary.
+/// Hook seam (HOOK-004): when `template::wants_hook(approval)`, call the hook first and
+/// only then fall through to this function.
+pub fn build_summary(
+    l: Option<&Loaded>,
+    app: Option<&AppMatch<'_>>,
+    tool_id: Option<&str>,
+    r: &SummaryRequest<'_>,
+) -> ApprovalSummary {
+    if let (Some(l), Some(m)) = (l, app)
+        && let Some(a) = tool_id.and_then(|t| m.app.approvals.get(t))
+    {
+        let declared: Vec<&str> = l
+            .snapshot
+            .hosts
+            .iter()
+            .filter(|h| h.app_id == m.app.app_id)
+            .map(|h| h.host.as_str())
+            .collect();
+        let injected = template::injected_header_names(&m.entry.inject);
+        return template::summarize(
+            a,
+            &template::Input {
+                host: r.host,
+                path: r.path,
+                query: r.query,
+                header: r.header,
+                body_prefix: r.body_prefix,
+                truncated: r.truncated,
+                declared_hosts: &declared,
+                web_hosts: &m.app.about.web_hosts,
+                injected_headers: &injected,
+            },
+        );
+    }
+    aurora_summary::generic(
+        r.method,
+        r.host,
+        r.path,
+        r.query,
+        r.content_type,
+        r.body_prefix,
+        r.truncated,
+    )
+}
 
 pub const POLL_INTERVAL: Duration = Duration::from_secs(2);
 

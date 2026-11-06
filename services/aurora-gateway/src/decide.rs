@@ -648,14 +648,26 @@ impl RequestHandler for PolicyHandler {
         {
             // 8. approval hold (nothing decrypted yet).
             let red_path = crate::reqlog::redact_path(&path);
-            let summary = aurora_summary::generic(
-                &ctx.method,
-                &host,
-                &red_path,
-                query.as_deref(),
-                content_type.as_deref(),
-                &peek,
-                peek_truncated,
+            let hdr = |n: &str| {
+                headers
+                    .get(n)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_owned)
+            };
+            let summary = crate::hold::build_summary(
+                registry.as_deref(),
+                app_match.as_ref(),
+                ctx.tool_id.as_deref(),
+                &crate::hold::SummaryRequest {
+                    method: &ctx.method,
+                    host: &host,
+                    path: &red_path,
+                    query: query.as_deref(),
+                    content_type: content_type.as_deref(),
+                    header: &hdr,
+                    body_prefix: &peek,
+                    truncated: peek_truncated,
+                },
             );
             let outcome = holds
                 .hold(HoldRequest {

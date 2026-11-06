@@ -1,6 +1,9 @@
-//! aurora-summary: approval summaries (docs/09 §Approval summaries). M2 ships the
-//! generic redacting summarizer; templates and hooks are M3.
+//! aurora-summary: approval summaries (docs/09 §3.4 `approvals`, §5 decoders). The
+//! generic redacting summarizer plus the template summarizer ([`template`]); the hook
+//! call (`summarize: hook`) is made by the caller before [`template::summarize`].
 #![forbid(unsafe_code)]
+
+pub mod template;
 
 use aurora_core::limits::{
     SUMMARY_FIELDS_MAX, SUMMARY_TEXT_MAX, SUMMARY_TITLE_MAX, SUMMARY_VALUE_MAX,

@@ -145,10 +145,10 @@ impl Ca {
         let host = crate::guard::normalize_host(host);
         {
             let mut c = self.leaves.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(l) = c.get(&host) {
-                if l.minted.elapsed() + LEAF_MIN_REMAINING < LEAF_VALIDITY {
-                    return Ok(l.config.clone());
-                }
+            if let Some(l) = c.get(&host)
+                && l.minted.elapsed() + LEAF_MIN_REMAINING < LEAF_VALIDITY
+            {
+                return Ok(l.config.clone());
             }
         }
         let config = self.mint(&host)?;

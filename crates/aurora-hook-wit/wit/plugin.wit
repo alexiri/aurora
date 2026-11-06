@@ -1,0 +1,55 @@
+package aurora:plugin@1.0.0;
+
+interface types {
+  record kv { key: string, value: string }
+  record http-request { method: string, url: string, headers: list<kv>, body: option<list<u8>> }
+  record http-response { status: u16, headers: list<kv>, body: list<u8> }
+  variant fetch-error { denied(string), timeout, too-large, network(string) }
+  enum log-level { debug, info, warn, error }
+  variant hook-error { unsupported, invalid-input(string), upstream(string), reauth-required(string), internal(string) }
+
+  record authorize-input  { app-id: string, method-id: string, client: list<kv>, redirect-uri: string,
+                            state: string, scopes: list<string>, access-level: option<string>,
+                            fields: list<kv>, context: list<kv> }
+  record authorize-output { url: string, continuation: option<string> }
+
+  variant exchange-source { oauth-callback(list<kv>), form(list<kv>) }
+  record exchange-input   { app-id: string, method-id: string, source: exchange-source, client: list<kv>,
+                            client-secret: list<kv>, redirect-uri: string, pkce-verifier: option<string>,
+                            continuation: option<string>, context: list<kv> }
+  record connected        { credentials: list<kv>, metadata: list<kv>, scopes: list<string>, label: string,
+                            expires-at: option<u64>, tenant-host: option<string> }
+  record continue-with    { url: string, continuation: string }
+  variant exchange-output { connected(connected), continue(continue-with) }
+
+  record mint-input       { app-id: string, credentials: list<kv>, metadata: list<kv>,
+                            tenant-host: option<string>, client: list<kv>, client-secret: list<kv>, context: list<kv> }
+  record mint-output      { credentials: list<kv>, expires-at: u64 }
+
+  record summarize-input  { app-id: string, tool-id: option<string>, method: string, host: string, path: string,
+                            query: list<kv>, headers: list<kv>, body-prefix: list<u8>, truncated: bool }
+  record summary          { title: string, fields: list<kv>, text: option<string>, link: option<string>,
+                            group: option<string> }
+}
+
+interface host {
+  use types.{http-request, http-response, fetch-error, log-level};
+  fetch: func(req: http-request) -> result<http-response, fetch-error>;
+  log: func(level: log-level, message: string);
+  random-bytes: func(len: u32) -> list<u8>;
+  now-unix-seconds: func() -> u64;
+}
+
+interface hooks {
+  use types.{authorize-input, authorize-output, exchange-input, exchange-output, mint-input, mint-output,
+             summarize-input, summary, hook-error};
+  connect-authorize: func(input: authorize-input) -> result<authorize-output, hook-error>;
+  connect-exchange:  func(input: exchange-input)  -> result<exchange-output, hook-error>;
+  token-mint:        func(input: mint-input)      -> result<mint-output, hook-error>;
+  approval-summarize: func(input: summarize-input) -> result<summary, hook-error>;
+}
+
+world plugin {
+  import host;
+  export hooks;
+}

@@ -45,17 +45,17 @@ pub fn package(
     egress(&m, ctx, &mut out);
     hooks_wasm(&m, pkg, &mut out);
     for (i, a) in m.apps.iter().enumerate() {
-        if let Some(owner) = ctx.active_app_ids.get(&a.about.id) {
-            if *owner != m.package.id {
-                out.push(Violation::new(
-                    "duplicate_app_id",
-                    format!("/apps/{i}/about/id"),
-                    format!(
-                        "app id `{}` is already used by package `{owner}`",
-                        a.about.id
-                    ),
-                ));
-            }
+        if let Some(owner) = ctx.active_app_ids.get(&a.about.id)
+            && *owner != m.package.id
+        {
+            out.push(Violation::new(
+                "duplicate_app_id",
+                format!("/apps/{i}/about/id"),
+                format!(
+                    "app id `{}` is already used by package `{owner}`",
+                    a.about.id
+                ),
+            ));
         }
     }
     out
@@ -76,15 +76,8 @@ fn hooks_wasm(m: &Manifest, pkg: &Package, out: &mut Vec<Violation>) {
             HOOKS_WASM,
             "hooks.wasm present but permissions.hooks is empty",
         ));
-    } else if pkg
-        .file(HOOKS_WASM)
-        .is_some_and(|b| !b.starts_with(b"\0asm"))
-    {
-        out.push(Violation::new(
-            "hooks_wasm_invalid",
-            HOOKS_WASM,
-            "not a WebAssembly binary",
-        ));
+    } else if let Some(bytes) = pkg.file(HOOKS_WASM) {
+        out.extend(super::hooks_component(HOOKS_WASM, bytes));
     }
 }
 

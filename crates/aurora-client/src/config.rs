@@ -61,11 +61,11 @@ impl Config {
     /// Atomic write, file mode 0600, parent directory 0700 when created.
     pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
         let text = toml::to_string_pretty(self).map_err(|e| ConfigError::Parse(e.to_string()))?;
-        if let Some(dir) = path.parent() {
-            if !dir.exists() {
-                std::fs::create_dir_all(dir)?;
-                std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-            }
+        if let Some(dir) = path.parent()
+            && !dir.exists()
+        {
+            std::fs::create_dir_all(dir)?;
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
         }
         let tmp = path.with_extension("toml.tmp");
         let _ = std::fs::remove_file(&tmp);

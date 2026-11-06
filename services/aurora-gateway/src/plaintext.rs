@@ -79,13 +79,13 @@ impl PlaintextCache {
         version: i64,
     ) -> Result<Arc<Secret<Vec<u8>>>, PlaintextError> {
         let key = (vref.to_column(), version);
-        if let Ok(mut m) = self.map.lock() {
-            if let Some(e) = m.get(&key) {
-                if e.expires > Instant::now() {
-                    return Ok(e.value.clone());
-                }
-                m.remove(&key);
+        if let Ok(mut m) = self.map.lock()
+            && let Some(e) = m.get(&key)
+        {
+            if e.expires > Instant::now() {
+                return Ok(e.value.clone());
             }
+            m.remove(&key);
         }
         let value = match self.vault.open(ctx, vref).await {
             Ok(v) => Arc::new(v),

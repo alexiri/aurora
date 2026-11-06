@@ -247,35 +247,35 @@ impl Proxy {
         response_headers: http::HeaderMap,
         upgrade_fut: Option<hyper::upgrade::OnUpgrade>,
     ) -> Response<Body> {
-        if let Some(h) = hook {
-            if let Some(replacement) = h.on_response(resp.status(), resp.headers()) {
-                return replacement;
-            }
+        if let Some(h) = hook
+            && let Some(replacement) = h.on_response(resp.status(), resp.headers())
+        {
+            return replacement;
         }
         for (k, v) in &response_headers {
             resp.headers_mut().insert(k.clone(), v.clone());
         }
-        if resp.status() == http::StatusCode::SWITCHING_PROTOCOLS {
-            if let Some(client_up) = upgrade_fut {
-                let upstream_up = hyper::upgrade::on(&mut resp);
-                let stop = self.stop.subscribe();
-                let live = self.track();
-                tokio::spawn(async move {
-                    let _live = live;
-                    if let (Ok(c), Ok(u)) = (client_up.await, upstream_up.await) {
-                        let idle = aurora_core::limits::WEBSOCKET_IDLE_TIMEOUT;
-                        bridge(
-                            hyper_util::rt::TokioIo::new(c),
-                            hyper_util::rt::TokioIo::new(u),
-                            Some(idle),
-                            stop,
-                        )
-                        .await;
-                    }
-                });
-                let (p, _) = resp.into_parts();
-                return Response::from_parts(p, empty_body());
-            }
+        if resp.status() == http::StatusCode::SWITCHING_PROTOCOLS
+            && let Some(client_up) = upgrade_fut
+        {
+            let upstream_up = hyper::upgrade::on(&mut resp);
+            let stop = self.stop.subscribe();
+            let live = self.track();
+            tokio::spawn(async move {
+                let _live = live;
+                if let (Ok(c), Ok(u)) = (client_up.await, upstream_up.await) {
+                    let idle = aurora_core::limits::WEBSOCKET_IDLE_TIMEOUT;
+                    bridge(
+                        hyper_util::rt::TokioIo::new(c),
+                        hyper_util::rt::TokioIo::new(u),
+                        Some(idle),
+                        stop,
+                    )
+                    .await;
+                }
+            });
+            let (p, _) = resp.into_parts();
+            return Response::from_parts(p, empty_body());
         }
         hygiene::strip_hop_by_hop(resp.headers_mut());
         resp.map(|b| b.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync())

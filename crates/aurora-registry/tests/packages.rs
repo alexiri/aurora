@@ -270,7 +270,7 @@ fn egress_private_and_reserved() {
                 "      - id: api_key\n        kind: hook\n        fields: []",
             );
         let mut b = PackageBuilder::new(&y);
-        b.set_file("hooks.wasm", b"\0asm\x01\0\0\0");
+        b.set_file("hooks.wasm", MIN_HOOKS_COMPONENT);
         let p = read(&b);
         let c = codes(&p, &ctx(), &TrustStore::default(), true);
         assert_eq!(c, [code], "{h}");
@@ -297,7 +297,7 @@ fn duplicate_app_id_with_active_package() {
 #[test]
 fn hooks_wasm_presence() {
     let mut b = PackageBuilder::new(&manifest("aurora", "api.todoist.com"));
-    b.set_file("hooks.wasm", b"\0asm\x01\0\0\0");
+    b.set_file("hooks.wasm", MIN_HOOKS_COMPONENT);
     let p = read(&b);
     assert_eq!(
         codes(&p, &ctx(), &TrustStore::default(), true),
@@ -321,3 +321,8 @@ fn wildcard_superset() {
     assert!(unsigned_codes(&with(w, "")).contains(&"wildcard_not_superset"));
     assert!(unsigned_codes(&with(w, outside)).contains(&"wildcard_not_superset"));
 }
+
+/// Smallest component satisfying the plugin world shape: exports an (empty)
+/// instance named `aurora:plugin/hooks@1.0.0`, imports nothing.
+const MIN_HOOKS_COMPONENT: &[u8] =
+    b"\0asm\x0d\0\x01\0\x05\x03\x01\x01\0\x0b\x1f\x01\0\x19aurora:plugin/hooks@1.0.0\x05\0\0";

@@ -6,13 +6,12 @@
 
 use crate::apps::{identify_app, identify_tool};
 use crate::decide::{finalize_request, inject_and_route};
+use crate::hold::{SummaryRequest, build_summary};
 use crate::mechanisms::route::{GuardError, tenant_guard};
 use crate::mechanisms::template::Vars;
 use crate::pipeline::Scheme;
 use crate::snapshot::Loaded;
 use aurora_registry::index::Snapshot;
-use aurora_registry::manifest::Source;
-use aurora_summary::{ApprovalSummary, SummaryField};
 use http::{HeaderMap, HeaderName, HeaderValue, Method};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -287,15 +286,32 @@ fn execute(l: &Loaded, c: &Case, failures: &mut Vec<String>) -> Result<Value, St
         })
         .collect();
 
-    let summary = summarize(
-        m.app,
+    let hdr = |n: &str| {
+        c.request
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(n))
+            .map(|(_, v)| v.clone())
+    };
+    let summary = build_summary(
+        Some(l),
+        Some(&m),
         tool.map(|t| t.id.as_str()),
-        &method,
-        &host,
-        &path,
-        query.as_deref(),
-        &c.request.headers,
-        body,
+        &SummaryRequest {
+            method: method.as_str(),
+            host: &host,
+            path: &path,
+            query: query.as_deref(),
+            content_type: c
+                .request
+                .headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+                .map(|(_, v)| v.as_str()),
+            header: &hdr,
+            body_prefix: body,
+            truncated: false,
+        },
     );
     if let Some(o) = obs.as_object_mut() {
         o.insert("upstream".into(), json!({ "url": url, "headers": hdrs }));
@@ -305,68 +321,6 @@ fn execute(l: &Loaded, c: &Case, failures: &mut Vec<String>) -> Result<Value, St
         );
     }
     Ok(obs)
-}
-
-/// Approval template for the tool when declared (path/query/header sources), else the
-/// generic summary. Body-source fields need the decoders and fall back to the generic
-/// summary (the live gateway has no template summarizer yet).
-#[allow(clippy::too_many_arguments)]
-fn summarize(
-    app: &aurora_registry::snapshot::AppEntry,
-    tool: Option<&str>,
-    method: &Method,
-    host: &str,
-    path: &str,
-    query: Option<&str>,
-    req_headers: &BTreeMap<String, String>,
-    body: &[u8],
-) -> ApprovalSummary {
-    if let Some(a) = tool.and_then(|t| app.approvals.get(t))
-        && a.fields
-            .iter()
-            .all(|f| !matches!(f.source, Source::Body { .. }))
-    {
-        let fields = a
-            .fields
-            .iter()
-            .map(|f| {
-                let value = match &f.source {
-                    Source::Path { segment } => path
-                        .split('/')
-                        .nth(*segment as usize)
-                        .unwrap_or_default()
-                        .to_owned(),
-                    Source::Query { name } => query
-                        .into_iter()
-                        .flat_map(|q| q.split('&'))
-                        .filter_map(|kv| kv.split_once('='))
-                        .find(|(k, _)| k == name)
-                        .map(|(_, v)| v.to_owned())
-                        .unwrap_or_default(),
-                    Source::Header { name } => req_headers
-                        .iter()
-                        .find(|(k, _)| k.eq_ignore_ascii_case(name))
-                        .map(|(_, v)| v.clone())
-                        .unwrap_or_default(),
-                    Source::Body { .. } => String::new(),
-                };
-                SummaryField {
-                    label: f.label.clone(),
-                    value,
-                }
-            })
-            .collect();
-        return ApprovalSummary {
-            title: a.title.clone(),
-            fields,
-            text: None,
-            link: None,
-            group: None,
-            source: aurora_summary::SummarySource::Template,
-        }
-        .clamp();
-    }
-    aurora_summary::generic(method.as_str(), host, path, query, None, body, false)
 }
 
 fn compare(e: &Expect, o: &Value) -> Vec<String> {
