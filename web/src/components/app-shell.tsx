@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuTrigger } from "./ui/menu";
 
-const SECTIONS = ["Conversations", "Memory", "Connections", "Keys"];
+const SECTIONS = ["Conversations", "Memory", "Connections"];
 
 function SwitcherButton({ label, value }: { label: string; value: string }) {
   return (
@@ -139,6 +139,7 @@ function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
     <nav aria-label="Organization" className="w-48 border-r border-neutral-200 p-3">
       <ul className="space-y-1 text-sm">
         {link(base, "Workspaces", pathname === base)}
+        {link(`${base}/credentials`, "Credentials", pathname.startsWith(`${base}/credentials`))}
         {admin ? ORG_LINKS.map((l) => link(`${base}/${l.path}`, l.label, pathname.startsWith(`${base}/${l.path}`))) : null}
       </ul>
     </nav>
@@ -174,6 +175,7 @@ export function WorkspaceNav({
       <ul className="space-y-1 text-sm">
         {link(base, "Overview", pathname === base)}
         {link(`${base}/agents`, "Agents", pathname.startsWith(`${base}/agents`))}
+        {link(`${base}/credentials`, "Credentials", pathname.startsWith(`${base}/credentials`))}
         {SECTIONS.map((s) => (
           <li key={s}>
             <span aria-disabled="true" className="block cursor-not-allowed rounded px-2 py-1.5 text-neutral-400">
