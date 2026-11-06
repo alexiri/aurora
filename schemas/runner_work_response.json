@@ -1,0 +1,652 @@
+{
+  "$defs": {
+    "AttachmentRef": {
+      "properties": {
+        "attachment_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "attachment_id",
+        "filename",
+        "size"
+      ],
+      "type": "object"
+    },
+    "Gate": {
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "timeout_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command",
+        "timeout_secs"
+      ],
+      "type": "object"
+    },
+    "HomeSync": {
+      "properties": {
+        "generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "part": {
+          "$ref": "#/$defs/HomeSyncPart"
+        },
+        "part_count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "part_index": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "generation",
+        "part_index",
+        "part_count",
+        "part"
+      ],
+      "type": "object"
+    },
+    "HomeSyncKind": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "HomeSyncPart": {
+      "properties": {
+        "entries": {
+          "description": "Entry shape per part kind is defined in `12 §Sync protocol` (not typed here).",
+          "items": true,
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/HomeSyncKind"
+        }
+      },
+      "required": [
+        "kind",
+        "entries"
+      ],
+      "type": "object"
+    },
+    "ModelChoice": {
+      "properties": {
+        "base_url": {
+          "type": "string"
+        },
+        "client_env": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "dialect": {
+          "type": "string"
+        },
+        "effort": {
+          "type": "string"
+        },
+        "endpoint_id": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "endpoint_id",
+        "base_url",
+        "dialect",
+        "model",
+        "effort",
+        "client_env"
+      ],
+      "type": "object"
+    },
+    "Recall": {
+      "properties": {
+        "index": {
+          "type": "string"
+        },
+        "snippets": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "index",
+        "snippets"
+      ],
+      "type": "object"
+    },
+    "SandboxResources": {
+      "properties": {
+        "cpu_millis": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "memory_mib": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pids": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpu_millis",
+        "memory_mib",
+        "pids"
+      ],
+      "type": "object"
+    },
+    "SandboxSpec": {
+      "properties": {
+        "boot_secret": {
+          "$ref": "#/$defs/SecretString",
+          "description": "base64url"
+        },
+        "env": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "home_gib": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "home_ref": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "resources": {
+          "$ref": "#/$defs/SandboxResources"
+        }
+      },
+      "required": [
+        "image",
+        "env",
+        "boot_secret",
+        "home_ref",
+        "home_gib",
+        "resources"
+      ],
+      "type": "object"
+    },
+    "SandboxStart": {
+      "properties": {
+        "spec": {
+          "$ref": "#/$defs/SandboxSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "SandboxStop": {
+      "properties": {
+        "grace_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "$ref": "#/$defs/StopReason"
+        }
+      },
+      "required": [
+        "reason",
+        "grace_secs"
+      ],
+      "type": "object"
+    },
+    "SecretString": {
+      "description": "A secret-bearing string: serializes transparently, never printed by `Debug`.",
+      "type": "string"
+    },
+    "SessionInfo": {
+      "properties": {
+        "epoch": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "resume_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "epoch"
+      ],
+      "type": "object"
+    },
+    "SessionRelease": {
+      "properties": {
+        "conversation_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "StopReason": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "TurnDeliver": {
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/AttachmentRef"
+          },
+          "type": "array"
+        },
+        "context_credential": {
+          "$ref": "#/$defs/SecretString",
+          "description": "`auc_…`"
+        },
+        "conversation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "gate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Gate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input": {
+          "$ref": "#/$defs/TurnInput"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelChoice"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionInfo"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "turn_id",
+        "session",
+        "model",
+        "context_credential",
+        "input",
+        "attachments"
+      ],
+      "type": "object"
+    },
+    "TurnInput": {
+      "properties": {
+        "door": {
+          "type": "string"
+        },
+        "notices": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "recall": {
+          "$ref": "#/$defs/Recall"
+        },
+        "speaker_label": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "speaker_label",
+        "door",
+        "recall",
+        "notices"
+      ],
+      "type": "object"
+    },
+    "TurnMessage": {
+      "properties": {
+        "followup_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "speaker_label": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "followup_id",
+        "text",
+        "speaker_label"
+      ],
+      "type": "object"
+    },
+    "TurnNotice": {
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "text"
+      ],
+      "type": "object"
+    },
+    "TurnRef": {
+      "properties": {
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id"
+      ],
+      "type": "object"
+    },
+    "WorkItem": {
+      "anyOf": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SandboxStart"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "sandbox.start"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SandboxStop"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "sandbox.stop"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/HomeSync"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "home.sync"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TurnDeliver"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "turn.deliver"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TurnMessage"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "turn.message"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TurnRef"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "turn.send_now"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TurnRef"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "turn.abort"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TurnNotice"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "turn.notice"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SessionRelease"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "session.release"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "description": "unknown kind; consumers log and skip",
+          "properties": {
+            "kind": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "boot_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "item_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "sandbox_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "sandbox_id",
+        "boot_id"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/$defs/WorkItem"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "title": "WorkResponse",
+  "type": "object"
+}

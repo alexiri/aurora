@@ -1,0 +1,115 @@
+{
+  "$defs": {
+    "HarnessId": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "HomeDurability": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "Range": {
+      "properties": {
+        "max": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ],
+      "type": "object"
+    },
+    "ResourceRanges": {
+      "properties": {
+        "cpu": {
+          "$ref": "#/$defs/Range"
+        },
+        "home_gib": {
+          "$ref": "#/$defs/Range"
+        },
+        "memory_mib": {
+          "$ref": "#/$defs/Range"
+        },
+        "pids": {
+          "$ref": "#/$defs/Range"
+        }
+      },
+      "required": [
+        "cpu",
+        "memory_mib",
+        "pids",
+        "home_gib"
+      ],
+      "type": "object"
+    },
+    "RunnerCapabilities": {
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "harnesses": {
+          "items": {
+            "$ref": "#/$defs/HarnessId"
+          },
+          "type": "array"
+        },
+        "home_durability": {
+          "$ref": "#/$defs/HomeDurability"
+        },
+        "max_attachment_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_sandboxes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "resources": {
+          "$ref": "#/$defs/ResourceRanges"
+        }
+      },
+      "required": [
+        "backend",
+        "home_durability",
+        "resources",
+        "max_sandboxes",
+        "harnesses",
+        "max_attachment_bytes"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "advertised_host": {
+      "type": "string"
+    },
+    "backend": {
+      "type": "string"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/RunnerCapabilities"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "version",
+    "backend",
+    "capabilities",
+    "advertised_host"
+  ],
+  "title": "RegisterRequest",
+  "type": "object"
+}

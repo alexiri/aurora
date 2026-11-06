@@ -1,0 +1,19 @@
+{
+  "$defs": {
+    "SecretString": {
+      "description": "A secret-bearing string: serializes transparently, never printed by `Debug`.",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "bootstrap_token": {
+      "$ref": "#/$defs/SecretString"
+    }
+  },
+  "required": [
+    "bootstrap_token"
+  ],
+  "title": "ChannelClaimRequest",
+  "type": "object"
+}

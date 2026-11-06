@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One entry of the synced tool catalogue as answered by MCP `tools/list`.\nProvisional: `16` does not define the catalogue entry shape.",
+  "properties": {
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "input_schema": true,
+    "name": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "input_schema"
+  ],
+  "title": "ToolDescriptor",
+  "type": "object"
+}

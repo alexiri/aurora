@@ -85,6 +85,12 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | M3 rest | snapshot compiler, lifecycle/ingestion API, connect flows, mechanisms in gateway, hook host + WIT + SDK (needs wasm32-wasip2), CLI plugin, fixtures | both | todo | M2 | — | |
 | M4–M7 | hosted runtime, hosted features, channels, k8s/Helm | both | todo | per 19 | — | |
 
+## Open spec issues (resolve before M4 implementation; found by PROTO-001)
+
+- W6 `file.part` max 192 KiB raw ⇒ 256 KiB base64 + envelope > `WS_FRAME_MAX` (256 KiB): part size must shrink or frame max grow.
+- W5 reports: `report_id` is runner-generated but W6 frames carry none ⇒ replays after a runner restart are not idempotent end-to-end.
+- Unspecified shapes: `HarnessEventWire`, `usage`, `ProcessState`, home-sync `entries`; `ack`/`shutdown` bodies; `ModelChoice` vocabularies; mcp-bridge ⇄ supervisor JSON-lines format; correlation ids for `memory.write`/`file.part`; misc formats/bounds (provisional constants in `aurora-protocol::runner`).
+
 ## Decisions requiring user input
 
 - (none blocking yet) Installing the `wasm32-wasip2` target (rustup or distro package) will be needed before M3 hook work — I-02.

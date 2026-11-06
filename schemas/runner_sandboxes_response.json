@@ -1,0 +1,54 @@
+{
+  "$defs": {
+    "DesiredState": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "SandboxAssignment": {
+      "properties": {
+        "agent_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "boot_id": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "desired": {
+          "$ref": "#/$defs/DesiredState"
+        },
+        "home_ref": {
+          "type": "string"
+        },
+        "sandbox_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox_id",
+        "agent_id",
+        "desired",
+        "home_ref"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "sandboxes": {
+      "items": {
+        "$ref": "#/$defs/SandboxAssignment"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "sandboxes"
+  ],
+  "title": "SandboxesResponse",
+  "type": "object"
+}

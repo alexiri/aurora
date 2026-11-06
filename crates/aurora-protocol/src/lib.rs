@@ -2,6 +2,10 @@
 //! generation. See `docs/16-wire-protocols.md` and `docs/02-engineering-conventions.md`.
 #![forbid(unsafe_code)]
 
+#[macro_use]
+mod tagged;
+
+pub mod common;
 pub mod connector;
 pub mod gateway_internal;
 pub mod hookhost;

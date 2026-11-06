@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/runner/tool-calls` request; identity is stamped by the runner.",
+  "properties": {
+    "args": true,
+    "boot_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "call_id": {
+      "type": "string"
+    },
+    "conversation_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "sandbox_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "tool": {
+      "type": "string"
+    },
+    "turn_id": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "sandbox_id",
+    "boot_id",
+    "call_id",
+    "conversation_id",
+    "tool",
+    "args"
+  ],
+  "title": "ToolCall",
+  "type": "object"
+}

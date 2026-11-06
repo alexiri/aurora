@@ -1,0 +1,708 @@
+{
+  "$defs": {
+    "BoundedString64": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "GateOutcome": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "GateResult": {
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/GateOutcome"
+        },
+        "output": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "HarnessEventWire": {
+      "additionalProperties": true,
+      "description": "Harness event as carried on the wire. `12` lists the event kinds (text\ndelta, thinking delta, activity, tool started/finished, correction, message\njoined, sent-now, session ref, usage, done, error) but not their fields, so\nthe payload is kept open.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/BoundedString64"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "HarnessId": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "HarnessInfo": {
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/BoundedString64"
+          },
+          "type": "array"
+        },
+        "id": {
+          "$ref": "#/$defs/HarnessId"
+        }
+      },
+      "required": [
+        "id",
+        "capabilities"
+      ],
+      "type": "object"
+    },
+    "HomeSynced": {
+      "properties": {
+        "generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "generation"
+      ],
+      "type": "object"
+    },
+    "NumberedEvent": {
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/HarnessEventWire"
+        },
+        "n": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "n",
+        "event"
+      ],
+      "type": "object"
+    },
+    "Observed": {
+      "properties": {
+        "cpu_millis": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "memory_mib": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpu_millis",
+        "memory_mib"
+      ],
+      "type": "object"
+    },
+    "PortsState": {
+      "properties": {
+        "ports": {
+          "items": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "ports"
+      ],
+      "type": "object"
+    },
+    "ProcessState": {
+      "description": "Provisional shape: `16` names the type but never defines it.",
+      "properties": {
+        "busy": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit_code": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "process_id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/ProcessStatus"
+        },
+        "tail": {
+          "description": "Last output, at most `PROCESS_TAIL` bytes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "process_id",
+        "state"
+      ],
+      "type": "object"
+    },
+    "ProcessStates": {
+      "properties": {
+        "processes": {
+          "items": {
+            "$ref": "#/$defs/ProcessState"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "processes"
+      ],
+      "type": "object"
+    },
+    "ProcessStatus": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "Report": {
+      "anyOf": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SandboxStatus"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "sandbox.status"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SupervisorReady"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "supervisor.ready"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/HomeSynced"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "home.synced"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TurnRef"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "turn.started"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TurnEvents"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "turn.events"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TurnRef"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "turn.progress"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TurnResult"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "turn.result"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SteerResult"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "steer.result"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SendNowResult"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "send_now.result"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/SessionReport"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "session"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/ProcessStates"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "process.state"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/WatchFired"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "watch.fired"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/GateResult"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "gate.result"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/PortsState"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "ports.state"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "description": "unknown kind; consumers log and skip",
+          "properties": {
+            "kind": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "boot_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "report_id": {
+          "description": "Sender-generated idempotency id.",
+          "format": "uuid",
+          "type": "string"
+        },
+        "sandbox_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "report_id",
+        "sandbox_id",
+        "boot_id"
+      ],
+      "type": "object"
+    },
+    "SandboxState": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "SandboxStatus": {
+      "properties": {
+        "container_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Observed"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoundedString64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/SandboxState"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    },
+    "SendNowOutcome": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "SendNowResult": {
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/SendNowOutcome"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "SessionReport": {
+      "properties": {
+        "conversation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "epoch": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "session_ref",
+        "epoch"
+      ],
+      "type": "object"
+    },
+    "SteerOutcome": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "SteerResult": {
+      "properties": {
+        "followup_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/SteerOutcome"
+        }
+      },
+      "required": [
+        "followup_id",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "SupervisorReady": {
+      "properties": {
+        "harness": {
+          "$ref": "#/$defs/HarnessInfo"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "harness"
+      ],
+      "type": "object"
+    },
+    "TurnEvents": {
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/NumberedEvent"
+          },
+          "type": "array"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "events"
+      ],
+      "type": "object"
+    },
+    "TurnRef": {
+      "properties": {
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id"
+      ],
+      "type": "object"
+    },
+    "TurnResult": {
+      "properties": {
+        "error_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoundedString64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error_message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/TurnStatus"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "usage": {
+          "description": "Shape unspecified in `16`/`12`; kept open."
+        }
+      },
+      "required": [
+        "turn_id",
+        "status"
+      ],
+      "type": "object"
+    },
+    "TurnStatus": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "WatchFired": {
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "watch_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "watch_id",
+        "detail"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "reports": {
+      "items": {
+        "$ref": "#/$defs/Report"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "reports"
+  ],
+  "title": "ReportsRequest",
+  "type": "object"
+}

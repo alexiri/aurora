@@ -1,0 +1,44 @@
+{
+  "$defs": {
+    "ReportResult": {
+      "properties": {
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "report_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ReportStatus"
+        }
+      },
+      "required": [
+        "report_id",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ReportStatus": {
+      "maxLength": 64,
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "results": {
+      "items": {
+        "$ref": "#/$defs/ReportResult"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "results"
+  ],
+  "title": "ReportsResponse",
+  "type": "object"
+}

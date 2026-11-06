@@ -1,0 +1,64 @@
+{
+  "$defs": {
+    "SecretString": {
+      "description": "A secret-bearing string: serializes transparently, never printed by `Debug`.",
+      "type": "string"
+    },
+    "SessionProof": {
+      "description": "HMAC session proof (`issued_at` is unix seconds; informational clocks).",
+      "properties": {
+        "boot_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "issued_at": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "mac": {
+          "$ref": "#/$defs/SecretString"
+        },
+        "sandbox_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox_id",
+        "boot_id",
+        "issued_at",
+        "mac"
+      ],
+      "type": "object"
+    },
+    "WelcomeBody": {
+      "properties": {
+        "resume_from": {
+          "description": "Last acked seq of the supervisor's direction.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionProof"
+        }
+      },
+      "required": [
+        "session",
+        "resume_from"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "welcome": {
+      "$ref": "#/$defs/WelcomeBody"
+    }
+  },
+  "required": [
+    "welcome"
+  ],
+  "title": "Welcome",
+  "type": "object"
+}

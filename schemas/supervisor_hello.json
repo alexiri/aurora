@@ -1,0 +1,81 @@
+{
+  "$defs": {
+    "HelloBody": {
+      "properties": {
+        "bootstrap_token": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SecretString"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`aup_…`; exactly one of `bootstrap_token` and `session` is set."
+        },
+        "protocol": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionProof"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "protocol"
+      ],
+      "type": "object"
+    },
+    "SecretString": {
+      "description": "A secret-bearing string: serializes transparently, never printed by `Debug`.",
+      "type": "string"
+    },
+    "SessionProof": {
+      "description": "HMAC session proof (`issued_at` is unix seconds; informational clocks).",
+      "properties": {
+        "boot_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "issued_at": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "mac": {
+          "$ref": "#/$defs/SecretString"
+        },
+        "sandbox_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox_id",
+        "boot_id",
+        "issued_at",
+        "mac"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "First message from the supervisor.",
+  "properties": {
+    "hello": {
+      "$ref": "#/$defs/HelloBody"
+    }
+  },
+  "required": [
+    "hello"
+  ],
+  "title": "Hello",
+  "type": "object"
+}
