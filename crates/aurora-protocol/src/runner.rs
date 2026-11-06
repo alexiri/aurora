@@ -26,8 +26,8 @@ pub const MAX_REPORTS_BODY: usize = 1024 * 1024;
 pub const MAX_WAIT_SECS: u32 = limits::RUNNER_POLL_WAIT.as_secs() as u32;
 /// Provisional bound for free-text error/status messages (not in the limits registry).
 pub const MAX_MESSAGE_CHARS: usize = 2_000;
-/// Provisional bound for gate output (not in the limits registry).
-pub const MAX_GATE_OUTPUT: usize = 4 * 1024;
+/// Gate stdout captured and reported (`12 §Process manager`: ≤ 16 KiB).
+pub const MAX_GATE_OUTPUT: usize = 16 * 1024;
 /// Provisional bound for `watch.fired.detail` (not in the limits registry).
 pub const MAX_WATCH_DETAIL: usize = limits::PROCESS_TAIL;
 /// Max bytes of a work-item `home.sync` part.

@@ -211,6 +211,7 @@ dependencies = [
  "aurora-db",
  "aurora-llm",
  "aurora-policy",
+ "aurora-protocol",
  "aurora-registry",
  "aurora-secrets",
  "aurora-testkit",

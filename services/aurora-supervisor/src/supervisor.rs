@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use aurora_protocol::runner::{
-    Code, HarnessId, HarnessInfo, HomeSynced, SendNowOutcome, SendNowResult, SessionReport,
-    SteerOutcome, SteerResult, SupervisorReady, TurnDeliver, TurnEvent, TurnMessage, TurnRef,
-    TurnResult, TurnStatus,
+    Code, Gate, GateOutcome, HarnessId, HarnessInfo, HomeSynced, SendNowOutcome, SendNowResult,
+    SessionReport, SteerOutcome, SteerResult, SupervisorReady, TurnDeliver, TurnEvent, TurnMessage,
+    TurnRef, TurnResult, TurnStatus,
 };
 use aurora_protocol::supervisor::{RunnerToSupervisor, SupervisorToRunner};
 use tokio::sync::{Mutex, Notify, mpsc};
@@ -25,7 +25,9 @@ use crate::harness::{
 };
 use crate::harvest::Harvester;
 use crate::home::{HomeConfig, HomeProjector, PartOutcome};
+use crate::process::{ProcessConfig, ProcessManager};
 use crate::proxy::{Credential, ProxyHandle, ProxyMode, spawn_proxy};
+use crate::tools::{ToolHub, ToolsConfig};
 
 const ABORT_GRACE: Duration = Duration::from_secs(5);
 const MAX_ERROR_MESSAGE: usize = 2_000;
@@ -40,8 +42,11 @@ pub struct SupervisorConfig {
     pub progress_interval: Duration,
     pub shutdown_grace: Duration,
     pub version: String,
+    /// Base bridge command (e.g. `[exe, "mcp-bridge"]`); `--session <conversation id>` is appended.
     pub mcp_bridge_command: Vec<String>,
     pub harvest_interval: Duration,
+    pub tools: ToolsConfig,
+    pub process: ProcessConfig,
 }
 
 impl SupervisorConfig {
@@ -56,6 +61,8 @@ impl SupervisorConfig {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             mcp_bridge_command: Vec::new(),
             harvest_interval: Duration::from_secs(10),
+            tools: ToolsConfig::default(),
+            process: ProcessConfig::new(PathBuf::from("/workspace")),
         }
     }
 }
@@ -87,6 +94,8 @@ pub struct Supervisor {
     turns: HashMap<Uuid, TurnHandle>,
     ready: bool,
     home: Arc<StdMutex<HomeCtl>>,
+    hub: Arc<ToolHub>,
+    procs: Arc<ProcessManager>,
 }
 
 /// Home projection state: staged sync, plus the memory harvest bookkeeping.
@@ -134,8 +143,17 @@ impl Supervisor {
             }),
             harvester: Harvester::new(&cfg.working_dir),
         }));
+        let procs = ProcessManager::new(cfg.process.clone(), out.clone());
+        let hub = ToolHub::new(
+            cfg.tools.clone(),
+            cfg.working_dir.join(".aurora/tools.json"),
+            out.clone(),
+            procs.clone(),
+        );
         Self {
             home,
+            hub,
+            procs,
             cfg,
             out,
             adapter,
@@ -162,6 +180,15 @@ impl Supervisor {
             },
         };
         self.send(SupervisorToRunner::Ready(ready)).await;
+        self.procs.spawn_background();
+        if let Some(path) = self.cfg.tools.socket.clone() {
+            let hub = self.hub.clone();
+            tokio::spawn(async move {
+                if let Err(e) = hub.serve(&path).await {
+                    tracing::error!(error = %e, "tools socket failed");
+                }
+            });
+        }
         let (done_tx, mut done_rx) = mpsc::unbounded_channel::<Uuid>();
         // Instruction files are a projection re-rendered on every boot.
         let home = self.home.clone();
@@ -187,8 +214,14 @@ impl Supervisor {
                     }
                     self.handle(msg, &done_tx).await;
                 }
-                Some(turn_id) = done_rx.recv() => { self.turns.remove(&turn_id); }
+                Some(turn_id) = done_rx.recv() => { self.finish_turn(turn_id); }
             }
+        }
+    }
+
+    fn finish_turn(&mut self, turn_id: Uuid) {
+        if let Some(t) = self.turns.remove(&turn_id) {
+            self.hub.set_turn(t.conversation_id, None);
         }
     }
 
@@ -201,7 +234,7 @@ impl Supervisor {
         let deadline = Instant::now() + grace;
         while !self.turns.is_empty() {
             tokio::select! {
-                Some(id) = done_rx.recv() => { self.turns.remove(&id); }
+                Some(id) = done_rx.recv() => { self.finish_turn(id); }
                 _ = sleep_until(deadline) => break,
             }
         }
@@ -251,9 +284,8 @@ impl Supervisor {
                     ));
                 }
             }
-            RunnerToSupervisor::TurnNotice(_)
-            | RunnerToSupervisor::ToolResult(_)
-            | RunnerToSupervisor::FileResult(_) => {
+            RunnerToSupervisor::ToolResult(r) => self.hub.on_result(r),
+            RunnerToSupervisor::TurnNotice(_) | RunnerToSupervisor::FileResult(_) => {
                 tracing::debug!("frame handled by SUP-002; ignored");
             }
             RunnerToSupervisor::Ack(_) | RunnerToSupervisor::Shutdown(_) => {}
@@ -415,7 +447,10 @@ impl Supervisor {
             pending_steers: handle.pending_steers.clone(),
             out: self.out.clone(),
             progress: self.cfg.progress_interval,
+            gate: d.gate,
+            procs: self.procs.clone(),
         };
+        self.hub.set_turn(d.conversation_id, Some(d.turn_id));
         self.turns.insert(d.turn_id, handle);
         let done = done_tx.clone();
         let turn_id = task.turn_id;
@@ -458,7 +493,13 @@ impl Supervisor {
                 model: d.model.clone(),
                 proxy_url: url,
                 mcp_bridge: McpBridgeSpec {
-                    command: self.cfg.mcp_bridge_command.clone(),
+                    command: if self.cfg.mcp_bridge_command.is_empty() {
+                        Vec::new()
+                    } else {
+                        let mut c = self.cfg.mcp_bridge_command.clone();
+                        c.extend(["--session".to_owned(), d.conversation_id.to_string()]);
+                        c
+                    },
                 },
                 env,
             })
@@ -536,6 +577,8 @@ struct TurnTask {
     pending_steers: Arc<StdMutex<HashSet<Uuid>>>,
     out: ChannelSender,
     progress: Duration,
+    gate: Option<Gate>,
+    procs: Arc<ProcessManager>,
 }
 
 impl TurnTask {
@@ -564,6 +607,22 @@ impl TurnTask {
     }
 
     async fn run(mut self) {
+        // A gated turn stays `dispatched` while its gate runs; only a waking gate proceeds, and the
+        // API finalizes quiet/failed turns from `gate.result` (no `turn.*` frames follow).
+        if let Some(g) = self.gate.take() {
+            let r = self
+                .procs
+                .run_gate(self.turn_id, &g.command, g.timeout_secs)
+                .await;
+            let wake = r.outcome == GateOutcome::Wake;
+            if wake && let Some(o) = &r.output {
+                self.input.notices.push(format!("Gate output:\n{o}"));
+            }
+            self.send(SupervisorToRunner::GateResult(r)).await;
+            if !wake {
+                return;
+            }
+        }
         let turn_ref = TurnRef {
             turn_id: self.turn_id,
         };

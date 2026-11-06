@@ -11,6 +11,7 @@
 //! - `memory`: `{path: "memory/<key>.md", content}` (supervisor appends the checksum trailer; 0644)
 //!   and `{path: "memory/index.md", content}` (verbatim, 0444).
 //! - `render_inputs`: objects whose keys are [`RenderInputs`] fields; merged across entries.
+//! - `skills` entries: `{path, content, exec?}`; `exec: true` installs the file 0555 instead of 0444.
 //! - `tools`: opaque catalogue entries, stored as `.aurora/tools.json`.
 //! - `manifest`: `{path}`; every managed path that should exist.
 
@@ -61,6 +62,9 @@ struct FileEntry {
     path: String,
     #[serde(default)]
     content: String,
+    /// Skill files only: install as 0555 instead of 0444 (`14` skills, executable bit).
+    #[serde(default)]
+    exec: bool,
 }
 
 #[derive(Deserialize)]
@@ -212,7 +216,13 @@ impl HomeProjector {
                     } else {
                         e.content
                     };
-                    write_atomic(&self.staged_files().join(&rel), body.as_bytes(), 0o600)?;
+                    // The exec flag travels through staging as the owner-x bit.
+                    let staged_mode = if e.exec && !memory { 0o700 } else { 0o600 };
+                    write_atomic(
+                        &self.staged_files().join(&rel),
+                        body.as_bytes(),
+                        staged_mode,
+                    )?;
                 }
             }
             HomeSyncKind::RenderInputs => {
@@ -288,6 +298,8 @@ impl HomeProjector {
                 } else {
                     0o644
                 }
+            } else if fs::metadata(&src)?.permissions().mode() & 0o100 != 0 {
+                0o555
             } else {
                 0o444
             };
@@ -389,7 +401,12 @@ fn lock_tree(root: &Path) {
     let mut files = Vec::new();
     walk_files(root, &mut files);
     for f in files {
-        let _ = fs::set_permissions(&f, fs::Permissions::from_mode(0o444));
+        // Executable skill files stay 0555; everything else is 0444.
+        let exec = fs::metadata(&f).is_ok_and(|m| m.permissions().mode() & 0o100 != 0);
+        let _ = fs::set_permissions(
+            &f,
+            fs::Permissions::from_mode(if exec { 0o555 } else { 0o444 }),
+        );
     }
     set_dirs(root, 0o555);
 }

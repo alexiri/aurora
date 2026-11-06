@@ -2,7 +2,7 @@
 #![forbid(unsafe_code)]
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -34,7 +34,13 @@ enum Command {
     /// Run the supervisor.
     Run,
     /// Run the MCP bridge.
-    McpBridge,
+    McpBridge {
+        /// Conversation id the harness session belongs to.
+        #[arg(long)]
+        session: String,
+        #[arg(long, default_value = aurora_supervisor::tools::DEFAULT_SOCKET)]
+        socket: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -48,9 +54,15 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Command::McpBridge => {
-            eprintln!("aurora-supervisor mcp-bridge: not implemented in this milestone (SUP-002)");
-            ExitCode::from(2)
+        Command::McpBridge { session, socket } => {
+            aurora_supervisor::mcp_bridge::run(
+                session,
+                socket,
+                tokio::io::stdin(),
+                tokio::io::stdout(),
+            )
+            .await;
+            ExitCode::SUCCESS
         }
     }
 }
@@ -92,11 +104,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         &doc.runner_url,
         doc.bootstrap_token.clone(),
     ));
-    let sup = Supervisor::new(
-        SupervisorConfig::new(upstream, boot_token),
-        chan.sender,
-        adapter,
-    );
+    let mut cfg = SupervisorConfig::new(upstream, boot_token);
+    cfg.tools.socket = Some(PathBuf::from(aurora_supervisor::tools::DEFAULT_SOCKET));
+    if let Ok(exe) = std::env::current_exe() {
+        cfg.mcp_bridge_command = vec![exe.display().to_string(), "mcp-bridge".to_owned()];
+    }
+    let sup = Supervisor::new(cfg, chan.sender, adapter);
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tokio::select! {
         () = sup.run(chan.inbound) => Ok(()),
