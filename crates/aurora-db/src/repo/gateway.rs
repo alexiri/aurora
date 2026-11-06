@@ -460,3 +460,106 @@ pub async fn update_secret_origin<'e, E: PgExecutor<'e>>(
         .await?;
     Ok(())
 }
+
+// ---- registry snapshot and app connections (docs/06 §Registry snapshot loading) ----
+
+/// Header of a stored registry snapshot (activation rule inputs).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SnapshotHeader {
+    pub contract: i32,
+    pub activated_at: chrono::DateTime<chrono::Utc>,
+    pub content_hash: String,
+}
+
+/// Snapshots with a contract in `min..=max` (the activation rule picks among them).
+pub async fn snapshot_headers<'e, E: PgExecutor<'e>>(
+    exec: E,
+    min: i32,
+    max: i32,
+) -> Result<Vec<SnapshotHeader>, DbError> {
+    Ok(sqlx::query_as::<_, SnapshotHeader>(
+        "SELECT contract, activated_at, content_hash FROM registry_snapshots \
+         WHERE contract BETWEEN $1 AND $2",
+    )
+    .bind(min)
+    .bind(max)
+    .fetch_all(exec)
+    .await?)
+}
+
+pub async fn snapshot_body<'e, E: PgExecutor<'e>>(
+    exec: E,
+    content_hash: &str,
+) -> Result<Option<serde_json::Value>, DbError> {
+    Ok(sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT snapshot FROM registry_snapshots WHERE content_hash = $1",
+    )
+    .bind(content_hash)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// An app connection as the gateway needs it (never the credentials).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AppConnectionRow {
+    pub id: Uuid,
+    pub workspace_id: Option<Uuid>,
+    pub app_id: String,
+    pub label: String,
+    pub status: String,
+    pub credentials_ref: String,
+    pub credentials_version: i64,
+    pub credentials_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub metadata: serde_json::Value,
+    pub tenant_host: Option<String>,
+}
+
+/// `active` and `disabled` connections of the organization (workspace NULL) and of the
+/// workspace for the given apps (`disabled` ones only feed guidance).
+pub async fn app_connections(
+    pool: &sqlx::PgPool,
+    org_id: Uuid,
+    workspace_id: Uuid,
+    app_ids: &[String],
+) -> Result<Vec<AppConnectionRow>, DbError> {
+    Ok(sqlx::query_as::<_, AppConnectionRow>(
+        "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
+                credentials_expires_at, metadata, tenant_host \
+         FROM app_connections \
+         WHERE org_id = $1 AND (workspace_id IS NULL OR workspace_id = $2) \
+           AND app_id = ANY($3) AND status IN ('active', 'disabled') \
+         ORDER BY created_at, id",
+    )
+    .bind(org_id)
+    .bind(workspace_id)
+    .bind(app_ids)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// `(restricted, available app ids)` for a workspace: `org_app_availability` rows with a
+/// NULL workspace apply to the whole organization.
+pub async fn app_availability(
+    pool: &sqlx::PgPool,
+    org_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<(bool, Vec<String>), DbError> {
+    let posture: Option<String> =
+        sqlx::query_scalar("SELECT app_posture FROM organizations WHERE id = $1")
+            .bind(org_id)
+            .fetch_optional(pool)
+            .await?;
+    let restricted = posture.as_deref() == Some("restricted");
+    if !restricted {
+        return Ok((false, Vec::new()));
+    }
+    let ids = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT app_id FROM org_app_availability \
+         WHERE org_id = $1 AND (workspace_id IS NULL OR workspace_id = $2)",
+    )
+    .bind(org_id)
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?;
+    Ok((true, ids))
+}

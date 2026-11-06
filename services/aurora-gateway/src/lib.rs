@@ -1,6 +1,7 @@
 //! aurora-gateway: forward proxy with TLS interception (docs/06-gateway.md).
 #![forbid(unsafe_code)]
 
+pub mod apps;
 pub mod auth;
 pub mod ca;
 pub mod decide;
@@ -12,12 +13,14 @@ pub mod hygiene;
 pub mod inject;
 pub mod instance;
 pub mod invalidation;
+pub mod mechanisms;
 pub mod pipeline;
 pub mod plaintext;
 pub mod proxy;
 pub mod reqlog;
 pub mod resolve;
 pub mod resolver;
+pub mod snapshot;
 pub mod upstream;
 
 use bytes::Bytes;

@@ -61,6 +61,8 @@ pub struct PreparedRequest {
     pub body: Body,
     /// Step 14/15 callback, invoked once with the upstream outcome.
     pub hook: Option<Box<dyn PostHook>>,
+    /// Headers added to the response the client receives (`x-aurora-connections`).
+    pub response_headers: HeaderMap,
 }
 
 /// Post-response hook (pipeline steps 14-15): guidance replacement and request log.
@@ -90,10 +92,12 @@ impl PipelineRequest {
             upgrade: self.upgrade,
             body: self.body,
             hook: None,
+            response_headers: HeaderMap::new(),
         }
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Outcome {
     /// Answer the client directly (guidance).
     Respond(Response<Body>),

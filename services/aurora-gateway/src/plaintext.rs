@@ -1,6 +1,7 @@
 //! Zeroizing 60 s plaintext cache keyed by `(SecretRef, version)`
 //! (docs/06 §Caches and invalidation). Plaintext is fetched lazily, after policy.
 
+use crate::apps::ConnCand;
 use crate::invalidation::{Invalidatable, Invalidate, Scope};
 use crate::resolve::SecretCand;
 use aurora_core::Secret;
@@ -31,7 +32,7 @@ struct Entry {
 pub struct PlaintextCache {
     vault: Arc<SecretVault>,
     ttl: Duration,
-    map: Mutex<HashMap<(String, i32), Entry>>,
+    map: Mutex<HashMap<(String, i64), Entry>>,
 }
 
 impl PlaintextCache {
@@ -48,7 +49,36 @@ impl PlaintextCache {
     }
 
     pub async fn get(&self, c: &SecretCand) -> Result<Arc<Secret<Vec<u8>>>, PlaintextError> {
-        let key = (c.vref.to_column(), c.version);
+        let ctx = SealContext {
+            purpose: Purpose::SecretValue,
+            owner_id: c.id,
+            org_id: c.org_id,
+            workspace_id: c.workspace_id,
+        };
+        self.fetch(&ctx, &c.vref, i64::from(c.version)).await
+    }
+
+    /// Credentials JSON of an app connection.
+    pub async fn get_connection(
+        &self,
+        c: &ConnCand,
+    ) -> Result<Arc<Secret<Vec<u8>>>, PlaintextError> {
+        let ctx = SealContext {
+            purpose: Purpose::ConnectionCredentials,
+            owner_id: c.id,
+            org_id: c.org_id,
+            workspace_id: c.workspace_id,
+        };
+        self.fetch(&ctx, &c.vref, c.version).await
+    }
+
+    async fn fetch(
+        &self,
+        ctx: &SealContext,
+        vref: &aurora_secrets::SecretRef,
+        version: i64,
+    ) -> Result<Arc<Secret<Vec<u8>>>, PlaintextError> {
+        let key = (vref.to_column(), version);
         if let Ok(mut m) = self.map.lock() {
             if let Some(e) = m.get(&key) {
                 if e.expires > Instant::now() {
@@ -57,21 +87,15 @@ impl PlaintextCache {
                 m.remove(&key);
             }
         }
-        let ctx = SealContext {
-            purpose: Purpose::SecretValue,
-            owner_id: c.id,
-            org_id: c.org_id,
-            workspace_id: c.workspace_id,
-        };
-        let value = match self.vault.open(&ctx, &c.vref).await {
+        let value = match self.vault.open(ctx, vref).await {
             Ok(v) => Arc::new(v),
             Err(SecretError::StoreUnavailable) => {
                 return Err(PlaintextError::StoreUnavailable(
-                    c.vref.store_id().unwrap_or("inline").to_owned(),
+                    vref.store_id().unwrap_or("inline").to_owned(),
                 ));
             }
             Err(e) => {
-                tracing::warn!(secret_id = %c.id, error = %e, "secret value unavailable");
+                tracing::warn!(owner_id = %ctx.owner_id, error = %e, "secret value unavailable");
                 return Err(PlaintextError::Unavailable);
             }
         };
@@ -83,8 +107,8 @@ impl PlaintextCache {
                 key,
                 Entry {
                     value: value.clone(),
-                    org: c.org_id,
-                    workspace: c.workspace_id,
+                    org: ctx.org_id,
+                    workspace: ctx.workspace_id,
                     expires: Instant::now() + self.ttl,
                 },
             );

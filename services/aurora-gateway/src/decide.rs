@@ -5,10 +5,12 @@
 //! candidates), [`PlaintextCache`] (lazy plaintext, after the decision),
 //! `MemoryCounter` (rate limits) and [`RequestLog`].
 
+use crate::apps::{self, Cand, Exec, Pick};
 use crate::auth::{CredentialKind, RequestIdentity as Ident};
 use crate::governance::{BackstopInfo, Governance};
 use crate::hold::{HoldOutcome, HoldRequest, Holds};
 use crate::inject::{self, Target};
+use crate::mechanisms;
 use crate::pipeline::{
     OpenLaneDecision, Outcome, PipelineRequest, PostHook, PreparedRequest, RequestHandler,
     TunnelReport,
@@ -18,9 +20,8 @@ use crate::reqlog::{RequestLog, Row};
 use crate::resolve::{ResolvedHost, Resolver, SecretCand};
 use crate::{Body, BoxError, guidance};
 use aurora_core::ApiError;
-use aurora_core::limits::{APPROVAL_BODY_PEEK, CONDITION_BODY_BUFFER, CONNECTION_CHOICE_MAX};
+use aurora_core::limits::{APPROVAL_BODY_PEEK, CONDITION_BODY_BUFFER};
 use aurora_policy::eval::{BlockReason, Decision, MemoryCounter, RateCounter, Verdict};
-use aurora_policy::facts::Level;
 use aurora_policy::{Credential, RequestFacts, RequestIdentity, evaluate, selected_candidates};
 use bytes::{Bytes, BytesMut};
 use futures::StreamExt;
@@ -78,6 +79,9 @@ struct Ctx {
     decision: &'static str,
     rule: Option<(Uuid, String)>,
     injected: i16,
+    app_id: Option<String>,
+    tool_id: Option<String>,
+    connection_id: Option<Uuid>,
 }
 
 impl Ctx {
@@ -96,9 +100,9 @@ impl Ctx {
             method: self.method.clone(),
             host: self.host.clone(),
             path: self.path.clone(),
-            app_id: None,
-            tool_id: None,
-            connection_id: None,
+            app_id: self.app_id.clone(),
+            tool_id: self.tool_id.clone(),
+            connection_id: self.connection_id,
             secret_id: self.secret_id,
             decision: self.decision,
             rule_logical_id: self.rule.as_ref().map(|r| r.0),
@@ -118,9 +122,12 @@ struct Hook {
     ctx: Ctx,
     log: Arc<RequestLog>,
     /// Guidance for an upstream 401/403 when nothing was injected.
-    ungranted: Option<(String, String)>,
+    fallback: Fallback,
+    /// `registry_token_challenge`: let anonymous registry token flows proceed.
+    passthrough_challenge: bool,
     create_secret_url: String,
     manage_url: String,
+    connect_url: String,
     /// Step 14 origin backstop for an injected LLM key.
     backstop: Option<(Arc<Governance>, BackstopInfo)>,
 }
@@ -145,9 +152,15 @@ impl PostHook for Hook {
                 .record(ctx.row(r.status().as_u16(), Some(status.as_u16()), code.as_deref()));
             return Some(r);
         }
-        if ctx.injected == 0 && matches!(status.as_u16(), 401 | 403) {
-            let err = match &self.ungranted {
-                Some((kind, provider)) => ApiError::new(
+        let challenge = self.passthrough_challenge
+            && status.as_u16() == 401
+            && headers
+                .get(http::header::WWW_AUTHENTICATE)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.trim_start().to_ascii_lowercase().starts_with("bearer"));
+        if ctx.injected == 0 && matches!(status.as_u16(), 401 | 403) && !challenge {
+            let err = match &self.fallback {
+                Fallback::Ungranted(kind, provider) => ApiError::new(
                     status,
                     "access_restricted",
                     format!(
@@ -158,7 +171,37 @@ impl PostHook for Hook {
                 .with_details(json!({
                     "kind": kind, "provider": provider, "manage_url": self.manage_url
                 })),
-                None => ApiError::new(
+                Fallback::Disabled(app_id) => ApiError::new(
+                    status,
+                    "access_restricted",
+                    format!(
+                        "The upstream rejected the request. The connection for {app_id} is disabled. Ask a workspace admin to enable it: {}",
+                        self.manage_url
+                    ),
+                )
+                .with_details(json!({
+                    "kind": "connection", "provider": app_id, "reason": "disabled",
+                    "manage_url": self.manage_url
+                })),
+                Fallback::NotConnected(app_id) => ApiError::new(
+                    status,
+                    "app_not_connected",
+                    format!(
+                        "{app_id} is not connected in this workspace. Connect it at {}",
+                        self.connect_url
+                    ),
+                )
+                .with_details(json!({ "app_id": app_id, "connect_url": self.connect_url })),
+                Fallback::PathUnserved => ApiError::new(
+                    status,
+                    "app_path_unserved",
+                    format!(
+                        "No installed app serves this path on {}. Check the request path.",
+                        ctx.host
+                    ),
+                )
+                .with_details(json!({ "host": ctx.host })),
+                Fallback::NotFound => ApiError::new(
                     status,
                     "credential_not_found",
                     format!(
@@ -187,6 +230,15 @@ impl PostHook for Hook {
     }
 }
 
+/// What to tell the agent when the upstream rejects an uncredentialed request.
+enum Fallback {
+    Ungranted(String, String),
+    Disabled(String),
+    NotConnected(String),
+    PathUnserved,
+    NotFound,
+}
+
 fn facts_identity(i: &Ident) -> RequestIdentity {
     RequestIdentity {
         agent_id: i.agent_id,
@@ -194,75 +246,9 @@ fn facts_identity(i: &Ident) -> RequestIdentity {
     }
 }
 
-enum Pick {
-    None,
-    One(Arc<SecretCand>),
-    Refuse(ApiError),
-}
-
-fn choices(c: &[Arc<SecretCand>]) -> serde_json::Value {
-    c.iter()
-        .take(CONNECTION_CHOICE_MAX as usize)
-        .map(|s| {
-            json!({
-                "id": s.id, "app_id": null, "label": s.name,
-                "scope": if s.scope == Level::Workspace { "workspace" } else { "organization" },
-            })
-        })
-        .collect()
-}
-
-/// Step 6: choose among the selected candidates (ids only).
-fn pick(mut sel: Vec<Arc<SecretCand>>, named: Option<&str>) -> Pick {
-    if let Some(n) = named {
-        let found = Uuid::parse_str(n)
-            .ok()
-            .and_then(|id| sel.iter().find(|c| c.id == id).cloned());
-        return match found {
-            Some(c) => Pick::One(c),
-            None => Pick::Refuse(
-                ApiError::not_found("No granted credential with that id is available here.")
-                    .with_code_override("connection_not_found"),
-            ),
-        };
-    }
-    // Path-limited over whole-host, then workspace over organization.
-    if sel.iter().any(|c| c.path.is_some()) {
-        sel.retain(|c| c.path.is_some());
-    }
-    if sel.iter().any(|c| c.scope == Level::Workspace) {
-        sel.retain(|c| c.scope == Level::Workspace);
-    }
-    match sel.len() {
-        0 => Pick::None,
-        1 => Pick::One(sel.remove(0)),
-        _ => Pick::Refuse(
-            ApiError::new(
-                StatusCode::CONFLICT,
-                "multiple_providers",
-                "Several granted credentials match this request. Choose one by sending the x-aurora-connection-id header with the id of one of the choices.",
-            )
-            .with_details(json!({ "choices": choices(&sel), "header": "x-aurora-connection-id" })),
-        ),
-    }
-}
-
-trait CodeOverride {
-    fn with_code_override(self, code: &str) -> Self;
-}
-impl CodeOverride for ApiError {
-    fn with_code_override(self, code: &str) -> Self {
-        let mut e = ApiError::new(self.status(), code, self.message().to_owned());
-        if let Some(d) = self.details() {
-            e = e.with_details(d.clone());
-        }
-        e
-    }
-}
-
 /// Reads up to `limit` bytes of the body; returns the prefix, `truncated`, and a
 /// body that replays the prefix followed by the rest.
-async fn buffer_prefix(mut body: Body, limit: usize) -> (Bytes, bool, Body) {
+pub(crate) async fn buffer_prefix(mut body: Body, limit: usize) -> (Bytes, bool, Body) {
     let mut buf = BytesMut::new();
     let mut ended = false;
     let mut failed = None;
@@ -478,6 +464,9 @@ impl RequestHandler for PolicyHandler {
             decision: "allow",
             rule: None,
             injected: 0,
+            app_id: None,
+            tool_id: None,
+            connection_id: None,
         };
         let rv = match self.resolver.resolve(&identity, &host, port).await {
             Ok(r) => r,
@@ -491,23 +480,77 @@ impl RequestHandler for PolicyHandler {
             }
         };
         let fi = facts_identity(&identity);
+        // 5. app identification (host/path); the tool follows once the body is known.
+        let registry = rv.registry.clone();
+        let app_match = registry
+            .as_ref()
+            .and_then(|l| apps::identify_app(l, &host, port, &path));
         // Candidates serving this path; selection by allow rules (07 §Injection selection).
-        let cands: Vec<Arc<SecretCand>> = rv
+        let mut cands: Vec<Cand> = rv
             .secrets
             .iter()
             .filter(|c| c.path.as_ref().is_none_or(|p| p.matches(&path)))
             .cloned()
+            .map(Cand::Secret)
             .collect();
-        let creds: Vec<Credential> = cands.iter().map(|c| c.credential()).collect();
+        let app_unavailable = app_match
+            .as_ref()
+            .is_some_and(|m| rv.unavailable_apps.contains(&m.entry.app_id));
+        if let Some(m) = &app_match {
+            let same: Vec<_> = rv
+                .conns
+                .iter()
+                .filter(|c| c.app_id == m.entry.app_id)
+                .cloned()
+                .collect();
+            // Tenant-bound entries only offer connections stored for this host; when none
+            // does, the mismatching ones stay so that the guard answers 421.
+            let bound: Vec<_> = if m.entry.tenant.is_some() {
+                let ok: Vec<_> = same
+                    .iter()
+                    .filter(|c| {
+                        c.tenant_host
+                            .as_deref()
+                            .is_some_and(|t| t.eq_ignore_ascii_case(&host))
+                    })
+                    .cloned()
+                    .collect();
+                if ok.is_empty() { same } else { ok }
+            } else {
+                same
+            };
+            cands.extend(bound.into_iter().map(Cand::App));
+        }
+        let creds: Vec<Credential> = cands.iter().map(Cand::credential).collect();
         let selected: HashSet<_> = selected_candidates(rv.all_rules(), &fi, &creds);
         let (granted, ungranted): (Vec<_>, Vec<_>) = cands
             .into_iter()
             .partition(|c| selected.contains(&c.credential().key()));
-        let winner = match pick(granted, aurora_headers.connection_id.as_deref()) {
+        let mut response_headers = HeaderMap::new();
+        if granted.len() > 1
+            && let Ok(v) = http::HeaderValue::from_str(&apps::choices(&granted).to_string())
+        {
+            response_headers.insert("x-aurora-connections", v);
+        }
+        let winner = match apps::pick(granted, aurora_headers.connection_id.as_deref()) {
             Pick::None => None,
             Pick::One(c) => Some(c),
             Pick::Refuse(e) => return Outcome::Respond(self.refuse(ctx, &e, "error")),
         };
+        let wsec: Option<&SecretCand> = winner.as_ref().and_then(Cand::secret).map(|a| &**a);
+        if let Some(Cand::App(c)) = &winner {
+            ctx.connection_id = Some(c.id);
+        }
+        ctx.app_id = app_match.as_ref().map(|m| m.entry.app_id.clone());
+        if winner.is_none() && app_unavailable {
+            let err = ApiError::new(
+                StatusCode::FORBIDDEN,
+                "app_unavailable",
+                "This app is not available to this workspace under the organization's app policy.",
+            )
+            .with_details(json!({ "app_id": ctx.app_id }));
+            return Outcome::Respond(self.refuse(ctx, &err, "blocked"));
+        }
         // 4. body prefix, only when a rule inspects the body.
         let content_type = headers
             .get(http::header::CONTENT_TYPE)
@@ -518,8 +561,11 @@ impl RequestHandler for PolicyHandler {
         let llm_body = rv
             .governance
             .as_ref()
-            .is_some_and(|g| Governance::needs_body(g, &host_port, winner.as_deref()));
-        let (body_prefix, truncated, body) = if rv.needs_body() || may_hold || llm_body {
+            .is_some_and(|g| Governance::needs_body(g, &host_port, wsec))
+            || app_match
+                .as_ref()
+                .is_some_and(|m| apps::needs_body(m.app, &host, port, &path, method.as_str()));
+        let (body_prefix, truncated, mut body) = if rv.needs_body() || may_hold || llm_body {
             let limit = if rv.needs_body() || llm_body {
                 CONDITION_BODY_BUFFER
             } else {
@@ -530,6 +576,19 @@ impl RequestHandler for PolicyHandler {
         } else {
             (Vec::new(), false, body)
         };
+        let tool = app_match.as_ref().and_then(|m| {
+            apps::identify_tool(
+                m.app,
+                &host,
+                port,
+                &path,
+                query.as_deref(),
+                method.as_str(),
+                &body_prefix,
+                truncated,
+            )
+        });
+        ctx.tool_id = tool.map(|t| t.id.clone());
         // 6a. LLM governance (cached effective governance; nothing decrypted).
         if let (Some(gov), Some(g)) = (&self.governance, &rv.governance)
             && rv.is_llm_host
@@ -540,11 +599,11 @@ impl RequestHandler for PolicyHandler {
                 &path,
                 &body_prefix,
                 truncated,
-                winner.as_deref(),
+                wsec,
                 &self.url(&rv, "secrets"),
             )
         {
-            ctx.secret_id = winner.as_ref().map(|c| c.id);
+            ctx.secret_id = wsec.map(|c| c.id);
             return Outcome::Respond(self.refuse(ctx, &err, "governance_refused"));
         }
         // 7. decision (nothing decrypted yet).
@@ -558,10 +617,10 @@ impl RequestHandler for PolicyHandler {
             method: method.to_string(),
             body_prefix,
             truncated,
-            app_id: None,
-            tool_id: None,
-            tool_tags: Default::default(),
-            winning_credential: winner.as_ref().map(|c| c.credential()),
+            app_id: ctx.app_id.clone(),
+            tool_id: ctx.tool_id.clone(),
+            tool_tags: tool.map(apps::tool_tags).unwrap_or_default(),
+            winning_credential: winner.as_ref().map(Cand::credential),
             is_llm_host: rv.is_llm_host,
             identity: fi,
         };
@@ -571,7 +630,7 @@ impl RequestHandler for PolicyHandler {
             &facts,
             self.counters.as_ref(),
         );
-        ctx.secret_id = winner.as_ref().map(|c| c.id);
+        ctx.secret_id = wsec.map(|c| c.id);
         ctx.rule = d.deciding_rule().map(|r| (r.logical_id, r.name.clone()));
         if d.verdict == Verdict::NeedsApproval
             && let Some(holds) = &self.holds
@@ -638,7 +697,153 @@ impl RequestHandler for PolicyHandler {
         }
         self.apply_hits(&d);
         // 11. injection (plaintext fetched only now).
-        if let Some(c) = &winner {
+        if let Some(Cand::App(conn)) = &winner {
+            let Some(m) = &app_match else {
+                return Outcome::Respond(self.refuse(
+                    ctx,
+                    &credential_unavailable("connection"),
+                    "error",
+                ));
+            };
+            let unavailable = |s: &Self, ctx: Ctx| {
+                Outcome::Respond(s.refuse(ctx, &credential_unavailable("connection"), "error"))
+            };
+            if let Some(t) = &m.entry.tenant {
+                match mechanisms::route::tenant_guard(t, conn.tenant_host.as_deref(), &host) {
+                    Ok(()) => {}
+                    Err(mechanisms::route::GuardError::Mismatch { expected }) => {
+                        let err = ApiError::new(
+                            StatusCode::MISDIRECTED_REQUEST,
+                            "host_mismatch",
+                            format!("This connection is bound to {expected}; send the request to that host."),
+                        )
+                        .with_details(json!({ "expected_host": expected }));
+                        return Outcome::Respond(self.refuse(ctx, &err, "guard_refused"));
+                    }
+                    Err(mechanisms::route::GuardError::Unavailable) => {
+                        return unavailable(self, ctx);
+                    }
+                }
+            }
+            let raw = match self.plaintext.get_connection(conn).await {
+                Ok(v) => v,
+                Err(PlaintextError::StoreUnavailable(store_id)) => {
+                    let err = ApiError::unavailable(
+                        "secret_store_unavailable",
+                        "The secret store is unreachable. Retry shortly.",
+                    )
+                    .with_details(json!({ "store_id": store_id }));
+                    return Outcome::Respond(self.refuse(ctx, &err, "error"));
+                }
+                Err(PlaintextError::Unavailable) => return unavailable(self, ctx),
+            };
+            let pkg_ctx: &[String] = registry
+                .as_ref()
+                .and_then(|l| {
+                    l.snapshot
+                        .packages
+                        .iter()
+                        .find(|p| p.package_id == m.app.package_id)
+                })
+                .map_or(&[], |p| p.context.as_slice());
+            let cmap = HashMap::from([
+                ("org_id".to_owned(), identity.org_id.to_string()),
+                ("workspace_id".to_owned(), identity.workspace_id.to_string()),
+                ("instance_url".to_owned(), self.external_url.clone()),
+            ]);
+            let Some(exec) = Exec::new(m.app, pkg_ctx, conn, raw.expose(), cmap) else {
+                return unavailable(self, ctx);
+            };
+            // 9. token interception: answered locally, never forwarded.
+            if let Some(i) = &m.entry.intercept
+                && mechanisms::intercept::matches(i, &method, &path)
+            {
+                let Some(tok) = exec.credential("access_token") else {
+                    return unavailable(self, ctx);
+                };
+                let expires_in = conn
+                    .expires_at
+                    .map_or(3600, |e| (e - chrono::Utc::now()).num_seconds());
+                ctx.injected = 1;
+                self.touch(conn.id);
+                self.log.record(ctx.row(200, None, None));
+                return Outcome::Respond(mechanisms::intercept::token_response(tok, expires_in));
+            }
+            // 11-12. inject, route, transform, finalize.
+            let vars = exec.vars();
+            let mut new_path = path.clone();
+            let mut up_host = host.clone();
+            let mut ok = mechanisms::inject::apply_all(
+                &m.entry.inject,
+                &vars,
+                &mut Target {
+                    headers: &mut headers,
+                    path: &mut new_path,
+                    query: &mut query,
+                },
+            )
+            .is_ok();
+            if ok && let Some(r) = &m.entry.rewrite_host {
+                match mechanisms::route::rewrite_host(r, &vars) {
+                    Ok(h) => up_host = h,
+                    Err(_) => ok = false,
+                }
+            }
+            if ok && let Some(mechanisms::Transform::GitCommitTrailer(t)) = &m.entry.transform {
+                match mechanisms::transform::git_commit_trailer(
+                    t,
+                    &vars,
+                    &method,
+                    &mut headers,
+                    body,
+                )
+                .await
+                {
+                    Ok(b) => body = b,
+                    Err(_) => return unavailable(self, ctx),
+                }
+            }
+            if ok && let Some(mechanisms::Finalize::AwsSigv4(f)) = &m.entry.finalize {
+                let host_hdr = if port == scheme.default_port() {
+                    up_host.clone()
+                } else {
+                    format!("{up_host}:{port}")
+                };
+                ok = mechanisms::finalize::finalize(
+                    f,
+                    &vars,
+                    &method,
+                    &host_hdr,
+                    &new_path,
+                    query.as_deref(),
+                    &mut headers,
+                    chrono::Utc::now(),
+                )
+                .is_ok();
+            }
+            if !ok {
+                return unavailable(self, ctx);
+            }
+            ctx.injected = 1;
+            self.touch(conn.id);
+            let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
+            let passthrough = pass_challenge(app_match.as_ref());
+            let hook = self.hook(&rv, ctx, fb, passthrough, None);
+            return Outcome::Forward(PreparedRequest {
+                scheme,
+                host: up_host,
+                port,
+                method,
+                path: new_path,
+                query,
+                headers,
+                upgrade,
+                body,
+                hook: Some(hook),
+                response_headers,
+            });
+        }
+        if let Some(Cand::Secret(c)) = &winner {
             let value = match self.plaintext.get(c).await {
                 Ok(v) => v,
                 Err(PlaintextError::StoreUnavailable(store_id)) => {
@@ -650,7 +855,7 @@ impl RequestHandler for PolicyHandler {
                     return Outcome::Respond(self.refuse(ctx, &err, "error"));
                 }
                 Err(PlaintextError::Unavailable) => {
-                    let err = credential_unavailable();
+                    let err = credential_unavailable("secret");
                     return Outcome::Respond(self.refuse(ctx, &err, "error"));
                 }
             };
@@ -676,11 +881,16 @@ impl RequestHandler for PolicyHandler {
                 },
             );
             if r.is_err() {
-                return Outcome::Respond(self.refuse(ctx, &credential_unavailable(), "error"));
+                return Outcome::Respond(self.refuse(
+                    ctx,
+                    &credential_unavailable("secret"),
+                    "error",
+                ));
             }
             ctx.injected = 1;
             self.touch(c.id);
-            let hook = self.hook(&rv, ctx, &ungranted, backstop);
+            let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
+            let hook = self.hook(&rv, ctx, fb, false, backstop);
             return Outcome::Forward(PreparedRequest {
                 scheme,
                 host,
@@ -692,9 +902,12 @@ impl RequestHandler for PolicyHandler {
                 upgrade,
                 body,
                 hook: Some(hook),
+                response_headers,
             });
         }
-        let hook = self.hook(&rv, ctx, &ungranted, None);
+        let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
+        let passthrough = pass_challenge(app_match.as_ref());
+        let hook = self.hook(&rv, ctx, fb, passthrough, None);
         Outcome::Forward(PreparedRequest {
             scheme,
             host,
@@ -706,6 +919,7 @@ impl RequestHandler for PolicyHandler {
             upgrade,
             body,
             hook: Some(hook),
+            response_headers,
         })
     }
 
@@ -721,6 +935,9 @@ impl RequestHandler for PolicyHandler {
             decision: "allow",
             rule: None,
             injected: 0,
+            app_id: None,
+            tool_id: None,
+            connection_id: None,
         };
         let rv = match self.resolver.resolve(identity, host, port).await {
             Ok(r) => r,
@@ -801,6 +1018,9 @@ impl RequestHandler for PolicyHandler {
             decision: "allow",
             rule: None,
             injected: 0,
+            app_id: None,
+            tool_id: None,
+            connection_id: None,
         };
         let mut row = ctx.row(200, None, None);
         row.bytes_up = i64::try_from(r.bytes_up).unwrap_or(i64::MAX);
@@ -810,34 +1030,69 @@ impl RequestHandler for PolicyHandler {
 }
 
 impl PolicyHandler {
+    fn fallback(
+        &self,
+        rv: &ResolvedHost,
+        app: Option<&apps::AppMatch<'_>>,
+        ungranted: &[Cand],
+        _host: &str,
+    ) -> Fallback {
+        if let Some(c) = ungranted.first() {
+            return match c {
+                Cand::Secret(c) => Fallback::Ungranted(
+                    "secret".to_owned(),
+                    c.provider.clone().unwrap_or_else(|| c.name.clone()),
+                ),
+                Cand::App(c) => Fallback::Ungranted("connection".to_owned(), c.app_id.clone()),
+            };
+        }
+        match app {
+            Some(m) if rv.disabled_apps.contains(&m.entry.app_id) => {
+                Fallback::Disabled(m.entry.app_id.clone())
+            }
+            Some(m) => Fallback::NotConnected(m.entry.app_id.clone()),
+            None if rv.known_app_host => Fallback::PathUnserved,
+            None => Fallback::NotFound,
+        }
+    }
+
     fn hook(
         &self,
         rv: &ResolvedHost,
         ctx: Ctx,
-        ungranted: &[Arc<SecretCand>],
+        fallback: Fallback,
+        passthrough_challenge: bool,
         backstop: Option<(Arc<Governance>, BackstopInfo)>,
     ) -> Box<dyn PostHook> {
-        let ungranted = ungranted.first().map(|c| {
-            (
-                "secret".to_owned(),
-                c.provider.clone().unwrap_or_else(|| c.name.clone()),
-            )
-        });
+        let connect_url = match &ctx.app_id {
+            Some(a) => self.url(rv, &format!("apps/{a}")),
+            None => self.url(rv, "apps"),
+        };
         Box::new(Hook {
             ctx,
             log: self.log.clone(),
-            ungranted,
+            fallback,
+            passthrough_challenge,
             create_secret_url: self.url(rv, "secrets"),
             manage_url: self.url(rv, "policy"),
+            connect_url,
             backstop,
         })
     }
 }
 
-fn credential_unavailable() -> ApiError {
+fn pass_challenge(m: Option<&apps::AppMatch<'_>>) -> bool {
+    m.is_some_and(|m| {
+        m.entry
+            .passthrough
+            .contains(&aurora_registry::manifest::Passthrough::RegistryTokenChallenge)
+    })
+}
+
+fn credential_unavailable(kind: &str) -> ApiError {
     ApiError::bad_gateway(
         "credential_unavailable",
         "A granted credential could not be produced. Retry later or contact a workspace admin.",
     )
-    .with_details(json!({ "kind": "secret" }))
+    .with_details(json!({ "kind": kind }))
 }

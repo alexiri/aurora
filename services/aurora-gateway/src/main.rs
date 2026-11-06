@@ -15,6 +15,7 @@ use aurora_gateway::proxy::{Proxy, ProxyParts};
 use aurora_gateway::reqlog::{DbWriter, FLUSH_INTERVAL, RequestLog};
 use aurora_gateway::resolve::{DbSource, Resolver};
 use aurora_gateway::resolver::DbCredentialResolver;
+use aurora_gateway::snapshot::SnapshotStore;
 use base64::Engine;
 use clap::{Parser, Subcommand};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -125,8 +126,11 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     );
     // Registered before the resolver cache so a reload never sees stale governance.
     hub.register(governance.clone());
+    let snapshots = SnapshotStore::new();
     let policy_resolver = Arc::new(
-        Resolver::new(Arc::new(DbSource(pool.clone())), llm).with_governance(governance.clone()),
+        Resolver::new(Arc::new(DbSource(pool.clone())), llm)
+            .with_governance(governance.clone())
+            .with_snapshots(snapshots.clone()),
     );
     hub.register(policy_resolver.cache());
     let plaintext = Arc::new(PlaintextCache::new(vault));
@@ -153,6 +157,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         .with_governance(governance),
     );
     let reqlog_task = tokio::spawn(reqlog.run(FLUSH_INTERVAL, rx.clone()));
+    let snapshot_task = tokio::spawn(snapshots.clone().run(pool.clone(), rx.clone()));
     let hub_task = tokio::spawn(hub.clone().run(pool.clone(), rx.clone()));
     let instance_task = tokio::spawn(instance::run(
         pool.clone(),
@@ -171,6 +176,16 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+    let snapshot_check = ready_check(move || {
+        let loaded = snapshots.is_loaded();
+        async move {
+            if loaded {
+                Ok(())
+            } else {
+                Err("registry snapshot not loaded".to_owned())
+            }
+        }
+    });
     let db_check = ready_check(move || {
         let pool = pool.clone();
         async move {
@@ -184,7 +199,11 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     // Health and metrics are never served on the agent-reachable proxy port.
     let internal = service::ops_router(
         metrics,
-        vec![("database", db_check), ("invalidation", listener_check)],
+        vec![
+            ("database", db_check),
+            ("invalidation", listener_check),
+            ("registry", snapshot_check),
+        ],
     );
     let ca = Arc::new(Ca::load(Path::new(&cfg.gateway.ca_dir))?);
     let bind = cfg.server.bind.as_str();
@@ -234,6 +253,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     holds.abandon_all().await;
     internal_task.await??;
     let _ = hub_task.await;
+    let _ = snapshot_task.await;
     let _ = instance_task.await;
     let _ = reqlog_task.await;
     Ok(())

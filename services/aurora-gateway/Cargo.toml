@@ -26,6 +26,10 @@ aurora-policy = { workspace = true }
 aurora-secrets = { workspace = true }
 aurora-llm = { workspace = true }
 aurora-summary = { workspace = true }
+aurora-registry = { workspace = true }
+arc-swap = { workspace = true }
+hmac = { workspace = true }
+metrics = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }

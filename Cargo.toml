@@ -103,6 +103,8 @@ tar = "0.4"
 psl = "2"
 pulldown-cmark = { version = "0.13", default-features = false }
 sha2 = "0.10"
+hmac = "0.12"
+arc-swap = "1"
 
 # crypto
 aws-lc-rs = "1.18"

@@ -169,6 +169,7 @@ impl Proxy {
         };
         let mut prepared = prepared;
         let hook = prepared.hook.take();
+        let response_headers = std::mem::take(&mut prepared.response_headers);
         // 13. forward
         let mut resp = match self.upstream.send(prepared).await {
             Ok(r) => r,
@@ -184,6 +185,9 @@ impl Proxy {
             if let Some(replacement) = h.on_response(resp.status(), resp.headers()) {
                 return replacement;
             }
+        }
+        for (k, v) in &response_headers {
+            resp.headers_mut().insert(k.clone(), v.clone());
         }
         if resp.status() == http::StatusCode::SWITCHING_PROTOCOLS {
             if let Some(client_up) = upgrade_fut {

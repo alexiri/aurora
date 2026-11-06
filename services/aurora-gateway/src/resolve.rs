@@ -1,15 +1,17 @@
 //! Connect-time resolution: the cached policy view and secret/LLM candidates
 //! for (org, workspace, credential, host) (docs/06 §MITM lane, §Caches).
 
+use crate::apps::ConnCand;
 use crate::auth::RequestIdentity;
 use crate::invalidation::{Invalidatable, Invalidate, Scope};
+use crate::snapshot::{Loaded, SnapshotStore};
 use async_trait::async_trait;
-use aurora_db::repo::gateway::{self as repo, ScopePolicyRows, SecretMetaRow};
+use aurora_db::repo::gateway::{self as repo, AppConnectionRow, ScopePolicyRows, SecretMetaRow};
 use aurora_llm::{AuthMode, LlmInjection, ProviderRegistry};
 use aurora_policy::facts::{Level, SecretKind};
 use aurora_policy::{Credential, HostPattern, PathPattern, Rule, ScopePolicy};
 use aurora_secrets::{InjectionRecipe, SecretRef};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -63,6 +65,16 @@ pub struct ResolvedHost {
     pub is_llm_host: bool,
     /// Effective LLM/egress governance of the org (`None` = governance not wired).
     pub governance: Option<Arc<aurora_llm::governance::EffectiveGovernance>>,
+    /// The registry snapshot this view was built against.
+    pub registry: Option<Arc<Loaded>>,
+    /// Active app connections of the apps serving this host (any path).
+    pub conns: Vec<Arc<ConnCand>>,
+    /// Apps with a `disabled` connection in scope (guidance).
+    pub disabled_apps: HashSet<String>,
+    /// Apps removed by a `restricted` org posture (`app_unavailable`).
+    pub unavailable_apps: HashSet<String>,
+    /// Some active host entry of the snapshot covers this host.
+    pub known_app_host: bool,
 }
 
 impl ResolvedHost {
@@ -89,6 +101,19 @@ pub trait PolicySource: Send + Sync + 'static {
     async fn scope_policy(&self, org: Uuid, ws: Option<Uuid>) -> Result<ScopePolicyRows, String>;
     async fn secrets(&self, org: Uuid, ws: Uuid) -> Result<Vec<SecretMetaRow>, String>;
     async fn slugs(&self, ws: Uuid) -> Result<Option<(String, String)>, String>;
+    /// `active`/`disabled` connections of the given apps (default: none).
+    async fn connections(
+        &self,
+        _org: Uuid,
+        _ws: Uuid,
+        _app_ids: &[String],
+    ) -> Result<Vec<AppConnectionRow>, String> {
+        Ok(Vec::new())
+    }
+    /// `(restricted, available app ids)` (default: open posture).
+    async fn app_availability(&self, _org: Uuid, _ws: Uuid) -> Result<(bool, Vec<String>), String> {
+        Ok((false, Vec::new()))
+    }
 }
 
 pub struct DbSource(pub aurora_db::PgPool);
@@ -107,6 +132,21 @@ impl PolicySource for DbSource {
     }
     async fn slugs(&self, ws: Uuid) -> Result<Option<(String, String)>, String> {
         repo::scope_slugs(&self.0, ws)
+            .await
+            .map_err(|e| e.to_string())
+    }
+    async fn connections(
+        &self,
+        org: Uuid,
+        ws: Uuid,
+        app_ids: &[String],
+    ) -> Result<Vec<AppConnectionRow>, String> {
+        repo::app_connections(&self.0, org, ws, app_ids)
+            .await
+            .map_err(|e| e.to_string())
+    }
+    async fn app_availability(&self, org: Uuid, ws: Uuid) -> Result<(bool, Vec<String>), String> {
+        repo::app_availability(&self.0, org, ws)
             .await
             .map_err(|e| e.to_string())
     }
@@ -193,6 +233,7 @@ struct Key {
     credential: Uuid,
     host: String,
     port: u16,
+    snapshot: Option<Arc<str>>,
 }
 
 struct Entry {
@@ -212,6 +253,7 @@ pub struct Resolver {
     ttl: Duration,
     cache: Arc<ResolveCache>,
     governance: Option<Arc<crate::governance::Governance>>,
+    snapshots: Option<Arc<SnapshotStore>>,
 }
 
 /// The invalidatable part (registered with the hub).
@@ -259,6 +301,7 @@ impl Resolver {
             ttl,
             cache: Arc::new(ResolveCache::default()),
             governance: None,
+            snapshots: None,
         }
     }
 
@@ -266,6 +309,12 @@ impl Resolver {
     /// the governed-host view used by step 6a.
     pub fn with_governance(mut self, g: Arc<crate::governance::Governance>) -> Self {
         self.governance = Some(g);
+        self
+    }
+
+    /// Serve app connections declared by the registry snapshot.
+    pub fn with_snapshots(mut self, s: Arc<SnapshotStore>) -> Self {
+        self.snapshots = Some(s);
         self
     }
 
@@ -290,6 +339,11 @@ impl Resolver {
             credential: id.credential_id,
             host: host.to_ascii_lowercase(),
             port,
+            snapshot: self
+                .snapshots
+                .as_ref()
+                .and_then(|s| s.current())
+                .map(|l| l.hash.clone()),
         };
         let gen_seen = {
             let Ok(mut g) = self.cache.inner.lock() else {
@@ -364,6 +418,52 @@ impl Resolver {
                 Err(e) => tracing::warn!(error = %e, "skipping unusable secret"),
             }
         }
+        let registry = self.snapshots.as_ref().and_then(|s| s.current());
+        let (mut conns, mut disabled_apps, mut unavailable_apps, mut known_app_host) =
+            (Vec::new(), HashSet::new(), HashSet::new(), false);
+        // Governed LLM hosts never serve app connections (SEC-37).
+        if let Some(l) = registry
+            .as_ref()
+            .filter(|l| !is_llm_host && !l.is_reserved(&k.host, k.port))
+        {
+            let entries = l.entries_for_host(&k.host, k.port);
+            known_app_host = !entries.is_empty();
+            let mut app_ids: Vec<String> = entries.iter().map(|e| e.app_id.clone()).collect();
+            app_ids.sort();
+            app_ids.dedup();
+            if !app_ids.is_empty() {
+                let rows = self
+                    .source
+                    .connections(k.org, k.ws, &app_ids)
+                    .await
+                    .map_err(fail)?;
+                let (restricted, available) = self
+                    .source
+                    .app_availability(k.org, k.ws)
+                    .await
+                    .map_err(fail)?;
+                if restricted {
+                    unavailable_apps = app_ids
+                        .iter()
+                        .filter(|a| !available.contains(a))
+                        .cloned()
+                        .collect();
+                }
+                for r in rows {
+                    if unavailable_apps.contains(&r.app_id) {
+                        continue;
+                    }
+                    if r.status == "disabled" {
+                        disabled_apps.insert(r.app_id);
+                        continue;
+                    }
+                    match ConnCand::from_row(r, k.org) {
+                        Ok(c) => conns.push(Arc::new(c)),
+                        Err(e) => tracing::warn!(error = %e, "skipping unusable connection"),
+                    }
+                }
+            }
+        }
         let mut org_policy = to_scope_policy(org_rows).map_err(fail)?;
         if let Some(g) = &gov {
             crate::governance::apply_egress_posture(&mut org_policy, g);
@@ -376,6 +476,11 @@ impl Resolver {
             ws_slug,
             is_llm_host,
             governance: gov,
+            registry,
+            conns,
+            disabled_apps,
+            unavailable_apps,
+            known_app_host,
         })
     }
 }

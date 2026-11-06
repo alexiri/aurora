@@ -9,7 +9,7 @@ use http::{HeaderMap, HeaderName, HeaderValue, header};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 
 /// Everything except RFC 3986 unreserved characters.
-const ENC: &AsciiSet = &NON_ALPHANUMERIC
+pub(crate) const ENC: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'.')
     .remove(b'_')
@@ -24,7 +24,7 @@ pub struct Target<'a> {
     pub query: &'a mut Option<String>,
 }
 
-fn header_value(bytes: &[u8]) -> Result<HeaderValue, InjectError> {
+pub(crate) fn header_value(bytes: &[u8]) -> Result<HeaderValue, InjectError> {
     if bytes.iter().any(|b| matches!(b, b'\r' | b'\n' | 0)) {
         return Err(InjectError);
     }
@@ -49,7 +49,7 @@ fn format_value(format: &str, value: &[u8]) -> Result<Vec<u8>, InjectError> {
     Ok(out)
 }
 
-fn set_query(query: &mut Option<String>, name: &str, value: &str) {
+pub(crate) fn set_query(query: &mut Option<String>, name: &str, value: &str) {
     let kept: Vec<&str> = query
         .as_deref()
         .unwrap_or("")
@@ -68,6 +68,25 @@ fn set_query(query: &mut Option<String>, name: &str, value: &str) {
     q.push('=');
     q.push_str(&utf8_percent_encode(value, ENC).to_string());
     *query = Some(q);
+}
+
+/// Replace the remainder of the first segment starting with `prefix` by `enc`
+/// (already percent-encoded).
+pub(crate) fn replace_prefixed_segment(path: &mut String, prefix: &str, enc: &str) {
+    let bare = prefix.strip_prefix('/').unwrap_or(prefix);
+    let mut done = false;
+    let segs: Vec<String> = path
+        .split('/')
+        .map(|s| {
+            if !done && !s.is_empty() && s.starts_with(bare) {
+                done = true;
+                format!("{bare}{enc}")
+            } else {
+                s.to_owned()
+            }
+        })
+        .collect();
+    *path = segs.join("/");
 }
 
 pub fn apply(cand: &SecretCand, value: &[u8], t: Target<'_>) -> Result<(), InjectError> {
@@ -121,21 +140,7 @@ pub fn apply(cand: &SecretCand, value: &[u8], t: Target<'_>) -> Result<(), Injec
             }
             InjectionRecipe::PathTemplate { prefix } => {
                 let enc = utf8_percent_encode(text(value)?, ENC).to_string();
-                let bare = prefix.strip_prefix('/').unwrap_or(prefix);
-                let mut done = false;
-                let segs: Vec<String> = t
-                    .path
-                    .split('/')
-                    .map(|s| {
-                        if !done && !s.is_empty() && s.starts_with(bare) {
-                            done = true;
-                            format!("{bare}{enc}")
-                        } else {
-                            s.to_owned()
-                        }
-                    })
-                    .collect();
-                *t.path = segs.join("/");
+                replace_prefixed_segment(t.path, prefix, &enc);
                 Ok(())
             }
             InjectionRecipe::PathRegex {
