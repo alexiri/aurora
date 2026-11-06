@@ -4,8 +4,9 @@
 //! recorded so floods cannot grow the log) -> size (413) -> verification (401) -> fire-time
 //! authority of the creator (403, webhook disabled `authorization`) -> idempotency -> turn.
 //!
-//! Idempotency: the key is the first of `Idempotency-Key`, `X-Delivery-Id`, `X-GitHub-Delivery`,
-//! `Webhook-Id` (24 h window), else the SHA-256 of the raw body (60 s window). It is stored in
+//! Idempotency: the key is the first of the platform-neutral `Idempotency-Key`, `X-Delivery-Id`,
+//! `Webhook-Id` (24 h window; no sender-specific headers in core, SEC-33), else the SHA-256 of
+//! the raw body (60 s window). It is stored in
 //! the accepted delivery's `reason` as `key:<hex>` / `body:<hex>`. A duplicate is answered with
 //! 202 and the original `delivery_id`; no new delivery row or turn is created. The webhook row
 //! is locked for the whole decision, so concurrent duplicates serialize.
@@ -38,12 +39,7 @@ const KEY_WINDOW_SECS: f64 = 24.0 * 3600.0;
 const BODY_WINDOW_SECS: f64 = 60.0;
 /// Payload bytes embedded in the turn text.
 const TEXT_PAYLOAD_MAX: usize = 32 * 1024;
-const KEY_HEADERS: [&str; 4] = [
-    "idempotency-key",
-    "x-delivery-id",
-    "x-github-delivery",
-    "webhook-id",
-];
+const KEY_HEADERS: [&str; 3] = ["idempotency-key", "x-delivery-id", "webhook-id"];
 
 /// Receive a webhook delivery. Public: the capability token in the path is the credential.
 #[utoipa::path(post, path = "/hooks/{token}", operation_id = "receiveWebhook", tag = "webhooks",

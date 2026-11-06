@@ -99,7 +99,7 @@ mod tests {
     fn secrets_are_filtered() {
         assert!(!may_pass("AURORA_BOOT", "x"));
         assert!(!may_pass("FOO", "aub_123"));
-        assert!(!may_pass("GITHUB_TOKEN", "ghp"));
+        assert!(!may_pass("DEPLOY_TOKEN", "real-value"));
         assert!(may_pass("ANTHROPIC_AUTH_TOKEN", PLACEHOLDER));
         assert!(may_pass("HTTPS_PROXY", "http://127.0.0.1:3128"));
         let env = child_env([("AURORA_BOOT", "s"), ("MY_APP", "1")]);

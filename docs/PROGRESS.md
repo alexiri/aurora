@@ -153,7 +153,10 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 
 - No Kubernetes cluster (kind/kubectl not installed) → kind e2e and SEC-02-on-k8s probes cannot run on this host.
 - No LiteLLM endpoint configured → M5 live claude-code conformance cannot run.
-- Workspace license in Cargo.toml is `GPL-3.0-or-later` (owner's choice; deny ignores private crates).
+
+## Standing notes (not blockers)
+
+- Workspace `Cargo.toml` licenses all first-party crates `GPL-3.0-or-later` (owner's choice — do not change). `cargo deny`'s permissive-only allowlist applies to third-party deps only; our crates are `publish = false` and skipped via `private = { ignore = true }`, so the check still passes.
 
 ## Recently completed
 
