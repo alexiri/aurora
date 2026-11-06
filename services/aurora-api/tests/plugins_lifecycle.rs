@@ -180,7 +180,11 @@ async fn approve_activates_notifies_and_disable_removes() {
     let (s, p) = a.act(&v3["id"], "disable").await;
     assert_eq!((s, p["status"].as_str()), (200, Some("disabled")), "{p}");
     let (s, p) = a.act(&v3["id"], "enable").await;
-    assert_eq!((s, p["error"]["code"].as_str()), (409, Some("invalid_state")), "{p}");
+    assert_eq!(
+        (s, p["error"]["code"].as_str()),
+        (409, Some("invalid_state")),
+        "{p}"
+    );
 }
 
 #[tokio::test]
