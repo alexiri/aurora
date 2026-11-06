@@ -1,6 +1,6 @@
 # Implementation progress
 
-Last updated: 2026-11-06 (orchestrator)
+Last updated: 2026-11-06 10:55 (orchestrator)
 
 Scope: **Phase 0 (M0–M7)**. Phases 1–4 are out of scope until phase 0 exits.
 Ids per decision I-01. Task briefs live in `docs/tasks/<ID>.md`. Milestones
@@ -38,42 +38,46 @@ their dependencies near completion (adaptive planning).
 
 ## Task graph
 
-| Task ID | Summary | Stack | Status | Dependencies | Owner/model | Verification |
+Legend: done = acceptance evidence recorded; partial = code in tree, agent paused (usage limit) — resume.
+
+| Task ID | Summary | Stack | Status | Dependencies | Owner/model | Verification / evidence |
 |---|---|---|---|---|---|---|
-| OPS-001 | Cargo workspace scaffold, lints, profiles, toolchain | Rust | done | — | Opus | `cargo check --workspace` |
-| BE-001 | aurora-core | Rust | done | OPS-001 | rust-developer | `cargo test -p aurora-core --all-features` 29 pass; clippy/fmt clean |
-| BE-002 | aurora-config | Rust | done | OPS-001 | rust-developer | `cargo test -p aurora-config` 12 pass; clippy/fmt clean; invented `user` key scope removed |
-| BE-004 | aurora-db infra + migrations §1–§5 | Rust/SQL | done | OPS-001 | rust-developer | migrate twice ok; `cargo test -p aurora-db` 10 pass; spec fixes S-01/S-02 |
-| FE-001 | Next.js dashboard scaffold | Next.js | done | — | nextjs-developer | pnpm install/lint/typecheck/test(2)/build pass (orchestrator re-ran) |
-| BE-003 | aurora-crypto | Rust | done | BE-001 | rust-developer | `cargo test -p aurora-crypto` 9 pass (fixture pinned, AAD swap, rotation); clippy clean |
-| BE-005 | migrations §6–§11 + gateway role grants | SQL | done | BE-004 | rust-developer | reset+migrate from empty, rerun no-op; 16 db tests pass; grants tested on role |
-| TEST-001 | schema introspection diff vs `03` | Rust test | done | BE-005 | haiku-tester→rust-developer | `cargo test -p aurora-db --test schema_matches_spec` pass: 68 tables / all columns of 03 (parser fixed by orchestrator) |
-| BE-006 | aurora-protocol skeleton + schema gen | Rust | done | BE-001 | haiku-worker | `cargo test -p aurora-protocol` 12 pass incl. schema drift |
-| BE-007 | aurora-testkit (ephemeral PG, mock upstream) | Rust | done | BE-004 | haiku-worker | `cargo test -p aurora-testkit` 4 pass; clippy clean (orchestrator finished) |
-| BE-008 | service binaries: health/metrics/config, `migrate` | Rust | done | BE-001, BE-002, BE-004 | rust-developer | workspace build/clippy/fmt; live curl: api healthz/readyz 200, /v1 404 envelope, gw 4102 503 envelope, 4103 200; migrate idempotent; config errors exit 78 |
-| OPS-002 | CI workflow + cargo-deny + arch-guard scripts | CI | done | BE-008, FE-001 | haiku-worker | `scripts/guards/run-all.sh` pass; `cargo deny check` all ok; ci.yml parses (5 jobs); CI itself not run (no remote) |
-| OPS-003 | compose skeleton + Containerfiles + Caddyfile + setup.sh | Ops | done | BE-008, FE-001 | rust-developer | `podman compose config`; up (disk permitting) |
-| API-001 | M1 contract schemas in API_CONTRACTS.md | Contract | done | — | Opus | review |
-| BE-010 | API foundation: state, errors, extractors, authn/CSRF/authz, OpenAPI, audit | Rust | done | BE-008 | rust-developer | 13 foundation tests (auth, CSRF, access law, confinement, pagination, rate limit, NOTIFY flush) + orchestrator regression (non-Bearer Authorization never falls back to cookie) |
-| BE-012 | Tenancy: orgs/workspaces/members/access + creation txn + Daneel | Rust | done | BE-010 | rust-developer | tests/tenancy.rs 5 scenario tests (creation txn w/ gens + Daneel, slugs, members/last owner, visibility, resolve, deletes); openapi drift ok |
-| BE-011 | Auth flows: signup/login/verify/reset/change, mailer, password policy | Rust | in-progress | BE-012 | rust-developer | |
-| BE-013 | Invitations | Rust | todo | BE-012 | rust-developer | |
-| BE-014 | API keys + CLI device flow + /v1/me/api-keys | Rust | todo | BE-010 | rust-developer | |
-| BE-015 | OIDC + mock IdP (testkit) | Rust | todo | BE-011, BE-003 | rust-developer | |
-| BE-016 | Instance admins, bootstrap-admin, admin users, /v1/me, deletion | Rust | todo | BE-011 | rust-developer | |
-| TEST-010 | Permission-matrix test (route × role) | Rust test | todo | BE-011..016 | haiku-tester | |
-| FE-010 | Auth pages (login, signup, forgot, reset, verify, join, cli, setup-error) | Next.js | todo | BE-011 | nextjs-developer | |
-| FE-011 | App shell: org/workspace nav, resolve, overview (agents), security headers | Next.js | in-progress | BE-012 | nextjs-developer | |
-| FE-012 | Org pages: workspaces, members, invitations, API keys, audit, settings | Next.js | todo | BE-012..014 | nextjs-developer | |
-| FE-013 | Account, workspace settings/access/keys, admin users | Next.js | todo | BE-014, BE-016 | nextjs-developer | |
-| TEST-011 | Playwright: sign-up → workspace (Daneel) → invite → accept | e2e | todo | FE-010..012 | haiku-tester→nextjs-developer | |
-| BE-020 | aurora-policy: matchers, GraphQL/git, rules, selection, evaluator | Rust | done | BE-001 | rust-developer | 10 unit/prop + 30-case corpus; dep-graph guard ok |
-| BE-021 | aurora-secrets: SecretRef, store seam, registry, inline+memory, vault | Rust | done | BE-003 | rust-developer | 11 tests (AAD swap, rotation, reference mode, fail-closed) |
-| BE-022 | aurora-llm: providers LiteLLM+Anthropic, models, origin verification | Rust | done | BE-002 | rust-developer | 19 wiremock/unit tests; config endpoint fields fixed by orchestrator |
-| GW-001 | gateway transport: CA, proxy, lanes, MITM TLS, hygiene, guard, forward | Rust | in-progress | BE-008 | rust-developer | brief acceptance |
-| GW-002+ | gateway: DB credential resolver, ResolvedHost cache + NOTIFY, pipeline (policy, injection, guidance), request log, holds, governance | Rust | todo | GW-001, BE-020..022 | rust-developer | |
-| M2 API | secrets/LLM keys API, policy authoring, grants, approvals API+SSE, BYO agents, governance API | Rust | todo | M1 API tasks | rust-developer | |
-| M3–M7 epics | see FEATURES.md | both | todo | per `19` graph | — | `19` acceptance |
+| OPS-001..003, BE-001..008, TEST-001, FE-001 | M0 foundations | all | done | — | mixed | see M0 rows above |
+| API-001 | M1 contract | contract | done | — | Opus | API_CONTRACTS.md M1 |
+| BE-010 | API foundation | Rust | done | BE-008 | Sonnet | 13 tests + CSRF regression |
+| BE-012 | Tenancy + Daneel | Rust | done | BE-010 | Sonnet | tests/tenancy.rs |
+| BE-011 | Auth flows + mailer | Rust | done | BE-012 | Sonnet | tests/auth.rs 13 |
+| BE-016 | /v1/me, admin users, audit lists, bootstrap-admin | Rust | done | BE-011 | Sonnet | tests me/admin/audit 9; CLI run by orchestrator |
+| BE-014 | API keys, CLI device flow, resolve fix | Rust | done | BE-012 | Sonnet | tests keys/cli; S-04 + revoke-kind fix by orchestrator |
+| BE-013 | Invitations | Rust | done | BE-011 | Sonnet | tests/invitations.rs 5 (token never in responses); checks by orchestrator |
+| BE-015 | OIDC + mock IdP | Rust | ready (brief) | BE-011 | Sonnet | |
+| FE-011 | Dashboard shell | Next.js | done | BE-012 | Sonnet | 14 vitest; build; curl smoke |
+| FE-010 | Auth pages + CSP proxy | Next.js | done | BE-011 | Sonnet | 22 vitest; CSP nonce/nosniff headers verified; /join on generated client |
+| FE-013 | Account, workspace settings, admin users | Next.js | partial | BE-014, BE-016 | Sonnet | |
+| FE-012 | Org pages | Next.js | ready (brief) | BE-013, FE-013 | Sonnet | |
+| TEST-010 | Permission-matrix test | Rust test | todo | BE-013..016 | haiku-tester | |
+| TEST-011 | Playwright sign-up → workspace (Daneel) → invite → accept | e2e | todo | FE-010..013 | nextjs-developer | |
+| BE-020 | aurora-policy | Rust | done | BE-001 | Sonnet | 10 + 30-case corpus |
+| BE-021 | aurora-secrets | Rust | done | BE-003 | Sonnet | 11 tests |
+| BE-022 | aurora-llm providers | Rust | done | BE-002 | Sonnet | 19 tests |
+| GW-001 | Gateway transport core | Rust | done | BE-008 | Sonnet | 22 tests; generate-ca verified |
+| GW-002 | Credential resolver, invalidation hub, instances | Rust | done | GW-001 | Sonnet | 28 tests |
+| GW-003 | Resolution, decision, injection, guidance, request log | Rust | done | GW-002 | Sonnet | pipeline 8 + policy_db |
+| GW-004 | Approval holds + ApprovalSummary | Rust | done | GW-003 | Sonnet | hold 6 + summary 5 |
+| API-002 | M2 contract | contract | done | — | Opus | API_CONTRACTS.md M2 |
+| GOV-001 | Governance library | Rust | partial | BE-022 | Sonnet | |
+| GW-005 | Gateway governance enforcement | Rust | ready (brief) | GOV-001 | Sonnet | |
+| BE-031 | Secrets + LLM keys API | Rust | ready (brief) | GOV-001 | Sonnet | |
+| BE-032 | BYO agents API + credentials + container config | Rust | ready (brief) | BE-016 | Sonnet | |
+| BE-033 | Policy authoring, grants, simulate, effective | Rust | blocked | BE-031, BE-032 | Sonnet | |
+| BE-030 | Approvals API + SSE + jobs + activity | Rust | ready (brief) | GW-004 | Sonnet | |
+| BE-034 | Governance API | Rust | blocked | GOV-001, BE-031 | Sonnet | |
+| CLI-001 | aurora-client + CLI login/run/approvals watch | Rust | blocked | BE-030, BE-032 | Sonnet | |
+| FE-020..024 | M2 dashboard: credentials, policy editor, approvals, agents/BYO connect, governance | Next.js | todo (briefs after BE) | BE-030..034 | Sonnet | |
+| REG-001 | Manifest model + in-manifest validation | Rust | done | BE-020 | Sonnet | 37 rule fixtures |
+| REG-002 | Package format, signatures, remaining validation | Rust | done | REG-001 | Sonnet | 15 package tests |
+| M3 rest | snapshot compiler, lifecycle/ingestion API, connect flows, mechanisms in gateway, hook host + WIT + SDK (needs wasm32-wasip2), CLI plugin, fixtures | both | todo | M2 | — | |
+| M4–M7 | hosted runtime, hosted features, channels, k8s/Helm | both | todo | per 19 | — | |
 
 ## Decisions requiring user input
 
@@ -81,8 +85,12 @@ their dependencies near completion (adaptive planning).
 
 ## Blockers
 
-- none. Note: workspace license in Cargo.toml is `GPL-3.0-or-later` (not set by the orchestrator; kept as the owner's choice; deny ignores private crates).
+- Sub-agent usage limit (Sonnet) until 14:20 Europe/Zurich: FE-013 and GOV-001 paused mid-task (resume, don't restart).
+- Workspace license in Cargo.toml is `GPL-3.0-or-later` (owner's choice; deny ignores private crates).
+- M3 hooks need the `wasm32-wasip2` target (I-02).
 
 ## Recently completed
+
+- 2026-11-06: BE-010..016 (except 015), FE-010/011, GW-001..004, REG-001/002, BE-020..022, API-002; spec fixes S-01..S-04; decisions I-01..I-16.
 
 - OPS-001, FE-001, API-001, BE-001..BE-006 (2026-11-05). Spec fixes S-01, S-02 recorded in 90-decisions.md.
