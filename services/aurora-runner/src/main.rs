@@ -57,7 +57,8 @@ async fn main() -> ExitCode {
 
 async fn serve(cfg: &RunnerConfig) -> std::io::Result<()> {
     tracing::info!(backend = ?cfg.backend, "runner backend configured");
-    let backend = aurora_runner::backends::build(cfg.backend, cfg.runner.max_sandboxes)
+    let backend = aurora_runner::backends::build(cfg)
+        .await
         .map_err(std::io::Error::other)?;
     let metrics = service::install_metrics(SERVICE);
     let app = service::ops_router(metrics, vec![]);

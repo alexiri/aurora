@@ -427,6 +427,8 @@ pub struct RunnerSection {
     pub podman_socket: Option<String>,
     pub sandbox_network: String,
     pub sandbox_hosts: BTreeMap<String, String>,
+    /// Dev escape hatch: run the podman backend on a non-internal sandbox network.
+    pub dev_allow_external_network: bool,
     pub k8s: K8sSection,
 }
 impl Default for RunnerSection {
@@ -449,6 +451,7 @@ impl Default for RunnerSection {
             podman_socket: None,
             sandbox_network: "aurora-sandbox".into(),
             sandbox_hosts: BTreeMap::new(),
+            dev_allow_external_network: false,
             k8s: K8sSection::default(),
         }
     }

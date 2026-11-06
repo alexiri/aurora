@@ -85,6 +85,9 @@ tokio-tungstenite = { version = "0.28", default-features = false, features = ["c
 lru = "0.18"
 openidconnect = { version = "4.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 
+# containers (podman API)
+bollard = { version = "0.21", default-features = false, features = ["pipe"] }
+
 # data
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "chrono", "json"] }
 serde = { version = "1", features = ["derive"] }
