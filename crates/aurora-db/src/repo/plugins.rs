@@ -286,3 +286,199 @@ pub async fn disable_signed_by(
     .fetch_all(conn)
     .await?)
 }
+
+// ---- lifecycle, decisions, snapshots (BE-041) ----------------------------------
+
+/// Transaction-scoped advisory lock serialising snapshot compile/activate and
+/// lifecycle transitions across API replicas.
+pub async fn lock_compile(conn: &mut PgConnection) -> Result<(), DbError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('aurora:registry:compile', 0))")
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_for_update(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<PackageRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {SEL} FROM {FROM} WHERE p.id = $1 FOR UPDATE OF p"
+    ))
+    .bind(id)
+    .fetch_optional(conn)
+    .await?)
+}
+
+/// Packages in any of `statuses`, ordered by package id then approval time.
+pub async fn list_by_status<'e, E: PgExecutor<'e>>(
+    exec: E,
+    statuses: &[&str],
+) -> Result<Vec<PackageRow>, DbError> {
+    let statuses: Vec<String> = statuses.iter().map(|s| (*s).to_owned()).collect();
+    Ok(sqlx::query_as(&format!(
+        "SELECT {SEL} FROM {FROM} WHERE p.status = ANY($1)
+         ORDER BY p.package_id, p.created_at DESC, p.id DESC"
+    ))
+    .bind(statuses)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Move a package to `status`. `approver` (with `approve = true`) stamps
+/// `approved_by`/`approved_at` (kept when already set).
+pub async fn transition(
+    conn: &mut PgConnection,
+    id: Uuid,
+    status: &str,
+    reason: Option<&str>,
+    approver: Option<Uuid>,
+    approve: bool,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE plugin_packages SET status = $2, status_reason = $3, updated_at = now(),
+            approved_by = CASE WHEN $5 THEN COALESCE(approved_by, $4) ELSE approved_by END,
+            approved_at = CASE WHEN $5 THEN COALESCE(approved_at, now()) ELSE approved_at END
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(status)
+    .bind(reason)
+    .bind(approver)
+    .bind(approve)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_package(conn: &mut PgConnection, id: Uuid) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM plugin_packages WHERE id = $1")
+        .bind(id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// Raw blob bytes of `kind`.
+pub async fn get_blob<'e, E: PgExecutor<'e>>(
+    exec: E,
+    digest: &str,
+    kind: &str,
+) -> Result<Option<Vec<u8>>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT content FROM plugin_blobs WHERE digest = $1 AND kind = $2")
+            .bind(digest)
+            .bind(kind)
+            .fetch_optional(exec)
+            .await?,
+    )
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct DecisionRow {
+    pub claim_key: String,
+    pub claim_fingerprint: String,
+    pub winner_package_id: String,
+    pub winner_app_id: String,
+    pub decided_by: Option<Uuid>,
+    pub decided_by_name: Option<String>,
+}
+
+pub async fn decisions<'e, E: PgExecutor<'e>>(exec: E) -> Result<Vec<DecisionRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT d.claim_key, d.claim_fingerprint, d.winner_package_id, d.winner_app_id,
+                d.decided_by, u.display_name AS decided_by_name
+         FROM host_claim_decisions d LEFT JOIN users u ON u.id = d.decided_by
+         ORDER BY d.claim_key",
+    )
+    .fetch_all(exec)
+    .await?)
+}
+
+pub async fn upsert_decision(
+    conn: &mut PgConnection,
+    id: Uuid,
+    claim_key: &str,
+    fingerprint: &str,
+    winner_package_id: &str,
+    winner_app_id: &str,
+    decided_by: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO host_claim_decisions
+            (id, claim_key, claim_fingerprint, winner_package_id, winner_app_id, decided_by)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (claim_key) DO UPDATE SET claim_fingerprint = EXCLUDED.claim_fingerprint,
+            winner_package_id = EXCLUDED.winner_package_id, winner_app_id = EXCLUDED.winner_app_id,
+            decided_by = EXCLUDED.decided_by, updated_at = now()",
+    )
+    .bind(id)
+    .bind(claim_key)
+    .bind(fingerprint)
+    .bind(winner_package_id)
+    .bind(winner_app_id)
+    .bind(decided_by)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Store a snapshot by content hash and (re)activate it: `activated_at` is
+/// bumped when the hash already exists, so the newest activation wins.
+pub async fn put_snapshot(
+    conn: &mut PgConnection,
+    id: Uuid,
+    contract: i32,
+    hash: &str,
+    snapshot: &Value,
+    compiled_by: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO registry_snapshots (id, contract, content_hash, snapshot, compiled_by, activated_at)
+         VALUES ($1,$2,$3,$4,$5, clock_timestamp())
+         ON CONFLICT (content_hash) DO UPDATE SET activated_at = clock_timestamp()",
+    )
+    .bind(id)
+    .bind(contract)
+    .bind(hash)
+    .bind(snapshot)
+    .bind(compiled_by)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+pub async fn snapshot_exists<'e, E: PgExecutor<'e>>(exec: E) -> Result<bool, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM registry_snapshots)")
+            .fetch_one(exec)
+            .await?,
+    )
+}
+
+/// Connections of `package_id` on any of `app_ids` that are not yet orphaned.
+pub async fn live_connection_ids<'e, E: PgExecutor<'e>>(
+    exec: E,
+    package_id: &str,
+    app_ids: &[String],
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM app_connections
+         WHERE package_id = $1 AND app_id = ANY($2) AND status <> 'orphaned'",
+    )
+    .bind(package_id)
+    .bind(app_ids)
+    .fetch_all(exec)
+    .await?)
+}
+
+pub async fn orphan_connections(conn: &mut PgConnection, ids: &[Uuid]) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE app_connections SET status = 'orphaned', status_reason = 'app_removed',
+            updated_at = now() WHERE id = ANY($1)",
+    )
+    .bind(ids)
+    .execute(conn)
+    .await?;
+    Ok(())
+}

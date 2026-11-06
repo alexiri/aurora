@@ -70,7 +70,7 @@ fn reject(v: &[Violation]) -> ApiError {
 
 /// Reserved hosts (09 §6): LLM endpoints, the external and service hosts,
 /// `*.aurora.internal`.
-fn reserved_hosts(state: &AppState) -> Vec<HostPattern> {
+pub fn reserved_names(state: &AppState) -> Vec<String> {
     let cfg = &state.config;
     let mut names = state.llm.endpoint_hosts();
     for url in [
@@ -96,6 +96,10 @@ fn reserved_hosts(state: &AppState) -> Vec<HostPattern> {
     }
     names.push("*.aurora.internal".to_owned());
     names
+}
+
+fn reserved_hosts(state: &AppState) -> Vec<HostPattern> {
+    reserved_names(state)
         .iter()
         .filter_map(|n| HostPattern::parse(n).ok())
         .collect()

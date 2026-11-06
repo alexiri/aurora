@@ -1,6 +1,7 @@
 use super::dto::*;
 use super::ingest::{self, Source};
-use super::{keys, service};
+use super::lifecycle::{self, Action};
+use super::{claims, keys, registry, service};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::auth::InstanceAdmin;
@@ -19,7 +20,14 @@ use uuid::Uuid;
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_plugins, upload_plugin))
-        .routes(routes!(get_plugin))
+        .routes(routes!(get_plugin, delete_plugin))
+        .routes(routes!(approve_plugin))
+        .routes(routes!(reject_plugin))
+        .routes(routes!(disable_plugin))
+        .routes(routes!(enable_plugin))
+        .routes(routes!(list_host_claims))
+        .routes(routes!(decide_host_claim))
+        .routes(routes!(registry_snapshot))
         .routes(routes!(list_trusted_keys, create_trusted_key))
         .routes(routes!(revoke_trusted_key))
         // Multipart framing overhead on top of the package cap.
@@ -198,4 +206,140 @@ async fn revoke_trusted_key(
         .metadata(json!({"publisher": key.publisher, "disabled_packages": disabled})),
     );
     Ok(StatusCode::NO_CONTENT)
+}
+
+macro_rules! action_route {
+    ($name:ident, $path:literal, $op:literal, $action:expr, $doc:literal) => {
+        #[doc = $doc]
+        #[utoipa::path(post, path = $path, operation_id = $op, tag = "plugins",
+            params(("id" = Uuid, Path, description = "Package row id")),
+            request_body = PluginActionRequest,
+            responses((status = 200, body = PluginPackage), (status = 403, body = ErrorEnvelope),
+                (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope)),
+            security(("session" = [])))]
+        async fn $name(
+            c: InstanceAdmin,
+            State(s): State<AppState>,
+            Path(id): Path<Uuid>,
+            Json(req): Json<PluginActionRequest>,
+        ) -> Result<Json<PluginPackage>, ApiError> {
+            let row = lifecycle::act(
+                &s,
+                &AuditActor::instance_admin(&c),
+                c.user_id,
+                id,
+                $action,
+                req.reason,
+            )
+            .await?;
+            Ok(Json(service::to_dto(&s, row).await?))
+        }
+    };
+}
+
+action_route!(
+    approve_plugin,
+    "/admin/plugins/{id}/approve",
+    "adminApprovePlugin",
+    Action::Approve,
+    "Approve a pending package and activate it."
+);
+action_route!(
+    reject_plugin,
+    "/admin/plugins/{id}/reject",
+    "adminRejectPlugin",
+    Action::Reject,
+    "Reject a pending package."
+);
+action_route!(
+    disable_plugin,
+    "/admin/plugins/{id}/disable",
+    "adminDisablePlugin",
+    Action::Disable,
+    "Disable a package; it leaves the next snapshot."
+);
+action_route!(
+    enable_plugin,
+    "/admin/plugins/{id}/enable",
+    "adminEnablePlugin",
+    Action::Enable,
+    "Re-enable a disabled package."
+);
+
+/// Uninstall a package; `force` orphans live connections of removed apps.
+#[utoipa::path(delete, path = "/admin/plugins/{id}", operation_id = "adminDeletePlugin", tag = "plugins",
+    params(("id" = Uuid, Path, description = "Package row id"), DeletePluginQuery),
+    responses((status = 204), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn delete_plugin(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<DeletePluginQuery>,
+) -> Result<StatusCode, ApiError> {
+    lifecycle::delete(
+        &s,
+        &AuditActor::instance_admin(&c),
+        id,
+        q.force.unwrap_or(false),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Host-claim conflicts with their decisions.
+#[utoipa::path(get, path = "/admin/host-claims", operation_id = "adminListHostClaims", tag = "plugins",
+    responses((status = 200, body = HostClaimConflictList), (status = 403, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn list_host_claims(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+) -> Result<Json<HostClaimConflictList>, ApiError> {
+    Ok(Json(HostClaimConflictList {
+        items: claims::list(&s).await?,
+    }))
+}
+
+/// Decide (or reverse) the winner of a host-claim conflict.
+#[utoipa::path(put, path = "/admin/host-claims/{group_key}", operation_id = "adminDecideHostClaim", tag = "plugins",
+    params(("group_key" = String, Path, description = "Conflict group key")),
+    request_body = HostClaimDecisionRequest,
+    responses((status = 200, body = HostClaimConflict), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 409, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn decide_host_claim(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path(group_key): Path<String>,
+    Json(req): Json<HostClaimDecisionRequest>,
+) -> Result<Json<HostClaimConflict>, ApiError> {
+    Ok(Json(
+        claims::decide(
+            &s,
+            &AuditActor::instance_admin(&c),
+            c.user_id,
+            &group_key,
+            &req.winner_package_id,
+            &req.winner_app_id,
+            &req.fingerprint,
+        )
+        .await?,
+    ))
+}
+
+/// The active registry snapshot (canonical JSON; hash in `x-snapshot-hash`).
+#[utoipa::path(get, path = "/admin/registry/snapshot", operation_id = "adminGetRegistrySnapshot", tag = "plugins",
+    responses((status = 200, body = Object), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn registry_snapshot(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+) -> Result<axum::response::Response, ApiError> {
+    let snap = registry::active_snapshot(&s, aurora_registry::manifest::CONTRACT)
+        .await?
+        .ok_or_else(|| ApiError::not_found("No active registry snapshot."))?;
+    Ok(snap.into_response())
 }

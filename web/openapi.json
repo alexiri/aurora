@@ -10,6 +10,129 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/admin/host-claims": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Host-claim conflicts with their decisions.",
+        "operationId": "adminListHostClaims",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostClaimConflictList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/host-claims/{group_key}": {
+      "put": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Decide (or reverse) the winner of a host-claim conflict.",
+        "operationId": "adminDecideHostClaim",
+        "parameters": [
+          {
+            "name": "group_key",
+            "in": "path",
+            "description": "Conflict group key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostClaimDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostClaimConflict"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/plugins": {
       "get": {
         "tags": [
@@ -185,6 +308,432 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PluginPackage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Uninstall a package; `force` orphans live connections of removed apps.",
+        "operationId": "adminDeletePlugin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Package row id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "description": "Orphan live connections instead of refusing.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/plugins/{id}/approve": {
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Approve a pending package and activate it.",
+        "operationId": "adminApprovePlugin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Package row id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPackage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/plugins/{id}/disable": {
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Disable a package; it leaves the next snapshot.",
+        "operationId": "adminDisablePlugin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Package row id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPackage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/plugins/{id}/enable": {
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Re-enable a disabled package.",
+        "operationId": "adminEnablePlugin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Package row id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPackage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/plugins/{id}/reject": {
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Reject a pending package.",
+        "operationId": "adminRejectPlugin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Package row id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPackage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/registry/snapshot": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "The active registry snapshot (canonical JSON; hash in `x-snapshot-hash`).",
+        "operationId": "adminGetRegistrySnapshot",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
               }
             }
@@ -8724,6 +9273,120 @@
           }
         }
       },
+      "HostClaimConflict": {
+        "type": "object",
+        "required": [
+          "group_key",
+          "fingerprint",
+          "claims"
+        ],
+        "properties": {
+          "claims": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostClaimMember"
+            }
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HostClaimDecision"
+              }
+            ]
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "group_key": {
+            "type": "string"
+          }
+        }
+      },
+      "HostClaimConflictList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostClaimConflict"
+            }
+          }
+        }
+      },
+      "HostClaimDecision": {
+        "type": "object",
+        "required": [
+          "winner_package_id",
+          "winner_app_id",
+          "stale"
+        ],
+        "properties": {
+          "decided_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginUserRef"
+              }
+            ]
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "winner_app_id": {
+            "type": "string"
+          },
+          "winner_package_id": {
+            "type": "string"
+          }
+        }
+      },
+      "HostClaimDecisionRequest": {
+        "type": "object",
+        "required": [
+          "winner_package_id",
+          "winner_app_id",
+          "fingerprint"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": "string"
+          },
+          "winner_app_id": {
+            "type": "string"
+          },
+          "winner_package_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HostClaimMember": {
+        "type": "object",
+        "required": [
+          "package_id",
+          "app_id",
+          "claim_key"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "claim_key": {
+            "type": "string"
+          },
+          "package_id": {
+            "type": "string"
+          }
+        }
+      },
       "Identity": {
         "oneOf": [
           {
@@ -11238,6 +11901,19 @@
           "hour",
           "day"
         ]
+      },
+      "PluginActionRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Free-text reason (at most 64 characters), stored as `status_reason`."
+          }
+        },
+        "additionalProperties": false
       },
       "PluginAppRef": {
         "type": "object",

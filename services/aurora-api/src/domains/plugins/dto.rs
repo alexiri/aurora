@@ -206,3 +206,53 @@ pub struct CreateTrustedKeyRequest {
     /// Base64 ed25519 public key.
     pub public_key: String,
 }
+
+#[derive(Deserialize, ToSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub struct PluginActionRequest {
+    /// Free-text reason (at most 64 characters), stored as `status_reason`.
+    pub reason: Option<String>,
+}
+
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct DeletePluginQuery {
+    /// Orphan live connections instead of refusing.
+    pub force: Option<bool>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct HostClaimMember {
+    pub package_id: String,
+    pub app_id: String,
+    pub claim_key: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct HostClaimDecision {
+    pub winner_package_id: String,
+    pub winner_app_id: String,
+    pub decided_by: Option<PluginUserRef>,
+    pub stale: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct HostClaimConflict {
+    pub group_key: String,
+    pub fingerprint: String,
+    pub claims: Vec<HostClaimMember>,
+    pub decision: Option<HostClaimDecision>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct HostClaimConflictList {
+    pub items: Vec<HostClaimConflict>,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HostClaimDecisionRequest {
+    pub winner_package_id: String,
+    pub winner_app_id: String,
+    pub fingerprint: String,
+}
