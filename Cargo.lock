@@ -380,6 +380,15 @@ dependencies = [
 [[package]]
 name = "aurora-registry"
 version = "0.1.0"
+dependencies = [
+ "aurora-core",
+ "aurora-policy",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "aurora-runner"

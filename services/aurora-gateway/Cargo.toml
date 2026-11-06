@@ -20,6 +20,7 @@ path = "src/main.rs"
 [dependencies]
 aurora-core = { workspace = true, features = ["service"] }
 aurora-config = { workspace = true }
+aurora-db = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
@@ -46,5 +47,6 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+aurora-testkit = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }

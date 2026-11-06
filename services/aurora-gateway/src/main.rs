@@ -3,11 +3,13 @@
 
 use aurora_config::GatewayConfig;
 use aurora_core::service::{self, exit_config, ready_check};
-use aurora_gateway::auth::DenyAllResolver;
 use aurora_gateway::ca::{self, Ca};
 use aurora_gateway::guard::Guard;
+use aurora_gateway::instance;
+use aurora_gateway::invalidation::Hub;
 use aurora_gateway::pipeline::PassThrough;
 use aurora_gateway::proxy::{Proxy, ProxyParts};
+use aurora_gateway::resolver::DbCredentialResolver;
 use clap::{Parser, Subcommand};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::net::{IpAddr, SocketAddr};
@@ -86,6 +88,28 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         .acquire_timeout(Duration::from_secs(3))
         .connect_lazy(cfg.database_url.expose())?;
     let metrics = service::install_metrics(SERVICE);
+    let hub = Hub::new();
+    let resolver = Arc::new(DbCredentialResolver::new(pool.clone()));
+    hub.register(resolver.cache());
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let hub_task = tokio::spawn(hub.clone().run(pool.clone(), rx.clone()));
+    let instance_task = tokio::spawn(instance::run(
+        pool.clone(),
+        uuid::Uuid::now_v7(),
+        instance::HEARTBEAT_INTERVAL,
+        rx.clone(),
+    ));
+    let listener_hub = hub.clone();
+    let listener_check = ready_check(move || {
+        let connected = listener_hub.is_connected();
+        async move {
+            if connected {
+                Ok(())
+            } else {
+                Err("invalidation listener not connected".to_owned())
+            }
+        }
+    });
     let db_check = ready_check(move || {
         let pool = pool.clone();
         async move {
@@ -97,7 +121,10 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     // Health and metrics are never served on the agent-reachable proxy port.
-    let internal = service::ops_router(metrics, vec![("database", db_check)]);
+    let internal = service::ops_router(
+        metrics,
+        vec![("database", db_check), ("invalidation", listener_check)],
+    );
     let ca = Arc::new(Ca::load(Path::new(&cfg.gateway.ca_dir))?);
     let bind = cfg.server.bind.as_str();
     let bind_ip: IpAddr = bind.parse()?;
@@ -116,7 +143,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     };
     let proxy = Proxy::new(ProxyParts {
         ca,
-        resolver: Arc::new(DenyAllResolver),
+        resolver,
         handler: Arc::new(PassThrough),
         guard,
         header_timeout: Duration::from_secs(cfg.gateway.upstream_header_timeout_secs),
@@ -125,7 +152,6 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     })?;
     let proxy_listener = service::bind(bind, PROXY_PORT).await?;
     let internal_listener = service::bind(bind, INTERNAL_PORT).await?;
-    let (tx, rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
         service::shutdown_signal().await;
         let _ = tx.send(true);
@@ -145,5 +171,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         })
         .await;
     internal_task.await??;
+    let _ = hub_task.await;
+    let _ = instance_task.await;
     Ok(())
 }

@@ -115,6 +115,14 @@ struct Env {
 }
 
 async fn start(allow: &[&str], header_timeout: Duration) -> Env {
+    start_with(Arc::new(StaticResolver), allow, header_timeout).await
+}
+
+async fn start_with(
+    resolver: Arc<dyn CredentialResolver>,
+    allow: &[&str],
+    header_timeout: Duration,
+) -> Env {
     let up_ca = ca::generate("up").unwrap();
     let up = Ca::from_pem(&up_ca.cert_pem, &up_ca.key_pem).unwrap();
     let cfg = up.server_config("127.0.0.1").unwrap();
@@ -153,7 +161,7 @@ async fn start(allow: &[&str], header_timeout: Duration) -> Env {
     let guard = Arc::new(Guard::new(&allow, vec![proxy]).unwrap());
     let p = Proxy::new(ProxyParts {
         ca: gw_ca,
-        resolver: Arc::new(StaticResolver),
+        resolver,
         handler: Arc::new(PassThrough),
         guard,
         header_timeout,
@@ -533,4 +541,105 @@ async fn connect_failure_is_bad_gateway() {
     let (st, _, body) = text(c.send(get(dead, "/", &[])).await).await;
     assert_eq!(st, 502, "{body}");
     assert!(body.contains("bad_gateway"));
+}
+
+#[tokio::test]
+async fn db_credentials_forwarded_and_revoked_gets_407() {
+    let db = aurora_testkit::TestDb::new().await;
+    let pool = db.pool().clone();
+    let f = seed(&pool).await;
+    let resolver = Arc::new(aurora_gateway::resolver::DbCredentialResolver::new(
+        pool.clone(),
+    ));
+    let hub = aurora_gateway::invalidation::Hub::new();
+    hub.register(resolver.cache());
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(hub.clone().run(pool.clone(), rx));
+    while !hub.is_connected() {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let env = start_with(resolver, &["127.0.0.0/8"], Duration::from_secs(10)).await;
+    let h = env.http.to_string();
+    let req = format!(
+        "GET http://{h}/plain HTTP/1.1\r\nHost: {h}\r\nProxy-Authorization: {}\r\nConnection: close\r\n\r\n",
+        basic(&format!("agent:{}", f.token))
+    );
+    assert!(raw(env.proxy, &req).await.starts_with("HTTP/1.1 200"));
+    sqlx::query("UPDATE gateway_credentials SET revoked_at = now()")
+        .execute(&pool)
+        .await
+        .unwrap();
+    aurora_db::bus::notify(
+        &pool,
+        aurora_db::bus::Channel::GatewayInvalidate,
+        &serde_json::json!({"scope":"credential","id":f.credential_id}),
+    )
+    .await
+    .unwrap();
+    let mut got = String::new();
+    for _ in 0..50 {
+        got = raw(env.proxy, &req).await;
+        if got.starts_with("HTTP/1.1 407") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(got.starts_with("HTTP/1.1 407"), "{got}");
+    let _ = tx.send(true);
+}
+
+struct Seed {
+    token: String,
+    credential_id: Uuid,
+}
+
+async fn seed(pool: &sqlx::PgPool) -> Seed {
+    let org = Uuid::now_v7();
+    let ws = Uuid::now_v7();
+    let agent = Uuid::now_v7();
+    let user = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO organizations (id, slug, name, external_id) VALUES ($1,'o','O','ext')",
+    )
+    .bind(org)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO users (id, email, display_name) VALUES ($1,'u@x.io','U')")
+        .bind(user)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO org_members (org_id, user_id, role) VALUES ($1,$2,'owner')")
+        .bind(org)
+        .bind(user)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO workspaces (id, org_id, slug, name) VALUES ($1,$2,'w','W')")
+        .bind(ws)
+        .bind(org)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind) VALUES ($1,$2,$3,'a','A','byo')")
+        .bind(agent)
+        .bind(org)
+        .bind(ws)
+        .execute(pool)
+        .await
+        .unwrap();
+    let token = "aug_e2etoken".to_owned();
+    let cid = Uuid::now_v7();
+    sqlx::query("INSERT INTO gateway_credentials (id, kind, token_hash, display_prefix, agent_id) VALUES ($1,'agent',$2,'aug_e2etoken',$3)")
+        .bind(cid)
+        .bind(aurora_core::token::hash(&token).to_vec())
+        .bind(agent)
+        .execute(pool)
+        .await
+        .unwrap();
+    Seed {
+        token,
+        credential_id: cid,
+    }
 }

@@ -6,8 +6,11 @@ pub mod ca;
 pub mod guard;
 pub mod guidance;
 pub mod hygiene;
+pub mod instance;
+pub mod invalidation;
 pub mod pipeline;
 pub mod proxy;
+pub mod resolver;
 pub mod upstream;
 
 use bytes::Bytes;
