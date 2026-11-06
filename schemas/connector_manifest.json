@@ -1,0 +1,111 @@
+{
+  "$defs": {
+    "ManifestAbout": {
+      "properties": {
+        "icon_png_b64": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "setup_guide_md": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "ManifestLimits": {
+      "properties": {
+        "message_max_chars": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "writes_per_space_per_minute": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ManifestPackage": {
+      "properties": {
+        "contract": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "publisher": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "contract",
+        "publisher"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Connector manifest (13 §3). `capabilities` is an open vocabulary: a name\nmaps to `true`/`false` or an object (`files`); unknown names are ignored.",
+  "properties": {
+    "about": {
+      "$ref": "#/$defs/ManifestAbout"
+    },
+    "capabilities": {
+      "additionalProperties": true,
+      "default": {},
+      "type": "object"
+    },
+    "integration_setup": {
+      "default": null
+    },
+    "limits": {
+      "$ref": "#/$defs/ManifestLimits",
+      "default": {}
+    },
+    "package": {
+      "$ref": "#/$defs/ManifestPackage"
+    },
+    "presence_setup": {
+      "default": null
+    },
+    "public_callbacks": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "package",
+    "about"
+  ],
+  "title": "ConnectorManifest",
+  "type": "object"
+}

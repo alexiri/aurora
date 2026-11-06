@@ -247,6 +247,17 @@ dependencies = [
 [[package]]
 name = "aurora-channels"
 version = "0.1.0"
+dependencies = [
+ "aurora-core",
+ "aurora-crypto",
+ "aurora-protocol",
+ "base64 0.22.1",
+ "schemars 1.2.3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "uuid",
+]
 
 [[package]]
 name = "aurora-cli"
@@ -299,17 +310,41 @@ dependencies = [
 name = "aurora-connector-fake"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "aurora-channels",
  "aurora-config",
+ "aurora-connector-sdk",
  "aurora-core",
+ "aurora-protocol",
  "axum",
  "clap",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
+ "uuid",
+ "wiremock",
 ]
 
 [[package]]
 name = "aurora-connector-sdk"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "aurora-core",
+ "aurora-protocol",
+ "axum",
+ "bytes",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wiremock",
+]
 
 [[package]]
 name = "aurora-core"
@@ -378,6 +413,23 @@ dependencies = [
  "sqlx",
  "tokio",
  "tokio-rustls",
+ "uuid",
+]
+
+[[package]]
+name = "aurora-e2e-hosted"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aurora-config",
+ "aurora-core",
+ "aurora-testkit",
+ "base64 0.22.1",
+ "futures",
+ "reqwest",
+ "serde_json",
+ "sqlx",
+ "tokio",
  "uuid",
 ]
 

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Payload of `message.edited` / `message.deleted`.",
+  "properties": {
+    "message_ref": {
+      "type": "string"
+    },
+    "space_ref": {
+      "type": "string"
+    },
+    "text": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "thread_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "space_ref",
+    "message_ref"
+  ],
+  "title": "MessageChanged",
+  "type": "object"
+}

@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "Space": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/SpaceKind"
+        },
+        "label": {
+          "default": "",
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "SpaceKind": {
+      "maxLength": 64,
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "args": {
+      "default": "",
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "response_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "space": {
+      "$ref": "#/$defs/Space"
+    },
+    "thread_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "user_ref": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "space",
+    "user_ref"
+  ],
+  "title": "CommandInvoked",
+  "type": "object"
+}

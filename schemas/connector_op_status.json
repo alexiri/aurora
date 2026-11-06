@@ -1,0 +1,58 @@
+{
+  "$defs": {
+    "Sender": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SharedTag"
+        },
+        {
+          "properties": {
+            "presence_id": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "presence_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SharedTag": {
+      "description": "`\"shared\"` marker of [`Sender::Shared`].",
+      "enum": [
+        "shared"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`status.set` / `status.clear`.",
+  "properties": {
+    "sender": {
+      "$ref": "#/$defs/Sender"
+    },
+    "space_ref": {
+      "type": "string"
+    },
+    "text": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "thread_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "space_ref",
+    "sender"
+  ],
+  "title": "StatusOp",
+  "type": "object"
+}

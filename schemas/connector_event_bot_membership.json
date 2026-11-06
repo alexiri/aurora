@@ -1,0 +1,49 @@
+{
+  "$defs": {
+    "Space": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/SpaceKind"
+        },
+        "label": {
+          "default": "",
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "SpaceKind": {
+      "maxLength": 64,
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Payload of `bot.added` / `bot.removed`.",
+  "properties": {
+    "actor_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "bot_ref": {
+      "type": "string"
+    },
+    "space": {
+      "$ref": "#/$defs/Space"
+    }
+  },
+  "required": [
+    "space",
+    "bot_ref"
+  ],
+  "title": "BotMembership",
+  "type": "object"
+}

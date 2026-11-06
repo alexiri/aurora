@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "emoji": {
+      "type": "string"
+    },
+    "message_ref": {
+      "type": "string"
+    },
+    "space_ref": {
+      "type": "string"
+    },
+    "user_ref": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "space_ref",
+    "message_ref",
+    "user_ref",
+    "emoji"
+  ],
+  "title": "ReactionAdded",
+  "type": "object"
+}

@@ -2,10 +2,13 @@
 #![forbid(unsafe_code)]
 
 use aurora_config::ConnectorConfig;
+use aurora_connector_fake::{FakeConnector, control};
+use aurora_connector_sdk::{Connector, RuntimeConfig};
 use aurora_core::service::{self, exit_config};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 const SERVICE: &str = "aurora-connector-fake";
 const OPS_PORT: u16 = 4190;
@@ -20,6 +23,17 @@ struct Cli {
     /// Config file (else `AURORA_CONFIG`, else /etc/aurora/aurora.toml).
     #[arg(long, global = true)]
     config: Option<PathBuf>,
+    /// Base URL of the Aurora API (the connector/1 core).
+    #[arg(
+        long,
+        global = true,
+        env = "AURORA_CORE_URL",
+        default_value = "http://127.0.0.1:4100"
+    )]
+    core_url: String,
+    /// Mount the `/fake/*` test control API (test profile only).
+    #[arg(long, global = true, env = "AURORA_FAKE_CONTROL")]
+    control: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -39,7 +53,7 @@ async fn main() -> ExitCode {
     let instance = service::init_tracing(SERVICE, &cfg.telemetry.log_level);
     tracing::info!(instance_id = %instance, "starting");
     let Command::Serve = cli.command;
-    match serve().await {
+    match serve(&cfg, &cli.core_url, cli.control).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!(error = %e, "fatal");
@@ -49,9 +63,31 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn serve() -> std::io::Result<()> {
+async fn serve(cfg: &ConnectorConfig, core_url: &str, control_api: bool) -> std::io::Result<()> {
     let metrics = service::install_metrics(SERVICE);
-    let app = service::ops_router(metrics, vec![]);
+    let fake = Arc::new(FakeConnector::default());
+    let mut app = service::ops_router(metrics, vec![]);
+    if control_api {
+        tracing::warn!("test control API mounted at /fake/*");
+        app = app.merge(control::router(fake.clone()));
+    }
+    if let Some(r) = fake.router() {
+        app = app.merge(r);
+    }
     let listener = service::bind("0.0.0.0", OPS_PORT).await?;
-    service::serve_all(vec![(listener, app)]).await
+
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    let runtime = tokio::spawn(aurora_connector_sdk::run(
+        fake.clone(),
+        RuntimeConfig::new(core_url, cfg.token.expose()),
+        stop_rx,
+    ));
+    let served = service::serve_all(vec![(listener, app)]).await;
+    let _ = stop_tx.send(true);
+    match runtime.await {
+        Ok(Err(e)) => tracing::error!(error = %e, "connector runtime stopped"),
+        Err(e) => tracing::error!(error = %e, "connector runtime panicked"),
+        Ok(Ok(())) => {}
+    }
+    served
 }

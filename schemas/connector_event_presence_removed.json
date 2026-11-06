@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "PresenceRemovedReason": {
+      "maxLength": 64,
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "bot_ref": {
+      "type": "string"
+    },
+    "presence_id": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reason": {
+      "$ref": "#/$defs/PresenceRemovedReason"
+    }
+  },
+  "required": [
+    "bot_ref",
+    "reason"
+  ],
+  "title": "PresenceRemoved",
+  "type": "object"
+}

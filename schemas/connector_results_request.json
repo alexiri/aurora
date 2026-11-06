@@ -1,0 +1,79 @@
+{
+  "$defs": {
+    "ErrorCode": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "OpError": {
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retry_after_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "OpResult": {
+      "properties": {
+        "data": true,
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "op_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        }
+      },
+      "required": [
+        "op_id",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "Outcome": {
+      "enum": [
+        "ok",
+        "error"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "results": {
+      "items": {
+        "$ref": "#/$defs/OpResult"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "results"
+  ],
+  "title": "ResultsRequest",
+  "type": "object"
+}

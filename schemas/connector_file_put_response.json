@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "attachment_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "attachment_id"
+  ],
+  "title": "FilePutResponse",
+  "type": "object"
+}

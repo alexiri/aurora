@@ -1,0 +1,54 @@
+{
+  "$defs": {
+    "Sender": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SharedTag"
+        },
+        {
+          "properties": {
+            "presence_id": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "presence_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SharedTag": {
+      "description": "`\"shared\"` marker of [`Sender::Shared`].",
+      "enum": [
+        "shared"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`reaction.add` / `reaction.remove`.",
+  "properties": {
+    "emoji": {
+      "type": "string"
+    },
+    "message_ref": {
+      "type": "string"
+    },
+    "sender": {
+      "$ref": "#/$defs/Sender"
+    },
+    "space_ref": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "space_ref",
+    "message_ref",
+    "sender",
+    "emoji"
+  ],
+  "title": "ReactionOp",
+  "type": "object"
+}

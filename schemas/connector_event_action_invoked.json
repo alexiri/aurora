@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "clicker_ref": {
+      "type": "string"
+    },
+    "message_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "space_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "token": {
+      "description": "Opaque action token; never interpreted by the connector.",
+      "type": "string"
+    },
+    "value": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "token",
+    "clicker_ref"
+  ],
+  "title": "ActionInvoked",
+  "type": "object"
+}

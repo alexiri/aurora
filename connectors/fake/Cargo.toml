@@ -9,6 +9,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[lib]
+name = "aurora_connector_fake"
+path = "src/lib.rs"
+
 [[bin]]
 name = "aurora-connector-fake"
 path = "src/main.rs"
@@ -16,7 +20,18 @@ path = "src/main.rs"
 [dependencies]
 aurora-core = { workspace = true, features = ["service"] }
 aurora-config = { workspace = true }
+aurora-channels = { workspace = true }
+aurora-connector-sdk = { workspace = true }
+aurora-protocol = { workspace = true }
+async-trait = { workspace = true }
 axum = { workspace = true }
 clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }
+wiremock = { workspace = true }

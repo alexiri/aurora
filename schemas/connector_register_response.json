@@ -1,0 +1,51 @@
+{
+  "$defs": {
+    "ConnectorStatus": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "PollConfig": {
+      "properties": {
+        "config_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ops_wait_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "config_secs",
+        "ops_wait_secs"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "connector_id": {
+      "type": "string"
+    },
+    "poll": {
+      "$ref": "#/$defs/PollConfig"
+    },
+    "replica_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/ConnectorStatus"
+    }
+  },
+  "required": [
+    "connector_id",
+    "replica_id",
+    "status",
+    "poll"
+  ],
+  "title": "RegisterResponse",
+  "type": "object"
+}
