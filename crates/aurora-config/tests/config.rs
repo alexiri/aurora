@@ -337,3 +337,106 @@ fn overlap_warning_logic() {
     assert!(bind_overlap_warning("127.0.0.2", "127.0.0.3").is_none());
     assert!(bind_overlap_warning("0.0.0.0", "127.0.0.1").is_none());
 }
+
+#[test]
+fn k8s_core_namespace_is_accepted() {
+    let raw = load_with(
+        &format!(
+            "{BASE}[runner]\nbackend = \"kubernetes\"\napi_url = \"http://api:4101\"\n\
+             [runner.k8s]\nnamespace = \"sbx\"\ncore_namespace = \"core\"\n"
+        ),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(raw.runner.k8s.core_namespace.as_deref(), Some("core"));
+    let r = raw.runner_config().unwrap();
+    assert_eq!(r.backend, RunnerBackend::Kubernetes);
+    assert_eq!(r.runner.k8s.core_namespace.as_deref(), Some("core"));
+    // Unset by default (the backend resolves the pod's own namespace).
+    let raw = load_with(BASE, &[]).unwrap();
+    assert!(raw.runner.k8s.core_namespace.is_none());
+}
+
+/// The ConfigMap TOML as rendered by the chart (`helm template t deploy/helm/aurora`).
+const HELM_RENDERED_TOML: &str = r#"
+[database]
+  max_connections = 20
+
+[gateway]
+  ca_dir = "/var/lib/aurora/ca"
+  internal_bind = "0.0.0.0"
+
+[hosted]
+  enabled = true
+
+[runner]
+  api_url = "http://t-aurora-api:4101"
+  backend = "kubernetes"
+  ops_bind = "0.0.0.0"
+  [runner.k8s]
+    core_namespace = "default"
+    gateway_service = "t-aurora-gateway-proxy"
+    namespace = "aurora-sandboxes"
+    runner_service = "t-aurora-runner"
+
+[server]
+  bind = "0.0.0.0"
+  external_url = "https://aurora.example.org"
+  trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+
+[telemetry]
+  log_level = "info"
+"#;
+
+fn assert_helm_toml_loads(toml: &str) {
+    let raw = load_with(toml, &[]).unwrap();
+    let r = raw.runner_config().unwrap();
+    assert_eq!(r.backend, RunnerBackend::Kubernetes);
+    let k = &r.runner.k8s;
+    assert_eq!(k.namespace.as_deref(), Some("aurora-sandboxes"));
+    assert!(k.core_namespace.is_some());
+    assert!(k.gateway_service.is_some() && k.runner_service.is_some());
+}
+
+#[test]
+fn helm_rendered_runner_config_loads() {
+    assert_helm_toml_loads(HELM_RENDERED_TOML);
+}
+
+/// Renders the real chart when `helm` is installed and loads the ConfigMap TOML.
+#[test]
+fn live_helm_template_config_loads() {
+    let chart = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/helm/aurora");
+    let Ok(out) = std::process::Command::new("helm")
+        .args(["template", "t"])
+        .arg(&chart)
+        .output()
+    else {
+        eprintln!("helm not installed: skipping live chart render");
+        return;
+    };
+    assert!(
+        out.status.success(),
+        "helm template failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let mut toml = String::new();
+    let mut inside = false;
+    for line in text.lines() {
+        if line.trim_end() == "  aurora.toml: |" {
+            inside = true;
+        } else if inside {
+            if let Some(l) = line.strip_prefix("    ") {
+                toml.push_str(l);
+                toml.push('\n');
+            } else if line.trim().is_empty() {
+                toml.push('\n');
+            } else {
+                break;
+            }
+        }
+    }
+    assert!(toml.contains("[runner.k8s]"), "ConfigMap TOML not found");
+    assert_helm_toml_loads(&toml);
+}

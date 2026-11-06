@@ -22,6 +22,8 @@ aurora-config = { workspace = true }
 aurora-protocol = { workspace = true }
 async-trait = { workspace = true }
 bollard = { workspace = true }
+kube = { workspace = true }
+k8s-openapi = { workspace = true }
 axum = { workspace = true }
 chrono = { workspace = true }
 base64 = { workspace = true }
@@ -40,4 +42,7 @@ tracing = { workspace = true }
 uuid = { workspace = true, features = ["v4", "v5"] }
 
 [dev-dependencies]
+http = { workspace = true }
+http-body-util = { workspace = true }
+tower = { workspace = true }
 wiremock = { workspace = true }

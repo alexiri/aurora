@@ -101,7 +101,7 @@ Setup tooling generates every secret and **never overwrites** an existing one.
 | `runner.reconcile_interval_secs`, `runner.orphan_grace_secs`, `runner.orphan_reap` | 60, 3600, `reap` | runner | `reap` or `log_only` |
 | `runner.capacity_wait_secs` | 300 | runner | |
 | `runner.podman_socket`, `runner.sandbox_network`, `runner.sandbox_hosts` | — | runner (podman) | `11` |
-| `runner.k8s.namespace`, `runner.k8s.storage_class`, `runner.k8s.runtime_class`, `runner.k8s.node_selector`, `runner.k8s.tolerations`, `runner.k8s.gateway_service`, `runner.k8s.runner_service` | — | runner (kubernetes) | `11` |
+| `runner.k8s.namespace`, `runner.k8s.core_namespace` (namespace holding the gateway/runner Services; default: the runner pod's own namespace, else `default`), `runner.k8s.storage_class`, `runner.k8s.runtime_class`, `runner.k8s.node_selector`, `runner.k8s.tolerations`, `runner.k8s.gateway_service`, `runner.k8s.runner_service` | — | runner (kubernetes) | `11` |
 | `tls.extra_ca_bundle` | — | api, gateway, hookhost, runner, connectors | PEM file of additional trusted CAs for all outbound TLS (e.g. an organization CA for internal LLM endpoints, OIDC, Vault) |
 | `retention.request_log_days` | 30 | api | |
 | `telemetry.otlp_endpoint` | — | all | optional tracing export |
