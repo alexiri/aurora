@@ -436,6 +436,7 @@ Routes/auth: `05 §Conversations and turns`, `§Agents and sandboxes` (sandbox, 
 **Contract decisions**
 - C-23 Transcript events are delivered as `{ seq: number | null, type, ts, payload }`: durable events (`10` table "Durable: yes") have `seq`; ephemeral (`text.delta`, `thinking.delta`, `activity`) have `seq: null` and are never returned by `/events`. Payloads are exactly the `10` table shapes (snake_case). Unknown types must be ignored by clients.
 - C-24 SSE `GET /v1/conversations/{id}/stream?after_seq=`: each event is `event: <type>`, `id: <seq>` for durable events only, `data: <TranscriptEvent JSON>`; keepalive comment every `SSE_KEEPALIVE`; resume with `Last-Event-ID` or `after_seq`. Clients: fetch `/events?after_seq=` first, then open the stream from the last seq; discard a turn's deltas once its durable `text` arrives (`14 §Key flows`).
+- C-26 Follow-ups: creating a follow-up appends a durable `turn.queued` with `turn_id = <followup id>` and extra `followup_of: <parent turn id>`; promotion appends a durable `turn.queued` for the new turn with extra `promoted_from: <followup id>` (clients render the message once). Ephemeral delta payloads use the `10` field names (`message_id`, never abbreviations).
 - C-25 `POST /v1/conversations/{id}/messages` returns 202 `{ turn: Turn }` or `{ followup: Followup }` (exactly one non-null).
 
 ```ts
