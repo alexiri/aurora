@@ -368,6 +368,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Conversations of an agent, most recently active first. */
+        get: operations["listConversations"];
+        put?: never;
+        /** Get-or-create an `api` conversation by caller-supplied reference (API key). */
+        post: operations["createApiConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/conversations/direct": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Get-or-create the caller's direct conversation with the agent. */
+        post: operations["getOrCreateDirectConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/effective": {
         parameters: {
             query?: never;
@@ -894,6 +929,78 @@ export interface paths {
         };
         /** Grants held on a connection. */
         get: operations["listConnectionGrants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One conversation. */
+        get: operations["getConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Durable transcript events after `after_seq` (ephemeral events are never returned). */
+        get: operations["listConversationEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send a message: starts a turn, or becomes a follow-up when a turn is active. */
+        post: operations["postConversationMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Server-sent events: `event: <type>`, `id: <seq>` (durable only), `data: <TranscriptEvent>`.
+         *     Replays durable events after `after_seq` / `Last-Event-ID`, then tails; ephemeral deltas carry
+         *     no id.
+         */
+        get: operations["streamConversation"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1575,6 +1682,40 @@ export interface paths {
         put?: never;
         /** Re-verify the key and its origin (`can_own`). */
         post: operations["verifySecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/turns/{id}/abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Abort a turn (queued turns end immediately). */
+        post: operations["abortTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/turns/{id}/send-now": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask the harness to move a blocking tool to the background. */
+        post: operations["sendNowTurn"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2306,6 +2447,27 @@ export interface components {
              */
             ttl_secs?: number | null;
         };
+        Conversation: {
+            active_turn?: null | components["schemas"]["Turn"];
+            /** Format: uuid */
+            agent_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            direct_user_id?: string | null;
+            external_ref: string;
+            /** Format: uuid */
+            id: string;
+            /** @description `direct` | `group` | `schedule` | `webhook` | `watch` | `peer` | `api` */
+            kind: string;
+            /** Format: date-time */
+            last_activity_at?: string | null;
+            /** Format: int64 */
+            last_seq: number;
+            /** Format: uuid */
+            origin_conversation_id?: string | null;
+            title?: string | null;
+        };
         CreateAgentRequest: {
             brief?: string | null;
             effort?: string | null;
@@ -2317,6 +2479,10 @@ export interface components {
             model_id?: string | null;
             name: string;
             proactive_messaging?: string | null;
+        };
+        CreateApiConversation: {
+            external_ref: string;
+            title?: string | null;
         };
         CreateInvitationRequest: {
             email: string;
@@ -2489,9 +2655,25 @@ export interface components {
         ErrorEnvelope: {
             error: components["schemas"]["ErrorBody"];
         };
+        EventsPage: {
+            items: components["schemas"]["TranscriptEvent"][];
+            /** Format: int64 */
+            last_seq: number;
+        };
         Features: {
             channels: boolean;
             hosted: boolean;
+        };
+        Followup: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            parent_turn_id: string;
+            /** @description `joining` | `joined` | `promoted` */
+            status: string;
+            text: string;
         };
         ForgotRequest: {
             email: string;
@@ -2733,6 +2915,11 @@ export interface components {
         };
         /** @enum {string} */
         MemberStatus: "active" | "suspended";
+        /** @description Exactly one of `turn` / `followup` is non-null (C-25). */
+        MessageAccepted: {
+            followup?: null | components["schemas"]["Followup"];
+            turn?: null | components["schemas"]["Turn"];
+        };
         ModelItem: {
             display_name?: string | null;
             id: string;
@@ -3002,6 +3189,30 @@ export interface components {
                 updated_at: string;
                 /** Format: uuid */
                 workspace_id?: string | null;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_Conversation: {
+            items: {
+                active_turn?: null | components["schemas"]["Turn"];
+                /** Format: uuid */
+                agent_id: string;
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                direct_user_id?: string | null;
+                external_ref: string;
+                /** Format: uuid */
+                id: string;
+                /** @description `direct` | `group` | `schedule` | `webhook` | `watch` | `peer` | `api` */
+                kind: string;
+                /** Format: date-time */
+                last_activity_at?: string | null;
+                /** Format: int64 */
+                last_seq: number;
+                /** Format: uuid */
+                origin_conversation_id?: string | null;
+                title?: string | null;
             }[];
             next_cursor?: string | null;
         };
@@ -3674,6 +3885,10 @@ export interface components {
             value: string;
             warning?: string | null;
         };
+        SendMessage: {
+            attachment_ids?: string[];
+            text: string;
+        };
         SetValueRequest: {
             reference?: null | components["schemas"]["SecretReference"];
             value?: string | null;
@@ -3844,6 +4059,15 @@ export interface components {
         };
         /** @enum {string} */
         TraceSource: "hand" | "derived" | "default";
+        /** @description `seq` is null for ephemeral events (`text.delta`, `thinking.delta`, `activity`). */
+        TranscriptEvent: {
+            payload: Record<string, never>;
+            /** Format: int64 */
+            seq?: number | null;
+            /** Format: date-time */
+            ts: string;
+            type: string;
+        };
         TrustedKey: {
             /** Format: date-time */
             created_at: string;
@@ -3855,6 +4079,29 @@ export interface components {
             /** Format: date-time */
             revoked_at?: string | null;
         };
+        Turn: {
+            abort_requested: boolean;
+            attachment_ids: string[];
+            /** Format: uuid */
+            conversation_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description `dashboard` | `api` | `channel` | `schedule` | `webhook` | `watch` | `peer` | `system` */
+            door: string;
+            error_code?: string | null;
+            /** Format: date-time */
+            finished_at?: string | null;
+            /** Format: uuid */
+            id: string;
+            send_now_requested: boolean;
+            speaker_label?: string | null;
+            /** Format: date-time */
+            started_at?: string | null;
+            /** @description `queued` | `dispatched` | `running` | `done` | `failed` | `aborted` */
+            status: string;
+            text: string;
+            usage?: null | components["schemas"]["Usage"];
+        };
         /** @enum {string} */
         UncredentialedDefault: "none" | "block";
         /** @description `multipart/form-data` body of the upload route. */
@@ -3864,6 +4111,16 @@ export interface components {
              * @description The `.aurora-plugin` archive (tar.gz), at most 20 MiB.
              */
             package: string;
+        };
+        Usage: {
+            /** Format: int64 */
+            cache_read_tokens?: number | null;
+            /** Format: double */
+            cost_usd?: number | null;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
         };
         User: {
             /** Format: date-time */
@@ -5102,6 +5359,130 @@ export interface operations {
             };
             /** @description gateway_ca_unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listConversations: {
+        parameters: {
+            query?: {
+                kind?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Conversation"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createApiConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateApiConversation"];
+            };
+        };
+        responses: {
+            /** @description Existing */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getOrCreateDirectConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6461,6 +6842,162 @@ export interface operations {
                 };
             };
             /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listConversationEvents: {
+        parameters: {
+            query?: {
+                /** @description Return events with `seq` greater than this (default 0). */
+                after_seq?: number;
+                /** @description 1..=500 (default 200). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsPage"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    postConversationMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendMessage"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageAccepted"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description hosted_disabled */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    streamConversation: {
+        parameters: {
+            query?: {
+                after_seq?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["TranscriptEvent"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8886,6 +9423,84 @@ export interface operations {
             };
             /** @description llm_key_invalid | llm_endpoint_unreachable | not_llm_secret */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    abortTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Turn id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Turn"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description turn_finished */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    sendNowTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Turn id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Turn"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description turn_finished */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

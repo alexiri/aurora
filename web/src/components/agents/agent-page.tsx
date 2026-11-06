@@ -8,6 +8,8 @@ import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 
 import { AccessTab } from "./access-tab";
+import { ChatTab } from "./chat-tab";
+import { ComputerTab } from "./computer-tab";
 import { ConnectTab } from "./connect-tab";
 import { DeleteZone } from "./delete-zone";
 import { InstructionsTab } from "./instructions-tab";
@@ -19,7 +21,7 @@ export function AgentPage() {
   const wsId = resolved.data?.workspace?.id;
   const agents = useAgents(wsId);
   const workspace = useWorkspace(wsId);
-  const [tab, setTab] = useState<"instructions" | "access" | "connect">("instructions");
+  const [tab, setTab] = useState<"chat" | "instructions" | "access" | "connect" | "computer">("instructions");
 
   if (resolved.isPending || (wsId && agents.isPending)) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
@@ -29,9 +31,12 @@ export function AgentPage() {
 
   const byo = agent.kind === "byo";
   const tabs = [
+    ...(byo ? [] : [{ id: "chat" as const, label: "Chat" }]),
     { id: "instructions" as const, label: "Instructions" },
     { id: "access" as const, label: "Access" },
-    ...(byo ? [{ id: "connect" as const, label: "Computer: Connect" }] : []),
+    ...(byo
+      ? [{ id: "connect" as const, label: "Computer: Connect" }]
+      : [{ id: "computer" as const, label: "Computer" }]),
   ];
 
   return (
@@ -59,6 +64,8 @@ export function AgentPage() {
         ))}
       </div>
       <div role="tabpanel" id="agent-panel" aria-labelledby={`tab-${tab}`} className="pt-2">
+        {tab === "chat" && !byo ? <ChatTab agentId={agent.id} wsId={wsId!} base={`/o/${org}/w/${ws}`} /> : null}
+        {tab === "computer" && !byo ? <ComputerTab agentId={agent.id} /> : null}
         {tab === "instructions" ? (
           <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} />
         ) : null}

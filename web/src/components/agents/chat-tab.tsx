@@ -1,0 +1,293 @@
+"use client";
+
+import { useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
+import { useMemo, useState, type FormEvent } from "react";
+
+import { Markdown } from "@/components/apps/markdown";
+import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Button } from "@/components/ui/button";
+import { inputClass } from "@/components/ui/field";
+import { useDecide } from "@/lib/api/approvals";
+import { ApiError } from "@/lib/api/client";
+import { chatApi, useConversations, useDirectConversation, type Conversation, type Followup, type TranscriptEvent } from "@/lib/api/conversations";
+import {
+  activeTurnId,
+  approvalStatus,
+  classifySend,
+  errorCopy,
+  pendingFollowups,
+  type TranscriptState,
+} from "@/lib/chat/transcript";
+import { useTranscript } from "@/lib/chat/use-transcript";
+
+const s = (v: unknown): string => (typeof v === "string" ? v : "");
+
+export function ErrorNotice({ code, message, base }: { code?: string | null; message?: string; base: string }) {
+  const copy = errorCopy(code, message);
+  const href = copy.link ? (copy.link.path === "credentials" ? `${base}/credentials` : undefined) : undefined;
+  return (
+    <p role="alert" className="text-sm text-red-700">
+      {copy.message}{" "}
+      {copy.link && href ? (
+        <Link href={href} className="underline">
+          {copy.link.label}
+        </Link>
+      ) : null}
+      {copy.link && copy.link.path === "computer" ? <span>(see the Computer tab)</span> : null}
+    </p>
+  );
+}
+
+export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: TranscriptState; wsId: string }) {
+  const id = s(ev.payload.approval_id);
+  const st = approvalStatus(state, id);
+  const decide = useDecide(wsId);
+  const settled = st.status !== "pending";
+  return (
+    <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+      <p className="font-medium">Approval requested</p>
+      <p>{s(ev.payload.summary)}</p>
+      {settled ? (
+        <p role="status" className="mt-1 text-neutral-700">
+          {st.status === "expired" ? "Expired" : st.status === "approve" ? "Approved" : "Denied"}
+          {st.by ? ` by ${st.by}` : ""}
+        </p>
+      ) : (
+        <div className="mt-2 flex gap-2">
+          <Button size="sm" disabled={decide.isPending} onClick={() => decide.mutate({ id, decision: "approve" })}>
+            Approve
+          </Button>
+          <Button size="sm" variant="outline" disabled={decide.isPending} onClick={() => decide.mutate({ id, decision: "deny" })}>
+            Deny
+          </Button>
+        </div>
+      )}
+      {decide.error ? (
+        <p role="alert" className="mt-1 text-red-700">
+          {decide.error instanceof ApiError && decide.error.status === 409 ? "Already decided." : "Could not record the decision."}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function EventView({ ev, state, wsId, base }: { ev: TranscriptEvent; state: TranscriptState; wsId: string; base: string }) {
+  const p = ev.payload;
+  switch (ev.type) {
+    case "turn.queued":
+      return (
+        <div className="ml-auto max-w-[80%] rounded-md bg-neutral-100 p-2 text-sm">
+          <p className="text-xs text-neutral-600">
+            {s(p.speaker_label) || "You"}
+            {s(p.door) && s(p.door) !== "dashboard" ? (
+              <span className="ml-2 rounded-full border border-neutral-300 px-2 py-0.5">{s(p.door)}</span>
+            ) : null}
+          </p>
+          <p className="whitespace-pre-wrap">{s(p.text)}</p>
+          {Array.isArray(p.attachments)
+            ? (p.attachments as unknown[]).map((a) => (
+                <a key={s(a)} className="block text-xs underline" href={`/v1/attachments/${encodeURIComponent(s(a))}/content`}>
+                  Attachment
+                </a>
+              ))
+            : null}
+        </div>
+      );
+    case "text":
+      return (
+        <div className="max-w-[90%] rounded-md border border-neutral-200 p-2">
+          <Markdown source={s(p.text)} />
+        </div>
+      );
+    case "tool.started": {
+      const fin = state.events.find((e) => e.type === "tool.finished" && s(e.payload.call_id) === s(p.call_id));
+      return (
+        <div className="rounded-md border border-neutral-200 p-2 text-xs">
+          <span className="font-mono font-medium">{s(p.name)}</span> <span>{s(p.summary)}</span>{" "}
+          <span className="text-neutral-600">
+            {fin ? (fin.payload.ok ? "done" : "failed") : "running…"}
+            {fin && s(fin.payload.summary) ? `: ${s(fin.payload.summary)}` : ""}
+          </span>
+        </div>
+      );
+    }
+    case "correction":
+      return (
+        <p className="text-xs italic text-neutral-600">
+          {p.action === "retract" ? "A previous message was retracted." : `A previous message was corrected: ${s(p.text)}`}
+        </p>
+      );
+    case "message.joined":
+      return <p className="text-xs text-neutral-600">Follow-up joined the running turn.</p>;
+    case "message.sent_now":
+      return <p className="text-xs text-neutral-600">Follow-up sent now.</p>;
+    case "approval.pending":
+      return <ApprovalCard ev={ev} state={state} wsId={wsId} />;
+    case "action_approval.pending":
+      return (
+        <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm">
+          Action approval: {s(p.summary)} (decide in Approvals)
+        </p>
+      );
+    case "attachment":
+      return (
+        <a className="text-sm underline" href={`/v1/attachments/${encodeURIComponent(s(p.attachment_id))}/content`}>
+          {s(p.filename)} ({String(p.size ?? "")} bytes)
+        </a>
+      );
+    case "notice":
+      return <p className="rounded bg-blue-50 p-2 text-sm text-blue-900">{s(p.text)}</p>;
+    case "error":
+      return <ErrorNotice code={s(p.code)} message={s(p.message)} base={base} />;
+    case "turn.finished":
+      return s(p.status) === "failed" && s(p.error_code) ? <ErrorNotice code={s(p.error_code)} base={base} /> : null;
+    default:
+      return null; // unknown or non-rendered types
+  }
+}
+
+function Transcript({ state, wsId, base }: { state: TranscriptState; wsId: string; base: string }) {
+  const turn = activeTurnId(state);
+  const deltas = Object.values(state.deltas);
+  return (
+    <div className="space-y-2" aria-live="polite">
+      {state.events.map((ev) => (
+        <EventView key={ev.seq} ev={ev} state={state} wsId={wsId} base={base} />
+      ))}
+      {deltas.map((d) => (
+        <div key={d.messageId} className="max-w-[90%] rounded-md border border-dashed border-neutral-300 p-2">
+          <Markdown source={d.text} />
+        </div>
+      ))}
+      {turn && state.activity[turn] ? <p className="text-xs text-neutral-500">{state.activity[turn]}</p> : null}
+    </div>
+  );
+}
+
+export function ChatTab({ agentId, wsId, base }: { agentId: string; wsId: string; base: string }) {
+  const direct = useDirectConversation(agentId);
+  const list = useConversations(agentId);
+  const [picked, setPicked] = useState<string | null>(null);
+  if (direct.isPending) return <Loading />;
+  if (direct.isError) return <ErrorState error={direct.error} onRetry={() => void direct.refetch()} />;
+  const convId = picked ?? direct.data.id;
+  const convs = list.data?.items ?? [];
+  return (
+    <div className="grid gap-4 md:grid-cols-[14rem_1fr]">
+      <nav aria-label="Conversations" className="space-y-1 text-sm">
+        <button
+          type="button"
+          onClick={() => setPicked(null)}
+          aria-current={!picked}
+          className={`block w-full rounded px-2 py-1 text-left ${!picked ? "bg-neutral-100 font-medium" : ""}`}
+        >
+          Direct chat
+        </button>
+        {convs
+          .filter((c) => c.id !== direct.data.id)
+          .map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => setPicked(c.id)}
+              aria-current={picked === c.id}
+              className={`block w-full rounded px-2 py-1 text-left ${picked === c.id ? "bg-neutral-100 font-medium" : ""}`}
+            >
+              <span className="mr-1 rounded-full border border-neutral-300 px-1.5 text-xs">{c.kind}</span>
+              {c.title ?? c.external_ref}
+            </button>
+          ))}
+      </nav>
+      <ChatPane key={convId} agentId={agentId} wsId={wsId} base={base} convId={convId} direct={convId === direct.data.id ? direct.data : null} />
+    </div>
+  );
+}
+
+function ChatPane({ agentId, wsId, base, convId, direct }: { agentId: string; wsId: string; base: string; convId: string; direct: Conversation | null }) {
+  const qc = useQueryClient();
+  const { state, loading, error, live } = useTranscript(convId);
+  const [text, setText] = useState("");
+  const [followups, setFollowups] = useState<Followup[]>([]);
+  const [sendErr, setSendErr] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const active = activeTurnId(state, direct);
+  const waiting = useMemo(() => pendingFollowups(followups, state), [followups, state]);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const t = text.trim();
+    if (!t || !convId || busy) return;
+    setBusy(true);
+    setSendErr(null);
+    try {
+      const out = classifySend(await chatApi.send(convId, t));
+      if (out.kind === "followup") setFollowups((f) => [...f, out.followup]);
+      setText("");
+      void qc.invalidateQueries({ queryKey: ["agents", agentId, "conversations"] });
+    } catch (err) {
+      setSendErr(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function act(fn: () => Promise<unknown>) {
+    setSendErr(null);
+    try {
+      await fn();
+    } catch (err) {
+      setSendErr(err);
+    }
+  }
+
+  return (
+      <section aria-label="Chat" className="space-y-3">
+        {loading ? <Loading /> : null}
+        {error ? <ErrorState error={error} /> : null}
+        {!loading && !error && state.events.length === 0 ? (
+          <EmptyState title="No messages yet">Say hello to start the conversation.</EmptyState>
+        ) : null}
+        <Transcript state={state} wsId={wsId} base={base} />
+        {!live && !loading && !error ? <p className="text-xs text-neutral-500">Reconnecting to live updates…</p> : null}
+        {waiting.map((f) => (
+          <div key={f.id} className="flex items-center gap-2 text-sm">
+            <span className="text-neutral-600">Queued follow-up: {f.text}</span>
+            <Button size="sm" variant="outline" onClick={() => void act(() => chatApi.sendNow(f.parent_turn_id))}>
+              Send now
+            </Button>
+          </div>
+        ))}
+        {sendErr ? (
+          <ErrorNotice
+            code={sendErr instanceof ApiError ? sendErr.code : null}
+            message={sendErr instanceof ApiError ? sendErr.message : undefined}
+            base={base}
+          />
+        ) : null}
+        <form onSubmit={(e) => void submit(e)} className="flex gap-2">
+          <label htmlFor="chat-input" className="sr-only">
+            Message
+          </label>
+          <textarea
+            id="chat-input"
+            className={inputClass}
+            rows={2}
+            value={text}
+            placeholder={active ? "Add a follow-up…" : "Message the agent…"}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <div className="flex flex-col gap-1">
+            <Button type="submit" disabled={busy || !text.trim()}>
+              {active ? "Follow up" : "Send"}
+            </Button>
+            {active ? (
+              <Button type="button" variant="outline" onClick={() => void act(() => chatApi.abort(active))}>
+                Stop
+              </Button>
+            ) : null}
+          </div>
+        </form>
+      </section>
+  );
+}
