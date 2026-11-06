@@ -23,10 +23,13 @@ their dependencies near completion (adaptive planning).
 | Milestone | Status | Acceptance evidence |
 |---|---|---|
 | M0 | done (CI never executed on GitHub — no remote) | schema guard, compose up, guards, cargo-deny |
-| M1 | done except OIDC (BE-015 in progress) and permission-matrix test (TEST-010) | `scripts/e2e/m1.sh` Playwright sign-up → workspace (Daneel) → invite → accept: pass |
+| M1 | done except permission-matrix test (TEST-010 in progress) | `scripts/e2e/m1.sh` Playwright sign-up → workspace (Daneel) → invite → accept: pass; OIDC (BE-015) done |
 | M2 | done (core) — follow-ups FUP-M2 | `scripts/e2e/gateway.sh` 11 scenarios pass; governance SEC-35..39 service tests (GW-005, TEST-020); hold tests incl. two replicas |
-| M3 | in progress: registry crate + gateway apps/mechanisms/refresh done; lifecycle API, connect flows, connection grants, apps UI, hook host/WIT/SDK (needs wasm32-wasip2), plugin CLI, fixtures todo | — |
-| M4–M7 | todo (wire types done) | — |
+| M3 | done (core) — follow-ups FUP-M3 | plugin lifecycle/ingestion, apps/connect/grants, hook host + WIT + SDK, CLI plugin, fixtures 33/33 (`scripts/fixtures/build.sh`), e2e-gateway 15/15 incl. hooks |
+| M4 | done (core) — follow-ups FUP-M4 | `AURORA_TEST_PODMAN=1 bash scripts/e2e/hosted.sh` 9/9 (scenarios 1–8 + 8b SEC probes) after SEC-FIX-01/02 |
+| M5 | in progress: memory, skills, claude-code adapter, memory/skills UI done; schedules (BE-062), webhooks (BE-063) in progress; attachments, action approvals, agent links/peer tasks, app-turn cap, schedules/webhooks/peers UI, live conformance todo | — |
+| M6 | in progress: aurora-channels (CHAN-001), connector contract + SDK + fake connector (CON-001) done; channel core API, conformance, channel UI todo | — |
+| M7 | in progress: Helm chart (OPS-010) done; kubernetes backend (RUN-004) in progress; kind e2e blocked (no cluster on host); perf budgets, upgrade test, operator docs todo | — |
 
 ## Requirement coverage
 
@@ -63,12 +66,12 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | BE-016 | /v1/me, admin users, audit lists, bootstrap-admin | Rust | done | BE-011 | Sonnet | tests me/admin/audit 9; CLI run by orchestrator |
 | BE-014 | API keys, CLI device flow, resolve fix | Rust | done | BE-012 | Sonnet | tests keys/cli; S-04 + revoke-kind fix by orchestrator |
 | BE-013 | Invitations | Rust | done | BE-011 | Sonnet | tests/invitations.rs 5 (token never in responses); checks by orchestrator |
-| BE-015 | OIDC + mock IdP | Rust | in-progress | BE-011 | Sonnet | |
+| BE-015 | OIDC + mock IdP | Rust | done | BE-011 | Sonnet | tests/oidc.rs |
 | FE-011 | Dashboard shell | Next.js | done | BE-012 | Sonnet | 14 vitest; build; curl smoke |
 | FE-010 | Auth pages + CSP proxy | Next.js | done | BE-011 | Sonnet | 22 vitest; CSP nonce/nosniff headers verified; /join on generated client |
 | FE-013 | Account, workspace settings, admin users | Next.js | done | BE-014, BE-016 | Sonnet | |
 | FE-012 | Org pages | Next.js | done | BE-013, FE-013 | Sonnet | |
-| TEST-010 | Permission-matrix test | Rust test | todo | BE-013..016 | haiku-tester | |
+| TEST-010 | Permission-matrix test | Rust test | in-progress | BE-013..016 | haiku→Sonnet | |
 | TEST-011 | Playwright sign-up → workspace (Daneel) → invite → accept | e2e | done (`bash scripts/e2e/m1.sh` 1 passed, rerun by orchestrator) | FE-010..013 | nextjs-developer | |
 | BE-020 | aurora-policy | Rust | done | BE-001 | Sonnet | 10 + 30-case corpus |
 | BE-021 | aurora-secrets | Rust | done | BE-003 | Sonnet | 11 tests |
@@ -106,16 +109,39 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | FIX-001 | Fixture packages (7 valid + 25 invalid) | fixtures | done | CLI-002 | Sonnet | `bash scripts/fixtures/build.sh` 33 pass |
 | HOOK-004 p1 | Gateway↔hookhost (summarize, mint) e2e | Rust/e2e | done | HOOK-002 | Sonnet | e2e-gateway 15/15 |
 | FE-031 | Admin plugins/host claims/trusted keys UI | Next.js | done | BE-041 | Sonnet | 76 vitest |
-| BE-043 | Connect flows (fields+probe, oauth2, callback, reconnect, blocklist) + API connect hooks | Rust | todo (next) | BE-042 | Sonnet | |
-| BE-044 | Connection grants + effective tools | Rust | todo | BE-042 | Sonnet | |
-| FE-030 | Apps catalogue, connect window, connections, OAuth clients, availability UI | Next.js | todo | BE-042/043 | Sonnet | |
+| BE-043 | Connect flows (fields+probe, oauth2, callback, reconnect, blocklist) + API connect hooks | Rust | done | BE-042 | Sonnet | connect tests; C-22 |
+| BE-044 | Connection grants + effective tools | Rust | done | BE-042 | Sonnet | grants tests; C-21 |
+| FE-030/032 | Apps catalogue, connect window, connections, OAuth clients (C-21), availability UI | Next.js | done | BE-042/043 | Sonnet | vitest |
 | FUP-M3 | Pre-warm hook modules on snapshot load; OpenAPI typing for governance document; OAuth callback should surface `missing_scopes` (store requested scopes in state, show on connection); first connect with a tenant-templated token URL must take `tenant_host` from connect `fields` (zone-validated); skill exec bit (SUP-003, done); move tool-call identity SQL from `domains/tools/service.rs` into an `aurora-db` repo (02 rule; BE-053) | — | todo | — | — | |
 | FUP-M4 | From BE-052: (1) answer text buffered in memory on the API — durable `text` must come from the supervisor's answer-rule events or a persisted buffer so a channel move mid-turn loses nothing; (2) harness capabilities stored in `sandboxes.resource_profile` and `steer_delivered_at` reused as send-now marker — give them proper homes (spec fix with migration); (3) `gate.result` handling (M5 schedules); (4) model-list 10-min cache; (5) render inputs: plugin snippets/env/stubs, channels, peers, recall snippets (M5/M6) | Rust | todo | BE-052 | — | |
 | FUP-M5 | Memory recall uses `websearch_to_tsquery` (AND) over the whole message — consider OR semantics for recall to get useful snippets (BE-060); cross-crate checksum-trailer test (API render vs supervisor harvest) | Rust | todo | BE-060 | — | |
 | FUP-M6 | From CON-001: space bindings not passed to the `Connector` trait (13 §8 signature lacks a slot); fake connector lacks `file.fetch`/outbound file download (SDK `put_file`/`get_file` unreachable from `execute`) | Rust | todo | CON-001 | — | |
 | FUP-M7 | Helm: evaluation Postgres rendered as hook resources (not removed on uninstall — document or move to a subchart); hook jobs use third-party `alpine/k8s` image (consider a pinned digest or an Aurora tools image); kind e2e not run (no cluster) | Ops | todo | OPS-010 | — | |
-| M3 rest | snapshot compiler, lifecycle/ingestion API, connect flows, mechanisms in gateway, hook host + WIT + SDK (needs wasm32-wasip2), CLI plugin, fixtures | both | todo | M2 | — | |
-| M4–M7 | hosted runtime, hosted features, channels, k8s/Helm | both | todo | per 19 | — | |
+| API-004 | M4 contract (conversations, turns, transcript, SSE, sandbox, models; C-23..C-26) | contract | done | — | Opus | API_CONTRACTS.md M4 |
+| RUN-001/002/003 | Runner core, supervisor channel server, podman backend + sandbox images | Rust | done | PROTO-001 | Sonnet | runner tests; S-07/S-08 |
+| SUP-001..004 | Supervisor core, home projection/harvest, MCP bridge + tools socket + process manager, claude-code adapter + conformance | Rust | done | PROTO-001 | Sonnet | supervisor tests; I-23 |
+| BE-050 | Runner plane (W5), admin runners | Rust | done | RUN-001 | Sonnet | runner_plane tests |
+| BE-051/052/053 | Conversation plane, due-work engine + report handlers, tool registry | Rust | done | BE-050 | Sonnet | conversations/runner_plane tests; I-25 |
+| FE-040/041 | Agent Chat + Computer tabs, model picker, conversation calls | Next.js | done | BE-051 | Sonnet | vitest |
+| TEST-013 | M4 e2e-hosted (podman) | e2e | done | M4 | Sonnet | 9/9 incl. SEC-01/02/09/24/25/26/34 probes |
+| SEC-FIX-01 | Supervisor child env rebuilt via spawn.rs (SEC-34) | Rust | done | TEST-013 | Sonnet + Opus fix (app env kept) | spawn_env re-exec test; clippy disallowed-methods |
+| SEC-FIX-02 | Internal listener binds (SEC-09) | Rust/ops | done | TEST-013 | Sonnet + Opus fix (Helm nesting) | listener_binds test; TEST-013 s8b |
+| BE-060 | Memory (API, revisions, redaction, language-aware search, recall, tools, harvest plane) | Rust | done | BE-053 | Sonnet | memory tests |
+| BE-061 | Skills (agent/org API, files, limits, tools, projection) | Rust | done | BE-053 | Sonnet | skills tests |
+| FE-050 | Memory + Skills tabs, org skills page | Next.js | done | BE-060/061 | Sonnet | vitest |
+| BE-062 | Schedules (API, cron, gates, tools, due-work arm) | Rust | in-progress | BE-052 | Sonnet | |
+| BE-063 | Webhooks (API, receive endpoint, deliveries, tools) | Rust | in-progress | BE-052 | Sonnet | |
+| BE-064 | Attachments in/out (BlobStore, routes, runner plane, delivery, send_file) | Rust | todo (next) | BE-052 | Sonnet (worktree) | |
+| BE-065 | Action approvals, agent links, peer tasks, app-turn cap, agent tools | Rust | todo (next) | BE-052 | Sonnet (worktree) | |
+| FE-051 | Schedules, webhooks, peers tabs | Next.js | todo | BE-062/063/065 | Sonnet | |
+| TEST-014 | M5 hosted suites (18) + live claude-code conformance (needs LiteLLM endpoint) | e2e | todo | M5 | Sonnet | |
+| CHAN-001 | aurora-channels (content, cards, action tokens, capabilities; I-26) | Rust | done | — | Sonnet | channels tests |
+| CON-001 | Connector contract W8 + SDK + fake connector | Rust | done | CHAN-001 | Sonnet | connector tests; FUP-M6 |
+| API-005 | M6 contract (channel management, connector plane) | contract | todo | — | Opus | |
+| BE-070+ | Channel core API (registration, inbox/ops, routing, linking, cards, presence, messaging tools), conformance, channel UI | both | todo | API-005 | — | |
+| OPS-010 | Helm chart | Ops | done | — | Sonnet | `helm lint`, `helm template` |
+| RUN-004 | Kubernetes backend (+ runner.k8s.core_namespace config fix) | Rust | in-progress | RUN-003 | Sonnet (Orca worker, worktree `run-004-k8s`) | |
+| OPS-011 | kind e2e, perf budgets, upgrade test, operator docs | Ops | todo (kind blocked: no cluster) | RUN-004 | — | |
 
 ## Open spec issues (resolve before M4 implementation; found by PROTO-001)
 
@@ -129,14 +155,13 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 
 ## Open security findings
 
-- **SEC-34** (TEST-013): supervisor child processes (harness, background processes, gates) did not get scrubbed environments ⇒ `AURORA_BOOT` (boot + bootstrap tokens) could reach agent processes. Fix in progress: SEC-FIX-01 (allow-list env spawn helper, enforced). Re-prove with TEST-013 s8.
-- **SEC-09** (TEST-013 s8b): gateway 4103 and runner 4106 listeners reachable from sandboxes (same bind as proxy/channel). Fix in progress: SEC-FIX-02 (separate binds, compose core-network IPs). Re-prove with TEST-013 s8b.
+- none open. SEC-34 fixed by SEC-FIX-01 (9b61c0f1) and SEC-09 by SEC-FIX-02 (f9130aa3); TEST-013 s8b passes. TEST-013 should gain a `process_start` env probe for SEC-34 now that `process_*` tools are listed (follow-up).
 
 ## Blockers
 
-- Sub-agent usage limit (Sonnet) until 14:20 Europe/Zurich: FE-013 and GOV-001 paused mid-task (resume, don't restart).
+- No Kubernetes cluster (kind/kubectl not installed) → kind e2e and SEC-02-on-k8s probes cannot run on this host.
+- No LiteLLM endpoint configured → M5 live claude-code conformance cannot run.
 - Workspace license in Cargo.toml is `GPL-3.0-or-later` (owner's choice; deny ignores private crates).
-- (resolved 2026-11-06) `wasm32-wasip2` installed by the owner (`rust-wasm`); component builds verified.
 
 ## Recently completed
 
