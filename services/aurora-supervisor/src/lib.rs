@@ -6,6 +6,7 @@
 //! (turn execution), [`logging`].
 #![forbid(unsafe_code)]
 
+pub mod adapters;
 pub mod boot;
 pub mod channel;
 pub mod fake;

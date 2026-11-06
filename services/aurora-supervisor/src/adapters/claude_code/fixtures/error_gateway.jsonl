@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"5d1e0c1a-0000-4000-8000-000000000001","tools":["mcp__aurora__memory_save"],"mcp_servers":[{"name":"aurora","status":"connected"}]}
+{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"result":"API Error: 403 {\"error\":{\"code\":\"blocked_by_policy\",\"message\":\"Blocked by policy rule deny-all. Fix at https://x/y\",\"details\":{}}}","session_id":"5d1e0c1a-0000-4000-8000-000000000001","usage":{"input_tokens":0,"output_tokens":0}}

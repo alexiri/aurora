@@ -438,7 +438,7 @@ async fn gates_capture_output_and_time_out() {
         .run_gate(t, "head -c 100000 /dev/zero | tr '\\0' a", 5)
         .await;
     assert_eq!(r.outcome, GateOutcome::Wake);
-    assert!(r.output.unwrap().len() <= 4096);
+    assert!(r.output.unwrap().len() <= aurora_protocol::runner::MAX_GATE_OUTPUT);
 }
 
 #[test]

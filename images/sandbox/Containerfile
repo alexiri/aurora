@@ -43,9 +43,13 @@ ENV PATH=/workspace/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 # ---- sandbox: base + supervisor + pinned harness
 FROM base AS sandbox
-ARG CLAUDE_CODE_VERSION=
-# TODO: pin the Claude Code CLI under /opt/aurora/harness/claude-code once the
-# version is chosen: npm install --prefix /opt/aurora/harness/claude-code @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+# Pinned Claude Code CLI; must match PINNED_VERSION in
+# services/aurora-supervisor/src/adapters/claude_code/mod.rs.
+ARG CLAUDE_CODE_VERSION=2.1.319
+RUN mkdir -p /opt/aurora/harness/claude-code \
+ && npm install --prefix /opt/aurora/harness/claude-code --no-audit --no-fund \
+      @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+ && /opt/aurora/harness/claude-code/node_modules/.bin/claude --version
 COPY --from=supervisor-builder /out/aurora-supervisor /usr/local/bin/aurora-supervisor
 USER 1000:1000
 WORKDIR /workspace

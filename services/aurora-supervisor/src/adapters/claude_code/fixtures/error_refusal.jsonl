@@ -1,0 +1,3 @@
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_09","role":"assistant","content":[]}},"parent_tool_use_id":null}
+{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"refusal"},"usage":{"output_tokens":3}},"parent_tool_use_id":null}
+{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"s","usage":{"input_tokens":5,"output_tokens":3}}
