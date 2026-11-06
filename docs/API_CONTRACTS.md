@@ -423,8 +423,13 @@ interface TrustedKey { id: Uuid; publisher: string; name: string; public_key: st
 | PUT `/v1/admin/host-claims/{group_key}` | IA | `{ winner_package_id, winner_app_id, fingerprint }` | 200 `HostClaimConflict` | 409 `stale_fingerprint` |
 | GET/POST `/v1/admin/trusted-keys`; DELETE `/v1/admin/trusted-keys/{id}` | IA | POST `{ publisher, name, public_key }` | 200 `Page<TrustedKey>` / 201 / 204 (revoke: disables signed packages) | 400; 409 |
 | GET `/v1/admin/registry/snapshot` | IA | — | 200 snapshot JSON + `x-snapshot-hash` | 404 |
-| GET `/internal/v1/registry/active?contract_max=` | internal secret (port 4111) | — | 200 `{ hash, contract, snapshot }` | 404 |
+| GET `/internal/v1/registry/active?contract_max=` | internal secret (port 4111) | — | 200 body = the **canonical snapshot bytes** (`application/json`); headers `x-snapshot-hash: <sha256 hex of body>`, `x-snapshot-contract: <n>` (C-18) | 404 (none active) |
 | GET `/internal/v1/registry/blobs/{digest}` | internal secret | — | 200 `application/wasm` | 404 |
+
+### W9 hook-host JSON encoding (C-18, C-19)
+
+- C-18 Internal snapshot route returns the exact canonical bytes so consumers verify `sha256(body) == x-snapshot-hash` without re-serialization.
+- C-19 `POST /internal/v1/hooks/{connect.authorize|connect.exchange|token.mint|approval.summarize}` (`Authorization: Bearer <internal secret>`, I-20) body `{ package_id, package_digest, app_id, input }`; `input`/`ok` objects use the WIT record field names in **snake_case**; `list<kv>` = `[{ "key", "value" }]`; `option<T>` = value or `null` (fields always present); `list<u8>` = JSON array of integers 0–255; `u64` timestamps = integer Unix seconds; variants = single-key objects (`exchange-source`: `{"oauth_callback": [kv]}` \| `{"form": [kv]}`; `exchange-output`: `{"connected": {...}}` \| `{"continue": {"url", "continuation"}}`). Errors: `{ "error": { "code", "message" } }` with codes `unsupported`, `invalid_input`, `upstream`, `reauth_required`, `internal`, `timeout`, `memory`, `output_too_large`, `egress_denied`. Implemented by `services/aurora-hookhost/src/wire.rs`; clients: gateway `mint.rs`, API connect hooks (BE-043), gateway summarize (HOOK-004).
 
 ## Shared schemas
 
