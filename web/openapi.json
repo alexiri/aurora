@@ -10,6 +10,386 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/admin/plugins": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "List plugin packages (instance administrators).",
+        "operationId": "adminListPlugins",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by package status.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_PluginPackage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Upload a plugin package (multipart part `package`).",
+        "operationId": "adminUploadPlugin",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadPluginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPackage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/plugins/{id}": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "One plugin package.",
+        "operationId": "adminGetPlugin",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Package row id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPackage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/trusted-keys": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "List trusted signing keys, including revoked ones.",
+        "operationId": "adminListTrustedKeys",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_TrustedKey"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Trust a publisher key.",
+        "operationId": "adminCreateTrustedKey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTrustedKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustedKey"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/trusted-keys/{id}": {
+      "delete": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Revoke a trusted key; packages it signed become `disabled`.",
+        "operationId": "adminRevokeTrustedKey",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Trusted key id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/users": {
       "get": {
         "tags": [
@@ -7825,6 +8205,27 @@
         },
         "additionalProperties": false
       },
+      "CreateTrustedKeyRequest": {
+        "type": "object",
+        "required": [
+          "publisher",
+          "name",
+          "public_key"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "public_key": {
+            "type": "string",
+            "description": "Base64 ed25519 public key."
+          },
+          "publisher": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateWorkspaceRequest": {
         "type": "object",
         "required": [
@@ -9981,6 +10382,130 @@
           }
         }
       },
+      "Page_PluginPackage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "package_id",
+                "version",
+                "contract",
+                "publisher",
+                "digest",
+                "signer",
+                "source",
+                "status",
+                "violations",
+                "apps",
+                "permissions",
+                "host_claims",
+                "widenings",
+                "created_at"
+              ],
+              "properties": {
+                "approved_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "approved_by": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PluginUserRef"
+                    }
+                  ]
+                },
+                "apps": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PluginAppRef"
+                  }
+                },
+                "contract": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "digest": {
+                  "type": "string"
+                },
+                "host_claims": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PluginHostClaim"
+                  }
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "package_id": {
+                  "type": "string"
+                },
+                "permissions": {
+                  "$ref": "#/components/schemas/PluginPermissions"
+                },
+                "publisher": {
+                  "type": "string"
+                },
+                "signer": {
+                  "$ref": "#/components/schemas/PluginSigner"
+                },
+                "source": {
+                  "type": "string",
+                  "description": "`builtin` | `directory` | `upload`."
+                },
+                "status": {
+                  "type": "string",
+                  "description": "`pending_approval` | `active` | `superseded` | `rejected` | `disabled` | `invalid`."
+                },
+                "status_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "version": {
+                  "type": "string"
+                },
+                "violations": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PluginViolation"
+                  }
+                },
+                "widenings": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PluginWidening"
+                  }
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_PolicyGenerationSummary": {
         "type": "object",
         "required": [
@@ -10373,6 +10898,59 @@
           }
         }
       },
+      "Page_TrustedKey": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "publisher",
+                "name",
+                "public_key",
+                "created_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "public_key": {
+                  "type": "string"
+                },
+                "publisher": {
+                  "type": "string"
+                },
+                "revoked_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_Workspace": {
         "type": "object",
         "required": [
@@ -10660,6 +11238,257 @@
           "hour",
           "day"
         ]
+      },
+      "PluginAppRef": {
+        "type": "object",
+        "required": [
+          "app_id",
+          "name"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "PluginHostClaim": {
+        "type": "object",
+        "required": [
+          "claim_key",
+          "host",
+          "app_id"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "claim_key": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "path_prefix": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PluginPackage": {
+        "type": "object",
+        "required": [
+          "id",
+          "package_id",
+          "version",
+          "contract",
+          "publisher",
+          "digest",
+          "signer",
+          "source",
+          "status",
+          "violations",
+          "apps",
+          "permissions",
+          "host_claims",
+          "widenings",
+          "created_at"
+        ],
+        "properties": {
+          "approved_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "approved_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginUserRef"
+              }
+            ]
+          },
+          "apps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginAppRef"
+            }
+          },
+          "contract": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "host_claims": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginHostClaim"
+            }
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "package_id": {
+            "type": "string"
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/PluginPermissions"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "signer": {
+            "$ref": "#/components/schemas/PluginSigner"
+          },
+          "source": {
+            "type": "string",
+            "description": "`builtin` | `directory` | `upload`."
+          },
+          "status": {
+            "type": "string",
+            "description": "`pending_approval` | `active` | `superseded` | `rejected` | `disabled` | `invalid`."
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "string"
+          },
+          "violations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginViolation"
+            }
+          },
+          "widenings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginWidening"
+            }
+          }
+        }
+      },
+      "PluginPermissions": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "egress": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "hooks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "PluginSigner": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "key_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`builtin` | `trusted_key` | `unsigned`."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PluginUserRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "PluginViolation": {
+        "type": "object",
+        "required": [
+          "code",
+          "path",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "PluginWidening": {
+        "type": "object",
+        "required": [
+          "kind",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`hook` | `egress` | `context` | `host_claim` | `zone`."
+          }
+        }
       },
       "PolicyDocument": {
         "type": "object",
@@ -12168,12 +12997,62 @@
           "default"
         ]
       },
+      "TrustedKey": {
+        "type": "object",
+        "required": [
+          "id",
+          "publisher",
+          "name",
+          "public_key",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "public_key": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "UncredentialedDefault": {
         "type": "string",
         "enum": [
           "none",
           "block"
         ]
+      },
+      "UploadPluginRequest": {
+        "type": "object",
+        "description": "`multipart/form-data` body of the upload route.",
+        "required": [
+          "package"
+        ],
+        "properties": {
+          "package": {
+            "type": "string",
+            "format": "binary",
+            "description": "The `.aurora-plugin` archive (tar.gz), at most 20 MiB."
+          }
+        }
       },
       "User": {
         "type": "object",

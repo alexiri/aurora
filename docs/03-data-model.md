@@ -275,6 +275,7 @@ The project's built-in publisher key (`aurora`) is compiled in and never stored.
 | source | text CHECK in (`builtin`,`directory`,`upload`) | |
 | status | text CHECK in (`pending_approval`,`active`,`superseded`,`rejected`,`disabled`,`invalid`) | |
 | status_reason | text null | |
+| violations | jsonb not null default '[]' | validation violations for status invalid; spec fix S-05 |
 | approved_by | uuid null FK→users (set null) | |
 | approved_at | timestamptz null | |
 | unique | (package_id, version, digest) | |

@@ -16,6 +16,7 @@ pub mod identities;
 pub mod invitations;
 pub mod members;
 pub mod orgs;
+pub mod plugins;
 pub mod policy;
 pub mod request_log;
 pub mod secrets;

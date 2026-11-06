@@ -46,6 +46,9 @@ aurora-secrets = { workspace = true }
 aurora-llm = { workspace = true }
 aurora-policy = { workspace = true }
 aurora-crypto = { workspace = true }
+aurora-registry = { workspace = true }
+serde_yaml = { workspace = true }
+sha2 = { workspace = true }
 reqwest = { workspace = true }
 openidconnect = { workspace = true }
 

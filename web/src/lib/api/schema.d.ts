@@ -4,6 +4,76 @@
  */
 
 export interface paths {
+    "/v1/admin/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List plugin packages (instance administrators). */
+        get: operations["adminListPlugins"];
+        put?: never;
+        /** Upload a plugin package (multipart part `package`). */
+        post: operations["adminUploadPlugin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/plugins/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One plugin package. */
+        get: operations["adminGetPlugin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/trusted-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List trusted signing keys, including revoked ones. */
+        get: operations["adminListTrustedKeys"];
+        put?: never;
+        /** Trust a publisher key. */
+        post: operations["adminCreateTrustedKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/trusted-keys/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a trusted key; packages it signed become `disabled`. */
+        delete: operations["adminRevokeTrustedKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/users": {
         parameters: {
             query?: never;
@@ -1683,6 +1753,12 @@ export interface components {
             /** @description Managed value (exactly one of `value` / `reference`). */
             value?: string | null;
         };
+        CreateTrustedKeyRequest: {
+            name: string;
+            /** @description Base64 ed25519 public key. */
+            public_key: string;
+            publisher: string;
+        };
         CreateWorkspaceRequest: {
             memory_language?: string | null;
             name: string;
@@ -2237,6 +2313,35 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_PluginPackage: {
+            items: {
+                /** Format: date-time */
+                approved_at?: string | null;
+                approved_by?: null | components["schemas"]["PluginUserRef"];
+                apps: components["schemas"]["PluginAppRef"][];
+                /** Format: int32 */
+                contract: number;
+                /** Format: date-time */
+                created_at: string;
+                digest: string;
+                host_claims: components["schemas"]["PluginHostClaim"][];
+                /** Format: uuid */
+                id: string;
+                package_id: string;
+                permissions: components["schemas"]["PluginPermissions"];
+                publisher: string;
+                signer: components["schemas"]["PluginSigner"];
+                /** @description `builtin` | `directory` | `upload`. */
+                source: string;
+                /** @description `pending_approval` | `active` | `superseded` | `rejected` | `disabled` | `invalid`. */
+                status: string;
+                status_reason?: string | null;
+                version: string;
+                violations: components["schemas"]["PluginViolation"][];
+                widenings: components["schemas"]["PluginWidening"][];
+            }[];
+            next_cursor?: string | null;
+        };
         Page_PolicyGenerationSummary: {
             items: {
                 /** Format: date-time */
@@ -2341,6 +2446,20 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_TrustedKey: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                /** Format: uuid */
+                id: string;
+                name: string;
+                public_key: string;
+                publisher: string;
+                /** Format: date-time */
+                revoked_at?: string | null;
+            }[];
+            next_cursor?: string | null;
+        };
         Page_Workspace: {
             items: {
                 /** Format: date-time */
@@ -2409,6 +2528,70 @@ export interface components {
         };
         /** @enum {string} */
         Per: "minute" | "hour" | "day";
+        PluginAppRef: {
+            app_id: string;
+            name: string;
+        };
+        PluginHostClaim: {
+            app_id: string;
+            claim_key: string;
+            host: string;
+            path_prefix?: string | null;
+        };
+        PluginPackage: {
+            /** Format: date-time */
+            approved_at?: string | null;
+            approved_by?: null | components["schemas"]["PluginUserRef"];
+            apps: components["schemas"]["PluginAppRef"][];
+            /** Format: int32 */
+            contract: number;
+            /** Format: date-time */
+            created_at: string;
+            digest: string;
+            host_claims: components["schemas"]["PluginHostClaim"][];
+            /** Format: uuid */
+            id: string;
+            package_id: string;
+            permissions: components["schemas"]["PluginPermissions"];
+            publisher: string;
+            signer: components["schemas"]["PluginSigner"];
+            /** @description `builtin` | `directory` | `upload`. */
+            source: string;
+            /** @description `pending_approval` | `active` | `superseded` | `rejected` | `disabled` | `invalid`. */
+            status: string;
+            status_reason?: string | null;
+            version: string;
+            violations: components["schemas"]["PluginViolation"][];
+            widenings: components["schemas"]["PluginWidening"][];
+        };
+        PluginPermissions: {
+            context?: string[];
+            egress?: {
+                [key: string]: string[];
+            };
+            hooks?: string[];
+        };
+        PluginSigner: {
+            key_id?: string | null;
+            /** @description `builtin` | `trusted_key` | `unsigned`. */
+            kind: string;
+            name?: string | null;
+        };
+        PluginUserRef: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+        };
+        PluginViolation: {
+            code: string;
+            message: string;
+            path: string;
+        };
+        PluginWidening: {
+            detail: string;
+            /** @description `hook` | `egress` | `context` | `host_claim` | `zone`. */
+            kind: string;
+        };
         PolicyDocument: {
             draft: components["schemas"]["PolicyGeneration"];
             published: components["schemas"]["PolicyGeneration"];
@@ -2800,8 +2983,27 @@ export interface components {
         };
         /** @enum {string} */
         TraceSource: "hand" | "derived" | "default";
+        TrustedKey: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            public_key: string;
+            publisher: string;
+            /** Format: date-time */
+            revoked_at?: string | null;
+        };
         /** @enum {string} */
         UncredentialedDefault: "none" | "block";
+        /** @description `multipart/form-data` body of the upload route. */
+        UploadPluginRequest: {
+            /**
+             * Format: binary
+             * @description The `.aurora-plugin` archive (tar.gz), at most 20 MiB.
+             */
+            package: string;
+        };
         User: {
             /** Format: date-time */
             created_at: string;
@@ -2857,6 +3059,254 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    adminListPlugins: {
+        parameters: {
+            query?: {
+                /** @description Filter by package status. */
+                status?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_PluginPackage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminUploadPlugin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["UploadPluginRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginPackage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminGetPlugin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Package row id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginPackage"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListTrustedKeys: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_TrustedKey"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminCreateTrustedKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTrustedKeyRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustedKey"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminRevokeTrustedKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Trusted key id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminListUsers: {
         parameters: {
             query?: {
