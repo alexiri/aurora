@@ -332,6 +332,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-e2e-gateway"
+version = "0.1.0"
+
+[[package]]
 name = "aurora-gateway"
 version = "0.1.0"
 dependencies = [

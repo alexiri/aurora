@@ -22,6 +22,7 @@ members = [
   "services/aurora-supervisor",
   "services/aurora-cli",
   "connectors/fake",
+  "tests/e2e-gateway",
 ]
 # aurora-hook-wit and aurora-plugin-sdk (wasm32-wasip2 guest side) join the
 # workspace in M3; see docs/90-decisions.md I-02.
