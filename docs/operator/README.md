@@ -51,37 +51,42 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 ## Known gaps (checked against the code)
 
 These are places where the spec, the chart or a comment says something the code does
-not do. Treat each as **(not yet implemented)** until the code changes.
+not do. Treat each as **(not yet implemented)** until the code changes. Gap numbers are
+stable (other tasks refer to them). Gaps 3, 4, 5, 6, 9, 10 and 13 were fixed or documented in
+OPS-013 and are listed as resolved below.
 
-1. **Connector bootstrap tokens.** `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` is read and
-   validated, but nothing applies it. Compose sets it for the fake connector, which
-   therefore needs manual provisioning. See [plugins-and-connectors.md](plugins-and-connectors.md#connectors).
-2. **Connector manifests and `plugins.allow_unsigned`.** The flag applies to plugin
-   packages only. docs/15 says it also auto-approves connectors; the connector
-   approval code does not read it.
-3. **Gateway database URL.** The Helm values comment mentions
-   `AURORA_GATEWAY_DATABASE_URL`. No code reads it; the gateway uses
-   `AURORA_DATABASE_URL`. A least-privilege gateway role is set with `database.gatewayRole`.
-4. **Sandbox node selector and tolerations.** `runner.k8s.nodeSelector` and
-   `runner.k8s.tolerations` in `values.yaml` are not rendered into `aurora.toml`
-   (confirmed with `helm template`), so sandbox pods do not receive them.
-5. **Plugin packages in Helm.** docs/15 describes plugin packages mounted from a
-   ConfigMap or PVC. The chart has no value or template for this.
-6. **Connector port key.** The `connectors[]` comment in `values.yaml` lists `port`.
-   The template reads `callbackPort` (default 4190) and ignores `port`.
-7. **OpenTelemetry export.** `telemetry.otlp_endpoint` is validated, but no exporter
-   reads it.
-8. **Parsed but unused keys.** `gateway.condition_body_bytes`,
-   `gateway.resolve_cache_ttl_secs` and `runner.held_awake_ceiling` are parsed and
-   validated, but no runtime code reads them.
-9. **`just dev`.** docs/15 describes a `just dev` loop. The `justfile` has `dev-db`,
-   `migrate`, `compose-up` and `compose-down` only.
-10. **Compose gateway CA.** `setup.sh` does not mint the gateway CA (its own TODO(M2)).
-    The gateway fails to start without it. See [install-compose.md](install-compose.md#2-create-the-gateway-ca).
-11. **Compose runner backend.** `deploy/compose/aurora.toml` sets `runner.backend = "fake"`.
-    Hosted agents run as fake sandboxes until the operator switches the backend.
-12. **Sandbox env.** Per `docs/PROGRESS.md` (FUP-M7), the API's `SandboxSpec.env` is
-    empty, so `AURORA_AGENT_HANDLE` and snapshot app env do not reach sandboxes on any
-    backend. See [runners.md](runners.md#known-limitations).
-13. **Helm evaluation Postgres.** Per FUP-M7, its hook resources are not removed on
-    uninstall. Use an external database in production.
+- **1. Connector bootstrap tokens.** `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` is read and
+  validated, but nothing applies it. Compose sets it for the fake connector, which
+  therefore needs manual provisioning. See [plugins-and-connectors.md](plugins-and-connectors.md#connectors).
+- **2. Connector manifests and `plugins.allow_unsigned`.** The flag applies to plugin
+  packages only. docs/15 says it also auto-approves connectors; the connector
+  approval code does not read it.
+- **7. OpenTelemetry export.** `telemetry.otlp_endpoint` is validated, but no exporter
+  reads it.
+- **8. Parsed but unused keys.** `gateway.condition_body_bytes`,
+  `gateway.resolve_cache_ttl_secs` and `runner.held_awake_ceiling` are parsed and
+  validated, but no runtime code reads them.
+- **11. Compose runner backend.** `deploy/compose/aurora.toml` sets `runner.backend = "fake"`.
+  Hosted agents run as fake sandboxes until the operator switches the backend.
+- **12. Sandbox env.** Per `docs/PROGRESS.md` (FUP-M7), the API's `SandboxSpec.env` is
+  empty, so `AURORA_AGENT_HANDLE` and snapshot app env do not reach sandboxes on any
+  backend. See [runners.md](runners.md#known-limitations).
+
+### Resolved in OPS-013
+
+- **3. Gateway database URL.** The Helm values comment no longer mentions
+  `AURORA_GATEWAY_DATABASE_URL`. The gateway uses `AURORA_DATABASE_URL`, and
+  `database.gatewayRole` is the least-privilege switch.
+- **4. Sandbox node selector and tolerations.** `runner.k8s.nodeSelector` and
+  `runner.k8s.tolerations` render into `[runner.k8s] node_selector` and `tolerations`.
+- **5. Plugin packages in Helm.** `plugins.source` mounts packages from a ConfigMap (copied by
+  an init container) or an existing PVC at `plugins.dir`. See [install-helm.md](install-helm.md#plugin-packages).
+- **6. Connector port key.** The chart reads `callbackPort` (default 4190). The values comment
+  and examples use it; `port` is gone.
+- **9. `just dev`.** Postgres in podman, migrate, then the API, gateway, hook host and web
+  app on the host. See [install-compose.md](install-compose.md#developer-loop-without-containers).
+- **10. Compose gateway CA.** `setup.sh` mints the CA into the `aurora-ca` volume when it is
+  absent, and never overwrites it. See [install-compose.md](install-compose.md#2-create-the-gateway-ca).
+- **13. Helm evaluation Postgres.** Its hook resources cannot be removed by a hook delete
+  policy, so the chart documents it instead: `values.yaml` and `NOTES.txt` say it is
+  evaluation-only and leaks on uninstall, with the cleanup commands. See [install-helm.md](install-helm.md#database).

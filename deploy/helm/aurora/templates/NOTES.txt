@@ -1,3 +1,11 @@
 Aurora {{ .Chart.AppVersion }} installed. Public URL: {{ .Values.externalUrl }}
 Upgrade order is enforced by the migrate hook (runs before any new api replica); roll api, hookhost, gateway, runner, web, connectors.
 Secrets: {{ include "aurora.secretName" . }} (generated once, never overwritten). Gateway CA: {{ include "aurora.caSecretName" . }}.
+{{- if .Values.postgres.enabled }}
+
+WARNING: postgres.enabled renders an EVALUATION-ONLY database. Its StatefulSet, Service and PVC are
+pre-install hook resources, so `helm uninstall` leaves them, and the data stays on the PVC. Use an
+external database in production. To remove the evaluation database and its data:
+  kubectl -n {{ .Release.Namespace }} delete statefulset,service {{ include "aurora.fullname" . }}-postgres
+  kubectl -n {{ .Release.Namespace }} delete pvc data-{{ include "aurora.fullname" . }}-postgres-0
+{{- end }}

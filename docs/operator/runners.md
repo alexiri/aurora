@@ -114,8 +114,8 @@ For production (docs/11 §Backend kubernetes). The Helm chart sets `runner.backe
 | `runner.k8s.runner_service` | `aurora-runner` | Service for the runner. Helm renders `<fullname>-runner`. |
 | `runner.k8s.storage_class` | unset | StorageClass of each home PVC (`ReadWriteOnce`). |
 | `runner.k8s.runtime_class` | unset | RuntimeClass of each sandbox Pod. gVisor or Kata recommended. |
-| `runner.k8s.node_selector` | `{}` | Parsed by the runner. **The chart does not render it** (known issue). |
-| `runner.k8s.tolerations` | `[]` | Parsed by the runner. **The chart does not render it** (known issue). |
+| `runner.k8s.node_selector` | `{}` | Labels that sandbox Pods must match. Helm renders `runner.k8s.nodeSelector` here. |
+| `runner.k8s.tolerations` | `[]` | Tolerations of each sandbox Pod, as TOML tables. Helm renders `runner.k8s.tolerations` here. |
 
 Per sandbox the runner creates a PVC `home-<sandbox_id>`, a Pod `sbx-<handle>-<boot>` with
 `restartPolicy: Never`, and a Secret `boot-<boot_id>`, which is deleted when the boot ends.
@@ -156,4 +156,3 @@ From `docs/PROGRESS.md` (FUP-M7, RUN-004). These are open at this commit:
 - Sandboxes cannot use an `imagePullSecrets` setting. The config has no key for it.
 - The per-pod pid limit cannot be enforced on Kubernetes.
 - The `/run/aurora` emptyDir cannot be mounted `noexec`.
-- `runner.k8s.node_selector` and `tolerations` are not rendered by the chart.

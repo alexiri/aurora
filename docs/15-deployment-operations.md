@@ -168,9 +168,10 @@ Files: `compose.yaml`, `Caddyfile`, `aurora.toml`, `.env.example`, `setup.sh`.
 
 `setup.sh` (idempotent): generates `.env` secrets (never overwriting), creates
 the `aurora-sandbox` network (`podman network create --internal --disable-dns
---subnet 10.89.250.0/24 --gateway 10.89.250.1 aurora-sandbox`, see S-03) if missing, mints the gateway CA with
-`podman run --rm -v aurora-ca:/ca aurora-gateway generate-ca --out /ca` if
-absent, and prints the first-admin bootstrap command.
+--subnet 10.89.250.0/24 --gateway 10.89.250.1 aurora-sandbox`, see S-03) if missing, mints the gateway CA into
+the fixed-name `aurora-ca` volume with `aurora-gateway generate-ca --out /ca` if the volume has none (the
+volume root is first chowned to the gateway's nonroot uid, because a new volume is root-owned; an existing
+CA is never overwritten), and prints the first-admin bootstrap command.
 
 Services:
 

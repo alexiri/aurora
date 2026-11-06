@@ -37,8 +37,26 @@ else
   echo "network aurora-sandbox exists"
 fi
 
-echo "TODO(M2): gateway CA generation skipped (aurora-gateway generate-ca not implemented yet):"
-echo "  podman run --rm -v aurora-ca:/ca aurora-gateway generate-ca --out /ca"
+# Gateway CA (docs/15 §Development): minted once into the aurora-ca volume, which the gateway
+# mounts at /var/lib/aurora/ca. generate-ca refuses to overwrite, so an existing CA is never
+# touched: this only mints when the volume holds no CA. A new volume is root-owned and the
+# images run as the distroless nonroot uid, so the volume root is chowned before minting.
+CA_VOLUME=${AURORA_CA_VOLUME:-aurora-ca}   # override only for scratch tests
+GATEWAY_IMAGE=aurora-gateway:${AURORA_VERSION:-dev}
+GATEWAY_UID=65532
+PROBE_IMAGE=docker.io/library/postgres:16  # has sh; the Aurora images are distroless
+
+if podman run --rm -v "$CA_VOLUME:/ca:ro" --entrypoint /bin/sh "$PROBE_IMAGE" \
+  -c 'test -f /ca/ca.pem && test -f /ca/ca.key'; then
+  echo "gateway CA present in volume $CA_VOLUME; not regenerating"
+else
+  podman image exists "$GATEWAY_IMAGE" || podman compose -f compose.yaml build gateway
+  podman run --rm --user 0:0 -v "$CA_VOLUME:/ca" --entrypoint /bin/sh "$PROBE_IMAGE" \
+    -c "mkdir -p /ca && chown ${GATEWAY_UID}:${GATEWAY_UID} /ca"
+  # Fails (set -e) if only one of ca.pem/ca.key exists: generate-ca refuses, and nothing is overwritten.
+  podman run --rm -v "$CA_VOLUME:/ca" "$GATEWAY_IMAGE" generate-ca --out /ca
+  echo "gateway CA written to volume $CA_VOLUME"
+fi
 
 cat <<MSG
 

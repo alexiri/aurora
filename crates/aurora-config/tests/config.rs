@@ -403,17 +403,18 @@ fn helm_rendered_runner_config_loads() {
     assert_helm_toml_loads(HELM_RENDERED_TOML);
 }
 
-/// Renders the real chart when `helm` is installed and loads the ConfigMap TOML.
-#[test]
-fn live_helm_template_config_loads() {
+/// Renders the chart with `helm template t <chart> --set-json <each arg>` and returns the
+/// ConfigMap `aurora.toml`. `None` when `helm` is not installed.
+fn helm_rendered_toml(set_json: &[&str]) -> Option<String> {
     let chart = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/helm/aurora");
-    let Ok(out) = std::process::Command::new("helm")
-        .args(["template", "t"])
-        .arg(&chart)
-        .output()
-    else {
+    let mut cmd = std::process::Command::new("helm");
+    cmd.args(["template", "t"]).arg(&chart);
+    for s in set_json {
+        cmd.args(["--set-json", s]);
+    }
+    let Ok(out) = cmd.output() else {
         eprintln!("helm not installed: skipping live chart render");
-        return;
+        return None;
     };
     assert!(
         out.status.success(),
@@ -438,5 +439,69 @@ fn live_helm_template_config_loads() {
         }
     }
     assert!(toml.contains("[runner.k8s]"), "ConfigMap TOML not found");
+    Some(toml)
+}
+
+/// Renders the real chart when `helm` is installed and loads the ConfigMap TOML.
+#[test]
+fn live_helm_template_config_loads() {
+    let Some(toml) = helm_rendered_toml(&[]) else {
+        return;
+    };
     assert_helm_toml_loads(&toml);
+}
+
+/// OPS-013: `runner.k8s.nodeSelector` / `tolerations` and the plugin directory render into
+/// the ConfigMap TOML and load.
+#[test]
+fn helm_rendered_scheduling_and_plugins_load() {
+    let Some(toml) = helm_rendered_toml(&[
+        r#"runner.k8s.nodeSelector={"kubernetes.io/os":"linux","aurora.example.org/sandbox":"true"}"#,
+        r#"runner.k8s.tolerations=[{"key":"sandbox","operator":"Exists","effect":"NoSchedule"}]"#,
+        r#"plugins.source="pvc""#,
+        r#"plugins.pvcName="plugins-data""#,
+    ]) else {
+        return;
+    };
+    assert_helm_toml_loads(&toml);
+    let raw = load_with(&toml, &[]).unwrap();
+    assert_eq!(raw.plugins.dir, "/var/lib/aurora/plugins");
+    let r = raw.runner_config().unwrap();
+    assert_eq!(
+        r.runner
+            .k8s
+            .node_selector
+            .get("kubernetes.io/os")
+            .map(String::as_str),
+        Some("linux")
+    );
+    assert_eq!(
+        r.runner
+            .k8s
+            .node_selector
+            .get("aurora.example.org/sandbox")
+            .map(String::as_str),
+        Some("true")
+    );
+    assert_eq!(r.runner.k8s.tolerations.len(), 1);
+    assert_eq!(r.runner.k8s.tolerations[0]["key"].as_str(), Some("sandbox"));
+    assert_eq!(
+        r.runner.k8s.tolerations[0]["effect"].as_str(),
+        Some("NoSchedule")
+    );
+}
+
+/// OPS-013: `deploy/dev/aurora.dev.toml` (used by `just dev`) loads for the API, gateway and
+/// hook host run as host processes, with their localhost URLs.
+#[test]
+fn dev_config_loads_for_host_processes() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/dev/aurora.dev.toml");
+    let raw = load(Some(&path), secrets().into_iter()).unwrap();
+    raw.api_config().unwrap();
+    raw.gateway_config().unwrap();
+    raw.hookhost_config().unwrap();
+    assert_eq!(raw.gateway.ca_dir, "deploy/dev/ca");
+    assert_eq!(raw.api.hookhost_url, "http://127.0.0.1:4104");
+    assert_eq!(raw.gateway.hookhost_url, "http://127.0.0.1:4104");
+    assert_eq!(raw.hookhost.api_internal_url, "http://127.0.0.1:4111");
 }

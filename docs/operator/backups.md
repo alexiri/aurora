@@ -15,7 +15,7 @@ volume and secret tooling. Test them on a non-production copy before you rely on
 | Internal secret, runner session key | `.env` | Same Secret | Services that share them stop talking until restored. |
 | **Gateway CA** (`ca.pem`, `ca.key`) | Volume `aurora-ca` | Secret `<fullname>-gateway-ca` (or `gateway.ca.existingSecret`) | A new CA must be minted, and anything that trusted the old CA must trust the new one. |
 | **Per-agent home volumes** | Podman volumes `aurora-home-<sandbox_id>` | PVCs `home-<sandbox_id>` in the sandboxes namespace | Each agent's files and workspace. |
-| **Directory-sourced plugins** | Whatever you mount at `plugins.dir` (default `/var/lib/aurora/plugins`) | Not mounted by the chart (**not yet implemented**) | Packages must be re-supplied. |
+| **Directory-sourced plugins** | Whatever you mount at `plugins.dir` (default `/var/lib/aurora/plugins`) | `plugins.source`: the ConfigMap (`configMap`) or the PVC (`pvc`), see [install-helm.md](install-helm.md#plugin-packages) | Packages must be re-supplied. |
 | Configuration sources | `deploy/compose/aurora.toml`, `.env` | Your `values.yaml` and `config:` overrides | Install cannot be reproduced exactly. |
 
 docs/15 says home volume backups are the operator's job (PVC snapshots or volume backups).

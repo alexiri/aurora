@@ -4,10 +4,16 @@
 {{- $k8s := dict "namespace" .Values.sandboxes.namespace "core_namespace" .Release.Namespace "gateway_service" (printf "%s-gateway-proxy" $full) "runner_service" (printf "%s-runner" $full) -}}
 {{- with .Values.runner.k8s.storageClass }}{{ $_ := set $k8s "storage_class" . }}{{ end -}}
 {{- with .Values.runner.k8s.runtimeClass }}{{ $_ := set $k8s "runtime_class" . }}{{ end -}}
+{{- with .Values.runner.k8s.nodeSelector }}{{ $_ := set $k8s "node_selector" . }}{{ end -}}
+{{- with .Values.runner.k8s.tolerations }}{{ $_ := set $k8s "tolerations" . }}{{ end -}}
 {{- $_ := set $cfg "runner" (merge (dict "backend" "kubernetes" "api_url" (printf "http://%s-api:4101" $full) "k8s" $k8s) (default (dict) $cfg.runner)) -}}
 {{- $_ := set $cfg "database" (merge (dict "max_connections" .Values.database.maxConnections.api) (default (dict) $cfg.database)) -}}
 {{- if .Values.database.gatewayRole }}{{ $_ := set $cfg.database "gateway_role" .Values.database.gatewayRole }}{{ end -}}
 {{- $_ := set $cfg "gateway" (merge (dict "ca_dir" "/var/lib/aurora/ca") (default (dict) $cfg.gateway)) -}}
+{{- if not (has .Values.plugins.source (list "none" "configMap" "pvc")) }}{{ fail "plugins.source must be none, configMap or pvc" }}{{ end -}}
+{{- if and (eq .Values.plugins.source "configMap") (not .Values.plugins.configMapName) }}{{ fail "plugins.configMapName is required when plugins.source is configMap" }}{{ end -}}
+{{- if and (eq .Values.plugins.source "pvc") (not .Values.plugins.pvcName) }}{{ fail "plugins.pvcName is required when plugins.source is pvc" }}{{ end -}}
+{{- $_ := set $cfg "plugins" (merge (dict "dir" .Values.plugins.dir) (default (dict) $cfg.plugins)) -}}
 # Pre-install hook: the migrate job needs the config before regular resources exist.
 apiVersion: v1
 kind: ConfigMap

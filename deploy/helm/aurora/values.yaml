@@ -11,7 +11,8 @@ image:
   pullPolicy: IfNotPresent
   pullSecrets: []         # [{name: regcred}]
 
-# Image used by the secrets and gateway-ca hook jobs: must provide sh, kubectl, openssl, base64.
+# Image used by the secrets and gateway-ca hook jobs (and the plugins seed init container):
+# must provide sh, cp, kubectl, openssl, base64.
 hookImage: docker.io/alpine/k8s:1.31.2
 
 # ---- Secrets ---------------------------------------------------------------
@@ -26,16 +27,19 @@ secrets:
 
 database:
   # External Postgres is expected in production. Supply a Secret with key
-  # AURORA_DATABASE_URL (postgres://user:pass@host:5432/aurora). Optional key
-  # AURORA_GATEWAY_DATABASE_URL for a least-privilege gateway role.
+  # AURORA_DATABASE_URL (postgres://user:pass@host:5432/aurora). Every service, the gateway
+  # included, reads that one key.
   existingSecret: ""     # default name when empty: <release>-aurora-database (you must create it)
   maxConnections: {api: 20, gateway: 10}
+  # Least-privilege role the gateway uses (rendered as database.gateway_role). Optional.
   gatewayRole: ""
   # Egress CIDRs of the external database, used by NetworkPolicies (ignored if postgres.enabled).
   cidrs: []               # e.g. ["10.20.0.0/24"]
   port: 5432
 
 # Evaluation-only single-instance Postgres bundled in this chart. NOT for production.
+# Its StatefulSet, Service and PVC are pre-install hook resources, so `helm uninstall`
+# does NOT remove them (and the PVC is never removed). See NOTES.txt for the cleanup command.
 postgres:
   enabled: false
   image: docker.io/library/postgres:16
@@ -59,7 +63,8 @@ config:
   telemetry:
     log_level: info
   # auth: {signup_mode: invite_only}
-  # oidc / llm endpoints / secret stores / plugins.dir: add sections here (see docs/15 reference).
+  # oidc / llm endpoints / secret stores: add sections here (see docs/15 reference).
+  # plugins.dir is rendered from `plugins.dir` below; do not set it here.
 
 # ---- Workloads -----------------------------------------------------------------
 api:
@@ -111,15 +116,27 @@ runner:
   k8s:                    # rendered into [runner.k8s]
     storageClass: ""
     runtimeClass: ""      # gVisor / Kata recommended
-    nodeSelector: {}
-    tolerations: []
+    nodeSelector: {}      # rendered as [runner.k8s] node_selector: sandbox pods get these labels
+    tolerations: []       # rendered as [[runner.k8s.tolerations]]: sandbox pods get these tolerations
+
+# Plugin packages (`*.aurora-plugin`) for the api pods (docs/15 §Production). The api scans
+# `plugins.dir` at startup and every 60 s. The chart never writes to the packages.
+plugins:
+  dir: /var/lib/aurora/plugins   # rendered into [plugins] dir; the volume is mounted here
+  # none: no package volume. configMap: a ConfigMap whose keys are package files
+  # (binaryData, 1 MiB Kubernetes limit); an init container copies them into an emptyDir.
+  # pvc: an existing PersistentVolumeClaim. Each api replica scans it, so use ReadWriteMany
+  # when api.replicas > 1. Restart the api pods after changing a ConfigMap (no auto-reload).
+  source: none                   # none | configMap | pvc
+  configMapName: ""
+  pvcName: ""
 
 podDisruptionBudget:
   enabled: true
   minAvailable: 1
 
-# Optional connectors: [{id, image, port, callbackPort, tokenSecret: {name, key},
-#   callbackIngress: {enabled, host, path}, replicas, env: []}]
+# Optional connectors: [{id, image, callbackPort (default 4190), tokenSecret: {name, key},
+#   callbackIngress: {enabled, host, path}, replicas, resources, env: []}]
 connectors: []
 
 # ---- Routing -------------------------------------------------------------------
