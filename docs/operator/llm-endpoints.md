@@ -1,0 +1,136 @@
+# LLM endpoints and governance
+
+This page covers `[[llm.endpoints]]`, the instance-level governance ceiling, and key
+origin rules. The design is in [docs/08 §6 and §11](../08-secrets-credentials.md#6-llm-providers),
+and the example in [docs/15 §Governance example](../15-deployment-operations.md#governance-example-corporate-llm-accounts-only-strict-egress).
+
+The API and the gateway both read this configuration. Each endpoint is an instance
+ceiling: organizations and workspaces can narrow it but cannot widen it.
+
+## Providers
+
+Phase 0 has two providers (docs/08 §6):
+
+| Provider | Endpoint | Notes |
+|----------|----------|-------|
+| `litellm` | Declared by you, `provider = "litellm"` and a `base_url` (for example a central LiteLLM proxy). | Auth is a LiteLLM virtual key. Default dialects: `openai_chat`, `openai_responses`, `anthropic_messages`. |
+| `anthropic` | Fixed `https://api.anthropic.com`. | Enabled by default. An implicit endpoint `id = "anthropic"` exists when no `anthropic` endpoint is declared. Declare one only to attach a key-origin rule or an allow-list. |
+
+`llm.enabled_providers` defaults to `["litellm", "anthropic"]`. An endpoint whose
+`provider` is not enabled stops startup with
+`endpoint `<id>`: provider `<name>` is unknown or not enabled` (`crates/aurora-llm/src/registry.rs`).
+An unknown name in `enabled_providers` also stops startup.
+
+`llm.provider_preference` (default `["litellm", "anthropic"]`) sets the auto-selection order
+for hosted agents (`services/aurora-api/src/domains/hosted/model.rs`).
+
+## Endpoint keys
+
+Each entry of `[[llm.endpoints]]` accepts:
+
+| Key | Meaning |
+|-----|---------|
+| `id` | Unique endpoint id. Duplicate ids stop startup. |
+| `provider` | `litellm` or `anthropic` (enabled). |
+| `display_name` | Shown in the dashboard. |
+| `base_url` | Required for `litellm`. Validated as an origin. |
+| `dialects` | Empty means the provider default. Known values: `anthropic_messages`, `openai_chat`, `openai_responses`. |
+| `default_model` | Default for new agents. |
+| `models` | Optional static fallback list when the model list endpoint is not available. |
+| `allowed_models` | Instance-wide model allow-list. Empty means any model. |
+| `key_origin` | Key-origin rule (below). |
+
+Unknown keys are rejected (`deny_unknown_fields`), so a misspelled key stops startup and names the key.
+
+## Key origin
+
+`key_origin` tells Aurora which account a key must belong to before it may carry prompts.
+Its keys are `method`, `allowed_organization_ids`, `allowed_workspace_ids` and `allowed_team_ids`.
+
+| `method` | Meaning | Verified by |
+|----------|---------|-------------|
+| `endpoint` | A key that works on your endpoint is your key. | Validation of the key against the endpoint. |
+| `litellm_team` | LiteLLM's key-info endpoint returns the team and user ids for the key. | The gateway's key-origin check. |
+| `provider_account` | The Anthropic `anthropic-organization-id` and `anthropic-workspace-id` headers name the key's organization and workspace. | The `GET /v1/models?limit=1` call and the response headers. |
+
+Any other `method` value stops startup (`must be endpoint, litellm_team or provider_account`).
+
+A key complies when its stored origin is `verified`, its `value_version` is current, and its
+organization, workspace and team ids satisfy the current rule. A key on an endpoint with no
+`key_origin` rule is treated as compliant. (docs/08 §11.3)
+
+Aurora checks at three points (docs/08 §11.3):
+
+1. **At save.** A non-compliant key is never stored.
+2. **Before first use of a value.** The gateway checks a cached result with a TTL of
+   `governance.llm.origin_recheck_secs` (default 3600). A non-compliant value returns 403
+   `llm_key_wrong_organization`, and an unreachable provider returns 503
+   `llm_origin_check_unavailable`, which fails closed.
+3. **On every response.** A mismatch in the response headers replaces the response with 403.
+   This is a backstop, because the request has already been sent.
+
+## Governance ceiling
+
+These keys live under `[governance.llm]` and `[governance.egress]`:
+
+| Key | Default | Allowed values and meaning |
+|-----|---------|----------------------------|
+| `governance.llm.allowed_key_scopes` | `["organization", "workspace"]` | Scopes at which users and organizations may hold LLM keys. |
+| `governance.llm.minimum_posture` | `open` | `open` or `sanctioned_only`. Floor for every organization. `sanctioned_only` sends prompts only with compliant keys. |
+| `governance.llm.require_key_origin` | `false` | When `true`, every endpoint must declare `key_origin` or startup fails. |
+| `governance.llm.known_llm_hosts` | built-in list | Hosts that count as model APIs even without an endpoint. Replaces the built-in list. |
+| `governance.llm.known_llm_hosts_extra` | `[]` | Appended to the list. Hosts of configured endpoints are removed automatically. |
+| `governance.llm.origin_recheck_secs` | `3600` | TTL of the key-origin cache. |
+| `governance.egress.minimum_posture` | `open` | `open` or `credentialed_only`. Floor for every organization. |
+| `governance.egress.baseline_allowlist` | `[]` | `[{ host, path? }]` merged into every organization's egress allow-list. |
+
+Effective settings are computed, not stored: `instance ∩ organization` for lists, and
+`max(instance minimum, organization)` for postures. A posture below the instance minimum is never used.
+
+Organization owners and admins set their own posture and lists with
+`GET` and `PUT /v1/orgs/{org}/governance` and read the result with
+`GET /v1/orgs/{org}/governance/effective`. Any signed-in user can read
+`GET /v1/governance/instance`, which shows the instance ceiling without secrets
+(`services/aurora-api/src/domains/governance/routes.rs`).
+
+## Example: corporate accounts only, strict egress
+
+This matches [docs/15](../15-deployment-operations.md#governance-example-corporate-llm-accounts-only-strict-egress).
+Replace the ids and hosts with your own.
+
+```toml
+[[llm.endpoints]]
+id = "central"
+provider = "litellm"
+base_url = "https://llm.example.org"
+key_origin = { method = "endpoint" }
+
+[[llm.endpoints]]
+id = "anthropic"
+provider = "anthropic"
+key_origin = { method = "provider_account", allowed_organization_ids = ["<corporate org uuid>"] }
+
+[governance.llm]
+allowed_key_scopes = ["organization", "workspace"]   # users may hold their own keys…
+minimum_posture = "sanctioned_only"                  # …but only verified corporate ones carry prompts
+require_key_origin = true
+
+[governance.egress]
+minimum_posture = "credentialed_only"
+baseline_allowlist = [ { host = "pypi.org" }, { host = "files.pythonhosted.org" },
+                       { host = "registry.npmjs.org" }, { host = "github.com" },
+                       { host = "codeload.github.com" }, { host = "*.githubusercontent.com" } ]
+```
+
+In Helm, put the same TOML structure under `config:` in `values.yaml`
+(see [install-helm.md](install-helm.md#configuration)). In compose, add it to
+`deploy/compose/aurora.toml`. Restart the API and gateway afterwards, because both read
+the configuration at startup.
+
+## Checks before going live
+
+- Start the service. A rejected endpoint, key-origin method or posture stops startup and names the key.
+- Confirm `GET /v1/governance/instance` shows your ceiling.
+- Try saving a key from an account outside `allowed_organization_ids`. It should be refused at save (docs/08 §11.3).
+- `allowed_models` and `known_llm_hosts` are described in docs/08 §11.5 and §11.7. This page does not
+  show a test for them; write one against your own agent before you rely on them.
