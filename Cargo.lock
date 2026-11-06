@@ -364,6 +364,10 @@ name = "aurora-e2e-gateway"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aurora-config",
+ "aurora-core",
+ "aurora-crypto",
+ "aurora-secrets",
  "aurora-testkit",
  "base64 0.22.1",
  "rcgen",

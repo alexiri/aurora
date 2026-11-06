@@ -24,6 +24,7 @@ pub mod reqlog;
 pub mod resolve;
 pub mod resolver;
 pub mod snapshot;
+pub mod summarize_client;
 pub mod upstream;
 
 use bytes::Bytes;

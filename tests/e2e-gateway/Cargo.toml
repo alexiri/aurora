@@ -12,6 +12,10 @@ workspace = true
 [dependencies]
 
 [dev-dependencies]
+aurora-core = { workspace = true }
+aurora-config = { workspace = true }
+aurora-crypto = { workspace = true }
+aurora-secrets = { workspace = true }
 aurora-testkit = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }

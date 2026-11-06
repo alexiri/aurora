@@ -50,6 +50,7 @@ pub struct PolicyHandler {
     touched: Mutex<HashMap<Uuid, Instant>>,
     governance: Option<Arc<Governance>>,
     tokens: Option<Arc<TokenManager>>,
+    summarizer: Option<Arc<dyn crate::summarize_client::Summarizer>>,
 }
 
 pub struct PolicyHandlerParts {
@@ -304,7 +305,14 @@ impl PolicyHandler {
             touched: Mutex::new(HashMap::new()),
             governance: None,
             tokens: None,
+            summarizer: None,
         }
+    }
+
+    /// Enable the `approval.summarize` hook for held requests.
+    pub fn with_summarizer(mut self, s: Arc<dyn crate::summarize_client::Summarizer>) -> Self {
+        self.summarizer = Some(s);
+        self
     }
 
     /// Enable token refresh / mint and stale-token retry for app connections.
@@ -654,7 +662,12 @@ impl RequestHandler for PolicyHandler {
                     .and_then(|v| v.to_str().ok())
                     .map(str::to_owned)
             };
-            let summary = crate::hold::build_summary(
+            let all_headers: Vec<(String, String)> = headers
+                .iter()
+                .filter_map(|(k, v)| Some((k.as_str().to_owned(), v.to_str().ok()?.to_owned())))
+                .collect();
+            let summary = crate::hold::build_summary_hooked(
+                self.summarizer.as_deref(),
                 registry.as_deref(),
                 app_match.as_ref(),
                 ctx.tool_id.as_deref(),
@@ -667,8 +680,10 @@ impl RequestHandler for PolicyHandler {
                     header: &hdr,
                     body_prefix: &peek,
                     truncated: peek_truncated,
+                    headers: &all_headers,
                 },
-            );
+            )
+            .await;
             let outcome = holds
                 .hold(HoldRequest {
                     identity: &identity,

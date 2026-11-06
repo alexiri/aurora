@@ -141,7 +141,18 @@ impl Catalog {
     }
 
     /// Compiled module for a `hooks_digest`, pulling and verifying the blob on miss.
+    ///
+    /// Pull + compile run in a detached task: a caller that gives up (the gateway's 1 s
+    /// summarize budget) must not cancel a cold compile, or the cache would never warm.
     pub async fn module(self: &Arc<Self>, digest: &str) -> Result<Module, CallError> {
+        let this = self.clone();
+        let digest = digest.to_owned();
+        tokio::spawn(async move { this.module_inner(&digest).await })
+            .await
+            .map_err(|_| CallError::new("internal", "hook module load failed"))?
+    }
+
+    async fn module_inner(self: &Arc<Self>, digest: &str) -> Result<Module, CallError> {
         let key = strip(digest).to_ascii_lowercase();
         let mut cache = self.modules.lock().await;
         if let Some(m) = cache.get(&key) {

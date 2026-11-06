@@ -260,7 +260,7 @@ async fn happy_path_each_hook() {
     assert_eq!(v["ok"]["credentials"][0]["value"], "minted", "{v}");
     let (_, v) = call(&env, "approval.summarize", summarize("ok", ""), ok_auth()).await;
     assert_eq!(v["ok"]["title"], "POST /v1/x", "{v}");
-    assert_eq!(v["ok"]["fields"][0]["label"], "host");
+    assert_eq!(v["ok"]["fields"][0]["key"], "host");
     // stdout is captured, not an error.
     let (st, _) = call(&env, "connect.authorize", authorize("stdout"), ok_auth()).await;
     assert_eq!(st, StatusCode::OK);

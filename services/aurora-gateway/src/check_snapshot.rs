@@ -311,6 +311,7 @@ fn execute(l: &Loaded, c: &Case, failures: &mut Vec<String>) -> Result<Value, St
             header: &hdr,
             body_prefix: body,
             truncated: false,
+            headers: &[],
         },
     );
     if let Some(o) = obs.as_object_mut() {

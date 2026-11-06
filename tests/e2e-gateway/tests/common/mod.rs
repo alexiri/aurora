@@ -16,6 +16,7 @@ use tokio::process::{Child, Command};
 pub const API_IP: &str = "127.0.0.31";
 pub const GW_A_IP: &str = "127.0.0.32";
 pub const GW_B_IP: &str = "127.0.0.33";
+pub const HH_IP: &str = "127.0.0.34";
 const ORIGIN: &str = "http://localhost:4100";
 
 #[derive(Default, Clone)]
@@ -25,6 +26,10 @@ pub struct Opts {
     pub litellm_base: Option<String>,
     /// PEM bundle of extra upstream CAs (HTTPS mocks).
     pub extra_ca_bundle: Option<String>,
+    /// Start `aurora-hookhost` (HOOK-004) on `HH_IP:4104`.
+    pub hookhost: bool,
+    /// Overrides `gateway.hookhost_url` (default: the started hook host).
+    pub hookhost_url: Option<String>,
 }
 
 pub struct Stack {
@@ -49,7 +54,7 @@ fn bin(name: &str) -> PathBuf {
     let p = target_dir().join(name);
     assert!(
         p.exists(),
-        "{} missing: run `cargo build -p aurora-api -p aurora-gateway` first",
+        "{} missing: run `cargo build -p aurora-api -p aurora-gateway -p aurora-hookhost` first",
         p.display()
     );
     p
@@ -88,6 +93,7 @@ log_level = "info"
 allowed_private = ["127.0.0.1/32"]
 ca_dir = "{ca}"
 advertised_proxy_url = "http://{GW_A_IP}:4102"
+hookhost_url = "{hh_url}"
 
 [api]
 hookhost_url = "http://127.0.0.1:9"
@@ -95,7 +101,11 @@ hookhost_url = "http://127.0.0.1:9"
 [hookhost]
 api_internal_url = "http://{API_IP}:4111"
 "#,
-            ca = dir.join("ca").display()
+            ca = dir.join("ca").display(),
+            hh_url = o
+                .hookhost_url
+                .clone()
+                .unwrap_or_else(|| format!("http://{HH_IP}:4104"))
         );
         if let Some(t) = o.approvals_timeout_secs {
             toml.push_str(&format!("\n[approvals]\ntimeout_secs = {t}\n"));
@@ -133,11 +143,15 @@ api_internal_url = "http://{API_IP}:4111"
         .execute(stack.pool())
         .await
         .unwrap();
-        for (name, ip, exe, args) in [
+        let mut procs = vec![
             ("api", API_IP, "aurora-api", vec!["serve"]),
             ("gw-a", GW_A_IP, "aurora-gateway", vec!["serve"]),
             ("gw-b", GW_B_IP, "aurora-gateway", vec!["serve"]),
-        ] {
+        ];
+        if o.hookhost {
+            procs.push(("hookhost", HH_IP, "aurora-hookhost", vec!["serve"]));
+        }
+        for (name, ip, exe, args) in procs {
             let cfg = stack.dir.join(format!("{name}.toml"));
             std::fs::write(&cfg, toml.replace("BIND", ip)).unwrap();
             let log = stack.dir.join(format!("{name}.log"));
@@ -158,6 +172,26 @@ api_internal_url = "http://{API_IP}:4111"
         stack.wait_ready().await;
         eprintln!("[e2e] ready after {:?}", t0.elapsed());
         stack
+    }
+
+    /// Wait until the hook host has loaded a registry snapshot.
+    pub async fn wait_hookhost_ready(&self) {
+        let c = reqwest::Client::new();
+        let u = format!("http://{HH_IP}:4104/readyz");
+        let deadline = Instant::now() + Duration::from_secs(40);
+        loop {
+            if let Ok(r) = c.get(&u).send().await
+                && r.status().is_success()
+            {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "hookhost not ready\n{}",
+                self.log_tails()
+            );
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
     }
 
     async fn wait_ready(&mut self) {
@@ -298,6 +332,55 @@ impl Api {
     }
     pub async fn put(&self, p: &str, b: Value) -> (u16, Value) {
         self.call(Method::PUT, p, Some(b)).await
+    }
+
+    /// Fresh login (new session, so a changed `users` row is not served from the auth cache).
+    pub async fn relogin(&mut self, email: &str) {
+        let r = self
+            .http
+            .post(format!("{}/v1/auth/login", self.base))
+            .header("origin", ORIGIN)
+            .json(&json!({"email": email, "password": "correct horse battery staple 42"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200);
+        self.cookie = r
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .map(|s| s.split(';').next().unwrap().to_owned())
+            .collect::<Vec<_>>()
+            .join("; ");
+    }
+
+    /// `POST /v1/admin/plugins` (multipart `package`).
+    pub async fn upload_plugin(&self, bytes: &[u8]) -> (u16, Value) {
+        let boundary = "XAURORAE2EX";
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"p.aurora-plugin\"\r\nContent-Type: application/gzip\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let resp = self
+            .http
+            .post(format!("{}/v1/admin/plugins", self.base))
+            .header("cookie", &self.cookie)
+            .header("origin", ORIGIN)
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(body)
+            .timeout(Duration::from_secs(40))
+            .send()
+            .await
+            .unwrap();
+        let s = resp.status().as_u16();
+        let t = resp.text().await.unwrap();
+        (s, serde_json::from_str(&t).unwrap_or(Value::String(t)))
     }
 
     /// Create a BYO agent; returns (agent_id, token).

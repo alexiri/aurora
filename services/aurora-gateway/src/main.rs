@@ -162,11 +162,14 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     hub.register(policy_resolver.cache());
     // `gateway.hookhost_url` (docs/15); bearer = the configured internal secret (W9).
     let hookhost_url = cfg.gateway.hookhost_url.clone();
-    let minter: Arc<dyn aurora_gateway::mint::Minter> =
-        Arc::new(aurora_gateway::mint::HttpMinter::new(
-            &hookhost_url,
-            &base64::engine::general_purpose::STANDARD.encode(cfg.internal_secret.expose()),
-        ));
+    let hook_bearer =
+        base64::engine::general_purpose::STANDARD.encode(cfg.internal_secret.expose());
+    let minter: Arc<dyn aurora_gateway::mint::Minter> = Arc::new(
+        aurora_gateway::mint::HttpMinter::new(&hookhost_url, &hook_bearer),
+    );
+    let summarizer: Arc<dyn aurora_gateway::summarize_client::Summarizer> = Arc::new(
+        aurora_gateway::summarize_client::HttpSummarizer::new(&hookhost_url, &hook_bearer),
+    );
     let tokens = Arc::new(aurora_gateway::refresh::TokenManager::new(
         pool.clone(),
         vault.clone(),
@@ -194,7 +197,8 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             touch_pool: Some(pool.clone()),
         })
         .with_governance(governance)
-        .with_tokens(tokens),
+        .with_tokens(tokens)
+        .with_summarizer(summarizer),
     );
     let reqlog_task = tokio::spawn(reqlog.run(FLUSH_INTERVAL, rx.clone()));
     let snapshot_task = tokio::spawn(snapshots.clone().run(pool.clone(), rx.clone()));

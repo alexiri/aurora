@@ -30,9 +30,56 @@ pub struct SummaryRequest<'a> {
     pub query: Option<&'a str>,
     pub content_type: Option<&'a str>,
     /// Case-insensitive request header lookup.
-    pub header: &'a dyn Fn(&str) -> Option<String>,
+    pub header: &'a (dyn Fn(&str) -> Option<String> + Sync),
     pub body_prefix: &'a [u8],
     pub truncated: bool,
+    /// All request headers (the hook client filters sensitive ones). Empty skips none.
+    pub headers: &'a [(String, String)],
+}
+
+/// Hook-first variant of [`build_summary`] (live holds): when the tool's approval says
+/// `summarize: hook` and a summarizer is configured, ask the hook host (1 s budget, no
+/// egress); any failure falls through to the template, then the generic summary.
+pub async fn build_summary_hooked(
+    summarizer: Option<&dyn crate::summarize_client::Summarizer>,
+    l: Option<&Loaded>,
+    app: Option<&AppMatch<'_>>,
+    tool_id: Option<&str>,
+    r: &SummaryRequest<'_>,
+) -> ApprovalSummary {
+    if let (Some(sz), Some(l), Some(m)) = (summarizer, l, app)
+        && let Some(a) = tool_id.and_then(|t| m.app.approvals.get(t))
+        && template::wants_hook(a)
+    {
+        let digest = l
+            .snapshot
+            .packages
+            .iter()
+            .find(|p| p.package_id == m.app.package_id)
+            .map(|p| p.digest.as_str());
+        if let Some(digest) = digest {
+            let injected = template::injected_header_names(&m.entry.inject);
+            let call = crate::summarize_client::SummarizeCall {
+                package_id: &m.app.package_id,
+                package_digest: digest,
+                app_id: &m.app.app_id,
+                tool_id,
+                method: r.method,
+                host: r.host,
+                path: r.path,
+                query: r.query,
+                headers: r.headers,
+                injected_headers: &injected,
+                body_prefix: r.body_prefix,
+                truncated: r.truncated,
+            };
+            if let Some(s) = sz.summarize(call).await {
+                return s;
+            }
+            tracing::warn!(app_id = %m.app.app_id, "approval.summarize unavailable; using template");
+        }
+    }
+    build_summary(l, app, tool_id, r)
 }
 
 /// The one approval-summary entry point (live holds and `check-snapshot`): the tool's

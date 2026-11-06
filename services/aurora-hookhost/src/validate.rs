@@ -168,7 +168,7 @@ pub fn to_json(o: &Outcome) -> Value {
     match o {
         Outcome::Summarize(s) => serde_json::json!({
             "title": s.title,
-            "fields": s.fields.iter().map(|f| serde_json::json!({"label": f.key, "value": f.value})).collect::<Vec<_>>(),
+            "fields": s.fields.iter().map(|f| serde_json::json!({"key": f.key, "value": f.value})).collect::<Vec<_>>(),
             "text": s.text,
             "link": s.link,
             "group": s.group,
