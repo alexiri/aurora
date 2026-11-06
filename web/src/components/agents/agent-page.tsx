@@ -14,6 +14,9 @@ import { ConnectTab } from "./connect-tab";
 import { DeleteZone } from "./delete-zone";
 import { MemoryTab } from "@/components/memory/memory-tab";
 import { SkillsTab } from "@/components/skills/skills-tab";
+import { PeersTab } from "@/components/peers/peers-tab";
+import { SchedulesTab } from "@/components/schedules/schedules-tab";
+import { WebhooksTab } from "@/components/webhooks/webhooks-tab";
 
 import { InstructionsTab } from "./instructions-tab";
 
@@ -24,7 +27,7 @@ export function AgentPage() {
   const wsId = resolved.data?.workspace?.id;
   const agents = useAgents(wsId);
   const workspace = useWorkspace(wsId);
-  const [tab, setTab] = useState<"chat" | "instructions" | "access" | "connect" | "computer" | "memory" | "skills">("instructions");
+  const [tab, setTab] = useState<"chat" | "instructions" | "access" | "connect" | "computer" | "memory" | "skills" | "schedules" | "webhooks" | "peers">("instructions");
 
   if (resolved.isPending || (wsId && agents.isPending)) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
@@ -41,6 +44,9 @@ export function AgentPage() {
       : [
           { id: "memory" as const, label: "Memory" },
           { id: "skills" as const, label: "Skills" },
+          { id: "schedules" as const, label: "Schedules" },
+          { id: "webhooks" as const, label: "Webhooks" },
+          { id: "peers" as const, label: "Peers" },
         ]),
     { id: "access" as const, label: "Access" },
     ...(byo
@@ -76,6 +82,9 @@ export function AgentPage() {
         {tab === "chat" && !byo ? <ChatTab agentId={agent.id} wsId={wsId!} base={`/o/${org}/w/${ws}`} /> : null}
         {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} memoryLanguage={workspace.data?.memory_language} /> : null}
         {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} /> : null}
+        {tab === "schedules" && !byo ? <SchedulesTab agentId={agent.id} defaultTimezone={workspace.data?.timezone} /> : null}
+        {tab === "webhooks" && !byo ? <WebhooksTab agentId={agent.id} /> : null}
+        {tab === "peers" && !byo ? <PeersTab agentId={agent.id} /> : null}
         {tab === "computer" && !byo ? <ComputerTab agentId={agent.id} /> : null}
         {tab === "instructions" ? (
           <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} />

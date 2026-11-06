@@ -55,6 +55,10 @@ export const ERROR_MESSAGES: Record<string, string> = {
   policy_invalid: "The policy has errors. Fix the highlighted rules and try again.",
   governance_invalid: "The governance settings have errors. Fix the highlighted fields and try again.",
   governance_below_instance_minimum: "These settings are below the minimum required by the instance.",
+  schedule_busy: "This schedule already has a run in progress. Try again in a moment.",
+  already_decided: "Someone else already decided this.",
+  too_many_attachments: "Too many attachments on one message. Remove some and try again.",
+  payload_too_large: "That file is too large.",
   instance_admin_required: "This requires an instance administrator.",
 };
 
