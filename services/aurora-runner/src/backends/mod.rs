@@ -7,6 +7,7 @@ use aurora_config::{RunnerBackend, RunnerConfig};
 use crate::backend::Backend;
 
 pub mod fake;
+pub mod kubernetes;
 pub mod podman;
 
 pub async fn build(cfg: &RunnerConfig) -> Result<Arc<dyn Backend>, String> {
@@ -17,6 +18,10 @@ pub async fn build(cfg: &RunnerConfig) -> Result<Arc<dyn Backend>, String> {
             let backend = podman::PodmanBackend::connect(settings).await?;
             Ok(Arc::new(backend))
         }
-        RunnerBackend::Kubernetes => Err("backend `kubernetes` is not implemented yet (M7)".into()),
+        RunnerBackend::Kubernetes => {
+            let settings = kubernetes::KubernetesSettings::from_config(cfg)?;
+            let backend = kubernetes::KubernetesBackend::connect(settings).await?;
+            Ok(Arc::new(backend))
+        }
     }
 }

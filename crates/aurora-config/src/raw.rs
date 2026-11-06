@@ -470,7 +470,11 @@ impl Default for RunnerSection {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct K8sSection {
+    /// Sandbox namespace (default `aurora-sandboxes`).
     pub namespace: Option<String>,
+    /// Namespace of the core services (gateway/runner Services are looked up here).
+    /// Default: the runner pod's own namespace (service-account namespace file), else `default`.
+    pub core_namespace: Option<String>,
     pub storage_class: Option<String>,
     pub runtime_class: Option<String>,
     pub node_selector: BTreeMap<String, String>,
