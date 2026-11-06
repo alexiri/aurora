@@ -3,12 +3,16 @@
 //! docs/03-data-model.md (owning document for every table).
 #![forbid(unsafe_code)]
 
+mod api_error;
+pub mod authz;
 pub mod bus;
 pub mod claim;
 mod error;
 pub mod grants;
 pub mod jobs;
+pub mod repo;
 
+pub use api_error::conflict_code;
 pub use error::DbError;
 pub use sqlx::PgPool;
 

@@ -1,9 +1,21 @@
 {
   "openapi": "3.1.0",
-  "info": { "title": "Aurora API (placeholder)", "version": "0.0.0" },
+  "info": {
+    "title": "Aurora API",
+    "description": "",
+    "license": {
+      "name": "GPL-3.0-or-later",
+      "identifier": "GPL-3.0-or-later"
+    },
+    "version": "0.1.0"
+  },
   "paths": {
     "/v1/instance": {
       "get": {
+        "tags": [
+          "instance"
+        ],
+        "summary": "Public instance information (no authentication).",
         "operationId": "getInstance",
         "responses": {
           "200": {
@@ -11,14 +23,154 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "required": ["version"],
-                  "properties": { "version": { "type": "string" } }
+                  "$ref": "#/components/schemas/InstanceInfo"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
           }
         }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ErrorBody": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "snake_case machine code."
+          },
+          "details": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Optional; validation errors carry `{\"fields\":[{\"path\",\"message\"}]}`."
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "description": "OpenAPI description of the error envelope (`02 §Error envelope`).",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        }
+      },
+      "Features": {
+        "type": "object",
+        "required": [
+          "hosted",
+          "channels"
+        ],
+        "properties": {
+          "channels": {
+            "type": "boolean"
+          },
+          "hosted": {
+            "type": "boolean"
+          }
+        }
+      },
+      "InstanceInfo": {
+        "type": "object",
+        "required": [
+          "version",
+          "signup_mode",
+          "org_creation",
+          "oidc_providers",
+          "features",
+          "default_agent_name",
+          "external_url",
+          "email_delivery",
+          "setup_errors"
+        ],
+        "properties": {
+          "default_agent_name": {
+            "type": "string"
+          },
+          "email_delivery": {
+            "type": "string",
+            "description": "`smtp` | `log`."
+          },
+          "external_url": {
+            "type": "string"
+          },
+          "features": {
+            "$ref": "#/components/schemas/Features"
+          },
+          "oidc_providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OidcProviderInfo"
+            }
+          },
+          "org_creation": {
+            "type": "string",
+            "description": "`instance_admins` | `anyone`."
+          },
+          "setup_errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "signup_mode": {
+            "type": "string",
+            "description": "`open` | `invite_only` | `sso_jit`."
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "OidcProviderInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "api_key": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "session": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "aurora_session"
       }
     }
   }

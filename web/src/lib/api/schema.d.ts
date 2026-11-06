@@ -11,6 +11,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** Public instance information (no authentication). */
         get: operations["getInstance"];
         put?: never;
         post?: never;
@@ -23,7 +24,41 @@ export interface paths {
 }
 export type webhooks = Record<string, never>;
 export interface components {
-    schemas: never;
+    schemas: {
+        ErrorBody: {
+            /** @description snake_case machine code. */
+            code: string;
+            /** @description Optional; validation errors carry `{"fields":[{"path","message"}]}`. */
+            details?: Record<string, never> | null;
+            message: string;
+        };
+        /** @description OpenAPI description of the error envelope (`02 §Error envelope`). */
+        ErrorEnvelope: {
+            error: components["schemas"]["ErrorBody"];
+        };
+        Features: {
+            channels: boolean;
+            hosted: boolean;
+        };
+        InstanceInfo: {
+            default_agent_name: string;
+            /** @description `smtp` | `log`. */
+            email_delivery: string;
+            external_url: string;
+            features: components["schemas"]["Features"];
+            oidc_providers: components["schemas"]["OidcProviderInfo"][];
+            /** @description `instance_admins` | `anyone`. */
+            org_creation: string;
+            setup_errors: string[];
+            /** @description `open` | `invite_only` | `sso_jit`. */
+            signup_mode: string;
+            version: string;
+        };
+        OidcProviderInfo: {
+            display_name: string;
+            id: string;
+        };
+    };
     responses: never;
     parameters: never;
     requestBodies: never;
@@ -47,9 +82,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        version: string;
-                    };
+                    "application/json": components["schemas"]["InstanceInfo"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

@@ -28,6 +28,11 @@ struct Cli {
 enum Command {
     /// Run the API server.
     Serve,
+    /// Print the OpenAPI document (or write it to `--out`).
+    Openapi {
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Apply database migrations (and gateway-role grants if configured).
     Migrate,
 }
@@ -35,6 +40,22 @@ enum Command {
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
+    if let Command::Openapi { out } = &cli.command {
+        let json = aurora_api::openapi::document_json();
+        return match out {
+            Some(path) => match std::fs::write(path, json) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::FAILURE
+                }
+            },
+            None => {
+                print!("{json}");
+                ExitCode::SUCCESS
+            }
+        };
+    }
     let cfg: ApiConfig = aurora_config::load(cli.config.as_deref(), std::env::vars())
         .and_then(|raw| raw.api_config())
         .unwrap_or_else(|e| exit_config(e));
@@ -43,6 +64,7 @@ async fn main() -> ExitCode {
     let result = match cli.command {
         Command::Serve => serve(cfg).await,
         Command::Migrate => migrate(cfg).await,
+        Command::Openapi { .. } => Ok(()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -72,8 +94,9 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
         .acquire_timeout(Duration::from_secs(3))
         .connect_lazy(cfg.database_url.expose())?;
     let metrics = service::install_metrics(SERVICE);
+    let check_pool = pool.clone();
     let db_check = ready_check(move || {
-        let pool = pool.clone();
+        let pool = check_pool.clone();
         async move {
             sqlx::query("SELECT 1")
                 .execute(&pool)
@@ -82,13 +105,51 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
                 .map_err(|e| e.to_string())
         }
     });
-    let public = service::ops_router(metrics, vec![("database", db_check)]);
+    let ops = service::ops_router(metrics, vec![("database", db_check)]);
+    let state = aurora_api::app::AppState::new(pool.clone(), cfg.clone());
+    aurora_api::http::auth::spawn_revocation_listener(pool, state.session_cache.clone());
+    let public = aurora_api::app::router(state, ops);
     let internal = Router::new().fallback(service::not_found);
     let bind = cfg.server.bind.as_str();
     let servers = vec![
         (service::bind(bind, PUBLIC_PORT).await?, public),
         (service::bind(bind, INTERNAL_PORT).await?, internal),
     ];
-    service::serve_all(servers).await?;
+    serve_all(servers).await?;
     Ok(())
+}
+
+/// Like `service::serve_all`, but exposes the peer address (`ConnectInfo`) so the
+/// client-IP middleware can resolve it.
+async fn serve_all(servers: Vec<(tokio::net::TcpListener, Router)>) -> std::io::Result<()> {
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        service::shutdown_signal().await;
+        let _ = tx.send(true);
+    });
+    let mut set = tokio::task::JoinSet::new();
+    for (listener, app) in servers {
+        if let Ok(addr) = listener.local_addr() {
+            tracing::info!(%addr, "listening");
+        }
+        let mut rx = rx.clone();
+        set.spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = rx.wait_for(|stop| *stop).await;
+            })
+            .await
+        });
+    }
+    let mut result = Ok(());
+    while let Some(joined) = set.join_next().await {
+        let r = joined.unwrap_or_else(|e| Err(std::io::Error::other(e)));
+        if r.is_err() && result.is_ok() {
+            result = r;
+        }
+    }
+    result
 }
