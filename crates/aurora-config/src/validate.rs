@@ -867,6 +867,15 @@ fn check_auth(
                 ),
             );
         }
+        if p.allowed_email_domains
+            .iter()
+            .any(|d| d.trim().trim_start_matches('@').is_empty() || d.contains(char::is_whitespace))
+        {
+            c.err(
+                k("allowed_email_domains"),
+                "entries must be non-empty domains such as `example.com`",
+            );
+        }
         if let Some(j) = &p.jit {
             if j.org_slug.is_empty() {
                 c.err(k("jit.org_slug"), "required");

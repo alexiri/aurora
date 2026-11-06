@@ -5,6 +5,15 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+  # rsa (via openidconnect): Marvin timing attack affects private-key decryption/signing;
+  # Aurora only verifies ID-token signatures with provider public keys.
+  { id = "RUSTSEC-2023-0071", reason = "public-key verification only (OIDC); no private RSA operations" },
+  # paste (via utoipa-axum) is unmaintained; compile-time macro only, no safe upgrade yet.
+  { id = "RUSTSEC-2024-0436", reason = "build-time macro via utoipa-axum; revisit on utoipa upgrade (I-04)" },
+  # unsafe-libyaml (via serde_yaml, pinned by docs/02 for manifests) is unmaintained.
+  { id = "RUSTSEC-2024-0449", reason = "serde_yaml pinned by spec 02; parses size-limited signed manifests; track migration" },
+]
 
 [licenses]
 version = 2

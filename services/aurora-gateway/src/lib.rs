@@ -4,6 +4,7 @@
 pub mod apps;
 pub mod auth;
 pub mod ca;
+pub mod check_snapshot;
 pub mod decide;
 pub mod governance;
 pub mod guard;

@@ -84,7 +84,7 @@ fn validate_email(email: &str) -> Result<(), ApiError> {
     }
 }
 
-fn is_listed_admin(state: &AppState, email: &str) -> bool {
+pub(crate) fn is_listed_admin(state: &AppState, email: &str) -> bool {
     state
         .config
         .auth
@@ -100,7 +100,7 @@ fn links(state: &AppState, path: &str, tok: &str) -> String {
     )
 }
 
-async fn issue_session(
+pub(crate) async fn issue_session(
     conn: &mut PgConnection,
     state: &AppState,
     user_id: Uuid,
@@ -156,7 +156,7 @@ fn send_verification(state: &AppState, email: &str, tok: &str) {
     );
 }
 
-fn actor(user: &UserRow, client: &Client) -> AuditActor {
+pub(crate) fn actor(user: &UserRow, client: &Client) -> AuditActor {
     AuditActor {
         kind: "user",
         id: Some(user.id),

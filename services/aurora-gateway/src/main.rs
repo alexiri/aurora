@@ -48,6 +48,14 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Offline fixture run against a compiled snapshot; prints JSON results.
+    CheckSnapshot {
+        #[arg(long)]
+        snapshot: PathBuf,
+        /// Directory of `*.yaml` fixture files.
+        #[arg(long)]
+        fixtures: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -68,6 +76,25 @@ async fn main() -> ExitCode {
             Err(e) => {
                 eprintln!("error: {e}");
                 ExitCode::FAILURE
+            }
+        };
+    }
+    if let Command::CheckSnapshot { snapshot, fixtures } = &cli.command {
+        return match aurora_gateway::check_snapshot::run_paths(snapshot, fixtures) {
+            Ok(r) => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&r.json).unwrap_or_default()
+                );
+                if r.ok {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                }
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::from(2)
             }
         };
     }

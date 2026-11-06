@@ -47,11 +47,13 @@ aurora-llm = { workspace = true }
 aurora-policy = { workspace = true }
 aurora-crypto = { workspace = true }
 reqwest = { workspace = true }
+openidconnect = { workspace = true }
 
 [dev-dependencies]
 aurora-secrets = { workspace = true, features = ["memory-store"] }
 wiremock = { workspace = true }
 aurora-testkit = { workspace = true }
+percent-encoding = { workspace = true }
 http-body-util = { workspace = true }
 tower = { workspace = true }
 chrono = { workspace = true }

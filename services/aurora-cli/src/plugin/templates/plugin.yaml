@@ -1,0 +1,24 @@
+package: {{ id: {id}, version: 0.1.0, contract: 1, min_core: 0.1.0, publisher: {publisher}, name: {id} }}
+apps:
+  - about: {{ id: {id}, name: {id} }}
+    credentials: [ {{ name: api_token, secret: true }} ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ {{ name: api_token, label: API token, type: secret, required: true }} ]
+    hosts:
+      - match: {{ host: api.example.com }}
+        inject:
+          - bearer: "{{credentials.api_token}}"
+    tools:
+      read:
+        items:
+          - {{ id: list_items, name: List items, host: api.example.com, path: /v1/items, methods: [GET] }}
+      write:
+        items:
+          - {{ id: close_item, name: Close item, host: api.example.com, path: "/v1/items/*/close", methods: [POST] }}
+    approvals:
+      close_item:
+        title: Close item
+        fields:
+          - {{ label: Item, source: path, segment: 3 }}

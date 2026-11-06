@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 mod approvals;
+mod plugin;
 mod run;
 mod token;
 
@@ -49,6 +50,11 @@ enum Cmd {
         token_env: String,
         #[arg(trailing_var_arg = true, required = true, allow_hyphen_values = true)]
         command: Vec<String>,
+    },
+    /// Plugin package development: new, build, validate, compile, test, sign, keygen, docs.
+    Plugin {
+        #[command(subcommand)]
+        cmd: plugin::PluginCmd,
     },
     /// Approvals.
     Approvals {
@@ -109,6 +115,7 @@ async fn main() {
 
 async fn real_main() -> Result<i32> {
     match Cli::parse().cmd {
+        Cmd::Plugin { cmd } => plugin::run(cmd),
         Cmd::Login { url, hostname } => {
             let path = config::default_path()?;
             let url = match url {

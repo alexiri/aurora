@@ -16,6 +16,8 @@ use sqlx::PgConnection;
 use sqlx::PgPool;
 use tokio::sync::OnceCell;
 
+pub mod oidc;
+
 pub use wiremock;
 
 /// Name of the env var that overrides the test server.

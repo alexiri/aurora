@@ -1235,7 +1235,8 @@ fn reauth_required(app_id: &str, connection_id: Uuid, connect_url: &str) -> ApiE
 }
 
 /// Inject and `rewrite_host`; returns the rewritten upstream host, if any.
-fn inject_and_route(
+#[allow(clippy::result_unit_err)]
+pub fn inject_and_route(
     entry: &aurora_registry::snapshot::HostEntry,
     vars: &mechanisms::template::Vars<'_>,
     headers: &mut HeaderMap,
@@ -1261,7 +1262,8 @@ fn inject_and_route(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn finalize_request(
+#[allow(clippy::result_unit_err)]
+pub fn finalize_request(
     entry: &aurora_registry::snapshot::HostEntry,
     vars: &mechanisms::template::Vars<'_>,
     method: &http::Method,

@@ -279,3 +279,27 @@ fn secrets_never_in_debug() {
     }
     assert!(dbg.contains("[redacted]"));
 }
+
+#[test]
+fn oidc_provider_defaults_alias_and_domain_validation() {
+    let p = "[[auth.oidc_providers]]\nid = \"corp\"\nissuer_url = \"https://idp.example.org\"\nclient_id = \"c\"\nclient_secret_env = \"CORP_SECRET\"\n";
+    let raw = load_with(
+        &format!("{BASE}{p}allowed_email_domains = [\"example.org\"]\n"),
+        &[("CORP_SECRET", "s3cret")],
+    )
+    .unwrap();
+    let a = raw.api_config().unwrap();
+    let o = &a.auth.oidc_providers[0];
+    assert_eq!(o.issuer, "https://idp.example.org");
+    assert!(o.require_email_verified);
+    assert_eq!(o.scopes, ["openid", "email", "profile"]);
+    assert_eq!(a.oidc_client_secrets["corp"].expose(), "s3cret");
+
+    let bad = load_with(
+        &format!("{BASE}{p}allowed_email_domains = [\"@\"]\n"),
+        &[("CORP_SECRET", "s3cret")],
+    )
+    .unwrap();
+    let err = bad.api_config().unwrap_err().to_string();
+    assert!(err.contains("allowed_email_domains"), "{err}");
+}

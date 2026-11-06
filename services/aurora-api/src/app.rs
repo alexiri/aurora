@@ -61,6 +61,10 @@ pub struct AppState {
     pub llm_http: reqwest::Client,
     /// Shared `aurora_approval` fan-out (SSE, long-poll).
     pub approval_bus: Arc<crate::domains::approvals::bus::ApprovalBus>,
+    /// HKDF-derived keys (OIDC state, ...).
+    pub derived: Arc<aurora_crypto::DerivedKeys>,
+    /// OIDC discovery cache and HTTP client.
+    pub oidc: Arc<crate::domains::oidc::OidcClients>,
     /// SSE keepalive interval.
     pub sse_keepalive: std::time::Duration,
 }
@@ -106,6 +110,13 @@ impl AppState {
             .timeout(aurora_core::limits::LLM_ORIGIN_CHECK_TIMEOUT)
             .build()
             .map_err(|e| format!("http client: {e}"))?;
+        let derived = Arc::new(
+            aurora_crypto::DerivedKeys::new(aurora_core::secret::Secret::new(
+                *config.signing_key.expose(),
+            ))
+            .map_err(|e| format!("derived keys: {e}"))?,
+        );
+        let oidc = Arc::new(crate::domains::oidc::OidcClients::new()?);
         Ok(Self {
             pool,
             config: Arc::new(config),
@@ -118,6 +129,8 @@ impl AppState {
             gov_instance,
             llm_http,
             approval_bus: Arc::default(),
+            derived,
+            oidc,
             sse_keepalive: aurora_core::limits::SSE_KEEPALIVE,
         })
     }
@@ -180,6 +193,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::keys::router())
         .merge(domains::invitations::router())
         .merge(domains::cli_login::router())
+        .merge(domains::oidc::router())
 }
 
 /// Public API router (without ops endpoints) and its OpenAPI document.

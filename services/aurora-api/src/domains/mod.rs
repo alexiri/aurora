@@ -14,6 +14,7 @@ pub mod instance;
 pub mod invitations;
 pub mod keys;
 pub mod me;
+pub mod oidc;
 pub mod policy;
 pub mod secrets;
 pub mod tenancy;
