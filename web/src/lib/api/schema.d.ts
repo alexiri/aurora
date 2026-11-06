@@ -38,6 +38,40 @@ export interface paths {
         patch: operations["adminPatchUser"];
         trace?: never;
     };
+    "/v1/agent/container-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Container config for the calling agent, token embedded (agent token). */
+        get: operations["getSelfContainerConfig"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agent/context-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mint a context credential (`auc_`) for attribution (agent token). */
+        post: operations["createContextCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}": {
         parameters: {
             query?: never;
@@ -49,6 +83,42 @@ export interface paths {
         get: operations["getAgent"];
         put?: never;
         post?: never;
+        /** Delete an agent and revoke all its gateway credentials (`can_use`). */
+        delete: operations["deleteAgent"];
+        options?: never;
+        head?: never;
+        /** Update an agent (`can_use`); `handle` and `kind` are immutable. */
+        patch: operations["updateAgent"];
+        trace?: never;
+    };
+    "/v1/agents/{agent}/container-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** BYO container config with an `<AGENT_TOKEN>` placeholder. */
+        get: operations["getAgentContainerConfig"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Regenerate the BYO agent token (revokes the previous token and context credentials). */
+        post: operations["regenerateAgentToken"];
         delete?: never;
         options?: never;
         head?: never;
@@ -270,6 +340,23 @@ export interface paths {
         put?: never;
         /** Send a fresh verification email to the signed-in user. */
         post: operations["resendVerification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/gateway/ca.pem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The gateway CA certificate (PEM). */
+        get: operations["getGatewayCa"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -604,7 +691,8 @@ export interface paths {
         /** List the agents of a workspace (`can_use`). */
         get: operations["listAgents"];
         put?: never;
-        post?: never;
+        /** Create an agent (`can_use`). BYO agents return their `aug_` token once. */
+        post: operations["createAgent"];
         delete?: never;
         options?: never;
         head?: never;
@@ -698,6 +786,10 @@ export interface components {
             /** Format: uuid */
             workspace_id: string;
         };
+        AgentToken: {
+            container_config: components["schemas"]["ContainerConfig"];
+            token: string;
+        };
         ApiKey: {
             /** Format: date-time */
             created_at: string;
@@ -767,6 +859,47 @@ export interface components {
         ConfirmRequest: {
             confirm: string;
         };
+        ContainerConfig: {
+            ca_path: string;
+            ca_pem: string;
+            env: {
+                [key: string]: string;
+            };
+            llm_env: {
+                [key: string]: string;
+            };
+            /** @description Contains `<AGENT_TOKEN>` unless the token is revealed. */
+            proxy_url: string;
+            stubs: components["schemas"]["StubFile"][];
+        };
+        ContextCredential: {
+            credential: string;
+            /** Format: date-time */
+            expires_at: string;
+            proxy_url: string;
+        };
+        ContextCredentialRequest: {
+            /** Format: uuid */
+            conversation_id?: string | null;
+            label: string;
+            /**
+             * Format: int64
+             * @description 60..=86400, default 3600.
+             */
+            ttl_secs?: number | null;
+        };
+        CreateAgentRequest: {
+            brief?: string | null;
+            effort?: string | null;
+            handle?: string | null;
+            harness?: string | null;
+            /** @description `byo` | `hosted`. */
+            kind: string;
+            model_endpoint_id?: string | null;
+            model_id?: string | null;
+            name: string;
+            proactive_messaging?: string | null;
+        };
         CreateInvitationRequest: {
             email: string;
             role: components["schemas"]["InvitedRole"];
@@ -799,6 +932,12 @@ export interface components {
         CreateWorkspaceResponse: {
             default_agent: components["schemas"]["Agent"];
             workspace: components["schemas"]["Workspace"];
+        };
+        CreatedAgent: {
+            agent: components["schemas"]["Agent"];
+            container_config?: null | components["schemas"]["ContainerConfig"];
+            /** @description BYO only; shown once. */
+            token?: string | null;
         };
         CreatedKey: {
             api_key: components["schemas"]["ApiKey"];
@@ -1132,6 +1271,17 @@ export interface components {
             disabled?: boolean | null;
             is_instance_admin?: boolean | null;
         };
+        PatchAgentRequest: {
+            brief?: string | null;
+            effort?: string | null;
+            harness?: string | null;
+            model_endpoint_id?: string | null;
+            model_id?: string | null;
+            name?: string | null;
+            proactive_messaging?: string | null;
+            /** @description Instance admins only. */
+            resource_overrides?: Record<string, never> | null;
+        };
         PatchMeRequest: {
             /**
              * Format: uuid
@@ -1195,6 +1345,11 @@ export interface components {
             /** @description `ABCD-EFGH`. */
             user_code: string;
             verification_url: string;
+        };
+        StubFile: {
+            content: string;
+            mode: string;
+            path: string;
         };
         TokenRequest: {
             device_code: string;
@@ -1330,6 +1485,95 @@ export interface operations {
             };
         };
     };
+    getSelfContainerConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Container config */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContainerConfig"];
+                };
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description gateway_ca_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createContextCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContextCredentialRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextCredential"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conversation not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getAgent: {
         parameters: {
             query?: never;
@@ -1349,6 +1593,181 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Agent"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    updateAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchAgentRequest"];
+            };
+        };
+        responses: {
+            /** @description Agent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agent"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAgentContainerConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Container config */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContainerConfig"];
+                };
+            };
+            /** @description hosted_agent_token_hidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description gateway_ca_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    regenerateAgentToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description New token */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentToken"];
+                };
+            };
+            /** @description hosted_agent_token_hidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */
@@ -1824,6 +2243,35 @@ export interface operations {
                 };
             };
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getGatewayCa: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description PEM */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-pem-file": string;
+                };
+            };
+            /** @description gateway_ca_unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3151,6 +3599,69 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAgentRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedAgent"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description handle_taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description hosted_disabled | agent_limit_reached */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

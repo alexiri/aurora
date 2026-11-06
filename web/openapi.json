@@ -153,6 +153,118 @@
         ]
       }
     },
+    "/v1/agent/container-config": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Container config for the calling agent, token embedded (agent token).",
+        "operationId": "getSelfContainerConfig",
+        "responses": {
+          "200": {
+            "description": "Container config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerConfig"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "gateway_ca_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "agent_token": []
+          }
+        ]
+      }
+    },
+    "/v1/agent/context-credentials": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Mint a context credential (`auc_`) for attribution (agent token).",
+        "operationId": "createContextCredential",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextCredential"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conversation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "agent_token": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}": {
       "get": {
         "tags": [
@@ -200,6 +312,256 @@
           },
           {
             "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Delete an agent and revoke all its gateway credentials (`can_use`).",
+        "operationId": "deleteAgent",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Update an agent (`can_use`); `handle` and `kind` are immutable.",
+        "operationId": "updateAgent",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchAgentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Agent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/container-config": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "BYO container config with an `<AGENT_TOKEN>` placeholder.",
+        "operationId": "getAgentContainerConfig",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Container config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerConfig"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "hosted_agent_token_hidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "gateway_ca_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/token": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Regenerate the BYO agent token (revokes the previous token and context credentials).",
+        "operationId": "regenerateAgentToken",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "New token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentToken"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "hosted_agent_token_hidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
           }
         ]
       }
@@ -799,6 +1161,45 @@
         "security": [
           {
             "session": []
+          }
+        ]
+      }
+    },
+    "/v1/gateway/ca.pem": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "The gateway CA certificate (PEM).",
+        "operationId": "getGatewayCa",
+        "responses": {
+          "200": {
+            "description": "PEM",
+            "content": {
+              "application/x-pem-file": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "gateway_ca_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
           }
         ]
       }
@@ -2972,6 +3373,95 @@
             "api_key": []
           }
         ]
+      },
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Create an agent (`can_use`). BYO agents return their `aug_` token once.",
+        "operationId": "createAgent",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAgentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedAgent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "handle_taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "hosted_disabled | agent_limit_reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
       }
     },
     "/v1/workspaces/{ws}/api-keys": {
@@ -3405,6 +3895,21 @@
           }
         }
       },
+      "AgentToken": {
+        "type": "object",
+        "required": [
+          "token",
+          "container_config"
+        ],
+        "properties": {
+          "container_config": {
+            "$ref": "#/components/schemas/ContainerConfig"
+          },
+          "token": {
+            "type": "string"
+          }
+        }
+      },
       "ApiKey": {
         "type": "object",
         "required": [
@@ -3625,6 +4130,159 @@
           }
         }
       },
+      "ContainerConfig": {
+        "type": "object",
+        "required": [
+          "proxy_url",
+          "env",
+          "ca_pem",
+          "ca_path",
+          "llm_env",
+          "stubs"
+        ],
+        "properties": {
+          "ca_path": {
+            "type": "string"
+          },
+          "ca_pem": {
+            "type": "string"
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "llm_env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "proxy_url": {
+            "type": "string",
+            "description": "Contains `<AGENT_TOKEN>` unless the token is revealed."
+          },
+          "stubs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StubFile"
+            }
+          }
+        }
+      },
+      "ContextCredential": {
+        "type": "object",
+        "required": [
+          "credential",
+          "expires_at",
+          "proxy_url"
+        ],
+        "properties": {
+          "credential": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "proxy_url": {
+            "type": "string"
+          }
+        }
+      },
+      "ContextCredentialRequest": {
+        "type": "object",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "ttl_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "60..=86400, default 3600."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateAgentRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "brief": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "handle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "harness": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`byo` | `hosted`."
+          },
+          "model_endpoint_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "proactive_messaging": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateInvitationRequest": {
         "type": "object",
         "required": [
@@ -3744,6 +4402,34 @@
           },
           "workspace": {
             "$ref": "#/components/schemas/Workspace"
+          }
+        }
+      },
+      "CreatedAgent": {
+        "type": "object",
+        "required": [
+          "agent"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/Agent"
+          },
+          "container_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContainerConfig"
+              }
+            ]
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "BYO only; shown once."
           }
         }
       },
@@ -4939,6 +5625,61 @@
           }
         }
       },
+      "PatchAgentRequest": {
+        "type": "object",
+        "properties": {
+          "brief": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "harness": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model_endpoint_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proactive_messaging": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resource_overrides": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Instance admins only."
+          }
+        },
+        "additionalProperties": false
+      },
       "PatchMeRequest": {
         "type": "object",
         "properties": {
@@ -5183,6 +5924,25 @@
           }
         }
       },
+      "StubFile": {
+        "type": "object",
+        "required": [
+          "path",
+          "content",
+          "mode"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
       "TokenRequest": {
         "type": "object",
         "required": [
@@ -5325,6 +6085,10 @@
       }
     },
     "securitySchemes": {
+      "agent_token": {
+        "type": "http",
+        "scheme": "bearer"
+      },
       "api_key": {
         "type": "http",
         "scheme": "bearer"

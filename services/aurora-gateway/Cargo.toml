@@ -28,6 +28,8 @@ aurora-llm = { workspace = true }
 aurora-summary = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
+reqwest = { workspace = true }
+sha2 = { workspace = true }
 serde = { workspace = true }
 zeroize = { workspace = true }
 async-trait = { workspace = true }

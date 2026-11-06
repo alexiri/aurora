@@ -5,6 +5,7 @@ pub mod agents;
 pub mod api_keys;
 pub mod audit;
 pub mod cli_logins;
+pub mod credentials;
 pub mod email_tokens;
 pub mod gateway;
 pub mod invitations;

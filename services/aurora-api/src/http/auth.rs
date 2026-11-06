@@ -466,3 +466,40 @@ impl FromRequestParts<AppState> for InstanceAdmin {
         }
     }
 }
+
+/// Agent-token (A) caller: a live `aug_` gateway credential of kind `agent`.
+/// Use only on `/v1/agent/*` routes; every other extractor rejects `aug_` tokens.
+/// Not cached, so regeneration/deletion take effect immediately.
+#[derive(Debug, Clone)]
+pub struct AgentCaller {
+    pub agent_id: Uuid,
+    pub workspace_id: Uuid,
+    pub org_id: Uuid,
+    pub credential_id: Uuid,
+}
+
+impl FromRequestParts<AppState> for AgentCaller {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
+        let tok = parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split_once(' '))
+            .and_then(|(scheme, rest)| scheme.eq_ignore_ascii_case("bearer").then(|| rest.trim()))
+            .filter(|t| t.starts_with(TokenPrefix::Gateway.as_str()))
+            .ok_or_else(unauth)?;
+        let rec =
+            aurora_db::repo::gateway::find_credential_identity(&state.pool, &token::hash(tok))
+                .await?
+                .filter(|r| r.kind == "agent")
+                .ok_or_else(unauth)?;
+        Ok(Self {
+            agent_id: rec.agent_id,
+            workspace_id: rec.workspace_id,
+            org_id: rec.org_id,
+            credential_id: rec.credential_id,
+        })
+    }
+}

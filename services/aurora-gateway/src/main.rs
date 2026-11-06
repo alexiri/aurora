@@ -5,6 +5,7 @@ use aurora_config::GatewayConfig;
 use aurora_core::service::{self, exit_config, ready_check};
 use aurora_gateway::ca::{self, Ca};
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
+use aurora_gateway::governance::{DbGovSource, Governance, instance_from_config};
 use aurora_gateway::guard::Guard;
 use aurora_gateway::hold::Holds;
 use aurora_gateway::instance;
@@ -114,7 +115,19 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let vault = Arc::new(aurora_secrets::SecretVault::new(
         aurora_secrets::StoreRegistry::from_config(&cfg.secrets, keyring)?,
     ));
-    let policy_resolver = Arc::new(Resolver::new(Arc::new(DbSource(pool.clone())), llm));
+    let governance = Arc::new(
+        Governance::new(
+            instance_from_config(&cfg.governance, &llm),
+            llm.clone(),
+            Arc::new(DbGovSource(pool.clone())),
+        )
+        .with_recheck(Duration::from_secs(cfg.governance.origin_recheck_secs)),
+    );
+    // Registered before the resolver cache so a reload never sees stale governance.
+    hub.register(governance.clone());
+    let policy_resolver = Arc::new(
+        Resolver::new(Arc::new(DbSource(pool.clone())), llm).with_governance(governance.clone()),
+    );
     hub.register(policy_resolver.cache());
     let plaintext = Arc::new(PlaintextCache::new(vault));
     hub.register(plaintext.clone());
@@ -128,14 +141,17 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         Duration::from_secs(cfg.approvals.timeout_secs),
         Some(rx.clone()),
     ));
-    let handler = Arc::new(PolicyHandler::new(PolicyHandlerParts {
-        resolver: policy_resolver,
-        plaintext,
-        log: reqlog.clone(),
-        external_url: cfg.external_url.clone(),
-        holds: Some(holds.clone()),
-        touch_pool: Some(pool.clone()),
-    }));
+    let handler = Arc::new(
+        PolicyHandler::new(PolicyHandlerParts {
+            resolver: policy_resolver,
+            plaintext,
+            log: reqlog.clone(),
+            external_url: cfg.external_url.clone(),
+            holds: Some(holds.clone()),
+            touch_pool: Some(pool.clone()),
+        })
+        .with_governance(governance),
+    );
     let reqlog_task = tokio::spawn(reqlog.run(FLUSH_INTERVAL, rx.clone()));
     let hub_task = tokio::spawn(hub.clone().run(pool.clone(), rx.clone()));
     let instance_task = tokio::spawn(instance::run(

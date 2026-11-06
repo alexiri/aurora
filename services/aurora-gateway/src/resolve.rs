@@ -38,6 +38,8 @@ pub struct SecretCand {
     pub version: i32,
     pub llm_endpoint: Option<String>,
     pub provider: Option<String>,
+    /// Stored key origin (`secrets.origin`, LLM secrets).
+    pub origin: Option<serde_json::Value>,
 }
 
 impl SecretCand {
@@ -59,6 +61,8 @@ pub struct ResolvedHost {
     pub org_slug: String,
     pub ws_slug: String,
     pub is_llm_host: bool,
+    /// Effective LLM/egress governance of the org (`None` = governance not wired).
+    pub governance: Option<Arc<aurora_llm::governance::EffectiveGovernance>>,
 }
 
 impl ResolvedHost {
@@ -177,6 +181,7 @@ fn to_candidate(r: SecretMetaRow, org: Uuid, llm: &ProviderRegistry) -> Result<S
         version: r.value_version,
         llm_endpoint: r.llm_endpoint_id,
         provider: r.llm_provider,
+        origin: r.origin,
     })
 }
 
@@ -206,6 +211,7 @@ pub struct Resolver {
     llm: Arc<ProviderRegistry>,
     ttl: Duration,
     cache: Arc<ResolveCache>,
+    governance: Option<Arc<crate::governance::Governance>>,
 }
 
 /// The invalidatable part (registered with the hub).
@@ -252,7 +258,15 @@ impl Resolver {
             llm,
             ttl,
             cache: Arc::new(ResolveCache::default()),
+            governance: None,
         }
+    }
+
+    /// Apply org governance (08 §11): egress posture as the org uncredentialed default and
+    /// the governed-host view used by step 6a.
+    pub fn with_governance(mut self, g: Arc<crate::governance::Governance>) -> Self {
+        self.governance = Some(g);
+        self
     }
 
     pub fn cache(&self) -> Arc<ResolveCache> {
@@ -327,7 +341,14 @@ impl Resolver {
         } else {
             format!("{}:{}", k.host, k.port)
         };
-        let is_llm_host = self.llm.is_endpoint_host(&host_port);
+        let gov = match &self.governance {
+            Some(g) => Some(g.effective(k.org).await.map_err(fail)?),
+            None => None,
+        };
+        let is_llm_host = self.llm.is_endpoint_host(&host_port)
+            || gov
+                .as_ref()
+                .is_some_and(|g| g.is_known_llm_host(&host_port));
         let mut cands = Vec::new();
         for r in secrets {
             // Generic secrets are never candidates on a governed LLM host (08 §6).
@@ -343,13 +364,18 @@ impl Resolver {
                 Err(e) => tracing::warn!(error = %e, "skipping unusable secret"),
             }
         }
+        let mut org_policy = to_scope_policy(org_rows).map_err(fail)?;
+        if let Some(g) = &gov {
+            crate::governance::apply_egress_posture(&mut org_policy, g);
+        }
         Ok(ResolvedHost {
-            org_policy: to_scope_policy(org_rows).map_err(fail)?,
+            org_policy,
             ws_policy: to_scope_policy(ws_rows).map_err(fail)?,
             secrets: cands,
             org_slug,
             ws_slug,
             is_llm_host,
+            governance: gov,
         })
     }
 }

@@ -431,3 +431,32 @@ pub async fn abandon_approvals<'e, E: PgExecutor<'e>>(
     .await?
     .rows_affected())
 }
+
+// ---- LLM governance (docs/08 §11) ----
+
+/// `organizations.governance` (raw document; normalized by the caller). `None` = no such org.
+pub async fn org_governance<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org_id: Uuid,
+) -> Result<Option<serde_json::Value>, DbError> {
+    Ok(sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT governance FROM organizations WHERE id = $1",
+    )
+    .bind(org_id)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// Write back a verified/mismatched key origin (LLM secrets only).
+pub async fn update_secret_origin<'e, E: PgExecutor<'e>>(
+    exec: E,
+    secret_id: Uuid,
+    origin: &serde_json::Value,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE secrets SET origin = $2 WHERE id = $1 AND kind = 'llm'")
+        .bind(secret_id)
+        .bind(origin)
+        .execute(exec)
+        .await?;
+    Ok(())
+}

@@ -16,6 +16,10 @@ impl Modify for Security {
             "api_key",
             SecurityScheme::Http(HttpBuilder::new().scheme(HttpAuthScheme::Bearer).build()),
         );
+        c.add_security_scheme(
+            "agent_token",
+            SecurityScheme::Http(HttpBuilder::new().scheme(HttpAuthScheme::Bearer).build()),
+        );
     }
 }
 

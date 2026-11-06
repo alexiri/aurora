@@ -90,3 +90,128 @@ pub async fn list_for_workspace<'e, E: PgExecutor<'e>>(
     .fetch_all(exec)
     .await?)
 }
+
+pub struct NewAgent<'a> {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub workspace_id: Uuid,
+    pub handle: &'a str,
+    pub name: &'a str,
+    pub kind: &'a str,
+    pub harness: Option<&'a str>,
+    pub model_endpoint_id: Option<&'a str>,
+    pub model_id: Option<&'a str>,
+    pub effort: Option<&'a str>,
+    pub proactive_messaging: &'a str,
+    pub brief: &'a str,
+    pub created_by: Uuid,
+}
+
+/// Unique constraint on `(workspace_id, handle)`.
+pub const HANDLE_CONSTRAINT: &str = "agents_workspace_id_handle_key";
+
+pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, a: &NewAgent<'_>) -> Result<AgentRow, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness, model_endpoint_id,
+            model_id, effort, proactive_messaging, brief, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING {COLS}"
+    ))
+    .bind(a.id)
+    .bind(a.org_id)
+    .bind(a.workspace_id)
+    .bind(a.handle)
+    .bind(a.name)
+    .bind(a.kind)
+    .bind(a.harness)
+    .bind(a.model_endpoint_id)
+    .bind(a.model_id)
+    .bind(a.effort)
+    .bind(a.proactive_messaging)
+    .bind(a.brief)
+    .bind(a.created_by)
+    .fetch_one(exec)
+    .await?)
+}
+
+pub async fn handle_exists<'e, E: PgExecutor<'e>>(
+    exec: E,
+    ws: Uuid,
+    handle: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM agents WHERE workspace_id = $1 AND handle = $2)",
+    )
+    .bind(ws)
+    .bind(handle)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// Lock the org row and return `(settings.max_agents, current agent count)`.
+pub async fn lock_org_agent_limit(
+    tx: &mut sqlx::PgConnection,
+    org: Uuid,
+) -> Result<(Option<i64>, i64), DbError> {
+    let settings: serde_json::Value =
+        sqlx::query_scalar("SELECT settings FROM organizations WHERE id = $1 FOR UPDATE")
+            .bind(org)
+            .fetch_one(&mut *tx)
+            .await?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM agents WHERE org_id = $1")
+        .bind(org)
+        .fetch_one(&mut *tx)
+        .await?;
+    Ok((
+        settings
+            .get("max_agents")
+            .and_then(serde_json::Value::as_i64),
+        count,
+    ))
+}
+
+#[derive(Default)]
+pub struct AgentPatch<'a> {
+    pub name: Option<&'a str>,
+    pub brief: Option<&'a str>,
+    pub harness: Option<&'a str>,
+    pub model_endpoint_id: Option<&'a str>,
+    pub model_id: Option<&'a str>,
+    pub effort: Option<&'a str>,
+    pub proactive_messaging: Option<&'a str>,
+    pub resource_overrides: Option<&'a serde_json::Value>,
+}
+
+pub async fn update<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    p: &AgentPatch<'_>,
+) -> Result<AgentRow, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "UPDATE agents SET name = COALESCE($2, name), brief = COALESCE($3, brief),
+            harness = COALESCE($4, harness), model_endpoint_id = COALESCE($5, model_endpoint_id),
+            model_id = COALESCE($6, model_id), effort = COALESCE($7, effort),
+            proactive_messaging = COALESCE($8, proactive_messaging),
+            resource_overrides = COALESCE($9, resource_overrides), updated_at = now()
+         WHERE id = $1 RETURNING {COLS}"
+    ))
+    .bind(id)
+    .bind(p.name)
+    .bind(p.brief)
+    .bind(p.harness)
+    .bind(p.model_endpoint_id)
+    .bind(p.model_id)
+    .bind(p.effort)
+    .bind(p.proactive_messaging)
+    .bind(p.resource_overrides)
+    .fetch_one(exec)
+    .await?)
+}
+
+pub async fn delete<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query("DELETE FROM agents WHERE id = $1")
+        .bind(id)
+        .execute(exec)
+        .await?
+        .rows_affected()
+        > 0)
+}

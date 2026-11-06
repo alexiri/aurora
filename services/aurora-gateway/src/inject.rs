@@ -175,6 +175,7 @@ mod tests {
             version: 1,
             llm_endpoint: None,
             provider: None,
+            origin: None,
         }
     }
 

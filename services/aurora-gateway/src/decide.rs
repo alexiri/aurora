@@ -6,6 +6,7 @@
 //! `MemoryCounter` (rate limits) and [`RequestLog`].
 
 use crate::auth::{CredentialKind, RequestIdentity as Ident};
+use crate::governance::{BackstopInfo, Governance};
 use crate::hold::{HoldOutcome, HoldRequest, Holds};
 use crate::inject::{self, Target};
 use crate::pipeline::{
@@ -44,6 +45,7 @@ pub struct PolicyHandler {
     /// Churn column updates; `None` disables them (tests).
     touch_pool: Option<aurora_db::PgPool>,
     touched: Mutex<HashMap<Uuid, Instant>>,
+    governance: Option<Arc<Governance>>,
 }
 
 pub struct PolicyHandlerParts {
@@ -119,17 +121,30 @@ struct Hook {
     ungranted: Option<(String, String)>,
     create_secret_url: String,
     manage_url: String,
+    /// Step 14 origin backstop for an injected LLM key.
+    backstop: Option<(Arc<Governance>, BackstopInfo)>,
 }
 
 impl PostHook for Hook {
     fn on_response(
         self: Box<Self>,
         status: StatusCode,
-        _headers: &HeaderMap,
+        headers: &HeaderMap,
     ) -> Option<Response<Body>> {
         let mut ctx = self.ctx;
         let mut replacement = None;
         let mut code = None;
+        if let Some((g, b)) = &self.backstop
+            && ctx.injected > 0
+            && let Some(err) = g.backstop(b, headers)
+        {
+            ctx.decision = "governance_refused";
+            code = Some(err.code().to_owned());
+            let r = guidance::response(&err);
+            self.log
+                .record(ctx.row(r.status().as_u16(), Some(status.as_u16()), code.as_deref()));
+            return Some(r);
+        }
         if ctx.injected == 0 && matches!(status.as_u16(), 401 | 403) {
             let err = match &self.ungranted {
                 Some((kind, provider)) => ApiError::new(
@@ -298,7 +313,14 @@ impl PolicyHandler {
             holds: p.holds,
             touch_pool: p.touch_pool,
             touched: Mutex::new(HashMap::new()),
+            governance: None,
         }
+    }
+
+    /// Enable origin preflight/backstop (the resolver carries the effective governance).
+    pub fn with_governance(mut self, g: Arc<Governance>) -> Self {
+        self.governance = Some(g);
+        self
     }
 
     fn url(&self, rv: &ResolvedHost, tail: &str) -> String {
@@ -492,8 +514,13 @@ impl RequestHandler for PolicyHandler {
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
         let may_hold = self.holds.is_some() && rv.all_rules().any(|r| r.require_approval);
-        let (body_prefix, truncated, body) = if rv.needs_body() || may_hold {
-            let limit = if rv.needs_body() {
+        let host_port = format!("{host}:{port}");
+        let llm_body = rv
+            .governance
+            .as_ref()
+            .is_some_and(|g| Governance::needs_body(g, &host_port, winner.as_deref()));
+        let (body_prefix, truncated, body) = if rv.needs_body() || may_hold || llm_body {
+            let limit = if rv.needs_body() || llm_body {
                 CONDITION_BODY_BUFFER
             } else {
                 APPROVAL_BODY_PEEK
@@ -503,6 +530,23 @@ impl RequestHandler for PolicyHandler {
         } else {
             (Vec::new(), false, body)
         };
+        // 6a. LLM governance (cached effective governance; nothing decrypted).
+        if let (Some(gov), Some(g)) = (&self.governance, &rv.governance)
+            && rv.is_llm_host
+            && let Err(err) = gov.check_6a(
+                g,
+                &host_port,
+                &method,
+                &path,
+                &body_prefix,
+                truncated,
+                winner.as_deref(),
+                &self.url(&rv, "secrets"),
+            )
+        {
+            ctx.secret_id = winner.as_ref().map(|c| c.id);
+            return Outcome::Respond(self.refuse(ctx, &err, "governance_refused"));
+        }
         // 7. decision (nothing decrypted yet).
         let peek = body_prefix[..body_prefix.len().min(APPROVAL_BODY_PEEK)].to_vec();
         let peek_truncated = truncated || body_prefix.len() > APPROVAL_BODY_PEEK;
@@ -610,6 +654,17 @@ impl RequestHandler for PolicyHandler {
                     return Outcome::Respond(self.refuse(ctx, &err, "error"));
                 }
             };
+            let mut backstop = None;
+            if let (Some(gov), Some(g)) = (&self.governance, &rv.governance)
+                && let Some(info) =
+                    Governance::backstop_info(g, &host_port, c, &self.url(&rv, "secrets"))
+            {
+                // Origin preflight: verify unseen key values before injecting.
+                if let Err(err) = gov.preflight(&info, value.expose()).await {
+                    return Outcome::Respond(self.refuse(ctx, &err, "governance_refused"));
+                }
+                backstop = Some((gov.clone(), info));
+            }
             let mut new_path = path.clone();
             let r = inject::apply(
                 c,
@@ -625,7 +680,7 @@ impl RequestHandler for PolicyHandler {
             }
             ctx.injected = 1;
             self.touch(c.id);
-            let hook = self.hook(&rv, ctx, &ungranted);
+            let hook = self.hook(&rv, ctx, &ungranted, backstop);
             return Outcome::Forward(PreparedRequest {
                 scheme,
                 host,
@@ -639,7 +694,7 @@ impl RequestHandler for PolicyHandler {
                 hook: Some(hook),
             });
         }
-        let hook = self.hook(&rv, ctx, &ungranted);
+        let hook = self.hook(&rv, ctx, &ungranted, None);
         Outcome::Forward(PreparedRequest {
             scheme,
             host,
@@ -679,6 +734,13 @@ impl RequestHandler for PolicyHandler {
                 return OpenLaneDecision::Deny(err);
             }
         };
+        if let Some(g) = &rv.governance
+            && rv.is_llm_host
+            && let Err(err) = Governance::check_open_lane(g, &format!("{host}:{port}"))
+        {
+            self.refuse(ctx, &err, "governance_refused");
+            return OpenLaneDecision::Deny(err);
+        }
         let facts = RequestFacts {
             host: host.to_owned(),
             port,
@@ -753,6 +815,7 @@ impl PolicyHandler {
         rv: &ResolvedHost,
         ctx: Ctx,
         ungranted: &[Arc<SecretCand>],
+        backstop: Option<(Arc<Governance>, BackstopInfo)>,
     ) -> Box<dyn PostHook> {
         let ungranted = ungranted.first().map(|c| {
             (
@@ -766,6 +829,7 @@ impl PolicyHandler {
             ungranted,
             create_secret_url: self.url(rv, "secrets"),
             manage_url: self.url(rv, "policy"),
+            backstop,
         })
     }
 }

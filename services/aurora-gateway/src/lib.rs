@@ -4,6 +4,7 @@
 pub mod auth;
 pub mod ca;
 pub mod decide;
+pub mod governance;
 pub mod guard;
 pub mod guidance;
 pub mod hold;

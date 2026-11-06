@@ -210,3 +210,29 @@ async fn loads_view_and_invalidates_on_notify() {
     assert!(touched);
     let _ = tx.send(true);
 }
+
+#[tokio::test]
+async fn governance_reads_and_origin_write_back() {
+    let db = TestDb::new().await;
+    let p = db.pool();
+    let org = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO organizations (id, slug, name, external_id, governance) VALUES ($1,'acme','O','ext','{\"llm\":{\"posture\":\"open\"}}')",
+    )
+    .bind(org)
+    .execute(p)
+    .await
+    .unwrap();
+    let g = repo::org_governance(p, org).await.unwrap().unwrap();
+    assert_eq!(g["llm"]["posture"], "open");
+    assert!(
+        repo::org_governance(p, Uuid::now_v7())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // No LLM secret matches: the write is a no-op, not an error.
+    repo::update_secret_origin(p, Uuid::now_v7(), &json!({"status":"mismatch"}))
+        .await
+        .unwrap();
+}

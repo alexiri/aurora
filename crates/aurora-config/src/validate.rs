@@ -125,6 +125,8 @@ pub struct ApiConfig {
     pub agents: AgentsSection,
     pub hosted: HostedSection,
     pub advertised_proxy_url: String,
+    /// `gateway.ca_dir`: directory holding the gateway's `ca.pem`.
+    pub gateway_ca_dir: String,
     pub hookhost_url: String,
     pub plugins: PluginsSection,
     pub retention: RetentionSection,
@@ -266,6 +268,7 @@ impl RawConfig {
             agents: self.agents.clone(),
             hosted: self.hosted.clone(),
             advertised_proxy_url,
+            gateway_ca_dir: self.gateway.ca_dir.clone(),
             hookhost_url: self.api.hookhost_url.clone(),
             plugins: self.plugins.clone(),
             retention: self.retention.clone(),
