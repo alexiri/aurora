@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
 import { useDecide } from "@/lib/api/approvals";
 import { ApiError } from "@/lib/api/client";
+import { attachmentUrl, canThumbnail, formatBytes, uploadAttachment, uploadErrorMessage, type Attachment } from "@/lib/api/attachments";
 import { chatApi, useConversations, useDirectConversation, type Conversation, type Followup, type TranscriptEvent } from "@/lib/api/conversations";
 import {
   activeTurnId,
@@ -22,6 +23,57 @@ import {
 import { useTranscript } from "@/lib/chat/use-transcript";
 
 const s = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/**
+ * Download link for an attachment. Content is never rendered inline (no HTML/SVG): the only embedded
+ * form is an <img> of the download URL for raster images.
+ */
+export function AttachmentLink({ id, filename, contentType, size }: { id: string; filename?: string; contentType?: string; size?: number }) {
+  const url = attachmentUrl(id);
+  return (
+    <span className="flex items-center gap-2 text-sm">
+      {canThumbnail(contentType) ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt="" className="h-12 w-12 rounded border border-neutral-200 object-cover" />
+      ) : null}
+      <a className="underline" href={url} download={filename || undefined}>
+        {filename || "Attachment"}
+      </a>
+      {size !== undefined ? <span className="text-xs text-neutral-600">({formatBytes(size)})</span> : null}
+    </span>
+  );
+}
+
+function ContinueNotice({ text, convId }: { text: string; convId: string }) {
+  const [err, setErr] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="space-y-1 rounded bg-blue-50 p-2 text-sm text-blue-900">
+      <p>{text || "The agent paused after reaching the automated turn limit."}</p>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          setErr(null);
+          chatApi
+            .continue(convId)
+            // The durable `app_turn_cap_reset` notice arrives on the transcript stream and hides this button.
+            .catch(setErr)
+            .finally(() => setBusy(false));
+        }}
+      >
+        Continue
+      </Button>
+      {err ? (
+        <p role="alert" className="text-red-700">
+          {err instanceof ApiError ? err.message : "Could not continue."}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 export function ErrorNotice({ code, message, base }: { code?: string | null; message?: string; base: string }) {
   const copy = errorCopy(code, message);
@@ -72,7 +124,7 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
   );
 }
 
-function EventView({ ev, state, wsId, base }: { ev: TranscriptEvent; state: TranscriptState; wsId: string; base: string }) {
+export function EventView({ ev, state, wsId, base, convId }: { ev: TranscriptEvent; state: TranscriptState; wsId: string; base: string; convId: string }) {
   const p = ev.payload;
   switch (ev.type) {
     case "turn.queued":
@@ -86,11 +138,7 @@ function EventView({ ev, state, wsId, base }: { ev: TranscriptEvent; state: Tran
           </p>
           <p className="whitespace-pre-wrap">{s(p.text)}</p>
           {Array.isArray(p.attachments)
-            ? (p.attachments as unknown[]).map((a) => (
-                <a key={s(a)} className="block text-xs underline" href={`/v1/attachments/${encodeURIComponent(s(a))}/content`}>
-                  Attachment
-                </a>
-              ))
+            ? (p.attachments as unknown[]).map((a) => <AttachmentLink key={s(a)} id={s(a)} />)
             : null}
         </div>
       );
@@ -132,12 +180,21 @@ function EventView({ ev, state, wsId, base }: { ev: TranscriptEvent; state: Tran
       );
     case "attachment":
       return (
-        <a className="text-sm underline" href={`/v1/attachments/${encodeURIComponent(s(p.attachment_id))}/content`}>
-          {s(p.filename)} ({String(p.size ?? "")} bytes)
-        </a>
+        <AttachmentLink
+          id={s(p.attachment_id)}
+          filename={s(p.filename)}
+          contentType={s(p.content_type)}
+          size={typeof p.size === "number" ? p.size : typeof p.size_bytes === "number" ? p.size_bytes : undefined}
+        />
       );
-    case "notice":
+    case "notice": {
+      if (s(p.code) === "app_turn_cap_reached") {
+        // Only offer Continue until a later durable reset notice (C-27) exists.
+        const reset = state.events.some((e) => (e.seq ?? 0) > (ev.seq ?? 0) && e.type === "notice" && s(e.payload.code) === "app_turn_cap_reset");
+        if (!reset) return <ContinueNotice text={s(p.text)} convId={convId} />;
+      }
       return <p className="rounded bg-blue-50 p-2 text-sm text-blue-900">{s(p.text)}</p>;
+    }
     case "error":
       return <ErrorNotice code={s(p.code)} message={s(p.message)} base={base} />;
     case "turn.finished":
@@ -147,13 +204,13 @@ function EventView({ ev, state, wsId, base }: { ev: TranscriptEvent; state: Tran
   }
 }
 
-function Transcript({ state, wsId, base }: { state: TranscriptState; wsId: string; base: string }) {
+function Transcript({ state, wsId, base, convId }: { state: TranscriptState; wsId: string; base: string; convId: string }) {
   const turn = activeTurnId(state);
   const deltas = Object.values(state.deltas);
   return (
     <div className="space-y-2" aria-live="polite">
       {state.events.map((ev) => (
-        <EventView key={ev.seq} ev={ev} state={state} wsId={wsId} base={base} />
+        <EventView key={ev.seq} ev={ev} state={state} wsId={wsId} base={base} convId={convId} />
       ))}
       {deltas.map((d) => (
         <div key={d.messageId} className="max-w-[90%] rounded-md border border-dashed border-neutral-300 p-2">
@@ -204,31 +261,51 @@ export function ChatTab({ agentId, wsId, base }: { agentId: string; wsId: string
   );
 }
 
-function ChatPane({ agentId, wsId, base, convId, direct }: { agentId: string; wsId: string; base: string; convId: string; direct: Conversation | null }) {
+export function ChatPane({ agentId, wsId, base, convId, direct }: { agentId: string; wsId: string; base: string; convId: string; direct: Conversation | null }) {
   const qc = useQueryClient();
   const { state, loading, error, live } = useTranscript(convId);
   const [text, setText] = useState("");
   const [followups, setFollowups] = useState<Followup[]>([]);
   const [sendErr, setSendErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const [uploadErr, setUploadErr] = useState<string | null>(null);
   const active = activeTurnId(state, direct);
   const waiting = useMemo(() => pendingFollowups(followups, state), [followups, state]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     const t = text.trim();
-    if (!t || !convId || busy) return;
+    if (!t || !convId || busy || uploading > 0) return;
     setBusy(true);
     setSendErr(null);
     try {
-      const out = classifySend(await chatApi.send(convId, t));
+      const out = classifySend(await chatApi.send(convId, t, pending.map((a) => a.id)));
       if (out.kind === "followup") setFollowups((f) => [...f, out.followup]);
       setText("");
+      setPending([]);
       void qc.invalidateQueries({ queryKey: ["agents", agentId, "conversations"] });
     } catch (err) {
       setSendErr(err);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function attach(files: FileList | null) {
+    if (!files) return;
+    setUploadErr(null);
+    for (const file of Array.from(files)) {
+      setUploading((n) => n + 1);
+      try {
+        const a = await uploadAttachment(convId, file);
+        setPending((p) => [...p, a]);
+      } catch (err) {
+        setUploadErr(`${file.name}: ${uploadErrorMessage(err)}`);
+      } finally {
+        setUploading((n) => n - 1);
+      }
     }
   }
 
@@ -248,7 +325,7 @@ function ChatPane({ agentId, wsId, base, convId, direct }: { agentId: string; ws
         {!loading && !error && state.events.length === 0 ? (
           <EmptyState title="No messages yet">Say hello to start the conversation.</EmptyState>
         ) : null}
-        <Transcript state={state} wsId={wsId} base={base} />
+        <Transcript state={state} wsId={wsId} base={base} convId={convId} />
         {!live && !loading && !error ? <p className="text-xs text-neutral-500">Reconnecting to live updates…</p> : null}
         {waiting.map((f) => (
           <div key={f.id} className="flex items-center gap-2 text-sm">
@@ -258,12 +335,36 @@ function ChatPane({ agentId, wsId, base, convId, direct }: { agentId: string; ws
             </Button>
           </div>
         ))}
-        {sendErr ? (
+        {sendErr instanceof ApiError && sendErr.code === "too_many_attachments" ? (
+          <p role="alert" className="text-sm text-red-700">
+            {uploadErrorMessage(sendErr)}
+          </p>
+        ) : sendErr ? (
           <ErrorNotice
             code={sendErr instanceof ApiError ? sendErr.code : null}
             message={sendErr instanceof ApiError ? sendErr.message : undefined}
             base={base}
           />
+        ) : null}
+        {pending.length > 0 ? (
+          <ul aria-label="Pending attachments" className="flex flex-wrap gap-2">
+            {pending.map((a) => (
+              <li key={a.id} className="flex items-center gap-1 rounded-full border border-neutral-300 px-2 py-0.5 text-xs">
+                <span>
+                  {a.filename} ({formatBytes(a.size_bytes)})
+                </span>
+                <button type="button" aria-label={`Remove ${a.filename}`} onClick={() => setPending((p) => p.filter((x) => x.id !== a.id))}>
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {uploading > 0 ? <p role="status" className="text-xs text-neutral-600">Uploading…</p> : null}
+        {uploadErr ? (
+          <p role="alert" className="text-sm text-red-700">
+            {uploadErr}
+          </p>
         ) : null}
         <form onSubmit={(e) => void submit(e)} className="flex gap-2">
           <label htmlFor="chat-input" className="sr-only">
@@ -278,7 +379,20 @@ function ChatPane({ agentId, wsId, base, convId, direct }: { agentId: string; ws
             onChange={(e) => setText(e.target.value)}
           />
           <div className="flex flex-col gap-1">
-            <Button type="submit" disabled={busy || !text.trim()}>
+            <label className="inline-flex h-9 cursor-pointer items-center justify-center rounded-md border border-neutral-300 px-3 text-sm focus-within:ring-2">
+              Attach
+              <input
+                type="file"
+                multiple
+                className="sr-only"
+                aria-label="Attach files"
+                onChange={(e) => {
+                  void attach(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <Button type="submit" disabled={busy || uploading > 0 || !text.trim()}>
               {active ? "Follow up" : "Send"}
             </Button>
             {active ? (

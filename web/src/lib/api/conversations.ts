@@ -59,8 +59,14 @@ export const chatApi = {
     unwrap(api.GET("/v1/agents/{agent}/conversations", { params: { path: { agent }, query: { limit: 50 } } })),
   events: (id: string, afterSeq: number) =>
     unwrap(api.GET("/v1/conversations/{id}/events", { params: { path: { id }, query: { after_seq: afterSeq, limit: 500 } } })),
-  send: (id: string, text: string) =>
-    unwrap(api.POST("/v1/conversations/{id}/messages", { params: { path: { id } }, body: { text } })),
+  send: (id: string, text: string, attachmentIds: string[] = []) =>
+    unwrap(
+      api.POST("/v1/conversations/{id}/messages", {
+        params: { path: { id } },
+        body: attachmentIds.length > 0 ? { text, attachment_ids: attachmentIds } : { text },
+      }),
+    ),
+  continue: (id: string) => unwrap(api.POST("/v1/conversations/{id}/continue", { params: { path: { id } } })),
   abort: (turn: string) => unwrap(api.POST("/v1/turns/{id}/abort", { params: { path: { id: turn } } })),
   sendNow: (turn: string) => unwrap(api.POST("/v1/turns/{id}/send-now", { params: { path: { id: turn } } })),
   sandbox: (agent: string) => call<SandboxView>("GET", `/v1/agents/${agent}/sandbox`),
