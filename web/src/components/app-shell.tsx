@@ -178,6 +178,8 @@ export function WorkspaceNav({
         {link(`${base}/agents`, "Agents", pathname.startsWith(`${base}/agents`))}
         {link(`${base}/credentials`, "Credentials", pathname.startsWith(`${base}/credentials`))}
         {link(`${base}/policy`, "Policy", pathname.startsWith(`${base}/policy`))}
+        {link(`${base}/approvals`, "Approvals", pathname.startsWith(`${base}/approvals`))}
+        {link(`${base}/activity`, "Activity", pathname.startsWith(`${base}/activity`))}
         {SECTIONS.map((s) => (
           <li key={s}>
             <span aria-disabled="true" className="block cursor-not-allowed rounded px-2 py-1.5 text-neutral-400">
