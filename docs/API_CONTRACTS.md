@@ -515,6 +515,60 @@ interface PeerTask { id: Uuid; link_id: Uuid; from_agent_id: Uuid; to_agent_id: 
 | PUT `/v1/agent-links/{id}/policy` | S/K can_use (C-29) | `{ agent_id, policy, revision }` | 200 `AgentLink` | 404; 409 `stale_revision` |
 | GET `/v1/agents/{agent}/peer-tasks` | S/K can_use | `?status&limit&cursor` | 200 `Page<PeerTask>` | 404 |
 
+### M6 — channels management, connector admin (API-006)
+
+Routes/auth: `05 §Channels (management)`, `§Instance administration` (connectors). Behaviour: `13 §3`, `§5.3`, `§5.7`–`§5.9`; connector plane wire shapes are `aurora-protocol::connector` (CON-001) and are not repeated here. Permissions per `04` + I-27: integrations/user links (admin) → org owner/admin; presences, links listing, peer views → `can_use`; space bindings and reach decisions → `can_own`.
+
+**Contract decisions**
+- C-31 Connector provisioning: `POST /v1/admin/connectors { id, display_name }` → 201 `{ connector: ConnectorAdmin, token }` (`aun_…`, shown once); `POST …/{id}/token` rotates → `{ token }`; `POST …/{id}/approve { manifest_digest }` approves exactly the pending manifest (409 `stale_manifest` if it changed); `DELETE …/{id}` → 409 `connector_in_use` while integrations exist.
+- C-32 `GET /v1/connectors` lists only `active` connectors for any signed-in caller; icons via `GET /v1/connectors/{id}/icon` (sanitized PNG, app-asset rules). Manifest `setup_guide_md` is returned raw and rendered client-side with the existing safe markdown renderer.
+- C-33 Integration create is synchronous: the row is inserted `validating`, a correlated `credentials.validate` runs (10 s); success → 201 `active`; connector `invalid`/`forbidden`/`credential_dead` → row removed, 422 `credentials_invalid` (sanitized connector message); timeout → row removed, 503 `connector_unavailable`; tenant owned by another org → row removed, 409 `tenant_already_bound`. Credentials are write-only (never returned); `PATCH` may replace `config`/`credentials` (re-validated the same way) or set `status: "active"|"disabled"`.
+- C-34 Presence attach `{ integration_id, mode, fields? }`: `shared` → 201 `active` (422 `no_shared_bot` without one); `dedicated` → 201 `pending_setup` + `presence.provision` op, or, when the manifest has `presence_setup.dedicated.fields`, the fields are validated synchronously like C-33. `POST /v1/presences/{id}/reattach` re-runs provisioning/validation.
+- C-35 Reach decision `POST /v1/reach-grants/{id}/decision { decision: "approve"|"block", listen?: "mentions"|"all", revision }` (`can_own`); 409 `stale_revision`.
+- C-36 `POST /v1/channel-links/confirm { token }` (session only, SO) consumes a `link_requests` token (`aui_…`, 30 min, single use) for the signed-in user → 200 `UserLink`; expired/used → 410 `link_expired`; the platform user already linked to another Aurora user → 409 `already_linked`.
+- C-37 DM defaults: `GET /v1/me/dm-defaults` → items for every (integration, platform user) linked to the caller; `PUT /v1/me/dm-defaults { integration_id, agent_id }` requires a user link on that integration and that the caller can reach the agent (`can_use` or approved person reach) with an active shared presence there (422 `agent_not_reachable`).
+
+```ts
+type ConnectorStatus = "awaiting_registration" | "pending_approval" | "active" | "disabled";
+interface ConnectorAdmin { id: string; display_name: string; status: ConnectorStatus; version: string | null; contract: number | null;
+  manifest: Record<string, unknown> | null; manifest_digest: string | null; approved_manifest_digest: string | null;
+  widening: string[] /* human-readable reasons pending approval is required */; replicas: { id: Uuid; version: string; last_seen_at: Timestamp }[];
+  integration_count: number; approved_at: Timestamp | null; created_at: Timestamp }
+interface ConnectorInfo { id: string; display_name: string; icon_url: string; setup_guide_md: string | null;
+  capabilities: Record<string, unknown>; integration_setup: { fields: FormField[] }; presence_setup: { dedicated?: { fields: FormField[] } } }
+type IntegrationStatus = "validating" | "active" | "needs_attention" | "disabled";
+interface ChannelIntegration { id: Uuid; org_id: Uuid; connector_id: string; tenant_ref: string; tenant_label: string;
+  config: Record<string, unknown> /* without credentials; `_capabilities` included */; shared_bot: { handle: string; display_name: string } | null;
+  status: IntegrationStatus; status_reason: string | null; created_at: Timestamp; updated_at: Timestamp }
+interface Presence { id: Uuid; agent_id: Uuid; integration_id: Uuid; connector_id: string; tenant_label: string; mode: "dedicated" | "shared";
+  handle: string | null; status: "pending_setup" | "active" | "disabled" | "needs_attention"; status_reason: string | null; created_at: Timestamp }
+interface SpaceBinding { id: Uuid; integration_id: Uuid; space_ref: string; space_label: string; agent_id: Uuid;
+  listen: "mentions" | "all"; followups_need_mention: boolean; active: boolean; bound_by: { id: Uuid; display_name: string } | null; created_at: Timestamp }
+interface UserLink { id: Uuid; integration_id: Uuid; connector_id: string; tenant_label: string; platform_user_ref: string;
+  user: { id: Uuid; display_name: string }; method: "verified_email" | "sign_in_link" | "admin"; created_at: Timestamp }
+interface DmDefault { integration_id: Uuid; platform_user_ref: string; agent_id: Uuid | null }
+interface ReachGrant { id: Uuid; agent_id: Uuid; integration_id: Uuid; subject_kind: "space" | "person"; subject_ref: string; subject_label: string;
+  state: "pending" | "approved" | "blocked" | "left" | "expired"; listen: "mentions" | "all"; revision: number;
+  decided_by: { id: Uuid; display_name: string } | null; decided_at: Timestamp | null; expires_at: Timestamp | null; created_at: Timestamp }
+```
+`FormField` is the app connect-field schema already in the generated client (`09 §3.4`).
+
+| Method & path | Auth | Request | 2xx response | Errors |
+|---|---|---|---|---|
+| GET `/v1/connectors`; GET `/v1/connectors/{id}/icon` | S/K | — | 200 `{ items: ConnectorInfo[] }`; PNG (C-32) | 404 |
+| GET/POST `/v1/admin/connectors`; DELETE `/v1/admin/connectors/{id}` | IA | `{ id, display_name }` | 200 `{ items: ConnectorAdmin[] }`; 201 (C-31); 204 | 409 `connector_in_use`, `conflict` |
+| POST `/v1/admin/connectors/{id}/approve`; `…/{id}/token` | IA | `{ manifest_digest }`; — | 200 `ConnectorAdmin`; 200 `{ token }` | 404; 409 `stale_manifest` |
+| GET/POST `/v1/orgs/{org}/channel-integrations` | S/K owner/admin | `{ connector_id, config, credentials }` | 200 `Page<ChannelIntegration>`; 201 (C-33) | 409 `tenant_already_bound`; 422 `credentials_invalid`; 503 `connector_unavailable` |
+| GET/PATCH/DELETE `/v1/channel-integrations/{id}` | S/K owner/admin | `{ config?, credentials?, status? }` | 200 `ChannelIntegration`; 204 (deprovisions presences via ops) | 404; 422; 503 |
+| GET/POST `/v1/channel-integrations/{id}/user-links`; DELETE `/v1/user-links/{id}` | S/K owner/admin | `{ platform_user_ref, user_id }` | 200 `Page<UserLink>`; 201 `UserLink`; 204 | 404; 409 `already_linked` |
+| GET/POST `/v1/agents/{agent}/presences` | S/K can_use | `{ integration_id, mode, fields? }` | 200 `{ items: Presence[] }`; 201 (C-34) | 404; 409 `conflict`; 422 `no_shared_bot`, `mode_unsupported`, `credentials_invalid` |
+| DELETE `/v1/presences/{id}`; POST `/v1/presences/{id}/reattach` | S/K can_use | — | 204; 200 `Presence` | 404 |
+| GET `/v1/agents/{agent}/space-bindings`; PATCH/DELETE `/v1/space-bindings/{id}` | S/K can_own | `{ listen?, followups_need_mention? }` | 200 `{ items: SpaceBinding[] }`; 200 `SpaceBinding`; 204 | 404 |
+| GET `/v1/me/channel-links`; DELETE `/v1/me/channel-links/{id}` | S | — | 200 `{ items: UserLink[] }`; 204 | 404 |
+| POST `/v1/channel-links/confirm` | S (SO) | `{ token }` | 200 `UserLink` (C-36) | 409; 410 `link_expired` |
+| GET/PUT `/v1/me/dm-defaults` | S | `{ integration_id, agent_id }` | 200 `{ items: DmDefault[] }`; 200 `DmDefault` (C-37) | 404; 422 `agent_not_reachable` |
+| GET `/v1/agents/{agent}/reach`; POST `/v1/reach-grants/{id}/decision` | S/K can_use (list), can_own (decide) | (C-35) | 200 `Page<ReachGrant>`; 200 `ReachGrant` | 404; 409 `stale_revision` |
+
 ### W9 hook-host JSON encoding (C-18, C-19)
 
 - C-18 Internal snapshot route returns the exact canonical bytes so consumers verify `sha256(body) == x-snapshot-hash` without re-serialization.
