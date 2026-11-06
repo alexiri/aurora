@@ -3150,6 +3150,136 @@
         ]
       }
     },
+    "/v1/agents/{agent}/schedules": {
+      "get": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "List an agent's schedules.",
+        "operationId": "listSchedules",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Schedule"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Create a schedule; the caller becomes its creator (fire-time authority).",
+        "operationId": "createSchedule",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateScheduleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Schedule"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/skills": {
       "get": {
         "tags": [
@@ -3334,6 +3464,136 @@
         "security": [
           {
             "session": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/webhooks": {
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "List an agent's webhooks.",
+        "operationId": "listWebhooks",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Webhook"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Create a webhook; the caller becomes its creator (fire-time authority). The URL is shown once.",
+        "operationId": "createWebhook",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookWithUrl"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
           }
         ]
       }
@@ -5200,6 +5460,112 @@
           {
             "session": []
           }
+        ]
+      }
+    },
+    "/v1/hooks/{token}": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Receive a webhook delivery. Public: the capability token in the path is the credential.",
+        "operationId": "receiveWebhook",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Webhook capability token (auw_…)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Any payload up to 1 MiB",
+          "content": {
+            "*/*": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HookAccepted"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {}
         ]
       }
     },
@@ -8428,6 +8794,293 @@
         ]
       }
     },
+    "/v1/schedules/{id}": {
+      "get": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Get one schedule.",
+        "operationId": "getSchedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Schedule id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Schedule"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Delete a schedule and its run log.",
+        "operationId": "deleteSchedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Schedule id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Update a schedule; `enabled: true` re-enables and clears the failure count.",
+        "operationId": "updateSchedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Schedule id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateScheduleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Schedule"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/schedules/{id}/run-now": {
+      "post": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Fire the schedule now, outside its cadence; 409 `schedule_busy` while a run is active.",
+        "operationId": "runScheduleNow",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Schedule id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleRun"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/schedules/{id}/runs": {
+      "get": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Recent runs of a schedule, newest first.",
+        "operationId": "listScheduleRuns",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Schedule id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (default 50, max 200).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ScheduleRun"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/secret-stores": {
       "get": {
         "tags": [
@@ -9504,6 +10157,283 @@
           },
           "409": {
             "description": "turn_finished",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/webhooks/{id}": {
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Get one webhook (never includes the URL token or the verification secret).",
+        "operationId": "getWebhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Webhook"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Delete a webhook and its delivery log.",
+        "operationId": "deleteWebhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Update a webhook; `enabled: true` re-enables and clears the failure count.",
+        "operationId": "updateWebhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWebhookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Webhook"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/webhooks/{id}/deliveries": {
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Recent deliveries, newest first.",
+        "operationId": "listWebhookDeliveries",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (default 50, max 200).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_WebhookDelivery"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/webhooks/{id}/rotate": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Replace the capability token; the old URL stops working at once. The new URL is shown once.",
+        "operationId": "rotateWebhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookWithUrl"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -13312,6 +14242,46 @@
           }
         }
       },
+      "CreateScheduleRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "prompt",
+          "cron"
+        ],
+        "properties": {
+          "cron": {
+            "type": "string",
+            "description": "5-field cron expression (minimum interval 5 minutes)."
+          },
+          "gate_command": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "gate_description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "IANA timezone; defaults to the workspace timezone."
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateSecretRequest": {
         "type": "object",
         "required": [
@@ -13422,6 +14392,32 @@
           },
           "publisher": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateWebhookRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "instructions"
+        ],
+        "properties": {
+          "instructions": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "verification": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VerificationInput"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -14057,6 +15053,18 @@
             "items": {
               "$ref": "#/components/schemas/SecretGrant"
             }
+          }
+        }
+      },
+      "HookAccepted": {
+        "type": "object",
+        "required": [
+          "delivery_id"
+        ],
+        "properties": {
+          "delivery_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -16972,6 +17980,189 @@
           }
         }
       },
+      "Page_Schedule": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "agent_id",
+                "name",
+                "prompt",
+                "cron",
+                "timezone",
+                "enabled",
+                "consecutive_failures",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "agent_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "consecutive_failures": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "created_by": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ScheduleCreator"
+                    }
+                  ]
+                },
+                "cron": {
+                  "type": "string",
+                  "description": "5-field cron expression."
+                },
+                "disabled_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "`user` | `authorization` | `failures` when disabled."
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "gate_command": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "gate_description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "last_fired_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "next_fire_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "origin_conversation_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "prompt": {
+                  "type": "string"
+                },
+                "timezone": {
+                  "type": "string",
+                  "description": "IANA timezone name."
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_ScheduleRun": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "schedule_id",
+                "scheduled_for",
+                "fired_at",
+                "outcome",
+                "created_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "fired_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "outcome": {
+                  "type": "string",
+                  "description": "`fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced`."
+                },
+                "schedule_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "scheduled_for": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "The run log stores the fire instant only; this equals `fired_at`."
+                },
+                "turn_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_Secret": {
         "type": "object",
         "required": [
@@ -17247,6 +18438,147 @@
                     "null"
                   ],
                   "format": "date-time"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_Webhook": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "agent_id",
+                "name",
+                "instructions",
+                "verification",
+                "enabled",
+                "url_prefix",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "agent_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "created_by": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WebhookCreator"
+                    }
+                  ]
+                },
+                "disabled_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "`user` | `authorization` | `failures` when disabled."
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "instructions": {
+                  "type": "string"
+                },
+                "last_delivery_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "url_prefix": {
+                  "type": "string",
+                  "description": "Display prefix of the capability token (the full URL is shown once)."
+                },
+                "verification": {
+                  "$ref": "#/components/schemas/VerificationView"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_WebhookDelivery": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "received_at",
+                "status",
+                "size"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "Also the `delivery_id` returned to the sender."
+                },
+                "received_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "size": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "`accepted` | `rejected_signature` | `rejected_size` | `disabled` | `unauthorized`\n(`duplicate` deliveries are answered with the original id and not logged)."
+                },
+                "turn_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
                 }
               }
             }
@@ -18801,6 +20133,171 @@
           }
         }
       },
+      "Schedule": {
+        "type": "object",
+        "required": [
+          "id",
+          "agent_id",
+          "name",
+          "prompt",
+          "cron",
+          "timezone",
+          "enabled",
+          "consecutive_failures",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "consecutive_failures": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScheduleCreator"
+              }
+            ]
+          },
+          "cron": {
+            "type": "string",
+            "description": "5-field cron expression."
+          },
+          "disabled_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`user` | `authorization` | `failures` when disabled."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "gate_command": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "gate_description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_fired_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_fire_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "origin_conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "IANA timezone name."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ScheduleCreator": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ScheduleRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "schedule_id",
+          "scheduled_for",
+          "fired_at",
+          "outcome",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fired_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced`."
+          },
+          "schedule_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scheduled_for": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The run log stores the fire instant only; this equals `fired_at`."
+          },
+          "turn_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
       "ScopeInfo": {
         "type": "object",
         "required": [
@@ -20079,6 +21576,55 @@
           "block"
         ]
       },
+      "UpdateScheduleRequest": {
+        "type": "object",
+        "properties": {
+          "cron": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "gate_command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` removes the gate."
+          },
+          "gate_description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prompt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "UpdateSkillRequest": {
         "type": "object",
         "properties": {
@@ -20101,6 +21647,41 @@
             ]
           }
         }
+      },
+      "UpdateWebhookRequest": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` re-enables (clears the failure count; the caller becomes the authority anchor)."
+          },
+          "instructions": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verification": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VerificationInput"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "UploadPluginRequest": {
         "type": "object",
@@ -20194,6 +21775,53 @@
           }
         }
       },
+      "VerificationInput": {
+        "type": "object",
+        "description": "Write-only verification settings.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "header": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Header carrying the signature/token (defaults: `X-Signature`, `Authorization`)."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`none` | `hmac_sha256` (hex digest of the raw body) | `bearer`."
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Shared secret; required when choosing a kind (or switching to one). Never returned."
+          }
+        },
+        "additionalProperties": false
+      },
+      "VerificationView": {
+        "type": "object",
+        "description": "Verification as exposed: never contains the secret.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "header": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`none` | `hmac_sha256` | `bearer`."
+          }
+        }
+      },
       "VerifyEmailRequest": {
         "type": "object",
         "required": [
@@ -20223,6 +21851,145 @@
           "inert",
           "overridden_by_org"
         ]
+      },
+      "Webhook": {
+        "type": "object",
+        "required": [
+          "id",
+          "agent_id",
+          "name",
+          "instructions",
+          "verification",
+          "enabled",
+          "url_prefix",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WebhookCreator"
+              }
+            ]
+          },
+          "disabled_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`user` | `authorization` | `failures` when disabled."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "last_delivery_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "url_prefix": {
+            "type": "string",
+            "description": "Display prefix of the capability token (the full URL is shown once)."
+          },
+          "verification": {
+            "$ref": "#/components/schemas/VerificationView"
+          }
+        }
+      },
+      "WebhookCreator": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "required": [
+          "id",
+          "received_at",
+          "status",
+          "size"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Also the `delivery_id` returned to the sender."
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "status": {
+            "type": "string",
+            "description": "`accepted` | `rejected_signature` | `rejected_size` | `disabled` | `unauthorized`\n(`duplicate` deliveries are answered with the original id and not logged)."
+          },
+          "turn_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "WebhookWithUrl": {
+        "type": "object",
+        "description": "Returned by create and rotate: the URL embeds the token and is shown once.",
+        "required": [
+          "webhook",
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "webhook": {
+            "$ref": "#/components/schemas/Webhook"
+          }
+        }
       },
       "WinningCredential": {
         "type": "object",

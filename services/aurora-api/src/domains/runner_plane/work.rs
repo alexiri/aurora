@@ -169,6 +169,8 @@ async fn compute(
     }
     // Arms 4-8 (hosted engine): abort/send-now, home sync, dispatch, steer, stale recovery.
     dispatch::arms(s, &mut tx, runner.id, replica, &mut items, &mut after).await?;
+    // Arm 9 (schedules): claim due schedules and create their turns.
+    crate::domains::schedules::fire::arm9(s, &mut tx).await?;
     tx.commit().await.map_err(DbError::from)?;
     for (conv, turn) in after.flush {
         crate::domains::hosted::lifecycle::flush_deltas(s, conv, turn).await;

@@ -166,7 +166,11 @@ async fn catalogue_lists_available_tools_with_schemas() {
     let r = rig().await;
     let b = r.booted("a1").await;
     let cat = catalogue(r.h.pool(), b.agent).await.unwrap();
-    let names: Vec<&str> = cat.iter().map(|t| t.name.as_str()).collect();
+    let names: Vec<&str> = cat
+        .iter()
+        .map(|t| t.name.as_str())
+        .filter(|n| !n.starts_with("webhook_"))
+        .collect();
     assert_eq!(
         names,
         [
@@ -181,7 +185,11 @@ async fn catalogue_lists_available_tools_with_schemas() {
             "skill_get",
             "skill_create",
             "skill_update",
-            "skill_delete"
+            "skill_delete",
+            "schedule_list",
+            "schedule_create",
+            "schedule_update",
+            "schedule_delete"
         ]
     );
     for t in &cat {

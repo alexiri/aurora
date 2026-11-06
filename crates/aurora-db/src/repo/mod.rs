@@ -27,12 +27,14 @@ pub mod policy;
 pub mod request_log;
 pub mod runners;
 pub mod sandboxes;
+pub mod schedules;
 pub mod secrets;
 pub mod sessions;
 pub mod skills;
 pub mod transcript;
 pub mod turns;
 pub mod users;
+pub mod webhooks;
 pub mod workspaces;
 
 use crate::DbError;

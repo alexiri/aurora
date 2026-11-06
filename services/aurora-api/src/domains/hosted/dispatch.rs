@@ -240,7 +240,7 @@ async fn arm6_dispatch(
                     notices: std::mem::take(&mut notices),
                 },
                 attachments,
-                gate: None,
+                gate: crate::domains::schedules::fire::gate_for_turn(tx, turn.id).await?,
             })),
         ));
     }

@@ -629,6 +629,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List an agent's schedules. */
+        get: operations["listSchedules"];
+        put?: never;
+        /** Create a schedule; the caller becomes its creator (fire-time authority). */
+        post: operations["createSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/skills": {
         parameters: {
             query?: never;
@@ -658,6 +676,24 @@ export interface paths {
         put?: never;
         /** Regenerate the BYO agent token (revokes the previous token and context credentials). */
         post: operations["regenerateAgentToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/webhooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List an agent's webhooks. */
+        get: operations["listWebhooks"];
+        put?: never;
+        /** Create a webhook; the caller becomes its creator (fire-time authority). The URL is shown once. */
+        post: operations["createWebhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1217,6 +1253,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hooks/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Receive a webhook delivery. Public: the capability token in the path is the credential. */
+        post: operations["receiveWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/instance": {
         parameters: {
             query?: never;
@@ -1759,6 +1812,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/schedules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one schedule. */
+        get: operations["getSchedule"];
+        put?: never;
+        post?: never;
+        /** Delete a schedule and its run log. */
+        delete: operations["deleteSchedule"];
+        options?: never;
+        head?: never;
+        /** Update a schedule; `enabled: true` re-enables and clears the failure count. */
+        patch: operations["updateSchedule"];
+        trace?: never;
+    };
+    "/v1/schedules/{id}/run-now": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fire the schedule now, outside its cadence; 409 `schedule_busy` while a run is active. */
+        post: operations["runScheduleNow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/schedules/{id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent runs of a schedule, newest first. */
+        get: operations["listScheduleRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/secret-stores": {
         parameters: {
             query?: never;
@@ -1945,6 +2051,59 @@ export interface paths {
         put?: never;
         /** Ask the harness to move a blocking tool to the background. */
         post: operations["sendNowTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/webhooks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one webhook (never includes the URL token or the verification secret). */
+        get: operations["getWebhook"];
+        put?: never;
+        post?: never;
+        /** Delete a webhook and its delivery log. */
+        delete: operations["deleteWebhook"];
+        options?: never;
+        head?: never;
+        /** Update a webhook; `enabled: true` re-enables and clears the failure count. */
+        patch: operations["updateWebhook"];
+        trace?: never;
+    };
+    "/v1/webhooks/{id}/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent deliveries, newest first. */
+        get: operations["listWebhookDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/webhooks/{id}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Replace the capability token; the old URL stops working at once. The new URL is shown once. */
+        post: operations["rotateWebhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2755,6 +2914,16 @@ export interface components {
             /** @description Unique runner name (1-64 chars). */
             name: string;
         };
+        CreateScheduleRequest: {
+            /** @description 5-field cron expression (minimum interval 5 minutes). */
+            cron: string;
+            gate_command?: string | null;
+            gate_description?: string | null;
+            name: string;
+            prompt: string;
+            /** @description IANA timezone; defaults to the workspace timezone. */
+            timezone?: string | null;
+        };
         CreateSecretRequest: {
             host_pattern?: string | null;
             injection?: null | components["schemas"]["InjectionRecipe"];
@@ -2780,6 +2949,11 @@ export interface components {
             /** @description Base64 ed25519 public key. */
             public_key: string;
             publisher: string;
+        };
+        CreateWebhookRequest: {
+            instructions: string;
+            name: string;
+            verification?: null | components["schemas"]["VerificationInput"];
         };
         CreateWorkspaceRequest: {
             memory_language?: string | null;
@@ -2948,6 +3122,10 @@ export interface components {
         GrantsResponse: {
             connections: components["schemas"]["ConnectionGrant"][];
             secrets: components["schemas"]["SecretGrant"][];
+        };
+        HookAccepted: {
+            /** Format: uuid */
+            delivery_id: string;
         };
         HostClaimConflict: {
             claims: components["schemas"]["HostClaimMember"][];
@@ -3710,6 +3888,61 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_Schedule: {
+            items: {
+                /** Format: uuid */
+                agent_id: string;
+                /** Format: int32 */
+                consecutive_failures: number;
+                /** Format: date-time */
+                created_at: string;
+                created_by?: null | components["schemas"]["ScheduleCreator"];
+                /** @description 5-field cron expression. */
+                cron: string;
+                /** @description `user` | `authorization` | `failures` when disabled. */
+                disabled_reason?: string | null;
+                enabled: boolean;
+                gate_command?: string | null;
+                gate_description?: string | null;
+                /** Format: uuid */
+                id: string;
+                /** Format: date-time */
+                last_fired_at?: string | null;
+                name: string;
+                /** Format: date-time */
+                next_fire_at?: string | null;
+                /** Format: uuid */
+                origin_conversation_id?: string | null;
+                prompt: string;
+                /** @description IANA timezone name. */
+                timezone: string;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_ScheduleRun: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                /** Format: date-time */
+                fired_at: string;
+                /** Format: uuid */
+                id: string;
+                /** @description `fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced`. */
+                outcome: string;
+                /** Format: uuid */
+                schedule_id: string;
+                /**
+                 * Format: date-time
+                 * @description The run log stores the fire instant only; this equals `fired_at`.
+                 */
+                scheduled_for: string;
+                /** Format: uuid */
+                turn_id?: string | null;
+            }[];
+            next_cursor?: string | null;
+        };
         Page_Secret: {
             items: {
                 /** Format: date-time */
@@ -3783,6 +4016,51 @@ export interface components {
                 publisher: string;
                 /** Format: date-time */
                 revoked_at?: string | null;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_Webhook: {
+            items: {
+                /** Format: uuid */
+                agent_id: string;
+                /** Format: date-time */
+                created_at: string;
+                created_by?: null | components["schemas"]["WebhookCreator"];
+                /** @description `user` | `authorization` | `failures` when disabled. */
+                disabled_reason?: string | null;
+                enabled: boolean;
+                /** Format: uuid */
+                id: string;
+                instructions: string;
+                /** Format: date-time */
+                last_delivery_at?: string | null;
+                name: string;
+                /** Format: date-time */
+                updated_at: string;
+                /** @description Display prefix of the capability token (the full URL is shown once). */
+                url_prefix: string;
+                verification: components["schemas"]["VerificationView"];
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_WebhookDelivery: {
+            items: {
+                /**
+                 * Format: uuid
+                 * @description Also the `delivery_id` returned to the sender.
+                 */
+                id: string;
+                /** Format: date-time */
+                received_at: string;
+                /** Format: int32 */
+                size: number;
+                /**
+                 * @description `accepted` | `rejected_signature` | `rejected_size` | `disabled` | `unauthorized`
+                 *     (`duplicate` deliveries are answered with the original id and not logged).
+                 */
+                status: string;
+                /** Format: uuid */
+                turn_id?: string | null;
             }[];
             next_cursor?: string | null;
         };
@@ -4195,6 +4473,60 @@ export interface components {
             /** @description unprovisioned | starting | running | stopping | stopped | failed */
             state: string;
         };
+        Schedule: {
+            /** Format: uuid */
+            agent_id: string;
+            /** Format: int32 */
+            consecutive_failures: number;
+            /** Format: date-time */
+            created_at: string;
+            created_by?: null | components["schemas"]["ScheduleCreator"];
+            /** @description 5-field cron expression. */
+            cron: string;
+            /** @description `user` | `authorization` | `failures` when disabled. */
+            disabled_reason?: string | null;
+            enabled: boolean;
+            gate_command?: string | null;
+            gate_description?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_fired_at?: string | null;
+            name: string;
+            /** Format: date-time */
+            next_fire_at?: string | null;
+            /** Format: uuid */
+            origin_conversation_id?: string | null;
+            prompt: string;
+            /** @description IANA timezone name. */
+            timezone: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ScheduleCreator: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+        };
+        ScheduleRun: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            fired_at: string;
+            /** Format: uuid */
+            id: string;
+            /** @description `fired` | `gated_quiet` | `gate_failed` | `skipped_unauthorized` | `coalesced`. */
+            outcome: string;
+            /** Format: uuid */
+            schedule_id: string;
+            /**
+             * Format: date-time
+             * @description The run log stores the fire instant only; this equals `fired_at`.
+             */
+            scheduled_for: string;
+            /** Format: uuid */
+            turn_id?: string | null;
+        };
         ScopeInfo: {
             /** @description `read` | `write`. */
             access: string;
@@ -4525,10 +4857,27 @@ export interface components {
         };
         /** @enum {string} */
         UncredentialedDefault: "none" | "block";
+        UpdateScheduleRequest: {
+            cron?: string | null;
+            enabled?: boolean | null;
+            /** @description `null` removes the gate. */
+            gate_command?: string | null;
+            gate_description?: string | null;
+            name?: string | null;
+            prompt?: string | null;
+            timezone?: string | null;
+        };
         UpdateSkillRequest: {
             body?: string | null;
             description?: string | null;
             enabled?: boolean | null;
+        };
+        UpdateWebhookRequest: {
+            /** @description `true` re-enables (clears the failure count; the caller becomes the authority anchor). */
+            enabled?: boolean | null;
+            instructions?: string | null;
+            name?: string | null;
+            verification?: null | components["schemas"]["VerificationInput"];
         };
         /** @description `multipart/form-data` body of the upload route. */
         UploadPluginRequest: {
@@ -4562,6 +4911,21 @@ export interface components {
         UserResponse: {
             user: components["schemas"]["User"];
         };
+        /** @description Write-only verification settings. */
+        VerificationInput: {
+            /** @description Header carrying the signature/token (defaults: `X-Signature`, `Authorization`). */
+            header?: string | null;
+            /** @description `none` | `hmac_sha256` (hex digest of the raw body) | `bearer`. */
+            kind: string;
+            /** @description Shared secret; required when choosing a kind (or switching to one). Never returned. */
+            secret?: string | null;
+        };
+        /** @description Verification as exposed: never contains the secret. */
+        VerificationView: {
+            header?: string | null;
+            /** @description `none` | `hmac_sha256` | `bearer`. */
+            kind: string;
+        };
         VerifyEmailRequest: {
             token: string;
         };
@@ -4570,6 +4934,55 @@ export interface components {
         };
         /** @enum {string} */
         WarningCode: "shadowed" | "inert" | "overridden_by_org";
+        Webhook: {
+            /** Format: uuid */
+            agent_id: string;
+            /** Format: date-time */
+            created_at: string;
+            created_by?: null | components["schemas"]["WebhookCreator"];
+            /** @description `user` | `authorization` | `failures` when disabled. */
+            disabled_reason?: string | null;
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            instructions: string;
+            /** Format: date-time */
+            last_delivery_at?: string | null;
+            name: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Display prefix of the capability token (the full URL is shown once). */
+            url_prefix: string;
+            verification: components["schemas"]["VerificationView"];
+        };
+        WebhookCreator: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+        };
+        WebhookDelivery: {
+            /**
+             * Format: uuid
+             * @description Also the `delivery_id` returned to the sender.
+             */
+            id: string;
+            /** Format: date-time */
+            received_at: string;
+            /** Format: int32 */
+            size: number;
+            /**
+             * @description `accepted` | `rejected_signature` | `rejected_size` | `disabled` | `unauthorized`
+             *     (`duplicate` deliveries are answered with the original id and not logged).
+             */
+            status: string;
+            /** Format: uuid */
+            turn_id?: string | null;
+        };
+        /** @description Returned by create and rotate: the URL embeds the token and is shown once. */
+        WebhookWithUrl: {
+            url: string;
+            webhook: components["schemas"]["Webhook"];
+        };
         WinningCredential: {
             /** Format: uuid */
             id: string;
@@ -6614,6 +7027,86 @@ export interface operations {
             };
         };
     };
+    listSchedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Schedule"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateScheduleRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listAgentSkills: {
         parameters: {
             query?: never;
@@ -6726,6 +7219,86 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWebhooks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Webhook"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWebhookRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookWithUrl"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8010,6 +8583,81 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InstanceGovernance"];
+                };
+            };
+        };
+    };
+    receiveWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Webhook capability token (auw_…) */
+                token: string;
+            };
+            cookie?: never;
+        };
+        /** @description Any payload up to 1 MiB */
+        requestBody: {
+            content: {
+                "*/*": string;
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HookAccepted"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -10049,6 +10697,178 @@ export interface operations {
             };
         };
     };
+    getSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Schedule id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Schedule id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    updateSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Schedule id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateScheduleRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    runScheduleNow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Schedule id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRun"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listScheduleRuns: {
+        parameters: {
+            query?: {
+                /** @description Page size (default 50, max 200). */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Schedule id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_ScheduleRun"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listSecretStores: {
         parameters: {
             query?: never;
@@ -10773,6 +11593,170 @@ export interface operations {
             };
             /** @description turn_finished */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Webhook id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Webhook"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Webhook id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    updateWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Webhook id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateWebhookRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Webhook"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWebhookDeliveries: {
+        parameters: {
+            query?: {
+                /** @description Page size (default 50, max 200). */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                /** @description Webhook id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_WebhookDelivery"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    rotateWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Webhook id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookWithUrl"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

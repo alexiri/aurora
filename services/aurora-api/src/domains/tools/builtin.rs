@@ -8,6 +8,8 @@ pub fn tools() -> Vec<Box<dyn PlatformTool>> {
     let mut v: Vec<Box<dyn PlatformTool>> = vec![Box::new(ListAgents), Box::new(ListApps)];
     v.extend(super::memory::tools());
     v.extend(super::skills::tools());
+    v.extend(super::webhooks::tools());
+    v.extend(super::schedules::tools());
     v
 }
 

@@ -31,6 +31,8 @@ pub async fn finish(
     for id in ids {
         credentials::notify_gateway_invalidate(&mut *conn, "credential", id).await?;
     }
+    crate::domains::schedules::fire::on_turn_finished(conn, &row).await?;
+    crate::domains::webhooks::on_turn_finished(conn, &row).await?;
     Ok(Some(row))
 }
 

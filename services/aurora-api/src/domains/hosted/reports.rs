@@ -179,6 +179,22 @@ pub async fn apply(
             res(r, ReportStatus::Applied, None)
         }
         ReportBody::WatchFired(w) => watch_fired(tx, facts, r, &w.watch_id, &w.detail).await?,
+        ReportBody::GateResult(g) => {
+            use crate::domains::schedules::fire::{GateApplied, gate_result};
+            match gate_result(
+                tx,
+                facts.agent_id,
+                g.turn_id,
+                &g.outcome,
+                g.output.as_deref(),
+            )
+            .await?
+            {
+                GateApplied::Applied => res(r, ReportStatus::Applied, None),
+                GateApplied::Duplicate => res(r, ReportStatus::Duplicate, None),
+                GateApplied::Invalid(d) => res(r, ReportStatus::Invalid, Some(d)),
+            }
+        }
         _ => res(r, ReportStatus::Invalid, Some("not_implemented")),
     };
     Ok(Some(out))

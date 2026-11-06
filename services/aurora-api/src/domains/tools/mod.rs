@@ -8,8 +8,10 @@
 mod builtin;
 mod memory;
 mod registry;
+mod schedules;
 pub mod service;
 mod skills;
+mod webhooks;
 
 pub use registry::{
     PlatformTool, Registry, ToolCallContext, ToolContext, ToolError, catalogue, registry,
