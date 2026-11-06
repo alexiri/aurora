@@ -12,6 +12,9 @@ import { ChatTab } from "./chat-tab";
 import { ComputerTab } from "./computer-tab";
 import { ConnectTab } from "./connect-tab";
 import { DeleteZone } from "./delete-zone";
+import { MemoryTab } from "@/components/memory/memory-tab";
+import { SkillsTab } from "@/components/skills/skills-tab";
+
 import { InstructionsTab } from "./instructions-tab";
 
 export function AgentPage() {
@@ -21,7 +24,7 @@ export function AgentPage() {
   const wsId = resolved.data?.workspace?.id;
   const agents = useAgents(wsId);
   const workspace = useWorkspace(wsId);
-  const [tab, setTab] = useState<"chat" | "instructions" | "access" | "connect" | "computer">("instructions");
+  const [tab, setTab] = useState<"chat" | "instructions" | "access" | "connect" | "computer" | "memory" | "skills">("instructions");
 
   if (resolved.isPending || (wsId && agents.isPending)) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
@@ -33,6 +36,12 @@ export function AgentPage() {
   const tabs = [
     ...(byo ? [] : [{ id: "chat" as const, label: "Chat" }]),
     { id: "instructions" as const, label: "Instructions" },
+    ...(byo
+      ? []
+      : [
+          { id: "memory" as const, label: "Memory" },
+          { id: "skills" as const, label: "Skills" },
+        ]),
     { id: "access" as const, label: "Access" },
     ...(byo
       ? [{ id: "connect" as const, label: "Computer: Connect" }]
@@ -65,6 +74,8 @@ export function AgentPage() {
       </div>
       <div role="tabpanel" id="agent-panel" aria-labelledby={`tab-${tab}`} className="pt-2">
         {tab === "chat" && !byo ? <ChatTab agentId={agent.id} wsId={wsId!} base={`/o/${org}/w/${ws}`} /> : null}
+        {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} memoryLanguage={workspace.data?.memory_language} /> : null}
+        {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} /> : null}
         {tab === "computer" && !byo ? <ComputerTab agentId={agent.id} /> : null}
         {tab === "instructions" ? (
           <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} />

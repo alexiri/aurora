@@ -114,6 +114,7 @@ function UserMenu() {
 
 const ORG_LINKS = [
   { path: "policy", label: "Policy" },
+  { path: "skills", label: "Skills" },
   { path: "members", label: "Members" },
   { path: "api-keys", label: "API keys" },
   { path: "audit", label: "Audit log" },
