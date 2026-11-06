@@ -139,6 +139,21 @@ pub struct FilePart {
     pub data_b64: String,
 }
 
+/// One chunk of an inbound attachment (decision S-11). Frames of one `(turn_id, attachment_id)` are
+/// sent in `index` order, `last` on the final one; `size` and `sha256` describe the whole file and
+/// repeat on every frame. `filename` is untrusted (the supervisor sanitizes it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FileIn {
+    pub turn_id: Uuid,
+    pub attachment_id: Uuid,
+    pub filename: String,
+    pub index: u32,
+    pub last: bool,
+    pub size: u64,
+    pub sha256: String,
+    pub data_b64: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FileCommit {
     pub upload_id: String,
@@ -164,6 +179,7 @@ tagged_open! {
         ToolResult(ToolResult) = "tool.result",
         MemoryWriteResult(MemoryWriteResult) = "memory.write.result",
         FileResult(FileResult) = "file.result",
+        FileIn(FileIn) = "file.in",
         Shutdown(ShutdownBody) = "shutdown",
         Ack(Empty) = "ack",
     }
@@ -210,6 +226,58 @@ impl Validate for FilePart {
     }
 }
 
+impl Validate for FileIn {
+    fn validate(&self) -> Result<(), ValidationError> {
+        let bad = |reason| ValidationError::Invalid {
+            field: "file.in",
+            reason,
+        };
+        if self.filename.is_empty() {
+            return Err(bad("filename must not be empty"));
+        }
+        check_chars("filename", &self.filename, 255)?;
+        if self.sha256.len() != 64 || !self.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(ValidationError::Invalid {
+                field: "sha256",
+                reason: "must be 64 hex characters",
+            });
+        }
+        check_max(
+            "size",
+            self.size as usize,
+            limits::ATTACH_IN_FILE_MAX as usize,
+        )?;
+        if !self.data_b64.len().is_multiple_of(4) {
+            return Err(bad("data_b64 is not padded standard base64"));
+        }
+        let decoded = b64_decoded_len(&self.data_b64);
+        check_max("data_b64 (decoded)", decoded, MAX_FILE_PART_DECODED)?;
+        if decoded as u64 > self.size {
+            return Err(bad("chunk is larger than the declared size"));
+        }
+        // An empty file is exactly one empty last chunk; any other chunk carries data, so the
+        // index cannot exceed the size.
+        if self.size == 0 {
+            if self.index != 0 || !self.last || decoded != 0 {
+                return Err(bad("an empty file is a single empty last chunk"));
+            }
+        } else if decoded == 0 {
+            return Err(bad("empty chunk of a non-empty file"));
+        }
+        if u64::from(self.index) >= self.size.max(1) {
+            return Err(bad("index exceeds the declared size"));
+        }
+        // A single chunk that is last at index 0 must be the whole file.
+        if self.last && self.index == 0 && decoded as u64 != self.size {
+            return Err(bad("single-chunk file does not match the declared size"));
+        }
+        if !self.last && decoded as u64 >= self.size {
+            return Err(bad("non-last chunk already covers the declared size"));
+        }
+        Ok(())
+    }
+}
+
 impl Validate for FileCommit {
     fn validate(&self) -> Result<(), ValidationError> {
         check_chars("upload_id", &self.upload_id, 128)?;
@@ -235,6 +303,7 @@ impl Validate for RunnerToSupervisor {
     fn validate(&self) -> Result<(), ValidationError> {
         match self {
             Self::TurnDeliver(v) => v.validate(),
+            Self::FileIn(v) => v.validate(),
             Self::TurnMessage(v) => check_chars("text", &v.text, limits::TURN_TEXT_MAX),
             Self::TurnNotice(v) => check_chars("text", &v.text, limits::TURN_TEXT_MAX),
             Self::HomeSync(v) => v.validate(),

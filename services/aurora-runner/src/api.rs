@@ -265,6 +265,69 @@ impl ApiClient {
         Ok(r)
     }
 
+    /// Download an inbound attachment (`GET /attachments/{id}`, decision S-11). Retries transient
+    /// failures; the body is read incrementally and refused once it passes `max_bytes`, so a lying
+    /// or oversized response never fills memory.
+    pub async fn download_attachment(
+        &self,
+        id: Uuid,
+        max_bytes: u64,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, ApiError> {
+        let mut attempt = 0;
+        loop {
+            match tokio::time::timeout(timeout, self.download_once(id, max_bytes)).await {
+                Ok(Ok(bytes)) => return Ok(bytes),
+                Ok(Err(e)) if e.retryable() && attempt + 1 < self.retry.attempts => {
+                    tracing::warn!(attachment_id = %id, attempt, error = %e, "attachment download failed; retrying");
+                    tokio::time::sleep(self.retry.delay(attempt)).await;
+                    attempt += 1;
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_) => return Err(ApiError::Transport("attachment download timed out".into())),
+            }
+        }
+    }
+
+    async fn download_once(&self, id: Uuid, max_bytes: u64) -> Result<Vec<u8>, ApiError> {
+        let mut rb = self
+            .http
+            .get(format!("{}/attachments/{id}", self.base))
+            .bearer_auth(&self.token)
+            .header(aurora_protocol::version::HEADER, "runner/1");
+        if let Some(r) = self.replica_id() {
+            rb = rb.header(HDR_REPLICA, r.to_string());
+        }
+        let mut resp = rb
+            .send()
+            .await
+            .map_err(|e| ApiError::Transport(e.without_url().to_string()))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.bytes().await.unwrap_or_default();
+            return Err(ApiError::Status {
+                status: status.as_u16(),
+                body: String::from_utf8_lossy(&body).chars().take(200).collect(),
+            });
+        }
+        let too_large = || ApiError::Decode(format!("attachment exceeds {max_bytes} bytes"));
+        if resp.content_length().is_some_and(|n| n > max_bytes) {
+            return Err(too_large());
+        }
+        let mut out = Vec::new();
+        while let Some(chunk) = resp
+            .chunk()
+            .await
+            .map_err(|e| ApiError::Transport(e.without_url().to_string()))?
+        {
+            if (out.len() + chunk.len()) as u64 > max_bytes {
+                return Err(too_large());
+            }
+            out.extend_from_slice(&chunk);
+        }
+        Ok(out)
+    }
+
     /// Upload an outbound file; metadata travels in headers, the body is the raw bytes.
     pub async fn upload_attachment(
         &self,

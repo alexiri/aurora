@@ -98,6 +98,7 @@ impl Runner {
         let api = Arc::new(ApiClient::new(&s.api_url, &s.token, s.retry)?);
         let caps = self.backend.capabilities();
         let max = caps.max_sandboxes;
+        let max_attachment_bytes = caps.max_attachment_bytes;
         let reg = RegisterRequest {
             version: s.version.clone(),
             backend: self.backend.id().to_owned(),
@@ -129,6 +130,7 @@ impl Runner {
             sink.clone(),
             s.executor.clone(),
         );
+        exec.set_inbound_api(api.clone(), max_attachment_bytes);
         if let Ok(objs) = self.backend.list_managed().await {
             let rid = registered.runner_id.to_string();
             exec.seed_running(

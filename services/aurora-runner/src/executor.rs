@@ -5,16 +5,27 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use aurora_core::limits::ATTACH_IN_FILE_MAX;
+use aurora_protocol::runner::AttachmentRef;
 use aurora_protocol::runner::{
     NAMESPACE_AURORA_REPORT, ReportBody, SandboxStart, SandboxState, SandboxStatus, SandboxStop,
     StopReason, WorkItem, WorkItemBody,
 };
+use aurora_protocol::supervisor::{FileIn, MAX_FILE_PART_DECODED};
+use base64::Engine as _;
+use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
+use crate::api::ApiClient;
 use crate::backend::{Backend, ContainerRef, HoldCallback, StartRequest};
-use crate::hub::{ChannelHub, Frame};
+use crate::hub::{ChannelHub, Frame, HubError};
 use crate::reporter::{ReportSink, report};
+
+/// Time allowed for downloading one inbound attachment (all retries included).
+const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long `file.in` frames may wait for the supervisor to acknowledge earlier ones.
+const ATTACHMENT_BACKLOG_WAIT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub struct ExecutorSettings {
@@ -41,7 +52,16 @@ struct Queues {
     running: HashSet<Uuid>,
 }
 
+/// What the executor needs to fetch inbound attachments (set once the runner has registered).
+#[derive(Clone)]
+struct Inbound {
+    api: Arc<ApiClient>,
+    /// Per-file download cap.
+    max_bytes: u64,
+}
+
 struct Inner {
+    inbound: Mutex<Option<Inbound>>,
     backend: Arc<dyn Backend>,
     hub: Arc<dyn ChannelHub>,
     sink: ReportSink,
@@ -103,6 +123,7 @@ impl Executor {
         settings: ExecutorSettings,
     ) -> Self {
         Self(Arc::new(Inner {
+            inbound: Mutex::new(None),
             permits: Semaphore::new(settings.max_concurrency.max(1)),
             backend,
             hub,
@@ -117,6 +138,18 @@ impl Executor {
             .q
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Enables inbound attachment delivery (S-11). Each download is capped at
+    /// `max_attachment_bytes` (the runner's advertised capability), further bounded by the
+    /// protocol's per-file inbound limit. Without an API client `turn.deliver` is forwarded as is.
+    pub fn set_inbound_api(&self, api: Arc<ApiClient>, max_attachment_bytes: u64) {
+        let max_bytes = max_attachment_bytes.min(ATTACH_IN_FILE_MAX);
+        *self
+            .0
+            .inbound
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Inbound { api, max_bytes });
     }
 
     /// Sandboxes this replica currently believes to be running.
@@ -334,6 +367,11 @@ impl Executor {
             tracing::warn!(%kind, "unknown work item kind skipped");
             return;
         }
+        // Channel order is seq order: every `file.in` frame precedes the `turn.deliver` it belongs to.
+        if let WorkItemBody::TurnDeliver(d) = &body {
+            self.deliver_attachments(sandbox, d.turn_id, &d.attachments)
+                .await;
+        }
         if let Err(e) = self
             .0
             .hub
@@ -347,6 +385,106 @@ impl Executor {
             .await
         {
             tracing::warn!(%sandbox, %kind, error = %e, "work item not delivered");
+        }
+    }
+}
+
+/// Why an attachment could not be streamed. The turn is delivered regardless.
+#[derive(Debug)]
+enum InboundError {
+    Download(crate::api::ApiError),
+    Channel(HubError),
+}
+
+impl Executor {
+    /// Downloads each attachment and streams it to the supervisor as `file.in` frames. A failure
+    /// is logged (never the contents) and skipped: the supervisor reports a missing file to the
+    /// model when the turn starts.
+    async fn deliver_attachments(&self, sandbox: Uuid, turn_id: Uuid, list: &[AttachmentRef]) {
+        let inbound = self
+            .0
+            .inbound
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let Some(inbound) = inbound else { return };
+        for a in list
+            .iter()
+            .take(aurora_protocol::runner::MAX_TURN_ATTACHMENTS)
+        {
+            match self.stream_attachment(&inbound, sandbox, turn_id, a).await {
+                Ok(n) => {
+                    tracing::info!(%sandbox, %turn_id, attachment_id = %a.attachment_id, bytes = n, "inbound attachment delivered");
+                }
+                Err(InboundError::Channel(e)) => {
+                    tracing::warn!(%sandbox, %turn_id, attachment_id = %a.attachment_id, error = %e, "inbound attachment not delivered");
+                    return; // the channel is gone; later files would fail the same way
+                }
+                Err(InboundError::Download(e)) => {
+                    tracing::warn!(%sandbox, %turn_id, attachment_id = %a.attachment_id, error = %e, "inbound attachment download failed");
+                }
+            }
+        }
+    }
+
+    async fn stream_attachment(
+        &self,
+        inbound: &Inbound,
+        sandbox: Uuid,
+        turn_id: Uuid,
+        a: &AttachmentRef,
+    ) -> Result<usize, InboundError> {
+        let bytes = inbound
+            .api
+            .download_attachment(a.attachment_id, inbound.max_bytes, ATTACHMENT_TIMEOUT)
+            .await
+            .map_err(InboundError::Download)?;
+        let sha256 = hex::encode(Sha256::digest(&bytes));
+        let size = bytes.len() as u64;
+        let mut chunks: Vec<&[u8]> = bytes.chunks(MAX_FILE_PART_DECODED).collect();
+        if chunks.is_empty() {
+            chunks.push(&[]); // an empty file is one empty last chunk
+        }
+        let count = chunks.len();
+        for (index, chunk) in chunks.into_iter().enumerate() {
+            let frame = FileIn {
+                turn_id,
+                attachment_id: a.attachment_id,
+                filename: a.filename.clone(),
+                index: u32::try_from(index).unwrap_or(u32::MAX),
+                last: index + 1 == count,
+                size,
+                sha256: sha256.clone(),
+                data_b64: base64::engine::general_purpose::STANDARD.encode(chunk),
+            };
+            let body = serde_json::to_value(&frame)
+                .map_err(|_| InboundError::Channel(HubError::TooLarge))?;
+            self.send_with_backpressure(sandbox, "file.in", body)
+                .await?;
+        }
+        Ok(bytes.len())
+    }
+
+    /// The hub bounds unacknowledged bytes; wait for the supervisor's acks instead of failing.
+    async fn send_with_backpressure(
+        &self,
+        sandbox: Uuid,
+        kind: &str,
+        body: serde_json::Value,
+    ) -> Result<(), InboundError> {
+        let deadline = tokio::time::Instant::now() + ATTACHMENT_BACKLOG_WAIT;
+        loop {
+            let frame = Frame {
+                kind: kind.to_owned(),
+                body: body.clone(),
+            };
+            match self.0.hub.send(sandbox, frame).await {
+                Ok(()) => return Ok(()),
+                Err(HubError::Backlog) if tokio::time::Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(e) => return Err(InboundError::Channel(e)),
+            }
         }
     }
 }

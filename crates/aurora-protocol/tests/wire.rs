@@ -490,3 +490,105 @@ fn secrets_not_in_debug() -> R {
     assert!(!format!("{t:?}").contains("auc_secret"));
     Ok(())
 }
+
+#[test]
+fn file_in_roundtrip_and_validation() -> R {
+    use aurora_protocol::supervisor::{FileIn, MAX_FILE_PART_DECODED};
+    let ok = json!({"turn_id": U1, "attachment_id": U2, "filename": "a b.txt", "index": 0,
+        "last": true, "size": 3, "sha256": "a".repeat(64), "data_b64": "QUJD"});
+    let f: Frame<RunnerToSupervisor> =
+        rt(json!({"seq": 1, "ack": 0, "kind": "file.in", "body": ok}))?;
+    assert!(matches!(f.msg, RunnerToSupervisor::FileIn(_)));
+    f.validate()?;
+
+    let base = FileIn {
+        turn_id: uuid::Uuid::nil(),
+        attachment_id: uuid::Uuid::nil(),
+        filename: "f".into(),
+        index: 0,
+        last: true,
+        size: 3,
+        sha256: "a".repeat(64),
+        data_b64: "QUJD".into(),
+    };
+    assert!(base.validate().is_ok());
+    // Empty file: one empty last chunk.
+    let empty = FileIn {
+        size: 0,
+        data_b64: String::new(),
+        ..base.clone()
+    };
+    assert!(empty.validate().is_ok());
+    // A full-size middle chunk fits WS_FRAME_MAX.
+    let full = Frame {
+        seq: 1,
+        ack: 0,
+        msg: RunnerToSupervisor::FileIn(FileIn {
+            index: 0,
+            last: false,
+            size: 10 * 1024 * 1024,
+            data_b64: "A".repeat(MAX_FILE_PART_DECODED / 3 * 4),
+            ..base.clone()
+        }),
+    };
+    assert!(full.validate().is_ok());
+    let bad = [
+        FileIn {
+            data_b64: "A".repeat((MAX_FILE_PART_DECODED / 3 + 1) * 4),
+            size: 10 * 1024 * 1024,
+            last: false,
+            ..base.clone()
+        },
+        FileIn {
+            filename: String::new(),
+            ..base.clone()
+        },
+        FileIn {
+            filename: "x".repeat(256),
+            ..base.clone()
+        },
+        FileIn {
+            sha256: "zz".into(),
+            ..base.clone()
+        },
+        FileIn {
+            size: 11 * 1024 * 1024,
+            ..base.clone()
+        },
+        // Single chunk shorter than the declared size.
+        FileIn {
+            size: 9,
+            ..base.clone()
+        },
+        // Not last, yet already complete.
+        FileIn {
+            last: false,
+            ..base.clone()
+        },
+        // Empty chunk of a non-empty file.
+        FileIn {
+            data_b64: String::new(),
+            ..base.clone()
+        },
+        // Index beyond the size.
+        FileIn {
+            index: 3,
+            ..base.clone()
+        },
+        // Empty file declared not last.
+        FileIn {
+            size: 0,
+            last: false,
+            data_b64: String::new(),
+            ..base.clone()
+        },
+        FileIn {
+            data_b64: "QUJ".into(),
+            ..base.clone()
+        },
+    ];
+    for (i, b) in bad.iter().enumerate() {
+        assert!(b.validate().is_err(), "case {i}");
+    }
+    Ok(())
+}
