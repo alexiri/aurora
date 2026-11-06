@@ -121,6 +121,8 @@ pub async fn update<'e, E: PgExecutor<'e>>(
 ) -> Result<WorkspaceRow, DbError> {
     Ok(sqlx::query_as(&format!(
         "UPDATE workspaces SET name = COALESCE($2, name), timezone = COALESCE($3, timezone),
+         home_sync_generation = home_sync_generation
+             + CASE WHEN $4::text IS NOT NULL AND $4::text <> memory_language THEN 1 ELSE 0 END,
          memory_language = COALESCE($4, memory_language), updated_at = now()
          WHERE id = $1 RETURNING {COLS}"
     ))

@@ -3,6 +3,7 @@
 
 use super::boot::{self, BootInput};
 use crate::app::AppState;
+use crate::domains::hosted::dispatch;
 use aurora_core::token::{self, TokenPrefix};
 use aurora_core::{ApiError, limits};
 use aurora_db::DbError;
@@ -102,6 +103,7 @@ async fn compute(
     let default_harness = hosted.default_harness.as_str();
 
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+    let mut after = dispatch::After::default();
     // Arm 1: ownership takeover (the heartbeat itself was stamped by the extractor).
     sandboxes::take_over(&mut tx, runner.id, replica, online_secs()).await?;
 
@@ -130,6 +132,9 @@ async fn compute(
         stops.push(ev);
     }
     let mut items: Vec<WorkItem> = stops.into_iter().filter_map(stop_item).collect();
+
+    // `no_model_key` fails queued turns before any sandbox start is claimed for them.
+    dispatch::sweep_no_model_key(s, &mut tx, &mut after).await?;
 
     // Arm 3: start (capacity decisions serialised per runner).
     sandboxes::lock_runner(&mut tx, runner.id).await?;
@@ -162,7 +167,12 @@ async fn compute(
             }
         }
     }
+    // Arms 4-8 (hosted engine): abort/send-now, home sync, dispatch, steer, stale recovery.
+    dispatch::arms(s, &mut tx, runner.id, replica, &mut items, &mut after).await?;
     tx.commit().await.map_err(DbError::from)?;
+    for (conv, turn) in after.flush {
+        crate::domains::hosted::lifecycle::flush_deltas(s, conv, turn).await;
+    }
     Ok(items)
 }
 

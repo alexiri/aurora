@@ -167,7 +167,23 @@ async fn catalogue_lists_available_tools_with_schemas() {
     let b = r.booted("a1").await;
     let cat = catalogue(r.h.pool(), b.agent).await.unwrap();
     let names: Vec<&str> = cat.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["list_agents", "list_apps"]);
+    assert_eq!(
+        names,
+        [
+            "list_agents",
+            "list_apps",
+            "memory_save",
+            "memory_get",
+            "memory_list",
+            "memory_search",
+            "memory_delete",
+            "skill_list",
+            "skill_get",
+            "skill_create",
+            "skill_update",
+            "skill_delete"
+        ]
+    );
     for t in &cat {
         assert_eq!(t.input_schema["type"], "object");
         assert!(t.description.as_deref().is_some_and(|d| !d.is_empty()));

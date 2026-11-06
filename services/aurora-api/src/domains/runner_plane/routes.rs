@@ -19,7 +19,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .route("/runner/channel/hold", post(hold))
         .route("/runner/channel/release", post(release))
         .route("/runner/tool-calls", post(tool_calls))
-        .route("/runner/memory-writes", post(placeholder))
+        .route("/runner/memory-writes", post(memory_writes))
         .route("/runner/attachments", post(placeholder))
         .route("/runner/attachments/{id}", get(placeholder))
         .route("/runner/sandboxes", get(sandboxes))
@@ -89,6 +89,16 @@ async fn tool_calls(
 ) -> Result<Json<aurora_protocol::tools::ToolResult>, ApiError> {
     Ok(Json(
         crate::domains::tools::service::tool_call(&s, &c.runner, req).await?,
+    ))
+}
+
+async fn memory_writes(
+    c: RunnerCtx,
+    State(s): State<AppState>,
+    Json(req): Json<MemoryWriteRequest>,
+) -> Result<Json<MemoryWriteResponse>, ApiError> {
+    Ok(Json(
+        crate::domains::memory::memory_write(&s, &c.runner, req).await?,
     ))
 }
 

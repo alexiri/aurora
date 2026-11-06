@@ -1,0 +1,359 @@
+use aurora_core::{ApiError, FieldError, limits};
+use aurora_db::DbError;
+use aurora_db::repo::skills::{self as repo, SkillRow};
+use base64::Engine as _;
+use sqlx::{PgConnection, PgPool};
+use uuid::Uuid;
+
+const PATH_MAX_DEPTH: usize = 4;
+const PATH_MAX_LEN: usize = 200;
+
+pub struct FileMeta {
+    pub path: String,
+    pub size: usize,
+    pub executable: bool,
+}
+
+pub struct SkillView {
+    pub row: SkillRow,
+    pub files: Vec<FileMeta>,
+    pub total_size: usize,
+}
+
+pub struct NewSkill<'a> {
+    pub name: &'a str,
+    pub description: &'a str,
+    pub body: &'a str,
+    pub enabled: bool,
+}
+
+#[derive(Default)]
+pub struct Patch<'a> {
+    pub description: Option<&'a str>,
+    pub body: Option<&'a str>,
+    pub enabled: Option<bool>,
+}
+
+fn bad(path: &str, msg: &str) -> ApiError {
+    ApiError::invalid_request("Invalid skill.", vec![FieldError::new(path, msg)])
+}
+
+fn not_found() -> ApiError {
+    ApiError::not_found("Skill not found.")
+}
+
+pub fn validate_name(name: &str) -> Result<(), ApiError> {
+    let ok = !name.is_empty()
+        && name.len() <= limits::SKILL_NAME_MAX
+        && name.split('-').all(|p| {
+            !p.is_empty()
+                && p.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        });
+    if !ok {
+        return Err(bad(
+            "/name",
+            "lowercase letters and digits joined by single hyphens, at most 64 characters",
+        ));
+    }
+    if name.starts_with("aurora-") || name == "aurora" {
+        return Err(bad("/name", "the aurora- prefix is reserved"));
+    }
+    Ok(())
+}
+
+fn validate_description(d: &str) -> Result<(), ApiError> {
+    if d.trim().is_empty() {
+        return Err(bad("/description", "must not be empty"));
+    }
+    if d.contains(['\r', '\n']) {
+        return Err(bad("/description", "must be a single line"));
+    }
+    if d.chars().count() > limits::SKILL_DESCRIPTION_MAX {
+        return Err(bad(
+            "/description",
+            &format!("at most {} characters", limits::SKILL_DESCRIPTION_MAX),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_body(b: &str) -> Result<(), ApiError> {
+    if b.chars().count() > limits::SKILL_BODY_MAX {
+        return Err(bad(
+            "/body",
+            &format!("at most {} characters", limits::SKILL_BODY_MAX),
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_path(path: &str) -> Result<(), ApiError> {
+    let chars_ok = path
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'/' | b'-'));
+    let segs: Vec<&str> = path.split('/').collect();
+    let ok = !path.is_empty()
+        && path.len() <= PATH_MAX_LEN
+        && chars_ok
+        && segs.len() <= PATH_MAX_DEPTH
+        && segs
+            .iter()
+            .all(|s| !s.is_empty() && *s != "." && *s != "..")
+        && !segs
+            .last()
+            .is_some_and(|l| l.eq_ignore_ascii_case("skill.md"));
+    if ok {
+        Ok(())
+    } else {
+        Err(bad(
+            "/path",
+            "relative path of [A-Za-z0-9._/-], depth at most 4, no . or .. segments, \
+             and not named SKILL.md",
+        ))
+    }
+}
+
+/// Characters for text, base64 length for binary content.
+fn content_size(c: &[u8]) -> usize {
+    match std::str::from_utf8(c) {
+        Ok(s) => s.chars().count(),
+        Err(_) => base64::engine::general_purpose::STANDARD.encode(c).len(),
+    }
+}
+
+fn check_total(body: &str, files: &[repo::FileRow]) -> Result<(), ApiError> {
+    let total = body.chars().count()
+        + files
+            .iter()
+            .map(|f| content_size(&f.content))
+            .sum::<usize>();
+    if total > limits::SKILL_TOTAL_MAX {
+        return Err(ApiError::unprocessable(
+            "skill_too_large",
+            format!(
+                "A skill's body and files can total at most {} characters.",
+                limits::SKILL_TOTAL_MAX
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Bumps the sync generation of the agent (agent tier) or of every agent in the org.
+async fn bump(conn: &mut PgConnection, s: &SkillRow) -> Result<(), DbError> {
+    match s.agent_id {
+        Some(a) => repo::bump_agent(conn, a).await,
+        None => repo::bump_org(conn, s.org_id).await,
+    }
+}
+
+fn views(rows: Vec<SkillRow>, files: Vec<repo::FileRow>) -> Vec<SkillView> {
+    rows.into_iter()
+        .map(|row| {
+            let mine: Vec<&repo::FileRow> = files.iter().filter(|f| f.skill_id == row.id).collect();
+            let metas: Vec<FileMeta> = mine
+                .iter()
+                .map(|f| FileMeta {
+                    path: f.path.clone(),
+                    size: content_size(&f.content),
+                    executable: f.executable,
+                })
+                .collect();
+            let total_size = row.body.chars().count() + metas.iter().map(|m| m.size).sum::<usize>();
+            SkillView {
+                row,
+                files: metas,
+                total_size,
+            }
+        })
+        .collect()
+}
+
+async fn view(conn: &mut PgConnection, row: SkillRow) -> Result<SkillView, ApiError> {
+    let files = repo::files(conn, &[row.id]).await?;
+    Ok(views(vec![row], files).remove(0))
+}
+
+async fn view_many(
+    conn: &mut PgConnection,
+    rows: Vec<SkillRow>,
+) -> Result<Vec<SkillView>, ApiError> {
+    let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+    let files = repo::files(conn, &ids).await?;
+    Ok(views(rows, files))
+}
+
+pub async fn list_agent(pool: &PgPool, agent: Uuid) -> Result<Vec<SkillView>, ApiError> {
+    let mut c = pool.acquire().await.map_err(DbError::from)?;
+    let rows = repo::list_agent(&mut c, agent).await?;
+    view_many(&mut c, rows).await
+}
+
+pub async fn list_org(pool: &PgPool, org: Uuid) -> Result<Vec<SkillView>, ApiError> {
+    let mut c = pool.acquire().await.map_err(DbError::from)?;
+    let rows = repo::list_org(&mut c, org).await?;
+    view_many(&mut c, rows).await
+}
+
+/// Raw row lookup (authorization is the caller's job).
+pub async fn row(pool: &PgPool, id: Uuid) -> Result<SkillRow, ApiError> {
+    let mut c = pool.acquire().await.map_err(DbError::from)?;
+    repo::get(&mut c, id).await?.ok_or_else(not_found)
+}
+
+pub async fn get(pool: &PgPool, id: Uuid) -> Result<SkillView, ApiError> {
+    let mut c = pool.acquire().await.map_err(DbError::from)?;
+    let r = repo::get(&mut c, id).await?.ok_or_else(not_found)?;
+    view(&mut c, r).await
+}
+
+pub async fn get_agent_named(
+    pool: &PgPool,
+    agent: Uuid,
+    name: &str,
+) -> Result<SkillView, ApiError> {
+    let mut c = pool.acquire().await.map_err(DbError::from)?;
+    let r = repo::get_agent_named(&mut c, agent, name)
+        .await?
+        .ok_or_else(not_found)?;
+    view(&mut c, r).await
+}
+
+pub async fn get_org_named(pool: &PgPool, org: Uuid, name: &str) -> Result<SkillView, ApiError> {
+    let mut c = pool.acquire().await.map_err(DbError::from)?;
+    let r = repo::get_org_named(&mut c, org, name)
+        .await?
+        .ok_or_else(not_found)?;
+    view(&mut c, r).await
+}
+
+/// Text content of one file (UTF-8 only).
+pub async fn read_file(pool: &PgPool, id: Uuid, path: &str) -> Result<String, ApiError> {
+    let mut c = pool.acquire().await.map_err(DbError::from)?;
+    let f = repo::file(&mut c, id, path)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Skill file not found."))?;
+    String::from_utf8(f.content)
+        .map_err(|_| ApiError::unprocessable("binary_file", "This file is binary."))
+}
+
+pub async fn create(
+    pool: &PgPool,
+    org: Uuid,
+    agent: Option<Uuid>,
+    n: &NewSkill<'_>,
+    created_by: &str,
+) -> Result<SkillView, ApiError> {
+    validate_name(n.name)?;
+    validate_description(n.description)?;
+    validate_body(n.body)?;
+    let mut tx = pool.begin().await.map_err(DbError::from)?;
+    let row = repo::insert(
+        &mut tx,
+        org,
+        agent,
+        n.name,
+        n.description,
+        n.body,
+        n.enabled,
+        created_by,
+    )
+    .await
+    .map_err(|e| match e {
+        DbError::UniqueViolation { .. } => ApiError::conflict(
+            "skill_exists",
+            "A skill with this name already exists in this scope.",
+        ),
+        e => e.into(),
+    })?;
+    bump(&mut tx, &row).await?;
+    let v = view(&mut tx, row).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(v)
+}
+
+pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView, ApiError> {
+    if let Some(d) = p.description {
+        validate_description(d)?;
+    }
+    if let Some(b) = p.body {
+        validate_body(b)?;
+    }
+    let mut tx = pool.begin().await.map_err(DbError::from)?;
+    let cur = repo::get_for_update(&mut tx, id)
+        .await?
+        .ok_or_else(not_found)?;
+    let body = p.body.unwrap_or(&cur.body);
+    if p.body.is_some() {
+        let files = repo::files(&mut tx, &[id]).await?;
+        check_total(body, &files)?;
+    }
+    let row = repo::update(
+        &mut tx,
+        id,
+        p.description.unwrap_or(&cur.description),
+        body,
+        p.enabled.unwrap_or(cur.enabled),
+    )
+    .await?;
+    bump(&mut tx, &row).await?;
+    let v = view(&mut tx, row).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(v)
+}
+
+pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(DbError::from)?;
+    let cur = repo::get_for_update(&mut tx, id)
+        .await?
+        .ok_or_else(not_found)?;
+    repo::delete(&mut tx, id).await?;
+    bump(&mut tx, &cur).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(())
+}
+
+pub async fn put_file(
+    pool: &PgPool,
+    id: Uuid,
+    path: &str,
+    content: &[u8],
+    executable: Option<bool>,
+) -> Result<SkillView, ApiError> {
+    validate_path(path)?;
+    let mut tx = pool.begin().await.map_err(DbError::from)?;
+    let cur = repo::get_for_update(&mut tx, id)
+        .await?
+        .ok_or_else(not_found)?;
+    let mut files = repo::files(&mut tx, &[id]).await?;
+    files.retain(|f| f.path != path);
+    files.push(repo::FileRow {
+        skill_id: id,
+        path: path.to_owned(),
+        content: content.to_vec(),
+        executable: false,
+    });
+    check_total(&cur.body, &files)?;
+    repo::upsert_file(&mut tx, id, path, content, executable).await?;
+    repo::touch(&mut tx, id).await?;
+    bump(&mut tx, &cur).await?;
+    let row = repo::get(&mut tx, id).await?.ok_or_else(not_found)?;
+    let v = view(&mut tx, row).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(v)
+}
+
+pub async fn delete_file(pool: &PgPool, id: Uuid, path: &str) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(DbError::from)?;
+    let cur = repo::get_for_update(&mut tx, id)
+        .await?
+        .ok_or_else(not_found)?;
+    if !repo::delete_file(&mut tx, id, path).await? {
+        return Err(ApiError::not_found("Skill file not found."));
+    }
+    repo::touch(&mut tx, id).await?;
+    bump(&mut tx, &cur).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(())
+}

@@ -5,7 +5,10 @@ use aurora_protocol::tools::{JsonContent, ToolContent};
 use serde_json::{Value, json};
 
 pub fn tools() -> Vec<Box<dyn PlatformTool>> {
-    vec![Box::new(ListAgents), Box::new(ListApps)]
+    let mut v: Vec<Box<dyn PlatformTool>> = vec![Box::new(ListAgents), Box::new(ListApps)];
+    v.extend(super::memory::tools());
+    v.extend(super::skills::tools());
+    v
 }
 
 fn no_args(args: &Value) -> Result<(), ToolError> {

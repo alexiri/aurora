@@ -337,7 +337,7 @@ pub async fn promote_followups(
 ) -> Result<Vec<TurnRow>, ApiError> {
     let mut out = Vec::new();
     for f in turns::joining_of(&mut *conn, parent).await? {
-        if let Some(t) = turns::promote_followup(&mut *conn, f.id).await? {
+        if let Some(t) = promote_one(&mut *conn, &f).await? {
             out.push(t);
         }
     }
@@ -345,6 +345,37 @@ pub async fn promote_followups(
         notify_work(&mut *conn).await?;
     }
     Ok(out)
+}
+
+/// Promote one `joining` follow-up (fenced by `promoted_at`) and append the durable
+/// `turn.queued` of the new turn with `promoted_from` (C-26).
+pub async fn promote_one(
+    conn: &mut PgConnection,
+    f: &TurnRow,
+) -> Result<Option<TurnRow>, ApiError> {
+    let Some(t) = turns::promote_followup(&mut *conn, f.id).await? else {
+        return Ok(None);
+    };
+    let attachments = turns::get(&mut *conn, t.id)
+        .await?
+        .map(|r| r.attachment_ids)
+        .unwrap_or_default();
+    transcript::append_durable_event(
+        &mut *conn,
+        t.conversation_id,
+        Some(t.id),
+        "turn.queued",
+        &json!({
+            "turn_id": t.id,
+            "door": super::dto::door_name(&t.door),
+            "speaker_label": t.speaker_label,
+            "text": clip(&t.text, EVENT_TEXT_MAX_BYTES),
+            "attachments": attachments,
+            "promoted_from": f.id,
+        }),
+    )
+    .await?;
+    Ok(Some(t))
 }
 
 async fn speaker_label(state: &AppState, c: &Caller) -> Result<String, ApiError> {

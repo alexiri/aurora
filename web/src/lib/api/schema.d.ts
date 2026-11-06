@@ -473,6 +473,180 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List an agent's memories (workspace access). */
+        get: operations["listMemories"];
+        put?: never;
+        /** Create a memory; 409 `memory_exists`, 422 `memory_limit_reached`. */
+        post: operations["createMemory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/memories/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search memories in the workspace memory language. */
+        get: operations["searchMemories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/memories/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one memory. */
+        get: operations["getMemory"];
+        /** Replace a memory's title, description and content; creates it when the key is new. */
+        put: operations["putMemory"];
+        post?: never;
+        /** Delete a memory and its revisions. */
+        delete: operations["deleteMemory"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/memories/{key}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore an older revision as a new revision. */
+        post: operations["restoreMemory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/memories/{key}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Revisions, newest first (at most `MEMORY_REVISIONS_KEPT`). */
+        get: operations["listMemoryRevisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/memories/{key}/revisions/{rev}/redact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Redact a non-latest revision's content in place (audited). */
+        post: operations["redactMemoryRevision"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Models selectable for the agent: usable granted keys only, allowed models only. */
+        get: operations["listAgentModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restart the agent's computer; its active turns fail with `agent_restarted`. */
+        post: operations["restartAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/sandbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The agent's sandbox (computer) state. */
+        get: operations["getAgentSandbox"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List an agent's own skills. */
+        get: operations["listAgentSkills"];
+        put?: never;
+        /** Create an agent-tier skill; 409 `skill_exists`. */
+        post: operations["createAgentSkill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/token": {
         parameters: {
             query?: never;
@@ -1532,6 +1706,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{org}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List an organization's skills. */
+        get: operations["listOrgSkills"];
+        put?: never;
+        /** Create an organization-tier skill (owner/admin); 409 `skill_exists`. */
+        post: operations["createOrgSkill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/workspaces": {
         parameters: {
             query?: never;
@@ -1683,6 +1875,43 @@ export interface paths {
         /** Re-verify the key and its origin (`can_own`). */
         post: operations["verifySecret"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one skill with its file metadata. */
+        get: operations["getSkill"];
+        put?: never;
+        post?: never;
+        /** Delete a skill and its files. */
+        delete: operations["deleteSkill"];
+        options?: never;
+        head?: never;
+        /** Update description, body or enabled. The name is immutable. */
+        patch: operations["updateSkill"];
+        trace?: never;
+    };
+    "/v1/skills/{id}/files/{*path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Create or replace a skill file; the request body is the raw file content. */
+        put: operations["putSkillFile"];
+        post?: never;
+        /** Delete one skill file. */
+        delete: operations["deleteSkillFile"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2498,6 +2727,13 @@ export interface components {
             /** @description 1-80 characters. */
             name: string;
         };
+        CreateMemoryRequest: {
+            content: string;
+            description?: string | null;
+            /** @description Immutable kebab-case key, at most 64 characters. */
+            key: string;
+            title?: string | null;
+        };
         CreateOAuthClientRequest: {
             client_key: string;
             /** @description Values for every field the manifest declares, secret ones included (sealed on write). */
@@ -2530,6 +2766,14 @@ export interface components {
             reference?: null | components["schemas"]["SecretReference"];
             /** @description Managed value (exactly one of `value` / `reference`). */
             value?: string | null;
+        };
+        CreateSkillRequest: {
+            body: string;
+            /** @description Single line, at most 500 characters. */
+            description: string;
+            enabled?: boolean | null;
+            /** @description Immutable kebab-case directory name, at most 64 characters; `aurora-*` is reserved. */
+            name: string;
         };
         CreateTrustedKeyRequest: {
             name: string;
@@ -2915,6 +3159,44 @@ export interface components {
         };
         /** @enum {string} */
         MemberStatus: "active" | "suspended";
+        Memory: {
+            content: string;
+            /** Format: date-time */
+            created_at: string;
+            description?: string | null;
+            /** @description `key: line` as shown in the memory index. */
+            index_line: string;
+            key: string;
+            /** Format: int32 */
+            revision: number;
+            title?: string | null;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        MemoryRevision: {
+            /** @description `user` | `agent` | `system`. */
+            author_kind: string;
+            author_label: string;
+            /** @description Null when redacted. */
+            content?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** @description `dashboard` | `api` | `tool` | `harvest` | `restore`. */
+            provenance: string;
+            redacted: boolean;
+            /** Format: int32 */
+            revision: number;
+        };
+        MemorySearchHit: {
+            key: string;
+            /** Format: float */
+            score: number;
+            snippet: string;
+            title?: string | null;
+        };
+        MemorySearchResponse: {
+            items: components["schemas"]["MemorySearchHit"][];
+        };
         /** @description Exactly one of `turn` / `followup` is non-null (C-25). */
         MessageAccepted: {
             followup?: null | components["schemas"]["Followup"];
@@ -2923,6 +3205,16 @@ export interface components {
         ModelItem: {
             display_name?: string | null;
             id: string;
+        };
+        ModelOption: {
+            dialects: string[];
+            display_name?: string | null;
+            endpoint_id: string;
+            model_id: string;
+            provider: string;
+        };
+        ModelOptions: {
+            items: components["schemas"]["ModelOption"][];
         };
         Models: {
             items: components["schemas"]["ModelItem"][];
@@ -3247,6 +3539,40 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_Memory: {
+            items: {
+                content: string;
+                /** Format: date-time */
+                created_at: string;
+                description?: string | null;
+                /** @description `key: line` as shown in the memory index. */
+                index_line: string;
+                key: string;
+                /** Format: int32 */
+                revision: number;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_MemoryRevision: {
+            items: {
+                /** @description `user` | `agent` | `system`. */
+                author_kind: string;
+                author_label: string;
+                /** @description Null when redacted. */
+                content?: string | null;
+                /** Format: date-time */
+                created_at: string;
+                /** @description `dashboard` | `api` | `tool` | `harvest` | `restore`. */
+                provenance: string;
+                redacted: boolean;
+                /** Format: int32 */
+                revision: number;
+            }[];
+            next_cursor?: string | null;
+        };
         Page_OAuthClient: {
             items: {
                 client_key: string;
@@ -3418,6 +3744,31 @@ export interface components {
                 value_version: number;
                 /** Format: uuid */
                 workspace_id?: string | null;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_Skill: {
+            items: {
+                /** Format: uuid */
+                agent_id?: string | null;
+                body: string;
+                /** Format: date-time */
+                created_at: string;
+                description: string;
+                enabled: boolean;
+                /** @description Metadata only; content is fetched per file. */
+                files: components["schemas"]["SkillFile"][];
+                /** Format: uuid */
+                id: string;
+                name: string;
+                /** Format: uuid */
+                org_id: string;
+                /** @description `agent` | `organization`. */
+                scope: string;
+                /** @description Body plus files, in characters (binary counted as base64 length). */
+                total_size: number;
+                /** Format: date-time */
+                updated_at: string;
             }[];
             next_cursor?: string | null;
         };
@@ -3670,6 +4021,12 @@ export interface components {
             /** Format: int64 */
             revision: number;
         };
+        /** @description Full replacement of the mutable fields; creates the memory when the key is new. */
+        PutMemoryRequest: {
+            content: string;
+            description?: string | null;
+            title?: string | null;
+        };
         RateLimit: {
             /** Format: int32 */
             count: number;
@@ -3745,6 +4102,10 @@ export interface components {
             name: string;
             slug: string;
         };
+        RestoreMemoryRequest: {
+            /** Format: int32 */
+            revision: number;
+        };
         RevokedResponse: {
             /** Format: int64 */
             revoked: number;
@@ -3801,6 +4162,38 @@ export interface components {
             runner: components["schemas"]["RunnerSummary"];
             /** @description `aur_…`, shown once. */
             token: string;
+        };
+        SandboxPort: {
+            /** Format: int32 */
+            port: number;
+            protocol: string;
+        };
+        SandboxProcess: {
+            busy: boolean;
+            id: string;
+            name: string;
+            /** Format: date-time */
+            started_at?: string | null;
+            state: string;
+        };
+        SandboxView: {
+            /** Format: uuid */
+            agent_id: string;
+            /** Format: uuid */
+            boot_id?: string | null;
+            failure_code?: string | null;
+            failure_message?: string | null;
+            image?: string | null;
+            keep_awake_reasons: string[];
+            ports: components["schemas"]["SandboxPort"][];
+            processes: components["schemas"]["SandboxProcess"][];
+            restart_to_update: boolean;
+            /** Format: uuid */
+            runner_id?: string | null;
+            /** Format: date-time */
+            started_at?: string | null;
+            /** @description unprovisioned | starting | running | stopping | stopped | failed */
+            state: string;
         };
         ScopeInfo: {
             /** @description `read` | `write`. */
@@ -3934,6 +4327,34 @@ export interface components {
             trace: components["schemas"]["SimTrace"];
             verdict: components["schemas"]["SimVerdict"];
             winning_credential?: null | components["schemas"]["WinningCredential"];
+        };
+        Skill: {
+            /** Format: uuid */
+            agent_id?: string | null;
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            description: string;
+            enabled: boolean;
+            /** @description Metadata only; content is fetched per file. */
+            files: components["schemas"]["SkillFile"][];
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: uuid */
+            org_id: string;
+            /** @description `agent` | `organization`. */
+            scope: string;
+            /** @description Body plus files, in characters (binary counted as base64 length). */
+            total_size: number;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        SkillFile: {
+            executable: boolean;
+            path: string;
+            /** @description Characters for text, base64 length for binary content. */
+            size: number;
         };
         Sourced_String: {
             /** @description `instance` | `org`. */
@@ -4104,6 +4525,11 @@ export interface components {
         };
         /** @enum {string} */
         UncredentialedDefault: "none" | "block";
+        UpdateSkillRequest: {
+            body?: string | null;
+            description?: string | null;
+            enabled?: boolean | null;
+        };
         /** @description `multipart/form-data` body of the upload route. */
         UploadPluginRequest: {
             /**
@@ -5728,6 +6154,537 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listMemories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Memory"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMemoryRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Memory"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    searchMemories: {
+        parameters: {
+            query: {
+                /** @description Search text (websearch syntax). */
+                q: string;
+            };
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemorySearchResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description Memory key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Memory"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description Memory key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutMemoryRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Memory"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description Memory key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    restoreMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description Memory key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreMemoryRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Memory"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listMemoryRevisions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description Memory key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_MemoryRevision"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    redactMemoryRevision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description Memory key */
+                key: string;
+                /** @description Revision number */
+                rev: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redacted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listAgentModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelOptions"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    restartAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAgentSandbox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listAgentSkills: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Skill"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createAgentSkill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSkillRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Skill"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8881,6 +9838,94 @@ export interface operations {
             };
         };
     };
+    listOrgSkills: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Skill"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createOrgSkill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSkillRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Skill"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listWorkspaces: {
         parameters: {
             query?: {
@@ -9423,6 +10468,233 @@ export interface operations {
             };
             /** @description llm_key_invalid | llm_endpoint_unreachable | not_llm_secret */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getSkill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Skill id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Skill"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteSkill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Skill id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    updateSkill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Skill id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSkillRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Skill"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putSkillFile: {
+        parameters: {
+            query?: {
+                /** @description Executable bit (projected 0555, else 0444). Omitted keeps the current bit. */
+                executable?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Skill id */
+                id: string;
+                /** @description Relative file path */
+                path: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": number[];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Skill"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteSkillFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Skill id */
+                id: string;
+                /** @description Relative file path */
+                path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

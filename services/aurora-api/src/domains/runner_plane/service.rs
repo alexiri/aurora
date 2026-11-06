@@ -6,7 +6,7 @@ use aurora_core::token;
 use aurora_core::{ApiError, limits};
 use aurora_db::bus::{self, Channel};
 use aurora_db::repo::{
-    credentials,
+    credentials, hosted,
     runners::{self, RunnerRow},
     sandboxes,
 };
@@ -144,6 +144,9 @@ async fn apply(
             for id in revoked {
                 credentials::notify_gateway_invalidate(&mut *tx, "credential", id).await?;
             }
+            if a == Applied::Applied && upd.state == "failed" {
+                fail_start(&mut tx, r.sandbox_id, upd.reason_code, upd.message).await?;
+            }
             if a == Applied::Applied && matches!(upd.state, "stopped" | "failed") {
                 bus::notify(
                     &mut *tx,
@@ -155,19 +158,22 @@ async fn apply(
             }
             from_applied(r.report_id, a)
         }
-        // Full home sync scheduling belongs to BE-051 (arm 5); nothing to schedule yet.
-        ReportBody::SupervisorReady(_) => result(r.report_id, ReportStatus::Applied, None),
-        ReportBody::HomeSynced(h) => from_applied(
-            r.report_id,
-            sandboxes::apply_home_synced(
+        ReportBody::HomeSynced(h) => {
+            let a = sandboxes::apply_home_synced(
                 &mut tx,
                 r.sandbox_id,
                 r.boot_id,
                 replica,
                 i64::try_from(h.generation).unwrap_or(i64::MAX),
             )
-            .await?,
-        ),
+            .await?;
+            if a == Applied::Applied {
+                // Release the sync lease and wake dispatch (arm 6) now that the home is synced.
+                hosted::clear_sync_lease(&mut tx, r.sandbox_id).await?;
+                notify_conv_work(&mut tx).await?;
+            }
+            from_applied(r.report_id, a)
+        }
         ReportBody::PortsState(p) => {
             let ports: Vec<i32> = p.ports.iter().map(|p| i32::from(*p)).collect();
             from_applied(
@@ -179,8 +185,18 @@ async fn apply(
             tracing::warn!(kind = %u.kind.as_str(), "unknown report kind skipped");
             result(r.report_id, ReportStatus::Invalid, Some("unknown_kind"))
         }
-        // Turn/process/watch reports are applied by BE-051.
-        _ => result(r.report_id, ReportStatus::Invalid, Some("not_implemented")),
+        // supervisor.ready, turn.*, steer/send_now, session, process, watch, gate: hosted engine.
+        _ => {
+            let facts = hosted::sandbox_facts(&mut tx, r.sandbox_id).await?;
+            match facts {
+                Some(f) => crate::domains::hosted::reports::apply(s, &mut tx, replica, &f, r)
+                    .await?
+                    .unwrap_or_else(|| {
+                        result(r.report_id, ReportStatus::Invalid, Some("unsupported"))
+                    }),
+                None => result(r.report_id, ReportStatus::Fenced, Some("unknown_sandbox")),
+            }
+        }
     };
     tx.commit().await.map_err(DbError::from)?;
     Ok(out)
@@ -281,3 +297,35 @@ pub fn not_implemented() -> ApiError {
 }
 
 pub use work::poll;
+
+async fn notify_conv_work(conn: &mut sqlx::PgConnection) -> Result<(), ApiError> {
+    crate::domains::conversations::service::notify_work(conn).await
+}
+
+/// Sandbox start failed: the agent's queued turns fail with the start reason (10 §Failure
+/// semantics); dispatched/running ones are recovered by the stale arm (agent_restarted).
+async fn fail_start(
+    conn: &mut sqlx::PgConnection,
+    sandbox: Uuid,
+    reason: Option<&str>,
+    message: Option<&str>,
+) -> Result<(), ApiError> {
+    let Some(f) = hosted::sandbox_facts(conn, sandbox).await? else {
+        return Ok(());
+    };
+    let code = reason
+        .filter(|c| ["image_unavailable", "at_capacity", "agent_start_failed"].contains(c))
+        .unwrap_or("agent_start_failed");
+    for (turn, conv) in hosted::queued_turns_of_agent(conn, f.agent_id).await? {
+        aurora_db::repo::conversations::lock(&mut *conn, conv).await?;
+        crate::domains::hosted::lifecycle::fail(
+            conn,
+            turn,
+            conv,
+            code,
+            message.unwrap_or("The agent's computer could not be started."),
+        )
+        .await?;
+    }
+    Ok(())
+}

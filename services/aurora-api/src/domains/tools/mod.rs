@@ -6,8 +6,10 @@
 //! home sync render inputs (BE-052). M4 ships `list_agents` and `list_apps`; further families
 //! are added by registering more tools in `builtin`.
 mod builtin;
+mod memory;
 mod registry;
 pub mod service;
+mod skills;
 
 pub use registry::{
     PlatformTool, Registry, ToolCallContext, ToolContext, ToolError, catalogue, registry,

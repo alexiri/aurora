@@ -30,7 +30,11 @@ async fn rig() -> Rig {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("ca.pem"), "-----BEGIN CERTIFICATE-----\nX\n").unwrap();
     let d = dir.to_string_lossy().into_owned();
-    let h = Harness::with_config(move |c| c.gateway_ca_dir = d).await;
+    let h = Harness::with_config(move |c| {
+        c.gateway_ca_dir = d;
+        c.hosted.allow_fake_harness = true;
+    })
+    .await;
     let admin = h.user("admin@x.io", true).await;
     let (_, sess) = h.good_session(admin).await;
     let c = cookie(&sess);
@@ -592,7 +596,7 @@ async fn channel_claim_is_single_use_and_hold_is_fenced() {
 async fn failed_start_backs_off() {
     let r = rig().await;
     let rep = r.register("runner-a", 4).await;
-    r.agent_with_turn("flaky").await;
+    let agent = r.agent_with_turn("flaky").await;
     let w = r.work(rep, 0).await;
     let item = first(&w, "sandbox.start");
     let (sb, boot) = (
@@ -604,6 +608,13 @@ async fn failed_start_backs_off() {
         "applied"
     );
     assert_eq!(r.sandbox_state(sb).await, "failed");
+    // The start failure fails the queued turn (10 §Failure semantics); a new one wants a retry.
+    let failed: i64 = sqlx::query_scalar("SELECT count(*) FROM turns WHERE status = 'failed'")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(failed, 1);
+    r.turn(agent).await;
     assert!(
         r.work(rep, 0).await["items"].as_array().unwrap().is_empty(),
         "backoff holds"
