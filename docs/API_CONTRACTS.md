@@ -202,6 +202,145 @@ visible resources with insufficient role, **403 `forbidden`**. Workspace key
 used on another workspace → 403 `workspace_mismatch`. Org key on workspace
 routes uses the path workspace (or `X-Workspace-Id`).
 
+### M2 — secrets, LLM keys, BYO agents, grants, policy, approvals, governance (API-002)
+
+Routes/auth: `05 §Secrets and LLM`, `§Grants and effective views`, `§Policy`,
+`§Approvals`, `§Agents and sandboxes` (BYO subset), `§Organizations` (governance
+rows), `§Workspaces` (activity). Behaviour: `07`, `08`. Rule JSON: I-12.
+Approval summary: I-16. Injection recipe: `08 §5` (`aurora_secrets::recipe`).
+
+**Contract decisions**
+- C-07 Secret create takes exactly one of `value` (managed) or `reference` (`{store_id, path, field?}`); responses never contain values (SEC-12). LLM secrets take `llm: {endpoint_id, auth_mode?}`; `host_pattern`/`injection` are derived and read-only for them.
+- C-08 Policy drafts are replaced whole; rule order = array order (server assigns `priority`); `logical_id` omitted ⇒ new rule.
+- C-09 Batch decisions require `agent_id` in the body (`07 §Batching`: "within the same agent").
+- C-10 `GET /v1/approvals/stream` events carry no SSE id (approvals are not transcript-sequenced); on reconnect clients refetch `GET …/approvals?status=pending`.
+- C-11 `GET /v1/llm/providers?org_id=` adds the caller's effective governance per endpoint (`permitted`, `key_scopes`) for key forms.
+- C-12 Agent `handle` is immutable after creation (not in the `05` PATCH list).
+
+#### Shared schemas (M2)
+
+```ts
+type InjectionRecipe =
+  | { kind: "bearer" } | { kind: "header"; name: string; format: string }
+  | { kind: "query"; name: string; format: string } | { kind: "basic"; username: string }
+  | { kind: "path_template"; prefix: string } | { kind: "path_regex"; pattern: string; replacement: string };
+
+interface StoredOrigin { status: "verified" | "mismatch" | "unverifiable" | "pending"; method: "endpoint" | "litellm_team" | "provider_account";
+  organization_id: string | null; workspace_id: string | null; team_id: string | null; user_id: string | null;
+  value_version: number; checked_at: Timestamp }
+
+interface Secret { id: Uuid; org_id: Uuid; workspace_id: Uuid | null; scope: "organization" | "workspace";
+  name: string; kind: "generic" | "llm";
+  llm: { provider: string; endpoint_id: string; auth_mode: string } | null;
+  host_pattern: string; path_pattern: string | null; injection: InjectionRecipe;
+  value_source: "managed" | "reference"; reference: { store_id: string; path: string; field: string | null } | null;
+  status: "active" | "proposed" | "rejected"; origin: StoredOrigin | null; value_version: number;
+  proposed_by_agent_id: Uuid | null; created_by: { id: Uuid; display_name: string } | null;
+  last_used_at: Timestamp | null; created_at: Timestamp; updated_at: Timestamp }
+
+interface ContainerConfig { proxy_url: string /* contains <AGENT_TOKEN> unless revealed */; env: Record<string, string>;
+  ca_pem: string; ca_path: string; llm_env: Record<string, string>; stubs: { path: string; content: string; mode: string }[] }
+
+type Identity = { kind: "agent"; id: Uuid } | { kind: "user"; id: Uuid };
+type Target =
+  | { type: "app"; app_id: string; tools?: string[] } | { type: "connection"; id: Uuid; tools?: string[] }
+  | { type: "app_connections"; app_id: string; scope: "workspace" | "organization" | "any"; tools?: string[] }
+  | { type: "secret"; id: Uuid } | { type: "secrets"; scope: "workspace" | "organization" | "any"; kind?: "generic" | "llm" }
+  | { type: "network"; host: string; path?: string; methods?: string[] };
+interface Condition { on: "body"; op: "contains" | "not_contains" | "equals"; value: string; json_pointer?: string }
+interface PolicyRule { logical_id: Uuid; priority: number; name: string; description: string | null; enabled: boolean;
+  identities: Identity[]; targets: Target[]; action: "allow" | "block"; require_approval: boolean;
+  rate_limit: { count: number; per: "minute" | "hour" | "day" } | null; conditions: Condition[] }
+interface AllowlistEntry { host: string; path?: string }
+interface PolicyGeneration { id: Uuid; number: number; status: "draft" | "published" | "superseded";
+  default_action: "none" | "allow" | "block"; uncredentialed_default: "none" | "block" /* org scope: always none */;
+  uncredentialed_allowlist: AllowlistEntry[]; rules: PolicyRule[]; draft_revision: number | null /* drafts only */;
+  published_by: { id: Uuid; display_name: string } | null; published_at: Timestamp | null; created_at: Timestamp }
+interface PolicyDocument { scope: "organization" | "workspace"; published: PolicyGeneration; draft: PolicyGeneration }
+
+interface ScopeTrace { verdict: "allow" | "needs_approval" | "rate_limited" | "block" | null;
+  considered: { rule_logical_id: Uuid; rule_name: string; source: "hand" | "derived" | "default"; matched: boolean; reason: string }[] }
+interface Simulation { verdict: "allow" | "needs_approval" | "rate_limited" | "block";
+  reason: "rule" | "default_denied" | "egress_denied" | "governance" | null; guidance_code: string | null;
+  winning_credential: { kind: "secret" | "connection"; id: Uuid; name: string } | null;
+  candidates: { kind: "secret" | "connection"; id: Uuid; name: string; selected: boolean }[];
+  trace: { organization: ScopeTrace; workspace: ScopeTrace } }
+
+interface SecretGrant { id: Uuid; agent_id: Uuid; secret_id: Uuid; created_at: Timestamp }
+interface ConnectionGrant { id: Uuid; agent_id: Uuid; connection_id: Uuid; mode: "full" | "custom";
+  allow_tools: string[]; ask_tools: string[]; created_at: Timestamp }   // M3
+
+interface ApprovalSummary { title: string; fields: { label: string; value: string }[]; text: string | null;
+  link: string | null; group: string | null; source: "template" | "hook" | "generic" }
+interface Approval { id: Uuid; org_id: Uuid; workspace_id: Uuid; agent: { id: Uuid; name: string; handle: string } | null;
+  conversation_id: Uuid | null; turn_id: Uuid | null; method: string; host: string; path: string;
+  app_id: string | null; tool_id: string | null; connection_id: Uuid | null; rule_logical_id: Uuid | null; rule_name: string | null;
+  summary: ApprovalSummary; batch: { id: string; label: string | null; total: number | null } | null;
+  status: "pending" | "approved" | "denied" | "expired" | "abandoned";
+  decided_by: { id: Uuid; display_name: string } | null; decided_via: "dashboard" | "api" | "channel" | null;
+  decided_at: Timestamp | null; deadline: Timestamp; created_at: Timestamp }
+
+interface RequestLogEntry { id: Uuid; ts: Timestamp; agent_id: Uuid; conversation_id: Uuid | null; turn_id: Uuid | null;
+  credential_kind: "agent" | "boot" | "context"; lane: "mitm" | "open" | "db"; method: string; host: string; path: string;
+  app_id: string | null; tool_id: string | null; connection_id: Uuid | null; secret_id: Uuid | null; decision: string;
+  rule_logical_id: Uuid | null; rule_name: string | null; upstream_status: number | null; status: number;
+  error_code: string | null; injected: number; latency_ms: number; bytes_up: number; bytes_down: number }
+
+// Governance: OrgGovernance = the `08 §11.2` document verbatim.
+interface Sourced<T> { value: T; source: "instance" | "org" }
+interface EffectiveGovernance {
+  llm: { posture: Sourced<"open" | "sanctioned_only">;
+         endpoints: { id: string; provider: string; display_name: string; permitted: Sourced<boolean>;
+                      key_scopes: Sourced<("organization" | "workspace")[]>; allowed_models: Sourced<string[]>;
+                      origin_rule: { method: string; allowed_organization_ids: string[]; allowed_workspace_ids: string[];
+                                     allowed_team_ids: string[] } | null }[] };
+  egress: { posture: Sourced<"open" | "credentialed_only">; org_allowlist: AllowlistEntry[]; baseline_allowlist: AllowlistEntry[] };
+  non_compliant_secrets: { id: Uuid; name: string; workspace_id: Uuid | null; reason: "mismatch" | "unverifiable" | "not_permitted" | "pending" }[] }
+```
+
+#### Endpoints (M2)
+
+| Method & path | Auth | Request | 2xx response | Errors |
+|---|---|---|---|---|
+| GET `/v1/workspaces/{ws}/secrets`, `/v1/orgs/{org}/secrets` | S/K (can_use / org member) | `?kind&status` | 200 `Page<Secret>` | 404 |
+| POST `/v1/workspaces/{ws}/secrets`, `/v1/orgs/{org}/secrets` | S/K can_own / owner·admin | `{ name, kind, llm?: {endpoint_id, auth_mode?}, host_pattern?, path_pattern?, injection?, value?, reference? }` (C-07) | 201 `Secret` | 400; 403 `llm_key_not_permitted`; 409 `name_taken`; 422 `llm_host_requires_llm_key` \| `llm_key_invalid` \| `llm_key_wrong_organization` \| `llm_key_unverifiable` \| `llm_endpoint_unreachable` \| `reference_not_permitted`; 503 `secret_store_unavailable` |
+| GET/PATCH/DELETE `/v1/secrets/{id}` | S/K | PATCH `{ name?, host_pattern?, path_pattern?, injection? }` (generic only) | 200 `Secret` / 204 | 404; 403; 422 as create |
+| PUT `/v1/secrets/{id}/value` | S/K can_own | `{ value }` \| `{ reference }` | 200 `Secret` (`value_version`+1, origin re-verified) | as create |
+| POST `/v1/secrets/{id}/accept` | S can_own | `{ value }` | 200 `Secret` (active) + grant to proposer | 409 `not_proposed` |
+| POST `/v1/secrets/{id}/reject` | S/K can_own | — | 204 | 409 `not_proposed` |
+| GET `/v1/secret-stores` | S/K | — | 200 `{ items: { id, kind, capabilities: {managed, references} }[] }` | — |
+| GET `/v1/llm/providers` | S/K | `?org_id` (C-11) | 200 `{ providers: { id, display_name, auth_modes: string[], dialects: string[] }[], endpoints: { id, provider, display_name, base_url, dialects, origin_method: string \| null, permitted: boolean \| null, key_scopes: string[] \| null }[] }` | — |
+| GET `/v1/secrets/{id}/models` | S/K | — | 200 `{ items: { id, display_name: string \| null }[] }` (allowed only) | 404; 502 `llm_endpoint_unreachable` |
+| POST `/v1/secrets/{id}/verify` | S/K can_own | — | 200 `{ origin: StoredOrigin }` | 404; 422 |
+| POST `/v1/workspaces/{ws}/agents` | S/K can_use | `{ name, handle?, kind, brief?, harness?, model_endpoint_id?, model_id?, effort?, proactive_messaging? }` | 201 `{ agent: Agent, token: string \| null /* byo only, once */, container_config: ContainerConfig \| null }` | 400; 409 `handle_taken`; 422 `hosted_disabled` \| `agent_limit_reached` |
+| PATCH `/v1/agents/{agent}` | S/K can_use | `{ name?, brief?, harness?, model_endpoint_id?, model_id?, effort?, proactive_messaging?, resource_overrides? (IA) }` (C-12) | 200 `Agent` | 400; 404 |
+| DELETE `/v1/agents/{agent}` | S/K can_use | — | 204 (credentials revoked) | 404 |
+| POST `/v1/agents/{agent}/token` | S can_use | — | 200 `{ token, container_config }` (BYO; revokes previous agent + context credentials) | 403 `hosted_agent_token_hidden` |
+| GET `/v1/agents/{agent}/container-config` | S/K can_use | — | 200 `ContainerConfig` (`<AGENT_TOKEN>` placeholder) | 403 `hosted_agent_token_hidden` |
+| GET `/v1/agent/container-config` | A | — | 200 `ContainerConfig` (token embedded) | 401 |
+| POST `/v1/agent/context-credentials` | A | `{ label, conversation_id?, ttl_secs? }` | 201 `{ credential: "auc_…", expires_at, proxy_url }` | 400; 404 conversation |
+| GET `/v1/gateway/ca.pem` | S/K | — | 200 `application/x-pem-file` | 503 |
+| GET `/v1/agents/{agent}/grants` | S/K can_use | — | 200 `{ secrets: SecretGrant[], connections: ConnectionGrant[] }` | 404 |
+| PUT/DELETE `/v1/agents/{agent}/grants/secrets/{secret}` | S/K can_own | — | 200 `SecretGrant` / 204 | 404 (secret not in agent's workspace or its org) |
+| GET `/v1/agents/{agent}/effective` | S/K can_use | — | 200 `{ credentials: { kind, id, name, scope, selected: boolean, selected_by: Uuid[] }[], tools: { app_id, tool_id, decision: string, org_ceiling: string \| null }[] }` | 404 |
+| GET `/v1/workspaces/{ws}/policy`, `/v1/orgs/{org}/policy` | S/K (read: can_use / member) | — | 200 `PolicyDocument` | 404 |
+| PUT `…/policy/draft` | S/K can_own / owner·admin | `{ revision, default_action, uncredentialed_default?, uncredentialed_allowlist?, rules: Omit<PolicyRule,"priority"\|"logical_id"> & {logical_id?}[] }` (C-08) | 200 `PolicyGeneration` (draft) | 409 `stale_revision`; 422 `policy_invalid` (`details.fields`) |
+| POST `…/policy/publish` | same | `{ revision }` | 200 `PolicyDocument` | 409 `stale_revision` |
+| POST `…/policy/rollback` | same | `{ generation: number }` | 200 `PolicyDocument` | 404 |
+| GET `…/policy/generations` | S/K | `?limit&cursor` | 200 `Page<Omit<PolicyGeneration,"rules"> & {rule_count}>` | — |
+| GET `…/policy/warnings` | S/K | — | 200 `{ items: { code: "shadowed" \| "inert" \| "overridden_by_org", rule_logical_id, message }[] }` | — |
+| POST `/v1/workspaces/{ws}/policy/simulate` | S/K can_use | `{ agent_id, method, url, body?, use_draft? }` | 200 `Simulation` | 400; 404 agent |
+| GET `/v1/workspaces/{ws}/approvals` | S/K can_use | `?status&limit&cursor` | 200 `Page<Approval>` | 404 |
+| GET `/v1/approvals/pending` | S/K | `?wait` (≤30) | 200 `{ items: Approval[] }` (decidable by caller) | — |
+| GET `/v1/approvals/stream` | S | — | SSE `event: approval`, `data: { event: "created"\|"decided"\|"expired", approval: Approval }` (C-10) | 401 |
+| POST `/v1/approvals/{id}/decision` | S/K can_use | `{ decision: "approve"\|"deny" }` | 200 `Approval` | 404; 409 `already_decided` |
+| POST `/v1/approvals/batches/{batch_id}/decision` | S/K can_use | `{ decision, agent_id }` (C-09) | 200 `{ decided: number }` | 404 |
+| GET `/v1/orgs/{org}/governance` | S/K owner·admin | — | 200 `{ document: OrgGovernance, revision: number }` | 403 |
+| PUT `/v1/orgs/{org}/governance` | S/K owner·admin | `{ document, revision }` | 200 same | 409 `stale_revision`; 422 `governance_invalid` \| `governance_below_instance_minimum` |
+| GET `/v1/orgs/{org}/governance/effective` | S/K any member | — | 200 `EffectiveGovernance` | 404 |
+| GET `/v1/governance/instance` | S | — | 200 `{ llm: { allowed_key_scopes, minimum_posture, require_key_origin, known_llm_hosts: string[], endpoints: {id, provider, display_name, allowed_models, key_origin}[] }, egress: { minimum_posture, baseline_allowlist } }` | — |
+| GET `/v1/workspaces/{ws}/activity` | S/K can_use | `?agent_id&conversation_id&decision&host&app_id&limit&cursor` | 200 `Page<RequestLogEntry>` (`ts desc`) | 404 |
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._
