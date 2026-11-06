@@ -91,6 +91,300 @@
         ]
       }
     },
+    "/v1/admin/connectors": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List connectors with replicas, integration counts and widening reasons (instance administrators).",
+        "operationId": "adminListConnectors",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorAdminList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Provision a connector; the `aun_` token is returned once.",
+        "operationId": "adminCreateConnector",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConnectorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorWithToken"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/connectors/{id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete a connector (409 `connector_in_use` while integrations exist).",
+        "operationId": "adminDeleteConnector",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connector id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/connectors/{id}/approve": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Approve exactly the announced manifest (409 `stale_manifest` if it changed).",
+        "operationId": "adminApproveConnector",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connector id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveConnectorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorAdmin"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/connectors/{id}/token": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Rotate the connector token; the new `aun_` token is returned once.",
+        "operationId": "adminRotateConnectorToken",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connector id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorToken"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/host-claims": {
       "get": {
         "tags": [
@@ -5452,6 +5746,100 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/connectors": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Active connectors available for integrations.",
+        "operationId": "listConnectors",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorInfoList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/connectors/{id}/icon": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Connector icon (`image/png`).",
+        "operationId": "getConnectorIcon",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connector id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PNG",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -13997,6 +14385,18 @@
           }
         }
       },
+      "ApproveConnectorRequest": {
+        "type": "object",
+        "required": [
+          "manifest_digest"
+        ],
+        "properties": {
+          "manifest_digest": {
+            "type": "string",
+            "description": "Digest of exactly the manifest being approved (`manifest_digest` of the connector)."
+          }
+        }
+      },
       "ApproveRequest": {
         "type": "object",
         "required": [
@@ -14665,6 +15065,198 @@
           }
         }
       },
+      "ConnectorAdmin": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name",
+          "status",
+          "widening",
+          "replicas",
+          "integration_count",
+          "created_at"
+        ],
+        "properties": {
+          "approved_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "approved_manifest_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contract": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "integration_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "manifest": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The announced manifest (opaque JSON), `null` until the first registration."
+          },
+          "manifest_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "replicas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReplicaInfo"
+            },
+            "description": "Live (not retired, recently seen) replicas."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConnectorStatus"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "widening": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Human-readable reasons approval is required (empty unless `pending_approval`)."
+          }
+        }
+      },
+      "ConnectorAdminList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectorAdmin"
+            }
+          }
+        }
+      },
+      "ConnectorInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name",
+          "icon_url",
+          "capabilities",
+          "integration_setup",
+          "presence_setup"
+        ],
+        "properties": {
+          "capabilities": {
+            "type": "object"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "icon_url": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "integration_setup": {
+            "type": "object",
+            "description": "`{ fields: FormField[] }`."
+          },
+          "presence_setup": {
+            "type": "object",
+            "description": "`{ dedicated?: { fields: FormField[] } }`."
+          },
+          "setup_guide_md": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Raw markdown; render client-side with the safe markdown renderer."
+          }
+        }
+      },
+      "ConnectorInfoList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectorInfo"
+            }
+          }
+        }
+      },
+      "ConnectorStatus": {
+        "type": "string",
+        "enum": [
+          "awaiting_registration",
+          "pending_approval",
+          "active",
+          "disabled"
+        ]
+      },
+      "ConnectorToken": {
+        "type": "object",
+        "description": "Returned once on rotation.",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "`aun_…`, shown once."
+          }
+        }
+      },
+      "ConnectorWithToken": {
+        "type": "object",
+        "description": "Returned once on provisioning.",
+        "required": [
+          "connector",
+          "token"
+        ],
+        "properties": {
+          "connector": {
+            "$ref": "#/components/schemas/ConnectorAdmin"
+          },
+          "token": {
+            "type": "string",
+            "description": "`aun_…`, shown once."
+          }
+        }
+      },
       "ContainerConfig": {
         "type": "object",
         "required": [
@@ -14916,6 +15508,23 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "CreateConnectorRequest": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "description": "Name shown to administrators (1-80 chars)."
+          },
+          "id": {
+            "type": "string",
+            "description": "Connector id: `[a-z][a-z0-9-]{1,31}`."
           }
         }
       },
@@ -20796,6 +21405,27 @@
             "format": "date-time"
           },
           "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "ReplicaInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "last_seen_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_seen_at": {
             "type": "string",
             "format": "date-time"
           },

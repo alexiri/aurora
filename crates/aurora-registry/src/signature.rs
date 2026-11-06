@@ -103,12 +103,23 @@ pub fn verify(
             Err(v("signature_missing", "package is not signed"))
         };
     };
-    let sig = Signature::parse(raw)?;
     let publisher = publisher_of(pkg)
         .ok_or_else(|| v("publisher_mismatch", "manifest publisher unreadable"))?;
-    let d = digest(pkg);
+    verify_digest(raw, &publisher, &digest(pkg), trust)
+}
+
+/// Verify a `SIGNATURE`-format detached signature (`aurora-sig-v1\n<key_id>\n<b64>\n`) over
+/// `digest` for `publisher`. Shared by packages and connector manifests (13 §3).
+pub fn verify_digest(
+    raw: &[u8],
+    publisher: &str,
+    d: &[u8; 32],
+    trust: &TrustStore,
+) -> Result<Signer, Violation> {
+    let sig = Signature::parse(raw)?;
+    let publisher = publisher.to_owned();
     let check = |key: &VerifyingKey| {
-        aurora_crypto::verify(key, &d, &sig.signature).map_err(|_| {
+        aurora_crypto::verify(key, d, &sig.signature).map_err(|_| {
             v(
                 "digest_mismatch",
                 "signature does not match package contents",
