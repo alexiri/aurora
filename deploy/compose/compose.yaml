@@ -1,0 +1,157 @@
+# Aurora development / single-host stack (docs/15 §Development).
+# Setup:  ./setup.sh   Start: podman compose up -d   (from this directory or -f)
+# Healthchecks: distroless images have no curl/shell, so only postgres has a
+# healthcheck; other services use depends_on service_started. Verify health from
+# the host: curl localhost:4000/v1/instance (api via edge), localhost:4102 (gateway).
+name: aurora
+
+x-env: &aurora-env
+  AURORA_CONFIG: /etc/aurora/aurora.toml
+  AURORA_DATABASE_URL: postgres://aurora:${POSTGRES_PASSWORD:?run setup.sh}@postgres:5432/aurora
+  AURORA_ENCRYPTION_KEYS: ${AURORA_ENCRYPTION_KEYS:?run setup.sh}
+  AURORA_ENCRYPTION_ACTIVE_KEY: ${AURORA_ENCRYPTION_ACTIVE_KEY:-k1}
+  AURORA_SIGNING_KEY: ${AURORA_SIGNING_KEY:?run setup.sh}
+  AURORA_INTERNAL_SECRET: ${AURORA_INTERNAL_SECRET:?run setup.sh}
+  AURORA_RUNNER_SESSION_KEY: ${AURORA_RUNNER_SESSION_KEY:?run setup.sh}
+  AURORA_RUNNER_TOKEN: ${AURORA_RUNNER_TOKEN:?run setup.sh}
+  AURORA_CONNECTOR_TOKEN: ${AURORA_CONNECTOR_TOKEN:?run setup.sh}
+  AURORA_BOOTSTRAP_RUNNER_TOKEN: ${AURORA_RUNNER_TOKEN}
+  AURORA_BOOTSTRAP_CONNECTOR_TOKENS: fake:${AURORA_CONNECTOR_TOKEN}
+
+x-cfg: &aurora-cfg
+  - ./aurora.toml:/etc/aurora/aurora.toml:ro
+
+services:
+  postgres:
+    image: docker.io/library/postgres:16
+    environment:
+      POSTGRES_USER: aurora
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run setup.sh}
+      POSTGRES_DB: aurora
+    volumes:
+      - aurora-pg:/var/lib/postgresql/data
+    networks: [core]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aurora -d aurora"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    image: aurora-api:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/Containerfile, target: api }
+    command: ["migrate"]
+    environment: *aurora-env
+    volumes: *aurora-cfg
+    networks: [core]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    image: aurora-api:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/Containerfile, target: api }
+    command: ["serve"]
+    environment: *aurora-env
+    volumes: *aurora-cfg
+    networks:
+      core:
+        aliases: [aurora-api]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  gateway:
+    image: aurora-gateway:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/Containerfile, target: gateway }
+    command: ["serve"]
+    environment: *aurora-env
+    volumes:
+      - ./aurora.toml:/etc/aurora/aurora.toml:ro
+      - aurora-ca:/var/lib/aurora/ca
+    networks:
+      core:
+        aliases: [aurora-gateway]
+      sandbox:
+        ipv4_address: 10.89.250.2
+    ports:
+      - "4102:4102"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  hookhost:
+    image: aurora-hookhost:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/Containerfile, target: hookhost }
+    command: ["serve"]
+    environment: *aurora-env
+    volumes: *aurora-cfg
+    networks:
+      core:
+        aliases: [aurora-hookhost]
+    depends_on:
+      api: { condition: service_started }
+    restart: unless-stopped
+
+  web:
+    image: aurora-web:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/web.Containerfile }
+    networks:
+      core:
+        aliases: [aurora-web]
+    restart: unless-stopped
+
+  edge:
+    image: docker.io/library/caddy:2
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks: [core]
+    ports:
+      - "4000:4000"
+    depends_on:
+      api: { condition: service_started }
+      web: { condition: service_started }
+    restart: unless-stopped
+
+  runner:
+    profiles: [hosted]
+    image: aurora-runner:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/Containerfile, target: runner }
+    command: ["serve"]
+    environment: *aurora-env
+    volumes:
+      - ./aurora.toml:/etc/aurora/aurora.toml:ro
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/podman/podman.sock:/run/podman/podman.sock
+    security_opt: [label=disable]
+    networks:
+      core: {}
+      sandbox:
+        ipv4_address: 10.89.250.3
+    depends_on:
+      api: { condition: service_started }
+    restart: unless-stopped
+
+  connector-fake:
+    profiles: [connector-fake]
+    image: aurora-connector-fake:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/Containerfile, target: connector-fake }
+    command: ["serve"]
+    environment: *aurora-env
+    volumes: *aurora-cfg
+    networks: [core]
+    ports:
+      - "4190:4190"
+    depends_on:
+      api: { condition: service_started }
+    restart: unless-stopped
+
+networks:
+  core: {}
+  sandbox:
+    external: true
+    name: aurora-sandbox
+
+volumes:
+  aurora-pg: {}
+  aurora-ca: {}

@@ -79,3 +79,4 @@ behaviour; they record environment and tooling choices.
 |----|----------|-----------|
 | I-10 | SMTP delivery uses `lettre` (tokio + rustls, no native-tls); unset `email.smtp_url` ⇒ log-only mailer (`04 §Email and password`). | `02` pins no mail library; lettre is the standard async SMTP client. |
 | I-11 | The common-password list is SecLists `Passwords/Common-Credentials/10k-most-common.txt` (MIT), vendored at `services/aurora-api/data/common-passwords.txt` and embedded with `include_str!`. | `04` requires a bundled top-10k list. |
+| S-03 | The compose `aurora-sandbox` network is created with `--gateway 10.89.250.1` in addition to `--internal --disable-dns --subnet 10.89.250.0/24`. | Without an explicit gateway, podman rejects the static `10.89.250.2`/`.3` addresses `15` assigns to gateway/runner. |

@@ -1,6 +1,6 @@
 # Implementation progress
 
-Last updated: 2026-11-05 (orchestrator)
+Last updated: 2026-11-06 (orchestrator)
 
 Scope: **Phase 0 (M0–M7)**. Phases 1–4 are out of scope until phase 0 exits.
 Ids per decision I-01. Task briefs live in `docs/tasks/<ID>.md`. Milestones
@@ -20,16 +20,16 @@ their dependencies near completion (adaptive planning).
 | Requirement ID | Summary | Task IDs | Status | Evidence/gap |
 |---|---|---|---|---|
 | M0/02§layout | Workspace + layout | OPS-001 | done | `cargo check --workspace` ok (2026-11-05) |
-| M0/02§core | aurora-core | BE-001 | planned | |
-| M0/15§config | aurora-config | BE-002 | planned | |
-| M0/08§3-4 | aurora-crypto | BE-003 | planned | |
-| M0/03 | aurora-db + all tables | BE-004, BE-005, TEST-001 | planned | |
-| M0/16 | aurora-protocol skeleton | BE-006 | planned | |
-| M0/18 | aurora-testkit | BE-007 | planned | |
-| M0/15§obs | service binaries | BE-008 | planned | |
-| M0/18§CI | CI stages 1–2 | OPS-002 | planned | |
-| M0/15§compose | compose skeleton | OPS-003 | planned | |
-| M0/14 | dashboard scaffold | FE-001 | planned | |
+| M0/02§core | aurora-core | BE-001 | done | |
+| M0/15§config | aurora-config | BE-002 | done | |
+| M0/08§3-4 | aurora-crypto | BE-003 | done | |
+| M0/03 | aurora-db + all tables | BE-004, BE-005, TEST-001 | done | migrate from empty == 03 (introspection test) |
+| M0/16 | aurora-protocol skeleton | BE-006 | done | |
+| M0/18 | aurora-testkit | BE-007 | done | |
+| M0/15§obs | service binaries | BE-008 | done | |
+| M0/18§CI | CI stages 1–2 | OPS-002 | done | guards + cargo-deny pass locally; workflow not executed (no remote) |
+| M0/15§compose | compose skeleton | OPS-003 | done | images built (api 34.5 MB…web 271 MB); `podman compose up`: edge→api 404 envelope, edge→web 200, /metrics+/internal 404, gw 4102 503; runner/connector profiles not exercised |
+| M0/14 | dashboard scaffold | FE-001 | done | |
 | M1..M7 | see FEATURES.md | epics | todo | |
 | SEC-10 | tokens hashed at rest | BE-001 (gen/hash), M1 repos | planned | |
 | SEC-11 | SecretRef AAD binding | BE-003 (envelope AAD), M2 | planned | |
@@ -47,14 +47,14 @@ their dependencies near completion (adaptive planning).
 | FE-001 | Next.js dashboard scaffold | Next.js | done | — | nextjs-developer | pnpm install/lint/typecheck/test(2)/build pass (orchestrator re-ran) |
 | BE-003 | aurora-crypto | Rust | done | BE-001 | rust-developer | `cargo test -p aurora-crypto` 9 pass (fixture pinned, AAD swap, rotation); clippy clean |
 | BE-005 | migrations §6–§11 + gateway role grants | SQL | done | BE-004 | rust-developer | reset+migrate from empty, rerun no-op; 16 db tests pass; grants tested on role |
-| TEST-001 | schema introspection diff vs `03` | Rust test | in-progress | BE-005 | haiku-tester→rust-developer | `cargo test -p aurora-db --test schema_matches_spec` |
+| TEST-001 | schema introspection diff vs `03` | Rust test | done | BE-005 | haiku-tester→rust-developer | `cargo test -p aurora-db --test schema_matches_spec` pass: 68 tables / all columns of 03 (parser fixed by orchestrator) |
 | BE-006 | aurora-protocol skeleton + schema gen | Rust | done | BE-001 | haiku-worker | `cargo test -p aurora-protocol` 12 pass incl. schema drift |
-| BE-007 | aurora-testkit (ephemeral PG, mock upstream) | Rust | in-progress | BE-004 | haiku-worker | `cargo test -p aurora-testkit` |
-| BE-008 | service binaries: health/metrics/config, `migrate` | Rust | in-progress | BE-001, BE-002, BE-004 | rust-developer | run binaries; curl health |
-| OPS-002 | CI workflow + cargo-deny + arch-guard scripts | CI | blocked | BE-008, FE-001 | haiku-worker | `act`-free: run scripts locally |
-| OPS-003 | compose skeleton + Containerfiles + Caddyfile + setup.sh | Ops | blocked | BE-008, FE-001 | rust-developer | `podman compose config`; up (disk permitting) |
+| BE-007 | aurora-testkit (ephemeral PG, mock upstream) | Rust | done | BE-004 | haiku-worker | `cargo test -p aurora-testkit` 4 pass; clippy clean (orchestrator finished) |
+| BE-008 | service binaries: health/metrics/config, `migrate` | Rust | done | BE-001, BE-002, BE-004 | rust-developer | workspace build/clippy/fmt; live curl: api healthz/readyz 200, /v1 404 envelope, gw 4102 503 envelope, 4103 200; migrate idempotent; config errors exit 78 |
+| OPS-002 | CI workflow + cargo-deny + arch-guard scripts | CI | done | BE-008, FE-001 | haiku-worker | `scripts/guards/run-all.sh` pass; `cargo deny check` all ok; ci.yml parses (5 jobs); CI itself not run (no remote) |
+| OPS-003 | compose skeleton + Containerfiles + Caddyfile + setup.sh | Ops | done | BE-008, FE-001 | rust-developer | `podman compose config`; up (disk permitting) |
 | API-001 | M1 contract schemas in API_CONTRACTS.md | Contract | done | — | Opus | review |
-| BE-010 | API foundation: state, errors, extractors, authn/CSRF/authz, OpenAPI, audit | Rust | planned (brief) | BE-008 | rust-developer | brief acceptance |
+| BE-010 | API foundation: state, errors, extractors, authn/CSRF/authz, OpenAPI, audit | Rust | in-progress | BE-008 | rust-developer | brief acceptance |
 | BE-012 | Tenancy: orgs/workspaces/members/access + creation txn + Daneel | Rust | planned (brief) | BE-010 | rust-developer | brief acceptance |
 | BE-011 | Auth flows: signup/login/verify/reset/change, mailer, password policy | Rust | todo | BE-012 | rust-developer | |
 | BE-013 | Invitations | Rust | todo | BE-012 | rust-developer | |
@@ -75,7 +75,7 @@ their dependencies near completion (adaptive planning).
 
 ## Blockers
 
-- none
+- none. Note: workspace license in Cargo.toml is `GPL-3.0-or-later` (not set by the orchestrator; kept as the owner's choice; deny ignores private crates).
 
 ## Recently completed
 

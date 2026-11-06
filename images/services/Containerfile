@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1
+# One Rust builder stage builds every service binary once; each target copies
+# its binary into a distroless, non-root image.
+#   podman build -f images/services/Containerfile --target api -t aurora-api .
+FROM docker.io/library/rust:1-bookworm AS builder
+WORKDIR /build
+ENV SQLX_OFFLINE=true CARGO_TERM_COLOR=never
+COPY . .
+# The repo pins a toolchain + wasm target via rust-toolchain.toml; the image's
+# own stable toolchain is used for service builds.
+RUN rm -f rust-toolchain.toml
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/build/target \
+    cargo build --release --locked \
+      -p aurora-api -p aurora-gateway -p aurora-hookhost \
+      -p aurora-runner -p aurora-connector-fake \
+    && mkdir /out \
+    && for b in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-fake; do \
+         cp target/release/$b /out/; done
+
+FROM gcr.io/distroless/cc-debian12:nonroot AS api
+COPY --from=builder /out/aurora-api /usr/local/bin/aurora-api
+EXPOSE 4101 4111
+ENTRYPOINT ["/usr/local/bin/aurora-api"]
+CMD ["serve"]
+
+FROM gcr.io/distroless/cc-debian12:nonroot AS gateway
+COPY --from=builder /out/aurora-gateway /usr/local/bin/aurora-gateway
+EXPOSE 4102 4103
+ENTRYPOINT ["/usr/local/bin/aurora-gateway"]
+
+FROM gcr.io/distroless/cc-debian12:nonroot AS hookhost
+COPY --from=builder /out/aurora-hookhost /usr/local/bin/aurora-hookhost
+EXPOSE 4104
+ENTRYPOINT ["/usr/local/bin/aurora-hookhost"]
+
+FROM gcr.io/distroless/cc-debian12:nonroot AS runner
+COPY --from=builder /out/aurora-runner /usr/local/bin/aurora-runner
+EXPOSE 4106
+ENTRYPOINT ["/usr/local/bin/aurora-runner"]
+
+FROM gcr.io/distroless/cc-debian12:nonroot AS connector-fake
+COPY --from=builder /out/aurora-connector-fake /usr/local/bin/aurora-connector-fake
+EXPOSE 4190
+ENTRYPOINT ["/usr/local/bin/aurora-connector-fake"]

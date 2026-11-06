@@ -1,0 +1,17 @@
+# Aurora compose configuration (mounted at /etc/aurora/aurora.toml).
+# Secrets come from the environment (.env), never from this file.
+[server]
+external_url = "http://localhost:4000"
+bind = "0.0.0.0"
+# Caddy (edge) is on the core network; trust its X-Forwarded-For.
+trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+
+[runner]
+backend = "fake"
+api_url = "http://aurora-api:4101"
+
+[hosted]
+enabled = true
+
+[telemetry]
+log_level = "info"
