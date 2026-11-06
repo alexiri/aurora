@@ -61,6 +61,8 @@ pub struct AppState {
     pub llm_http: reqwest::Client,
     /// Shared `aurora_approval` fan-out (SSE, long-poll).
     pub approval_bus: Arc<crate::domains::approvals::bus::ApprovalBus>,
+    /// Shared `aurora_conversation`/`aurora_delta` fan-out (transcript SSE) and delta coalescer.
+    pub conversation_bus: Arc<crate::domains::conversations::bus::ConversationBus>,
     /// HKDF-derived keys (OIDC state, ...).
     pub derived: Arc<aurora_crypto::DerivedKeys>,
     /// OIDC discovery cache and HTTP client.
@@ -135,6 +137,7 @@ impl AppState {
             gov_instance,
             llm_http,
             approval_bus: Arc::default(),
+            conversation_bus: Arc::default(),
             derived,
             oidc,
             connect,
@@ -215,6 +218,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::plugins::router())
         .merge(domains::apps::router())
         .merge(domains::connections::router())
+        .merge(domains::conversations::router())
         .merge(domains::connect::router())
         .merge(domains::oauth_clients::router())
         .merge(domains::availability::router())

@@ -584,8 +584,8 @@ async fn channel_claim_is_single_use_and_hold_is_fenced() {
     let (s, v) = r
         .call(Some(rep), "/v1/runner/tool-calls", Some(json!({})))
         .await;
-    assert_eq!(s, 501);
-    assert_eq!(v["error"]["code"], "not_implemented");
+    // Implemented by BE-053 (see tests/tools.rs): an empty body is now a 4xx.
+    assert_eq!(s, 400, "{v}");
 }
 
 #[tokio::test]

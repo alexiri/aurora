@@ -18,7 +18,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .route("/runner/channel/claim", post(claim))
         .route("/runner/channel/hold", post(hold))
         .route("/runner/channel/release", post(release))
-        .route("/runner/tool-calls", post(placeholder))
+        .route("/runner/tool-calls", post(tool_calls))
         .route("/runner/memory-writes", post(placeholder))
         .route("/runner/attachments", post(placeholder))
         .route("/runner/attachments/{id}", get(placeholder))
@@ -80,6 +80,16 @@ async fn release(
 ) -> Result<Json<OkResponse>, ApiError> {
     service::channel_release(&s, &c.runner, c.replica, req).await?;
     Ok(Json(OkResponse { ok: true }))
+}
+
+async fn tool_calls(
+    c: RunnerCtx,
+    State(s): State<AppState>,
+    Json(req): Json<aurora_protocol::tools::ToolCall>,
+) -> Result<Json<aurora_protocol::tools::ToolResult>, ApiError> {
+    Ok(Json(
+        crate::domains::tools::service::tool_call(&s, &c.runner, req).await?,
+    ))
 }
 
 async fn placeholder(_c: RunnerCtx) -> Result<Json<OkResponse>, ApiError> {

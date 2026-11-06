@@ -8,6 +8,7 @@ pub mod audit;
 pub mod availability;
 pub mod cli_logins;
 pub mod connections;
+pub mod conversations;
 pub mod credentials;
 pub mod derived_rules;
 pub mod email_tokens;
@@ -26,6 +27,8 @@ pub mod runners;
 pub mod sandboxes;
 pub mod secrets;
 pub mod sessions;
+pub mod transcript;
+pub mod turns;
 pub mod users;
 pub mod workspaces;
 
