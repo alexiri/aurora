@@ -25,6 +25,7 @@ use crate::harness::{
 };
 use crate::harvest::Harvester;
 use crate::home::{HomeConfig, HomeProjector, PartOutcome};
+use crate::inbox::Inbox;
 use crate::process::{ProcessConfig, ProcessManager};
 use crate::proxy::{Credential, ProxyHandle, ProxyMode, spawn_proxy};
 use crate::tools::{ToolHub, ToolsConfig};
@@ -96,6 +97,7 @@ pub struct Supervisor {
     home: Arc<StdMutex<HomeCtl>>,
     hub: Arc<ToolHub>,
     procs: Arc<ProcessManager>,
+    inbox: Inbox,
 }
 
 /// Home projection state: staged sync, plus the memory harvest bookkeeping.
@@ -144,13 +146,16 @@ impl Supervisor {
             harvester: Harvester::new(&cfg.working_dir),
         }));
         let procs = ProcessManager::new(cfg.process.clone(), out.clone());
+        let mut tools = cfg.tools.clone();
+        tools.home = cfg.working_dir.clone();
         let hub = ToolHub::new(
-            cfg.tools.clone(),
+            tools,
             cfg.working_dir.join(".aurora/tools.json"),
             out.clone(),
             procs.clone(),
         );
         Self {
+            inbox: Inbox::new(&cfg.working_dir),
             home,
             hub,
             procs,
@@ -285,7 +290,9 @@ impl Supervisor {
                 }
             }
             RunnerToSupervisor::ToolResult(r) => self.hub.on_result(r),
-            RunnerToSupervisor::TurnNotice(_) | RunnerToSupervisor::FileResult(_) => {
+            RunnerToSupervisor::FileIn(f) => self.inbox.accept(f).await,
+            RunnerToSupervisor::FileResult(r) => self.hub.on_file_result(r),
+            RunnerToSupervisor::TurnNotice(_) => {
                 tracing::debug!("frame handled by SUP-002; ignored");
             }
             RunnerToSupervisor::Ack(_) | RunnerToSupervisor::Shutdown(_) => {}
@@ -362,6 +369,9 @@ impl Supervisor {
     }
 
     async fn deliver(&mut self, d: TurnDeliver, done_tx: &mpsc::UnboundedSender<Uuid>) {
+        // The runner sent this turn's `file.in` frames first (S-11); settle them now so partial
+        // files never outlive the delivery, even when the turn is refused below.
+        let inbound = self.inbox.resolve(d.turn_id, &d.attachments).await;
         if !self.ready {
             return self
                 .fail_turn(d.turn_id, "not_ready", "home sync incomplete")
@@ -422,17 +432,10 @@ impl Supervisor {
                 speaker_label: d.input.speaker_label,
                 door: d.input.door,
                 recall: d.input.recall,
-                attachment_paths: d
-                    .attachments
-                    .iter()
-                    .map(|a| {
-                        self.cfg
-                            .working_dir
-                            .join(format!(".aurora/inbox/{}/{}", d.turn_id, a.filename))
-                    })
-                    .collect(),
+                attachment_paths: inbound.paths,
                 notices: {
                     let mut n = d.input.notices;
+                    n.extend(inbound.notices);
                     if let Ok(mut h) = self.home.lock() {
                         n.extend(h.harvester.take_notices());
                     }

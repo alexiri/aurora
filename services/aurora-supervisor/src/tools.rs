@@ -19,12 +19,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use aurora_core::limits;
-use aurora_protocol::supervisor::SupervisorToRunner;
+use aurora_protocol::supervisor::{FileResult, SupervisorToRunner};
 use aurora_protocol::tools::{
     TextContent, ToolCallBody, ToolContent, ToolDescriptor, ToolError, ToolResult,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, oneshot};
@@ -32,12 +32,19 @@ use tokio::time::{Instant, timeout};
 use uuid::Uuid;
 
 use crate::channel::ChannelSender;
+use crate::outbound::{OutboundError, OutboundFile, send_file};
 use crate::process::{ProcessManager, code};
 
 pub const DEFAULT_SOCKET: &str = "/run/aurora/tools.sock";
 /// Serialized results larger than this are truncated (`12 §Path`).
 pub const MAX_RESULT_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+/// Upload ceiling: the runner's API call allows 120 s, plus headroom for queueing.
+const FILE_RESULT_TIMEOUT: Duration = Duration::from_secs(150);
+/// Name of the supervisor-local file tool (`12 §Platform tools`).
+pub const SEND_FILE: &str = "send_file";
+/// `file.result`s that arrived before their `send_file` call registered (bounded).
+const MAX_EARLY_RESULTS: usize = 32;
 const TRUNCATION_NOTE: &str = "\n[result truncated: exceeded 64 KiB]";
 
 #[derive(Debug, Clone)]
@@ -47,6 +54,10 @@ pub struct ToolsConfig {
     pub call_timeout: Duration,
     pub max_failures: u32,
     pub probe_interval: Duration,
+    /// Workspace root: `send_file` reads only below it.
+    pub home: PathBuf,
+    /// How long `send_file` waits for the runner's `file.result` after the last chunk.
+    pub file_timeout: Duration,
 }
 
 impl Default for ToolsConfig {
@@ -56,6 +67,8 @@ impl Default for ToolsConfig {
             call_timeout: limits::TOOL_CALL_TIMEOUT,
             max_failures: limits::TOOL_CONSECUTIVE_FAILURES,
             probe_interval: Duration::from_secs(5),
+            home: PathBuf::from("/workspace"),
+            file_timeout: FILE_RESULT_TIMEOUT,
         }
     }
 }
@@ -103,6 +116,8 @@ struct Breaker {
 struct HubState {
     turns: HashMap<Uuid, Uuid>,
     pending: HashMap<String, oneshot::Sender<ToolResult>>,
+    files: HashMap<String, oneshot::Sender<FileResult>>,
+    early_files: HashMap<String, FileResult>,
     breakers: HashMap<String, Breaker>,
     next_call: u64,
 }
@@ -123,6 +138,23 @@ fn fail(call_id: &str, c: &str, message: impl Into<String>) -> ToolResult {
             message: message.into(),
         },
     )
+}
+
+fn is_local_tool(name: &str) -> bool {
+    name == SEND_FILE || ProcessManager::is_local_tool(name)
+}
+
+fn send_file_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        name: SEND_FILE.to_owned(),
+        description: Some(
+            "Send a file from the workspace to the current conversation as an attachment; returns its attachment id."
+                .to_owned(),
+        ),
+        input_schema: json!({"type":"object","additionalProperties":false,"required":["path"],"properties":{
+            "path":{"type":"string","description":"File inside the workspace (absolute, or relative to it)"},
+            "caption":{"type":"string","maxLength":limits::ATTACH_CAPTION_MAX}}}),
+    }
 }
 
 fn text_ok(call_id: &str, text: String) -> ToolResult {
@@ -201,6 +233,23 @@ impl ToolHub {
         }
     }
 
+    /// Delivers a runner `file.result` to the waiting `send_file` call (or parks it briefly if the
+    /// call has not registered yet: the result can overtake the return of the upload).
+    pub fn on_file_result(&self, r: FileResult) {
+        let mut g = self.st();
+        match g.files.remove(&r.upload_id) {
+            Some(tx) => {
+                let _ = tx.send(r);
+            }
+            None => {
+                if g.early_files.len() >= MAX_EARLY_RESULTS {
+                    g.early_files.clear();
+                }
+                g.early_files.insert(r.upload_id.clone(), r);
+            }
+        }
+    }
+
     /// Remote tools from `.aurora/tools.json` (the API catalogue never holds `process_*`).
     fn remote_catalogue(&self) -> Vec<ToolDescriptor> {
         let Ok(bytes) = std::fs::read(&self.catalogue) else {
@@ -212,7 +261,7 @@ impl ToolHub {
         items
             .into_iter()
             .filter_map(|v| serde_json::from_value::<ToolDescriptor>(v).ok())
-            .filter(|t| !ProcessManager::is_local_tool(&t.name))
+            .filter(|t| !is_local_tool(&t.name))
             .collect()
     }
 
@@ -220,7 +269,88 @@ impl ToolHub {
     pub fn catalogue(&self) -> Vec<ToolDescriptor> {
         let mut all = self.remote_catalogue();
         all.extend(ProcessManager::local_descriptors());
+        all.push(send_file_descriptor());
         all
+    }
+
+    /// `send_file {path, caption?}`: uploads a workspace file to the calling conversation and
+    /// answers `{ attachment_id }` once the runner reports the API accepted it. `Err` is shown to
+    /// the model.
+    async fn send_file(
+        &self,
+        conversation_id: Uuid,
+        turn_id: Option<Uuid>,
+        args: &Value,
+    ) -> Result<Value, String> {
+        let path = args
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|p| !p.is_empty())
+            .ok_or("path required (a file inside the workspace)")?;
+        let caption = match args.get("caption") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(c)) if c.chars().count() <= limits::ATTACH_CAPTION_MAX => {
+                Some(c.clone())
+            }
+            Some(Value::String(_)) => {
+                return Err(format!(
+                    "caption is longer than {} characters",
+                    limits::ATTACH_CAPTION_MAX
+                ));
+            }
+            Some(_) => return Err("caption must be a string".into()),
+        };
+        let turn_id = turn_id.ok_or("no turn is running in this conversation")?;
+        let upload_id = send_file(
+            &self.out,
+            &self.cfg.home,
+            OutboundFile {
+                path: PathBuf::from(path),
+                conversation_id,
+                turn_id,
+                caption,
+            },
+        )
+        .await
+        .map_err(|e| match e {
+            OutboundError::BadPath => {
+                "path must be an existing regular file inside the workspace".to_owned()
+            }
+            OutboundError::TooLarge(max) => format!("file is larger than {max} bytes"),
+            OutboundError::Io(e) => format!("cannot read the file: {}", e.kind()),
+            OutboundError::Closed => "platform connection closed".to_owned(),
+        })?;
+        let (tx, rx) = oneshot::channel();
+        let early = {
+            let mut g = self.st();
+            let early = g.early_files.remove(&upload_id);
+            if early.is_none() {
+                g.files.insert(upload_id.clone(), tx);
+            }
+            early
+        };
+        let result = match early {
+            Some(r) => r,
+            None => match timeout(self.cfg.file_timeout, rx).await {
+                Ok(Ok(r)) => r,
+                _ => {
+                    self.st().files.remove(&upload_id);
+                    return Err(
+                        "the platform did not confirm the upload in time; the file may or may not have been sent"
+                            .into(),
+                    );
+                }
+            },
+        };
+        match (result.ok, result.attachment_id) {
+            (true, Some(id)) => Ok(json!({ "attachment_id": id })),
+            _ => Err(format!(
+                "the platform rejected the file: {}",
+                result
+                    .error
+                    .map_or_else(|| "unknown error".to_owned(), |e| e.message)
+            )),
+        }
     }
 
     /// Breaker gate: `true` when the call may proceed (closed, or an allowed probe).
@@ -277,6 +407,13 @@ impl ToolHub {
                     "tool `{tool}` is not available to this agent (it may have been removed or its prerequisite changed); ask an owner or retry in a new message"
                 ),
             );
+        }
+        if tool == SEND_FILE {
+            let turn_id = self.st().turns.get(&conversation_id).copied();
+            return match self.send_file(conversation_id, turn_id, &args).await {
+                Ok(v) => text_ok(&call_id, v.to_string()),
+                Err(m) => fail(&call_id, "invalid_request", m),
+            };
         }
         if ProcessManager::is_local_tool(tool) {
             return match self.procs.call(tool, &args) {

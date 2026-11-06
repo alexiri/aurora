@@ -30,6 +30,52 @@
       "description": "An empty JSON object body (`{}`).",
       "type": "object"
     },
+    "FileIn": {
+      "description": "One chunk of an inbound attachment (decision S-11). Frames of one `(turn_id, attachment_id)` are\nsent in `index` order, `last` on the final one; `size` and `sha256` describe the whole file and\nrepeat on every frame. `filename` is untrusted (the supervisor sanitizes it).",
+      "properties": {
+        "attachment_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "data_b64": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "index": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last": {
+          "type": "boolean"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "attachment_id",
+        "filename",
+        "index",
+        "last",
+        "size",
+        "sha256",
+        "data_b64"
+      ],
+      "type": "object"
+    },
     "FileResult": {
       "properties": {
         "attachment_id": {
@@ -669,6 +715,20 @@
         },
         "kind": {
           "const": "file.result"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/FileIn"
+        },
+        "kind": {
+          "const": "file.in"
         }
       },
       "required": [
