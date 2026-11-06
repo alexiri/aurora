@@ -1,52 +1,24 @@
 "use client";
 
-// TODO(BE-051/052): the M4 routes are not in the generated schema yet. These narrowly
-// typed fetch wrappers replace `api.*` calls until `schema.d.ts` is regenerated (D-32).
-// Calls using the wrapper: every function in this file.
+// Conversation-plane calls use the generated client (`api.*` + `unwrap`). The sandbox, restart and
+// agent-models routes are not in `schema.d.ts` yet, so they stay on the narrow fetch wrapper below.
+// TODO(BE-051/052 follow-up): move `sandbox`, `restart`, `models` to `api.*` once the routes are generated.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { ApiError } from "./client";
+import { api, ApiError } from "./client";
+import type { components } from "./schema";
+import { unwrap } from "./unwrap";
 
-export type TurnStatus = "queued" | "dispatched" | "running" | "done" | "failed" | "aborted";
-export interface Turn {
-  id: string;
-  conversation_id: string;
-  status: TurnStatus;
-  door: string;
-  speaker_label: string | null;
-  text: string;
-  attachment_ids: string[];
-  error_code: string | null;
-  abort_requested: boolean;
-  send_now_requested: boolean;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
-}
-export interface Followup {
-  id: string;
-  parent_turn_id: string;
-  status: "joining" | "joined" | "promoted";
-  text: string;
-  created_at: string;
-}
-export interface Conversation {
-  id: string;
-  agent_id: string;
-  kind: "direct" | "group" | "schedule" | "webhook" | "watch" | "peer" | "api";
-  external_ref: string;
-  title: string | null;
-  last_seq: number;
-  active_turn: Turn | null;
-  last_activity_at: string | null;
-  created_at: string;
-}
-export interface TranscriptEvent {
-  seq: number | null;
-  type: string;
-  ts: string;
+export type Turn = components["schemas"]["Turn"];
+export type Followup = components["schemas"]["Followup"];
+export type Conversation = components["schemas"]["Conversation"];
+// The schema types `payload` as `Record<string, never>`; transcript code reads arbitrary keys.
+export type TranscriptEvent = Omit<components["schemas"]["TranscriptEvent"], "payload"> & {
   payload: Record<string, unknown>;
-}
+};
+export type SendResult = components["schemas"]["MessageAccepted"];
+
+// Not in the generated schema yet (wrapper routes below).
 export interface SandboxView {
   agent_id: string;
   state: "unprovisioned" | "starting" | "running" | "stopping" | "stopped" | "failed";
@@ -68,10 +40,6 @@ export interface ModelOption {
   display_name: string | null;
   dialects: string[];
 }
-export interface SendResult {
-  turn: Turn | null;
-  followup: Followup | null;
-}
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
@@ -86,13 +54,15 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export const chatApi = {
-  direct: (agent: string) => call<Conversation>("POST", `/v1/agents/${agent}/conversations/direct`),
-  list: (agent: string) => call<{ items: Conversation[]; next_cursor: string | null }>("GET", `/v1/agents/${agent}/conversations?limit=50`),
+  direct: (agent: string) => unwrap(api.POST("/v1/agents/{agent}/conversations/direct", { params: { path: { agent } } })),
+  list: (agent: string) =>
+    unwrap(api.GET("/v1/agents/{agent}/conversations", { params: { path: { agent }, query: { limit: 50 } } })),
   events: (id: string, afterSeq: number) =>
-    call<{ items: TranscriptEvent[]; last_seq: number }>("GET", `/v1/conversations/${id}/events?after_seq=${afterSeq}&limit=500`),
-  send: (id: string, text: string) => call<SendResult>("POST", `/v1/conversations/${id}/messages`, { text }),
-  abort: (turn: string) => call<Turn>("POST", `/v1/turns/${turn}/abort`),
-  sendNow: (turn: string) => call<Turn>("POST", `/v1/turns/${turn}/send-now`),
+    unwrap(api.GET("/v1/conversations/{id}/events", { params: { path: { id }, query: { after_seq: afterSeq, limit: 500 } } })),
+  send: (id: string, text: string) =>
+    unwrap(api.POST("/v1/conversations/{id}/messages", { params: { path: { id } }, body: { text } })),
+  abort: (turn: string) => unwrap(api.POST("/v1/turns/{id}/abort", { params: { path: { id: turn } } })),
+  sendNow: (turn: string) => unwrap(api.POST("/v1/turns/{id}/send-now", { params: { path: { id: turn } } })),
   sandbox: (agent: string) => call<SandboxView>("GET", `/v1/agents/${agent}/sandbox`),
   restart: (agent: string) => call<SandboxView>("POST", `/v1/agents/${agent}/restart`),
   models: (agent: string) => call<{ items: ModelOption[] }>("GET", `/v1/agents/${agent}/models`),
