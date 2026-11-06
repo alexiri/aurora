@@ -9,3 +9,6 @@
 .DS_Store
 # Optional local-only Claude settings
 .claude/settings.local.json
+
+/plugins/fixtures/dist/
+/plugins/fixtures/**/target/
