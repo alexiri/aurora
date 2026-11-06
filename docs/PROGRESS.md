@@ -116,7 +116,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | BE-063 | Webhooks (API, receive endpoint, deliveries, tools) | Rust | done (c519c441) | BE-052 | Sonnet | webhooks 11 |
 | BE-064 | Attachments API side (BlobStore, routes, runner plane, delivery) | Rust | in-progress | BE-052 | Sonnet (worktree) | |
 | BE-065 | Action approvals, agent links, peer tasks, app-turn cap, agent tools | Rust | in-progress | BE-052 | Sonnet (worktree) | |
-| RUN-005 | Inbound attachments `file.in` (S-11) + `send_file` local tool | Rust | in-progress | S-11 | Sonnet (worktree) | |
+| RUN-005 | Inbound attachments `file.in` (S-11) + `send_file` local tool | Rust | done (2e799b23) | S-11 | Sonnet (worktree) | protocol/runner/supervisor 24 binaries, 155 tests pass on phase0; inbound tests (runner 3, supervisor 9); API side pending BE-064 |
 | SEC-FIX-03 | Permission matrix on reads (I-27, TEST-010 findings) | Rust | in-progress | TEST-010 | Sonnet (worktree) | |
 | API-005 | M5 contract (attachments, action approvals, links, peer tasks; C-27..C-30) | contract | done | — | Opus | API_CONTRACTS.md M5 |
 | FE-051 | Schedules, webhooks, peers tabs | Next.js | todo | BE-062/063/065 | Sonnet | |

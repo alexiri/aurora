@@ -40,7 +40,7 @@ Last reconciled with git history: 2026-11-06 (after RUN-004 merge, e65ec66d).
 | M5/10§schedules | Schedules: cron (5-min floor), gates, fire lease, fire-time authority, tools | P0 | BE-062 | FE-051 | M4 | backend done; UI todo | schedules 5 |
 | M5/10§webhooks | Webhooks: receiver, verification, rate limit, idempotency, tools | P0 | BE-063 | FE-051 | M4 | backend done; UI todo | webhooks 11 |
 | M5/10§processes | Processes and watches (local tools, process.state, watch turns, parked/lost) | P0 | SUP-003, BE-052 | FE-041 (computer tab) | M4 | done | supervisor process tests; hosted tests |
-| M5/10§attachments | Attachments in/out (BlobStore, routes, `file.in` S-11, `send_file`) | P0 | BE-064, RUN-005 | composer upload (todo) | M4 | in-progress | |
+| M5/10§attachments | Attachments in/out (BlobStore, routes, `file.in` S-11, `send_file`) | P0 | BE-064, RUN-005 | composer upload (todo) | M4 | in-progress (RUN-005 done; BE-064 API side running) | runner inbound 3, supervisor inbound 9 |
 | M5/07§actions | Action approvals, agent links, peer tasks, app-turn cap, agent tools | P0 | BE-065 | FE-051 | API-005 | in-progress | |
 | M5/12§catalogue | Full phase-0 platform tool catalogue | P0 | BE-060..065; apps tools `request_app_connection`, `propose_custom_connection` (task todo); messaging tools BE-075 | — | — | in-progress | |
 | M5/12§claude-code | `claude-code` adapter + conformance | P0 | SUP-004 | — | SUP-001 | done offline; live conformance **blocked** (no LiteLLM endpoint) | adapter tests |
