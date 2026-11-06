@@ -74,7 +74,8 @@ fn checked_in_schemas_match_generated() -> TestResult {
             .collect();
         for entry in fs::read_dir(&dir)? {
             let file = entry?.file_name().to_string_lossy().into_owned();
-            if file.ends_with(".json") && !known.contains(&file) {
+            // `channels_*.json` are owned by aurora-channels (its own drift test).
+            if file.ends_with(".json") && !file.starts_with("channels_") && !known.contains(&file) {
                 return Err(format!("stale schema file {file} is not in the registry").into());
             }
         }
