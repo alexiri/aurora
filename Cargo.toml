@@ -25,6 +25,7 @@ members = [
   "services/aurora-cli",
   "connectors/fake",
   "tests/e2e-gateway",
+  "tests/e2e-hosted",
 ]
 
 [workspace.package]
@@ -101,6 +102,7 @@ utoipa-axum = "0.2"
 uuid = { version = "1.22", features = ["v7", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 chrono-tz = "0.10"
+croner = "3"
 toml = "0.9"
 graphql-parser = "0.4"
 mail-parser = "1.0"

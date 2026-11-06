@@ -1,0 +1,28 @@
+[package]
+name = "aurora-e2e-hosted"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+
+[dependencies]
+
+[dev-dependencies]
+aurora-core = { workspace = true }
+aurora-config = { workspace = true }
+aurora-testkit = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
+base64 = { workspace = true }
+anyhow = { workspace = true }
+futures = { workspace = true }
+tokio-tungstenite = { workspace = true }
+chrono = { workspace = true }
