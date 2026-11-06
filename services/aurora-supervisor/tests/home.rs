@@ -367,3 +367,36 @@ async fn outbound_refuses_paths_outside_home() {
         assert!(matches!(r, Err(OutboundError::BadPath)), "{r:?}");
     }
 }
+
+#[tokio::test]
+async fn outbound_refuses_platform_dir() {
+    let d = TempDir::new();
+    fs::create_dir_all(d.path().join(".aurora/inbox/t")).unwrap();
+    fs::write(d.path().join(".aurora/tools.json"), "[]").unwrap();
+    fs::write(d.path().join(".aurora/inbox/t/a.txt"), "x").unwrap();
+    fs::create_dir_all(d.path().join("sub")).unwrap();
+    std::os::unix::fs::symlink(d.path().join(".aurora/tools.json"), d.path().join("alias"))
+        .unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(4);
+    let out = ChannelSender::from_mpsc(tx);
+    for path in [
+        ".aurora/tools.json".into(),
+        ".aurora/inbox/t/a.txt".into(),
+        "sub/../.aurora/tools.json".into(),
+        "alias".into(),
+        d.path().join(".aurora/tools.json"),
+    ] {
+        let r = send_file(
+            &out,
+            d.path(),
+            OutboundFile {
+                path,
+                conversation_id: Uuid::now_v7(),
+                turn_id: Uuid::now_v7(),
+                caption: None,
+            },
+        )
+        .await;
+        assert!(matches!(r, Err(OutboundError::Reserved)), "{r:?}");
+    }
+}

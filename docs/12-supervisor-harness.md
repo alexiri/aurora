@@ -274,7 +274,10 @@ next turn. Files stay in place until superseded by the canonical render.
 
 ## Outbound files
 
-`send_file`: the supervisor validates the path is inside `/workspace`, size ≤
+`send_file` (supervisor-local tool, S-11): the supervisor resolves the path
+(symlinks and `..` included) and validates it is a regular file inside
+`/workspace` and **not** inside the platform-managed `/workspace/.aurora/`
+(tool catalogue cache, inbox attachments, home projection state), size ≤
 `ATTACH_OUT_FILE_MAX`, then uploads in `file.part` chunks (≤ 144 KiB (S-06)) with a
 final `file.commit`; the API enforces per-turn and per-conversation caps.
 

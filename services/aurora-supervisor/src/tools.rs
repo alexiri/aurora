@@ -316,6 +316,9 @@ impl ToolHub {
             OutboundError::BadPath => {
                 "path must be an existing regular file inside the workspace".to_owned()
             }
+            OutboundError::Reserved => {
+                "files under .aurora/ are platform-managed and cannot be sent".to_owned()
+            }
             OutboundError::TooLarge(max) => format!("file is larger than {max} bytes"),
             OutboundError::Io(e) => format!("cannot read the file: {}", e.kind()),
             OutboundError::Closed => "platform connection closed".to_owned(),

@@ -18,6 +18,9 @@ use crate::channel::ChannelSender;
 pub enum OutboundError {
     #[error("path is outside the home or not a regular file")]
     BadPath,
+    /// Inside the platform-managed `.aurora/` directory (tool cache, inbox, projections).
+    #[error("path is inside the platform directory .aurora/")]
+    Reserved,
     #[error("file larger than {0} bytes")]
     TooLarge(u64),
     #[error("io: {0}")]
@@ -35,6 +38,9 @@ pub struct OutboundFile {
     pub caption: Option<String>,
 }
 
+/// Platform-managed directory under the home that `send_file` never reads (12 §Outbound files).
+pub const RESERVED_DIR: &str = ".aurora";
+
 /// Uploads one file; returns the `upload_id` the runner answers `file.result` with.
 pub async fn send_file(
     out: &ChannelSender,
@@ -47,6 +53,10 @@ pub async fn send_file(
         .map_err(|_| OutboundError::BadPath)?;
     if !real.starts_with(&root) {
         return Err(OutboundError::BadPath);
+    }
+    // Checked on the canonical path, so `..` segments and symlinks into it are refused too.
+    if real.starts_with(root.join(RESERVED_DIR)) {
+        return Err(OutboundError::Reserved);
     }
     let meta = tokio::fs::metadata(&real).await?;
     if !meta.is_file() {
