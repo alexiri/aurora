@@ -53,7 +53,7 @@ Last reconciled with git history: 2026-11-06 night (after FE-051 merge, 55480baf
 | M7/11§k8s | Kubernetes runner backend | P0 | RUN-004 | — | RUN-003 | done (no cluster: mock API only) | k8s_mock 15, unit 15 |
 | M7/15§helm | Helm chart (jobs, policies, namespaces, RBAC, routing) | P0 | OPS-010 | — | — | done (FUP-M7) | `helm lint`, `helm template`; ConfigMap loads (RUN-004) |
 | M7/18 | kind e2e, SEC-02 on k8s, performance budgets, upgrade test | P0 | OPS-011 | — | RUN-004 | **blocked** for kind (no cluster on host); rest todo | |
-| M7/15§docs | Operator docs (install, LLM endpoints, runners, plugins, backups) | P0 | OPS-012 | — | — | in-progress | |
+| M7/15§docs | Operator docs (install, LLM endpoints, runners, plugins, backups) | P0 | OPS-012 (+ OPS-013, FIX-003 for the gaps it found) | — | — | done (docs); gap fixes in progress | `docs/operator/` |
 | SEC-01..39 | Security invariants, each with a proving test (`17`) | P0 | per milestone | — | — | in-progress | proven so far: SEC-01/02/09/24/25/26/34 (TEST-013), SEC-35..39 (GW-005, TEST-020), CSRF (BE-010); full map at final audit |
 | P1/20 | Mattermost connector | P1 (later phase) | — | — | Phase 0 exit | out of scope now | |
 | P2..P4/21 | App catalogue, DB lane, Vault, SSH, previews, evals, … | later | — | — | Phase 0 exit | out of scope now | |
