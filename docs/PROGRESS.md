@@ -116,7 +116,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | FUP-M4 | From BE-052: (1) answer text buffered in memory on the API — durable `text` must come from the supervisor's answer-rule events or a persisted buffer so a channel move mid-turn loses nothing; (2) harness capabilities stored in `sandboxes.resource_profile` and `steer_delivered_at` reused as send-now marker — give them proper homes (spec fix with migration); (3) `gate.result` handling (M5 schedules); (4) model-list 10-min cache; (5) render inputs: plugin snippets/env/stubs, channels, peers, recall snippets (M5/M6) | Rust | todo | BE-052 | — | |
 | FUP-M5 | Memory recall uses `websearch_to_tsquery` (AND) over the whole message — consider OR semantics for recall to get useful snippets (BE-060); cross-crate checksum-trailer test (API render vs supervisor harvest) | Rust | todo | BE-060 | — | |
 | FUP-M6 | From CON-001: space bindings not passed to the `Connector` trait (13 §8 signature lacks a slot); fake connector lacks `file.fetch`/outbound file download (SDK `put_file`/`get_file` unreachable from `execute`) | Rust | todo | CON-001 | — | |
-| FUP-M7 | Helm: evaluation Postgres rendered as hook resources (not removed on uninstall — document or move to a subchart); hook jobs use third-party `alpine/k8s` image (consider a pinned digest or an Aurora tools image); kind e2e not run (no cluster) | Ops | todo | OPS-010 | — | |
+| FUP-M7 | From RUN-004: API's `SandboxSpec.env` is empty, so `AURORA_AGENT_HANDLE` and snapshot app `env` (11 §The boot document) never reach sandboxes on any backend; k8s pod name falls back to sandbox id; no `imagePullSecrets` config key; per-pod pids limit not enforceable on k8s; `/run/aurora` emptyDir cannot be `noexec`. Helm: evaluation Postgres rendered as hook resources (not removed on uninstall — document or move to a subchart); hook jobs use third-party `alpine/k8s` image (consider a pinned digest or an Aurora tools image); kind e2e not run (no cluster) | Ops | todo | OPS-010 | — | |
 | API-004 | M4 contract (conversations, turns, transcript, SSE, sandbox, models; C-23..C-26) | contract | done | — | Opus | API_CONTRACTS.md M4 |
 | RUN-001/002/003 | Runner core, supervisor channel server, podman backend + sandbox images | Rust | done | PROTO-001 | Sonnet | runner tests; S-07/S-08 |
 | SUP-001..004 | Supervisor core, home projection/harvest, MCP bridge + tools socket + process manager, claude-code adapter + conformance | Rust | done | PROTO-001 | Sonnet | supervisor tests; I-23 |
@@ -131,8 +131,11 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | FE-050 | Memory + Skills tabs, org skills page | Next.js | done | BE-060/061 | Sonnet | vitest |
 | BE-062 | Schedules (API, cron, gates, tools, due-work arm) | Rust | in-progress | BE-052 | Sonnet | |
 | BE-063 | Webhooks (API, receive endpoint, deliveries, tools) | Rust | in-progress | BE-052 | Sonnet | |
-| BE-064 | Attachments in/out (BlobStore, routes, runner plane, delivery, send_file) | Rust | todo (next) | BE-052 | Sonnet (worktree) | |
-| BE-065 | Action approvals, agent links, peer tasks, app-turn cap, agent tools | Rust | todo (next) | BE-052 | Sonnet (worktree) | |
+| BE-064 | Attachments API side (BlobStore, routes, runner plane, delivery) | Rust | in-progress | BE-052 | Sonnet (worktree) | |
+| BE-065 | Action approvals, agent links, peer tasks, app-turn cap, agent tools | Rust | in-progress | BE-052 | Sonnet (worktree) | |
+| RUN-005 | Inbound attachments `file.in` (S-11) + `send_file` local tool | Rust | in-progress | S-11 | Sonnet (worktree) | |
+| SEC-FIX-03 | Permission matrix on reads (I-27, TEST-010 findings) | Rust | in-progress | TEST-010 | Sonnet (worktree) | |
+| API-005 | M5 contract (attachments, action approvals, links, peer tasks; C-27..C-30) | contract | done | — | Opus | API_CONTRACTS.md M5 |
 | FE-051 | Schedules, webhooks, peers tabs | Next.js | todo | BE-062/063/065 | Sonnet | |
 | TEST-014 | M5 hosted suites (18) + live claude-code conformance (needs LiteLLM endpoint) | e2e | todo | M5 | Sonnet | |
 | CHAN-001 | aurora-channels (content, cards, action tokens, capabilities; I-26) | Rust | done | — | Sonnet | channels tests |
@@ -140,7 +143,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | API-005 | M6 contract (channel management, connector plane) | contract | todo | — | Opus | |
 | BE-070+ | Channel core API (registration, inbox/ops, routing, linking, cards, presence, messaging tools), conformance, channel UI | both | todo | API-005 | — | |
 | OPS-010 | Helm chart | Ops | done | — | Sonnet | `helm lint`, `helm template` |
-| RUN-004 | Kubernetes backend (+ runner.k8s.core_namespace config fix) | Rust | in-progress | RUN-003 | Sonnet (Orca worker, worktree `run-004-k8s`) | |
+| RUN-004 | Kubernetes backend (+ runner.k8s.core_namespace config fix) | Rust | done (e65ec66d) | RUN-003 | Sonnet (Orca worker, worktree) + Opus (kube → aws-lc-rs) | config 18, k8s unit 15, k8s_mock 15 (fake API server), runner 10; clippy; cargo deny ok; helm-rendered ConfigMap loads |
 | OPS-011 | kind e2e, perf budgets, upgrade test, operator docs | Ops | todo (kind blocked: no cluster) | RUN-004 | — | |
 
 ## Open spec issues (resolve before M4 implementation; found by PROTO-001)
@@ -155,7 +158,8 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 
 ## Open security findings
 
-- none open. SEC-34 fixed by SEC-FIX-01 (9b61c0f1) and SEC-09 by SEC-FIX-02 (f9130aa3); TEST-013 s8b passes. TEST-013 should gain a `process_start` env probe for SEC-34 now that `process_*` tools are listed (follow-up).
+- **I-27 member-read defects** (TEST-010): org/workspace policy, secrets, connections, OAuth clients, availability, access, grants readable below the matrix role → SEC-FIX-03 in progress.
+- SEC-34 fixed by SEC-FIX-01 (9b61c0f1) and SEC-09 by SEC-FIX-02 (f9130aa3); TEST-013 s8b passes. TEST-013 should gain a `process_start` env probe for SEC-34 now that `process_*` tools are listed (follow-up).
 
 ## Blockers
 
