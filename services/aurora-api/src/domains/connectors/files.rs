@@ -7,6 +7,10 @@
 //!   (required; the workspace is taken from the conversation), optional `turn_id` and
 //!   `caption`. With a `turn_id` the attachment is stored `bound`, otherwise `pending`;
 //! * the filename comes from `X-Aurora-Filename`, sanitized like user uploads;
+//! * single-shot: the first successful PUT records `_attachment_id`/`_attachment_sha256` on the
+//!   op row, in the transaction that inserts the attachment and under the op's row lock, so
+//!   concurrent PUTs cannot both win. A later PUT with identical bytes (same sha256) returns the
+//!   same `attachment_id` (idempotent retry); different bytes get 409 `file_already_uploaded`;
 //! * downloads are served with the same fixed safe headers as dashboard downloads.
 
 use super::auth::ConnectorCtx;
@@ -121,44 +125,97 @@ async fn put_file(
     let key = blob::new_key();
     store.put(&key, &bytes).await?;
     let id = Uuid::now_v7();
-    let inserted = attachments::insert(
-        &s.pool,
-        &NewAttachment {
-            id,
-            workspace_id: conv.workspace_id,
-            conversation_id,
-            turn_id,
-            direction: "in",
-            status: if turn_id.is_some() {
-                "bound"
-            } else {
-                "pending"
-            },
-            filename: &filename,
-            content_type: &content_type,
-            size_bytes: i64::try_from(bytes.len()).unwrap_or(i64::MAX),
-            sha256: &sha,
-            blob_backend: backend,
-            blob_key: &key,
-            caption: caption.as_deref(),
-            created_by_user_id: None,
+    let new = NewAttachment {
+        id,
+        workspace_id: conv.workspace_id,
+        conversation_id,
+        turn_id,
+        direction: "in",
+        status: if turn_id.is_some() {
+            "bound"
+        } else {
+            "pending"
         },
-    )
-    .await;
-    match inserted {
-        Ok(_) => Ok(Json(FilePutResponse { attachment_id: id })),
+        filename: &filename,
+        content_type: &content_type,
+        size_bytes: i64::try_from(bytes.len()).unwrap_or(i64::MAX),
+        sha256: &sha,
+        blob_backend: backend,
+        blob_key: &key,
+        caption: caption.as_deref(),
+        created_by_user_id: None,
+    };
+    let outcome = store_once(&s, &c, op_id, &new).await;
+    match outcome {
+        Ok(Some(existing)) => {
+            // Lost to an earlier upload: our blob is surplus.
+            if let Err(d) = store.delete(&key).await {
+                tracing::warn!(error = %d, "surplus blob after repeated connector upload");
+            }
+            existing
+        }
+        Ok(None) => Ok(Json(FilePutResponse { attachment_id: id })),
         Err(e) => {
             if let Err(d) = store.delete(&key).await {
                 tracing::warn!(error = %d, "orphan blob after failed connector attachment insert");
             }
-            Err(match e {
-                DbError::ForeignKeyViolation { .. } => {
-                    ApiError::unprocessable("op_context_invalid", "Unknown turn.")
-                }
-                e => e.into(),
-            })
+            Err(e)
         }
     }
+}
+
+/// Under the op's row lock: if it already has an attachment return the idempotent answer
+/// (`Some`), else run `insert` and record the upload (`None`).
+async fn store_once(
+    s: &AppState,
+    c: &ConnectorCtx,
+    op_id: Uuid,
+    new: &NewAttachment<'_>,
+) -> Result<Option<Result<Json<FilePutResponse>, ApiError>>, ApiError> {
+    let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+    let op = ops::lock(&mut tx, op_id, &c.connector.id)
+        .await?
+        .filter(|o| {
+            o.kind == "file.fetch"
+                && o.status == "claimed"
+                && o.claimed_by_replica == Some(c.replica)
+        })
+        .ok_or_else(op_404)?;
+    if let Some(prev) = op
+        .payload
+        .get("_attachment_id")
+        .and_then(|v| v.as_str())
+        .and_then(|v| v.parse::<Uuid>().ok())
+    {
+        let same = op
+            .payload
+            .get("_attachment_sha256")
+            .and_then(|v| v.as_str())
+            == Some(new.sha256);
+        return Ok(Some(if same {
+            Ok(Json(FilePutResponse {
+                attachment_id: prev,
+            }))
+        } else {
+            Err(ApiError::conflict(
+                "file_already_uploaded",
+                "This operation already received a different file.",
+            ))
+        }));
+    }
+    match attachments::insert(&mut *tx, new).await {
+        Ok(_) => {}
+        Err(DbError::ForeignKeyViolation { .. }) => {
+            return Err(ApiError::unprocessable(
+                "op_context_invalid",
+                "Unknown turn.",
+            ));
+        }
+        Err(e) => return Err(e.into()),
+    }
+    ops::record_upload(&mut *tx, op_id, new.id, new.sha256).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(None)
 }
 
 async fn get_file(

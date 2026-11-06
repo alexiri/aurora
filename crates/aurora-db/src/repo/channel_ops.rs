@@ -274,3 +274,24 @@ pub async fn disable_presence<'e, E: PgExecutor<'e>>(
     .rows_affected()
         == 1)
 }
+
+/// Record the attachment a `file.fetch` op produced (private payload keys `_attachment_id`,
+/// `_attachment_sha256`). Call under the op's row lock.
+pub async fn record_upload<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    attachment_id: Uuid,
+    sha256: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE channel_ops SET payload = payload || jsonb_build_object(
+             '_attachment_id', $2::text, '_attachment_sha256', $3::text), updated_at=now()
+          WHERE id=$1",
+    )
+    .bind(id)
+    .bind(attachment_id.to_string())
+    .bind(sha256)
+    .execute(exec)
+    .await?;
+    Ok(())
+}

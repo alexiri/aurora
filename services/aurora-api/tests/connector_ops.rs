@@ -210,11 +210,17 @@ impl W {
             .unwrap()
     }
 
-    async fn conversation(&self) -> Uuid {
+    async fn agent(&self, handle: &str) -> Uuid {
         let ws = self.h.workspace(self.org).await;
         let agent = Uuid::now_v7();
-        sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) VALUES ($1,$2,$3,'a1','a1','hosted','fake')")
-            .bind(agent).bind(self.org).bind(ws).execute(self.h.pool()).await.unwrap();
+        sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) VALUES ($1,$2,$3,$4,$4,'hosted','fake')")
+            .bind(agent).bind(self.org).bind(ws).bind(handle).execute(self.h.pool()).await.unwrap();
+        agent
+    }
+
+    async fn conversation(&self) -> Uuid {
+        let ws = self.h.workspace(self.org).await;
+        let agent = self.agent("a1").await;
         let conv = Uuid::now_v7();
         sqlx::query("INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at) VALUES ($1,$2,$3,'api','x',now())")
             .bind(conv).bind(agent).bind(ws).execute(self.h.pool()).await.unwrap();
@@ -848,6 +854,40 @@ async fn file_put_and_get_authorization_and_size_cap() {
         ("pa_ss.txt", "in", "pending", 5, "text/plain")
     );
     assert_eq!(sha, format!("{:x}", Sha256::digest(b"hello")));
+    // Single-shot: identical bytes again return the same attachment, different bytes are 409.
+    let (s, body) = w
+        .raw(
+            r1,
+            Method::PUT,
+            &format!("/files/{fetch}"),
+            &[],
+            b"hello".to_vec(),
+        )
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap()["attachment_id"],
+        att.to_string()
+    );
+    let (s, body) = w
+        .raw(
+            r1,
+            Method::PUT,
+            &format!("/files/{fetch}"),
+            &[],
+            b"other".to_vec(),
+        )
+        .await;
+    assert_eq!(s, 409);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"],
+        "file_already_uploaded"
+    );
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM attachments")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
 
     // A non-file.fetch op and an op without destination are refused.
     let post = w.enqueue(Some(i1), "message.post", json!({})).await;
@@ -1088,4 +1128,114 @@ async fn inbox_processor_handles_each_row_exactly_once() {
         inbox::process_batch(&w.h.state, &handlers).await.unwrap(),
         1
     );
+}
+
+#[tokio::test]
+async fn concurrent_file_puts_produce_one_attachment() {
+    let w = Arc::new(world().await);
+    let r1 = w.replica().await;
+    let i1 = w.integration("T1", r1).await;
+    let conv = w.conversation().await;
+    let count = |w: Arc<W>| async move {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM attachments")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap()
+    };
+    for (round, bodies) in [
+        vec![b"same".to_vec(), b"same".to_vec(), b"same".to_vec()],
+        vec![b"aaaa".to_vec(), b"bbbb".to_vec(), b"cccc".to_vec()],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let op = w
+            .enqueue(
+                Some(i1),
+                "file.fetch",
+                json!({"file_ref": "F", "max_bytes": 16, "conversation_id": conv}),
+            )
+            .await;
+        w.claim(r1, 10, 0).await;
+        let before = count(w.clone()).await;
+        let mut tasks = vec![];
+        for b in bodies {
+            let w = w.clone();
+            tasks.push(tokio::spawn(async move {
+                w.raw(r1, Method::PUT, &format!("/files/{op}"), &[], b)
+                    .await
+            }));
+        }
+        let mut ok = vec![];
+        let mut conflicts = 0;
+        for t in tasks {
+            let (s, body) = t.await.unwrap();
+            match s {
+                200 => ok.push(
+                    serde_json::from_slice::<Value>(&body).unwrap()["attachment_id"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                ),
+                409 => conflicts += 1,
+                other => panic!("round {round}: unexpected {other}"),
+            }
+        }
+        assert_eq!(count(w.clone()).await, before + 1, "round {round}");
+        ok.dedup();
+        assert_eq!(ok.len(), 1, "one attachment id handed out");
+        assert_eq!(conflicts, if round == 0 { 0 } else { 2 });
+        // Surplus blobs of the losers are removed.
+        let blobs: i64 = sqlx::query_scalar("SELECT count(*) FROM blobs")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+        assert_eq!(blobs, before + 1);
+    }
+}
+
+#[tokio::test]
+async fn credential_dead_on_a_presence_disables_only_the_presence() {
+    let w = world().await;
+    let r1 = w.replica().await;
+    let i1 = w.integration("T1", r1).await;
+    let agent = w.agent("bot1").await;
+    let presence = Uuid::now_v7();
+    sqlx::query("INSERT INTO channel_presences (id, agent_id, integration_id, mode, platform_user_ref, status) VALUES ($1,$2,$3,'dedicated','B1','active')")
+        .bind(presence).bind(agent).bind(i1).execute(w.h.pool()).await.unwrap();
+    let mut tx = w.h.pool().begin().await.unwrap();
+    let mut op = new_op(Some(i1), "message.post", json!({}), None);
+    op.presence_id = Some(presence);
+    let id = ops::enqueue(&mut tx, op).await.unwrap();
+    tx.commit().await.unwrap();
+    w.claim(r1, 1, 0).await;
+    let (s, v) = w
+        .result(
+            r1,
+            json!({"op_id": id, "outcome": "error",
+                   "error": {"code": "credential_dead", "message": "revoked"}}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (st, _, code, _) = w.op(id).await;
+    assert_eq!(
+        (st.as_str(), code.as_deref()),
+        ("failed", Some("credential_dead"))
+    );
+    let (pst, reason): (String, Option<String>) =
+        sqlx::query_as("SELECT status, status_reason FROM channel_presences WHERE id=$1")
+            .bind(presence)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        (pst.as_str(), reason.as_deref()),
+        ("disabled", Some("credential_dead"))
+    );
+    let ist: String = sqlx::query_scalar("SELECT status FROM channel_integrations WHERE id=$1")
+        .bind(i1)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(ist, "active");
 }
