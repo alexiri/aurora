@@ -33,6 +33,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   oidc_state_invalid: "The single sign-on attempt expired or was invalid. Please try again.",
   oidc_failed: "Single sign-on failed. Please try again or use another method.",
   email_domain_not_allowed: "Your email domain is not allowed to sign in with this provider.",
+  cannot_modify_self: "You cannot change your own administrator status or disable your own account.",
   instance_admin_required: "This requires an instance administrator.",
 };
 

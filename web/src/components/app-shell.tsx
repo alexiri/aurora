@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuTrigger } from "./ui/menu";
 
-const SECTIONS = ["Conversations", "Memory", "Connections", "Keys", "Members", "Settings"];
+const SECTIONS = ["Conversations", "Memory", "Connections", "Keys", "Members"];
 
 function SwitcherButton({ label, value }: { label: string; value: string }) {
   return (
@@ -98,6 +98,14 @@ function UserMenu() {
       </MenuTrigger>
       <MenuContent align="end">
         {me.data ? <MenuLabel>{me.data.user.email}</MenuLabel> : null}
+        <MenuItem asChild>
+          <Link href="/account">Account</Link>
+        </MenuItem>
+        {me.data?.user.is_instance_admin ? (
+          <MenuItem asChild>
+            <Link href="/admin/users">Admin</Link>
+          </MenuItem>
+        ) : null}
         <MenuItem onSelect={() => void onLogout()}>Sign out</MenuItem>
       </MenuContent>
     </Menu>
@@ -119,7 +127,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           Aurora
         </Link>
         <nav aria-label="Context" className="flex items-center gap-1">
-          <OrgSwitcher orgSlug={orgSlug} />
+          {orgSlug ? <OrgSwitcher orgSlug={orgSlug} /> : null}
           {orgSlug ? <WorkspaceSwitcher orgSlug={orgSlug} wsSlug={wsSlug} /> : null}
         </nav>
         <div className="ml-auto">
@@ -152,6 +160,20 @@ export function AppShell({ children }: { children: ReactNode }) {
                   </span>
                 </li>
               ))}
+              <li>
+                <Link
+                  href={`${base}/settings`}
+                  aria-current={pathname.startsWith(`${base}/settings`) ? "page" : undefined}
+                  className={cn(
+                    "block rounded px-2 py-1.5",
+                    pathname.startsWith(`${base}/settings`)
+                      ? "bg-neutral-100 font-medium"
+                      : "hover:bg-neutral-50",
+                  )}
+                >
+                  Settings
+                </Link>
+              </li>
             </ul>
           </nav>
         ) : null}
