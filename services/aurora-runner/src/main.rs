@@ -6,6 +6,11 @@ use aurora_core::service::{self, exit_config};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
+
+use aurora_runner::hub::NullHub;
+use aurora_runner::runner::RunnerError;
+use aurora_runner::{Runner, RunnerSettings};
 
 const SERVICE: &str = "aurora-runner";
 const OPS_PORT: u16 = 4106;
@@ -51,8 +56,24 @@ async fn main() -> ExitCode {
 
 async fn serve(cfg: &RunnerConfig) -> std::io::Result<()> {
     tracing::info!(backend = ?cfg.backend, "runner backend configured");
+    let backend = aurora_runner::backends::build(cfg.backend, cfg.runner.max_sandboxes)
+        .map_err(std::io::Error::other)?;
     let metrics = service::install_metrics(SERVICE);
     let app = service::ops_router(metrics, vec![]);
     let listener = service::bind(cfg.server.bind.as_str(), OPS_PORT).await?;
-    service::serve_all(vec![(listener, app)]).await
+
+    // The supervisor channel server (RUN-002) replaces the null hub.
+    let hub = Arc::new(NullHub);
+    let runner = Runner::new(RunnerSettings::from_config(cfg), backend, hub);
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    let task = tokio::spawn(runner.run(stop_rx));
+
+    let served = service::serve_all(vec![(listener, app)]).await;
+    let _ = stop_tx.send(true);
+    match task.await {
+        Ok(Ok(())) | Ok(Err(RunnerError::Shutdown)) => {}
+        Ok(Err(e)) => return Err(std::io::Error::other(e)),
+        Err(e) => return Err(std::io::Error::other(e)),
+    }
+    served
 }

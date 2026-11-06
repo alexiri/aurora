@@ -46,6 +46,18 @@ pub const HDR_FILENAME: &str = "x-aurora-filename";
 pub const HDR_CAPTION: &str = "x-aurora-caption";
 pub const HDR_REPLICA: &str = "x-aurora-replica";
 
+/// UUIDv5 namespace for reports the runner derives from supervisor frames (spec fix S-07).
+pub const NAMESPACE_AURORA_REPORT: Uuid =
+    Uuid::from_u128(0x6f1c_2a58_9d3e_5b47_8c10_a7e4_52d9_b3f6);
+
+/// Deterministic `report_id = UUIDv5(NAMESPACE_AURORA_REPORT, "<boot_id>:<seq>")`.
+pub fn frame_report_id(boot_id: Uuid, seq: u64) -> Uuid {
+    Uuid::new_v5(
+        &NAMESPACE_AURORA_REPORT,
+        format!("{boot_id}:{seq}").as_bytes(),
+    )
+}
+
 open_vocab! {
     /// Result of applying one report.
     pub enum ReportStatus {
@@ -189,6 +201,9 @@ impl Validate for WorkRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkResponse {
     pub items: Vec<WorkItem>,
+    /// True only for the oldest live replica of the runner, computed at poll time (S-08).
+    #[serde(default)]
+    pub reconciler: bool,
 }
 
 /// `[key, value]` pairs, as on the wire.
@@ -796,4 +811,21 @@ pub struct StrayObject {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StraysRequest {
     pub objects: Vec<StrayObject>,
+}
+
+#[cfg(test)]
+mod report_id_tests {
+    use super::*;
+
+    #[test]
+    fn frame_report_id_is_deterministic_v5() {
+        let boot = Uuid::from_u128(1);
+        assert_eq!(frame_report_id(boot, 5), frame_report_id(boot, 5));
+        assert_ne!(frame_report_id(boot, 5), frame_report_id(boot, 6));
+        assert_ne!(
+            frame_report_id(boot, 5),
+            frame_report_id(Uuid::from_u128(2), 5)
+        );
+        assert_eq!(frame_report_id(boot, 5).get_version_num(), 5);
+    }
 }

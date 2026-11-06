@@ -9,6 +9,9 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "aurora-runner"
 path = "src/main.rs"
@@ -16,7 +19,20 @@ path = "src/main.rs"
 [dependencies]
 aurora-core = { workspace = true, features = ["service"] }
 aurora-config = { workspace = true }
+aurora-protocol = { workspace = true }
+async-trait = { workspace = true }
 axum = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true }
+hex = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4", "v5"] }
+
+[dev-dependencies]
+wiremock = { workspace = true }

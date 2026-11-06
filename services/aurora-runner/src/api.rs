@@ -1,0 +1,221 @@
+//! API client for the W5 runner plane (`16 §W5`).
+
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+use aurora_protocol::runner::{
+    HDR_REPLICA, RegisterRequest, RegisterResponse, ReportResult, ReportsRequest, ReportsResponse,
+    SandboxAssignment, SandboxesCheckRequest, SandboxesCheckResponse, SandboxesResponse,
+    StraysRequest, WorkRequest, WorkResponse,
+};
+use reqwest::Method;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use uuid::Uuid;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ApiError {
+    #[error("transport: {0}")]
+    Transport(String),
+    #[error("api answered {status}: {body}")]
+    Status { status: u16, body: String },
+    #[error("undecodable response: {0}")]
+    Decode(String),
+}
+
+impl ApiError {
+    pub fn retryable(&self) -> bool {
+        match self {
+            Self::Transport(_) => true,
+            Self::Status { status, .. } => *status >= 500 || matches!(*status, 408 | 429),
+            Self::Decode(_) => false,
+        }
+    }
+
+    /// Credentials rejected: retrying is pointless.
+    pub fn is_auth(&self) -> bool {
+        matches!(self, Self::Status { status, .. } if matches!(*status, 401 | 403))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RetryPolicy {
+    pub attempts: u32,
+    pub initial: Duration,
+    pub max: Duration,
+}
+
+impl RetryPolicy {
+    pub fn delay(&self, attempt: u32) -> Duration {
+        self.initial
+            .saturating_mul(1u32 << attempt.min(16))
+            .min(self.max)
+    }
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            attempts: 5,
+            initial: Duration::from_millis(250),
+            max: Duration::from_secs(10),
+        }
+    }
+}
+
+pub struct ApiClient {
+    http: reqwest::Client,
+    base: String,
+    token: String,
+    replica: Mutex<Option<Uuid>>,
+    retry: RetryPolicy,
+    reconciler: AtomicBool,
+}
+
+impl ApiClient {
+    /// `api_url` is the API origin; `/v1/runner` is appended.
+    pub fn new(api_url: &str, token: &str, retry: RetryPolicy) -> Result<Self, ApiError> {
+        let http = reqwest::Client::builder()
+            .user_agent(concat!("aurora-runner/", env!("CARGO_PKG_VERSION")))
+            .connect_timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|e| ApiError::Transport(e.to_string()))?;
+        Ok(Self {
+            http,
+            base: format!("{}/v1/runner", api_url.trim_end_matches('/')),
+            token: token.to_owned(),
+            replica: Mutex::new(None),
+            retry,
+            reconciler: AtomicBool::new(false),
+        })
+    }
+
+    pub fn replica_id(&self) -> Option<Uuid> {
+        self.replica.lock().ok().and_then(|r| *r)
+    }
+
+    /// `reconciler` flag of the most recent successful `/work`; false if absent or after an error (S-08).
+    pub fn is_reconciler(&self) -> bool {
+        self.reconciler.load(Ordering::Relaxed)
+    }
+
+    async fn once<B: Serialize, R: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&B>,
+        timeout: Option<Duration>,
+    ) -> Result<(R, reqwest::header::HeaderMap), ApiError> {
+        let mut rb = self
+            .http
+            .request(method, format!("{}{path}", self.base))
+            .bearer_auth(&self.token)
+            .header(aurora_protocol::version::HEADER, "runner/1");
+        if let Some(id) = self.replica_id() {
+            rb = rb.header(HDR_REPLICA, id.to_string());
+        }
+        if let Some(t) = timeout {
+            rb = rb.timeout(t);
+        }
+        if let Some(b) = body {
+            rb = rb.json(b);
+        }
+        let resp = rb
+            .send()
+            .await
+            .map_err(|e| ApiError::Transport(e.without_url().to_string()))?;
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| ApiError::Transport(e.without_url().to_string()))?;
+        if !status.is_success() {
+            let snippet: String = String::from_utf8_lossy(&bytes).chars().take(200).collect();
+            return Err(ApiError::Status {
+                status: status.as_u16(),
+                body: snippet,
+            });
+        }
+        let raw: &[u8] = if bytes.is_empty() { b"null" } else { &bytes };
+        let value = serde_json::from_slice(raw).map_err(|e| ApiError::Decode(e.to_string()))?;
+        Ok((value, headers))
+    }
+
+    async fn call<B: Serialize, R: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&B>,
+    ) -> Result<R, ApiError> {
+        let mut attempt = 0;
+        loop {
+            match self.once(method.clone(), path, body, None).await {
+                Ok((v, _)) => return Ok(v),
+                Err(e) if e.retryable() && attempt + 1 < self.retry.attempts => {
+                    tracing::warn!(path, attempt, error = %e, "api call failed; retrying");
+                    tokio::time::sleep(self.retry.delay(attempt)).await;
+                    attempt += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    pub async fn register(&self, req: &RegisterRequest) -> Result<RegisterResponse, ApiError> {
+        let r: RegisterResponse = self.call(Method::POST, "/register", Some(req)).await?;
+        if let Ok(mut g) = self.replica.lock() {
+            *g = Some(r.replica_id);
+        }
+        Ok(r)
+    }
+
+    /// One long poll (no internal retry; the runner loop owns the backoff).
+    pub async fn work(&self, req: &WorkRequest) -> Result<WorkResponse, ApiError> {
+        let timeout = Duration::from_secs(u64::from(req.wait_secs) + 15);
+        let result = self
+            .once::<_, WorkResponse>(Method::POST, "/work", Some(req), Some(timeout))
+            .await;
+        // Fail safe: only a successful response with `reconciler: true` enables reconcile.
+        self.reconciler.store(
+            result.as_ref().is_ok_and(|(r, _)| r.reconciler),
+            Ordering::Relaxed,
+        );
+        let (r, _) = result?;
+        Ok(r)
+    }
+
+    pub async fn post_reports(
+        &self,
+        reports: &ReportsRequest,
+    ) -> Result<Vec<ReportResult>, ApiError> {
+        let r: ReportsResponse = self.call(Method::POST, "/reports", Some(reports)).await?;
+        Ok(r.results)
+    }
+
+    pub async fn list_sandboxes(&self) -> Result<Vec<SandboxAssignment>, ApiError> {
+        let r: SandboxesResponse = self.call(Method::GET, "/sandboxes", None::<&()>).await?;
+        Ok(r.sandboxes)
+    }
+
+    pub async fn check_sandboxes(&self, ids: Vec<Uuid>) -> Result<Vec<Uuid>, ApiError> {
+        let req = SandboxesCheckRequest { sandbox_ids: ids };
+        let r: SandboxesCheckResponse = self
+            .call(Method::POST, "/sandboxes/check", Some(&req))
+            .await?;
+        Ok(r.known)
+    }
+
+    pub async fn strays(&self, req: &StraysRequest) -> Result<(), ApiError> {
+        let _: serde_json::Value = self.call(Method::POST, "/strays", Some(req)).await?;
+        Ok(())
+    }
+
+    pub async fn retire(&self) -> Result<(), ApiError> {
+        let _: serde_json::Value = self
+            .call(Method::POST, "/retire", Some(&serde_json::json!({})))
+            .await?;
+        Ok(())
+    }
+}

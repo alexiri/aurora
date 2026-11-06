@@ -642,6 +642,11 @@
         "$ref": "#/$defs/WorkItem"
       },
       "type": "array"
+    },
+    "reconciler": {
+      "default": false,
+      "description": "True only for the oldest live replica of the runner, computed at poll time (S-08).",
+      "type": "boolean"
     }
   },
   "required": [
