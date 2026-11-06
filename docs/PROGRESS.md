@@ -106,7 +106,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | BE-043 | Connect flows (fields+probe, oauth2, callback, reconnect, blocklist) + API connect hooks | Rust | todo (next) | BE-042 | Sonnet | |
 | BE-044 | Connection grants + effective tools | Rust | todo | BE-042 | Sonnet | |
 | FE-030 | Apps catalogue, connect window, connections, OAuth clients, availability UI | Next.js | todo | BE-042/043 | Sonnet | |
-| FUP-M3 | Pre-warm hook modules on snapshot load; OpenAPI typing for governance document | — | todo | — | — | |
+| FUP-M3 | Pre-warm hook modules on snapshot load; OpenAPI typing for governance document; OAuth callback should surface `missing_scopes` (store requested scopes in state, show on connection); first connect with a tenant-templated token URL must take `tenant_host` from connect `fields` (zone-validated); skill exec bit (SUP-003) | — | todo | — | — | |
 | M3 rest | snapshot compiler, lifecycle/ingestion API, connect flows, mechanisms in gateway, hook host + WIT + SDK (needs wasm32-wasip2), CLI plugin, fixtures | both | todo | M2 | — | |
 | M4–M7 | hosted runtime, hosted features, channels, k8s/Helm | both | todo | per 19 | — | |
 

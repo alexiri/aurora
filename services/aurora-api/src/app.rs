@@ -65,6 +65,8 @@ pub struct AppState {
     pub derived: Arc<aurora_crypto::DerivedKeys>,
     /// OIDC discovery cache and HTTP client.
     pub oidc: Arc<crate::domains::oidc::OidcClients>,
+    /// Connect-flow outbound clients (guarded HTTP, hook host).
+    pub connect: Arc<crate::domains::connect::Env>,
     /// SSE keepalive interval.
     pub sse_keepalive: std::time::Duration,
 }
@@ -117,6 +119,10 @@ impl AppState {
             .map_err(|e| format!("derived keys: {e}"))?,
         );
         let oidc = Arc::new(crate::domains::oidc::OidcClients::new()?);
+        let connect = Arc::new(crate::domains::connect::Env::new(
+            &config.hookhost_url,
+            config.internal_secret.expose(),
+        )?);
         Ok(Self {
             pool,
             config: Arc::new(config),
@@ -131,6 +137,7 @@ impl AppState {
             approval_bus: Arc::default(),
             derived,
             oidc,
+            connect,
             sse_keepalive: aurora_core::limits::SSE_KEEPALIVE,
         })
     }
@@ -166,6 +173,20 @@ impl AppState {
         self
     }
 
+    /// Redirect guarded connect-flow requests to a test server (tests only).
+    #[must_use]
+    pub fn with_connect_override(mut self, origin: &str) -> Self {
+        if let Ok(env) = crate::domains::connect::Env::new(
+            &self.config.hookhost_url,
+            self.config.internal_secret.expose(),
+        ) {
+            let mut env = env;
+            env.override_origin = reqwest::Url::parse(origin).ok();
+            self.connect = Arc::new(env);
+        }
+        self
+    }
+
     /// Replace the mailer (tests).
     #[must_use]
     pub fn with_mailer(mut self, mailer: Arc<dyn Mailer>) -> Self {
@@ -192,6 +213,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::plugins::router())
         .merge(domains::apps::router())
         .merge(domains::connections::router())
+        .merge(domains::connect::router())
         .merge(domains::oauth_clients::router())
         .merge(domains::availability::router())
         .merge(domains::audit::router())

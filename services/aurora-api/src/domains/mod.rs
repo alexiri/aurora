@@ -10,6 +10,7 @@ pub mod audit;
 pub mod auth;
 pub mod availability;
 pub mod cli_login;
+pub mod connect;
 pub mod connections;
 pub mod governance;
 pub mod grants;

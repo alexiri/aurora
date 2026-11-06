@@ -51,6 +51,7 @@ serde_yaml = { workspace = true }
 sha2 = { workspace = true }
 reqwest = { workspace = true }
 openidconnect = { workspace = true }
+percent-encoding = { workspace = true }
 
 [dev-dependencies]
 aurora-secrets = { workspace = true, features = ["memory-store"] }

@@ -2244,6 +2244,103 @@
         ]
       }
     },
+    "/v1/apps/{app}/connect": {
+      "post": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "Start or complete a connection (fields/hook) or begin an OAuth redirect.",
+        "operationId": "connectApp",
+        "parameters": [
+          {
+            "name": "app",
+            "in": "path",
+            "description": "App id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Redirect or connected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "app_unavailable / forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "connect_probe_failed | oauth_client_required | connect_hook_failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/apps/{app}/guide": {
       "get": {
         "tags": [
@@ -3908,6 +4005,26 @@
             "api_key": []
           }
         ]
+      }
+    },
+    "/v1/oauth/callback": {
+      "get": {
+        "tags": [
+          "connections"
+        ],
+        "summary": "OAuth callback: HTML page posting `aurora:connected` to the opener, or `error=<code>`.",
+        "operationId": "oauthCallback",
+        "responses": {
+          "200": {
+            "description": "HTML page",
+            "content": {
+              "text/html": {}
+            }
+          },
+          "302": {
+            "description": "Continue redirect (hook methods)"
+          }
+        }
       }
     },
     "/v1/orgs": {
@@ -10016,6 +10133,115 @@
             ]
           }
         }
+      },
+      "ConnectRequest": {
+        "type": "object",
+        "required": [
+          "scope",
+          "method_id"
+        ],
+        "properties": {
+          "access_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fields": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "method_id": {
+            "type": "string"
+          },
+          "oauth_client_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "org_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Required for organization scope unless `reconnect_connection_id` is given."
+          },
+          "reconnect_connection_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "scope": {
+            "type": "string",
+            "description": "`organization` | `workspace`."
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "url",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "redirect"
+                ]
+              },
+              "url": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "connection",
+              "missing_scopes",
+              "kind"
+            ],
+            "properties": {
+              "connection": {
+                "$ref": "#/components/schemas/Connection"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "connected"
+                ]
+              },
+              "missing_scopes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ],
+        "description": "`redirect` (navigate the popup) or `connected`."
       },
       "ConnectedBy": {
         "type": "object",

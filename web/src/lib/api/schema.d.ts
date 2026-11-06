@@ -504,6 +504,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/apps/{app}/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start or complete a connection (fields/hook) or begin an OAuth redirect. */
+        post: operations["connectApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/apps/{app}/guide": {
         parameters: {
             query?: never;
@@ -969,6 +986,23 @@ export interface paths {
         head?: never;
         /** Update fields or the enabled flag of an OAuth client. */
         patch: operations["updateOauthClient"];
+        trace?: never;
+    };
+    "/v1/oauth/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** OAuth callback: HTML page posting `aurora:connected` to the opener, or `error=<code>`. */
+        get: operations["oauthCallback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/orgs": {
@@ -2060,6 +2094,37 @@ export interface components {
         ConnectNote: {
             text: string;
             url?: string | null;
+        };
+        ConnectRequest: {
+            access_level?: string | null;
+            fields?: {
+                [key: string]: string;
+            };
+            method_id: string;
+            /** Format: uuid */
+            oauth_client_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Required for organization scope unless `reconnect_connection_id` is given.
+             */
+            org_id?: string | null;
+            /** Format: uuid */
+            reconnect_connection_id?: string | null;
+            /** @description `organization` | `workspace`. */
+            scope: string;
+            /** Format: uuid */
+            workspace_id?: string | null;
+        };
+        /** @description `redirect` (navigate the popup) or `connected`. */
+        ConnectResponse: {
+            /** @enum {string} */
+            kind: "redirect";
+            url: string;
+        } | {
+            connection: components["schemas"]["Connection"];
+            /** @enum {string} */
+            kind: "connected";
+            missing_scopes: string[];
         };
         ConnectedBy: {
             display_name: string;
@@ -5157,6 +5222,78 @@ export interface operations {
             };
         };
     };
+    connectApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description App id */
+                app: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Redirect or connected */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectResponse"];
+                };
+            };
+            /** @description invalid_request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description app_unavailable / forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description connect_probe_failed | oauth_client_required | connect_hook_failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getAppGuide: {
         parameters: {
             query?: never;
@@ -6364,6 +6501,33 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
+            };
+        };
+    };
+    oauthCallback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description HTML page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": unknown;
+                };
+            };
+            /** @description Continue redirect (hook methods) */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

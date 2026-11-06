@@ -16,6 +16,7 @@ use sqlx::PgConnection;
 use sqlx::PgPool;
 use tokio::sync::OnceCell;
 
+pub mod oauth;
 pub mod oidc;
 
 pub use wiremock;
