@@ -141,6 +141,7 @@ function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
       <ul className="space-y-1 text-sm">
         {link(base, "Workspaces", pathname === base)}
         {link(`${base}/credentials`, "Credentials", pathname.startsWith(`${base}/credentials`))}
+        {link(`${base}/governance`, "Governance", pathname.startsWith(`${base}/governance`))}
         {admin ? ORG_LINKS.map((l) => link(`${base}/${l.path}`, l.label, pathname.startsWith(`${base}/${l.path}`))) : null}
       </ul>
     </nav>

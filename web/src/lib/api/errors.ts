@@ -53,6 +53,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   not_proposed: "This secret is no longer awaiting a value.",
   stale_revision: "The policy was changed by someone else. Reload to see the latest version.",
   policy_invalid: "The policy has errors. Fix the highlighted rules and try again.",
+  governance_invalid: "The governance settings have errors. Fix the highlighted fields and try again.",
+  governance_below_instance_minimum: "These settings are below the minimum required by the instance.",
   instance_admin_required: "This requires an instance administrator.",
 };
 
