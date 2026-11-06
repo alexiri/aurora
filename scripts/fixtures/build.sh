@@ -62,9 +62,7 @@ for src in "$FIX"/fixture-*/; do
   if ! printf '%s' "$v" | json 'd["ok"]' 2>/dev/null | grep -qx True; then
     note "$name" "FAIL (validate)"; printf '%s\n' "$v"; fail=$((fail+1)); continue
   fi
-  # `plugin test` has no --pubkey and rejects signed archives (CLI gap), so it runs on the
-  # staged source directory, which is packed unsigned in memory.
-  t="$("$AURORA" plugin test "$STAGE/$name" 2>&1)"
+  t="$("$AURORA" plugin test "$pkg" --pubkey "$PUB" 2>&1)"
   summary="$(printf '%s' "$t" | json '"%s pass=%d fail=%d skipped=%d" % (d["ok"], d["fixtures"]["passed"], d["fixtures"]["failed"], d["fixtures"]["skipped"])' 2>/dev/null)"
   if printf '%s' "$summary" | grep -q '^True'; then
     note "$name" "ok   $summary"; pass=$((pass+1))

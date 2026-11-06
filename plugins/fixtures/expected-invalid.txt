@@ -18,7 +18,7 @@ fixture-invalid-tool-host-uncovered tool_host_uncovered
 fixture-invalid-duplicate-tool-id duplicate_tool_id
 fixture-invalid-wildcard-superset wildcard_not_superset
 fixture-invalid-zone-too-broad zone_too_broad
-fixture-invalid-reserved-host reserved_host xfail
+fixture-invalid-reserved-host reserved_host
 fixture-invalid-hooks-mismatch hooks_mismatch
 fixture-invalid-hooks-wasm-missing hooks_wasm_missing
 fixture-invalid-egress-summarize egress_summarize

@@ -8,6 +8,8 @@ use anyhow::Result;
 use clap::Subcommand;
 use std::path::PathBuf;
 
+pub use cmds::Reserved;
+
 #[derive(Subcommand)]
 pub enum PluginCmd {
     /// Scaffold a package directory.
@@ -40,6 +42,12 @@ pub enum PluginCmd {
         /// Accept a missing signature (dev only).
         #[arg(long)]
         allow_unsigned: bool,
+        /// Extra reserved host pattern (repeatable; `*.aurora.internal` is always reserved).
+        #[arg(long)]
+        reserved_host: Vec<String>,
+        /// Instance external URL; its host is reserved.
+        #[arg(long)]
+        external_url: Option<String>,
         #[arg(long, default_value = cmds::CORE_VERSION)]
         core_version: String,
     },
@@ -49,6 +57,15 @@ pub enum PluginCmd {
     Test {
         /// Package archive or source directory.
         package: PathBuf,
+        /// Trust this public key file for the package's publisher (repeatable).
+        #[arg(long)]
+        pubkey: Vec<PathBuf>,
+        /// Extra reserved host pattern (repeatable; `*.aurora.internal` is always reserved).
+        #[arg(long)]
+        reserved_host: Vec<String>,
+        /// Instance external URL; its host is reserved.
+        #[arg(long)]
+        external_url: Option<String>,
         #[arg(long, default_value = cmds::CORE_VERSION)]
         core_version: String,
     },
@@ -82,13 +99,29 @@ pub fn run(cmd: PluginCmd) -> Result<i32> {
             package,
             pubkey,
             allow_unsigned,
+            reserved_host,
+            external_url,
             core_version,
-        } => cmds::validate(&package, &pubkey, allow_unsigned, &core_version),
+        } => cmds::validate(
+            &package,
+            &pubkey,
+            allow_unsigned,
+            &Reserved::new(reserved_host, external_url),
+            &core_version,
+        ),
         PluginCmd::Compile { package } => cmds::compile(&package),
         PluginCmd::Test {
             package,
+            pubkey,
+            reserved_host,
+            external_url,
             core_version,
-        } => cmds::test(&package, &core_version),
+        } => cmds::test(
+            &package,
+            &pubkey,
+            &Reserved::new(reserved_host, external_url),
+            &core_version,
+        ),
         PluginCmd::Sign { package, key, out } => cmds::sign(&package, &key, out),
         PluginCmd::Keygen { out } => cmds::keygen(&out),
         PluginCmd::Docs { package, format } => cmds::docs(&package, &format),

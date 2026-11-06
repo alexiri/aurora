@@ -17,6 +17,7 @@ path = "src/main.rs"
 clap = { workspace = true }
 aurora-client = { workspace = true }
 aurora-crypto = { workspace = true }
+aurora-policy = { workspace = true }
 aurora-registry = { workspace = true }
 ed25519-dalek = { workspace = true }
 pulldown-cmark = { workspace = true, features = ["html"] }

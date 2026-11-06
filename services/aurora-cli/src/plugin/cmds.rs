@@ -1,5 +1,6 @@
 use super::pack;
 use anyhow::{Context, Result, anyhow, bail};
+use aurora_policy::HostPattern;
 use aurora_registry::snapshot::{ActivePackage, compile as compile_snapshot};
 use aurora_registry::validate::{ValidationContext, package as validate_package};
 use aurora_registry::{Package, TrustStore, TrustedKey, Violation};
@@ -83,10 +84,56 @@ fn violations_json(v: &[Violation]) -> Value {
     )
 }
 
+/// Reserved hosts for `validate`/`test`: built-in `*.aurora.internal`, extra patterns, and the
+/// instance host taken from `--external-url`.
+#[derive(Default)]
+pub struct Reserved {
+    hosts: Vec<String>,
+    external_url: Option<String>,
+}
+
+impl Reserved {
+    pub fn new(hosts: Vec<String>, external_url: Option<String>) -> Self {
+        Self {
+            hosts,
+            external_url,
+        }
+    }
+
+    fn patterns(&self) -> Result<Vec<HostPattern>> {
+        let mut names = vec!["*.aurora.internal".to_owned()];
+        names.extend(self.hosts.iter().cloned());
+        if let Some(u) = &self.external_url {
+            names.push(url_host(u)?);
+        }
+        names
+            .iter()
+            .map(|n| HostPattern::parse(n).map_err(|_| anyhow!("invalid reserved host `{n}`")))
+            .collect()
+    }
+}
+
+/// Host part of an absolute URL (no port, no path).
+fn url_host(url: &str) -> Result<String> {
+    let rest = url
+        .split_once("://")
+        .map_or(url, |(_, r)| r)
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    let host = rest.rsplit_once('@').map_or(rest, |(_, h)| h);
+    let host = host.rsplit_once(':').map_or(host, |(h, _)| h);
+    if host.is_empty() {
+        bail!("external URL `{url}` has no host");
+    }
+    Ok(host.to_owned())
+}
+
 fn lint(
     pkg: &Package,
     pubkeys: &[PathBuf],
     allow_unsigned: bool,
+    reserved: &Reserved,
     core: &str,
 ) -> Result<Vec<Violation>> {
     let publisher = pkg
@@ -103,14 +150,21 @@ fn lint(
     }
     let ctx = ValidationContext {
         running_version: core.to_owned(),
+        reserved_hosts: reserved.patterns()?,
         ..Default::default()
     };
     Ok(validate_package(pkg, &ctx, &trust, allow_unsigned))
 }
 
-pub fn validate(path: &Path, pubkeys: &[PathBuf], allow_unsigned: bool, core: &str) -> Result<i32> {
+pub fn validate(
+    path: &Path,
+    pubkeys: &[PathBuf],
+    allow_unsigned: bool,
+    reserved: &Reserved,
+    core: &str,
+) -> Result<i32> {
     let pkg = pack::load(path)?;
-    let v = lint(&pkg, pubkeys, allow_unsigned, core)?;
+    let v = lint(&pkg, pubkeys, allow_unsigned, reserved, core)?;
     println!(
         "{}",
         serde_json::to_string_pretty(
@@ -154,9 +208,9 @@ pub fn compile(path: &Path) -> Result<i32> {
     Ok(0)
 }
 
-pub fn test(path: &Path, core: &str) -> Result<i32> {
+pub fn test(path: &Path, pubkeys: &[PathBuf], reserved: &Reserved, core: &str) -> Result<i32> {
     let pkg = pack::load(path)?;
-    let v = lint(&pkg, &[], true, core)?;
+    let v = lint(&pkg, pubkeys, true, reserved, core)?;
     let mut ok = v.is_empty();
     let mut out = json!({ "validate": { "ok": v.is_empty(), "violations": violations_json(&v) } });
     if ok {

@@ -254,6 +254,7 @@ dependencies = [
  "anyhow",
  "aurora-client",
  "aurora-crypto",
+ "aurora-policy",
  "aurora-registry",
  "base64 0.22.1",
  "clap",
