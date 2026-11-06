@@ -112,8 +112,8 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 
 ## Open spec issues (resolve before M4 implementation; found by PROTO-001)
 
-- W6 `file.part` max 192 KiB raw ⇒ 256 KiB base64 + envelope > `WS_FRAME_MAX` (256 KiB): part size must shrink or frame max grow.
-- W5 reports: `report_id` is runner-generated but W6 frames carry none ⇒ replays after a runner restart are not idempotent end-to-end.
+- (resolved S-06) `file.part` ≤ 144 KiB decoded.
+- (resolved S-07) deterministic UUIDv5 report ids from (boot_id, seq) — add `NAMESPACE_AURORA_REPORT` const in M4 runner task.
 - Unspecified shapes: `HarnessEventWire`, `usage`, `ProcessState`, home-sync `entries`; `ack`/`shutdown` bodies; `ModelChoice` vocabularies; mcp-bridge ⇄ supervisor JSON-lines format; correlation ids for `memory.write`/`file.part`; misc formats/bounds (provisional constants in `aurora-protocol::runner`).
 
 ## Decisions requiring user input

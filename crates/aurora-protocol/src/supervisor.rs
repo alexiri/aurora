@@ -23,8 +23,8 @@ use crate::tools::{ToolCallBody, ToolError, ToolResult};
 
 /// Max serialized size of one frame.
 pub const MAX_FRAME: usize = limits::WS_FRAME_MAX;
-/// Max decoded bytes of one `file.part` (192 KiB).
-pub const MAX_FILE_PART_DECODED: usize = 192 * 1024;
+/// Max decoded bytes of one `file.part` (144 KiB ⇒ 192 KiB base64, fits `WS_FRAME_MAX`; spec fix S-06).
+pub const MAX_FILE_PART_DECODED: usize = 144 * 1024;
 /// Max unacknowledged bytes a sender retains (4 MiB).
 pub const MAX_UNACKED_BYTES: usize = 4 * 1024 * 1024;
 pub const PING_INTERVAL: Duration = Duration::from_secs(20);

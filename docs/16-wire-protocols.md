@@ -135,12 +135,15 @@ Supervisor → runner kinds: `ready`, `home.synced`, `turn.started`, `turn.event
 (`{ turn_id, n, event }`), `turn.progress`, `turn.result`, `steer.result`,
 `send_now.result`, `session`, `process.state`, `watch.fired`, `gate.result`,
 `ports.state`, `tool.call`, `memory.write`, `file.part` (`{ upload_id, index,
-data_b64 }` ≤ 192 KiB decoded), `file.commit` (`{ upload_id, conversation_id,
+data_b64 }` ≤ 144 KiB decoded, so the base64 frame stays under `WS_FRAME_MAX`; spec fix S-06), `file.commit` (`{ upload_id, conversation_id,
 turn_id, filename, caption?, sha256, size }`).
 
 The runner translates frames 1:1 into work items / reports / plane calls,
 adding `sandbox_id` and `boot_id` from the authenticated channel (never from the
-frame body). Unknown kinds are logged and dropped.
+frame body). Reports derived from supervisor frames use a deterministic
+`report_id = UUIDv5(NAMESPACE_AURORA_REPORT, boot_id ‖ ":" ‖ seq)` so a frame
+replayed after a runner restart deduplicates at the API (spec fix S-07).
+Unknown kinds are logged and dropped.
 
 ---
 
