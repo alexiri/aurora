@@ -113,6 +113,7 @@ function UserMenu() {
 }
 
 const ORG_LINKS = [
+  { path: "policy", label: "Policy" },
   { path: "members", label: "Members" },
   { path: "api-keys", label: "API keys" },
   { path: "audit", label: "Audit log" },
@@ -176,6 +177,7 @@ export function WorkspaceNav({
         {link(base, "Overview", pathname === base)}
         {link(`${base}/agents`, "Agents", pathname.startsWith(`${base}/agents`))}
         {link(`${base}/credentials`, "Credentials", pathname.startsWith(`${base}/credentials`))}
+        {link(`${base}/policy`, "Policy", pathname.startsWith(`${base}/policy`))}
         {SECTIONS.map((s) => (
           <li key={s}>
             <span aria-disabled="true" className="block cursor-not-allowed rounded px-2 py-1.5 text-neutral-400">

@@ -4,9 +4,10 @@ import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
-import { useAgents, useResolve } from "@/lib/api/queries";
+import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 
+import { AccessTab } from "./access-tab";
 import { ConnectTab } from "./connect-tab";
 import { DeleteZone } from "./delete-zone";
 import { InstructionsTab } from "./instructions-tab";
@@ -17,7 +18,8 @@ export function AgentPage() {
   const resolved = useResolve(org, ws);
   const wsId = resolved.data?.workspace?.id;
   const agents = useAgents(wsId);
-  const [tab, setTab] = useState<"instructions" | "connect">("instructions");
+  const workspace = useWorkspace(wsId);
+  const [tab, setTab] = useState<"instructions" | "access" | "connect">("instructions");
 
   if (resolved.isPending || (wsId && agents.isPending)) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
@@ -28,6 +30,7 @@ export function AgentPage() {
   const byo = agent.kind === "byo";
   const tabs = [
     { id: "instructions" as const, label: "Instructions" },
+    { id: "access" as const, label: "Access" },
     ...(byo ? [{ id: "connect" as const, label: "Computer: Connect" }] : []),
   ];
 
@@ -54,21 +57,15 @@ export function AgentPage() {
             {t.label}
           </button>
         ))}
-        <button
-          role="tab"
-          type="button"
-          disabled
-          aria-disabled="true"
-          title="Available once grants are enabled"
-          className="-mb-px cursor-not-allowed border-b-2 border-transparent px-3 py-2 text-sm text-neutral-400"
-        >
-          Access
-        </button>
       </div>
       <div role="tabpanel" id="agent-panel" aria-labelledby={`tab-${tab}`} className="pt-2">
         {tab === "instructions" ? (
           <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} />
         ) : null}
+        {tab === "access" && workspace.data ? (
+          <AccessTab agentId={agent.id} wsId={wsId!} orgId={workspace.data.org_id} canOwn={workspace.data.my_role === "owner"} />
+        ) : null}
+        {tab === "access" && workspace.isPending ? <Loading /> : null}
         {tab === "connect" && byo ? (
           <ConnectTab agent={agent} />
         ) : null}

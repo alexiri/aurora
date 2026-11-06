@@ -51,6 +51,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   secret_store_unavailable: "The secret store is unavailable. Try again later.",
   name_taken: "That name is already in use.",
   not_proposed: "This secret is no longer awaiting a value.",
+  stale_revision: "The policy was changed by someone else. Reload to see the latest version.",
+  policy_invalid: "The policy has errors. Fix the highlighted rules and try again.",
   instance_admin_required: "This requires an instance administrator.",
 };
 
