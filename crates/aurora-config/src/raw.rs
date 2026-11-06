@@ -206,7 +206,13 @@ impl Default for LlmSection {
 pub struct LlmEndpoint {
     pub id: String,
     pub provider: String,
+    pub display_name: Option<String>,
     pub base_url: Option<String>,
+    /// `anthropic_messages`, `openai_chat`, `openai_responses`; empty = provider default.
+    pub dialects: Vec<String>,
+    pub default_model: Option<String>,
+    /// Optional static fallback model list.
+    pub models: Vec<String>,
     pub allowed_models: Vec<String>,
     pub key_origin: Option<KeyOrigin>,
 }
