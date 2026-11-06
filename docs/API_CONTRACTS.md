@@ -474,6 +474,47 @@ interface ModelOption { endpoint_id: string; provider: string; model_id: string;
 | POST `/v1/agents/{agent}/restart` | S/K can_use | — | 202 `SandboxView` | 404 |
 | GET `/v1/agents/{agent}/models` | S/K can_use | — | 200 `{ items: ModelOption[] }` (only usable keys and allowed models, `08 §Model selection`) | 404 |
 
+### M5 — attachments, action approvals, agent links, peer tasks (API-005)
+
+Routes/auth: `05 §Conversations and turns` (attachments), `§Approvals` (action approvals), `§Memory, skills, schedules, webhooks, links`. Behaviour: `10 §Attachments`, `07 §Action approvals`, `§Agent links and peer tasks`; decision S-11; I-27 for reads.
+
+**Contract decisions**
+- C-27 App-turn cap reset: `POST /v1/conversations/{id}/continue` (S/K, `can_use`) sets `app_turn_streak = 0` and appends a durable `notice` (`code: "app_turn_cap_reset"`); 200 `Conversation`. Refused bot/agent turns append a durable `notice` with `code: "app_turn_cap_reached"`. `Conversation` gains `app_turn_streak: number` and `app_turn_capped: boolean`.
+- C-28 Action-approval decision body mirrors gateway approvals: `{ decision: "approve" | "deny" }`; deciding a non-`pending` row → 409 `already_decided`; unknown `action_key` at decide time → 500 `internal` + error log (07 "fail loud").
+- C-29 Link policy update: `PUT /v1/agent-links/{id}/policy` body `{ agent_id, policy: "ask" | "allow" | "blocked" }` sets **that agent's side**; caller needs `can_use` on that agent's workspace; the other side is read-only to them. Optimistic concurrency via `revision` (409 `stale_revision`).
+- C-30 Attachments: upload response and list items use `Attachment`; downloads are `application/octet-stream` + `Content-Disposition: attachment` + `nosniff` regardless of stored type.
+
+```ts
+interface Attachment { id: Uuid; conversation_id: Uuid; turn_id: Uuid | null; direction: "in" | "out";
+  status: "pending" | "bound" | "failed"; filename: string; content_type: string; size_bytes: number;
+  caption: string | null; created_at: Timestamp }
+type ActionApprovalStatus = "pending" | "approved" | "executed" | "failed" | "rejected" | "expired";
+interface ActionApproval { id: Uuid; workspace_id: Uuid; agent_id: Uuid; conversation_id: Uuid | null; turn_id: Uuid | null;
+  action_key: string; summary: string /* platform-composed, never raw model text */; status: ActionApprovalStatus;
+  decided_by: { id: Uuid; display_name: string } | null; decided_at: Timestamp | null; executed_at: Timestamp | null;
+  error: string | null; expires_at: Timestamp; created_at: Timestamp }
+type LinkPolicy = "ask" | "allow" | "blocked";
+interface AgentLink { id: Uuid; revision: number;
+  self: { agent_id: Uuid; policy: LinkPolicy }; peer: { agent_id: Uuid; handle: string; name: string; workspace_id: Uuid; policy: LinkPolicy };
+  created_at: Timestamp; updated_at: Timestamp }
+type PeerTaskStatus = "queued" | "open" | "completed" | "cancelled" | "expired";
+interface PeerTask { id: Uuid; link_id: Uuid; from_agent_id: Uuid; to_agent_id: Uuid; direction: "outgoing" | "incoming";
+  requester: { id: Uuid; display_name: string } | null; origin_conversation_id: Uuid; task_conversation_id: Uuid;
+  status: PeerTaskStatus; messages_used: number; message_budget: number; report: string | null;
+  expires_at: Timestamp; created_at: Timestamp; updated_at: Timestamp }
+```
+
+| Method & path | Auth | Request | 2xx response | Errors |
+|---|---|---|---|---|
+| POST `/v1/conversations/{id}/attachments` | S/K can_use | multipart `file` (≤ `ATTACH_IN_FILE_MAX`) | 201 `Attachment` (pending) | 404; 413 |
+| GET `/v1/attachments/{id}/content` | S/K can_use | — | 200 bytes (C-30) | 404 |
+| POST `/v1/conversations/{id}/continue` | S/K can_use | — | 200 `Conversation` (C-27) | 404 |
+| GET `/v1/workspaces/{ws}/action-approvals` | S/K can_use | `?status&agent_id&limit&cursor` | 200 `Page<ActionApproval>` | 404 |
+| POST `/v1/action-approvals/{id}/decision` | S/K can_use (on the row's workspace) | `{ decision }` (C-28) | 200 `ActionApproval` | 404; 409 `already_decided` |
+| GET `/v1/agents/{agent}/links` | S/K can_use | — | 200 `{ items: AgentLink[] }` | 404 |
+| PUT `/v1/agent-links/{id}/policy` | S/K can_use (C-29) | `{ agent_id, policy, revision }` | 200 `AgentLink` | 404; 409 `stale_revision` |
+| GET `/v1/agents/{agent}/peer-tasks` | S/K can_use | `?status&limit&cursor` | 200 `Page<PeerTask>` | 404 |
+
 ### W9 hook-host JSON encoding (C-18, C-19)
 
 - C-18 Internal snapshot route returns the exact canonical bytes so consumers verify `sha256(body) == x-snapshot-hash` without re-serialization.
