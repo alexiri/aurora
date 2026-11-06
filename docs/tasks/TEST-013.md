@@ -1,0 +1,15 @@
+# TEST-013: e2e-hosted — M4 acceptance (real API + gateway + runner (podman) + sandbox-min + fake harness)
+
+## Linked requirements
+- `19 §M4` acceptance: "e2e-hosted — chat with Daneel (fake harness) whose HTTP calls go through the gateway with its context credential (attributed in the request log and on an approval); idle park and wake; restart; follow-up promotion; never-started revival; security probes SEC-01, 02, 09, 24–26, 34"; `18 §Layers` End-to-end: hosted; `18 §Hosted agents`.
+
+## Design
+- New crate `tests/e2e-hosted` (orchestrator adds it to workspace members). Reuse the TEST-012 harness pattern (`tests/e2e-gateway/tests/common/mod.rs`): spawn `aurora-api`, `aurora-gateway`, `aurora-runner` (backend podman, `sandbox-min` image from `scripts/images/build-sandbox-min.sh`, sandbox network created per `deploy/compose/setup.sh` S-03 — use a **test-specific** network name/subnet and static addresses for gateway/runner on that network; the gateway and runner processes must be reachable from containers: run them bound on the host IP of that podman network or document the chosen approach) with `hosted.allow_fake_harness = true` and Daneel set to the `fake` harness.
+- Gated by `AURORA_TEST_PODMAN=1`; `scripts/e2e/hosted.sh` wrapper builds binaries + image and runs serially.
+- Scenarios: (1) chat with Daneel: post a message → turn done with the fake harness's text in the transcript (events API) and SSE; (2) the fake harness performs an HTTP request through the loopback proxy → gateway → mock upstream (wiremock on the host, allow-listed private) with a granted secret injected; the request-log row carries the conversation + turn; (3) a require-approval rule holds that request; the approval row carries conversation_id/turn_id; approve via API → turn completes; (4) idle park (short `hosted.idle_stop_secs`) → container removed, home volume kept → next message wakes; (5) restart → active turn `agent_restarted`, new boot; (6) follow-up while running → promoted/joined per fake harness capability; (7) never-started revival (kill the supervisor before ack — or make the fake harness never start) → revived once then `never_started`; (8) security probes from inside the sandbox via the fake harness's shell directive or `podman exec` as uid 1000: no real secret in env/files/transcript (SEC-01), no DNS / only gateway+runner reachable (SEC-02), gateway 4103 + API 4111 + hookhost unreachable (SEC-09), forged identity in frames ignored (SEC-24), bootstrap token single use (SEC-25), container hardening (SEC-26), supervisor environ unreadable + no `AURORA_BOOT` in child env (SEC-34, I-23).
+
+## Acceptance
+- [ ] `AURORA_TEST_PODMAN=1 bash scripts/e2e/hosted.sh` passes all scenarios (paste summary); cleanup of containers/volumes/networks/DBs even on failure; disk check before image build (stop if < 15 GB).
+- [ ] No production-code changes; defects reported with evidence (small fixes to the fake harness directives in aurora-supervisor are allowed — say exactly what).
+
+## Dependencies: BE-052, RUN-001..003, SUP-001..003, GW-*. Agent: rust-developer (Sonnet) — expect multiple sessions.
