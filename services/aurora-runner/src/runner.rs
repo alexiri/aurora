@@ -118,6 +118,7 @@ impl Runner {
             }
         };
         tracing::info!(runner_id = %registered.runner_id, replica_id = %registered.replica_id, "registered");
+        self.hub.attach_api(api.clone());
         let cfg = registered.config;
         let fingerprint = installation_fingerprint(&s.token);
 

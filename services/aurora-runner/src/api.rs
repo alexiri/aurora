@@ -5,10 +5,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use aurora_protocol::runner::{
-    HDR_REPLICA, RegisterRequest, RegisterResponse, ReportResult, ReportsRequest, ReportsResponse,
-    SandboxAssignment, SandboxesCheckRequest, SandboxesCheckResponse, SandboxesResponse,
-    StraysRequest, WorkRequest, WorkResponse,
+    AttachmentUploadMeta, AttachmentUploadResponse, ChannelClaimRequest, ChannelClaimResponse,
+    ChannelRef, HDR_BOOT, HDR_CAPTION, HDR_CONVERSATION, HDR_FILENAME, HDR_REPLICA, HDR_SANDBOX,
+    HDR_TURN, MemoryWriteRequest, MemoryWriteResponse, RegisterRequest, RegisterResponse,
+    ReportResult, ReportsRequest, ReportsResponse, SandboxAssignment, SandboxesCheckRequest,
+    SandboxesCheckResponse, SandboxesResponse, StraysRequest, WorkRequest, WorkResponse,
 };
+use aurora_protocol::tools::{ToolCall, ToolResult};
 use reqwest::Method;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -218,4 +221,105 @@ impl ApiClient {
             .await?;
         Ok(())
     }
+
+    /// Claim a bootstrap token (single use). No retry on 409/404.
+    pub async fn claim(&self, token: &str) -> Result<ChannelClaimResponse, ApiError> {
+        let req = ChannelClaimRequest {
+            bootstrap_token: aurora_protocol::common::SecretString::new(token),
+        };
+        self.call(Method::POST, "/channel/claim", Some(&req)).await
+    }
+
+    pub async fn channel_hold(&self, r: &ChannelRef) -> Result<(), ApiError> {
+        let _: serde_json::Value = self.call(Method::POST, "/channel/hold", Some(r)).await?;
+        Ok(())
+    }
+
+    pub async fn channel_release(&self, r: &ChannelRef) -> Result<(), ApiError> {
+        let _: serde_json::Value = self.call(Method::POST, "/channel/release", Some(r)).await?;
+        Ok(())
+    }
+
+    /// Single attempt: tool calls are not idempotent.
+    pub async fn tool_call(&self, call: &ToolCall) -> Result<ToolResult, ApiError> {
+        let t = aurora_core::limits::TOOL_CALL_TIMEOUT + Duration::from_secs(5);
+        let (r, _) = self
+            .once(Method::POST, "/tool-calls", Some(call), Some(t))
+            .await?;
+        Ok(r)
+    }
+
+    /// Single attempt: writes are not retried blindly.
+    pub async fn memory_write(
+        &self,
+        req: &MemoryWriteRequest,
+    ) -> Result<MemoryWriteResponse, ApiError> {
+        let (r, _) = self
+            .once(
+                Method::POST,
+                "/memory-writes",
+                Some(req),
+                Some(Duration::from_secs(30)),
+            )
+            .await?;
+        Ok(r)
+    }
+
+    /// Upload an outbound file; metadata travels in headers, the body is the raw bytes.
+    pub async fn upload_attachment(
+        &self,
+        meta: &AttachmentUploadMeta,
+        bytes: Vec<u8>,
+    ) -> Result<AttachmentUploadResponse, ApiError> {
+        let mut rb = self
+            .http
+            .post(format!("{}/attachments", self.base))
+            .bearer_auth(&self.token)
+            .timeout(Duration::from_secs(120))
+            .header(aurora_protocol::version::HEADER, "runner/1")
+            .header(HDR_SANDBOX, meta.sandbox_id.to_string())
+            .header(HDR_BOOT, meta.boot_id.to_string())
+            .header(HDR_CONVERSATION, meta.conversation_id.to_string())
+            .header(HDR_TURN, meta.turn_id.to_string())
+            // Percent-encode: header values must be ASCII.
+            .header(HDR_FILENAME, pct(&meta.filename))
+            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream");
+        if let Some(c) = &meta.caption {
+            rb = rb.header(HDR_CAPTION, pct(c));
+        }
+        if let Some(id) = self.replica_id() {
+            rb = rb.header(HDR_REPLICA, id.to_string());
+        }
+        let resp = rb
+            .body(bytes)
+            .send()
+            .await
+            .map_err(|e| ApiError::Transport(e.without_url().to_string()))?;
+        let status = resp.status();
+        let body = resp
+            .bytes()
+            .await
+            .map_err(|e| ApiError::Transport(e.without_url().to_string()))?;
+        if !status.is_success() {
+            return Err(ApiError::Status {
+                status: status.as_u16(),
+                body: String::from_utf8_lossy(&body).chars().take(200).collect(),
+            });
+        }
+        serde_json::from_slice(&body).map_err(|e| ApiError::Decode(e.to_string()))
+    }
+}
+
+/// Percent-encode everything but unreserved ASCII.
+fn pct(s: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
+    out
 }

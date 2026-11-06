@@ -7,6 +7,7 @@
 pub mod api;
 pub mod backend;
 pub mod backends;
+pub mod channel;
 pub mod executor;
 pub mod hub;
 pub mod reconcile;

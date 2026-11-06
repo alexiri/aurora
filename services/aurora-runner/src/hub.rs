@@ -29,6 +29,10 @@ pub struct HubEvent {
 pub enum HubError {
     #[error("sandbox not connected")]
     NotConnected,
+    #[error("frame exceeds the maximum size")]
+    TooLarge,
+    #[error("unacknowledged frame backlog is full")]
+    Backlog,
 }
 
 #[async_trait]
@@ -38,6 +42,8 @@ pub trait ChannelHub: Send + Sync {
     async fn send(&self, sandbox_id: Uuid, frame: Frame) -> Result<(), HubError>;
     /// Stream of supervisor frames; may be taken once.
     fn take_events(&self) -> Option<mpsc::Receiver<HubEvent>>;
+    /// Called once the runner has registered; hubs that make plane calls use this client.
+    fn attach_api(&self, _api: std::sync::Arc<crate::api::ApiClient>) {}
 }
 
 /// Hub with no connections (used until RUN-002 lands).

@@ -8,12 +8,13 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use aurora_runner::hub::NullHub;
+use aurora_runner::channel::{ChannelServer, ChannelSettings};
 use aurora_runner::runner::RunnerError;
 use aurora_runner::{Runner, RunnerSettings};
 
 const SERVICE: &str = "aurora-runner";
 const OPS_PORT: u16 = 4106;
+const CHANNEL_PORT: u16 = 4105;
 
 #[derive(Parser)]
 #[command(
@@ -62,14 +63,20 @@ async fn serve(cfg: &RunnerConfig) -> std::io::Result<()> {
     let app = service::ops_router(metrics, vec![]);
     let listener = service::bind(cfg.server.bind.as_str(), OPS_PORT).await?;
 
-    // The supervisor channel server (RUN-002) replaces the null hub.
-    let hub = Arc::new(NullHub);
-    let runner = Runner::new(RunnerSettings::from_config(cfg), backend, hub);
+    // Supervisor channel (W6) on the sandbox-facing port.
+    let channel_listener = service::bind(cfg.server.bind.as_str(), CHANNEL_PORT).await?;
+    let hub = ChannelServer::new(ChannelSettings::new(*cfg.session_key.expose()));
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    let channel_task = tokio::spawn({
+        let (hub, stop) = (hub.clone(), stop_rx.clone());
+        async move { hub.serve(channel_listener, stop).await }
+    });
+    let runner = Runner::new(RunnerSettings::from_config(cfg), backend, Arc::new(hub));
     let task = tokio::spawn(runner.run(stop_rx));
 
     let served = service::serve_all(vec![(listener, app)]).await;
     let _ = stop_tx.send(true);
+    let _ = channel_task.await;
     match task.await {
         Ok(Ok(())) | Ok(Err(RunnerError::Shutdown)) => {}
         Ok(Err(e)) => return Err(std::io::Error::other(e)),
