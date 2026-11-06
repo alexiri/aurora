@@ -4,7 +4,7 @@
 //! - An origin preflight mismatch writes `secrets.origin` and emits
 //!   `NOTIFY aurora_secret_origin {secret_id, status}`.
 
-use aurora_config::{KeyOrigin, LlmEndpoint, LlmSection, SecretsSection};
+use aurora_config::{KeyOrigin, LlmEndpoint, LlmSection};
 use aurora_db::bus::{BusEvent, Channel, Listener};
 use aurora_db::repo::gateway as repo;
 use aurora_gateway::auth::{CredentialKind, RequestIdentity};
