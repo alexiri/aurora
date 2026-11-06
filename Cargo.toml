@@ -145,6 +145,8 @@ wiremock = "0.6"
 [profile.dev]
 # Disk is constrained on the dev host (docs/90-decisions.md I-03).
 debug = "line-tables-only"
+# Incremental caches grew to 44 GB; off to bound disk use (I-24).
+incremental = false
 
 [profile.dev.package."*"]
 debug = false
