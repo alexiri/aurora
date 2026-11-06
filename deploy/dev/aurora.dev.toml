@@ -4,12 +4,19 @@
 #   AURORA_SIGNING_KEY, AURORA_INTERNAL_SECRET, AURORA_RUNNER_SESSION_KEY (base64),
 #   AURORA_RUNNER_TOKEN (aur_...), AURORA_CONNECTOR_TOKEN (aun_...)
 [server]
-external_url = "http://localhost:4101"
+# The dashboard (pnpm dev, :4100) is the single origin; it proxies /v1/* to
+# the API on :4101 (docs/15 §Networking: one URL).
+external_url = "http://localhost:4100"
 bind = "127.0.0.1"
 
 [runner]
 backend = "fake"
-api_url = "http://localhost:4111"
+api_url = "http://localhost:4101"
+
+[auth]
+# Dev convenience; production default is invite_only / instance_admins.
+signup_mode = "open"
+org_creation = "anyone"
 
 [telemetry]
 log_level = "info"
