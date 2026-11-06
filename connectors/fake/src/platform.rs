@@ -71,8 +71,20 @@ pub struct Failures {
     pub unavailable_next: u32,
 }
 
+/// A file hosted by the simulated platform (what `file.fetch` downloads).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FakeFile {
+    pub name: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
 #[derive(Debug, Default)]
 pub struct Platform {
+    /// Inbound files by platform file ref.
+    pub files: BTreeMap<String, FakeFile>,
+    /// Bytes of files attached to posted messages, by `(message_ref, file name)`.
+    pub attachments: BTreeMap<(String, String), Vec<u8>>,
     pub users: BTreeMap<String, FakeUser>,
     pub spaces: BTreeMap<String, FakeSpace>,
     pub messages: Vec<PostedMessage>,

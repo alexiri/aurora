@@ -8,6 +8,7 @@ use thiserror::Error;
 use tokio::sync::watch;
 use uuid::Uuid;
 
+use crate::client::CoreClient;
 use crate::sink::EventSink;
 
 /// Failure to open or update an integration (retried on the next config poll).
@@ -54,6 +55,12 @@ impl IntegrationHandle {
 #[async_trait]
 pub trait Connector: Send + Sync + 'static {
     fn manifest(&self) -> ConnectorManifest;
+
+    /// Called by the runtime once after `register` with the authenticated contract
+    /// client (token and replica id set), so `execute` can reach the
+    /// replica-scoped calls `PUT /files/{op_id}` ([`CoreClient::put_file`]) and
+    /// `GET /files/{attachment_id}` ([`CoreClient::get_file`]). Default: ignore.
+    fn attach_core_client(&self, _client: Arc<CoreClient>) {}
 
     /// Called when this replica gains ownership; the returned handle is closed on loss of ownership.
     async fn open_integration(

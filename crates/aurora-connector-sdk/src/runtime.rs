@@ -100,6 +100,7 @@ pub async fn run(
     };
     tracing::info!(status = reg.status.as_str(), replica = %reg.replica_id, "registered");
 
+    connector.attach_core_client(client.clone());
     let sink = spawn_event_poster(client.clone(), shutdown.clone());
     let ops_wait = cfg
         .ops_wait_secs
