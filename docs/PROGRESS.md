@@ -9,7 +9,7 @@ their dependencies near completion (adaptive planning).
 
 ## Environment
 
-- **Concurrency**: owner raised the default to **4 concurrent implementation agents** (2026-11-06), still with disjoint file ownership per lane.
+- **Concurrency**: owner raised the default to **3 concurrent implementation agents** (2026-11-06), still with disjoint file ownership per lane.
 - **Worktrees** (2026-11-06, owner): implementation lanes that touch a crate another lane is editing (esp. `services/aurora-api`) run in their own git worktree (Orca worker `--worktree new-top-level --repo id:706ffb9e-ae8b-4f11-a841-518970480f40`, or Agent `isolation: worktree`) with a per-worktree `target/` (never a shared `CARGO_TARGET_DIR`: e2e scripts run `target/debug/<bin>`). Orchestrator merges each branch into `phase0` after review. Disk budget: ~15 GB per worktree build, so at most 3 worktrees while free space is under 100 GB; check `df -h /home` before starting one.
 
 - Rust 1.99 stable (system, no rustup) — **no `wasm32-wasip2` target** (I-02, blocks M3 hook builds only).
