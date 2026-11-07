@@ -122,6 +122,15 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Permission matrix test generated from `04 §Permission matrix` (every route ×
   role), suspended members, workspace key confinement, CSRF, OIDC against a
   mock IdP (discovery, PKCE, nonce, email-verified rule, JIT).
+- (phase 1, RFE-009) Direct-conversation visibility (SEC-43): each
+  conversation-returning/naming route × {the direct user, another member, a
+  workspace owner, an org admin, workspace/org keys of each} — 404 vs 200,
+  `direct_conversation_forbidden` for owner writes; the direct user who lost
+  workspace access sees nothing; approvals naming a direct conversation hidden
+  from other members in list, long-poll, SSE and batch (and undecidable → 404);
+  channel DM card clicked by a non-participant refused; activity rows omitted;
+  `conversation.owner_view` audit; platform DM and dashboard chat remain one
+  conversation.
 - (phase 1, RFE-004) OIDC-only: the removed password/verify/reset routes return
   404; sign-up semantics per `signup_mode` (`open` creates user+org,
   `invite_only` refuses without invitation/admin e-mail and creates no row,

@@ -74,6 +74,7 @@ runs), configured external secret stores.
 | SEC-40 | (phase 1, RFE-002) The gateway proxy listener accepts TLS only; gateway credentials (`Proxy-Authorization`) and the `CONNECT` preamble never cross a network in cleartext, for sandboxes and BYO agents alike; every Aurora client verifies the listener certificate against the gateway CA (or the operator certificate) and the dialled name, and never falls back to plaintext. | 06, 08 §10, 11, 12, 15 | e2e-gateway: plaintext connect refused without reading a credential; TLS client with wrong name/untrusted CA refused; supervisor forwarder fails closed (no plaintext) when verification fails; container-config contains no `http://` gateway URL |
 | SEC-41 | (phase 1, RFE-003) The open lane is available only to credentials holding the `browser` capability (hosted boots started with it) and only while the effective open-lane posture (strictest of instance, org, workspace) permits it; a tunnel is judged by host and port only, restrictive rules treat unknowable parts (path, method, body, tool) as matched, allow rules and allow-list entries need a full match on what is knowable, and the supervisor opens the loopback open proxy only with the capability. | 06, 07, 08 §11, 11, 12 | e2e-gateway: BYO/context credential with username `open` refused; posture matrix (`enabled`/`allowlist_only`/`disabled` × instance/org/workspace); CONNECT-time corpus (path-scoped block refuses the tunnel, path-scoped allow does not admit it); e2e-hosted: no listener on 3129 in an image without the label |
 | SEC-42 | (phase 1, RFE-004) There is no local credential: every interactive sign-in is an OIDC sign-in with a provider-verified e-mail, so the IdP's MFA and offboarding apply to every account including instance admins; the only other bearer credentials are API keys, CLI-login keys and gateway/connector/runner tokens, none of which can create a session. The development IdP cannot be enabled on a non-loopback https deployment. | 04, 05, 14, 15 | API tests: removed routes 404; OIDC refusals (unverified e-mail, wrong nonce/audience/expiry, disabled user, `signup_closed` per mode); `bootstrap-admin` + OIDC binds the identity; startup refusal for dev IdP on a public URL and for zero providers |
+| SEC-43 | (phase 1, RFE-009) A `direct` conversation, and everything that names it (events, SSE, attachments, approval cards and feeds, activity rows, conversation references), is visible only to its user (while they have access) and to workspace owners; only its user can write to it. | 04, 05, 07, 10, 13, 14 | authz matrix test over every conversation-returning route × {direct user, other member, owner, org admin, key of each}; approval feed/SSE/long-poll/batch redaction tests; activity-row omission test; owner-view audit test |
 
 ## Residual risks (accepted, documented to operators)
 
@@ -104,6 +105,11 @@ runs), configured external secret stores.
   that does not enforce MFA removes it. Aurora sessions outlive an IdP session
   until idle/absolute expiry unless the user is disabled or suspended in Aurora;
   there is no back-channel logout in phase 1.
+- **Direct conversations are private to people, not to the agent's memory**
+  (phase 1, RFE-009): an agent may write what it learned in a direct conversation
+  into memory or a skill, which every workspace member can read. The preamble
+  asks it not to; nothing enforces it. Owners can always read direct
+  conversations (audited), and org owners/admins are implicit owners.
 - **Per-replica rate limits**: with N gateways a limit can be exceeded up to N×.
 - **Connectors see their platform's traffic and credentials**: operators choose
   which connectors to run. A connector also names the speaker/clicker platform

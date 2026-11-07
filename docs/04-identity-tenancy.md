@@ -265,6 +265,28 @@ The access law is implemented once (`aurora-db::authz`) and used by every
 surface: HTTP routes, channel speakers and clickers, approvals, schedule and
 webhook fire-time checks, peer messaging.
 
+**Conversation visibility** (phase 1, RFE-009, D-47). Phase 0 gated transcript
+reads by `can_use` alone, so every workspace member could read every other
+member's `direct` (1:1) conversation with an agent, including DMs sent from a
+chat platform. From phase 1, `can_see_conversation(user, conversation)` — also in
+`aurora-db::authz`, applied by every surface that names or returns a
+conversation — is true iff:
+
+- the conversation's kind is **not** `direct`, and `can_use(user, workspace)`
+  (unchanged); or
+- the kind is `direct` and **either** `user = conversation.direct_user_id` **and**
+  `can_use(user, workspace)` (a person who lost access to the workspace stops
+  seeing even their own direct conversation), **or** `can_own(user, workspace)`
+  (workspace owners and org owners/admins, who need repair access).
+
+Writing into a `direct` conversation (posting messages, uploading attachments for
+it) is the direct user's alone: a workspace owner who is not that user can
+**read** it and can **abort/send-now** its turns and (from phase 2, RFE-010)
+archive, delete or redact it, but cannot post as that person (403
+`direct_conversation_forbidden`). An owner reading another person's direct
+conversation writes an audit row `conversation.owner_view` (once per actor,
+conversation and hour; best-effort).
+
 ### Permission matrix
 
 | Action | Required |
@@ -281,9 +303,9 @@ webhook fire-time checks, peer messaging.
 | Workspace LLM keys | `can_own`, **and** org governance permits `workspace`-scoped keys for that endpoint, **and** the key's origin complies (`08 §11`) |
 | Space bindings for an agent of the workspace | `can_own` |
 | Create/edit/delete agents, brief, model, avatar; memory; skills; schedules; webhooks; restart sandbox | `can_use` |
-| Chat with agents, read transcripts, upload attachments | `can_use` |
-| Decide gateway approvals and action approvals for agents of the workspace | `can_use` |
-| Read activity (request log) of the workspace | `can_use` |
+| Chat with agents, read transcripts, upload attachments | `can_use`; (phase 1, RFE-009) for `direct` conversations: the direct user (read + write) and `can_own` (read, abort/send-now only) — `can_see_conversation` |
+| Decide gateway approvals and action approvals for agents of the workspace | `can_use`; (phase 1, RFE-009) an approval that names a `direct` conversation is visible and decidable only by callers who `can_see_conversation` it (so: the direct user and `can_own`) |
+| Read activity (request log) of the workspace | `can_use`; (phase 1, RFE-009) rows whose conversation is a `direct` conversation the caller cannot see are **omitted** (owners see all) |
 | Plugins, trusted keys, host claims, connectors, runners | instance admin |
 
 Org admins/owners can therefore always repair a workspace; members of a shared

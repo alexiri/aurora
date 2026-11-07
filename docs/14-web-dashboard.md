@@ -90,7 +90,10 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 - **Overview**: first-run checklist (store an LLM key → grant it to Daneel →
   say hello), agents, pending approvals, recent activity.
 - **Agents** list → **agent page** tabs:
-  - **Chat** — direct conversation; other conversations (schedules, webhooks,
+  - **Chat** — direct conversation (phase 1, RFE-009: banner "Only you and
+    workspace owners can see this conversation"; owners also get a "Direct
+    conversations of other members" sidebar group, read-only with an audit
+    notice, no composer); other conversations (schedules, webhooks,
     groups) in a sidebar; SSE transcript with delta rendering, tool cards,
     inline approvals (approve/deny), attachments (upload, thumbnails, failed
     chips), follow-ups with "Send now", Stop, live activity line, door chips
@@ -113,7 +116,8 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
     config, `aurora run` snippet, CA download).
   - **Activity** — request log filtered to the agent.
 - **Approvals** — pending gateway holds and action approvals (live via SSE),
-  history; batch actions.
+  history; batch actions. (phase 1, RFE-009) Items naming a direct conversation
+  appear only for its user and owners.
 - **Credentials** — tabs: Apps (catalogue → connect window), Connections,
   Secrets (generic; reference-mode secrets when a reference-capable store is
   configured), LLM keys (provider/endpoint picker from `/v1/llm/providers`),

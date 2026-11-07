@@ -62,6 +62,32 @@ Internal routes (API port 4111):
 | GET `/internal/v1/registry/active?contract_max=` | active snapshot JSON + content hash |
 | GET `/internal/v1/registry/blobs/{digest}` | hook module bytes |
 
+### Conversation visibility (phase 1, RFE-009)
+
+Every handler that returns, streams or names a conversation applies
+`can_see_conversation` (`04 §The access law`) in addition to the permission
+matrix:
+
+- A conversation the caller cannot see answers **404** (not 403, as above):
+  `GET /v1/conversations/{id}`, `…/events`, `…/stream` (SSE), `…/messages`,
+  `…/attachments`, `GET /v1/attachments/{id}/content`, turn `abort`/`send-now`
+  (owners may), and any `conversation=` filter.
+- `GET /v1/agents/{agent}/conversations` lists only visible conversations (a
+  member sees their own direct one; owners see every direct one, marked
+  `direct_user: {id, display_name}`).
+- `POST …/messages` and attachment upload on a `direct` conversation by anyone but
+  its user → 403 `direct_conversation_forbidden` (even for owners).
+- **Conversation references elsewhere** (`conversation_id` / `origin_conversation_id`
+  on approvals, action approvals, schedules, webhooks, peer tasks, reach items)
+  are returned as `null` with `conversation_hidden: true` when the caller cannot
+  see the conversation; approvals and action approvals naming such a conversation
+  are **omitted** from lists, long-polls, the `approvals/stream` SSE and batch
+  decisions for that caller, and a direct decision attempt answers 404.
+- `GET /v1/workspaces/{ws}/activity` omits request-log rows whose conversation is
+  an invisible direct conversation; `…/usage` (aggregates only) is unaffected.
+- Any present or future search over conversations or transcript events applies
+  the same predicate inside the query (never as a post-filter).
+
 ### Request scoping
 
 - Paths carry ids (`/v1/workspaces/{workspace_id}/…`, `/v1/agents/{agent_id}`).

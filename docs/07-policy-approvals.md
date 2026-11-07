@@ -269,7 +269,12 @@ status='pending'`); a losing decider gets 409 `already_decided`.
 **Who may decide**: any user with `can_use` on the approval's workspace,
 through the dashboard, the API (session or key of such a user), or a channel
 card (clicker resolved through the user link; `13 §Clicker authorization`).
-The chat platform never authorizes.
+The chat platform never authorizes. (phase 1, RFE-009) The decider set is further
+intersected with **conversation visibility**: an approval whose `conversation_id`
+is a `direct` conversation can be seen and decided only by callers who
+`can_see_conversation` it (the direct user and `can_own`; `04`). Approvals
+without a conversation are unaffected. Other members neither see such approvals
+nor receive their cards/notifications (SSE, long-poll, batch).
 
 **Delivery**:
 - Dashboard: `GET /v1/approvals/stream` (SSE) and the agent chat view (the

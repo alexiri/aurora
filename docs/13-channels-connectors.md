@@ -325,7 +325,9 @@ For every `action.invoked`: verify token signature, expiry, single use and
 integration; resolve the clicker through the user link (unlinked → link prompt,
 no action); apply the access law for the subject's workspace (`can_use` for
 approvals, action approvals, reach decisions, stop/send-now; `can_own` for
-bindings and reach); then act. **The platform never authorizes.** The card is
+bindings and reach; phase 1, RFE-009: for subjects that name a `direct`
+conversation, additionally `can_see_conversation`, so only that person or an
+owner can act); then act. **The platform never authorizes.** The card is
 then settled (`message.update`, or a new message without `edits`).
 
 ### 5.6 Approval cards

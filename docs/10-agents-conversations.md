@@ -69,6 +69,33 @@ session (`harness_session_ref`) inside the shared sandbox.
 Direct conversations die with their user. `origin_conversation_id` points at the
 conversation where results of schedules, webhooks and peer tasks are reported.
 
+### Visibility of direct conversations (phase 1, RFE-009)
+
+Phase 0: every workspace member could read every direct conversation. **From
+phase 1 a `direct` conversation is visible only to its user and to workspace
+owners** (`can_own`, including org owners/admins), per `can_see_conversation`
+(`04 §The access law`); other kinds keep `can_use` visibility. Consequences,
+specified once here and enforced by the same predicate everywhere:
+
+- API/SSE/attachments: `05 §Conversation visibility`; the dashboard lists only
+  visible conversations and shows owners a separate "Direct conversations of
+  other members" group, each marked "visible to workspace owners".
+- **Everything that names a conversation follows**: approval cards and the
+  approvals feed (visible/decidable only by those who can see the conversation,
+  `07`), activity/request-log rows (omitted for invisible direct conversations),
+  schedule/webhook/peer-task conversation references (redacted), the SSE streams,
+  and search.
+- **Chat doors**: platform DMs and the dashboard chat are the *same* private
+  conversation ("one conversation, several doors", D-27); the thread-link card
+  and approval card of a DM go to that DM only.
+- **Agent preamble** (platform voice): *"Direct conversations are private to the
+  person you are talking with and the workspace owners. Do not quote or describe
+  what someone told you in a direct conversation in another conversation, in a
+  memory or in a shared artifact unless they asked you to."* Memory and skills are
+  agent-wide and **not** conversation-scoped (`17 §Residual risks`).
+- The agent's own context is unaffected: an agent still sees its conversations'
+  contents; visibility concerns people.
+
 ## Turns
 
 A turn is one message in → the agent's whole response out: the unit of
