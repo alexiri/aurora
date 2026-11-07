@@ -2,7 +2,7 @@
 
 Last updated: 2026-11-06 (evening, orchestrator; reconciled with git through e65ec66d)
 
-Scope: **Phase 0 (M0–M7) is complete and merged to `master`.** Current: **phases 1 and 2 in parallel** on integration branch `phase1-2` (owner rule: phases 3 and 4 after 1 and 2).
+Scope: **Phase 0 (M0–M7) is complete and merged to `master`.** Current: **phases 1 and 2 in parallel**; lanes branch from `master` in worktrees and merge back to `master` (owner, 2026-11-08: no phase branches). Phases 3 and 4 after 1 and 2.
 Ids per decision I-01. Task briefs live in `docs/tasks/<ID>.md`. Milestones
 beyond the active one are tracked as epics and decomposed into briefs when
 their dependencies near completion (adaptive planning).
