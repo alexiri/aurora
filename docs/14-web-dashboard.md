@@ -28,6 +28,11 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
   rendered with the markdown renderer in safe mode (no raw HTML, links show
   their target, `rel="noopener noreferrer nofollow"`); never
   `dangerouslySetInnerHTML`.
+- (phase 2, RFE-017) The generated client treats 429 as retryable: it waits for
+  `retry-after` (cap 30 s, jittered) for idempotent reads and shows a non-blocking
+  "You're going fast — retrying in Ns" toast; non-idempotent writes are **not**
+  auto-retried (the user re-submits); streams that get `too_many_streams` show
+  "too many open tabs/streams" instead of reconnecting in a loop.
 - A "new version available" banner appears when `/v1/instance.version` differs
   from the build's version.
 - Copy lint: a test forbids platform/app names in core UI copy (they must come

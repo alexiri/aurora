@@ -112,6 +112,53 @@ matrix:
 - Optimistic concurrency: resources with a `revision` accept
   `If-Match: <revision>` or a `revision` body field; stale → 409 `stale_revision`.
 - Long-poll endpoints accept `?wait=<secs>` capped at `LONG_POLL_MAX`.
+- **Rate limiting (phase 2, RFE-017, D-57).** Phase 0 limited only the auth
+  endpoints and webhook deliveries; any member or a leaked workspace key could
+  degrade the instance with unlimited posts, uploads, simulations or searches. From
+  phase 2 every **authenticated** `/v1/**` request passes the API limiter, after
+  the principal is resolved and before authorization (so probing is limited too).
+  - **Principal**: an API key (`key:<api_key_id>`), a signed-in user
+    (`user:<user_id>` — all of a user's sessions share the budget, so opening more
+    sessions buys nothing) or a BYO agent token (`agent:<agent_id>`, its two routes
+    only). Unauthenticated routes keep their per-IP limits (`04 §Rate limits`; plus
+    `API_RATE_UNAUTH` 120/min/IP for public GETs and 30/min/IP for requests with a
+    rejected bearer). **Exempt**: `/healthz`, `/readyz`, `/metrics`, the machine
+    planes (`/v1/runner/*`, `/v1/connector/*`, `/internal/*`) which apply their own
+    back-pressure, and `POST /v1/hooks/{token}` (its own 60/min per webhook).
+  - **Token buckets**, in memory per API replica (the same approximation as the
+    gateway, D-05; N replicas can allow up to N×; a shared `CounterStore` backend
+    is the later seam, `06 §Rate limiting`). A request must obtain a token from
+    **every** bucket that applies: the principal's *general* bucket, the principal's
+    *class* bucket, and the *org* bucket of the resource's organization:
+
+    | Bucket | Applies to | Refill / burst (defaults) |
+    |--------|------------|---------------------------|
+    | `general` | every authenticated request of the principal | 600 / min, burst 120 |
+    | `write` | any POST/PUT/PATCH/DELETE not in a stricter class | 120 / min, burst 30 |
+    | `message` | `POST /v1/conversations/{id}/messages`, `/v1/turns/{id}/send-now` | 30 / min, burst 10 |
+    | `upload` | `POST /v1/conversations/{id}/attachments`, avatar/skill-file/plugin uploads | 20 / min, burst 5 |
+    | `simulate` | `POST …/policy/simulate`, `GET /v1/agents/{agent}/effective` | 20 / min, burst 5 |
+    | `search` | `GET …/memories/search` and any future search route | 30 / min, burst 10 |
+    | `export` | `GET /v1/conversations/{id}/export`, `GET /v1/admin/storage`, `GET /v1/orgs/{org}/storage` | 6 / hour, burst 2 |
+    | `org` | every authenticated request touching an org's resources (all principals together) | 3 000 / min, burst 600 |
+
+  - **Concurrency cap** for streams: at most `API_STREAMS_PER_PRINCIPAL` (20)
+    concurrent SSE connections and long-polls per principal; the next one gets 429
+    `too_many_streams`.
+  - **Refusal**: 429 with the standard envelope, code `rate_limited`, `details:
+    { scope: "general"|"class"|"org", class, limit, per, retry_after_secs }`, header
+    **`retry-after`** (whole seconds until the blocking bucket holds a token) and the
+    informational `ratelimit-limit` / `ratelimit-remaining` / `ratelimit-reset` of
+    the blocking bucket; `x-should-retry: true`. A refused request consumes no
+    tokens from the buckets that would have allowed it. Idempotent safe retries are
+    the client's responsibility (RFE-018 adds idempotency keys in phase 3).
+  - **Tuning**: `ratelimit.api.enabled` (default `true`), `ratelimit.api.multiplier`
+    (0.1–100, scales every bucket), per-class overrides
+    `ratelimit.api.classes.<name> = { per_minute | per_hour, burst }` and
+    `ratelimit.api.org_per_minute`; minimum 1 per period. Metrics:
+    `aurora_api_rate_limited_total{class,scope}`. Buckets idle for 10 minutes are
+    evicted (LRU 100 000 entries); eviction only ever *refills* (fail-open for the
+    individual, never fail-open for the instance because the entry cap bounds memory).
 - (phase 2, RFE-010) The conversation SSE adds the ephemeral `event.redacted
   { seq }` (no `id:`), telling clients to re-read that event.
 - SSE: `Content-Type: text/event-stream`; durable events carry `id: <seq>`;

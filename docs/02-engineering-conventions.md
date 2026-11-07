@@ -256,5 +256,8 @@ overridden by the named configuration key (`15`).
 | `AGENT_SNIPPET_MAX` | 2 000 chars per app | — | 09 |
 | `AVATAR_MAX` | 512 KiB (PNG/JPEG/WebP) | — | 10 |
 | `SSE_KEEPALIVE` | 15 s | — | 05 |
+| `API_RATE_*` | (phase 2, RFE-017) buckets of `05 §Conventions`: general 600/min (burst 120), write 120/min (30), message 30/min (10), upload 20/min (5), simulate 20/min (5), search 30/min (10), export 6/h (2), org 3 000/min (600) | `ratelimit.api.*` | 05 |
+| `API_RATE_UNAUTH` | (phase 2, RFE-017) 120 / min / IP public GETs; 30 / min / IP for requests with a rejected bearer | — | 05 |
+| `API_STREAMS_PER_PRINCIPAL` | (phase 2, RFE-017) 20 concurrent SSE connections + long-polls | — | 05 |
 | `DELTA_COALESCE` | (phase 1, RFE-016) 100 ms or 2 000 chars per turn per delta | `events.delta_coalesce_ms` (100–500) | 05 |
 | `LONG_POLL_MAX` | 30 s | — | 05 |

@@ -242,7 +242,8 @@ append) and by email: sign-in 10/min/IP and 5/min/email; sign-up 5/h/IP;
 reset 3/h/email *(all phase 0 only)*; CLI token polling governed by `interval`
 (`slow_down` error). (phase 1, RFE-004) Replaced by: OIDC `start` and `callback`
 `OIDC_AUTH_RATE` (20/min/IP each) and CLI token polling as before. The general
-per-principal API limiter of phase 2 (RFE-017) sits above these.
+per-principal API limiter of phase 2 (RFE-017, `05 §Conventions`) applies to every
+authenticated request on top of these and returns the same 429 + `retry-after` shape.
 
 ## Authorization
 

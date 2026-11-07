@@ -115,6 +115,8 @@ one new entry without activating it.
 | `tls.extra_ca_bundle` | — | api, gateway, hookhost, runner, connectors | PEM file of additional trusted CAs for all outbound TLS (e.g. an organization CA for internal LLM endpoints, OIDC, Vault) |
 | `events.delta_bus` | `notify` | api | (phase 1, RFE-016) `DeltaBus` implementation id; unknown id fails startup |
 | `events.delta_coalesce_ms` | 100 | api | (phase 1, RFE-016) delta coalescing window, 100–500 |
+| `ratelimit.api.enabled`, `ratelimit.api.multiplier` | `true`, `1.0` | api | (phase 2, RFE-017) management-API token buckets and a global multiplier (0.1–100) |
+| `ratelimit.api.classes.<name>`, `ratelimit.api.org_per_minute` | `05 §Conventions` | api | (phase 2, RFE-017) per-class `{ per_minute \| per_hour, burst }` overrides and the per-org bucket (default 3000) |
 | `retention.request_log_days` | 30 | api | |
 | `attachments.default_org_quota_mib`, `attachments.org_quota_mib_max` | 10240, 51200 | api | (phase 2, RFE-015) default and ceiling of an org's attachment storage quota (MiB; `0` = unlimited) |
 | `attachments.days_max` | — (no ceiling) | api | (phase 2, RFE-015) instance maximum for an org's attachment retention window |
@@ -162,6 +164,10 @@ removed from the list automatically.
 - `server.external_url` is the single public origin. The **edge** routes
   `/v1/*` → API :4101 and everything else → web :4100. `/internal/*` and
   `/metrics` are never routed.
+- (phase 2, RFE-017) The API limits by authenticated principal, not by IP, except
+  for unauthenticated routes (which trust the edge's overwritten `X-Forwarded-For`).
+  Size `ratelimit.api.multiplier` up for deployments where service keys legitimately
+  poll often, and remember limits are per API replica.
 - Edge requirements: request body ≥ 32 MiB (attachments), no buffering for SSE
   and long-polls (`/v1/conversations/*/stream`, `/v1/approvals/*`,
   `/v1/runner/work`, `/v1/connector/ops/claim`), read timeouts ≥ 60 s, HTTP/2,

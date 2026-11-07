@@ -200,6 +200,17 @@ done when its tests exist, pass in CI, and the security invariants it touches
   drift; breakdown endpoints (`/v1/orgs/{org}/storage`, `/v1/admin/storage`) agree
   with the table sums and are authorization-checked.
 
+### API rate limiting (phase 2, RFE-017)
+- Bucket semantics per class (burst then steady refill), a request must pass
+  general + class + org buckets and a refused request consumes none of the others;
+  principal isolation (a second key and another user are unaffected), a user's
+  sessions share one budget, org bucket across principals, stream/long-poll
+  concurrency cap (`too_many_streams`), 429 envelope with `retry-after` and
+  `ratelimit-*` headers and `details.scope`, exempt routes (health, metrics,
+  machine planes, webhooks), config overrides and multiplier, startup validation,
+  idle-bucket eviction; dashboard client retry behaviour (idempotent reads retried,
+  writes not).
+
 ### Identity
 - Permission matrix test generated from `04 §Permission matrix` (every route ×
   role), suspended members, workspace key confinement, CSRF, OIDC against a
