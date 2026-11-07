@@ -1107,3 +1107,18 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | capabilities | text[] not null default `{}` | credential capabilities; phase 1 value `browser` (open-lane use), settable on `boot` credentials only (`08 §7`) | 1 (RFE-003) |
+
+#### `users`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| password_hash | (existing column) | cleared (`NULL`) by the phase-1 migration and ignored from phase 1 (RFE-004); the column is dropped by the contract migration in a later release (`15 §Upgrades`, expand → migrate → contract) | 1 → drop later (RFE-004) |
+
+#### `email_tokens`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| (whole table) | — | unused from phase 1 (no e-mail verification or password reset, RFE-004); existing rows are ignored and the table is dropped by the contract migration in a later release | 1 → drop later (RFE-004) |
+
+#### `sessions`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| reauth_at | timestamptz null | last successful OIDC re-authentication (`04 §OIDC`); account deletion needs it within 10 min | 1 (RFE-004) |

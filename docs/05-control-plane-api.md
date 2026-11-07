@@ -11,7 +11,7 @@ interchangeable; all coordination is through Postgres.
 
 1. Management API (`/v1/…`) for the dashboard, CLI and API keys; OpenAPI
    document at `/v1/openapi.json`.
-2. Identity: sign-up/in, sessions, OIDC, invitations, API keys, CLI login (`04`).
+2. Identity: sign-up/in, sessions, OIDC, invitations, API keys, CLI login (`04`); from phase 1 sign-in is OIDC only (RFE-004).
 3. Secrets and LLM keys through the secret-store registry (`08`).
 4. Plugin registry: package ingestion, verification, validation, operator
    approval, snapshot compilation (`09`); app connect flows; OAuth clients.
@@ -205,18 +205,20 @@ connector, **P** public capability. Permission checks per `04`.
 ### Health and instance
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/instance` | none | `{ version, signup_mode, oidc_providers:[{id,display_name}], features:{hosted, channels}, default_agent_name, external_url }` |
+| GET `/v1/instance` | none | `{ version, signup_mode, oidc_providers:[{id,display_name}], features:{hosted, channels}, default_agent_name, external_url }`; (phase 1, RFE-004) `oidc_providers` is the complete list of ways to sign in (may include the development provider `dev`, `04`) |
 | GET `/v1/resolve` | S/K | slug → ids |
 
 ### Auth and account
 | Method & path | Auth | Purpose |
 |---|---|---|
-| POST `/v1/auth/signup` | none | email, password, display_name |
-| POST `/v1/auth/login` / `/v1/auth/logout` | none / S | |
-| POST `/v1/auth/verify-email`, `/v1/auth/verify-email/resend` | none / S | |
-| POST `/v1/auth/password/forgot`, `/v1/auth/password/reset` | none | |
-| POST `/v1/auth/password/change`, `/v1/auth/sessions/revoke-others` | SO | |
-| GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC` |
+| POST `/v1/auth/signup` | none | email, password, display_name — **phase 0 only; removed in phase 1 (RFE-004)** |
+| POST `/v1/auth/login` | none | **phase 0 only; removed in phase 1 (RFE-004)** |
+| POST `/v1/auth/logout` | S | (all phases) |
+| POST `/v1/auth/verify-email`, `/v1/auth/verify-email/resend` | none / S | **phase 0 only; removed in phase 1** |
+| POST `/v1/auth/password/forgot`, `/v1/auth/password/reset` | none | **phase 0 only; removed in phase 1** |
+| POST `/v1/auth/password/change` | SO | **phase 0 only; removed in phase 1** |
+| POST `/v1/auth/sessions/revoke-others` | SO | |
+| GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC`; (phase 1, RFE-004) the only sign-in; `start` accepts `reauth=1` |
 | POST `/v1/auth/cli`, `/v1/auth/cli/token` | none | device flow |
 | POST `/v1/auth/cli/approve` | SO | `{ user_code, workspace_id }` |
 | GET/PATCH/DELETE `/v1/me` | S (DELETE: SO) | profile, memberships, default org |

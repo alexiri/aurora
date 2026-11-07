@@ -37,9 +37,12 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
 ## Information architecture
 
 ### Public / auth (outside the shell)
-`/auth/login` (email+password, OIDC buttons from `/v1/instance`),
-`/auth/signup` (only if `signup_mode = open`), `/auth/forgot`, `/auth/reset`,
-`/auth/verify`, `/auth/cli` (approve a CLI login: shows the user code, workspace
+`/auth/login` (phase 0: email+password and OIDC buttons from `/v1/instance`;
+**from phase 1 (RFE-004): OIDC provider buttons only**, plus the "signup closed" /
+"email not verified" / "account disabled" error states; no password form),
+`/auth/signup` (phase 0, only if `signup_mode = open`), `/auth/forgot`,
+`/auth/reset`, `/auth/verify` (all three phase 0 only; removed in phase 1),
+`/auth/cli` (approve a CLI login: shows the user code, workspace
 picker), `/join` (invitation preview + accept), `/link/channel` (confirm a chat
 platform account link; from phase 1 it shows the platform account and email hint
 and requires an explicit confirm, RFE-001), `/oauth/bridge` (fragment-callback bridge for app
@@ -47,8 +50,9 @@ connects), `/setup-error` (missing required configuration reported by
 `/v1/instance`).
 
 ### Account (`/account/*`)
-Profile, password, sessions (sign out others), API keys (personal workspace
-keys), chat platform links, DM defaults, delete account.
+Profile, password *(phase 0 only)*, sessions (sign out others), API keys
+(personal workspace keys), chat platform links, DM defaults, delete account
+(phase 1: asks for a fresh OIDC sign-in first, `04 §OIDC`).
 
 ### Organization (`/o/<org>/*`) — owners/admins unless noted
 - **Workspaces** (all members: those they can access; owners/admins: all).

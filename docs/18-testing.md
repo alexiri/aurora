@@ -122,6 +122,16 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Permission matrix test generated from `04 §Permission matrix` (every route ×
   role), suspended members, workspace key confinement, CSRF, OIDC against a
   mock IdP (discovery, PKCE, nonce, email-verified rule, JIT).
+- (phase 1, RFE-004) OIDC-only: the removed password/verify/reset routes return
+  404; sign-up semantics per `signup_mode` (`open` creates user+org,
+  `invite_only` refuses without invitation/admin e-mail and creates no row,
+  `sso_jit` via the provider `jit`); invitation accepted through a first OIDC
+  sign-in; `bootstrap-admin` pre-provisioning bound by first sign-in;
+  `auth.instance_admins` flag via OIDC; unverified e-mail, disabled user,
+  re-authentication (`reauth=1`, `reauth_required` on account deletion);
+  startup refusals (no provider, dev IdP on a public URL, `require_email_verified
+  = false`); the dev IdP and `aurora_testkit::oidc` `sign_in` helper used by the
+  Playwright flows; API keys and CLI device login unchanged.
 
 ### Architecture guards (CI scripts)
 - No app/platform names in core paths (SEC-33).

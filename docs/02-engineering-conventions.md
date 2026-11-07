@@ -74,7 +74,7 @@ loaders live in `aurora-db`.
 | JSON Schema | `schemars` (generate), `jsonschema` (validate at receivers where serde alone is insufficient) |
 | OpenAPI | `utoipa` (+ `utoipa-axum`); the API serves `/v1/openapi.json` |
 | WebSocket | `tokio-tungstenite` |
-| Crypto | `aws-lc-rs` (AES-256-GCM, HKDF, HMAC, SHA-256), `ed25519-dalek` (package/manifest signatures), `argon2` (passwords) |
+| Crypto | `aws-lc-rs` (AES-256-GCM, HKDF, HMAC, SHA-256), `ed25519-dalek` (package/manifest signatures), `argon2` (passwords; phase 0 only, removed with password sign-in in phase 1, RFE-004) |
 | OIDC | `openidconnect` |
 | WebAssembly | `wasmtime` (component model, epoch interruption), `wit-bindgen` (guest SDK) |
 | Kubernetes | `kube`, `k8s-openapi` |
@@ -179,6 +179,7 @@ overridden by the named configuration key (`15`).
 | `CONDITION_BODY_BUFFER` | 256 KiB (4 KiB–8 MiB) | `gateway.condition_body_bytes` | 07 |
 | `UPSTREAM_HEADER_TIMEOUT` | 300 s | `gateway.upstream_header_timeout_secs` | 06 |
 | `WEBSOCKET_IDLE_TIMEOUT` | 600 s | — | 06 |
+| `OIDC_AUTH_RATE` | (phase 1, RFE-004) 20 / min / IP for each of OIDC `start` and `callback` | — | 04 |
 | `PROXY_TLS_LEAF_VALIDITY` | (phase 1, RFE-002) 30 days; renewed when < 10 days remain | — | 06 |
 | `REQUEST_LOG_FLUSH` | 5 s or 500 rows | — | 06 |
 | `REQUEST_LOG_RETENTION` | 30 days | `retention.request_log_days` | 15 |

@@ -64,7 +64,8 @@ Setup tooling generates every secret and **never overwrites** an existing one.
 | `auth.instance_admins` | `[]` | api | emails |
 | `auth.trusted_origins` | `[]` | api | extra origins for CSRF checks |
 | `auth.session_idle_secs` / `auth.session_absolute_secs` | 1209600 / 2592000 | api | |
-| `auth.oidc_providers[]` | — | api | `04 §OIDC` |
+| `auth.oidc_providers[]` | — | api | `04 §OIDC`; (phase 1, RFE-004) **at least one required** (or `auth.dev_idp.enabled`), `require_email_verified` removed |
+| `auth.dev_idp.enabled`, `auth.dev_idp.issuer` | `false`, — | api | (phase 1, RFE-004) registers the development provider `dev` served by `aurora-dev-idp`; refused on a non-loopback https `server.external_url` (`04 §Development and end-to-end sign-in`) |
 | `email.smtp_url`, `email.from` | — | api | unset ⇒ log-only mode |
 | `secrets.default_store`, `secrets.stores[]` | `inline` | api, gateway | `08 §2` |
 | `llm.enabled_providers`, `llm.provider_preference`, `llm.endpoints[]` | `["litellm","anthropic"]` | api, gateway | `08 §6`; each endpoint may set `allowed_models` and `key_origin` (`method` = `endpoint` \| `litellm_team` \| `provider_account`, with `allowed_organization_ids`, `allowed_workspace_ids`, `allowed_team_ids`) |
@@ -179,7 +180,10 @@ the `aurora-sandbox` network (`podman network create --internal --disable-dns
 --subnet 10.89.250.0/24 --gateway 10.89.250.1 aurora-sandbox`, see S-03) if missing, mints the gateway CA into
 the fixed-name `aurora-ca` volume with `aurora-gateway generate-ca --out /ca` if the volume has none (the
 volume root is first chowned to the gateway's nonroot uid, because a new volume is root-owned; an existing
-CA is never overwritten), and prints the first-admin bootstrap command.
+CA is never overwritten), and prints the first-admin bootstrap command (phase 1, RFE-004:
+`aurora-api bootstrap-admin --email <e>` pre-provisions the admin; the person then
+signs in through the configured OIDC provider or, in development, the `dev-idp`
+profile).
 
 Services:
 
@@ -194,6 +198,7 @@ Services:
 | `edge` | `caddy:2` | core | publishes 4000 → routes as above |
 | `runner` (profile `hosted`) | aurora-runner | core, sandbox (`10.89.250.3`) | mounts the podman socket (`${XDG_RUNTIME_DIR}/podman/podman.sock` for rootless) with `security_opt: [label=disable]` |
 | `connector-fake` (profile `connector-fake`) | aurora-connector-fake | core | test control API published on 4190 |
+| `dev-idp` (profile `dev-idp`) | aurora-dev-idp | core | (phase 1, RFE-004) development OIDC provider (`04`), users from `deploy/compose/dev-idp/users.json`, published on `127.0.0.1:4410`; development only |
 | `vidaimock` (profile `llm-mock`) | `ghcr.io/vidaiuk/vidaimock` pinned by digest | core | scripted Anthropic-API stand-in, config `deploy/compose/vidaimock/` mounted read-only; **not a model** |
 | `litellm` (profile `llm-mock`) | `ghcr.io/berriai/litellm` pinned by digest | core | real LiteLLM proxy, `deploy/compose/litellm.yaml`, dev master key `sk-aurora-mock-dev`; published on `127.0.0.1:4400`; endpoint `litellm-mock` in `aurora.toml` |
 
