@@ -85,8 +85,7 @@ pub async fn delete_conversation(conn: &mut PgConnection, id: Uuid) -> Result<De
             .bind(id)
             .fetch_one(&mut *conn)
             .await?;
-    // Attachment bytes: purged rows (RFE-015) have none left; the column may not exist before
-    // that task lands, so only the blob key decides.
+    // Purged rows (RFE-015) have an empty blob key; deleting it is a no-op.
     let blobs: Vec<(String, String)> =
         sqlx::query_as("SELECT blob_backend, blob_key FROM attachments WHERE conversation_id = $1")
             .bind(id)
@@ -409,6 +408,30 @@ pub async fn set_org_conversations_days(
     Ok(())
 }
 
+/// Set or clear one integer key of `settings.retention` (RFE-015: `attachments_days`,
+/// `attachment_quota_mib`), keeping the others. `key` is a code constant, never user input.
+pub async fn set_org_retention_key(
+    conn: &mut PgConnection,
+    org: Uuid,
+    key: &str,
+    value: Option<i64>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE organizations SET updated_at = now(), settings = CASE
+             WHEN $3::bigint IS NULL THEN settings #- ARRAY['retention', $2]
+             ELSE jsonb_set(settings, '{retention}',
+                  COALESCE(settings->'retention', '{}'::jsonb)
+                  || jsonb_build_object($2::text, $3::bigint), true) END
+         WHERE id = $1",
+    )
+    .bind(org)
+    .bind(key)
+    .bind(value)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 // ------------------------------------------------------------------ export
 
 /// `(events after seq, approximate bytes of events + turn text)`.
@@ -456,6 +479,8 @@ pub struct ExportAttachment {
     pub direction: String,
     pub blob_backend: String,
     pub blob_key: String,
+    /// Bytes deleted by retention or an explicit delete (RFE-015).
+    pub purged: bool,
 }
 
 pub async fn export_attachments(
@@ -463,7 +488,8 @@ pub async fn export_attachments(
     conversation: Uuid,
 ) -> Result<Vec<ExportAttachment>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT id, filename, size_bytes, sha256, content_type, direction, blob_backend, blob_key
+        "SELECT id, filename, size_bytes, sha256, content_type, direction, blob_backend, blob_key,
+                purged_at IS NOT NULL AS purged
          FROM attachments WHERE conversation_id = $1 AND status = 'bound' ORDER BY created_at, id",
     )
     .bind(conversation)

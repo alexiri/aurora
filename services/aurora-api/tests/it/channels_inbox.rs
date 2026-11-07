@@ -872,6 +872,61 @@ async fn file_fetch_success_and_failure() {
     assert!(w.turn_text().await.contains("could not be fetched"));
 }
 
+#[tokio::test]
+async fn file_fetch_over_the_org_quota_fails_the_file_and_tells_the_person() {
+    // P2-015 (RFE-015): the file is `failed` with `quota_exceeded` (no fetch is issued for it),
+    // the person gets a platform-voice notice and the turn still runs.
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    sqlx::query("UPDATE organizations SET settings = jsonb_set(settings, '{retention}', '{\"attachment_quota_mib\": 1}')")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let mut p = dm("U1", "see files", "BD1");
+    p["files"] = json!([
+        {"ref": "F1", "name": "big.bin", "size": 2097152, "content_type": "application/octet-stream"},
+        {"ref": "F2", "name": "small.txt", "size": 5, "content_type": "text/plain"}
+    ]);
+    w.send(w.integ, "q1", "message.posted", p).await;
+    tokio::join!(
+        w.run(),
+        w.serve(1, |op| {
+            assert_eq!(op["payload"]["file_ref"], "F2");
+            (
+                Some(b"hello".to_vec()),
+                json!({"outcome": "ok", "data": {"upload_url_used": true}}),
+            )
+        })
+    );
+    assert_eq!(w.outcome("q1").await["result"], "turn_created");
+    let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT filename, status, failure_reason FROM attachments WHERE turn_id IS NOT NULL ORDER BY filename",
+    )
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("a.txt".to_owned(), "bound".to_owned(), None),
+            (
+                "big.bin".to_owned(),
+                "failed".to_owned(),
+                Some("quota_exceeded".to_owned())
+            ),
+        ]
+    );
+    let posts = w.ops("message.post").await;
+    assert!(
+        posts.iter().any(|p| p["content"]["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("attachment storage is full"))),
+        "{posts:?}"
+    );
+}
+
 // ------------------------------------------------------------------ receipts
 
 #[tokio::test]

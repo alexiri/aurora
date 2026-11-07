@@ -159,6 +159,9 @@ fn defaults_match_table() {
     assert_eq!(r.runner.sandbox_memory_mib, 2048);
     assert_eq!(r.runner.orphan_reap, "reap");
     assert_eq!(r.retention.request_log_days, 30);
+    assert_eq!(r.attachments.default_org_quota_mib, 10240);
+    assert_eq!(r.attachments.org_quota_mib_max, 51200);
+    assert_eq!(r.attachments.days_max, None);
     assert_eq!(r.telemetry.log_level, "info");
 }
 

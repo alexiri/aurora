@@ -143,6 +143,9 @@ pub async fn upload(
         .map(|c| aurora_core::sanitize::one_line(c, ATTACH_CAPTION_MAX))
         .filter(|c| !c.is_empty());
 
+    // Org storage quota (RFE-015): cheap check before the bytes are written; `commit` decides
+    // under the org's counter lock.
+    super::quota::precheck(state, conv.workspace_id, buf.len() as i64).await?;
     let (backend, store) = blob::current(&state.pool);
     let key = blob::new_key();
     store.put(&key, &buf).await?;
@@ -204,6 +207,7 @@ async fn commit(
         ));
     }
     let row = service::insert_in(
+        state,
         &mut tx,
         NewBlob {
             workspace_id: *workspace_id,

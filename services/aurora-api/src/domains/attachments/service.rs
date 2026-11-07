@@ -1,6 +1,8 @@
 use super::blob;
 use super::dto::Attachment;
+use super::{quota, sweep};
 use crate::app::AppState;
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::conversations::service as conv;
 use crate::http::auth::Caller;
 use aurora_core::limits::{ATTACH_IN_FILE_MAX, ATTACH_PENDING_TTL};
@@ -19,6 +21,13 @@ const CONTENT_TYPE_MAX: usize = 127;
 const OCTET: &str = "application/octet-stream";
 /// Rows removed per sweep statement.
 const SWEEP_BATCH: i64 = 500;
+
+pub(super) fn purged() -> ApiError {
+    ApiError::gone(
+        "attachment_purged",
+        "This file was deleted or expired by the retention policy.",
+    )
+}
 
 fn att_404() -> ApiError {
     ApiError::not_found("Attachment not found.")
@@ -172,46 +181,50 @@ pub struct NewBlob<'a> {
     pub created_by_user_id: Option<Uuid>,
 }
 
-/// Put the bytes and insert the row; the blob is removed again if the insert fails.
+/// Put the bytes and insert the row; the blob is removed again if the quota check or the insert
+/// fails. The org quota is checked before the bytes are written (cheap, unlocked) and again,
+/// authoritatively, under the org's counter lock in the inserting transaction.
 async fn store(state: &AppState, n: NewBlob<'_>, bytes: &[u8]) -> Result<AttachmentRow, ApiError> {
+    let size = bytes.len() as i64;
+    quota::precheck(state, n.workspace_id, size).await?;
     let (backend, store) = blob::current(&state.pool);
     let key = blob::new_key();
     store.put(&key, bytes).await?;
-    let new = NewAttachment {
-        id: Uuid::now_v7(),
-        workspace_id: n.workspace_id,
-        conversation_id: n.conversation_id,
-        turn_id: n.turn_id,
-        direction: n.direction,
-        status: n.status,
-        filename: n.filename,
-        content_type: n.content_type,
-        size_bytes: bytes.len() as i64,
-        sha256: n.sha256,
-        blob_backend: backend,
-        blob_key: &key,
-        caption: n.caption,
-        created_by_user_id: n.created_by_user_id,
-    };
-    match attachments::insert(&state.pool, &new).await {
+    match insert_reserved(state, n, &key, backend, bytes.len()).await {
         Ok(r) => Ok(r),
         Err(e) => {
             if let Err(d) = store.delete(&key).await {
                 tracing::warn!(error = %d, "orphan blob after failed attachment insert");
             }
-            Err(e.into())
+            Err(e)
         }
     }
 }
 
-/// Insert an attachment inside the caller's transaction (blob already stored under `key`).
+async fn insert_reserved(
+    state: &AppState,
+    n: NewBlob<'_>,
+    key: &str,
+    backend: &str,
+    size: usize,
+) -> Result<AttachmentRow, ApiError> {
+    let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
+    let row = insert_in(state, &mut tx, n, key, backend, size).await?;
+    tx.commit().await.map_err(aurora_db::DbError::from)?;
+    Ok(row)
+}
+
+/// Insert an attachment inside the caller's transaction (blob already stored under `key`), after
+/// the org quota check under the org's counter lock (RFE-015).
 pub(super) async fn insert_in(
+    state: &AppState,
     conn: &mut sqlx::PgConnection,
     n: NewBlob<'_>,
     key: &str,
     backend: &str,
     size: usize,
 ) -> Result<AttachmentRow, ApiError> {
+    quota::reserve(state, &mut *conn, n.workspace_id, size as i64).await?;
     let new = NewAttachment {
         id: Uuid::now_v7(),
         workspace_id: n.workspace_id,
@@ -240,8 +253,51 @@ pub async fn download(state: &AppState, c: &Caller, id: Uuid) -> Result<Response
     conv::read_conversation(state, c, row.conversation_id)
         .await
         .map_err(|_| att_404())?;
+    if row.purged_at.is_some() {
+        return Err(purged());
+    }
     let bytes = read_blob(state, &row).await?;
     Ok(bytes_response(&row, bytes))
+}
+
+/// `DELETE /attachments/{id}`: purge the bytes now (`purge_reason = deleted`; the row stays so
+/// transcripts keep their chip). Authority: the uploader or `can_own`, always subject to
+/// `can_see_conversation` (404 otherwise). Idempotent; audited best-effort (`attachment.delete`).
+pub async fn delete(state: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> {
+    let row = attachments::get(&state.pool, id)
+        .await?
+        .filter(|a| a.status != "failed")
+        .ok_or_else(att_404)?;
+    let (conv_row, auth) = conv::load_conversation_auth(state, c, row.conversation_id)
+        .await
+        .map_err(|_| att_404())?;
+    if !(auth.can_own() || row.created_by_user_id == Some(c.user_id)) {
+        return Err(ApiError::forbidden(
+            "Only the uploader or a workspace owner can delete this file.",
+        ));
+    }
+    let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
+    let purged = attachments::purge_one(&mut tx, id, "deleted").await?;
+    tx.commit().await.map_err(aurora_db::DbError::from)?;
+    if let Some(p) = purged {
+        sweep::remove_blobs(&state.pool, std::slice::from_ref(&p)).await;
+        audit::record(
+            state,
+            AuditEvent::new(
+                AuditActor::from_caller(c),
+                "attachment.delete",
+                Outcome::Success,
+            )
+            .org(auth.org_id)
+            .workspace(conv_row.workspace_id)
+            .target("attachment", id)
+            .metadata(serde_json::json!({
+                "conversation_id": row.conversation_id, "direction": row.direction,
+                "size_bytes": p.size_bytes,
+            })),
+        );
+    }
+    Ok(())
 }
 
 pub(super) async fn read_blob(state: &AppState, row: &AttachmentRow) -> Result<Vec<u8>, ApiError> {

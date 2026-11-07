@@ -1490,6 +1490,42 @@
         ]
       }
     },
+    "/v1/admin/storage": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Instance storage breakdown (phase 2, RFE-015; instance administrators).",
+        "operationId": "adminStorage",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStorage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/trusted-keys": {
       "get": {
         "tags": [
@@ -5352,6 +5388,60 @@
         ]
       }
     },
+    "/v1/attachments/{id}": {
+      "delete": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Purge the file's bytes now (phase 2, RFE-015). The row stays, so the transcript chip shows\n\"expired\"; downloads then answer 410. The uploader or a workspace owner.",
+        "operationId": "deleteAttachment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attachment id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted (idempotent)"
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/attachments/{id}/content": {
       "get": {
         "tags": [
@@ -5389,6 +5479,16 @@
           },
           "404": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "attachment_purged",
             "content": {
               "application/json": {
                 "schema": {
@@ -7117,6 +7217,16 @@
           },
           "413": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "attachment_quota_exceeded",
             "content": {
               "application/json": {
                 "schema": {
@@ -11454,6 +11564,67 @@
             }
           },
           "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/storage": {
+      "get": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "Attachment storage of an organization: usage vs quota, retention and the breakdown by\nworkspace and direction (phase 2, RFE-015; org `owner`/`admin`).",
+        "operationId": "getOrgStorage",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgStorage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -16620,6 +16791,96 @@
           }
         }
       },
+      "AdminOrgStorage": {
+        "type": "object",
+        "description": "Attachment bytes of one org in the instance breakdown.",
+        "required": [
+          "org_id",
+          "slug",
+          "name",
+          "attachment_bytes",
+          "files"
+        ],
+        "properties": {
+          "attachment_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "files": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "quota_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Quota in force; null = unlimited."
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminStorage": {
+        "type": "object",
+        "description": "`GET /admin/storage` (API_CONTRACTS C-172).",
+        "required": [
+          "blob_bytes",
+          "blob_count",
+          "attachment_bytes",
+          "attachment_files",
+          "purged_files",
+          "orgs",
+          "tables"
+        ],
+        "properties": {
+          "attachment_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sum of the org counters."
+          },
+          "attachment_files": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "blob_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes held by the blob backend (`blobs`)."
+          },
+          "blob_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "orgs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminOrgStorage"
+            },
+            "description": "Top 50 orgs by attachment bytes."
+          },
+          "purged_files": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TableSize"
+            },
+            "description": "`blobs`, `attachments`, `transcript_events`, `request_log`, `audit_log`."
+          }
+        }
+      },
       "AdminUser": {
         "allOf": [
           {
@@ -21545,6 +21806,73 @@
           }
         }
       },
+      "OrgStorage": {
+        "type": "object",
+        "description": "`GET /orgs/{org}/storage` (API_CONTRACTS C-171).",
+        "required": [
+          "org_id",
+          "used_bytes",
+          "notice",
+          "files",
+          "purged_files",
+          "by_workspace"
+        ],
+        "properties": {
+          "attachments_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The org's attachment retention window; null = keep forever."
+          },
+          "attachments_days_effective": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The window in force (after the instance maximum)."
+          },
+          "by_workspace": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceStorage"
+            }
+          },
+          "files": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files that hold bytes."
+          },
+          "notice": {
+            "type": "string",
+            "description": "`clear` (< 80 %) | `warning` (≥ 80 %) | `full` (≥ 100 %)."
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "purged_files": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files whose bytes were purged (the rows remain)."
+          },
+          "quota_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Quota in force; null = unlimited."
+          },
+          "used_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Counter of non-purged attachment bytes."
+          }
+        }
+      },
       "OrgSummary": {
         "type": "object",
         "required": [
@@ -25550,6 +25878,22 @@
       "PutRetention": {
         "type": "object",
         "properties": {
+          "attachment_quota_mib": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(phase 2, RFE-015) MiB, `0` = unlimited; absent = unchanged, `null` = the instance default."
+          },
+          "attachments_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(phase 2, RFE-015) Absent = unchanged, `null` = keep forever."
+          },
           "conversations_days": {
             "type": [
               "integer",
@@ -26051,6 +26395,46 @@
         "type": "object",
         "description": "(phase 2, RFE-010) `GET/PUT /orgs/{org}/retention`.",
         "properties": {
+          "attachment_quota_mib": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The org's own attachment quota in MiB (`0` = unlimited); null = the instance default."
+          },
+          "attachment_quota_mib_effective": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The quota in force in MiB after the instance default and ceiling; null = unlimited."
+          },
+          "attachment_quota_mib_max": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The instance ceiling of the quota in MiB (`attachments.org_quota_mib_max`); null = none."
+          },
+          "attachments_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(phase 2, RFE-015) Purge attachment bytes older than this many days (7..=3650); null =\nkeep forever."
+          },
+          "attachments_days_max": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The instance maximum of `attachments_days` (`attachments.days_max`), when configured."
+          },
           "conversations_days": {
             "type": [
               "integer",
@@ -27555,6 +27939,23 @@
           }
         }
       },
+      "TableSize": {
+        "type": "object",
+        "description": "On-disk size of one big table (with indexes and TOAST).",
+        "required": [
+          "table",
+          "bytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "table": {
+            "type": "string"
+          }
+        }
+      },
       "Target": {
         "oneOf": [
           {
@@ -28603,6 +29004,42 @@
           "approver",
           "member"
         ]
+      },
+      "WorkspaceStorage": {
+        "type": "object",
+        "description": "Attachment bytes of one workspace in one direction.",
+        "required": [
+          "workspace_id",
+          "workspace_slug",
+          "workspace_name",
+          "direction",
+          "files",
+          "bytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "direction": {
+            "type": "string",
+            "description": "`in` (people -> agent) | `out` (agent -> people)"
+          },
+          "files": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workspace_name": {
+            "type": "string"
+          },
+          "workspace_slug": {
+            "type": "string"
+          }
+        }
       }
     },
     "securitySchemes": {

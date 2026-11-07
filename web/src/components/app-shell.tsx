@@ -182,6 +182,7 @@ const ORG_LINKS: { path: string; label: string; icon: IconType }[] = [
   { path: "channels", label: "Channels", icon: MessageIcon },
   { path: "api-keys", label: "API keys", icon: KeyIcon },
   { path: "audit", label: "Audit log", icon: ScrollIcon },
+  { path: "storage", label: "Storage", icon: ServerIcon },
   { path: "settings", label: "Settings", icon: SettingsIcon },
 ];
 
@@ -281,6 +282,7 @@ const ADMIN_LINKS: { href: string; label: string; icon: IconType }[] = [
   { href: "/admin/users", label: "Users", icon: UsersIcon },
   { href: "/admin/plugins", label: "Plugins", icon: PlugIcon },
   { href: "/admin/connectors", label: "Connectors", icon: LinkIcon },
+  { href: "/admin/storage", label: "Storage", icon: ServerIcon },
   { href: "/admin/host-claims", label: "Host claims", icon: ServerIcon },
   { href: "/admin/oauth-clients", label: "OAuth clients", icon: KeyIcon },
   { href: "/admin/trusted-keys", label: "Trusted keys", icon: ShieldIcon },

@@ -315,6 +315,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Instance storage breakdown (phase 2, RFE-015; instance administrators). */
+        get: operations["adminStorage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/trusted-keys": {
         parameters: {
             query?: never;
@@ -1096,6 +1113,26 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/attachments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Purge the file's bytes now (phase 2, RFE-015). The row stays, so the transcript chip shows
+         *     "expired"; downloads then answer 410. The uploader or a workspace owner.
+         */
+        delete: operations["deleteAttachment"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2342,6 +2379,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{org}/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Attachment storage of an organization: usage vs quota, retention and the breakdown by
+         *     workspace and direction (phase 2, RFE-015; org `owner`/`admin`).
+         */
+        get: operations["getOrgStorage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/workspaces": {
         parameters: {
             query?: never;
@@ -3288,6 +3345,45 @@ export interface components {
         ActionDecision: "approve" | "deny";
         ActionDecisionBody: {
             decision: components["schemas"]["ActionDecision"];
+        };
+        /** @description Attachment bytes of one org in the instance breakdown. */
+        AdminOrgStorage: {
+            /** Format: int64 */
+            attachment_bytes: number;
+            /** Format: int64 */
+            files: number;
+            name: string;
+            /** Format: uuid */
+            org_id: string;
+            /**
+             * Format: int64
+             * @description Quota in force; null = unlimited.
+             */
+            quota_bytes?: number | null;
+            slug: string;
+        };
+        /** @description `GET /admin/storage` (API_CONTRACTS C-172). */
+        AdminStorage: {
+            /**
+             * Format: int64
+             * @description Sum of the org counters.
+             */
+            attachment_bytes: number;
+            /** Format: int64 */
+            attachment_files: number;
+            /**
+             * Format: int64
+             * @description Bytes held by the blob backend (`blobs`).
+             */
+            blob_bytes: number;
+            /** Format: int64 */
+            blob_count: number;
+            /** @description Top 50 orgs by attachment bytes. */
+            orgs: components["schemas"]["AdminOrgStorage"][];
+            /** Format: int64 */
+            purged_files: number;
+            /** @description `blobs`, `attachments`, `transcript_events`, `request_log`, `audit_log`. */
+            tables: components["schemas"]["TableSize"][];
         };
         AdminUser: components["schemas"]["User"] & {
             /** Format: date-time */
@@ -4670,6 +4766,44 @@ export interface components {
             max_members?: number | null;
             members_can_create_workspaces?: boolean | null;
         };
+        /** @description `GET /orgs/{org}/storage` (API_CONTRACTS C-171). */
+        OrgStorage: {
+            /**
+             * Format: int64
+             * @description The org's attachment retention window; null = keep forever.
+             */
+            attachments_days?: number | null;
+            /**
+             * Format: int64
+             * @description The window in force (after the instance maximum).
+             */
+            attachments_days_effective?: number | null;
+            by_workspace: components["schemas"]["WorkspaceStorage"][];
+            /**
+             * Format: int64
+             * @description Files that hold bytes.
+             */
+            files: number;
+            /** @description `clear` (< 80 %) | `warning` (≥ 80 %) | `full` (≥ 100 %). */
+            notice: string;
+            /** Format: uuid */
+            org_id: string;
+            /**
+             * Format: int64
+             * @description Files whose bytes were purged (the rows remain).
+             */
+            purged_files: number;
+            /**
+             * Format: int64
+             * @description Quota in force; null = unlimited.
+             */
+            quota_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description Counter of non-purged attachment bytes.
+             */
+            used_bytes: number;
+        };
         OrgSummary: {
             /** Format: uuid */
             id: string;
@@ -5775,6 +5909,16 @@ export interface components {
         PutRetention: {
             /**
              * Format: int64
+             * @description (phase 2, RFE-015) MiB, `0` = unlimited; absent = unchanged, `null` = the instance default.
+             */
+            attachment_quota_mib?: number | null;
+            /**
+             * Format: int64
+             * @description (phase 2, RFE-015) Absent = unchanged, `null` = keep forever.
+             */
+            attachments_days?: number | null;
+            /**
+             * Format: int64
              * @description Absent = unchanged, `null` = none.
              */
             conversations_days?: number | null;
@@ -5929,6 +6073,32 @@ export interface components {
         };
         /** @description (phase 2, RFE-010) `GET/PUT /orgs/{org}/retention`. */
         Retention: {
+            /**
+             * Format: int64
+             * @description The org's own attachment quota in MiB (`0` = unlimited); null = the instance default.
+             */
+            attachment_quota_mib?: number | null;
+            /**
+             * Format: int64
+             * @description The quota in force in MiB after the instance default and ceiling; null = unlimited.
+             */
+            attachment_quota_mib_effective?: number | null;
+            /**
+             * Format: int64
+             * @description The instance ceiling of the quota in MiB (`attachments.org_quota_mib_max`); null = none.
+             */
+            attachment_quota_mib_max?: number | null;
+            /**
+             * Format: int64
+             * @description (phase 2, RFE-015) Purge attachment bytes older than this many days (7..=3650); null =
+             *     keep forever.
+             */
+            attachments_days?: number | null;
+            /**
+             * Format: int64
+             * @description The instance maximum of `attachments_days` (`attachments.days_max`), when configured.
+             */
+            attachments_days_max?: number | null;
             /**
              * Format: int64
              * @description Delete conversations idle for this many days (7..=3650); null = keep forever.
@@ -6356,6 +6526,12 @@ export interface components {
             label: string;
             value: string;
         };
+        /** @description On-disk size of one big table (with indexes and TOAST). */
+        TableSize: {
+            /** Format: int64 */
+            bytes: number;
+            table: string;
+        };
         /** @description Rule target (I-12: tagged with `type`). */
         Target: {
             app_id: string;
@@ -6654,6 +6830,19 @@ export interface components {
         };
         /** @enum {string} */
         WorkspaceRole: "owner" | "approver" | "member";
+        /** @description Attachment bytes of one workspace in one direction. */
+        WorkspaceStorage: {
+            /** Format: int64 */
+            bytes: number;
+            /** @description `in` (people -> agent) | `out` (agent -> people) */
+            direction: string;
+            /** Format: int64 */
+            files: number;
+            /** Format: uuid */
+            workspace_id: string;
+            workspace_name: string;
+            workspace_slug: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -7658,6 +7847,33 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminStorage"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10059,6 +10275,43 @@ export interface operations {
             };
         };
     };
+    deleteAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Attachment id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted (idempotent) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     downloadAttachment: {
         parameters: {
             query?: never;
@@ -10081,6 +10334,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description attachment_purged */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11290,6 +11552,15 @@ export interface operations {
                 };
             };
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description attachment_quota_exceeded */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14059,6 +14330,44 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getOrgStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgStorage"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

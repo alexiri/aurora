@@ -252,6 +252,17 @@ pub struct Retention {
     pub conversations_days: Option<i64>,
     /// The instance maximum, when one is configured.
     pub conversations_days_max: Option<i64>,
+    /// (phase 2, RFE-015) Purge attachment bytes older than this many days (7..=3650); null =
+    /// keep forever.
+    pub attachments_days: Option<i64>,
+    /// The instance maximum of `attachments_days` (`attachments.days_max`), when configured.
+    pub attachments_days_max: Option<i64>,
+    /// The org's own attachment quota in MiB (`0` = unlimited); null = the instance default.
+    pub attachment_quota_mib: Option<i64>,
+    /// The quota in force in MiB after the instance default and ceiling; null = unlimited.
+    pub attachment_quota_mib_effective: Option<i64>,
+    /// The instance ceiling of the quota in MiB (`attachments.org_quota_mib_max`); null = none.
+    pub attachment_quota_mib_max: Option<i64>,
 }
 
 fn double_option<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
@@ -268,6 +279,14 @@ pub struct PutRetention {
     #[serde(default, deserialize_with = "double_option")]
     #[schema(value_type = Option<i64>)]
     pub conversations_days: Option<Option<i64>>,
+    /// (phase 2, RFE-015) Absent = unchanged, `null` = keep forever.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<i64>)]
+    pub attachments_days: Option<Option<i64>>,
+    /// (phase 2, RFE-015) MiB, `0` = unlimited; absent = unchanged, `null` = the instance default.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<i64>)]
+    pub attachment_quota_mib: Option<Option<i64>>,
 }
 
 #[derive(Deserialize, IntoParams)]

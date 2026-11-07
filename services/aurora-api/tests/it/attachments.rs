@@ -1019,3 +1019,47 @@ async fn sweep_removes_blobs_orphaned_by_cascades_and_keeps_referenced_ones() {
         0
     );
 }
+
+#[tokio::test]
+async fn outbound_send_file_is_refused_at_the_org_storage_quota() {
+    // P2-015 (RFE-015, SEC-48): the agent's `send_file` obeys the org quota, not only the
+    // per-conversation daily cap; a refused file leaves no row and no blob.
+    let r = rig().await;
+    let lv = r.boot("orgquota").await;
+    let _ = r.deliver().await;
+    sqlx::query("UPDATE organizations SET settings = jsonb_set(settings, '{retention}', '{\"attachment_quota_mib\": 1}') WHERE id = $1")
+        .bind(r.org)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM blobs")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = r.send_out(&lv, "big.bin", vec![0u8; 2 * 1024 * 1024]).await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "attachment_quota_exceeded");
+    assert_eq!(v["error"]["details"]["quota_mib"], 1);
+    let (s, v) = r.send_out(&lv, "ok.bin", vec![0u8; 600 * 1024]).await;
+    assert_eq!(s, 200, "{v}");
+    // 600 KiB used: another 600 KiB does not fit.
+    let (s, v) = r.send_out(&lv, "ok2.bin", vec![0u8; 600 * 1024]).await;
+    assert_eq!(s, 422, "{v}");
+    let blobs: i64 = sqlx::query_scalar("SELECT count(*) FROM blobs")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(blobs, before + 1);
+    let used: i64 =
+        sqlx::query_scalar("SELECT attachment_bytes FROM org_storage_usage WHERE org_id = $1")
+            .bind(r.org)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    let sum: i64 =
+        sqlx::query_scalar("SELECT COALESCE(sum(size_bytes),0)::bigint FROM attachments")
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(used, sum);
+}

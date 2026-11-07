@@ -199,6 +199,41 @@ export function useRetention(orgId: string | undefined) {
   });
 }
 
+export type OrgStorage = components["schemas"]["OrgStorage"];
+export type AdminStorage = components["schemas"]["AdminStorage"];
+
+/** Attachment usage, quota and breakdown (RFE-015; org owner/admin). */
+export function useOrgStorage(orgId: string | undefined) {
+  return useQuery({
+    queryKey: ["orgs", orgId, "storage"] as const,
+    queryFn: () => unwrap(api.GET("/v1/orgs/{org}/storage", { params: { path: { org: orgId! } } })),
+    enabled: !!orgId,
+    retry: false,
+  });
+}
+
+/** Instance storage breakdown (RFE-015; instance admins). */
+export function useAdminStorage() {
+  return useQuery({
+    queryKey: ["admin", "storage"] as const,
+    queryFn: () => unwrap(api.GET("/v1/admin/storage")),
+    retry: false,
+  });
+}
+
+/** Attachment retention window and quota; `undefined` leaves a value unchanged, `null` clears it. */
+export function usePutAttachmentLimits(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { attachments_days?: number | null; attachment_quota_mib?: number | null }) =>
+      unwrap(api.PUT("/v1/orgs/{org}/retention", { params: { path: { org: orgId } }, body })),
+    onSuccess: (r) => {
+      qc.setQueryData(["orgs", orgId, "retention"], r);
+      void qc.invalidateQueries({ queryKey: ["orgs", orgId, "storage"] });
+    },
+  });
+}
+
 export function usePutRetention(orgId: string) {
   const qc = useQueryClient();
   return useMutation({

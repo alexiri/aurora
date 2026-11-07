@@ -348,7 +348,7 @@ pub async fn bind_attachments(
     let done = sqlx::query(
         "UPDATE attachments SET turn_id = $3, status = 'bound', updated_at = now()
          WHERE id = ANY($1) AND conversation_id = $2 AND direction = 'in' AND status = 'pending'
-           AND turn_id IS NULL",
+           AND turn_id IS NULL AND purged_at IS NULL",
     )
     .bind(ids)
     .bind(conversation_id)

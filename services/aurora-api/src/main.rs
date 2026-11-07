@@ -193,6 +193,7 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
         pool,
         cfg.retention.request_log_days,
         cfg.retention.conversation_days_max,
+        cfg.attachments.clone(),
     );
     aurora_api::domains::connectors::inbox::spawn(state.clone());
     aurora_api::domains::channels::cards::fanout::spawn(state.clone());

@@ -289,6 +289,7 @@ const ROWS: &[Row] = &[
     r("DELETE", "/v1/admin/trusted-keys/{id}", G::Inst, false),
     r("GET", "/v1/admin/users", G::Inst, false),
     r("PATCH", "/v1/admin/users/{id}", G::Inst, false),
+    r("GET", "/v1/admin/storage", G::Inst, false),
     r("POST", "/v1/orgs", G::Inst, false),
     // ---- any authenticated principal ----
     // I-27: instance governance is config without secrets, readable by any signed-in user
@@ -544,6 +545,7 @@ const ROWS: &[Row] = &[
         false,
     ),
     r("GET", "/v1/attachments/{id}/content", G::WsUse, false),
+    r("DELETE", "/v1/attachments/{id}", G::WsUse, false),
     r("POST", "/v1/turns/{id}/abort", G::WsUse, false),
     r("POST", "/v1/turns/{id}/send-now", G::WsUse, false),
     r("POST", "/v1/approvals/{id}/decision", G::WsApprove, false),
@@ -598,6 +600,7 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/conversations/{id}/export", G::WsUse, false),
     r("GET", "/v1/orgs/{org}/retention", G::Admin, false),
     r("PUT", "/v1/orgs/{org}/retention", G::Admin, false),
+    r("GET", "/v1/orgs/{org}/storage", G::Admin, false),
     // BE-074 (M6): channel management.
     r(
         "GET",

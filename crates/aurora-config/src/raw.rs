@@ -57,6 +57,7 @@ pub struct RawConfig {
     pub runner: RunnerSection,
     pub tls: TlsSection,
     pub retention: RetentionSection,
+    pub attachments: AttachmentsSection,
     pub ratelimit: RatelimitSection,
     pub telemetry: TelemetrySection,
     #[serde(skip)]
@@ -532,6 +533,27 @@ impl Default for RetentionSection {
         Self {
             request_log_days: 30,
             conversation_days_max: None,
+        }
+    }
+}
+
+/// `[attachments]` (phase 2, RFE-015): per-org attachment storage limits.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AttachmentsSection {
+    /// Quota of an org that set none, MiB (`0` = unlimited).
+    pub default_org_quota_mib: u64,
+    /// Instance ceiling of an org's quota, MiB (`0` = no ceiling).
+    pub org_quota_mib_max: u64,
+    /// Instance maximum of an org's attachment retention window, 7..=3650 days; `None` = none.
+    pub days_max: Option<u32>,
+}
+impl Default for AttachmentsSection {
+    fn default() -> Self {
+        Self {
+            default_org_quota_mib: 10 * 1024,
+            org_quota_mib_max: 50 * 1024,
+            days_max: None,
         }
     }
 }
