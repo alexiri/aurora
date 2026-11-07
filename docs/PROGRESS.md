@@ -147,7 +147,8 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | TEST-017 | VidaiMock (pinned, Aurora scenario files) behind real LiteLLM (I-30); live claude-code conformance + hosted CLI e2e | e2e | done (dab35c24) | smoke 8/8; live conformance pass; hosted claude-code e2e 2/2 | SUP-004, TEST-013 | Sonnet (worktree) | |
 | FIX-005 | Spec-required runtime follow-ups: SSE closes on revocation, durable answer text, render inputs, model-list cache | Rust | done (bb9ca8d6) | — | Sonnet (worktree) | sse_revocation 5, home_render_inputs 2, hosted answer-restart test; I-32 |
 | FIX-006 | Spec-required apps/gateway follow-ups: missing_scopes (I-33, C-42), tenant_host on first OAuth connect (S-14), governance typing, ask-hold test, tools SQL | both | done (4143733a) | — | Sonnet (worktree) | connect 12, ask_tool_hold 1; 552 tests across 6 crates; web 146 |
-| FIX-007 | restart_to_update on image change; render inputs/env respect app availability | Rust | in-progress | FIX-005, OPS-014 | Sonnet (worktree) | |
+| FIX-007 | restart_to_update on image change; render inputs/env respect app availability | Rust | done (93512503) | FIX-005, OPS-014 | Sonnet (worktree) | `UPGRADE_STRICT=1 bash scripts/e2e/upgrade.sh` 32/32; sandbox_env 4, home_render_inputs 3 |
+| AUDIT-001 | Phase-0 exit verification from scratch (`docs/audit/phase0-exit.md`) | audit | in-progress | all | Sonnet (worktree) + Opus review | |
 | TEST-018 | Security invariant coverage SEC-01..39 (`docs/tests/security-coverage.md`) | tests | done (13ac4bba) | 39 rows; 14 tests/guards added; SEC-18..20 proven via TEST-016; SEC-30 avatars → BE-067 |
 | BE-067 | Agent avatars: upload, re-encode to 256² PNG, rotating public URL, presence.set_icon (SEC-30) | both | done (4f7101df) | BE-064 | Sonnet (worktree) | avatars 7; web 149; I-31, C-41; SEC-30 proven |
 | OPS-014 | Gateway performance budgets (18) + upgrade test | Ops | done (51f6732c) | OPS-011 | Sonnet (worktree) | `bash scripts/perf/gateway.sh` PASS: (a) p50 0.033/p99 0.175 ms, (b) 11 563 rps/core, (c) p99 4.36 ms; `bash scripts/e2e/upgrade.sh` 31/31 (image-only restart flag → FIX-007) |
@@ -178,6 +179,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 
 ## Recently completed
 
+- 2026-11-08: BE-067 avatars (SEC-30; 39/39 SEC proven), FIX-006 (apps/gateway follow-ups, S-14, I-33), FIX-007 (image restart flag, availability); code frozen for AUDIT-001.
 - 2026-11-07 (late night): TEST-018 SEC coverage (38/39; SEC-30 → BE-067), OPS-014 perf PASS + upgrade 31/31, FIX-005 runtime follow-ups.
 - 2026-11-07 (night): TEST-014 (hosted coverage; S-13 memory encoded-size bound), TEST-016 channels e2e 6/6.
 - 2026-11-07 (evening): BE-075 messaging tools, FIX-004 (C-39/C-40), FIX-003 (config wiring, connector bootstrap, OTLP, runner-reported image + held-awake ceiling, k8s claude-code); all M6 backend merged.
