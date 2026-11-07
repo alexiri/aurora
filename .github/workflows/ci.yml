@@ -42,7 +42,16 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres: *pg
+    env:
+      # ~100 test binaries overflow the runner's ~14 GB free disk (the linker died with SIGBUS);
+      # no debug info in CI keeps them small (OPS-019 makes this job faster and smaller).
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
     steps:
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
