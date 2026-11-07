@@ -8,4 +8,5 @@ export AURORA_SIGNING_KEY="$K"
 export AURORA_INTERNAL_SECRET="$K"
 export AURORA_RUNNER_SESSION_KEY="$K"
 export AURORA_RUNNER_TOKEN=aur_devtoken
+export AURORA_BOOTSTRAP_RUNNER_TOKEN="$AURORA_RUNNER_TOKEN"   # the API registers the dev runner at start (OPS-018)
 export AURORA_CONNECTOR_TOKEN=aun_devtoken

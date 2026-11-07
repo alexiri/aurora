@@ -39,6 +39,9 @@ const LABEL_CREATED: &str = "aurora.created";
 const SANDBOX_UID_GID: &str = "1000:1000";
 const TMP_TMPFS: &str = "rw,nosuid,nodev,size=512m";
 const RUN_TMPFS: &str = "rw,nosuid,nodev,noexec,size=16m,mode=1777,U";
+/// Where the sandbox image keeps the supervisor (images/sandbox/Containerfile); the dev
+/// bind-mount shadows it.
+const SUPERVISOR_IMAGE_PATH: &str = "/usr/local/bin/aurora-supervisor";
 const CAPACITY_POLL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone)]
@@ -49,6 +52,8 @@ pub struct PodmanSettings {
     pub hosts: BTreeMap<String, String>,
     pub installation: String,
     pub allow_external_network: bool,
+    /// OPS-018 dev only (`runner.dev_supervisor_binary`, validated by aurora-config).
+    pub dev_supervisor_binary: Option<String>,
     pub max_sandboxes: u32,
     pub capacity_wait: Duration,
 }
@@ -62,6 +67,7 @@ impl PodmanSettings {
             hosts: r.sandbox_hosts.clone(),
             installation: installation_fingerprint(cfg.token.expose()),
             allow_external_network: r.dev_allow_external_network,
+            dev_supervisor_binary: r.dev_supervisor_binary.clone(),
             max_sandboxes: r.max_sandboxes,
             capacity_wait: Duration::from_secs(r.capacity_wait_secs),
         }
@@ -169,6 +175,17 @@ impl PodmanBackend {
             .await
             .map_err(|e| format!("podman socket `{path}` does not answer: {e}"))?;
         verify_network(&docker, &s.network, s.allow_external_network).await?;
+        if let Some(bin) = &s.dev_supervisor_binary {
+            if !std::fs::metadata(bin).is_ok_and(|m| m.is_file()) {
+                return Err(format!(
+                    "runner.dev_supervisor_binary `{bin}` is not a file (build it: cargo build -p aurora-supervisor)"
+                ));
+            }
+            tracing::warn!(
+                path = %bin,
+                "runner.dev_supervisor_binary is set: sandboxes run a host-built supervisor (dev only, never production)"
+            );
+        }
         Ok(Self {
             docker,
             socket: path,
@@ -230,6 +247,15 @@ impl PodmanBackend {
         env.into_iter().map(|(k, v)| format!("{k}={v}")).collect()
     }
 
+    /// The home volume, plus (dev only) the host-built supervisor, read-only.
+    fn binds(&self, req: &StartRequest) -> Vec<String> {
+        let mut binds = vec![format!("{}:/workspace", req.spec.home_ref)];
+        if let Some(bin) = &self.s.dev_supervisor_binary {
+            binds.push(format!("{bin}:{SUPERVISOR_IMAGE_PATH}:ro"));
+        }
+        binds
+    }
+
     fn host_config(&self, req: &StartRequest) -> HostConfig {
         let res = &req.spec.resources;
         let memory = i64::from(res.memory_mib) * 1024 * 1024;
@@ -242,7 +268,7 @@ impl PodmanBackend {
                     .map(|(n, ip)| format!("{n}:{ip}"))
                     .collect(),
             ),
-            binds: Some(vec![format!("{}:/workspace", req.spec.home_ref)]),
+            binds: Some(self.binds(req)),
             readonly_rootfs: Some(true),
             tmpfs: Some(HashMap::from([
                 ("/tmp".to_owned(), TMP_TMPFS.to_owned()),
@@ -672,6 +698,7 @@ mod tests {
             hosts: BTreeMap::from([("aurora-gateway".into(), "10.89.250.2".into())]),
             installation: "t".into(),
             allow_external_network: false,
+            dev_supervisor_binary: None,
             max_sandboxes: 4,
             capacity_wait: Duration::ZERO,
         };
@@ -713,6 +740,21 @@ mod tests {
         assert_eq!(h.network_mode.as_deref(), Some("aurora-sandbox"));
         // No host mounts except the named home volume.
         assert_eq!(h.binds, Some(vec!["aurora-home-x:/workspace".to_owned()]));
+        // Dev supervisor mount: absent by default, read-only and exact when configured.
+        let mut dev = b.s.clone();
+        dev.dev_supervisor_binary = Some("/h/target/debug/aurora-supervisor".into());
+        let b2 = PodmanBackend {
+            docker: b.docker.clone(),
+            socket: b.socket.clone(),
+            s: dev,
+        };
+        assert_eq!(
+            b2.host_config(&req).binds,
+            Some(vec![
+                "aurora-home-x:/workspace".to_owned(),
+                "/h/target/debug/aurora-supervisor:/usr/local/bin/aurora-supervisor:ro".to_owned(),
+            ])
+        );
         assert_ne!(h.pid_mode.as_deref(), Some("host"));
         assert_ne!(h.ipc_mode.as_deref(), Some("host"));
         assert_ne!(SANDBOX_UID_GID, "0:0");

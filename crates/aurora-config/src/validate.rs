@@ -522,6 +522,9 @@ impl RawConfig {
         if backend == Some(RunnerBackend::Podman) && r.sandbox_network.is_empty() {
             c.err("runner.sandbox_network", "must not be empty");
         }
+        if let Some(bin) = r.dev_supervisor_binary.as_deref() {
+            check_dev_supervisor_binary(&mut c, bin, backend, &self.server, &r.api_url);
+        }
         check_common(&mut c, &self.tls, &self.telemetry);
         let ops_bind = resolve_bind(
             &mut c,
@@ -961,6 +964,68 @@ pub fn bind_overlap_warning(sandbox_facing: &str, internal: &str) -> Option<&'st
 }
 
 /// Returns the normalized external URL (no trailing slash) when valid/required.
+/// True for `localhost` and loopback IP literals.
+fn is_loopback_host(h: &str) -> bool {
+    let h = h
+        .strip_prefix('[')
+        .and_then(|x| x.strip_suffix(']'))
+        .unwrap_or(h);
+    h == "localhost"
+        || h.parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// OPS-018: the dev-only supervisor bind-mount is a host-path mount into a sandbox, so it is
+/// refused unless the whole instance is visibly a developer's: podman backend, loopback
+/// `server.bind`, loopback `server.external_url` and `runner.api_url`. Never for production.
+fn check_dev_supervisor_binary(
+    c: &mut Ctx,
+    bin: &str,
+    backend: Option<RunnerBackend>,
+    server: &ServerSection,
+    api_url: &Option<String>,
+) {
+    const KEY: &str = "runner.dev_supervisor_binary";
+    if !bin.starts_with('/')
+        || bin.contains(':')
+        || bin.split('/').any(|p| p == "..")
+        || bin.chars().any(|ch| ch.is_control() || ch == ',')
+    {
+        c.err(KEY, "must be an absolute path without `:`, `,` or `..`");
+    }
+    if backend != Some(RunnerBackend::Podman) {
+        c.err(KEY, "only supported with runner.backend = \"podman\"");
+    }
+    let bind = server
+        .bind
+        .strip_prefix('[')
+        .and_then(|x| x.strip_suffix(']'))
+        .unwrap_or(&server.bind);
+    if !bind
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
+    {
+        c.err(
+            KEY,
+            "refused outside dev mode: server.bind must be a loopback address",
+        );
+    }
+    let loopback_url = |u: &str| host_of(u).is_some_and(|h| is_loopback_host(&h));
+    match server.external_url.as_deref() {
+        Some(u) if loopback_url(u) => {}
+        _ => c.err(
+            KEY,
+            "refused outside dev mode: server.external_url must be a localhost/loopback URL",
+        ),
+    }
+    if !api_url.as_deref().is_some_and(loopback_url) {
+        c.err(
+            KEY,
+            "refused outside dev mode: runner.api_url must be a localhost/loopback URL",
+        );
+    }
+}
+
 fn check_server(c: &mut Ctx, s: &ServerSection, need_external: bool) -> Option<String> {
     if !is_bind_addr(&s.bind) {
         c.err("server.bind", format!("`{}` is not an IP address", s.bind));
