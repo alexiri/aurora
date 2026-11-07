@@ -32,7 +32,8 @@ single compile of the workspace (`images/services/Containerfile`, cargo-chef dep
 `aurora-sandbox-min` is the slim e2e sandbox (OS + supervisor).
 
 Service images are distroless (`gcr.io/distroless/cc` or equivalent), run as
-non-root, contain only their binary, and are multi-arch (amd64, arm64).
+non-root, contain only their binary, and are built for linux/amd64. arm64 images are deferred
+to phase 5 at the earliest (OPS-022): there is no arm deployment planned.
 
 ## Configuration
 

@@ -204,3 +204,8 @@ SCIM, shared rate-limit counters, S3 blob store, additional LLM providers,
 additional connectors (Slack decision pending). See `21`.
 Design-review item RFE-011b (approval park-and-resume, Web Push).
 Phases 3 and 4 start once phases 1 and 2 are done.
+
+## Phase 5 — Later still
+
+Multi-arch (arm64) images, OPS-022 (owner, 2026-11-07: no arm deployment planned; images are
+amd64 only until then).
