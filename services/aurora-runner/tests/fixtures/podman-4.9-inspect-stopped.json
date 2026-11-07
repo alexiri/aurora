@@ -1,0 +1,1 @@
+{"Id":"c0ffee","State":{"Status":"stopped","Running":false,"Paused":false,"ExitCode":0},"Config":{"Labels":{"aurora.boot":"b1","aurora.managed":"true"}},"HostConfig":{"NanoCpus":500000000,"Memory":536870912}}

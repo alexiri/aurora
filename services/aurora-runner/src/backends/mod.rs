@@ -9,6 +9,7 @@ use crate::backend::Backend;
 pub mod fake;
 pub mod kubernetes;
 pub mod podman;
+pub mod podman_state;
 
 pub async fn build(cfg: &RunnerConfig) -> Result<Arc<dyn Backend>, String> {
     match cfg.backend {

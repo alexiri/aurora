@@ -13,17 +13,20 @@ use aurora_protocol::runner::{
 use bollard::Docker;
 use bollard::errors::Error as DockerError;
 use bollard::models::{
-    ContainerCreateBody, ContainerSummary, HostConfig, RestartPolicy, RestartPolicyNameEnum,
-    VolumeCreateRequest,
+    ContainerCreateBody, HostConfig, RestartPolicy, RestartPolicyNameEnum, VolumeCreateRequest,
 };
 use bollard::query_parameters::{
-    CreateContainerOptionsBuilder, CreateImageOptionsBuilder, ListContainersOptionsBuilder,
-    ListVolumesOptionsBuilder, RemoveContainerOptionsBuilder, StopContainerOptionsBuilder,
+    CreateContainerOptionsBuilder, CreateImageOptionsBuilder, ListVolumesOptionsBuilder,
+    RemoveContainerOptionsBuilder, StopContainerOptionsBuilder,
 };
+use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::TryStreamExt;
+use http_body_util::{BodyExt, Empty};
+use hyper_util::rt::TokioIo;
 use uuid::Uuid;
 
+use super::podman_state::{ListedContainer, parse_inspect, parse_list};
 use crate::backend::{
     Backend, BackendError, ContainerRef, HoldCallback, LABEL_BOOT, LABEL_INSTALLATION,
     LABEL_MANAGED, LABEL_RUNNER, LABEL_SANDBOX, ManagedObject, ObjectKind, Observation,
@@ -67,6 +70,7 @@ impl PodmanSettings {
 
 pub struct PodmanBackend {
     docker: Docker,
+    socket: String,
     s: PodmanSettings,
 }
 
@@ -102,6 +106,20 @@ fn valid_volume_name(n: &str) -> bool {
         && n.len() <= 128
         && n.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// Percent-encodes everything but RFC 3986 unreserved characters.
+fn percent_encode(s: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(s.len() * 2);
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(char::from(b));
+        } else {
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
+    out
 }
 
 fn parse_time(s: Option<&str>) -> DateTime<Utc> {
@@ -151,7 +169,11 @@ impl PodmanBackend {
             .await
             .map_err(|e| format!("podman socket `{path}` does not answer: {e}"))?;
         verify_network(&docker, &s.network, s.allow_external_network).await?;
-        Ok(Self { docker, s })
+        Ok(Self {
+            docker,
+            socket: path,
+            s,
+        })
     }
 
     fn container_name(sandbox_id: Uuid) -> String {
@@ -242,21 +264,57 @@ impl PodmanBackend {
         }
     }
 
-    async fn list_containers(&self, label: &str) -> Result<Vec<ContainerSummary>, BackendError> {
-        let opts = ListContainersOptionsBuilder::default()
-            .all(true)
-            .filters(&filter(label))
-            .build();
-        self.docker.list_containers(Some(opts)).await.map_err(other)
+    /// Raw `GET` over the podman socket. State-bearing endpoints go through here so the
+    /// status stays a string (see `podman_state`); bollard's typed models reject values
+    /// such as podman 4.x's `stopped`.
+    async fn raw_get(&self, path_and_query: &str) -> Result<(u16, Bytes), BackendError> {
+        let call = async {
+            let stream = tokio::net::UnixStream::connect(&self.socket)
+                .await
+                .map_err(other)?;
+            let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+                .await
+                .map_err(other)?;
+            tokio::spawn(async move {
+                let _ = conn.await;
+            });
+            let req = http::Request::builder()
+                .method(http::Method::GET)
+                .uri(path_and_query)
+                .header(http::header::HOST, "d")
+                .body(Empty::<Bytes>::new())
+                .map_err(other)?;
+            let resp = sender.send_request(req).await.map_err(other)?;
+            let status = resp.status().as_u16();
+            let body = resp.into_body().collect().await.map_err(other)?.to_bytes();
+            Ok::<_, BackendError>((status, body))
+        };
+        tokio::time::timeout(Duration::from_secs(API_TIMEOUT_SECS), call)
+            .await
+            .map_err(|_| other("podman socket request timed out"))?
     }
 
-    async fn running_managed(&self) -> Result<Vec<ContainerSummary>, BackendError> {
+    async fn list_containers(&self, label: &str) -> Result<Vec<ListedContainer>, BackendError> {
+        let filters = serde_json::json!({ "label": [label] }).to_string();
+        let (status, body) = self
+            .raw_get(&format!(
+                "/containers/json?all=true&filters={}",
+                percent_encode(&filters)
+            ))
+            .await?;
+        if status != 200 {
+            return Err(other(format!(
+                "list containers: HTTP {status}: {}",
+                String::from_utf8_lossy(&body)
+            )));
+        }
+        parse_list(&body).map_err(|e| other(format!("list containers: {e}")))
+    }
+
+    async fn running_managed(&self) -> Result<Vec<ListedContainer>, BackendError> {
         let label = format!("{LABEL_INSTALLATION}={}", self.s.installation);
         let all = self.list_containers(&label).await?;
-        Ok(all
-            .into_iter()
-            .filter(|c| c.state.is_some_and(|s| s.to_string() == "running"))
-            .collect())
+        Ok(all.into_iter().filter(ListedContainer::running).collect())
     }
 
     async fn remove_container(&self, id: &str) -> Result<(), BackendError> {
@@ -396,7 +454,7 @@ impl Backend for PodmanBackend {
         for c in self.list_containers(&sandbox_label).await? {
             let Some(id) = c.id.as_deref() else { continue };
             let boot = c.labels.as_ref().and_then(|l| l.get(LABEL_BOOT));
-            let running = c.state.is_some_and(|s| s.to_string() == "running");
+            let running = c.running();
             if running && boot.is_some_and(|b| *b == req.boot_id.to_string()) {
                 return Ok(ContainerRef(id.to_owned()));
             }
@@ -459,30 +517,31 @@ impl Backend for PodmanBackend {
         else {
             return Ok(None);
         };
-        let c = match self.docker.inspect_container(&id, None).await {
-            Ok(c) => c,
-            Err(e) if is_status(&e, 404) => return Ok(None),
-            Err(e) => return Err(other(e)),
-        };
-        let state = c.state.unwrap_or_default();
-        let running = state.running.unwrap_or(false);
-        let boot_id = c
-            .config
-            .and_then(|cfg| cfg.labels)
-            .and_then(|l| l.get(LABEL_BOOT).and_then(|b| b.parse().ok()));
+        let (status, body) = self.raw_get(&format!("/containers/{id}/json")).await?;
+        match status {
+            200 => {}
+            404 => return Ok(None),
+            _ => {
+                return Err(other(format!(
+                    "inspect container: HTTP {status}: {}",
+                    String::from_utf8_lossy(&body)
+                )));
+            }
+        }
+        let c = parse_inspect(&body).map_err(|e| other(format!("inspect container: {e}")))?;
+        let running = c.state.is_running();
+        let boot_id = c.labels.get(LABEL_BOOT).and_then(|b| b.parse().ok());
         // Enforced limits as the substrate reports them.
-        let observed = c.host_config.map(|h| Observed {
-            cpu_millis: u32::try_from(h.nano_cpus.unwrap_or(0) / 1_000_000).unwrap_or(u32::MAX),
-            memory_mib: u32::try_from(h.memory.unwrap_or(0) / (1024 * 1024)).unwrap_or(u32::MAX),
-        });
+        let observed = Observed {
+            cpu_millis: u32::try_from(c.nano_cpus / 1_000_000).unwrap_or(u32::MAX),
+            memory_mib: u32::try_from(c.memory / (1024 * 1024)).unwrap_or(u32::MAX),
+        };
         Ok(Some(Observation {
             container: ContainerRef(id),
             running,
             boot_id,
-            phase: state
-                .status
-                .map_or_else(|| "unknown".into(), |s| s.to_string()),
-            observed: observed.filter(|_| running),
+            phase: c.phase,
+            observed: running.then_some(observed),
         }))
     }
 
@@ -491,6 +550,7 @@ impl Backend for PodmanBackend {
         let mut out = Vec::new();
         for c in self.list_containers(&label).await? {
             let Some(id) = c.id.clone() else { continue };
+            let running = c.running();
             let l = c.labels.unwrap_or_default();
             out.push(ManagedObject {
                 kind: ObjectKind::Container,
@@ -503,7 +563,7 @@ impl Backend for PodmanBackend {
                     .created
                     .and_then(|t| DateTime::from_timestamp(t, 0))
                     .unwrap_or_else(Utc::now),
-                running: c.state.is_some_and(|s| s.to_string() == "running"),
+                running,
             });
         }
         let opts = ListVolumesOptionsBuilder::new()
@@ -572,7 +632,11 @@ mod tests {
         // Connecting is lazy: building the client needs no daemon.
         let docker =
             Docker::connect_with_unix("/dev/null", 5, bollard::API_DEFAULT_VERSION).unwrap();
-        let b = PodmanBackend { docker, s };
+        let b = PodmanBackend {
+            docker,
+            socket: "/dev/null".into(),
+            s,
+        };
         let req = StartRequest {
             sandbox_id: Uuid::nil(),
             boot_id: Uuid::nil(),

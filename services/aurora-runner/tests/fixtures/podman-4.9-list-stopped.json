@@ -1,0 +1,3 @@
+[{"Id":"a1","State":"stopped","Created":1700000000,"Labels":{"aurora.managed":"true"}},
+ {"Id":"a2","State":"running","Created":1700000001,"Labels":null},
+ {"Id":"a3","State":"frobnicating","Created":1700000002}]
