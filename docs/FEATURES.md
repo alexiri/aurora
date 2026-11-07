@@ -5,7 +5,7 @@ invariants `SEC-nn` (`17`). Phase 0 = M0–M7 (in scope now). Phase 1–4 are ou
 of scope until phase 0 exits (`MASTER_SPEC` "Phases are real").
 
 Status: `todo` · `planned` (briefs written) · `in-progress` · `done` (acceptance evidence in PROGRESS.md) · `blocked`.
-Last reconciled with git history: 2026-11-07 late night (after FIX-005 merge, bb9ca8d6).
+Last reconciled with git history: 2026-11-08 (code freeze for AUDIT-001, 2a6a0f8c).
 
 | Requirement ID | Feature | Priority | Backend tasks | Frontend tasks | Dependencies | Status | Evidence |
 |---|---|---|---|---|---|---|---|
@@ -28,21 +28,21 @@ Last reconciled with git history: 2026-11-07 late night (after FIX-005 merge, bb
 | M2/08 | Secrets (vault, stores, inline AEAD, reference mode), LLM keys, providers | P0 | BE-021, BE-022, BE-031 | FE-020 | M1 | done | secrets 8, providers 19 |
 | M2/06 | Gateway: CA, MITM/open lanes, credential auth, pipeline, guard, guidance, caches + NOTIFY, request log | P0 | GW-001..003 | — | M1 | done | gateway tests; TEST-012 e2e 11/11 |
 | M2/07 | Policy engine, authoring, grants, approvals (holds, API, SSE, UI) | P0 | BE-020, BE-033, GW-004, BE-030 | FE-021, FE-022 | M1 | done | policy corpus 30; hold tests incl. 2 replicas |
-| M2/08§10-11 | BYO agents, context credentials, CLI login/run/approvals, LLM & egress governance | P0 | BE-032, CLI-001, GOV-001, GW-005, BE-034 | FE-023, FE-024 | M1 | done (FUP-M2 open) | governance 15 + TEST-020 |
+| M2/08§10-11 | BYO agents, context credentials, CLI login/run/approvals, LLM & egress governance | P0 | BE-032, CLI-001, GOV-001, GW-005, BE-034 | FE-023, FE-024 | M1 | done (FUP-M2 closed except configurable ports) | governance 15 + TEST-020 |
 | M3/09 | Plugins: package/signing/validator/approval, snapshot, host claims, trusted keys | P0 | REG-001..003, BE-040, BE-041 | FE-031 | M2 | done | plugins 6 + lifecycle 5; fixtures 33/33 |
-| M3/09§apps | Apps catalogue, connect flows (fields/OAuth), OAuth clients, connections, grants, availability | P0 | BE-042..044, GW-010, GW-011 | FE-030, FE-032 | REG-003 | done (FUP-M3 open) | apps 10, connect, grants |
+| M3/09§apps | Apps catalogue, connect flows (fields/OAuth), OAuth clients, connections, grants, availability | P0 | BE-042..044, GW-010, GW-011 | FE-030, FE-032 | REG-003 | done (FUP-M3 closed except hook pre-warm) | apps 10, connect, grants |
 | M3/09§hooks | Hooks: WIT, SDK, hook host (wasmtime), gateway summarize/mint, CLI plugin | P0 | HOOK-001/002/004, SUM-001, CLI-002/003, FIX-001 | — | I-02a | done | hookhost 11; e2e-gateway 15/15 |
 | M4/11 | Runner core, channel server, fake + podman backends, sandbox images | P0 | RUN-001..003 | — | PROTO-001 | done | runner tests; TEST-013 |
 | M4/12 | Supervisor: boot doc, channel, loopback proxy, home projection, harvest, MCP bridge, process manager, scrubbed spawns | P0 | SUP-001..003, SEC-FIX-01 | — | PROTO-001 | done | supervisor tests; spawn_env |
-| M4/10 | Conversations, turns, transcript/SSE, due-work engine, context credentials, tool registry, models | P0 | BE-050..053, FIX-002 | FE-040, FE-041 | M2 | done (FUP-M4 open; sandbox env/stubs fixed by FIX-002) | hosted 7, runner_plane 10; TEST-013 9/9 |
+| M4/10 | Conversations, turns, transcript/SSE, due-work engine, context credentials, tool registry, models | P0 | BE-050..053, FIX-002 | FE-040, FE-041 | M2 | done (FIX-002/005/007; FUP-M4 (2) data homes open) | hosted 7, runner_plane 10; TEST-013 9/9 |
 | M5/10§memory | Memory (+language), search, recall, harvest, tools, UI | P0 | BE-060 | FE-050 | M4 | done (FUP-M5) | memory 7 |
 | M5/10§skills | Skills (agent/org), files, limits, projection, tools, UI | P0 | BE-061 | FE-050 | M4 | done | skills 5 |
 | M5/10§schedules | Schedules: cron (5-min floor), gates, fire lease, fire-time authority, tools | P0 | BE-062 | FE-051 | M4 | done | schedules 5; web m5-tabs |
 | M5/10§webhooks | Webhooks: receiver, verification, rate limit, idempotency, tools | P0 | BE-063 | FE-051 | M4 | done | webhooks 11; web m5-tabs |
 | M5/10§processes | Processes and watches (local tools, process.state, watch turns, parked/lost) | P0 | SUP-003, BE-052 | FE-041 (computer tab) | M4 | done | supervisor process tests; hosted tests |
-| M5/10§attachments | Attachments in/out (BlobStore, routes, `file.in` S-11, `send_file`) | P0 | BE-064, RUN-005 | FE-051 | M4 | done; e2e todo (TEST-014) | attachments 9; runner inbound 3, supervisor inbound 9 |
+| M5/10§attachments | Attachments in/out (BlobStore, routes, `file.in` S-11, `send_file`) | P0 | BE-064, RUN-005 | FE-051 | M4 | done (service + runner/supervisor inbound tests; e2e in AUDIT-001 runs) | attachments 9; runner inbound 3, supervisor inbound 9 |
 | M5/07§actions | Action approvals, agent links, peer tasks, app-turn cap, agent tools | P0 | BE-065 | FE-051 | API-005 | done | action_approvals 10, peer_tasks 12 |
-| M5/12§catalogue | Full phase-0 platform tool catalogue | P0 | BE-060..065; apps tools BE-066 (done); messaging tools BE-075 | — | — | in-progress | |
+| M5/12§catalogue | Full phase-0 platform tool catalogue | P0 | BE-060..065; apps tools BE-066 (done); messaging tools BE-075 | — | — | done | all 36 phase-0 tools present (memory, skills, schedules, webhooks, process_*, send_file, messaging, agents, apps); tools tests; presence-gated messaging (BE-075) |
 | M5/12§claude-code | `claude-code` adapter + conformance | P0 | SUP-004 | — | SUP-001 | done; live conformance via LiteLLM + VidaiMock (I-30, TEST-017) passes | conformance; hosted claude-code e2e 2/2 | adapter tests |
 | M5/18 | Hosted M5 suites (18) | P0 | TEST-014 | — | M5 above, FIX-002 | done | `docs/tests/hosted-coverage.md` |
 | M6/13§content | Neutral content, cards, action tokens, capabilities/fallbacks | P0 | CHAN-001 | — | — | done | channels tests; I-26 |
@@ -52,8 +52,8 @@ Last reconciled with git history: 2026-11-07 late night (after FIX-005 merge, bb
 | M6/13§7 | Conformance suite (fake core) + e2e channel scenario | P0 | TEST-015, TEST-016 | — | CON-001 / BE-075 | done | `scripts/conformance.sh` 12/12; `scripts/e2e/channels.sh` 6/6 |
 | M7/11§k8s | Kubernetes runner backend | P0 | RUN-004 | — | RUN-003 | done | k8s_mock 15, unit 15; kind e2e 4/4 (OPS-011) |
 | M7/15§helm | Helm chart (jobs, policies, namespaces, RBAC, routing) | P0 | OPS-010 | — | — | done (FUP-M7) | `helm lint`, `helm template`; ConfigMap loads (RUN-004) |
-| M7/18 | kind e2e, SEC-02 on k8s, performance budgets, upgrade test | P0 | OPS-011 | — | RUN-004 | done: kind e2e 4/4 (OPS-011), perf budgets PASS + upgrade 31/31 (OPS-014); image-only restart flag fix in FIX-007 | |
+| M7/18 | kind e2e, SEC-02 on k8s, performance budgets, upgrade test | P0 | OPS-011 | — | RUN-004 | done | kind e2e 4/4 (OPS-011); `scripts/perf/gateway.sh` PASS; `UPGRADE_STRICT=1 scripts/e2e/upgrade.sh` 32/32 (FIX-007) |
 | M7/15§docs | Operator docs (install, LLM endpoints, runners, plugins, backups) | P0 | OPS-012 (+ OPS-013, FIX-003 for the gaps it found) | — | — | done | `docs/operator/` |
-| SEC-01..39 | Security invariants, each with a proving test (`17`) | P0 | per milestone + TEST-018 | — | — | 39/39 proven (`docs/tests/security-coverage.md`; SEC-30 via BE-067) | proven so far: SEC-01/02/09/24/25/26/34 (TEST-013; SEC-02/09 also on k8s, OPS-011), SEC-35..39 (GW-005, TEST-020), CSRF (BE-010); full map at final audit |
+| SEC-01..39 | Security invariants, each with a proving test (`17`) | P0 | per milestone + TEST-018 | — | — | 39/39 proven (`docs/tests/security-coverage.md`; SEC-30 via BE-067) | `docs/tests/security-coverage.md` (39 rows, each citing a passing test); AUDIT-001 confirms execution |
 | P1/20 | Mattermost connector | P1 (later phase) | — | — | Phase 0 exit | out of scope now | |
 | P2..P4/21 | App catalogue, DB lane, Vault, SSH, previews, evals, … | later | — | — | Phase 0 exit | out of scope now | |
