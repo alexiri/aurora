@@ -210,7 +210,7 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | OPS-017 | kind replaces compose | 1 | todo | OPS-016 |
 | OPS-018 | Live reload | 1 | todo | OPS-016, OPS-017 |
 | FIX-008 | Podman backend tolerates `stopped`/unknown container states (CI e2e-hosted on podman 4.9) | 1 | done; CI e2e-hosted 9/9 on ubuntu-24.04 (run 42382511618) | — |
-| P2-005..P2-025 | Phase-2 RFE tasks (briefs in docs/tasks/P2-*.md) | 2 | P2-007, P2-017 in-progress; rest briefed | P2-025 after P1-004 |
+| P2-005..P2-025 | Phase-2 RFE tasks (briefs in docs/tasks/P2-*.md) | 2 | P2-007 done; P2-017 in-progress; rest briefed | P2-025 after P1-004 |
 | P2-CAT / P2-DBL | Built-in app catalogue; gateway database lane (`21`) | 2 | to be briefed | — |
 
 ### Phase 1 developer tooling (owner, 2026-11-08)
