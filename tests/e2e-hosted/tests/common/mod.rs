@@ -128,6 +128,12 @@ pub fn exec_in(container: &str, script: &str) -> (i32, String) {
 
 impl Stack {
     pub async fn start(o: Opts) -> Stack {
+        Self::start_with(o, "").await
+    }
+
+    /// Like [`Stack::start`], with extra top-level TOML appended to every service config
+    /// (TEST-017: `[llm]` endpoints).
+    pub async fn start_with(o: Opts, extra_toml: &str) -> Stack {
         let db = TestDb::new().await;
         let dir = std::env::temp_dir().join(format!("aurora-e2e-hosted-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(dir.join("ca")).unwrap();
@@ -150,6 +156,7 @@ backend = "podman"
 api_url = "http://{API_IP}:4101"
 podman_socket = "{sock}"
 sandbox_network = "{net}"
+image = "{image}"
 max_sandboxes = 4
 reconcile_interval_secs = 600
 capacity_wait_secs = 5
@@ -181,8 +188,10 @@ hookhost_url = "http://127.0.0.1:9"
 "#,
             sock = env("AURORA_E2EH_SOCK"),
             net = env("AURORA_E2EH_NETWORK"),
+            image = std::env::var("AURORA_E2EH_IMAGE")
+                .unwrap_or_else(|_| "localhost/aurora-sandbox:0.1.0".into()),
             ca = dir.join("ca").display(),
-        );
+        ) + extra_toml;
         let mut stack = Stack {
             db: Some(db),
             api_addr: format!("{API_IP}:4101"),

@@ -186,11 +186,17 @@ Services:
 | `edge` | `caddy:2` | core | publishes 4000 → routes as above |
 | `runner` (profile `hosted`) | aurora-runner | core, sandbox (`10.89.250.3`) | mounts the podman socket (`${XDG_RUNTIME_DIR}/podman/podman.sock` for rootless) with `security_opt: [label=disable]` |
 | `connector-fake` (profile `connector-fake`) | aurora-connector-fake | core | test control API published on 4190 |
+| `vidaimock` (profile `llm-mock`) | `ghcr.io/vidaiuk/vidaimock` pinned by digest | core | scripted Anthropic-API stand-in, config `deploy/compose/vidaimock/` mounted read-only; **not a model** |
+| `litellm` (profile `llm-mock`) | `ghcr.io/berriai/litellm` pinned by digest | core | real LiteLLM proxy, `deploy/compose/litellm.yaml`, dev master key `sk-aurora-mock-dev`; published on `127.0.0.1:4400`; endpoint `litellm-mock` in `aurora.toml` |
 
 Networks: `core` (bridge) and `sandbox` (external, created by `setup.sh`,
 internal, DNS disabled). `COMPOSE_PROFILES=hosted` enables hosted agents.
 `AURORA_BOOTSTRAP_RUNNER_TOKEN` / `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` wire the
 runner and fake connector without manual provisioning.
+
+`COMPOSE_PROFILES=hosted,llm-mock` adds a mock model behind a real LiteLLM (decision I-30) so hosted
+`claude-code` agents work without a model account; see `docs/operator/llm-endpoints.md` (§Running with the
+mock) and `scripts/e2e/llm.sh`. The dev master key is a dummy; the mock only replays scenario files.
 
 Developer loop without containers: `just dev` runs Postgres in podman and the
 API, gateway, hook host and web as host processes; the runner (podman backend)

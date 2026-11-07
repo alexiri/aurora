@@ -1,0 +1,7 @@
+{%- set err_type = "api_error" -%}
+{%- if status_code == 400 -%}{%- set err_type = "invalid_request_error" -%}
+{%- elif status_code == 401 -%}{%- set err_type = "authentication_error" -%}
+{%- elif status_code == 429 -%}{%- set err_type = "rate_limit_error" -%}
+{%- elif status_code == 529 -%}{%- set err_type = "overloaded_error" -%}
+{%- endif -%}
+{"type":"error","error":{"type":"{{ err_type }}","message":"Mock error response (HTTP {{ status_code | default(value=500) }})."}}

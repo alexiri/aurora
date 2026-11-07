@@ -1,0 +1,1 @@
+{"id":"msg_scn_pong","type":"message","role":"assistant","model":"{{ json.model }}","content":[{"type":"text","text":"pong"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":16,"output_tokens":2}}

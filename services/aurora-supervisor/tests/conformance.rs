@@ -2,6 +2,12 @@
 //! Harness conformance suite (`docs/12 §Harness interface`): the same cases run against every
 //! adapter. Always against `fake`; against `claude-code` only with `AURORA_LIVE_CLAUDE=1`
 //! (plus `ANTHROPIC_BASE_URL`, optional `AURORA_LIVE_MODEL`, `AURORA_LIVE_MCP_BRIDGE`), never in CI.
+//!
+//! Mock mode (decision I-30, `scripts/e2e/llm.sh`): the endpoint is the real LiteLLM proxy in front
+//! of VidaiMock. `AURORA_LIVE_SCENARIO_MODELS=say=scn-pong,long=scn-count,tool=scn-memory-tool,
+//! fail=scn-ratelimit,steer=scn-steer` picks the model (= VidaiMock scenario) per case, and adds a
+//! provider-error case. `AURORA_LIVE_CUSTOM_HEADERS` is passed as `ANTHROPIC_CUSTOM_HEADERS` (the
+//! supervisor suite has no gateway to inject the LiteLLM key). Without the variable nothing changes.
 
 use std::time::Duration;
 
@@ -21,7 +27,8 @@ const T: Duration = Duration::from_secs(60);
 struct Profile {
     say: &'static str,
     long_running: &'static str,
-    fail: Option<&'static str>,
+    /// `(prompt, expected harness error code)`.
+    fail: Option<(&'static str, &'static str)>,
     tool: Option<&'static str>,
     steerable: Option<&'static str>,
 }
@@ -29,7 +36,7 @@ struct Profile {
 const FAKE: Profile = Profile {
     say: "[[say: hello]] [[say: world]]",
     long_running: "[[say: start]] [[sleep: 30s]]",
-    fail: Some("[[fail: provider_quota]]"),
+    fail: Some(("[[fail: provider_quota]]", "provider_quota")),
     tool: Some("[[say: saving]] [[tool: memory_save {\"text\":\"x\"}]]"),
     steerable: Some("[[say: base]] [[steer-accept]]"),
 };
@@ -42,7 +49,19 @@ const LIVE: Profile = Profile {
     steerable: None,
 };
 
-fn opts(resume: Option<String>) -> SessionOptions {
+/// Mock mode: scenario model for a case (`say`, `long`, `tool`, `fail`, `steer`) from
+/// `AURORA_LIVE_SCENARIO_MODELS`. `None` outside mock mode.
+fn scenario_model(case: &str) -> Option<String> {
+    let map = std::env::var("AURORA_LIVE_SCENARIO_MODELS").ok()?;
+    let found = map
+        .split(',')
+        .filter_map(|kv| kv.split_once('='))
+        .find(|(k, _)| k.trim() == case)
+        .map(|(_, v)| v.trim().to_owned());
+    Some(found.unwrap_or_else(|| panic!("AURORA_LIVE_SCENARIO_MODELS has no `{case}=` entry")))
+}
+
+fn opts(case: &str, resume: Option<String>) -> SessionOptions {
     let endpoint = std::env::var("ANTHROPIC_BASE_URL").unwrap_or_default();
     SessionOptions {
         conversation_id: Uuid::now_v7(),
@@ -53,8 +72,9 @@ fn opts(resume: Option<String>) -> SessionOptions {
             endpoint_id: "live".into(),
             base_url: endpoint,
             dialect: "anthropic_messages".into(),
-            model: std::env::var("AURORA_LIVE_MODEL")
-                .unwrap_or_else(|_| "claude-sonnet-4-5".into()),
+            model: scenario_model(case).unwrap_or_else(|| {
+                std::env::var("AURORA_LIVE_MODEL").unwrap_or_else(|_| "claude-sonnet-4-5".into())
+            }),
             effort: "low".into(),
             client_env: vec![],
         },
@@ -64,8 +84,25 @@ fn opts(resume: Option<String>) -> SessionOptions {
                 .map(|c| c.split_whitespace().map(str::to_owned).collect())
                 .unwrap_or_default(),
         },
-        env: vec![],
+        env: mock_env(case),
     }
+}
+
+/// Extra child environment in mock mode only (empty otherwise).
+fn mock_env(case: &str) -> Vec<(String, String)> {
+    if scenario_model(case).is_none() {
+        return vec![];
+    }
+    // The adapter points HTTP(S)_PROXY at a dead port (no gateway here); the mock is on loopback.
+    let mut env = vec![("NO_PROXY".to_owned(), "127.0.0.1,localhost".to_owned())];
+    if let Ok(h) = std::env::var("AURORA_LIVE_CUSTOM_HEADERS") {
+        env.push(("ANTHROPIC_CUSTOM_HEADERS".to_owned(), h));
+    }
+    if case == "fail" {
+        // The CLI retries 429/5xx with backoff for minutes; fail fast so the code is classified.
+        env.push(("CLAUDE_CODE_MAX_RETRIES".to_owned(), "0".to_owned()));
+    }
+    env
 }
 
 fn turn(text: &str) -> TurnInput {
@@ -100,10 +137,12 @@ fn assert_one_terminal(ev: &[HarnessEvent]) -> &HarnessEvent {
 }
 
 async fn suite(a: &dyn HarnessAdapter, p: &Profile) {
+    let t0 = std::time::Instant::now();
     let caps = a.capabilities();
 
+    eprintln!("conformance case: say (+{:?})", t0.elapsed());
     // answer rule + terminal-event guarantee: text before exactly one Done.
-    let mut s = a.start_session(opts(None)).await.unwrap();
+    let mut s = a.start_session(opts("say", None)).await.unwrap();
     let ev = drain(s.run_turn(turn(p.say)).await.unwrap()).await;
     assert!(
         matches!(assert_one_terminal(&ev), HarnessEvent::Done { .. }),
@@ -115,6 +154,10 @@ async fn suite(a: &dyn HarnessAdapter, p: &Profile) {
         "a successful turn produces answer text: {ev:?}"
     );
 
+    eprintln!(
+        "conformance case: steer-between-turns (+{:?})",
+        t0.elapsed()
+    );
     // steer refuses between turns (never queued).
     if caps.steer {
         let st = s
@@ -137,6 +180,7 @@ async fn suite(a: &dyn HarnessAdapter, p: &Profile) {
         .unwrap();
     assert_eq!(st, SteerAck::Refused);
 
+    eprintln!("conformance case: resume (+{:?})", t0.elapsed());
     // resume: release keeps the ref; a new session with it reports the same ref.
     let r = s.session_ref();
     assert!(
@@ -145,13 +189,14 @@ async fn suite(a: &dyn HarnessAdapter, p: &Profile) {
     );
     s.release().await.unwrap();
     if caps.resume {
-        let s2 = a.start_session(opts(r.clone())).await.unwrap();
+        let s2 = a.start_session(opts("say", r.clone())).await.unwrap();
         assert_eq!(s2.session_ref(), r);
         s2.release().await.unwrap();
     }
 
+    eprintln!("conformance case: abort (+{:?})", t0.elapsed());
     // abort: terminal event still arrives, exactly once.
-    let mut s = a.start_session(opts(None)).await.unwrap();
+    let mut s = a.start_session(opts("long", None)).await.unwrap();
     let rx = s.run_turn(turn(p.long_running)).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     s.abort().await.unwrap();
@@ -159,19 +204,21 @@ async fn suite(a: &dyn HarnessAdapter, p: &Profile) {
     assert_one_terminal(&ev);
     s.release().await.unwrap();
 
+    eprintln!("conformance case: fail (+{:?})", t0.elapsed());
     // failure classification passthrough: scripted failure ends in Error with that code.
-    if let Some(f) = p.fail {
-        let mut s = a.start_session(opts(None)).await.unwrap();
+    if let Some((f, want)) = p.fail {
+        let mut s = a.start_session(opts("fail", None)).await.unwrap();
         let ev = drain(s.run_turn(turn(f)).await.unwrap()).await;
         assert!(
-            matches!(assert_one_terminal(&ev), HarnessEvent::Error { code, .. } if code == "provider_quota"),
+            matches!(assert_one_terminal(&ev), HarnessEvent::Error { code, .. } if code == want),
             "{ev:?}"
         );
     }
 
+    eprintln!("conformance case: tool (+{:?})", t0.elapsed());
     // tool round-trip: every started call finishes, with matching ids.
     if let (Some(t), true) = (p.tool, caps.tool_events) {
-        let mut s = a.start_session(opts(None)).await.unwrap();
+        let mut s = a.start_session(opts("tool", None)).await.unwrap();
         let ev = drain(s.run_turn(turn(t)).await.unwrap()).await;
         assert_one_terminal(&ev);
         for e in &ev {
@@ -188,9 +235,10 @@ async fn suite(a: &dyn HarnessAdapter, p: &Profile) {
         );
     }
 
+    eprintln!("conformance case: steer-running (+{:?})", t0.elapsed());
     // steer while running: accepted -> joined; and a steer to a run that cannot take it is refused.
     if let (Some(sp), true) = (p.steerable, caps.steer) {
-        let mut s = a.start_session(opts(None)).await.unwrap();
+        let mut s = a.start_session(opts("steer", None)).await.unwrap();
         let rx = s.run_turn(turn(sp)).await.unwrap();
         let id = Uuid::now_v7();
         let st = s
@@ -210,7 +258,7 @@ async fn suite(a: &dyn HarnessAdapter, p: &Profile) {
         assert_one_terminal(&ev);
 
         // missed steer: no steer-accept in the script, so the harness refuses to take it.
-        let mut s = a.start_session(opts(None)).await.unwrap();
+        let mut s = a.start_session(opts("steer", None)).await.unwrap();
         let rx = s.run_turn(turn("[[say: x]] [[sleep: 1s]]")).await.unwrap();
         let st = s
             .steer(SteerInput {
@@ -224,8 +272,9 @@ async fn suite(a: &dyn HarnessAdapter, p: &Profile) {
         assert_one_terminal(&drain(rx).await);
     }
 
+    eprintln!("conformance case: correction (+{:?})", t0.elapsed());
     // correction handling: any correction must refer to a message already streamed.
-    let mut s = a.start_session(opts(None)).await.unwrap();
+    let mut s = a.start_session(opts("say", None)).await.unwrap();
     let ev = drain(s.run_turn(turn(p.say)).await.unwrap()).await;
     let mut seen = Vec::new();
     for e in &ev {
@@ -257,5 +306,14 @@ async fn claude_code_live_conforms_when_enabled() {
         std::env::var("ANTHROPIC_BASE_URL").is_ok(),
         "AURORA_LIVE_CLAUDE=1 requires ANTHROPIC_BASE_URL"
     );
-    suite(&ClaudeCodeAdapter::default(), &LIVE).await;
+    // Mock mode adds the provider-error case (the real-model profile has none).
+    let profile = if std::env::var("AURORA_LIVE_SCENARIO_MODELS").is_ok() {
+        Profile {
+            fail: Some((LIVE.say, "provider_rate_limited")),
+            ..LIVE
+        }
+    } else {
+        LIVE
+    };
+    suite(&ClaudeCodeAdapter::default(), &profile).await;
 }

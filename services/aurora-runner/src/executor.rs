@@ -33,6 +33,9 @@ pub struct ExecutorSettings {
     pub max_concurrency: usize,
     /// How long a connected supervisor may flush after `shutdown` (`11 §Stop`: 10 s).
     pub shutdown_flush: Duration,
+    /// `runner.image` (docs/11, docs/15): the sandbox image this runner starts. `None` keeps the
+    /// image named in the start item (the API's `aurora-sandbox:<version>`).
+    pub image: Option<String>,
 }
 
 impl Default for ExecutorSettings {
@@ -40,6 +43,7 @@ impl Default for ExecutorSettings {
         Self {
             max_concurrency: 4,
             shutdown_flush: Duration::from_secs(10),
+            image: None,
         }
     }
 }
@@ -255,10 +259,14 @@ impl Executor {
             return;
         };
         let b = &self.0.backend;
+        let mut spec = s.spec;
+        if let Some(image) = &self.0.settings.image {
+            spec.image.clone_from(image);
+        }
         let req = StartRequest {
             sandbox_id: sandbox,
             boot_id: boot,
-            spec: s.spec,
+            spec,
         };
         let hold = HeldReporter {
             sink: self.0.sink.clone(),
@@ -285,7 +293,7 @@ impl Executor {
                 self.emit(item_id, "running", sandbox, boot, st);
             }
             Err(e) => {
-                tracing::warn!(%sandbox, %boot, reason = e.reason_code(), "sandbox start failed");
+                tracing::warn!(%sandbox, %boot, reason = e.reason_code(), error = %e.sanitized_message(), "sandbox start failed");
                 self.lock().running.remove(&sandbox);
                 let st = status(
                     SandboxState::Failed,

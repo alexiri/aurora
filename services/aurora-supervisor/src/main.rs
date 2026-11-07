@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
+use aurora_supervisor::adapters::claude_code::ClaudeCodeAdapter;
 use aurora_supervisor::boot::{self, BootDocument};
 use aurora_supervisor::channel::{self, ChannelConfig};
 use aurora_supervisor::fake::FakeHarness;
@@ -79,6 +80,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let adapter: Arc<dyn HarnessAdapter> = match doc.harness.id.as_str() {
         "fake" => Arc::new(FakeHarness),
+        "claude-code" => Arc::new(ClaudeCodeAdapter::default()),
         other => return Err(format!("harness `{other}` is not available in this build").into()),
     };
 

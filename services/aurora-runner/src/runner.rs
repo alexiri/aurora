@@ -59,6 +59,7 @@ impl RunnerSettings {
             retry: RetryPolicy::default(),
             executor: ExecutorSettings {
                 max_concurrency: cfg.runner.max_sandboxes.max(1) as usize,
+                image: Some(cfg.runner.image.clone()),
                 ..ExecutorSettings::default()
             },
             drain_timeout: Duration::from_secs(30),

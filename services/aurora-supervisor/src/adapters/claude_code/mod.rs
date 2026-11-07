@@ -20,7 +20,8 @@
 //!
 //! The first turn on a fresh child is held until `system/init` lists the `aurora` MCP server as
 //! connected with its tools; if the CLI emits no init before the first message, the message is sent
-//! and an init that lacks the tools fails the turn.
+//! and an init that lacks the tools fails the turn. Without an init, the wait is `INIT_GRACE` (2 s):
+//! CLI 2.1.319 emits none until it has a message.
 
 pub mod config;
 pub mod launcher;
@@ -44,6 +45,10 @@ use stream::StreamMapper;
 
 pub const PINNED_VERSION: &str = "2.1.319";
 const DEFAULT_HOLD: Duration = Duration::from_secs(30);
+/// How long a fresh child gets to emit `system/init` before the first message is sent anyway.
+/// CLI 2.1.319 emits no init until it has a user message, so waiting the full hold costs every
+/// first turn 30 s; the init that follows the message is still validated in-turn.
+const INIT_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub struct ClaudeCodeAdapter {
@@ -189,7 +194,8 @@ impl Pump {
         let mut lines = self.lines.lock().await;
         let mut mapper = StreamMapper::new();
         if !self.ready.load(Ordering::SeqCst) {
-            let deadline = Instant::now() + self.hold_timeout;
+            let started = Instant::now();
+            let mut deadline = started + self.hold_timeout.min(INIT_GRACE);
             let mut saw_init = false;
             loop {
                 let next = tokio::select! {
@@ -208,6 +214,10 @@ impl Pump {
                 let m = mapper.map_line(&line);
                 self.note_ref(&m.events);
                 if let Some(init) = m.init {
+                    if !saw_init {
+                        // An init is coming: give the MCP server the full hold to list its tools.
+                        deadline = started + self.hold_timeout;
+                    }
                     saw_init = true;
                     if init.mcp_ready {
                         self.ready.store(true, Ordering::SeqCst);
