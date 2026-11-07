@@ -5,7 +5,6 @@ web/.next
 web/out
 docs
 .env
-deploy/compose/.env
 **/*.pem
 **/*.key
 .cargo

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # TEST-017 / decision I-30: live `claude-code` acceptance against the real LiteLLM proxy in front of
 # VidaiMock (a scripted Anthropic-API stand-in; not a model). Pinned images, Aurora-owned scenarios
-# in deploy/compose/vidaimock/.
+# in deploy/dev/llm-mock/vidaimock/.
 #
 #   bash scripts/e2e/llm.sh                          smoke + supervisor-level live conformance
 #   AURORA_TEST_PODMAN=1 AURORA_TEST_LLM=1 bash scripts/e2e/llm.sh
@@ -20,7 +20,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-# Pinned images (keep in sync with deploy/compose/compose.yaml and vidaimock/README.md).
+# Pinned images (keep in sync with deploy/dev/llm-mock/{llm-mock.yaml,vidaimock.Containerfile,vidaimock/README.md}).
 VIDAIMOCK_IMAGE="ghcr.io/vidaiuk/vidaimock@sha256:c306a4e87637976bfd9034d0275ae6932497b18ee71614c46a0f143f393127c6"
 LITELLM_IMAGE="ghcr.io/berriai/litellm@sha256:d8b4ac356743d647a13bb93f45b941fcd5f5354122cfd205948a1b192790389d"
 CLAUDE_VERSION="2.1.319"
@@ -53,11 +53,11 @@ command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
 echo "== start vidaimock + litellm"
 podman network create --subnet 10.89.253.0/24 --gateway 10.89.253.1 "$NET" >/dev/null || exit 1
 podman run -d --name "$VID" --network "$NET" --network-alias vidaimock \
-  -v "$ROOT/deploy/compose/vidaimock:/config:ro,Z" "$VIDAIMOCK_IMAGE" \
+  -v "$ROOT/deploy/dev/llm-mock/vidaimock:/config:ro,Z" "$VIDAIMOCK_IMAGE" \
   --host 0.0.0.0 --port 8100 --config-dir /config --isolated >/dev/null || exit 1
 podman run -d --name "$LLM" --network "$NET" --ip "$LLM_IP" -p "127.0.0.1:$PORT:4000" \
   -e LITELLM_MASTER_KEY="$KEY" -e LITELLM_TELEMETRY=False \
-  -v "$ROOT/deploy/compose/litellm.yaml:/etc/litellm/litellm.yaml:ro,Z" "$LITELLM_IMAGE" \
+  -v "$ROOT/deploy/dev/llm-mock/litellm.yaml:/etc/litellm/litellm.yaml:ro,Z" "$LITELLM_IMAGE" \
   --config /etc/litellm/litellm.yaml --port 4000 >/dev/null || exit 1
 
 echo "== scenario smoke (curl through litellm)"

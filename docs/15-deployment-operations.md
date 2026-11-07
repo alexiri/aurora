@@ -1,7 +1,8 @@
 # 15 — Deployment and Operations
 
-Phase: **0**. Artifacts: `deploy/compose/` (podman compose, development and
-single host) and `deploy/helm/aurora/` (Kubernetes, production).
+Phase: **0**. Artifacts: `deploy/helm/aurora/` (Kubernetes, production) and, for development
+and integration testing, the same chart on a local kind cluster (`deploy/kind/`, `deploy/dev/`).
+(phase 1, OPS-017) `deploy/compose/` (podman compose) is removed; see §Development.
 
 ## Images
 
@@ -54,7 +55,7 @@ refuses to start on any error, naming the key.
 | `AURORA_RUNNER_SESSION_KEY` | api, runner | 32 bytes base64 |
 | `AURORA_RUNNER_TOKEN` | runner | `aur_…` |
 | `AURORA_CONNECTOR_TOKEN` | each connector | `aun_…` |
-| `AURORA_BOOTSTRAP_RUNNER_TOKEN` (optional) | api | on startup, upsert runner `default` with this token's hash (compose/Helm bootstrap) |
+| `AURORA_BOOTSTRAP_RUNNER_TOKEN` (optional) | api | on startup, upsert runner `default` with this token's hash (Helm bootstrap) |
 | `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` (optional) | api | `id:aun_…,id2:aun_…` — upsert connector ids (still require manifest approval unless `plugins.allow_unsigned` dev mode auto-approves) |
 | OIDC client secrets, SMTP password | api | referenced from config (`client_secret_env = "…"`) |
 
@@ -203,8 +204,8 @@ deny being an AI suits their users and applicable rules; the platform default do
 not.
 
 The sandbox base image is a **build-time** choice, passed to the image build
-(`podman build --build-arg SANDBOX_BASE_IMAGE=…`, the compose `.env`
-`SANDBOX_BASE_IMAGE`, or the CI variable of the same name; unset = the public
+(`podman build --build-arg SANDBOX_BASE_IMAGE=…`, the
+`SANDBOX_BASE_IMAGE` environment variable of `scripts/images/build-sandbox-min.sh`, or the CI variable of the same name; unset = the public
 default of `11 §Sandbox image`). This deployment sets
 `SANDBOX_BASE_IMAGE=gitlab-registry.cern.ch/linuxsupport/alma10-base:<tag>`. The
 override changes nothing else (same package list, same labels, same tag scheme
@@ -242,56 +243,37 @@ override changes nothing else (same package list, same labels, same tag scheme
   HTTPS to `external_url` (`/v1/runner/*`, `/v1/connector/*` are routed by the
   edge). A connector's own platform-callback port is exposed only to its
   platform.
-- A CI test checks that the documented edge configs (Caddyfile, Helm Ingress
-  and HTTPRoute templates) route every API path prefix and dashboard page
+- A CI test checks that the documented edge configs (Helm Ingress
+  and HTTPRoute templates, including the kind dev profile) route every API path prefix and dashboard page
   correctly.
 
-## Development: podman compose (`deploy/compose/`)
+## Development: kind + Helm (`deploy/kind/`, `deploy/dev/`)
 
-Files: `compose.yaml`, `Caddyfile`, `aurora.toml`, `.env.example`, `setup.sh`.
+(phase 1, OPS-017; replaces podman compose, decision I-40.) One containerized setup: the Helm chart on a local
+kind cluster (rootless podman provider). Host-process `just dev` stays for the inner loop. Evaluation and
+measurements: `docs/ops/dev-environments.md`; operator-style walkthrough: `docs/operator/install-kind-dev.md`.
 
-`setup.sh` (idempotent): generates `.env` secrets (never overwriting), creates
-the `aurora-sandbox` network (`podman network create --internal --disable-dns
---subnet 10.89.250.0/24 --gateway 10.89.250.1 aurora-sandbox`, see S-03) if missing, mints the gateway CA into
-the fixed-name `aurora-ca` volume with `aurora-gateway generate-ca --out /ca` if the volume has none (the
-volume root is first chowned to the gateway's nonroot uid, because a new volume is root-owned; an existing
-CA is never overwritten), and prints the first-admin bootstrap command (phase 1, RFE-004:
-`aurora-api bootstrap-admin --email <e>` pre-provisions the admin; the person then
-signs in through the configured OIDC provider or, in development, the `dev-idp`
-profile).
+Files: `deploy/dev/kind-dev.sh` (driven by `just kind-up | kind-dev | kind-status | kind-down`),
+`deploy/kind/kind-config-dev.yaml` (cluster `aurora-dev`; publishes 127.0.0.1:4000 → ingress-nginx),
+`deploy/kind/ingress-nginx.yaml` (vendored, pinned), Helm values profiles `deploy/kind/values-dev.yaml`,
+`values-llm-mock.yaml`, `values-connector-fake.yaml`, and `deploy/dev/llm-mock/` (LiteLLM + VidaiMock).
+`deploy/kind/values-e2e.yaml` and `scripts/e2e/kind.sh` (cluster `aurora-e2e`) remain the Kubernetes e2e.
 
-Services:
+| Compose (removed) | kind + Helm |
+|-------------------|-------------|
+| `edge` (Caddy, 4000) | chart Ingress (`ingress.className: nginx`) behind ingress-nginx; one URL `http://localhost:4000`, same `/v1/*` → api, `/` → web rule, guarded by `scripts/guards/edge-routes.sh` |
+| `postgres`, `migrate`, `api`, `gateway`, `hookhost`, `web` | the same components as chart Deployments; `postgres.enabled` (evaluation StatefulSet), the migrate pre-install/upgrade hook |
+| `setup.sh` secrets and gateway CA | the chart's `secrets` and `gateway-ca` hooks |
+| `runner` (profile `hosted`, podman socket) | `runner` with the Kubernetes backend: sandboxes are Pods in `aurora-sandboxes`, enforced by NetworkPolicies (so SEC-02/SEC-09 are exercised the way production runs them) |
+| `connector-fake` (profile) | `values-connector-fake.yaml`: a chart `connectors` entry; `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` from the generated token |
+| `vidaimock`, `litellm` (profile `llm-mock`, decision I-30) | `deploy/dev/llm-mock/llm-mock.yaml` (namespace `aurora-dev-mock`, LiteLLM Service at the fixed ClusterIP `10.96.100.40`) plus `values-llm-mock.yaml` (endpoint `litellm-mock`, `gateway.allowed_private = ["10.96.100.40/32"]`, `networkPolicy.gatewayExtraEgress`); dev master key `sk-aurora-mock-dev`; **not a model** |
+| `dev-idp` (profile, RFE-004) | not provided by OPS-017: the dev OIDC provider has to be added as a chart/kind component by RFE-004 |
 
-| Service | Image | Networks | Notes |
-|---------|-------|----------|-------|
-| `postgres` | `postgres:16` | core | volume `aurora-pg` |
-| `migrate` | aurora-api `migrate` | core | one-shot; `api` depends on its successful completion |
-| `api` | aurora-api | core | |
-| `gateway` | aurora-gateway | core, sandbox (`10.89.250.2`) | volume `aurora-ca`; publishes 4102 (TLS-only from phase 1; the CA-issued leaf covers `aurora-gateway`, `10.89.250.2` and `localhost`/`127.0.0.1` for host-side tools) |
-| `hookhost` | aurora-hookhost | core | |
-| `web` | aurora-web | core | |
-| `edge` | `caddy:2` | core | publishes 4000 → routes as above |
-| `runner` (profile `hosted`) | aurora-runner | core, sandbox (`10.89.250.3`) | podman backend (`AURORA__RUNNER__BACKEND=podman`, `runner.image` from `AURORA_SANDBOX_IMAGE`, network `aurora-sandbox`); mounts the podman socket (`${XDG_RUNTIME_DIR}/podman/podman.sock` for rootless) with `security_opt: [label=disable]`; runs as the invoking user (`userns_mode: keep-id`, `user: ${AURORA_UID}:${AURORA_GID}`) |
-| `connector-fake` (profile `connector-fake`) | aurora-connector-fake | core | test control API published on 4190 |
-| `dev-idp` (profile `dev-idp`) | aurora-dev-idp | core | (phase 1, RFE-004) development OIDC provider (`04`), users from `deploy/compose/dev-idp/users.json`, published on `127.0.0.1:4410`; development only |
-| `vidaimock` (profile `llm-mock`) | `ghcr.io/vidaiuk/vidaimock` pinned by digest | core | scripted Anthropic-API stand-in, config `deploy/compose/vidaimock/` mounted read-only; **not a model** |
-| `litellm` (profile `llm-mock`) | `ghcr.io/berriai/litellm` pinned by digest | core | real LiteLLM proxy, `deploy/compose/litellm.yaml`, dev master key `sk-aurora-mock-dev`; published on `127.0.0.1:4400`; endpoint `litellm-mock` in `aurora.toml` |
-
-The runner runs as the invoking user because the rootless socket is `srw-rw---- <user>:<user>` and the image's
-nonroot uid 65532 would map to an unprivileged sub-uid that cannot open it. That is no more privilege than the socket
-access itself; the other services keep the nonroot user. `setup.sh` writes `AURORA_UID`/`AURORA_GID`, warns when
-`systemctl --user is-active podman.socket` fails, and exports the public `ca.pem` to `deploy/compose/ca/` for the `api`
-service. The `hosted` profile needs `gateway.advertised_proxy_url = https://aurora-gateway:4102` and `runner.sandbox_hosts`
-(both in the shipped `aurora.toml`); `gateway.allowed_private` opens only the mock LiteLLM's static address.
-
-Networks: `core` (bridge) and `sandbox` (external, created by `setup.sh`,
-internal, DNS disabled). `COMPOSE_PROFILES=hosted` enables hosted agents.
-`AURORA_BOOTSTRAP_RUNNER_TOKEN` / `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` wire the
-runner and fake connector without manual provisioning.
-
-`COMPOSE_PROFILES=hosted,llm-mock` adds a mock model behind a real LiteLLM (decision I-30) so hosted
-`claude-code` agents work without a model account; see `docs/operator/llm-endpoints.md` (§Running with the
-mock) and `scripts/e2e/llm.sh`. The dev master key is a dummy; the mock only replays scenario files.
+`kind-dev.sh up` creates the cluster, installs ingress-nginx, builds and loads the images and runs
+`helm upgrade --install`. Rust services are built in a builder container against the bind-mounted source with a
+persistent cargo target volume and copied into thin distroless images; `kind-dev.sh dev [svc…]` rebuilds, loads
+and restarts only the services whose binary (web: sources) changed. Images are `localhost/aurora-dev/aurora-<svc>:dev`
+with `pullPolicy: Never`.
 
 Developer loop without containers: `just dev` runs Postgres in podman and the
 API, gateway, hook host and web as host processes; the runner (podman backend)
@@ -341,8 +323,7 @@ restarting it invalidates in-flight turns (bootstrap tokens are single use).
   backend settings (storage class, runtime class, node selectors), connectors
   (list of `{id, image, token secret, callback ingress}`), plugin packages
   (ConfigMap or PVC mounted at `plugins.dir`).
-- Helm and compose consume the **same** `aurora.toml` structure (Helm renders
-  it into a ConfigMap).
+- The chart renders the `aurora.toml` structure into a ConfigMap (the kind dev profiles use the same chart).
 
 ## Upgrades
 

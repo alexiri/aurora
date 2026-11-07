@@ -10,7 +10,7 @@ code in this repository:
 - configuration keys: `crates/aurora-config/src/raw.rs` and `validate.rs`
 - CLI flags: the clap definitions in `services/aurora-*/src/main.rs` and `services/aurora-cli/src/`
 - HTTP routes: `services/aurora-api/src/domains/*/routes.rs`
-- artifacts: `deploy/compose/`, `deploy/helm/aurora/`, `deploy/dev/`
+- artifacts: `deploy/helm/aurora/`, `deploy/kind/`, `deploy/dev/`
 
 Where the spec describes something the code does not do yet, the text says
 **(not yet implemented)**. Paths such as `POST /v1/admin/runners` are relative to the
@@ -20,8 +20,8 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 
 | Page | Covers |
 |------|--------|
-| [install-compose.md](install-compose.md) | Single-host install with podman compose (`deploy/compose/`) |
 | [install-helm.md](install-helm.md) | Kubernetes install with the Helm chart (`deploy/helm/aurora/`) |
+| [install-kind-dev.md](install-kind-dev.md) | Local development and test stack on kind with Helm (`deploy/dev/kind-dev.sh`, phase 1, OPS-017; replaces podman compose) |
 | [llm-endpoints.md](llm-endpoints.md) | `[[llm.endpoints]]`, key origin, governance ceilings |
 | [runners.md](runners.md) | Adding a runner, podman and kubernetes backends, `runner.k8s.*` |
 | [plugins-and-connectors.md](plugins-and-connectors.md) | Plugin upload and approval, trusted keys, host claims, connector provisioning and approval |
@@ -44,7 +44,7 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
   existing one. See [docs/15 §Required secrets](../15-deployment-operations.md#required-secrets).
 - **Admin actions.** `/v1/admin/*` routes require an instance-administrator session.
   The first administrator is created with `aurora-api bootstrap-admin` (see
-  [install-compose.md](install-compose.md#first-administrator)).
+  [install-helm.md](install-helm.md#post-install-checks)).
 - **Edge.** Only `server.external_url` is public. The edge routes `/v1/*` to the API and
   everything else to the web app. `/internal/*` and `/metrics` are never routed. See
   [docs/15 §Networking: one URL](../15-deployment-operations.md#networking-one-url).
@@ -56,8 +56,8 @@ not do. Treat each as **(not yet implemented)** until the code changes. Gap numb
 stable (other tasks refer to them). Gaps 3, 4, 5, 6, 9, 10 and 13 were fixed or documented in
 OPS-013, and gaps 1, 2, 7 and 8 were fixed in FIX-003; all are listed as resolved below.
 
-- **11. Compose runner backend.** `deploy/compose/aurora.toml` sets `runner.backend = "fake"`.
-  Hosted agents run as fake sandboxes until the operator switches the backend.
+- **11. Compose runner backend.** Removed in phase 1 (OPS-017): podman compose no longer ships. The Helm chart and the kind dev stack
+  use the `kubernetes` backend ([install-kind-dev.md](install-kind-dev.md)).
 - **12. Sandbox env.** Per `docs/PROGRESS.md` (FUP-M7), the API's `SandboxSpec.env` is
   empty, so `AURORA_AGENT_HANDLE` and snapshot app env do not reach sandboxes on any
   backend. See [runners.md](runners.md#known-limitations).
@@ -92,9 +92,9 @@ OPS-013, and gaps 1, 2, 7 and 8 were fixed in FIX-003; all are listed as resolve
 - **6. Connector port key.** The chart reads `callbackPort` (default 4190). The values comment
   and examples use it; `port` is gone.
 - **9. `just dev`.** Postgres in podman, migrate, then the API, gateway, hook host and web
-  app on the host. See [install-compose.md](install-compose.md#developer-loop-without-containers).
-- **10. Compose gateway CA.** `setup.sh` mints the CA into the `aurora-ca` volume when it is
-  absent, and never overwrites it. See [install-compose.md](install-compose.md#2-create-the-gateway-ca).
+  app on the host. See [install-kind-dev.md](install-kind-dev.md#inner-loop-on-the-host-just-dev).
+- **10. Gateway CA.** Compose is gone (phase 1, OPS-017). The chart's `gateway-ca` hook mints the CA when it is absent and
+  never overwrites it ([install-helm.md](install-helm.md)).
 - **13. Helm evaluation Postgres.** Its hook resources cannot be removed by a hook delete
   policy, so the chart documents it instead: `values.yaml` and `NOTES.txt` say it is
   evaluation-only and leaks on uninstall, with the cleanup commands. See [install-helm.md](install-helm.md#database).

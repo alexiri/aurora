@@ -1,6 +1,6 @@
-# LiteLLM proxy for the `llm-mock` compose profile (decision I-30). The real proxy, pinned image,
-# in front of VidaiMock (deploy/compose/vidaimock/). Dev only: the master key below comes from
-# LITELLM_MASTER_KEY (compose default `sk-aurora-mock-dev`) and protects nothing.
+# LiteLLM proxy for the `llm-mock` dev profile (decision I-30; deploy/dev/llm-mock/llm-mock.yaml). The real
+# proxy, pinned image, in front of VidaiMock (deploy/dev/llm-mock/vidaimock/). Dev only: the master key
+# comes from LITELLM_MASTER_KEY (`sk-aurora-mock-dev`) and protects nothing.
 #
 # One alias per VidaiMock scenario: `scn-<id>` is sent upstream as model `scn-<id>`, which selects
 # vidaimock/scenarios/anthropic/<id>.*. `claude-mock` and any `claude-*` id get the plain text answer.

@@ -8,10 +8,8 @@ notes where the shipped artifacts do not follow them yet.
 
 1. Read the release notes for schema and contract changes.
 2. Back up Postgres, the keyring, the signing key and the gateway CA ([backups.md](backups.md)).
-3. Check the current state: `curl -i https://<external-url>/v1/instance`, and the pods (Helm) or
-   containers (compose) are healthy.
-4. Choose the new version. Compose: set `AURORA_VERSION` in `deploy/compose/.env`. Helm: set
-   `image.tag` (default: the chart appVersion, `0.1.0`).
+3. Check the current state: `curl -i https://<external-url>/v1/instance`, and the pods are healthy.
+4. Choose the new version. Set `image.tag` (default: the chart appVersion, `0.1.0`).
 
 ## Rules that make a rolling upgrade safe
 
@@ -26,18 +24,6 @@ notes where the shipped artifacts do not follow them yet.
   Gateways and runners of the previous version keep working during the roll.
 
 ## Order
-
-### Compose (single host)
-
-```bash
-# deploy/compose/.env: AURORA_VERSION=<new>
-podman compose -f deploy/compose/compose.yaml up -d
-```
-
-`api` and `gateway` wait for `migrate` to complete (`service_completed_successfully`), so the
-migration runs first. The other services are recreated when their image changes, without the
-staged order above. For a single host with a short outage this is usually acceptable. Run a
-test upgrade first.
 
 ### Helm
 

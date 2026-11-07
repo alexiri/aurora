@@ -4,7 +4,7 @@
 
 | Component | Binary / image | Role | Port(s) | State | Inbound from |
 |-----------|----------------|------|---------|-------|--------------|
-| **Edge proxy** | Caddy (compose) / Ingress or Gateway API (k8s) | Single external origin; routes `/v1/*` to API, everything else to web | 4000 (compose) | none | browsers, CLI, webhooks |
+| **Edge proxy** | Ingress or Gateway API (k8s; ingress-nginx on the kind dev cluster; Caddy in phase 0 compose, removed in phase 1, OPS-017) | Single external origin; routes `/v1/*` to API, everything else to web | 4000 (kind dev) | none | browsers, CLI, webhooks |
 | **Web dashboard** | `aurora-web` (Next.js) | Human UI; a pure client of the API | 4100 | none | edge proxy |
 | **API server (control plane)** | `aurora-api` | Owns the database; management API; identity; conversation plane; due-work engine; plugin registry compiler; channel core; platform-tool execution | 4101 public (`/v1`); 4111 internal (`/internal`, hook host only) | **Postgres** | edge proxy, runners, connectors; hook hosts on 4111 |
 | **Gateway** | `aurora-gateway` | Agent-facing forward proxy: auth, policy, approval holds, credential injection; database lane (phase 2) | **4102** proxy (TLS-only from phase 1); **4103** internal control | reads Postgres; writes approvals, request log, refreshed credentials | agents (4102); API only (4103) |
@@ -208,9 +208,9 @@ creates a turn in the schedule's run conversation. The sandbox wakes as in B.
 
 ## Deployment topologies
 
-- **Development (podman compose)**: postgres, migrate (one-shot), api, web,
-  gateway, hookhost, edge (Caddy); profile `hosted` adds runner; profile
-  `connector-fake` adds the fake connector. See `15`.
+- **Development (kind + Helm)** (phase 1, OPS-017; phase 0 used podman compose): the production chart on a
+  local kind cluster with ingress-nginx as the edge; values profiles `llm-mock` and
+  `connector-fake` add a mock model and the fake connector. See `15`.
 - **Production (Kubernetes, Helm)**: same images; sandboxes are one Pod + PVC
   each in a fenced namespace with NetworkPolicy and ResourceQuota; API, gateway,
   hookhost, runner and connectors scale horizontally. See `15`.

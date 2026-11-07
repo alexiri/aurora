@@ -21,6 +21,12 @@ pub const BRIDGE: &str = "10.89.251.1";
 pub const OPS_IP: &str = "127.0.0.42";
 const ORIGIN: &str = "http://localhost:4100";
 
+/// Origin sent by `Api` requests: `AURORA_KIND_ORIGIN` when the suite runs against a Kubernetes stack whose
+/// `server.external_url` differs (the kind dev stack serves http://localhost:4000), else the default.
+fn request_origin() -> String {
+    std::env::var("AURORA_KIND_ORIGIN").unwrap_or_else(|_| ORIGIN.to_owned())
+}
+
 pub fn enabled() -> bool {
     let on = std::env::var("AURORA_TEST_PODMAN").is_ok_and(|v| v == "1");
     if !on {
@@ -500,7 +506,7 @@ impl Api {
             .http
             .request(m, format!("{}{path}", self.base))
             .header("cookie", &self.cookie)
-            .header("origin", ORIGIN)
+            .header("origin", &request_origin())
             .timeout(Duration::from_secs(40));
         if let Some(b) = body {
             r = r.json(&b);
@@ -528,7 +534,7 @@ impl Api {
         self.http
             .get(format!("{}{p}", self.base))
             .header("cookie", &self.cookie)
-            .header("origin", ORIGIN)
+            .header("origin", &request_origin())
     }
 
     pub async fn ws_secret(&self, body: Value) -> String {

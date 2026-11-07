@@ -1,0 +1,13 @@
+# `connector-fake` profile (replaces the compose profile of the same name): the fake connector, using
+# the chart-generated connector token. The API upserts connector `fake` with that token at startup
+# (AURORA_BOOTSTRAP_CONNECTOR_TOKENS), so it only needs manifest approval (docs/operator/plugins-and-connectors.md).
+connectors:
+  - id: fake
+    image: localhost/aurora-dev/aurora-connector-fake:dev
+    tokenSecret: {name: aurora-secrets, key: AURORA_CONNECTOR_TOKEN}
+api:
+  extraEnv:
+    - name: AURORA_CONNECTOR_TOKEN
+      valueFrom: {secretKeyRef: {name: aurora-secrets, key: AURORA_CONNECTOR_TOKEN}}
+    - name: AURORA_BOOTSTRAP_CONNECTOR_TOKENS
+      value: "fake:$(AURORA_CONNECTOR_TOKEN)"

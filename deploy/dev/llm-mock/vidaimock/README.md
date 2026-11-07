@@ -14,7 +14,7 @@ live `claude-code` conformance suite and the hosted e2e run the real Claude Code
 
 Upgrading: pick a new tag, read its changelog, take its index digest
 (`skopeo inspect --no-tags docker://ghcr.io/vidaiuk/vidaimock:<tag>`), change it in
-`deploy/compose/compose.yaml`, `scripts/e2e/llm.sh` and here, and run `bash scripts/e2e/llm.sh`.
+`deploy/dev/llm-mock/{llm-mock.yaml,vidaimock.Containerfile}`, `scripts/e2e/llm.sh` and here, and run `bash scripts/e2e/llm.sh`.
 
 ## Layout
 
@@ -31,7 +31,7 @@ turns are **scripted scenarios**, not generated.
 
 ## Scenario selection
 
-LiteLLM (`deploy/compose/litellm.yaml`) has one model alias per scenario, `scn-<id>` →
+LiteLLM (`deploy/dev/llm-mock/litellm.yaml`) has one model alias per scenario, `scn-<id>` →
 `anthropic/scn-<id>` on `http://vidaimock:8100`. The model name reaches VidaiMock in the request body
 and `providers/anthropic.yaml` renders the scenario id from it (`scenarios.key`). A model that does
 not start with `scn-` gets the plain "Mock model response." answer. An unknown `scn-` id returns a

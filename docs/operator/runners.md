@@ -89,12 +89,12 @@ seccomp profile, pid, memory and CPU limits, and no host mounts except the home 
 
 Prerequisites on the host (standard podman, not checked by this repository): a running
 podman API socket (rootless: `systemctl --user enable --now podman.socket`) and the
-`aurora-sandbox` network. `deploy/compose/setup.sh` creates the network.
+`aurora-sandbox` network (`podman network create --internal --disable-dns --subnet 10.89.250.0/24 --gateway 10.89.250.1 aurora-sandbox`).
+The podman backend is what the host-process e2e suites (`scripts/e2e/hosted.sh`, `llm.sh`) use; the shipped installs use the Kubernetes backend.
 
-Compose: the `hosted` profile selects this backend on the `runner` service, sets `runner.image` and
-`runner.sandbox_network`, and runs the runner as your uid with `userns_mode: keep-id` so it can open the rootless
-socket. `compose/aurora.toml` carries `sandbox_hosts`. See
-[install-compose.md](install-compose.md#hosted-agents-profile-hosted).
+Phase 1 (OPS-017): the podman compose stack that ran this backend in a container is gone (its runner could not open the
+rootless socket as a non-root user without `keep-id`). Run `aurora-runner serve` on the host with this backend, or use the
+Kubernetes backend on kind ([install-kind-dev.md](install-kind-dev.md)).
 
 ## Kubernetes backend
 
@@ -123,7 +123,7 @@ and Services in the core namespace.
 ## Fake backend
 
 `runner.backend = "fake"` is in memory. It simulates homes, boots, crashes and capacity
-holds. The shipped compose config uses it. It does not run real sandboxes. Do not use it in production.
+holds. It does not run real sandboxes. Do not use it in production.
 
 ## Reconcile and orphans
 

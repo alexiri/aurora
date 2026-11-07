@@ -123,9 +123,8 @@ baseline_allowlist = [ { host = "pypi.org" }, { host = "files.pythonhosted.org" 
 ```
 
 In Helm, put the same TOML structure under `config:` in `values.yaml`
-(see [install-helm.md](install-helm.md#configuration)). In compose, add it to
-`deploy/compose/aurora.toml`. Restart the API and gateway afterwards, because both read
-the configuration at startup.
+(see [install-helm.md](install-helm.md#configuration)), then `helm upgrade` (the pods restart, because the API and
+gateway read the configuration at startup).
 
 ## Checks before going live
 
@@ -137,25 +136,28 @@ the configuration at startup.
 
 ## Running with the mock (dev and e2e only)
 
-The compose profile `llm-mock` runs the real LiteLLM proxy in front of
+The `llm-mock` dev profile runs the real LiteLLM proxy in front of
 [VidaiMock](https://github.com/vidaiUK/VidaiMock), a scripted stand-in for the Anthropic API
 (decision I-30). **It is not a model.** Every answer is a fixed scenario file under
-`deploy/compose/vidaimock/scenarios/`, chosen by the model name (`scn-pong`, `scn-memory-tool`, ...).
+`deploy/dev/llm-mock/vidaimock/scenarios/`, chosen by the model name (`scn-pong`, `scn-memory-tool`, ...).
 Use it to exercise the gateway LLM lane, context credentials and the real `claude-code` CLI without
 a real model account, never for anything that needs an actual answer.
 
 ```sh
-cd deploy/compose
-COMPOSE_PROFILES=hosted,llm-mock podman compose up -d
+just kind-up --llm-mock          # deploy/dev/kind-dev.sh up --llm-mock; see install-kind-dev.md
 ```
 
-1. `aurora.toml` already declares the endpoint `litellm-mock` (`http://litellm:4000`, dialect
-   `anthropic_messages`, default model `scn-pong`). Default governance permits it.
-2. Create an LLM secret for it with the dev master key `sk-aurora-mock-dev` (`LITELLM_MASTER_KEY`;
-   override it in `.env`). The key is a dummy and protects nothing. LiteLLM runs without a database, so
-   only the master key is a valid key. The proxy is also published on `127.0.0.1:4400`.
+1. `deploy/kind/values-llm-mock.yaml` declares the endpoint `litellm-mock`
+   (`http://litellm.aurora-dev-mock.svc.cluster.local:4000`, dialect `anthropic_messages`, default model `scn-pong`),
+   opens exactly the LiteLLM Service's fixed ClusterIP `10.96.100.40/32` in `gateway.allowed_private`, and adds
+   one egress rule for the gateway's NetworkPolicy (`networkPolicy.gatewayExtraEgress`). Default governance permits it.
+2. Create an LLM secret for it with the dev master key `sk-aurora-mock-dev` (`LITELLM_MASTER_KEY` in
+   `deploy/dev/llm-mock/llm-mock.yaml`). The key is a dummy and protects nothing. LiteLLM runs without a database, so
+   only the master key is a valid key.
 3. Grant the key to a hosted agent with harness `claude-code` and chat with it. The agent answers
-   `pong`; a model override of `scn-memory-tool` makes it call `memory_save` and then say `done`.
+   `pong`; a model override of `scn-memory-tool` makes it call `memory_save` and then say `done`. This needs a
+   sandbox image that contains the Claude Code CLI (`scripts/e2e/llm.Containerfile`); the default dev sandbox image
+   uses the fake harness.
 
 Automated runs: `bash scripts/e2e/llm.sh` runs the scenario smoke and the supervisor-level live
 conformance suite (`AURORA_LIVE_CLAUDE=1`) against LiteLLM -> VidaiMock; with
@@ -164,4 +166,4 @@ conformance suite (`AURORA_LIVE_CLAUDE=1`) against LiteLLM -> VidaiMock; with
 to LiteLLM directly. A run against a real model remains an optional manual release check
 (`AURORA_LIVE_CLAUDE=1 ANTHROPIC_BASE_URL=... bash -c 'cargo test -p aurora-supervisor --test conformance'`).
 Scenario selection, pinned digests, the license and LiteLLM's observed error mapping are in
-`deploy/compose/vidaimock/README.md`.
+`deploy/dev/llm-mock/vidaimock/README.md`.

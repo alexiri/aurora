@@ -1,0 +1,69 @@
+# `llm-mock` dev components (decision I-30), applied by `deploy/dev/kind-dev.sh up --llm-mock`:
+# the real LiteLLM proxy in front of VidaiMock, a scripted Anthropic-API stand-in that is NOT a model.
+# Dev only (docs/operator/llm-endpoints.md). Config: litellm.yaml (ConfigMap `litellm-config`, created by
+# kind-dev.sh from that file) and vidaimock/ (baked into localhost/aurora-dev/vidaimock:dev).
+# Pair with deploy/kind/values-llm-mock.yaml, which opens exactly the litellm Service ClusterIP below.
+apiVersion: v1
+kind: Namespace
+metadata: {name: aurora-dev-mock}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: vidaimock, namespace: aurora-dev-mock}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: vidaimock}}
+  template:
+    metadata: {labels: {app: vidaimock}}
+    spec:
+      enableServiceLinks: false   # VIDAIMOCK_PORT=tcp://... from the Service would be read as the port setting
+      containers:
+        - name: vidaimock
+          image: localhost/aurora-dev/vidaimock:dev
+          imagePullPolicy: Never
+          args: ["--host", "0.0.0.0", "--port", "8100", "--config-dir", "/config", "--isolated", "--mode", "benchmark"]
+          ports: [{containerPort: 8100}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: vidaimock, namespace: aurora-dev-mock}
+spec:
+  selector: {app: vidaimock}
+  ports: [{port: 8100, targetPort: 8100}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: litellm, namespace: aurora-dev-mock}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: litellm}}
+  template:
+    metadata: {labels: {app: litellm}}
+    spec:
+      enableServiceLinks: false   # VIDAIMOCK_PORT=tcp://... from the Service would be read as the port setting
+      containers:
+        - name: litellm
+          # LiteLLM v1.108.2-lts, pinned by digest (same as scripts/e2e/llm.sh).
+          image: ghcr.io/berriai/litellm@sha256:d8b4ac356743d647a13bb93f45b941fcd5f5354122cfd205948a1b192790389d
+          args: ["--config", "/etc/litellm/litellm.yaml", "--port", "4000"]
+          env:
+            # Dev-only dummy key. Never reuse; it is the LLM key you give Aurora for endpoint `litellm-mock`.
+            - {name: LITELLM_MASTER_KEY, value: sk-aurora-mock-dev}
+            - {name: LITELLM_TELEMETRY, value: "False"}
+          ports: [{containerPort: 4000}]
+          readinessProbe:
+            tcpSocket: {port: 4000}
+            periodSeconds: 5
+          volumeMounts: [{name: cfg, mountPath: /etc/litellm, readOnly: true}]
+      volumes:
+        - name: cfg
+          configMap: {name: litellm-config}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: litellm, namespace: aurora-dev-mock}
+spec:
+  # Fixed ClusterIP (kind's default service CIDR is 10.96.0.0/16) so aurora's gateway.allowed_private can name one /32.
+  clusterIP: 10.96.100.40
+  selector: {app: litellm}
+  ports: [{port: 4000, targetPort: 4000}]

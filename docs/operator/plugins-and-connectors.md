@@ -66,7 +66,7 @@ curl -sS -X DELETE https://aurora.example.org/v1/admin/trusted-keys/<id>
 Revocation disables every package the key signed. Their connections stop injecting and show why.
 
 `plugins.allow_unsigned` (default `false`) accepts unsigned packages and auto-approves connector
-manifests. It is for development only. The chart and compose do not set it.
+manifests. It is for development only. The chart does not set it.
 
 ### Host claims
 
@@ -146,11 +146,12 @@ Integrations are not served until approval. Statuses: `awaiting_registration`,
 The core cannot verify which binary runs. docs/13 says operators SHOULD enforce image
 signatures with their deployment tooling (for example cosign and an admission policy).
 
-### Connector provisioning in compose and Helm
+### Connector provisioning in Helm
 
-- **Compose.** `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` is set to `fake:<token>`. At startup the API
-  upserts the connector `fake` with that token (`awaiting_registration`); it still needs manifest
-  approval, as described above.
+- **Dev stack on kind.** `deploy/kind/values-connector-fake.yaml` sets `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` to
+  `fake:<generated token>`. At startup the API upserts the connector `fake` with that token
+  (`awaiting_registration`); it still needs manifest approval, as described above
+  ([install-kind-dev.md](install-kind-dev.md)).
 - **Helm.** Create the token Secret first, then list the connector in `connectors`
   ([install-helm.md](install-helm.md#connectors-optional)).
 
