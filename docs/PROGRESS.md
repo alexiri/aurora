@@ -2,7 +2,7 @@
 
 Last updated: 2026-11-06 (evening, orchestrator; reconciled with git through e65ec66d)
 
-Scope: **Phase 0 (M0–M7)**. Phases 1–4 are out of scope until phase 0 exits.
+Scope: **Phase 0 (M0–M7) is complete and merged to `master`.** Current: **phases 1 and 2 in parallel** on integration branch `phase1-2` (owner rule: phases 3 and 4 after 1 and 2).
 Ids per decision I-01. Task briefs live in `docs/tasks/<ID>.md`. Milestones
 beyond the active one are tracked as epics and decomposed into briefs when
 their dependencies near completion (adaptive planning).
@@ -22,7 +22,7 @@ their dependencies near completion (adaptive planning).
 
 ## Milestone status
 
-**Phase 0 exit (docs/19): met.** All milestones accepted; 39/39 SEC invariants proven; compose and Helm install from scratch with documented steps (`docs/audit/phase0-exit.md`, AUDIT-001 + OPS-015). Awaiting owner approval to merge `phase0` → `master`.
+**Phase 0 exit (docs/19): met.** All milestones accepted; 39/39 SEC invariants proven; compose and Helm install from scratch with documented steps (`docs/audit/phase0-exit.md`, AUDIT-001 + OPS-015). Merged to `master` and pushed 2026-11-08 (`aeb93903`, owner-approved).
 
 | Milestone | Status | Acceptance evidence |
 |---|---|---|
