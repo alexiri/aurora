@@ -24,6 +24,7 @@ use aurora_channels::{
 use aurora_core::ApiError;
 use aurora_core::limits::ACTION_TOKEN_TTL;
 use aurora_crypto::DerivedKeys;
+use aurora_db::DbError;
 use aurora_db::bus::Channel;
 use aurora_db::repo::channel_cards::{self as repo, CardRow, NewCard};
 use aurora_db::repo::channel_ops::{self as ops, InsertOp};
@@ -110,6 +111,27 @@ pub fn dashboard_url_for(external_url: &str, path: &str) -> String {
 
 pub fn dashboard_url(state: &AppState, path: &str) -> String {
     dashboard_url_for(&state.config.external_url, path)
+}
+
+/// Dashboard URL of a workspace page (`/o/<org slug>/w/<workspace slug>/<page>`, the web app's
+/// routes); falls back to the dashboard home when the workspace is gone.
+pub async fn workspace_page_url(
+    conn: &mut PgConnection,
+    state: &AppState,
+    workspace_id: Uuid,
+    page: &str,
+) -> Result<String, ApiError> {
+    let slugs: Option<(String, String)> = sqlx::query_as(
+        "SELECT o.slug, w.slug FROM workspaces w JOIN organizations o ON o.id = w.org_id WHERE w.id = $1",
+    )
+    .bind(workspace_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(DbError::from)?;
+    Ok(match slugs {
+        Some((org, ws)) => dashboard_url(state, &format!("/o/{org}/w/{ws}/{page}")),
+        None => dashboard_url(state, "/"),
+    })
 }
 
 async fn enqueue(

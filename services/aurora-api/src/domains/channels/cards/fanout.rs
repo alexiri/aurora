@@ -5,9 +5,7 @@
 //! Idempotent and safe on every replica: posts and settles are claimed through
 //! `channel_ops.dedupe_key` and the `channel_cards` state.
 
-use super::{
-    CardRow, Minter, NewPost, build, capabilities, dashboard_url, post_card, repo, settle_card,
-};
+use super::{CardRow, Minter, NewPost, build, capabilities, post_card, repo, settle_card};
 use crate::app::AppState;
 use crate::domains::approvals::bus::BusMsg;
 use aurora_channels::CapabilitySet;
@@ -109,6 +107,8 @@ async fn post_approval(state: &AppState, id: Uuid) -> Result<bool, ApiError> {
         integration_id: link.integration_id,
     };
     let card = build::approval(&m, &row)?;
+    let approvals_url =
+        super::workspace_page_url(&mut tx, state, row.workspace_id, "approvals").await?;
     let posted = post_card(
         &mut tx,
         &caps,
@@ -123,7 +123,7 @@ async fn post_approval(state: &AppState, id: Uuid) -> Result<bool, ApiError> {
             },
             sender: sender_of(&link.sender),
             card,
-            dashboard_url: Some(dashboard_url(state, "/approvals")),
+            dashboard_url: Some(approvals_url),
             approval_code: Some(super::approval_code(id)),
             dedupe_key: format!("approval:{id}"),
         },
@@ -155,6 +155,8 @@ async fn post_action_approval(state: &AppState, id: Uuid) -> Result<bool, ApiErr
         integration_id: link.integration_id,
     };
     let card = build::action_approval(&m, &row, label)?;
+    let approvals_url =
+        super::workspace_page_url(&mut tx, state, row.workspace_id, "approvals").await?;
     let posted = post_card(
         &mut tx,
         &caps,
@@ -169,7 +171,7 @@ async fn post_action_approval(state: &AppState, id: Uuid) -> Result<bool, ApiErr
             },
             sender: sender_of(&link.sender),
             card,
-            dashboard_url: Some(dashboard_url(state, "/approvals")),
+            dashboard_url: Some(approvals_url),
             approval_code: Some(super::approval_code(id)),
             dedupe_key: format!("action_approval:{id}"),
         },

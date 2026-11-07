@@ -80,7 +80,7 @@ impl CardRequests for CardsImpl {
                 },
                 sender: Sender::shared(),
                 card,
-                dashboard_url: Some(dashboard_url_for(&self.external_url, "/agents")),
+                dashboard_url: Some(dashboard_url_for(&self.external_url, "/")),
                 approval_code: None,
                 dedupe_key: format!(
                     "binding:{}:{}:{}:{}",
@@ -120,7 +120,7 @@ impl CardRequests for CardsImpl {
                 },
                 sender: Sender::shared(),
                 card,
-                dashboard_url: Some(dashboard_url_for(&self.external_url, "/agents")),
+                dashboard_url: Some(dashboard_url_for(&self.external_url, "/")),
                 approval_code: None,
                 dedupe_key: format!(
                     "dm_default:{}:{}:{}",
