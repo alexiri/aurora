@@ -1,0 +1,12 @@
+# cargo-nextest configuration (OPS-019). The `ci` profile is used by .github/workflows/ci.yml.
+# Locally: `cargo nextest run --workspace --all-features` (default profile).
+[profile.default]
+fail-fast = false
+
+[profile.ci]
+fail-fast = false
+retries = 0
+slow-timeout = { period = "60s", terminate-after = 5 }
+failure-output = "immediate-final"
+status-level = "retry"
+final-status-level = "fail"

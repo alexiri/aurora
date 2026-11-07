@@ -435,3 +435,10 @@ done when its tests exist, pass in CI, and the security invariants it touches
 4. e2e-gateway, e2e-hosted (podman), dashboard Playwright on compose.
 5. Architecture guards.
 6. Nightly: Kubernetes e2e on kind, live suites, performance.
+
+**Implementation (OPS-019, `.github/workflows/ci.yml`).** `rust-build` compiles once and publishes a
+`cargo nextest archive` (all workspace tests except the e2e crates, plus the fixture packages);
+`rust-test` runs it in 4 shards (`--partition count:i/4`, profile `ci` in `.config/nextest.toml`);
+doctests run in `rust-build` (nextest skips them). `rust-lint`, `rust-deny`, `web` and `guards` are
+separate jobs. Actions are SHA-pinned and on Node 24; runners are pinned to `ubuntu-24.04`.
+The e2e crates run via `scripts/e2e/*.sh`, not in this workflow. See `docs/ops/build-performance.md`.
