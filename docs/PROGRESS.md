@@ -127,7 +127,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | FIX-003 | Unused config wired (condition_body_bytes, resolve cache TTL, held_awake_ceiling), connector bootstrap tokens + allow_unsigned, OTLP export, sandbox image from config (OPS-011), k8s harness advertisement (TEST-017) | Rust | done (75f73761) | BE-070 | Sonnet (worktree) | |
 | BE-066 | Apps tools `request_app_connection` (I-29), `propose_custom_connection` (08 §Agent-proposed) | Rust | done (73dab75f) | BE-031, BE-042 | Haiku (worktree) | |
 | FE-051 | Schedules, webhooks, peers tabs; action approvals; chat attachments; app-turn Continue | Next.js | done (55480baf) | BE-062..065 | Sonnet (worktree) | web 17 files / 123 tests; typecheck, lint (0 errors), build |
-| TEST-014 | M5 hosted suites: audit 18 §Hosted agents, fill gaps | Rust/e2e | in-progress | M5 | Sonnet (worktree) | |
+| TEST-014 | M5 hosted suites: audit 18 §Hosted agents, fill gaps | Rust/e2e | done (f5b4a155; S-13 follow-up 0e1a7b95) | `docs/tests/hosted-coverage.md` no gaps; fix: boot end converts armed watches | M5 | Sonnet (worktree) | |
 | CHAN-001 | aurora-channels (content, cards, action tokens, capabilities; I-26) | Rust | done | — | Sonnet | channels tests |
 | CON-001 | Connector contract W8 + SDK + fake connector | Rust | done | CHAN-001 | Sonnet | connector tests; FUP-M6 |
 | API-006 | M6 contract (connector admin, integrations, presences, bindings, user links, DM defaults, reach; C-31..C-37) | contract | done | — | Opus | API_CONTRACTS.md M6 |
@@ -145,6 +145,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | RUN-004 | Kubernetes backend (+ runner.k8s.core_namespace config fix) | Rust | done (e65ec66d) | RUN-003 | Sonnet (Orca worker, worktree) + Opus (kube → aws-lc-rs) | config 18, k8s unit 15, k8s_mock 15 (fake API server), runner 10; clippy; cargo deny ok; helm-rendered ConfigMap loads |
 | OPS-011 | kind e2e (Helm from scratch, k8s backend, NetworkPolicy/SEC-02 probes) | Ops | done (3f97f950) | RUN-004, OPS-013 | Sonnet (worktree) | |
 | TEST-017 | VidaiMock (pinned, Aurora scenario files) behind real LiteLLM (I-30); live claude-code conformance + hosted CLI e2e | e2e | done (dab35c24) | smoke 8/8; live conformance pass; hosted claude-code e2e 2/2 | SUP-004, TEST-013 | Sonnet (worktree) | |
+| TEST-018 | Security invariant coverage SEC-01..39 (`docs/tests/security-coverage.md`) | tests | in-progress | — | Sonnet (worktree) | |
 | OPS-014 | Gateway performance budgets (18) + upgrade test (baseline 8ba42973 → HEAD, running sandboxes) | Ops | in-progress | OPS-011 | Sonnet (worktree) | |
 
 ## Open spec issues (found by PROTO-001; S-06..S-11 resolved)

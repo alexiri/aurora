@@ -44,7 +44,7 @@ Last reconciled with git history: 2026-11-07 evening (after FIX-003 merge, 75f73
 | M5/07§actions | Action approvals, agent links, peer tasks, app-turn cap, agent tools | P0 | BE-065 | FE-051 | API-005 | done | action_approvals 10, peer_tasks 12 |
 | M5/12§catalogue | Full phase-0 platform tool catalogue | P0 | BE-060..065; apps tools BE-066 (done); messaging tools BE-075 | — | — | in-progress | |
 | M5/12§claude-code | `claude-code` adapter + conformance | P0 | SUP-004 | — | SUP-001 | done; live conformance via LiteLLM + VidaiMock (I-30, TEST-017) passes | conformance; hosted claude-code e2e 2/2 | adapter tests |
-| M5/18 | Hosted M5 suites (18) | P0 | TEST-014 | — | M5 above, FIX-002 | todo | |
+| M5/18 | Hosted M5 suites (18) | P0 | TEST-014 | — | M5 above, FIX-002 | done | `docs/tests/hosted-coverage.md` |
 | M6/13§content | Neutral content, cards, action tokens, capabilities/fallbacks | P0 | CHAN-001 | — | — | done | channels tests; I-26 |
 | M6/13§contract | Connector contract v1 types, SDK, fake connector | P0 | CON-001, TEST-015 fixes | — | CHAN-001 | done | connector tests; FUP-M6 closed |
 | M6/13§plane | Registration, approval, ownership, config feed, inbox, ops, correlated ops, files | P0 | BE-070, BE-071 | — | API-006 | done (BE-070, BE-071) | connectors 12, connector_ops 11 |
@@ -54,6 +54,6 @@ Last reconciled with git history: 2026-11-07 evening (after FIX-003 merge, 75f73
 | M7/15§helm | Helm chart (jobs, policies, namespaces, RBAC, routing) | P0 | OPS-010 | — | — | done (FUP-M7) | `helm lint`, `helm template`; ConfigMap loads (RUN-004) |
 | M7/18 | kind e2e, SEC-02 on k8s, performance budgets, upgrade test | P0 | OPS-011 | — | RUN-004 | kind e2e done (OPS-011: 4/4, SEC-02/SEC-09 in-cluster); perf + upgrade (OPS-014) in progress | |
 | M7/15§docs | Operator docs (install, LLM endpoints, runners, plugins, backups) | P0 | OPS-012 (+ OPS-013, FIX-003 for the gaps it found) | — | — | done | `docs/operator/` |
-| SEC-01..39 | Security invariants, each with a proving test (`17`) | P0 | per milestone | — | — | in-progress | proven so far: SEC-01/02/09/24/25/26/34 (TEST-013; SEC-02/09 also on k8s, OPS-011), SEC-35..39 (GW-005, TEST-020), CSRF (BE-010); full map at final audit |
+| SEC-01..39 | Security invariants, each with a proving test (`17`) | P0 | per milestone + TEST-018 | — | — | in-progress (TEST-018 mapping) | proven so far: SEC-01/02/09/24/25/26/34 (TEST-013; SEC-02/09 also on k8s, OPS-011), SEC-35..39 (GW-005, TEST-020), CSRF (BE-010); full map at final audit |
 | P1/20 | Mattermost connector | P1 (later phase) | — | — | Phase 0 exit | out of scope now | |
 | P2..P4/21 | App catalogue, DB lane, Vault, SSH, previews, evals, … | later | — | — | Phase 0 exit | out of scope now | |
