@@ -355,6 +355,7 @@
       "expires_at",
       "id",
       "integration_id",
+      "platform_email_hint",
       "platform_user_ref",
       "token_hash",
       "used_at",

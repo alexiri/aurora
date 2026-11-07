@@ -942,6 +942,7 @@ presence-level ownership).
 | token_hash | bytea unique | `aui_` |
 | expires_at | timestamptz | 30 min |
 | used_at | timestamptz null; user_id uuid null | |
+| platform_email_hint | citext null | (phase 1, RFE-001) email the platform asserted for the person; only pre-fills the sign-in (`login_hint`) and the confirm page; never authorizes |
 
 ### `thread_links`
 | Column | Type | Notes |
@@ -1087,11 +1088,6 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | `config.verified_email_autolink` | bool, default `false` | org-admin opt-in: the core may create `verified_email` user links from the connector's asserted `email`/`email_verified` (`13 §5.9`). Requires the `email_verified` capability. No column: `config` is `jsonb`. | 1 (RFE-001) |
-
-#### `link_requests`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| platform_email_hint | citext null | email the platform asserted for the person; used only to pre-fill the sign-in (`login_hint`) and the confirm page; never authorizes | 1 (RFE-001) |
 
 #### `policy_generations`
 | Planned column | Type | Notes | Phase |
