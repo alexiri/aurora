@@ -147,7 +147,11 @@ integration, default off), RFE-002 (TLS-only gateway proxy listener, internal
 and external), RFE-003 (open-lane posture, CONNECT-time rule semantics,
 supervisor 3129 listener only with the browser capability), RFE-004 (OIDC-only
 sign-in), RFE-009 (direct conversations visible to their user and workspace
-owners only), RFE-016 (`DeltaBus` seam). Acceptance: connector conformance
+owners only), RFE-016 (`DeltaBus` seam).
+Developer tooling (owner, 2026-11-08): OPS-016 (faster builds/tests, lane
+clean-up), OPS-017 (kind + Helm as the only containerized dev/test setup,
+replacing podman compose), OPS-018 (live reload: Next.js HMR, Rust
+watch-rebuild-restart with socket handover, dev-only supervisor bind mount). Acceptance: connector conformance
 suite against a Mattermost container in CI; live scenario: DM, channel
 mention + thread follow-up, approval click, unlinked user link flow, bot
 removal handling.

@@ -189,6 +189,14 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | RFE-024 | Self-contained deprovision ops, ordering guarantee | 3 | spec done (SPEC-RFE-P3) | todo |
 | RFE-011b | Approval park-and-resume, Web Push | 4 | later | todo |
 
+### Phase 1 developer tooling (owner, 2026-11-08)
+
+| Task | Summary | Status |
+|---|---|---|
+| OPS-016 | Faster builds/tests (lld, one test binary per crate, nextest, sccache, dev incremental), lane clean-up scripts | briefed (first task of phase 1) |
+| OPS-017 | kind + Helm replaces podman compose for dev/test (evaluate, migrate, remove compose) | briefed |
+| OPS-018 | Live reload: Next.js HMR, Rust watch→rebuild→restart with socket handover, Tilt for kind, dev-only supervisor bind mount | briefed (after OPS-016) |
+
 ## Open spec issues (found by PROTO-001; S-06..S-11 resolved)
 
 - (resolved S-06) `file.part` ≤ 144 KiB decoded.
