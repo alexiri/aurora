@@ -147,13 +147,22 @@ pub fn app_boot(handle: &str, apps: &[&AppEntry]) -> AppBoot {
 }
 
 /// The boot env/files for `agent`: apps with an effective (selected) connection grant, in the same
-/// view as `GET /v1/agents/{agent}/effective`, with manifests from the active snapshot.
+/// view as `GET /v1/agents/{agent}/effective` and available to the org (09 §App availability), with manifests from the active snapshot.
 pub async fn app_boot_for(state: &AppState, agent: &AgentRow) -> Result<AppBoot, ApiError> {
     let (_, granted) = crate::domains::grants::effective::compute_with_apps(state, agent).await?;
     let snap = crate::domains::apps::service::snapshot(state).await?;
+    let av =
+        crate::domains::apps::service::availability_of(state, agent.org_id, agent.workspace_id)
+            .await?;
     let apps: Vec<&AppEntry> = snap
         .as_ref()
-        .map(|sn| granted.iter().filter_map(|id| sn.app(id)).collect())
+        .map(|sn| {
+            granted
+                .iter()
+                .filter(|id| av.is_available(id))
+                .filter_map(|id| sn.app(id))
+                .collect()
+        })
         .unwrap_or_default();
     Ok(app_boot(&agent.handle, &apps))
 }

@@ -340,3 +340,51 @@ async fn projection_inputs_bump_the_home_sync_generation() {
         "timezone must bump the workspace generation"
     );
 }
+
+#[tokio::test]
+async fn unavailable_apps_leave_the_render_inputs_and_bump_the_generation() {
+    let w = world().await;
+    let conn = Uuid::now_v7();
+    w.sql("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'acme_app','acme','1.0.0','c','active','x')", &[conn, w.org, w.ws]).await;
+    w.sql("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4,'full')", &[Uuid::now_v7(), w.ws, w.agent, conn]).await;
+    assert_eq!(w.render_inputs().await["apps"].as_array().unwrap().len(), 1);
+
+    // Restricted posture with an empty allow-list: the app is unavailable.
+    let g = w.generation().await;
+    w.sql(
+        "UPDATE organizations SET app_posture = 'restricted' WHERE id = $1",
+        &[w.org],
+    )
+    .await;
+    assert!(w.generation().await > g, "posture change must bump");
+    assert!(
+        w.render_inputs().await["apps"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    // Allow-listing it brings it back, and bumps.
+    let g = w.generation().await;
+    w.sql(
+        "INSERT INTO org_app_availability (org_id, app_id, workspace_id) VALUES ($1, 'acme_app', NULL)",
+        &[w.org],
+    )
+    .await;
+    assert!(w.generation().await > g, "allow-list change must bump");
+    assert_eq!(w.render_inputs().await["apps"].as_array().unwrap().len(), 1);
+
+    let g = w.generation().await;
+    w.sql(
+        "DELETE FROM org_app_availability WHERE org_id = $1",
+        &[w.org],
+    )
+    .await;
+    assert!(w.generation().await > g, "allow-list removal must bump");
+    assert!(
+        w.render_inputs().await["apps"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}

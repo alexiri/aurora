@@ -346,13 +346,14 @@ pub struct HomeInputs {
     pub handle: String,
     pub name: String,
     pub org_id: Uuid,
+    pub workspace_id: Uuid,
     pub harness: Option<String>,
 }
 
 pub async fn home_inputs(conn: &mut PgConnection, agent: Uuid) -> Result<HomeInputs, DbError> {
     Ok(sqlx::query_as(
         "SELECT w.name AS workspace_name, w.timezone, w.memory_language, a.brief, a.handle,
-                a.name, a.org_id, a.harness
+                a.name, a.org_id, a.workspace_id, a.harness
          FROM agents a JOIN workspaces w ON w.id = a.workspace_id WHERE a.id = $1",
     )
     .bind(agent)
@@ -633,6 +634,39 @@ pub async fn boot_app_inputs_hash(
     .fetch_optional(conn)
     .await?
     .flatten())
+}
+
+/// The image the agent's current boot used, recorded in `resource_profile` at boot (absent for
+/// boots recorded before it was).
+pub async fn boot_image(conn: &mut PgConnection, agent: Uuid) -> Result<Option<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT resource_profile->>'boot_image' FROM sandboxes WHERE agent_id = $1",
+    )
+    .bind(agent)
+    .fetch_optional(conn)
+    .await?
+    .flatten())
+}
+
+/// Boots started before `boot_image` was recorded: when their runner starts advertising a different
+/// image, pin them to the image it advertised until now (what they booted with), so the new image
+/// is known to differ and `restart_to_update` flags.
+pub async fn backfill_boot_image(
+    conn: &mut PgConnection,
+    runner: Uuid,
+    previous_image: &str,
+) -> Result<u64, DbError> {
+    Ok(sqlx::query(
+        "UPDATE sandboxes SET resource_profile = COALESCE(resource_profile, '{}'::jsonb)
+                                                 || jsonb_build_object('boot_image', $2::text)
+         WHERE runner_id = $1 AND state IN ('starting', 'running')
+           AND COALESCE(resource_profile, '{}'::jsonb) ? 'boot_image' IS FALSE",
+    )
+    .bind(runner)
+    .bind(previous_image)
+    .execute(conn)
+    .await?
+    .rows_affected())
 }
 
 pub async fn sandbox_view(

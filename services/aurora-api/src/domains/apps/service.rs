@@ -52,6 +52,20 @@ pub async fn avail(
     })
 }
 
+/// Availability of apps for `workspace` of `org` without a caller (server-side renders).
+pub async fn availability_of(
+    state: &AppState,
+    org: Uuid,
+    workspace: Uuid,
+) -> Result<Avail, ApiError> {
+    let (restricted, ids) = gateway::app_availability(&state.pool, org, workspace).await?;
+    Ok(Avail {
+        restricted,
+        allowed: ids.into_iter().collect(),
+        counts: HashMap::new(),
+    })
+}
+
 /// The active snapshot, or an empty catalogue.
 pub async fn snapshot(state: &AppState) -> Result<Option<Snapshot>, ApiError> {
     registry::active_typed(state).await

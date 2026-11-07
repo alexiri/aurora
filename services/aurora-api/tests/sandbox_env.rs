@@ -337,3 +337,90 @@ async fn granted_app_env_and_stubs_reach_the_boot_and_restart_to_update_follows_
     w.grant(agent, cb).await;
     assert_eq!(w.sandbox(agent).await["restart_to_update"], true);
 }
+
+impl W {
+    /// Re-register the runner (same token) advertising `image`.
+    async fn reregister(&mut self, image: &str) {
+        let caps = json!({
+            "backend": "fake", "home_durability": "resident", "image": image,
+            "resources": {"cpu": {"min": 250, "max": 4000}, "memory_mib": {"min": 256, "max": 8192},
+                          "pids": {"min": 64, "max": 4096}, "home_gib": {"min": 1, "max": 100}},
+            "max_sandboxes": 4, "harnesses": ["fake"], "max_attachment_bytes": 1048576
+        });
+        let (s, v) = self
+            .runner(
+                None,
+                "/v1/runner/register",
+                json!({"version": "0.1", "backend": "fake", "capabilities": caps, "advertised_host": "runner-a"}),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        self.rep = v["replica_id"].as_str().unwrap().parse().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_new_runner_image_flags_restart_to_update() {
+    let mut w = world().await;
+    w.reregister("sandbox:A").await;
+    let agent = w.agent("imgbot").await;
+    let (start, _) = w.start(agent).await;
+    assert_eq!(start["spec"]["image"], "sandbox:A");
+    assert_eq!(w.sandbox(agent).await["restart_to_update"], false);
+    // same image again: still nothing to update
+    w.reregister("sandbox:A").await;
+    assert_eq!(w.sandbox(agent).await["restart_to_update"], false);
+    // image-only upgrade
+    w.reregister("sandbox:B").await;
+    let v = w.sandbox(agent).await;
+    assert_eq!(v["image"], "sandbox:B", "{v}");
+    assert_eq!(v["restart_to_update"], true);
+}
+
+#[tokio::test]
+async fn an_unavailable_app_contributes_no_env_or_stubs_and_flags_restart() {
+    let w = world().await;
+    let agent = w.agent("avail").await;
+    let ca = w.conn("app_a").await;
+    w.grant(agent, ca).await;
+    let (start, _) = w.start(agent).await;
+    assert_eq!(env_of(&start, "APP_A_BASE"), Some("https://a.example/api"));
+    assert_eq!(w.sandbox(agent).await["restart_to_update"], false);
+    // The org restricts to app_b only: app_a's env/stubs drop out of what a boot would get.
+    sqlx::query("UPDATE organizations SET app_posture = 'restricted' WHERE id = $1")
+        .bind(w.org)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO org_app_availability (org_id, app_id, workspace_id) VALUES ($1, 'app_b', NULL)")
+        .bind(w.org)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(w.sandbox(agent).await["restart_to_update"], true);
+    // a fresh boot of another agent granted app_a gets nothing from it
+    let other = w.agent("avail2").await;
+    w.grant(other, ca).await;
+    let (start2, doc2) = w.start(other).await;
+    assert_eq!(env_of(&start2, "APP_A_BASE"), None);
+    assert!(doc2["files"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_boot_recorded_without_an_image_flags_only_when_the_image_is_known_to_differ() {
+    let mut w = world().await;
+    w.reregister("sandbox:A").await;
+    let agent = w.agent("legacy").await;
+    w.start(agent).await;
+    // A boot recorded before the image was stored.
+    sqlx::query("UPDATE sandboxes SET resource_profile = resource_profile - 'boot_image' WHERE agent_id = $1")
+        .bind(agent)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(w.sandbox(agent).await["restart_to_update"], false);
+    w.reregister("sandbox:A").await;
+    assert_eq!(w.sandbox(agent).await["restart_to_update"], false);
+    w.reregister("sandbox:B").await;
+    assert_eq!(w.sandbox(agent).await["restart_to_update"], true);
+}

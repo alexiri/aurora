@@ -212,7 +212,11 @@ async fn mint_start(
         .await?
         .ok_or_else(|| ApiError::internal("sandbox agent vanished"))?;
     let app_boot = boot::app_boot_for(s, &agent_row).await?;
+    let image = caps
+        .and_then(|c| c.image.clone())
+        .unwrap_or_else(boot::default_image);
     let profile = serde_json::json!({
+        "boot_image": image,
         "cpu_millis": resources.cpu_millis, "memory_mib": resources.memory_mib,
         "pids": resources.pids, "home_gib": home_gib,
         "app_inputs_hash": app_boot.hash,
@@ -254,9 +258,6 @@ async fn mint_start(
         ("aurora.sandbox".to_owned(), c.sandbox_id.to_string()),
         ("aurora.boot".to_owned(), boot_id.to_string()),
     ]);
-    let image = caps
-        .and_then(|c| c.image.clone())
-        .unwrap_or_else(boot::default_image);
     let spec = boot::spec(
         image,
         app_boot.env,
