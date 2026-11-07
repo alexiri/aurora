@@ -67,8 +67,7 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
 
   # Compiles every workspace test binary once (plus the fixture packages connect.rs needs) and ships
-  # a nextest archive. e2e crates are excluded: they need fixed loopback IPs/ports, podman and
-  # --test-threads=1 (scripts/e2e/*.sh), so they were never runnable in plain `cargo test`.
+  # a nextest archive. e2e crates are excluded (fixed ports, podman, serial): see e2e-gateway/e2e-hosted.
   rust-build:
     runs-on: ubuntu-24.04
     services:
@@ -132,6 +131,68 @@ jobs:
         run: >-
           cargo nextest run --archive-file nextest-archive.tar.zst --workspace-remap .
           --profile ci --partition count:${{ matrix.shard }}/${{ env.NEXTEST_SHARDS }}
+
+  # Serial black-box suite (scripts/e2e/gateway.sh: builds api/gateway/hookhost, then
+  # `cargo test -p aurora-e2e-gateway -- --test-threads=1`); binds 127.0.0.31-34, uses the service DB.
+  e2e-gateway:
+    needs: rust-build
+    runs-on: ubuntu-24.04
+    services:
+      postgres: *pg
+    steps:
+      - name: Free runner disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: rust-test, save-if: "false" }
+      - *sqlx-cache
+      - *sqlx-install
+      - run: sqlx migrate run --source crates/aurora-db/migrations
+      - name: Fixture packages (hook fixtures used by the suite)
+        run: bash scripts/fixtures/build.sh
+      - run: bash scripts/e2e/gateway.sh
+
+  # Hosted suite on the runner's rootless podman (scripts/e2e/hosted.sh creates its own Postgres
+  # container and networks, builds the sandbox image unless SKIP_IMAGE_BUILD=1, and runs the tests
+  # inside `podman unshare --rootless-netns`). If the runner forbids unprivileged user namespaces the
+  # preflight step fails with `podman info` output; then run this suite locally/nightly (docs/18).
+  e2e-hosted:
+    needs: rust-build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Free runner disk space (script needs 15 GB free)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: rust-test, save-if: "false" }
+      - name: Podman preflight (rootless, userns, netavark)
+        run: |
+          podman --version
+          podman info --format 'rootless={{.Host.Security.Rootless}} network={{.Host.NetworkBackend}} sock={{.Host.RemoteSocket.Path}}'
+          podman unshare --rootless-netns true
+      - name: Restore sandbox image
+        id: sbx
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: sandbox-image.tar
+          key: sandbox-image-${{ hashFiles('images/**', 'Cargo.lock', 'services/aurora-supervisor/**', 'crates/*/src/**') }}
+      - name: Load cached sandbox image
+        if: steps.sbx.outputs.cache-hit == 'true'
+        run: podman load -i sandbox-image.tar
+      - name: Build sandbox image (cache miss)
+        if: steps.sbx.outputs.cache-hit != 'true'
+        run: |
+          bash scripts/images/build-sandbox-min.sh aurora-sandbox:0.1.0
+          podman save -o sandbox-image.tar localhost/aurora-sandbox:0.1.0
+      - name: e2e-hosted
+        env:
+          AURORA_TEST_PODMAN: "1"
+          SKIP_IMAGE_BUILD: "1"
+        run: bash scripts/e2e/hosted.sh
 
   web:
     runs-on: ubuntu-24.04

@@ -21,7 +21,7 @@ Changes and why:
 - lld via `RUSTFLAGS=-C link-arg=-fuse-ld=lld`, `CARGO_PROFILE_DEV_DEBUG=0` (disk). Align with OPS-016's `.cargo/config.toml` once merged.
 - `rust-cache` is saved by `rust-build` only (key `rust-test`), `rust-lint` has its own key.
 - **Coverage fix:** `connect.rs` (12 tests) failed in CI because `plugins/fixtures/dist` is gitignored and never built; `rust-build` now runs `scripts/fixtures/build.sh` and ships the packages to the shards.
-- `aurora-e2e-gateway`/`aurora-e2e-hosted` are excluded: they are not env-gated, need fixed IPs/ports, podman and serial runs (`scripts/e2e/*.sh`); they fail under plain `cargo test`.
+- `aurora-e2e-gateway`/`aurora-e2e-hosted` are excluded from the archive (not env-gated, fixed IPs/ports, podman, serial) and run as separate jobs `e2e-gateway` / `e2e-hosted` via their scripts; the hosted sandbox image is cached as a `podman save` tarball in `actions/cache`.
 - `schema_matches_spec` now runs in the shards instead of the `guards` job (same test, same migrated DB).
 
 ### Timings
@@ -31,4 +31,7 @@ Changes and why:
 | Before (run 42367335980) | 13m47s, failed (linker SIGBUS) | n/a |
 | After | TO BE RECORDED after the first push | TO BE RECORDED |
 
-Not measured locally: nextest could not be installed in the worker sandbox.
+| e2e-gateway | TO BE RECORDED after first push | |
+| e2e-hosted (image cache miss / hit) | TO BE RECORDED | |
+
+(Those two rows are not before/after pairs: the jobs are new.) Not measured locally: nextest could not be installed in the worker sandbox.
