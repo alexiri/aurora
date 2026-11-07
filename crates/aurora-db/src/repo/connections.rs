@@ -18,6 +18,7 @@ pub struct ConnectionRow {
     pub status: String,
     pub status_reason: Option<String>,
     pub scopes: Vec<String>,
+    pub requested_scopes: Vec<String>,
     pub metadata: serde_json::Value,
     pub tenant_host: Option<String>,
     pub oauth_client_id: Option<Uuid>,
@@ -30,7 +31,7 @@ pub struct ConnectionRow {
 }
 
 const SELECT: &str = "SELECT c.id, c.org_id, c.workspace_id, c.app_id, c.package_id, c.app_version, \
-    c.label, c.status, c.status_reason, c.scopes, c.metadata, c.tenant_host, c.oauth_client_id, \
+    c.label, c.status, c.status_reason, c.scopes, c.requested_scopes, c.metadata, c.tenant_host, c.oauth_client_id, \
     c.credentials_expires_at, c.connected_by, u.display_name AS connected_by_name, c.last_used_at, \
     c.created_at, c.updated_at FROM app_connections c LEFT JOIN users u ON u.id = c.connected_by";
 
@@ -181,6 +182,7 @@ pub struct NewConnection<'a> {
     pub credentials_ref: &'a str,
     pub credentials_expires_at: Option<DateTime<Utc>>,
     pub scopes: &'a [String],
+    pub requested_scopes: &'a [String],
     pub metadata: &'a serde_json::Value,
     pub tenant_host: Option<&'a str>,
     pub oauth_client_id: Option<Uuid>,
@@ -191,8 +193,8 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Re
     sqlx::query(
         "INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, \
          label, status, credentials_ref, credentials_expires_at, scopes, metadata, tenant_host, \
-         oauth_client_id, connected_by) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,$13,$14)",
+         oauth_client_id, connected_by, requested_scopes) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,$13,$14,$15)",
     )
     .bind(n.id)
     .bind(n.org_id)
@@ -208,6 +210,7 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Re
     .bind(n.tenant_host)
     .bind(n.oauth_client_id)
     .bind(n.connected_by)
+    .bind(n.requested_scopes)
     .execute(exec)
     .await?;
     Ok(())
@@ -236,7 +239,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
     Ok(sqlx::query(
         "UPDATE app_connections SET credentials_ref = $3, credentials_version = credentials_version + 1, \
          credentials_expires_at = $4, scopes = $5, metadata = $6, tenant_host = $7, oauth_client_id = $8, \
-         package_id = $9, app_version = $10, connected_by = $11, \
+         package_id = $9, app_version = $10, connected_by = $11, requested_scopes = $12, \
          status_reason = CASE WHEN status IN ('reauth_required','orphaned') THEN NULL ELSE status_reason END, \
          status = CASE WHEN status IN ('reauth_required','orphaned') THEN 'active' ELSE status END, \
          reauth_required_at = NULL, updated_at = now() \
@@ -253,6 +256,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
     .bind(n.package_id)
     .bind(n.app_version)
     .bind(n.connected_by)
+    .bind(n.requested_scopes)
     .execute(exec)
     .await?
     .rows_affected()

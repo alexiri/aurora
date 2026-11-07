@@ -17,8 +17,8 @@ use regex::Regex;
 
 use crate::Violation;
 use crate::manifest::{
-    App, Connect, FormField, Hook, HostRule, Inject, Manifest, Probe, Source, TokenKind,
-    UrlOrTemplate,
+    App, Connect, FieldType, FormField, Hook, HostRule, Inject, Manifest, Probe, Source, Store,
+    TokenKind, UrlOrTemplate,
 };
 use crate::template::{CONTEXT_VARS, Declared, Place, Template};
 
@@ -164,43 +164,11 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
     }
     let clients: BTreeSet<&str> = m.oauth_clients.iter().map(|c| c.id.as_str()).collect();
     for (i, c) in m.oauth_clients.iter().enumerate() {
-        let base = format!("/oauth_clients/{i}/token_url");
-        match &c.token_url {
-            UrlOrTemplate::Url(u) => {
-                if u.contains('{') || u.contains('}') {
-                    out.push(Violation::new(
-                        "token_url_template_no_zone",
-                        base,
-                        "templated token_url needs the {template, zone} form",
-                    ));
-                } else if !u.starts_with("https://") {
-                    out.push(Violation::new(
-                        "token_url_not_https",
-                        base,
-                        "token_url must be https",
-                    ));
-                }
-            }
-            UrlOrTemplate::Templated(z) => {
-                if !z.template.as_str().starts_with("https://") {
-                    out.push(Violation::new(
-                        "token_url_not_https",
-                        &base,
-                        "token_url must be https",
-                    ));
-                }
-                if !zone_ok(&z.zone) {
-                    out.push(Violation::new(
-                        "bad_zone",
-                        format!("{base}/zone"),
-                        "invalid zone",
-                    ));
-                }
-                let d = Declared::default();
-                for iss in z.template.check(Place::TokenUrl, &d) {
-                    out.push(Violation::new(iss.code, &base, iss.message));
-                }
-            }
+        for (key, url) in [
+            ("authorize_url", &c.authorize_url),
+            ("token_url", &c.token_url),
+        ] {
+            check_oauth_url(&mut out, &format!("/oauth_clients/{i}/{key}"), key, url);
         }
     }
 
@@ -232,6 +200,58 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
     out
 }
 
+fn check_oauth_url(out: &mut Vec<Violation>, base: &str, key: &str, url: &UrlOrTemplate) {
+    match url {
+        UrlOrTemplate::Url(u) => {
+            if u.contains('{') || u.contains('}') {
+                out.push(Violation::new(
+                    if key == "token_url" {
+                        "token_url_template_no_zone"
+                    } else {
+                        "authorize_url_template_no_zone"
+                    },
+                    base,
+                    format!("templated {key} needs the {{template, zone}} form"),
+                ));
+            } else if !u.starts_with("https://") {
+                out.push(Violation::new(
+                    if key == "token_url" {
+                        "token_url_not_https"
+                    } else {
+                        "authorize_url_not_https"
+                    },
+                    base,
+                    format!("{key} must be https"),
+                ));
+            }
+        }
+        UrlOrTemplate::Templated(z) => {
+            if !z.template.as_str().starts_with("https://") {
+                out.push(Violation::new(
+                    if key == "token_url" {
+                        "token_url_not_https"
+                    } else {
+                        "authorize_url_not_https"
+                    },
+                    base,
+                    format!("{key} must be https"),
+                ));
+            }
+            if !zone_ok(&z.zone) {
+                out.push(Violation::new(
+                    "bad_zone",
+                    format!("{base}/zone"),
+                    "invalid zone",
+                ));
+            }
+            let d = Declared::default();
+            for iss in z.template.check(Place::TokenUrl, &d) {
+                out.push(Violation::new(iss.code, base, iss.message));
+            }
+        }
+    }
+}
+
 fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hook>) {
     let app = cx.app;
     // hosts
@@ -249,6 +269,15 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                         &format!("{p}/client"),
                         format!("no oauth client `{}`", o.client),
                     );
+                }
+                for (j, f) in o.fields.iter().enumerate() {
+                    if f.store == Store::Credentials || f.kind == FieldType::JsonFile {
+                        cx.v(
+                            "oauth_field_store",
+                            &format!("{p}/fields/{j}"),
+                            "oauth2 fields may only use `store: metadata | tenant_host` (credentials come from the token response)",
+                        );
+                    }
                 }
                 if let Some(pr) = &o.probe {
                     probe(cx, pr, &format!("{p}/probe"), &[], false);

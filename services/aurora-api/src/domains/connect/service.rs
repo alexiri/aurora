@@ -80,7 +80,7 @@ pub struct Started {
 }
 
 pub enum Done {
-    Connected(Uuid),
+    Connected(Uuid, Vec<String>),
     Redirect { url: String, cookie: String },
 }
 
@@ -227,8 +227,11 @@ fn redirect_allowed(snap: &Snapshot, app: &AppEntry, pkg: &PackageEntry, url: &s
             .oauth_clients
             .iter()
             .filter(|c| c.package_id == pkg.package_id)
-            .any(|c| {
-                reqwest::Url::parse(&c.authorize_url).is_ok_and(|a| a.host_str() == u.host_str())
+            .any(|c| match &c.authorize_url {
+                UrlOrTemplate::Url(a) => {
+                    reqwest::Url::parse(a).is_ok_and(|a| a.host_str() == u.host_str())
+                }
+                UrlOrTemplate::Templated(z) => probe::in_zone(url, &z.zone),
             })
 }
 
@@ -299,6 +302,8 @@ impl Ctx<'_> {
             reconnect: self.reconnect.as_ref().map(|r| r.id),
             continuation: None,
             scopes: Vec::new(),
+            tenant_host: None,
+            metadata: Map::new(),
             exp: Flow::expiry(),
         }
     }
@@ -402,6 +407,7 @@ impl Ctx<'_> {
             credentials_ref: &col,
             credentials_expires_at: expires,
             scopes,
+            requested_scopes: &g.requested,
             metadata,
             tenant_host: g.tenant_host.as_deref(),
             oauth_client_id: g.client,
@@ -748,8 +754,39 @@ async fn start_oauth(
         .and_then(Value::as_str)
         .ok_or_else(|| client_required("The OAuth client has no client_id."))?
         .to_owned();
+    let parsed = fields::parse(&o.fields, &req.fields)?;
+    let tenant = parsed
+        .tenant_host
+        .clone()
+        .or_else(|| ctx.reconnect.as_ref().and_then(|r| r.tenant_host.clone()));
+    // Validate the tenant host (zone, no IP/userinfo/port) before any outbound request or
+    // redirect (S-14).
+    if let Some(h) = &tenant
+        && !probe::tenant_ok(ctx.snap, ctx.app, h)
+    {
+        return Err(invalid(
+            "/fields",
+            "tenant host is not allowed for this app",
+        ));
+    }
+    let authorize = oauth_url(&ce.authorize_url, tenant.as_deref()).ok_or_else(|| {
+        invalid(
+            "/fields",
+            "a tenant host is required for this connect method",
+        )
+    })?;
+    if matches!(ce.token_url, UrlOrTemplate::Templated(_))
+        && oauth_url(&ce.token_url, tenant.as_deref()).is_none()
+    {
+        return Err(invalid(
+            "/fields",
+            "a tenant host is required for this connect method",
+        ));
+    }
     let mut flow = ctx.new_flow(&o.id, Some(client.id), level.map(|l| l.id.clone()));
     flow.scopes = o.default_scopes.clone();
+    flow.tenant_host = tenant;
+    flow.metadata = parsed.metadata;
     let mut params: BTreeMap<String, String> = o.authorize_params.clone();
     if let Some(l) = level {
         params.extend(l.authorize_params.clone());
@@ -770,8 +807,8 @@ async fn start_oauth(
     if !o.default_scopes.is_empty() {
         params.insert("scope".into(), o.default_scopes.join(" "));
     }
-    let mut url = reqwest::Url::parse(&ce.authorize_url)
-        .map_err(|_| ApiError::internal("Bad authorize URL."))?;
+    let mut url =
+        reqwest::Url::parse(&authorize).map_err(|_| ApiError::internal("Bad authorize URL."))?;
     url.query_pairs_mut().extend_pairs(params);
     Ok(Started {
         response: ConnectResponse::Redirect {
@@ -898,8 +935,20 @@ async fn run_callback(
         }
         Connect::Fields(_) => return Err(ConnectErr::Exchange),
     };
-    let (row, _missing) = ctx.finalize(caller, method, kind, g).await?;
-    Ok(Done::Connected(row.id))
+    let (row, missing) = ctx.finalize(caller, method, kind, g).await?;
+    Ok(Done::Connected(row.id, missing))
+}
+
+/// Resolve an OAuth endpoint: fixed URLs as-is; templates render with the tenant host and must
+/// stay `https` inside their zone (SEC-17 / I-20).
+fn oauth_url(u: &UrlOrTemplate, tenant: Option<&str>) -> Option<String> {
+    match u {
+        UrlOrTemplate::Url(u) => Some(u.clone()),
+        UrlOrTemplate::Templated(z) => {
+            let url = probe::render_url(&z.template, tenant)?;
+            probe::in_zone(&url, &z.zone).then_some(url)
+        }
+    }
 }
 
 async fn token_exchange(
@@ -911,20 +960,17 @@ async fn token_exchange(
     flow: &Flow,
 ) -> Result<Gathered, ConnectErr> {
     let env = &ctx.state.connect;
-    let url = match &ce.token_url {
-        UrlOrTemplate::Url(u) => u.clone(),
-        UrlOrTemplate::Templated(z) => {
-            let tenant = ctx
-                .reconnect
-                .as_ref()
-                .and_then(|r| r.tenant_host.as_deref());
-            let u = probe::render_url(&z.template, tenant).ok_or(ConnectErr::Exchange)?;
-            if !probe::in_zone(&u, &z.zone) {
-                return Err(ConnectErr::Exchange);
-            }
-            u
-        }
-    };
+    let tenant = flow.tenant_host.as_deref().or_else(|| {
+        ctx.reconnect
+            .as_ref()
+            .and_then(|r| r.tenant_host.as_deref())
+    });
+    if let Some(h) = tenant
+        && !probe::tenant_ok(ctx.snap, ctx.app, h)
+    {
+        return Err(ConnectErr::Exchange);
+    }
+    let url = oauth_url(&ce.token_url, tenant).ok_or(ConnectErr::Exchange)?;
     let url = env.prepare(&url).map_err(|_| ConnectErr::Exchange)?;
     let get = |k: &str| {
         cf.1.get(k)
@@ -1021,6 +1067,7 @@ async fn token_exchange(
             },
         }
     }
-    g.tenant_host = ctx.reconnect.as_ref().and_then(|r| r.tenant_host.clone());
+    g.tenant_host = tenant.map(str::to_owned);
+    g.metadata = flow.metadata.clone();
     Ok(g)
 }

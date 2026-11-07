@@ -25,7 +25,7 @@ oauth_clients:
       - { name: client_secret, label: Client secret, secret: true }
     setup_note: "Create an OAuth client of type Web application."
   - id: zen
-    authorize_url: https://example.zendesk.com/oauth/authorizations/new
+    authorize_url: { template: "https://{connection.tenant_host}/oauth/authorizations/new", zone: "*.zendesk.com" }
     token_url: { template: "https://{connection.tenant_host}/oauth/token", zone: "*.zendesk.com" }
 apps:
   - about:
@@ -52,6 +52,8 @@ apps:
         authorize_params: { access_type: offline }
         access_levels:
           - { id: user, label: My account }
+        fields:
+          - { name: sub, label: Sub, store: tenant_host }
         callback: query
         token_response:
           access_token: /access_token

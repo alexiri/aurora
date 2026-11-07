@@ -34,6 +34,8 @@ pub struct Connection {
     pub status: String,
     pub status_reason: Option<String>,
     pub scopes: Vec<String>,
+    /// Scopes requested at authorize time that the provider did not grant (C-42).
+    pub missing_scopes: Vec<String>,
     pub metadata: BTreeMap<String, String>,
     pub tenant_host: Option<String>,
     pub oauth_client_id: Option<Uuid>,
@@ -60,6 +62,12 @@ impl Connection {
             (Some(s), "active" | "reauth_required") => injecting(s, &r.app_id),
             _ => Vec::new(),
         };
+        let missing_scopes = r
+            .requested_scopes
+            .iter()
+            .filter(|s| !r.scopes.contains(s))
+            .cloned()
+            .collect();
         Self {
             id: r.id,
             org_id: r.org_id,
@@ -77,6 +85,7 @@ impl Connection {
             status: r.status,
             status_reason: r.status_reason,
             scopes: r.scopes,
+            missing_scopes,
             metadata,
             tenant_host: r.tenant_host,
             oauth_client_id: r.oauth_client_id,

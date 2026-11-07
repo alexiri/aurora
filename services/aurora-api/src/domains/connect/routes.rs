@@ -69,10 +69,10 @@ async fn callback(
         return page::bridge();
     }
     match service::callback(&state, &caller, &q, cookie).await {
-        Ok(service::Done::Connected(id)) => {
+        Ok(service::Done::Connected(id, missing)) => {
             let origin =
                 crate::http::csrf::origin_of(&state.config.external_url).unwrap_or_default();
-            page::connected(id, &origin)
+            page::connected(id, &missing, &origin)
         }
         Ok(service::Done::Redirect { url, cookie }) => {
             let mut r = StatusCode::FOUND.into_response();

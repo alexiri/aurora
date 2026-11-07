@@ -1,9 +1,12 @@
 //! Serde models: the organization governance document (08 §11.2) and stored key origin (§11.3).
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use utoipa::ToSchema;
 
 /// LLM posture, ordered by strictness (`open` < `sanctioned_only`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize, ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmPosture {
     #[default]
@@ -12,7 +15,9 @@ pub enum LlmPosture {
 }
 
 /// Egress posture, ordered by strictness (`open` < `credentialed_only`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize, ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EgressPosture {
     #[default]
@@ -45,14 +50,14 @@ fn yes() -> bool {
 }
 
 /// Normalized organization governance document (`organizations.governance`).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct OrgGovernance {
     pub llm: OrgLlm,
     pub egress: OrgEgress,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct OrgLlm {
     pub posture: LlmPosture,
@@ -60,7 +65,7 @@ pub struct OrgLlm {
     pub endpoints: BTreeMap<String, OrgEndpoint>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct OrgEndpoint {
     pub allowed: bool,
@@ -82,7 +87,7 @@ impl Default for OrgEndpoint {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct OrgOrigin {
     pub allowed_organization_ids: Vec<String>,
@@ -98,7 +103,7 @@ impl OrgOrigin {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct OrgEgress {
     pub posture: EgressPosture,
@@ -106,7 +111,8 @@ pub struct OrgEgress {
 }
 
 /// An egress allow-list entry in policy host/path pattern syntax.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[schema(as = OrgAllowEntry)]
 pub struct AllowEntry {
     pub host: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

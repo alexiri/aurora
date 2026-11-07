@@ -16698,6 +16698,7 @@
           "label",
           "status",
           "scopes",
+          "missing_scopes",
           "metadata",
           "created_at",
           "updated_at",
@@ -16759,6 +16760,13 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "missing_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Scopes requested at authorize time that the provider did not grant (C-42)."
           },
           "oauth_client_id": {
             "type": [
@@ -18150,6 +18158,14 @@
           }
         }
       },
+      "EgressPosture": {
+        "type": "string",
+        "description": "Egress posture, ordered by strictness (`open` < `credentialed_only`).",
+        "enum": [
+          "open",
+          "credentialed_only"
+        ]
+      },
       "ErrorBody": {
         "type": "object",
         "required": [
@@ -18337,7 +18353,7 @@
         ],
         "properties": {
           "document": {
-            "type": "object",
+            "$ref": "#/components/schemas/OrgGovernance",
             "description": "The `08 §11.2` organization governance document (normalized)."
           },
           "revision": {
@@ -19125,6 +19141,14 @@
           }
         }
       },
+      "LlmPosture": {
+        "type": "string",
+        "description": "LLM posture, ordered by strictness (`open` < `sanctioned_only`).",
+        "enum": [
+          "open",
+          "sanctioned_only"
+        ]
+      },
       "LlmProviderInfo": {
         "type": "object",
         "required": [
@@ -19727,6 +19751,159 @@
           },
           "slug": {
             "type": "string"
+          }
+        }
+      },
+      "OrgAllowEntry": {
+        "type": "object",
+        "description": "An egress allow-list entry in policy host/path pattern syntax.",
+        "required": [
+          "host"
+        ],
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "OrgEgress": {
+        "type": "object",
+        "properties": {
+          "allowlist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrgAllowEntry"
+            },
+            "default": []
+          },
+          "posture": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EgressPosture"
+              }
+            ],
+            "default": "open"
+          }
+        }
+      },
+      "OrgEndpoint": {
+        "type": "object",
+        "properties": {
+          "allowed": {
+            "type": "boolean",
+            "default": true
+          },
+          "allowed_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Empty = the instance list for the endpoint (empty there = any).",
+            "default": []
+          },
+          "key_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Empty = the instance scopes.",
+            "default": []
+          },
+          "origin": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OrgOrigin"
+              }
+            ],
+            "default": {
+              "allowed_organization_ids": [],
+              "allowed_team_ids": [],
+              "allowed_workspace_ids": []
+            }
+          }
+        }
+      },
+      "OrgGovernance": {
+        "type": "object",
+        "description": "Normalized organization governance document (`organizations.governance`).",
+        "properties": {
+          "egress": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OrgEgress"
+              }
+            ],
+            "default": {
+              "allowlist": [],
+              "posture": "open"
+            }
+          },
+          "llm": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OrgLlm"
+              }
+            ],
+            "default": {
+              "endpoints": {},
+              "posture": "open"
+            }
+          }
+        }
+      },
+      "OrgLlm": {
+        "type": "object",
+        "properties": {
+          "endpoints": {
+            "type": "object",
+            "description": "Endpoints absent here are not permitted.",
+            "default": {},
+            "additionalProperties": {
+              "$ref": "#/components/schemas/OrgEndpoint"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "posture": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LlmPosture"
+              }
+            ],
+            "default": "open"
+          }
+        }
+      },
+      "OrgOrigin": {
+        "type": "object",
+        "properties": {
+          "allowed_organization_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "allowed_team_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "allowed_workspace_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
           }
         }
       },
@@ -20588,6 +20765,7 @@
                 "label",
                 "status",
                 "scopes",
+                "missing_scopes",
                 "metadata",
                 "created_at",
                 "updated_at",
@@ -20649,6 +20827,13 @@
                   "propertyNames": {
                     "type": "string"
                   }
+                },
+                "missing_scopes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Scopes requested at authorize time that the provider did not grant (C-42)."
                 },
                 "oauth_client_id": {
                   "type": [
@@ -23656,7 +23841,7 @@
         ],
         "properties": {
           "document": {
-            "type": "object"
+            "$ref": "#/components/schemas/OrgGovernance"
           },
           "revision": {
             "type": "integer",

@@ -78,6 +78,7 @@
       "org_id",
       "package_id",
       "reauth_required_at",
+      "requested_scopes",
       "scopes",
       "source_connection_id",
       "status",

@@ -79,7 +79,7 @@ function ConnectForm({ app, workspaceId }: { app: AppDetail; workspaceId: string
         return;
       }
       if (window.opener) {
-        (window.opener as Window).postMessage({ type: CONNECT_MESSAGE, connection_id: res.connection.id }, window.location.origin);
+        (window.opener as Window).postMessage({ type: CONNECT_MESSAGE, connection_id: res.connection.id, missing_scopes: res.missing_scopes }, window.location.origin);
         if (res.missing_scopes.length === 0) {
           window.close();
           return;

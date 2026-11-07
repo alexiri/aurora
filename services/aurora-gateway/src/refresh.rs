@@ -489,6 +489,15 @@ fn check_templated_token_url(url: &str, zone: &str) -> Result<(), RefreshError> 
         return Err(RefreshError::Unavailable);
     }
     let host = uri.host().ok_or(RefreshError::Unavailable)?;
+    // No userinfo tricks, no IP literals and no non-default port, whatever the zone says (SEC-17).
+    let authority = uri.authority().map_or("", http::uri::Authority::as_str);
+    if authority.contains('@')
+        || host.starts_with('[')
+        || host.parse::<std::net::IpAddr>().is_ok()
+        || uri.port_u16().is_some_and(|p| p != 443)
+    {
+        return Err(RefreshError::Unavailable);
+    }
     let pattern = aurora_policy::HostPattern::parse(zone).map_err(|_| RefreshError::Unavailable)?;
     if pattern.matches(&host.to_ascii_lowercase(), uri.port_u16().unwrap_or(443)) {
         Ok(())
@@ -526,5 +535,17 @@ mod token_url_tests {
         assert!(
             check_templated_token_url("https://example.com/oauth/token", "*.example.com").is_err()
         );
+        for bad in [
+            "https://10.0.0.1/oauth/token",
+            "https://[::1]/oauth/token",
+            "https://evil.test@acme.example.com/oauth/token",
+            "https://acme.example.com@evil.test/oauth/token",
+            "https://acme.example.com:8443/oauth/token",
+        ] {
+            assert!(
+                check_templated_token_url(bad, "*.example.com").is_err(),
+                "{bad}"
+            );
+        }
     }
 }

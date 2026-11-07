@@ -101,8 +101,13 @@ fn zones(m: &Manifest, out: &mut Vec<Violation>) {
         }
     };
     for (i, c) in m.oauth_clients.iter().enumerate() {
-        if let UrlOrTemplate::Templated(z) = &c.token_url {
-            chk(&z.zone, format!("/oauth_clients/{i}/token_url/zone"));
+        for (key, u) in [
+            ("authorize_url", &c.authorize_url),
+            ("token_url", &c.token_url),
+        ] {
+            if let UrlOrTemplate::Templated(z) = u {
+                chk(&z.zone, format!("/oauth_clients/{i}/{key}/zone"));
+            }
         }
     }
     for (i, a) in m.apps.iter().enumerate() {

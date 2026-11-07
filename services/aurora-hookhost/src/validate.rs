@@ -88,8 +88,14 @@ impl Ctx<'_> {
             .oauth_clients
             .iter()
             .filter(|c| c.package_id == self.package.package_id)
-            .filter_map(|c| Url::parse(&c.authorize_url).ok())
-            .any(|u| u.host_str().is_some_and(|h| h.eq_ignore_ascii_case(&host)));
+            .any(|c| match &c.authorize_url {
+                aurora_registry::manifest::UrlOrTemplate::Url(a) => Url::parse(a)
+                    .ok()
+                    .is_some_and(|u| u.host_str().is_some_and(|h| h.eq_ignore_ascii_case(&host))),
+                aurora_registry::manifest::UrlOrTemplate::Templated(z) => {
+                    HostPattern::lenient(&z.zone).matches(&host, port)
+                }
+            });
         if declared || oauth {
             Ok(())
         } else {

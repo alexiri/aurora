@@ -158,7 +158,7 @@ fn method(c: &Connect) -> ConnectMethod {
                 .collect(),
             client_key: Some(o.client.clone()),
             callback: Some(s(&o.callback)),
-            ..empty(&o.id, "oauth2", Vec::new())
+            ..empty(&o.id, "oauth2", o.fields.iter().map(field).collect())
         },
     }
 }

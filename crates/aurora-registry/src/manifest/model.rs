@@ -100,7 +100,7 @@ pub struct ClientField {
 #[serde(deny_unknown_fields)]
 pub struct OauthClient {
     pub id: String,
-    pub authorize_url: String,
+    pub authorize_url: UrlOrTemplate,
     pub token_url: UrlOrTemplate,
     #[serde(default)]
     pub pkce: bool,
@@ -241,6 +241,9 @@ pub struct Oauth2Connect {
     pub callback: Callback,
     #[serde(default)]
     pub token_response: BTreeMap<String, String>,
+    /// Connect-form fields (S-14); only `store: metadata | tenant_host` is allowed.
+    #[serde(default)]
+    pub fields: Vec<FormField>,
     pub probe: Option<Probe>,
 }
 

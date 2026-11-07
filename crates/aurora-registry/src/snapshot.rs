@@ -90,7 +90,7 @@ pub struct PackageEntry {
 pub struct OauthClientEntry {
     pub package_id: String,
     pub client_key: String,
-    pub authorize_url: String,
+    pub authorize_url: UrlOrTemplate,
     pub token_url: UrlOrTemplate,
     pub pkce: bool,
     pub client_auth: ClientAuth,
