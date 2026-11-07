@@ -140,11 +140,13 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | TEST-015 | Connector conformance suite (fake core) | Rust test | done (872d94d3) | CON-001 | Sonnet (worktree) | 12/12 scenarios in-process and binary mode (`scripts/conformance.sh`); fake/SDK fixes; FUP-M6 closed |
 | FE-060 | Channel pages, admin connectors, /link/channel, account links + DM defaults | Next.js | done (1fe32db7) | API-006 | Sonnet (worktree) | web 18 files / 142 tests; build |
 | FIX-004 | Presence options for members (C-39), connector manifest diff (C-40) | both | done (442db5bc) | FE-060 | Sonnet (worktree) | |
-| TEST-016 | M6 e2e: real core + fake connector (scenario of 19 M6, replica failover, linking, mirror, messaging approval, credential_dead) | e2e | in-progress | BE-070..075 | Sonnet (worktree) | |
+| TEST-016 | M6 e2e: real core + fake connector | e2e | done (b3868c42) | BE-070..075 | Sonnet (worktree) | `AURORA_TEST_PODMAN=1 bash scripts/e2e/channels.sh` 6/6; SDK/fake fixes; SEC-18..20 mapped |
 | OPS-010 | Helm chart | Ops | done | — | Sonnet | `helm lint`, `helm template` |
 | RUN-004 | Kubernetes backend (+ runner.k8s.core_namespace config fix) | Rust | done (e65ec66d) | RUN-003 | Sonnet (Orca worker, worktree) + Opus (kube → aws-lc-rs) | config 18, k8s unit 15, k8s_mock 15 (fake API server), runner 10; clippy; cargo deny ok; helm-rendered ConfigMap loads |
 | OPS-011 | kind e2e (Helm from scratch, k8s backend, NetworkPolicy/SEC-02 probes) | Ops | done (3f97f950) | RUN-004, OPS-013 | Sonnet (worktree) | |
 | TEST-017 | VidaiMock (pinned, Aurora scenario files) behind real LiteLLM (I-30); live claude-code conformance + hosted CLI e2e | e2e | done (dab35c24) | smoke 8/8; live conformance pass; hosted claude-code e2e 2/2 | SUP-004, TEST-013 | Sonnet (worktree) | |
+| FIX-005 | Spec-required runtime follow-ups: SSE closes on revocation, durable answer text, render inputs (apps/channels/peers), model-list cache | Rust | in-progress | — | Sonnet (worktree) | |
+| FIX-006 | Spec-required apps/gateway follow-ups (FUP-M2/M3): missing_scopes, tenant_host from fields, governance doc typing, GW-011 ask-hold test | both | todo | — | — | |
 | TEST-018 | Security invariant coverage SEC-01..39 (`docs/tests/security-coverage.md`) | tests | in-progress | — | Sonnet (worktree) | |
 | OPS-014 | Gateway performance budgets (18) + upgrade test (baseline 8ba42973 → HEAD, running sandboxes) | Ops | in-progress | OPS-011 | Sonnet (worktree) | |
 
@@ -174,6 +176,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 
 ## Recently completed
 
+- 2026-11-07 (night): TEST-014 (hosted coverage; S-13 memory encoded-size bound), TEST-016 channels e2e 6/6.
 - 2026-11-07 (evening): BE-075 messaging tools, FIX-004 (C-39/C-40), FIX-003 (config wiring, connector bootstrap, OTLP, runner-reported image + held-awake ceiling, k8s claude-code); all M6 backend merged.
 - 2026-11-07 (later): TEST-017 (VidaiMock+LiteLLM live conformance; claude-code adapter wiring, podman harness, guard LLM hosts fixed), BE-072 inbox + BE-073 cards (seam reconciled; S-12 approval codes; real dashboard links), FE-060 channel dashboard; C-39/C-40.
 - 2026-11-07: BE-074 channel management API, OPS-011 kind e2e (chart fixes: key generation, API CA mount, migrate NetworkPolicy); permission matrix back to 0 inconclusive; rate-limit test flake fixed.
