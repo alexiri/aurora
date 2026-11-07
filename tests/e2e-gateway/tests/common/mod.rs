@@ -525,3 +525,77 @@ pub fn err_code(body: &str) -> String {
         .and_then(|v| v["error"]["code"].as_str().map(str::to_owned))
         .unwrap_or_else(|| format!("<no code: {body}>"))
 }
+
+/// Raw `CONNECT target` through gateway `gw` ("ip:port", TLS-only listener, trusting `ca_pem`) as
+/// `user:token`; returns (status, response head + body as text).
+pub async fn raw_connect(
+    gw: &str,
+    ca_pem: &str,
+    user: &str,
+    token: &str,
+    target: &str,
+) -> (u16, String) {
+    use rustls::RootCertStore;
+    use rustls::pki_types::{CertificateDer, ServerName, pem::PemObject};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut roots = RootCertStore::empty();
+    for c in CertificateDer::pem_slice_iter(ca_pem.as_bytes()) {
+        roots.add(c.unwrap()).unwrap();
+    }
+    let cfg = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    let addr: std::net::SocketAddr = gw.parse().unwrap();
+    let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut tls = tokio_rustls::TlsConnector::from(std::sync::Arc::new(cfg))
+        .connect(ServerName::IpAddress(addr.ip().into()), tcp)
+        .await
+        .unwrap();
+    let auth = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{token}"));
+    tls.write_all(
+        format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nProxy-Authorization: Basic {auth}\r\n\r\n")
+            .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut buf = vec![0u8; 8192];
+    let n = tokio::time::timeout(Duration::from_secs(10), tls.read(&mut buf))
+        .await
+        .unwrap()
+        .unwrap();
+    let text = String::from_utf8_lossy(&buf[..n]).into_owned();
+    let status = text
+        .split(' ')
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    (status, text)
+}
+
+impl Stack {
+    /// Mint a boot credential (`aub_`) for `agent` holding `capabilities`, as the API does for a
+    /// hosted boot (08 §7); returns the token.
+    pub async fn boot_credential(&self, agent: &str, capabilities: &[&str]) -> String {
+        use aurora_core::token::{self, TokenPrefix};
+        let tok = token::generate(TokenPrefix::Boot);
+        let caps: Vec<String> = capabilities.iter().map(|c| (*c).to_owned()).collect();
+        sqlx::query(
+            "INSERT INTO gateway_credentials (id, kind, token_hash, display_prefix, agent_id, boot_id, capabilities)
+             VALUES ($1,'boot',$2,$3,$4::uuid,$5,$6)",
+        )
+        .bind(uuid::Uuid::now_v7())
+        .bind(&token::hash(tok.expose())[..])
+        .bind(token::display_prefix(tok.expose()))
+        .bind(agent)
+        .bind(uuid::Uuid::now_v7())
+        .bind(&caps)
+        .execute(self.pool())
+        .await
+        .unwrap();
+        tok.expose().to_owned()
+    }
+}

@@ -67,6 +67,7 @@ impl CredentialResolver for Static {
             turn_id: None,
             context_label: None,
             principals: vec![w.agent],
+            capabilities: vec![],
         }))
     }
 }

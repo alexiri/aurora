@@ -1,5 +1,5 @@
 //! Instance ceiling (08 §11.1) built from configuration and the provider registry.
-use super::model::{AllowEntry, EgressPosture, LlmPosture};
+use super::model::{AllowEntry, EgressPosture, LlmPosture, OpenLanePosture};
 use crate::{KeyOriginRule, LlmError, OriginMethod, ProviderRegistry, Result};
 use aurora_config::RawConfig;
 
@@ -19,6 +19,8 @@ pub struct Instance {
     pub allowed_key_scopes: Vec<String>,
     pub llm_minimum_posture: LlmPosture,
     pub egress_minimum_posture: EgressPosture,
+    /// (RFE-003) floor of the open-lane posture.
+    pub open_lane_minimum: OpenLanePosture,
     pub require_key_origin: bool,
     pub endpoints: Vec<InstanceEndpoint>,
     /// Known LLM hosts (providers Aurora has no configured endpoint for).
@@ -36,6 +38,10 @@ impl Instance {
         let egress_minimum_posture =
             EgressPosture::parse(&g.egress.minimum_posture).ok_or_else(|| {
                 LlmError::Config("governance.egress.minimum_posture: invalid value".into())
+            })?;
+        let open_lane_minimum =
+            OpenLanePosture::parse(&g.egress.open_lane_minimum).ok_or_else(|| {
+                LlmError::Config("governance.egress.open_lane_minimum: invalid value".into())
             })?;
         let endpoints = registry
             .endpoints()
@@ -57,6 +63,7 @@ impl Instance {
             allowed_key_scopes: g.llm.allowed_key_scopes.clone(),
             llm_minimum_posture,
             egress_minimum_posture,
+            open_lane_minimum,
             require_key_origin: g.llm.require_key_origin,
             endpoints,
             known_llm_hosts: cfg.known_llm_hosts(),

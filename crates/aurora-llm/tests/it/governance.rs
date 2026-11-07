@@ -399,3 +399,148 @@ fn stored_empty_document_means_instance_defaults() {
     let eff = aurora_llm::governance::effective(&inst, &explicit);
     assert!(eff.endpoints.values().all(|e| !e.permitted));
 }
+
+// ---- RFE-003: open-lane posture ----
+
+#[test]
+fn open_lane_defaults_to_the_instance_minimum_and_is_tighten_only() {
+    let i = inst();
+    assert_eq!(i.open_lane_minimum, OpenLanePosture::Enabled);
+    assert_eq!(
+        default_for_new_org(&i).egress.open_lane,
+        OpenLanePosture::Enabled
+    );
+    let d = validate(&json!({"egress": {"open_lane": "allowlist_only"}}), &i).unwrap();
+    assert_eq!(d.egress.open_lane, OpenLanePosture::AllowlistOnly);
+    assert_eq!(
+        codes(json!({"egress": {"open_lane": "maybe"}}), &i),
+        [("governance_invalid", "egress.open_lane".to_owned())]
+    );
+    let strict = cfg(|c| c.governance.egress.open_lane_minimum = "allowlist_only".into());
+    assert_eq!(
+        default_for_new_org(&strict).egress.open_lane,
+        OpenLanePosture::AllowlistOnly
+    );
+    assert_eq!(
+        codes(json!({"egress": {"open_lane": "enabled"}}), &strict),
+        [(BELOW_MIN, "egress.open_lane".to_owned())]
+    );
+    assert!(validate(&json!({"egress": {"open_lane": "disabled"}}), &strict).is_ok());
+}
+
+#[test]
+fn open_lane_effective_is_the_strictest_and_stored_phase0_documents_read_as_enabled() {
+    let i = cfg(|c| c.governance.egress.open_lane_minimum = "allowlist_only".into());
+    // A phase-0 stored egress section has no `open_lane`: enabled, raised by the instance.
+    let org = from_stored(&json!({"egress": {"posture": "open", "allowlist": []}}), &i).unwrap();
+    assert_eq!(org.egress.open_lane, OpenLanePosture::Enabled);
+    let e = effective(&i, &org);
+    assert_eq!(e.open_lane, OpenLanePosture::AllowlistOnly);
+    assert_eq!(e.open_lane_source, Source::Instance);
+    let org = from_stored(&json!({"egress": {"open_lane": "disabled"}}), &i).unwrap();
+    let e = effective(&i, &org);
+    assert_eq!(e.open_lane, OpenLanePosture::Disabled);
+    assert_eq!(e.open_lane_source, Source::Org);
+}
+
+#[test]
+fn open_lane_admission_levels_and_path_entries() {
+    use aurora_policy::eval::{AllowEntry as PolicyEntry, ScopePolicy};
+    use aurora_policy::{HostPattern, PathPattern, RequestFacts, RequestIdentity};
+    let facts = RequestFacts {
+        host: "pypi.org".into(),
+        port: 443,
+        path: "/".into(),
+        query: None,
+        method: "CONNECT".into(),
+        body_prefix: vec![],
+        truncated: false,
+        app_id: None,
+        tool_id: None,
+        tool_tags: Default::default(),
+        winning_credential: None,
+        is_llm_host: false,
+        identity: RequestIdentity::default(),
+        connect_time: true,
+        host_apps: vec![],
+    };
+    let none = ScopePolicy::default();
+    let listed = |path: Option<&str>| ScopePolicy {
+        uncredentialed_allowlist: vec![PolicyEntry {
+            host: HostPattern::lenient("pypi.org"),
+            path: path.map(PathPattern::lenient),
+        }],
+        ..ScopePolicy::default()
+    };
+    let i = inst();
+    let doc = |open_lane: &str, list: serde_json::Value| {
+        from_stored(
+            &json!({"egress": {"open_lane": open_lane, "allowlist": list}}),
+            &i,
+        )
+        .unwrap()
+    };
+    let adm = |o: &OrgGovernance, ws, wsp: &ScopePolicy| {
+        effective(&i, o).open_lane_admission(ws, &none, wsp, &facts)
+    };
+    use OpenLaneAdmission::*;
+    use OpenLanePosture as P;
+    assert_eq!(adm(&doc("enabled", json!([])), P::Enabled, &none), Admitted);
+    assert_eq!(
+        adm(&doc("disabled", json!([])), P::Enabled, &none),
+        Disabled
+    );
+    assert_eq!(
+        adm(&doc("enabled", json!([])), P::Disabled, &none),
+        Disabled
+    );
+    // org level
+    assert_eq!(
+        adm(&doc("allowlist_only", json!([])), P::Enabled, &none),
+        NotAllowlisted
+    );
+    assert_eq!(
+        adm(
+            &doc("allowlist_only", json!([{"host": "pypi.org"}])),
+            P::Enabled,
+            &none
+        ),
+        Admitted
+    );
+    assert_eq!(
+        adm(
+            &doc(
+                "allowlist_only",
+                json!([{"host": "pypi.org", "path": "/**"}])
+            ),
+            P::Enabled,
+            &none
+        ),
+        NotAllowlisted
+    );
+    // workspace level, and both levels must cover
+    assert_eq!(
+        adm(&doc("enabled", json!([])), P::AllowlistOnly, &none),
+        NotAllowlisted
+    );
+    assert_eq!(
+        adm(&doc("enabled", json!([])), P::AllowlistOnly, &listed(None)),
+        Admitted
+    );
+    assert_eq!(
+        adm(
+            &doc("enabled", json!([])),
+            P::AllowlistOnly,
+            &listed(Some("/x"))
+        ),
+        NotAllowlisted
+    );
+    assert_eq!(
+        adm(
+            &doc("allowlist_only", json!([{"host": "pypi.org"}])),
+            P::AllowlistOnly,
+            &none
+        ),
+        NotAllowlisted
+    );
+}

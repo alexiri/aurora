@@ -72,15 +72,21 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
         reasons.push("watch".to_owned());
     }
     // The image is whatever the owning runner advertised (`runner.image`).
-    let image = if running {
-        let caps = match r.runner_id {
+    let runner_caps = if running {
+        match r.runner_id {
             Some(rid) => aurora_db::repo::runners::get(&s.pool, rid)
                 .await?
                 .and_then(|row| crate::domains::runner_plane::work::caps_of(&row)),
             None => None,
-        };
+        }
+    } else {
+        None
+    };
+    let image = if running {
         Some(
-            caps.and_then(|c| c.image)
+            runner_caps
+                .as_ref()
+                .and_then(|c| c.image.clone())
                 .unwrap_or_else(boot::default_image),
         )
     } else {
@@ -92,13 +98,17 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
     let restart_to_update = if running {
         let booted_hash = hosted::boot_app_inputs_hash(&mut conn, agent).await?;
         let booted_image = hosted::boot_image(&mut conn, agent).await?;
+        let booted_caps = hosted::boot_capabilities(&mut conn, agent).await?;
         drop(conn);
+        // (RFE-003) A boot started without the capability a boot would get now (older boots,
+        // or the posture was loosened since) needs a restart to gain it.
+        let caps_changed = boot::capabilities_for(s, a, runner_caps.as_ref()).await? != booted_caps;
         let image_changed = matches!((&booted_image, &image), (Some(b), Some(now)) if b != now);
         let hash_changed = match booted_hash {
             Some(h) => boot::app_boot_for(s, a).await?.hash != h,
             None => false,
         };
-        image_changed || hash_changed
+        image_changed || hash_changed || caps_changed
     } else {
         false
     };

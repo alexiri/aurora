@@ -452,6 +452,7 @@ impl Backend for KubernetesBackend {
             // Filled in by the runner from `runner.image` at registration.
             image: None,
             held_awake_ceiling: None,
+            image_capabilities: vec![],
         }
     }
 

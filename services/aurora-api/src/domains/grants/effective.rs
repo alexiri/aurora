@@ -142,6 +142,8 @@ pub async fn compute_with_apps(
                         winning_credential: Some(cred.clone()),
                         is_llm_host: false,
                         identity: identity.clone(),
+                        connect_time: false,
+                        host_apps: Vec::new(),
                     };
                     let d = evaluate(&org, &ws, &facts, &counter);
                     let org_only = evaluate(&org, &empty, &facts, &counter);

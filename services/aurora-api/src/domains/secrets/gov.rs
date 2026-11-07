@@ -22,6 +22,7 @@ pub fn instance_from_config(
             aurora_config::EgressPosture::Open => EgressPosture::Open,
             aurora_config::EgressPosture::CredentialedOnly => EgressPosture::CredentialedOnly,
         },
+        open_lane_minimum: g.open_lane_minimum.into(),
         require_key_origin: g.require_key_origin,
         endpoints: registry
             .endpoints()

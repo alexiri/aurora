@@ -220,6 +220,8 @@ pub struct PolicyGeneration {
     pub default_action: DefaultAction,
     pub uncredentialed_default: UncredentialedDefault,
     pub uncredentialed_allowlist: Vec<AllowlistEntry>,
+    /// (RFE-003) workspace open-lane posture; always `enabled` at org scope.
+    pub open_lane_posture: aurora_llm::governance::OpenLanePosture,
     pub rules: Vec<PolicyRule>,
     /// Drafts only.
     pub draft_revision: Option<i64>,
@@ -251,6 +253,7 @@ pub struct PolicyGenerationSummary {
     pub default_action: DefaultAction,
     pub uncredentialed_default: UncredentialedDefault,
     pub uncredentialed_allowlist: Vec<AllowlistEntry>,
+    pub open_lane_posture: aurora_llm::governance::OpenLanePosture,
     pub rule_count: i64,
     pub draft_revision: Option<i64>,
     pub published_by: Option<CreatedBy>,
@@ -267,6 +270,10 @@ pub struct DraftRequest {
     pub uncredentialed_default: Option<UncredentialedDefault>,
     #[serde(default)]
     pub uncredentialed_allowlist: Option<Vec<AllowlistEntry>>,
+    /// (RFE-003) workspace scope only; absent = `enabled` (whole-draft replace). A
+    /// workspace can only tighten, so `enabled` adds no restriction beyond org and instance.
+    #[serde(default)]
+    pub open_lane_posture: Option<aurora_llm::governance::OpenLanePosture>,
     pub rules: Vec<RuleInput>,
 }
 
@@ -314,6 +321,18 @@ pub struct SimulateRequest {
     pub body: Option<String>,
     #[serde(default)]
     pub use_draft: Option<bool>,
+    /// (RFE-003) `request` (default) or `open`: `open` evaluates a browser tunnel under the
+    /// open-lane posture and the CONNECT-time semantics (`07`); `url` is `https://host[:port]`
+    /// and `method`/`body` are ignored.
+    #[serde(default)]
+    pub lane: Option<SimLane>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SimLane {
+    Request,
+    Open,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
@@ -328,6 +347,8 @@ pub enum SimVerdict {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SimReason {
+    /// (RFE-003) the open-lane posture refused the tunnel (`disabled`).
+    OpenLane,
     Rule,
     DefaultDenied,
     EgressDenied,
@@ -442,6 +463,7 @@ pub fn generation_dto(
         default_action: parse_str(&g.default_action)?,
         uncredentialed_default: parse_str(&g.uncredentialed_default)?,
         uncredentialed_allowlist: parse(g.uncredentialed_allowlist.clone())?,
+        open_lane_posture: parse_str(&g.open_lane_posture)?,
         rules: rules.into_iter().map(rule_dto).collect::<Result<_, _>>()?,
         draft_revision: (g.status == "draft").then_some(g.draft_revision),
         published_by: published_by(&g),
@@ -461,6 +483,7 @@ pub fn summary_dto(
         default_action: parse_str(&g.default_action)?,
         uncredentialed_default: parse_str(&g.uncredentialed_default)?,
         uncredentialed_allowlist: parse(g.uncredentialed_allowlist.clone())?,
+        open_lane_posture: parse_str(&g.open_lane_posture)?,
         rule_count: s.rule_count,
         draft_revision: (g.status == "draft").then_some(g.draft_revision),
         published_by: published_by(&g),

@@ -1,8 +1,8 @@
 //! Validation and normalization of the org governance document (08 §11.2).
 use super::instance::{Instance, InstanceEndpoint};
 use super::model::{
-    AllowEntry, BELOW_MIN, EgressPosture, GovernanceError, INVALID, LlmPosture, OrgEgress,
-    OrgEndpoint, OrgGovernance, OrgLlm, OrgOrigin,
+    AllowEntry, BELOW_MIN, EgressPosture, GovernanceError, INVALID, LlmPosture, OpenLanePosture,
+    OrgEgress, OrgEndpoint, OrgGovernance, OrgLlm, OrgOrigin,
 };
 use crate::OriginMethod;
 use aurora_core::limits::EGRESS_ALLOWLIST_MAX;
@@ -38,6 +38,7 @@ struct RawEndpoint {
 struct RawEgress {
     posture: Option<String>,
     allowlist: Option<Vec<AllowEntry>>,
+    open_lane: Option<String>,
 }
 
 fn dedup(v: &[String]) -> Vec<String> {
@@ -65,6 +66,7 @@ pub fn default_for_new_org(inst: &Instance) -> OrgGovernance {
         egress: OrgEgress {
             posture: inst.egress_minimum_posture,
             allowlist: vec![],
+            open_lane: inst.open_lane_minimum,
         },
     }
 }
@@ -147,6 +149,21 @@ pub fn validate(
                     "looser than the instance minimum posture",
                 )),
                 Some(v) => out.egress.posture = v,
+            }
+        }
+        if let Some(p) = eg.open_lane {
+            match OpenLanePosture::parse(&p) {
+                None => errs.push(GovernanceError::new(
+                    INVALID,
+                    "egress.open_lane",
+                    "must be `enabled`, `allowlist_only` or `disabled`",
+                )),
+                Some(v) if v < inst.open_lane_minimum => errs.push(GovernanceError::new(
+                    BELOW_MIN,
+                    "egress.open_lane",
+                    "looser than the instance minimum open-lane posture",
+                )),
+                Some(v) => out.egress.open_lane = v,
             }
         }
         if let Some(list) = eg.allowlist {

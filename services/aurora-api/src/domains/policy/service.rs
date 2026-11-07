@@ -82,6 +82,7 @@ pub async fn replace_draft(
         checked.default_action,
         checked.uncredentialed_default,
         &checked.allowlist,
+        checked.open_lane_posture,
         &checked.rules,
     )
     .await?;

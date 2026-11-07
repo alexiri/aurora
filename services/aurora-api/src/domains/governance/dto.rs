@@ -60,6 +60,8 @@ pub struct AllowlistEntry {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct EffectiveEgress {
     pub posture: Sourced<String>,
+    /// (RFE-003) effective open-lane posture: `enabled` | `allowlist_only` | `disabled`.
+    pub open_lane: Sourced<String>,
     pub org_allowlist: Vec<AllowlistEntry>,
     pub baseline_allowlist: Vec<AllowlistEntry>,
 }
@@ -101,6 +103,8 @@ pub struct InstanceLlm {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct InstanceEgress {
     pub minimum_posture: String,
+    /// (RFE-003) `enabled` | `allowlist_only` | `disabled`.
+    pub open_lane_minimum: String,
     pub baseline_allowlist: Vec<AllowlistEntry>,
 }
 

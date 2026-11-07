@@ -15,6 +15,8 @@ pub struct CredentialIdentityRow {
     pub conversation_id: Option<Uuid>,
     pub turn_id: Option<Uuid>,
     pub context_label: Option<String>,
+    /// `gateway_credentials.capabilities` (RFE-003).
+    pub capabilities: Vec<String>,
     /// Seconds until `expires_at` (None = no expiry).
     pub expires_in_secs: Option<f64>,
 }
@@ -27,7 +29,7 @@ pub async fn find_credential_identity<'e, E: PgExecutor<'e>>(
 ) -> Result<Option<CredentialIdentityRow>, DbError> {
     Ok(sqlx::query_as::<_, CredentialIdentityRow>(
         "SELECT c.id AS credential_id, c.kind, c.agent_id, a.workspace_id, w.org_id, \
-                c.conversation_id, c.turn_id, c.context_label, \
+                c.conversation_id, c.turn_id, c.context_label, c.capabilities, \
                 EXTRACT(EPOCH FROM (c.expires_at - now()))::float8 AS expires_in_secs \
          FROM gateway_credentials c \
          JOIN agents a ON a.id = c.agent_id \
@@ -121,6 +123,8 @@ pub struct ScopePolicyRows {
     pub default_action: String,
     pub uncredentialed_default: String,
     pub uncredentialed_allowlist: serde_json::Value,
+    /// (RFE-003) `enabled` | `allowlist_only` | `disabled`; always `enabled` at org scope.
+    pub open_lane_posture: String,
     /// Hand rules by ascending priority.
     pub rules: Vec<PolicyRuleRow>,
     /// Derived rules (JSON per `derived_rules.rule`, with `logical_id` column), in order.
@@ -133,6 +137,7 @@ impl Default for ScopePolicyRows {
             default_action: "none".into(),
             uncredentialed_default: "none".into(),
             uncredentialed_allowlist: serde_json::json!([]),
+            open_lane_posture: "enabled".into(),
             rules: Vec::new(),
             derived: Vec::new(),
         }
@@ -146,8 +151,9 @@ pub async fn load_scope_policy(
     org_id: Uuid,
     workspace_id: Option<Uuid>,
 ) -> Result<ScopePolicyRows, DbError> {
-    let gen_row: Option<(Uuid, String, String, serde_json::Value)> = sqlx::query_as(
-        "SELECT id, default_action, uncredentialed_default, uncredentialed_allowlist \
+    let gen_row: Option<(Uuid, String, String, serde_json::Value, String)> = sqlx::query_as(
+        "SELECT id, default_action, uncredentialed_default, uncredentialed_allowlist, \
+                open_lane_posture \
          FROM policy_generations \
          WHERE org_id = $1 AND workspace_id IS NOT DISTINCT FROM $2 AND status = 'published'",
     )
@@ -156,10 +162,11 @@ pub async fn load_scope_policy(
     .fetch_optional(pool)
     .await?;
     let mut out = ScopePolicyRows::default();
-    if let Some((id, da, ud, al)) = gen_row {
+    if let Some((id, da, ud, al, olp)) = gen_row {
         out.default_action = da;
         out.uncredentialed_default = ud;
         out.uncredentialed_allowlist = al;
+        out.open_lane_posture = olp;
         out.rules = sqlx::query_as::<_, PolicyRuleRow>(
             "SELECT logical_id, name, enabled, identities, targets, action, require_approval, \
                     rate_limit, conditions \

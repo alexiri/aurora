@@ -40,6 +40,7 @@ pub struct Checked {
     pub default_action: &'static str,
     pub uncredentialed_default: &'static str,
     pub allowlist: serde_json::Value,
+    pub open_lane_posture: &'static str,
     pub rules: Vec<NewRule>,
 }
 
@@ -224,6 +225,15 @@ fn check_shape(req: &mut DraftRequest, scope: Scope, e: &mut Errs) {
                 "organization policy has no uncredentialed allowlist",
             );
         }
+        if req
+            .open_lane_posture
+            .is_some_and(|p| p != aurora_llm::governance::OpenLanePosture::Enabled)
+        {
+            e.add(
+                "/open_lane_posture".into(),
+                "organization policy has no open-lane posture; set it in the organization governance",
+            );
+        }
     }
 }
 
@@ -353,6 +363,7 @@ pub async fn check(
             .unwrap_or(UncredentialedDefault::None)
             .as_str(),
         allowlist: to_json(&req.uncredentialed_allowlist.unwrap_or_default())?,
+        open_lane_posture: req.open_lane_posture.unwrap_or_default().as_str(),
         rules,
     })
 }

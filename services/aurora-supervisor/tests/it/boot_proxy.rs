@@ -301,3 +301,25 @@ fn boot_document_requires_tls_true() {
     let d = BootDocument::parse(&encode(&v)).unwrap();
     assert_eq!(d.gateway.verify_name(), "aurora-gateway");
 }
+
+/// (RFE-003) The `browser` capability gates the open proxy: absent (older documents) = none.
+#[test]
+fn boot_document_capabilities_gate_the_open_proxy() {
+    let dir = std::env::temp_dir().join(format!("aurora-sup-{}", uuid::Uuid::now_v7()));
+    let without = BootDocument::parse(&boot_json(&dir)).unwrap();
+    assert!(without.capabilities.is_empty());
+    assert!(!without.has_capability("browser"));
+
+    let raw = boot_json(&dir);
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(raw)
+        .unwrap();
+    let mut v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    v["capabilities"] = json!(["browser"]);
+    let with = BootDocument::parse(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v.to_string()),
+    )
+    .unwrap();
+    assert!(with.has_capability("browser"));
+    assert!(!with.has_capability("other"));
+}

@@ -277,6 +277,7 @@ impl DbCredentialResolver {
                 turn_id: row.turn_id,
                 context_label: row.context_label,
                 principals,
+                capabilities: row.capabilities,
             },
             expires_in,
         )))

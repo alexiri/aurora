@@ -42,7 +42,7 @@ afterEach(() => {
 
 const gen = (over: Partial<PolicyGeneration> = {}): PolicyGeneration => ({
   id: "g1", number: 1, status: "draft", default_action: "none", uncredentialed_default: "none",
-  uncredentialed_allowlist: [], rules: [], draft_revision: 3, created_at: "2026-01-01T00:00:00Z", ...over,
+  uncredentialed_allowlist: [], open_lane_posture: "enabled", rules: [], draft_revision: 3, created_at: "2026-01-01T00:00:00Z", ...over,
 });
 const rule = (name: string, id: string, over: Record<string, unknown> = {}) => ({
   logical_id: id, priority: 0, name, description: null, enabled: true, identities: [],
@@ -70,8 +70,11 @@ describe("policy mapping", () => {
     expect(ws.rules[0].logical_id).toBe("r1");
     expect(ws.rules[0].rate_limit).toEqual({ count: 5, per: "hour" });
     expect(ws.uncredentialed_default).toBe("none");
+    expect(ws.open_lane_posture).toBe("enabled");
+    expect(toDraftRequest({ ...state, open_lane_posture: "disabled" }, 3, "workspace").open_lane_posture).toBe("disabled");
     const org = toDraftRequest(state, 3, "organization");
     expect(org.uncredentialed_default).toBeUndefined();
+    expect(org.open_lane_posture).toBeUndefined();
   });
   it("reorders rules", () => {
     expect(moveRule(["a", "b", "c"], 2, 0)).toEqual(["c", "a", "b"]);
@@ -94,6 +97,8 @@ describe("PolicyView", () => {
       "GET /v1/workspaces/w1/policy/warnings": () => json(200, { items: [{ code: "shadowed", rule_logical_id: "r2", message: "Shadowed by Allow x" }] }),
       "GET /v1/workspaces/w1/secrets": () => json(200, { items: [] }),
       "GET /v1/orgs/o1/secrets": () => json(200, { items: [] }),
+      "GET /v1/orgs/o1/governance/effective": () =>
+        json(200, { llm: { posture: { value: "open", source: "org" }, endpoints: [] }, egress: { posture: { value: "open", source: "org" }, open_lane: { value: "allowlist_only", source: "instance" }, org_allowlist: [], baseline_allowlist: [] }, non_compliant_secrets: [] }),
       ...extra,
     });
 
@@ -124,6 +129,24 @@ describe("PolicyView", () => {
     await waitFor(() => expect(pubBody).toEqual({ revision: 4 }));
     expect(putBody!.revision).toBe(3);
     expect(putBody!.rules.map((r) => r.name)).toEqual(["Other", "Allow x"]);
+  });
+
+  it("edits the workspace open-lane posture and shows what the higher level enforces", async () => {
+    let putBody: { open_lane_posture?: string } | null = null;
+    base({
+      "PUT /v1/workspaces/w1/policy/draft": async (req) => {
+        putBody = await req.json();
+        return json(200, gen({ draft_revision: 4 }));
+      },
+    });
+    wrap(<PolicyView title="Policy" scope={scope} orgId="o1" canEdit />);
+    const sel = (await screen.findByLabelText("Open lane posture")) as HTMLSelectElement;
+    expect(sel.value).toBe("enabled");
+    expect((await screen.findByTestId("open-lane-enforced")).textContent).toMatch(/Enforced by instance: allowlist_only/);
+    fireEvent.change(sel, { target: { value: "disabled" } });
+    fireEvent.click(screen.getByText("Save draft"));
+    await waitFor(() => expect(putBody).not.toBeNull());
+    expect(putBody!.open_lane_posture).toBe("disabled");
   });
 
   it("prompts to reload on stale_revision", async () => {

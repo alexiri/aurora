@@ -27,6 +27,7 @@ import {
   type RuleInput,
 } from "@/lib/api/policy";
 import type { Agent } from "@/lib/api/queries";
+import { useEffectiveGovernance } from "@/lib/api/governance";
 import { useSecrets } from "@/lib/api/secrets";
 
 import { RuleEditorDialog, type Option, type PickerData } from "./rule-editor";
@@ -84,6 +85,7 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], org
   const warnings = usePolicyWarnings(scope);
   const wsSecrets = useSecrets(scope.kind === "workspace" ? { kind: "workspace", id: scope.id } : { kind: "organization", id: orgId });
   const orgSecrets = useSecrets({ kind: "organization", id: orgId });
+  const eff = useEffectiveGovernance(orgId);
   const put = usePutDraft(scope);
   const publish = usePublish(scope);
 
@@ -290,6 +292,29 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], org
                 <option value="block">Block unless allow-listed</option>
               </select>
               <span className="text-xs text-neutral-500">A workspace can only tighten the organization policy.</span>
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block font-medium">Browser tunnels (open lane)</span>
+              <select
+                aria-label="Open lane posture"
+                className={inputClass}
+                disabled={!canEdit}
+                value={state.open_lane_posture}
+                onChange={(e) => edit({ ...state, open_lane_posture: e.target.value as DraftState["open_lane_posture"] })}
+              >
+                <option value="enabled">Enabled</option>
+                <option value="allowlist_only">Allow-list only</option>
+                <option value="disabled">Disabled</option>
+              </select>
+              <span className="text-xs text-neutral-500">
+                Tunnels cannot be inspected or given credentials; allow-list only limits them to the allow-list. A workspace can only tighten the organization and instance setting.
+              </span>
+              {eff.data && eff.data.egress.open_lane.value !== "enabled" ? (
+                <span className="block text-xs text-amber-800" data-testid="open-lane-enforced">
+                  Enforced by {eff.data.egress.open_lane.source === "instance" ? "instance" : "organization"}:{" "}
+                  {eff.data.egress.open_lane.value}
+                </span>
+              ) : null}
             </label>
             <div className="space-y-2">
               <h3 className="text-sm font-medium">Allow-list</h3>

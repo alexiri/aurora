@@ -36,6 +36,7 @@ use tokio::net::TcpListener;
 use uuid::Uuid;
 
 const TOKEN: &str = "aug_good";
+const BOOT: &str = "aub_browser";
 
 struct World {
     org: Uuid,
@@ -48,13 +49,19 @@ struct Static(Arc<World>);
 #[async_trait]
 impl CredentialResolver for Static {
     async fn resolve(&self, token: &str) -> Result<Option<RequestIdentity>, ResolveError> {
-        if token != TOKEN {
+        // `BOOT` is a boot credential minted with the `browser` capability (RFE-003).
+        if token != TOKEN && token != BOOT {
             return Ok(None);
         }
+        let boot = token == BOOT;
         let w = &self.0;
         Ok(Some(RequestIdentity {
             credential_id: Uuid::nil(),
-            kind: CredentialKind::Agent,
+            kind: if boot {
+                CredentialKind::Boot
+            } else {
+                CredentialKind::Agent
+            },
             agent_id: w.agent,
             workspace_id: w.ws,
             org_id: w.org,
@@ -62,6 +69,7 @@ impl CredentialResolver for Static {
             turn_id: None,
             context_label: None,
             principals: vec![w.agent],
+            capabilities: if boot { vec!["browser".into()] } else { vec![] },
         }))
     }
 }
@@ -323,6 +331,7 @@ async fn start(o: Opts) -> Env {
         origin_recheck_secs: 3600,
         egress_minimum_posture: o.egress_min,
         baseline_allowlist: Vec::<EgressEntry>::new(),
+        open_lane_minimum: aurora_config::OpenLanePosture::Enabled,
     };
     let gsrc = Arc::new(TestGov {
         doc: Mutex::new(o.doc.clone()),
@@ -389,9 +398,11 @@ struct Reply {
 }
 
 fn auth(user: &str) -> String {
+    // The open lane needs a boot credential with the `browser` capability (RFE-003).
+    let token = if user == "open" { BOOT } else { TOKEN };
     format!(
         "Proxy-Authorization: Basic {}\r\n",
-        base64::engine::general_purpose::STANDARD.encode(format!("{user}:{TOKEN}"))
+        base64::engine::general_purpose::STANDARD.encode(format!("{user}:{token}"))
     )
 }
 

@@ -30,6 +30,27 @@ pub fn destination_refused(host: &str) -> ApiError {
     .with_details(json!({ "host": host }))
 }
 
+/// (RFE-003) The credential does not hold the `browser` capability.
+pub fn open_lane_not_permitted() -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "open_lane_not_permitted",
+        "This credential may not use the open (tunnel) lane. Browser tunnels are available only to sandboxes started with the browser capability; use the default proxy lane.",
+    )
+}
+
+/// (RFE-003) The effective open-lane posture is `disabled`.
+pub fn open_lane_disabled(manage_url: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "open_lane_disabled",
+        format!(
+            "Browser tunnels are disabled by policy. Review the open-lane setting at {manage_url}"
+        ),
+    )
+    .with_details(json!({ "manage_url": manage_url }))
+}
+
 pub fn method_override_refused() -> ApiError {
     ApiError::new(
         StatusCode::BAD_REQUEST,

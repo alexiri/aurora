@@ -64,11 +64,16 @@ export function SimulatePanel({ wsId, agents }: { wsId: string; agents: Agent[] 
   const [url, setUrl] = useState("https://");
   const [body, setBody] = useState("");
   const [useDraft, setUseDraft] = useState(true);
+  const [tunnel, setTunnel] = useState(false);
 
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!agentId) return;
-    sim.mutate({ agent_id: agentId, method, url: url.trim(), body: body || null, use_draft: useDraft });
+    sim.mutate(
+      tunnel
+        ? { agent_id: agentId, method: "CONNECT", url: url.trim(), use_draft: useDraft, lane: "open" }
+        : { agent_id: agentId, method, url: url.trim(), body: body || null, use_draft: useDraft, lane: "request" },
+    );
   }
 
   return (
@@ -85,6 +90,17 @@ export function SimulatePanel({ wsId, agents }: { wsId: string; agents: Agent[] 
             ))}
           </select>
         </Field>
+        <fieldset className="flex gap-4 text-sm">
+          <legend className="sr-only">Lane</legend>
+          <label className="flex items-center gap-1">
+            <input type="radio" name="sim-lane" checked={!tunnel} onChange={() => setTunnel(false)} />
+            Request
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="radio" name="sim-lane" checked={tunnel} onChange={() => setTunnel(true)} />
+            Tunnel (browser, https://host[:port])
+          </label>
+        </fieldset>
         <div className="flex gap-2">
           <div className="w-28">
             <Field id="sim-method" label="Method">

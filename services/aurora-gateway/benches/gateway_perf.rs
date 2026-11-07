@@ -74,6 +74,7 @@ impl CredentialResolver for Static {
             turn_id: None,
             context_label: None,
             principals: vec![w.agent],
+            capabilities: vec![],
         }))
     }
 }
@@ -446,6 +447,7 @@ async fn mode_resolve() {
         turn_id: None,
         context_label: None,
         principals: vec![gw.world.agent],
+        capabilities: vec![],
     };
     let cache = gw.resolver.cache();
     let mut v = Vec::with_capacity(n);

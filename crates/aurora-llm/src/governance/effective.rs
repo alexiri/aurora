@@ -1,11 +1,23 @@
 //! Effective governance = instance ∩ org (08 §11.1) and enforcement helpers.
 use super::instance::{Instance, InstanceEndpoint};
 use super::model::{
-    EgressPosture, LlmPosture, OrgEndpoint, OrgGovernance, OrgOrigin, OriginStatus, StoredOrigin,
+    EgressPosture, LlmPosture, OpenLanePosture, OrgEndpoint, OrgGovernance, OrgOrigin,
+    OriginStatus, StoredOrigin,
 };
 use crate::{KeyOriginRule, ModelRef, OriginMethod, origin};
 use aurora_policy::{HostPattern, PathPattern};
 use std::collections::BTreeMap;
+
+/// Outcome of the open-lane posture check (RFE-003).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenLaneAdmission {
+    Admitted,
+    /// Effective posture is `disabled` → 403 `open_lane_disabled`.
+    Disabled,
+    /// `allowlist_only` and a level's allow-list does not cover the target → 403
+    /// `blocked_by_egress_policy` (`details.open_lane = true`).
+    NotAllowlisted,
+}
 
 /// Which level determined a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +53,16 @@ pub struct EffectiveGovernance {
     pub llm_posture_source: Source,
     pub egress_posture: EgressPosture,
     pub egress_posture_source: Source,
+    /// (RFE-003) effective open-lane posture = strictest of instance minimum and org.
+    pub open_lane: OpenLanePosture,
+    pub open_lane_source: Source,
+    /// The instance's own open-lane minimum (decides whether the instance level
+    /// requires the baseline allow-list under `allowlist_only`).
+    pub open_lane_instance: OpenLanePosture,
+    /// The org's own open-lane posture.
+    pub open_lane_org: OpenLanePosture,
+    /// Instance baseline allow-list only (`allowlist_only` at instance level).
+    pub baseline_allowlist: Vec<EgressAllow>,
     pub endpoints: BTreeMap<String, EffectiveEndpoint>,
     /// Org entries first, then the instance baseline.
     pub egress_allowlist: Vec<EgressAllow>,
@@ -182,6 +204,16 @@ pub fn effective(inst: &Instance, org: &OrgGovernance) -> EffectiveGovernance {
             }
         }
     }
+    let olp = org.egress.open_lane.max(inst.open_lane_minimum);
+    let baseline_allowlist: Vec<EgressAllow> = inst
+        .baseline_allowlist
+        .iter()
+        .map(|a| EgressAllow {
+            host: HostPattern::lenient(&a.host),
+            path: a.path.as_deref().map(PathPattern::lenient),
+            source: Source::Instance,
+        })
+        .collect();
     let mut governed_hosts: Vec<String> = Vec::new();
     for h in inst
         .endpoints
@@ -210,6 +242,17 @@ pub fn effective(inst: &Instance, org: &OrgGovernance) -> EffectiveGovernance {
         } else {
             Source::Org
         },
+        open_lane: olp,
+        open_lane_source: if olp > org.egress.open_lane
+            || olp == inst.open_lane_minimum && olp > OpenLanePosture::Enabled
+        {
+            Source::Instance
+        } else {
+            Source::Org
+        },
+        open_lane_instance: inst.open_lane_minimum,
+        open_lane_org: org.egress.open_lane,
+        baseline_allowlist,
         endpoints,
         egress_allowlist: allow,
         governed_hosts,
@@ -302,6 +345,54 @@ impl EffectiveGovernance {
             ModelRef::NoModel => Ok(()),
             ModelRef::Model(m) if e.allowed_models.contains(m) => Ok(()),
             _ => Err(e.allowed_models.clone()),
+        }
+    }
+
+    /// (RFE-003) Open-lane posture admission (`06 §Open-lane admission and posture`,
+    /// step 2), evaluated before any policy decision. `ws_posture`, `ws_policy` and
+    /// `org_policy` are the workspace's published posture and the two scope policies;
+    /// `facts` are the `CONNECT`-time facts. Strictest of instance, org and workspace wins;
+    /// under `allowlist_only` every level that sets it must cover the target: the instance
+    /// by its baseline, the org by its list ∪ baseline, the workspace by its
+    /// `uncredentialed_allowlist`. Entries carrying a `path` never admit a tunnel, and an
+    /// explicit allow rule that is fully knowable at `CONNECT` time admits too.
+    pub fn open_lane_admission(
+        &self,
+        ws_posture: OpenLanePosture,
+        org_policy: &aurora_policy::ScopePolicy,
+        ws_policy: &aurora_policy::ScopePolicy,
+        facts: &aurora_policy::RequestFacts,
+    ) -> OpenLaneAdmission {
+        let effective = self.open_lane.max(ws_posture);
+        if effective == OpenLanePosture::Disabled {
+            return OpenLaneAdmission::Disabled;
+        }
+        if effective == OpenLanePosture::Enabled {
+            return OpenLaneAdmission::Admitted;
+        }
+        let covered = |list: &[EgressAllow]| {
+            list.iter()
+                .any(|a| a.path.is_none() && a.host.matches(&facts.host, facts.port))
+        };
+        let org_rule = aurora_policy::connect_allow_admits(org_policy, facts);
+        let mut ok = true;
+        if self.open_lane_instance == OpenLanePosture::AllowlistOnly {
+            ok &= covered(&self.baseline_allowlist) || org_rule;
+        }
+        if self.open_lane_org == OpenLanePosture::AllowlistOnly {
+            ok &= covered(&self.egress_allowlist) || org_rule;
+        }
+        if ws_posture == OpenLanePosture::AllowlistOnly {
+            let list = &ws_policy.uncredentialed_allowlist;
+            ok &= list
+                .iter()
+                .any(|a| a.path.is_none() && a.host.matches(&facts.host, facts.port))
+                || aurora_policy::connect_allow_admits(ws_policy, facts);
+        }
+        if ok {
+            OpenLaneAdmission::Admitted
+        } else {
+            OpenLaneAdmission::NotAllowlisted
         }
     }
 

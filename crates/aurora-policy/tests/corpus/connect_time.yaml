@@ -1,0 +1,130 @@
+# Open-lane (CONNECT-time) cases: docs/07 §CONNECT-time evaluation (RFE-003).
+- description: 'block rule scoped to a path refuses the tunnel (unknowable path counts as matched)'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: network, host: api.example.com, path: /admin/**}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: rule, workspace_rule: blk}
+- description: 'block rule scoped to methods refuses the tunnel'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: network, host: api.example.com, methods: [DELETE]}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: rule, workspace_rule: blk}
+- description: 'block rule with a body condition refuses the tunnel'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: network, host: api.example.com}], conditions: [{on: body, op: contains, value: DROP}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: rule, workspace_rule: blk}
+- description: 'block rule scoped to path, methods and body at once refuses the tunnel'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: network, host: api.example.com, path: /x, methods: [POST]}], conditions: [{on: body, op: equals, value: x}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: rule, workspace_rule: blk}
+- description: 'host-only block refuses the tunnel'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: network, host: api.example.com}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: rule, workspace_rule: blk}
+- description: 'block rule for another host does not apply'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: network, host: other.example.com, path: /x}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: allow}
+- description: 'block rule with a different port does not apply'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: network, host: api.example.com:8443}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: allow}
+- description: 'org path-scoped block beats a workspace allow'
+  org: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: network, host: api.example.com, path: /a}]}]}
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: ok, action: allow, targets: [{type: network, host: api.example.com}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: rule, org_rule: blk}
+- description: 'require_approval rule scoped to a path refuses (needs approval verdict, tunnel is never held)'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: appr, action: allow, targets: [{type: network, host: api.example.com, path: /pay/**}], require_approval: true}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: needs_approval, workspace_rule: appr}
+- description: 'require_approval with body condition is treated as matched'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: appr, action: allow, targets: [{type: network, host: api.example.com}], require_approval: true, conditions: [{on: body, op: contains, value: x}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: needs_approval, workspace_rule: appr}
+- description: 'allow rule scoped to a path does not match a tunnel (verdict falls through to nothing)'
+  workspace: {uncredentialed_default: block, ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: ok, action: allow, targets: [{type: network, host: api.example.com, path: /org/**}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: egress_denied}
+- description: 'allow rule scoped to methods does not admit a tunnel under the uncredentialed default'
+  workspace: {uncredentialed_default: block, ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: ok, action: allow, targets: [{type: network, host: api.example.com, methods: [GET]}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: egress_denied}
+- description: 'allow rule with a body condition does not admit a tunnel'
+  workspace: {uncredentialed_default: block, ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: ok, action: allow, targets: [{type: network, host: api.example.com}], conditions: [{on: body, op: contains, value: x}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: egress_denied}
+- description: 'host-only allow rule admits a tunnel under the uncredentialed default'
+  workspace: {uncredentialed_default: block, ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: ok, action: allow, targets: [{type: network, host: api.example.com}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: allow, workspace_rule: ok}
+- description: 'host and port allow rule admits the matching port only'
+  workspace: {uncredentialed_default: block, ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: ok, action: allow, targets: [{type: network, host: api.example.com:8443}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: egress_denied}
+- description: 'host and port allow rule admits the matching port'
+  workspace: {uncredentialed_default: block, ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: ok, action: allow, targets: [{type: network, host: api.example.com:8443}]}]}
+  facts: {host: api.example.com, port: 8443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: allow, workspace_rule: ok}
+- description: 'allow-list entry with a path does not admit a tunnel'
+  workspace: {uncredentialed_default: block, uncredentialed_allowlist: [{host: api.example.com, path: '/**'}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: egress_denied}
+- description: 'allow-list entry without a path admits a tunnel'
+  workspace: {uncredentialed_default: block, uncredentialed_allowlist: [{host: api.example.com}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: allow}
+- description: 'credential target (secret) never matches a tunnel: block on secrets is not applied'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: secrets, scope: any}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: allow}
+- description: 'credential target (connection) never matches a tunnel'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: allow}
+- description: 'credential target (app_connections) never matches a tunnel'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: app_connections, app_id: gh, scope: any}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, host_apps: [gh], identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: allow}
+- description: 'allow on a secret never admits a tunnel under the uncredentialed default'
+  workspace: {uncredentialed_default: block, ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: ok, action: allow, targets: [{type: secret, id: 00000000-0000-0000-0000-000000000051}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: egress_denied}
+- description: 'app block matches when the host is served by the app (tools treated as matched)'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: app, app_id: gh, tools: [delete_repo]}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, host_apps: [gh], identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: rule, workspace_rule: blk}
+- description: 'app block does not match when the host is not served by the app'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: app, app_id: gh, tools: [delete_repo]}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: allow}
+- description: 'app allow without tools admits a tunnel to a host the app serves'
+  workspace: {uncredentialed_default: block, ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: ok, action: allow, targets: [{type: app, app_id: gh}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, host_apps: [gh], identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: allow, workspace_rule: ok}
+- description: 'app allow scoped to tools does not admit a tunnel'
+  workspace: {uncredentialed_default: block, ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: ok, action: allow, targets: [{type: app, app_id: gh, tools: [list_repos]}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, host_apps: [gh], identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: egress_denied}
+- description: 'rate-limited rule scoped to a path counts the tunnel as one request (one hit)'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: rl, action: allow, targets: [{type: network, host: api.example.com, path: /api/**}], rate_limit: {count: 3, per: minute}}]}
+  counters: [{rule: 00000000-0000-0000-0000-0000000000a1, agent: 00000000-0000-0000-0000-000000000001, n: 1}]
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: allow, hits: 1}
+- description: 'exhausted rate limit refuses the tunnel even when the rule is path-scoped'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: rl, action: allow, targets: [{type: network, host: api.example.com, path: /api/**}], rate_limit: {count: 1, per: minute}}]}
+  counters: [{rule: 00000000-0000-0000-0000-0000000000a1, agent: 00000000-0000-0000-0000-000000000001, n: 1}]
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: rate_limited}
+- description: 'a blocked tunnel does not consume rate-limit quota'
+  org: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, targets: [{type: network, host: api.example.com, path: /a}]}]}
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: rl, action: allow, targets: [{type: network, host: api.example.com}], rate_limit: {count: 3, per: minute}}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: rule, hits: 0}
+- description: 'restrictive rule for a different agent does not apply'
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, identities: [{kind: agent, id: 00000000-0000-0000-0000-0000000000ff}], targets: [{type: network, host: api.example.com}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: allow}
+- description: 'an allow rule cannot loosen an org-level uncredentialed block (org scope default is egress)'
+  org: {uncredentialed_default: block}
+  workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: ok, action: allow, targets: [{type: network, host: api.example.com}]}]}
+  facts: {host: api.example.com, port: 443, path: /, method: CONNECT, connect_time: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+  expect: {verdict: block, reason: egress_denied}

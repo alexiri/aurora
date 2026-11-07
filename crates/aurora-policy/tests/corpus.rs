@@ -83,6 +83,88 @@ fn name_of(v: Verdict) -> (&'static str, Option<&'static str>) {
     }
 }
 
+fn run_case(label: &str, case: Case) {
+    let facts = load_facts(case.facts);
+    let counters = MemoryCounter::new();
+    for p in &case.counters {
+        let window = case
+            .org
+            .ordered_rules
+            .iter()
+            .chain(&case.workspace.ordered_rules)
+            .find(|r| r.logical_id == p.rule)
+            .and_then(|r| r.rate_limit)
+            .unwrap();
+        for _ in 0..p.n {
+            counters.record(p.rule, p.agent, &window);
+        }
+    }
+    if let Some(s) = &case.select {
+        let rules: Vec<&Rule> = case
+            .org
+            .ordered_rules
+            .iter()
+            .chain(&case.workspace.ordered_rules)
+            .collect();
+        let got: BTreeSet<Uuid> = selected_candidates(rules, &facts.identity, &s.candidates)
+            .into_iter()
+            .map(|k| match k {
+                aurora_policy::CredentialKey::Connection(i)
+                | aurora_policy::CredentialKey::Secret(i) => i,
+            })
+            .collect();
+        assert_eq!(got, s.expect, "{label}: selection");
+    }
+    if let Some(e) = &case.expect {
+        let d = evaluate(&case.org, &case.workspace, &facts, &counters);
+        let (v, r) = name_of(d.verdict);
+        assert_eq!(v, e.verdict, "{label}: verdict (trace {:?})", d.trace);
+        if let Some(reason) = &e.reason {
+            assert_eq!(r, Some(reason.as_str()), "{label}: reason");
+        }
+        if let Some(w) = &e.org_rule {
+            assert_eq!(
+                d.org_matched.as_ref().map(|m| m.name.as_str()),
+                Some(w.as_str()),
+                "{label}: org rule"
+            );
+        }
+        if let Some(w) = &e.workspace_rule {
+            assert_eq!(
+                d.workspace_matched.as_ref().map(|m| m.name.as_str()),
+                Some(w.as_str()),
+                "{label}: ws rule"
+            );
+        }
+        if let Some(h) = e.hits {
+            assert_eq!(d.rate_limit_hits().len(), h, "{label}: hits");
+        }
+        if let Some(g) = &e.graphql {
+            let got = serde_json::to_value(facts.graphql_kind()).unwrap();
+            assert_eq!(got.as_str(), Some(g.as_str()), "{label}: graphql");
+        }
+        if let Some(g) = &e.git {
+            let got = serde_json::to_value(facts.git_op()).unwrap();
+            assert_eq!(got.as_str(), Some(g.as_str()), "{label}: git");
+        }
+    }
+}
+
+/// `tests/corpus/connect_time.yaml`: a list of open-lane cases (RFE-003; each
+/// case's facts carry `connect_time: true`).
+#[test]
+fn connect_time_corpus() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/connect_time.yaml");
+    let text = std::fs::read_to_string(path).unwrap();
+    let cases: Vec<Case> = serde_yaml::from_str(&text).unwrap();
+    assert!(cases.len() >= 20, "connect-time corpus too small");
+    for (i, c) in cases.into_iter().enumerate() {
+        let label = format!("connect_time#{i}: {}", c.description);
+        run_case(&label, c);
+    }
+}
+
 #[test]
 fn corpus() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus");
@@ -95,74 +177,12 @@ fn corpus() {
     for path in files
         .iter()
         .filter(|p| p.extension().is_some_and(|e| e == "yaml"))
+        .filter(|p| p.file_name().is_some_and(|n| n != "connect_time.yaml"))
     {
         let label = path.file_name().unwrap().to_string_lossy().into_owned();
         let text = std::fs::read_to_string(path).unwrap();
         let case: Case = serde_yaml::from_str(&text).unwrap_or_else(|e| panic!("{label}: {e}"));
-        let facts = load_facts(case.facts);
-        let counters = MemoryCounter::new();
-        for p in &case.counters {
-            let window = case
-                .org
-                .ordered_rules
-                .iter()
-                .chain(&case.workspace.ordered_rules)
-                .find(|r| r.logical_id == p.rule)
-                .and_then(|r| r.rate_limit)
-                .unwrap();
-            for _ in 0..p.n {
-                counters.record(p.rule, p.agent, &window);
-            }
-        }
-        if let Some(s) = &case.select {
-            let rules: Vec<&Rule> = case
-                .org
-                .ordered_rules
-                .iter()
-                .chain(&case.workspace.ordered_rules)
-                .collect();
-            let got: BTreeSet<Uuid> = selected_candidates(rules, &facts.identity, &s.candidates)
-                .into_iter()
-                .map(|k| match k {
-                    aurora_policy::CredentialKey::Connection(i)
-                    | aurora_policy::CredentialKey::Secret(i) => i,
-                })
-                .collect();
-            assert_eq!(got, s.expect, "{label}: selection");
-        }
-        if let Some(e) = &case.expect {
-            let d = evaluate(&case.org, &case.workspace, &facts, &counters);
-            let (v, r) = name_of(d.verdict);
-            assert_eq!(v, e.verdict, "{label}: verdict (trace {:?})", d.trace);
-            if let Some(reason) = &e.reason {
-                assert_eq!(r, Some(reason.as_str()), "{label}: reason");
-            }
-            if let Some(w) = &e.org_rule {
-                assert_eq!(
-                    d.org_matched.as_ref().map(|m| m.name.as_str()),
-                    Some(w.as_str()),
-                    "{label}: org rule"
-                );
-            }
-            if let Some(w) = &e.workspace_rule {
-                assert_eq!(
-                    d.workspace_matched.as_ref().map(|m| m.name.as_str()),
-                    Some(w.as_str()),
-                    "{label}: ws rule"
-                );
-            }
-            if let Some(h) = e.hits {
-                assert_eq!(d.rate_limit_hits().len(), h, "{label}: hits");
-            }
-            if let Some(g) = &e.graphql {
-                let got = serde_json::to_value(facts.graphql_kind()).unwrap();
-                assert_eq!(got.as_str(), Some(g.as_str()), "{label}: graphql");
-            }
-            if let Some(g) = &e.git {
-                let got = serde_json::to_value(facts.git_op()).unwrap();
-                assert_eq!(got.as_str(), Some(g.as_str()), "{label}: git");
-            }
-        }
+        run_case(&label, case);
         n += 1;
     }
     assert!(n >= 20, "corpus too small: {n}");

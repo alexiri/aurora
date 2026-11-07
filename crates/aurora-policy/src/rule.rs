@@ -123,6 +123,30 @@ impl Target {
         }
     }
 
+    /// Match at `CONNECT` time (07 §CONNECT-time evaluation). Only host, port and
+    /// the serving app are knowable; credential targets never match (no credential
+    /// is injected into a tunnel). `restrictive` rules treat every unknowable part
+    /// (path, methods, tools) as matched; allow rules need those parts absent.
+    pub fn matches_connect(&self, f: &RequestFacts, restrictive: bool) -> bool {
+        match self {
+            Self::App { app_id, tools } => {
+                f.host_apps.contains(app_id)
+                    && (restrictive || tools.as_ref().is_none_or(Vec::is_empty))
+            }
+            Self::Connection { .. }
+            | Self::AppConnections { .. }
+            | Self::Secret { .. }
+            | Self::Secrets { .. } => false,
+            Self::Network {
+                host,
+                path,
+                methods: ms,
+            } => {
+                host.matches(&f.host, f.port) && (restrictive || (path.is_none() && ms.is_empty()))
+            }
+        }
+    }
+
     /// Does this target *name* the candidate credential (injection selection)?
     pub fn selects(&self, c: &Credential) -> bool {
         match (self, c) {
@@ -309,6 +333,21 @@ impl Rule {
 
     pub fn targets_match(&self, f: &RequestFacts) -> bool {
         self.targets.is_empty() || self.targets.iter().any(|t| t.matches(f))
+    }
+
+    /// `CONNECT`-time targets + conditions (RFE-003). Restrictive rules: unknowable
+    /// parts and body conditions count as matched. Allow rules: a full match on what
+    /// is knowable, so any path/method/tool/condition constraint means *not matched*.
+    pub fn connect_matches(&self, f: &RequestFacts) -> bool {
+        let restrictive = self.is_restrictive();
+        if !restrictive && !self.conditions.is_empty() {
+            return false;
+        }
+        self.targets.is_empty()
+            || self
+                .targets
+                .iter()
+                .any(|t| t.matches_connect(f, restrictive))
     }
 
     /// Restrictive rules resolve unknown conditions as matched.

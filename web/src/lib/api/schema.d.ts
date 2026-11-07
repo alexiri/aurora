@@ -3944,6 +3944,7 @@ export interface components {
         };
         DraftRequest: {
             default_action: components["schemas"]["DefaultAction"];
+            open_lane_posture?: null | components["schemas"]["OpenLanePosture"];
             /** Format: int64 */
             revision: number;
             rules: components["schemas"]["RuleInput"][];
@@ -3969,6 +3970,8 @@ export interface components {
         };
         EffectiveEgress: {
             baseline_allowlist: components["schemas"]["AllowlistEntry"][];
+            /** @description (RFE-003) effective open-lane posture: `enabled` | `allowlist_only` | `disabled`. */
+            open_lane: components["schemas"]["Sourced_String"];
             org_allowlist: components["schemas"]["AllowlistEntry"][];
             posture: components["schemas"]["Sourced_String"];
         };
@@ -4153,6 +4156,8 @@ export interface components {
         InstanceEgress: {
             baseline_allowlist: components["schemas"]["AllowlistEntry"][];
             minimum_posture: string;
+            /** @description (RFE-003) `enabled` | `allowlist_only` | `disabled`. */
+            open_lane_minimum: string;
         };
         InstanceEndpoint: {
             allowed_models: string[];
@@ -4446,6 +4451,12 @@ export interface components {
             display_name: string;
             id: string;
         };
+        /**
+         * @description Open-lane posture (RFE-003), ordered by strictness
+         *     (`enabled` < `allowlist_only` < `disabled`).
+         * @enum {string}
+         */
+        OpenLanePosture: "enabled" | "allowlist_only" | "disabled";
         Org: {
             /** @description `open` | `restricted`. */
             app_posture: string;
@@ -4467,6 +4478,8 @@ export interface components {
         OrgEgress: {
             /** @default [] */
             allowlist: components["schemas"]["OrgAllowEntry"][];
+            /** @default enabled */
+            open_lane: components["schemas"]["OpenLanePosture"];
             /** @default open */
             posture: components["schemas"]["EgressPosture"];
         };
@@ -4497,6 +4510,7 @@ export interface components {
             /**
              * @default {
              *       "allowlist": [],
+             *       "open_lane": "enabled",
              *       "posture": "open"
              *     }
              */
@@ -5021,6 +5035,7 @@ export interface components {
                 id: string;
                 /** Format: int32 */
                 number: number;
+                open_lane_posture: components["schemas"]["OpenLanePosture"];
                 /** Format: date-time */
                 published_at?: string | null;
                 published_by?: null | components["schemas"]["CreatedBy"];
@@ -5526,6 +5541,8 @@ export interface components {
             id: string;
             /** Format: int32 */
             number: number;
+            /** @description (RFE-003) workspace open-lane posture; always `enabled` at org scope. */
+            open_lane_posture: components["schemas"]["OpenLanePosture"];
             /** Format: date-time */
             published_at?: string | null;
             published_by?: null | components["schemas"]["CreatedBy"];
@@ -5545,6 +5562,7 @@ export interface components {
             id: string;
             /** Format: int32 */
             number: number;
+            open_lane_posture: components["schemas"]["OpenLanePosture"];
             /** Format: date-time */
             published_at?: string | null;
             published_by?: null | components["schemas"]["CreatedBy"];
@@ -6058,7 +6076,9 @@ export interface components {
             selected: boolean;
         };
         /** @enum {string} */
-        SimReason: "rule" | "default_denied" | "egress_denied" | "governance";
+        SimLane: "request" | "open";
+        /** @enum {string} */
+        SimReason: "open_lane" | "rule" | "default_denied" | "egress_denied" | "governance";
         SimTrace: {
             organization: components["schemas"]["ScopeTrace"];
             workspace: components["schemas"]["ScopeTrace"];
@@ -6070,6 +6090,7 @@ export interface components {
             agent_id: string;
             /** @description Request body (UTF-8 text) for body conditions. */
             body?: string | null;
+            lane?: null | components["schemas"]["SimLane"];
             method: string;
             url: string;
             use_draft?: boolean | null;

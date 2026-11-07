@@ -13,7 +13,8 @@ pub mod rule;
 pub mod select;
 
 pub use eval::{
-    BlockReason, Decision, MemoryCounter, RateCounter, RateLimitHit, ScopePolicy, Verdict, evaluate,
+    BlockReason, Decision, MemoryCounter, RateCounter, RateLimitHit, ScopePolicy, Verdict,
+    connect_allow_admits, evaluate,
 };
 pub use facts::{Credential, CredentialKey, RequestFacts, RequestIdentity};
 pub use git::GitOp;

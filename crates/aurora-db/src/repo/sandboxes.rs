@@ -298,6 +298,7 @@ pub async fn begin_boot(
     profile: &serde_json::Value,
     boot_hash: &[u8],
     boot_prefix: &str,
+    capabilities: &[String],
 ) -> Result<Vec<Uuid>, DbError> {
     sqlx::query(
         "UPDATE sandboxes SET boot_id = $2, bootstrap_token_hash = $3, bootstrap_used_at = NULL,
@@ -317,14 +318,15 @@ pub async fn begin_boot(
     .await?;
     let revoked = revoke_boot_credentials(conn, agent, None).await?;
     sqlx::query(
-        "INSERT INTO gateway_credentials (id, kind, token_hash, display_prefix, agent_id, boot_id)
-         VALUES ($1,'boot',$2,$3,$4,$5)",
+        "INSERT INTO gateway_credentials (id, kind, token_hash, display_prefix, agent_id, boot_id, capabilities)
+         VALUES ($1,'boot',$2,$3,$4,$5,$6)",
     )
     .bind(Uuid::now_v7())
     .bind(boot_hash)
     .bind(boot_prefix)
     .bind(agent)
     .bind(boot_id)
+    .bind(capabilities)
     .execute(conn)
     .await?;
     Ok(revoked)

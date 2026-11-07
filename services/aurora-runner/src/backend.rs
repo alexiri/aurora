@@ -101,6 +101,12 @@ pub trait Backend: Send + Sync {
     fn id(&self) -> &'static str;
     /// Declared at registration; never probed later.
     fn capabilities(&self) -> RunnerCapabilities;
+    /// (RFE-003) Capabilities the sandbox `image` declares in its `org.aurora.capabilities`
+    /// label (comma list), read once when the runner registers. A backend that cannot read
+    /// image labels, or an image without the label, reports none (fail closed).
+    async fn image_capabilities(&self, _image: &str) -> Vec<String> {
+        Vec::new()
+    }
     /// Idempotent.
     async fn provision_home(
         &self,

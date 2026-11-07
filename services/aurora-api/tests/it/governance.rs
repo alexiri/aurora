@@ -240,3 +240,89 @@ async fn change_marks_origin_mismatch_and_clears_agent_override() {
         "{v}"
     );
 }
+
+// ---- P1-003 (RFE-003): open-lane posture in the org governance document ----
+
+#[tokio::test]
+async fn open_lane_posture_validation_and_effective_view() {
+    let w = world().await;
+    // default: enabled, from the org
+    let (s, v) = w
+        .call(Method::GET, &w.url("/effective"), &w.owner, None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["egress"]["open_lane"]["value"], "enabled");
+    assert_eq!(v["egress"]["open_lane"]["source"], "org");
+    // invalid value
+    let (s, v) = w.put(json!({"egress": {"open_lane": "maybe"}}), 0).await;
+    assert_eq!((s, code(&v)), (422, Some("governance_invalid")), "{v}");
+    assert_eq!(
+        v["error"]["details"]["fields"][0]["path"],
+        "egress.open_lane"
+    );
+    // valid, round-trips and shows in the effective view
+    let (s, v) = w
+        .put(json!({"egress": {"open_lane": "allowlist_only"}}), 0)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["document"]["egress"]["open_lane"], "allowlist_only");
+    let (_, v) = w
+        .call(Method::GET, &w.url("/effective"), &w.owner, None)
+        .await;
+    assert_eq!(v["egress"]["open_lane"]["value"], "allowlist_only");
+    // members can read the effective value (they need to know why a tunnel is refused)
+    let (s, v) = w
+        .call(Method::GET, &w.url("/effective"), &w.member, None)
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["egress"]["open_lane"]["value"], "allowlist_only");
+}
+
+#[tokio::test]
+async fn open_lane_cannot_be_looser_than_the_instance_minimum() {
+    let h = Harness::with_config(|c| {
+        c.governance.open_lane_minimum = aurora_config::OpenLanePosture::AllowlistOnly;
+    })
+    .await;
+    let org = h.org().await;
+    let o = h.user("o@x.io", false).await;
+    h.member(org, o, "owner", "active").await;
+    let (_, t) = h.good_session(o).await;
+    let c = cookie(&t);
+    let hdr = [("cookie", c.as_str()), ("origin", ORIGIN)];
+    let (hr, hdrr) = (&h, &hdr);
+    let put = |doc: Value| async move {
+        hr.send(
+            Method::PUT,
+            &format!("/v1/orgs/{org}/governance"),
+            hdrr,
+            Some(json!({"document": doc, "revision": 0})),
+        )
+        .await
+    };
+    let (s, _, v) = put(json!({"egress": {"open_lane": "enabled"}})).await;
+    assert_eq!(s.as_u16(), 422);
+    assert_eq!(code(&v), Some("governance_below_instance_minimum"), "{v}");
+    assert_eq!(
+        v["error"]["details"]["fields"][0]["path"],
+        "egress.open_lane"
+    );
+    let (s, _, v) = h
+        .send(
+            Method::GET,
+            &format!("/v1/orgs/{org}/governance/effective"),
+            &hdr,
+            None,
+        )
+        .await;
+    assert_eq!(s.as_u16(), 200);
+    assert_eq!(v["egress"]["open_lane"]["value"], "allowlist_only");
+    assert_eq!(v["egress"]["open_lane"]["source"], "instance");
+    let (_, _, v) = h
+        .send(Method::GET, "/v1/governance/instance", &hdr, None)
+        .await;
+    assert_eq!(v["egress"]["open_lane_minimum"], "allowlist_only");
+    // stricter than the minimum is fine
+    let (s, _, _) = put(json!({"egress": {"open_lane": "disabled"}})).await;
+    assert_eq!(s.as_u16(), 200);
+}

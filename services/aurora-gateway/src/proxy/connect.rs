@@ -2,7 +2,7 @@
 
 use super::tunnel::stopped;
 use super::{Proxy, Target, bridge, dial_error};
-use crate::auth::Lane;
+use crate::auth::{CAP_BROWSER, Lane};
 use crate::guard::normalize_host;
 use crate::pipeline::{OpenLaneDecision, Scheme, TunnelReport};
 use crate::upstream::dial;
@@ -42,6 +42,12 @@ impl Proxy {
         let on_upgrade = hyper::upgrade::on(&mut req);
         match lane {
             Lane::Open => {
+                // (RFE-003 c) Capability first, before any policy evaluation: a client that
+                // merely sets the username `open` gains nothing. Only `aub_` boot credentials
+                // minted with `browser` hold it.
+                if !t.identity.has_capability(CAP_BROWSER) {
+                    return guidance::response(&guidance::open_lane_not_permitted());
+                }
                 if let OpenLaneDecision::Deny(e) = self
                     .handler
                     .open_lane_check(&t.identity, &t.host, t.port)

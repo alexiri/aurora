@@ -508,6 +508,25 @@ async fn s8_security_probes() {
         format!("{h}\n{mounts:?}"),
     );
 
+    // --- SEC-41 (RFE-003): an image without the `org.aurora.capabilities` label (the e2e
+    // sandbox-min image) boots with no capability: nothing listens on the open proxy 3129,
+    // while the machine proxy 3128 does.
+    check(
+        "SEC-41 no open-proxy listener without the capability",
+        !can_connect(c, "127.0.0.1", 3129),
+        "3129 is listening".into(),
+    );
+    check(
+        "SEC-41 machine proxy still listening",
+        can_connect(c, "127.0.0.1", 3128),
+        "3128 is not listening".into(),
+    );
+    check(
+        "SEC-41 boot document carries no capability",
+        doc["capabilities"].as_array().is_none_or(Vec::is_empty),
+        doc["capabilities"].to_string(),
+    );
+
     // --- SEC-02: only gateway proxy + runner channel reachable; no DNS.
     check(
         "SEC-02 dns",

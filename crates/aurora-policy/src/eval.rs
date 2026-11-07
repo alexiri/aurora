@@ -211,7 +211,13 @@ struct ScopeResult {
 
 fn allowlisted(p: &ScopePolicy, f: &RequestFacts) -> bool {
     p.uncredentialed_allowlist.iter().any(|e| {
-        e.host.matches(&f.host, f.port) && e.path.as_ref().is_none_or(|pp| pp.matches(&f.path))
+        e.host.matches(&f.host, f.port)
+            && if f.connect_time {
+                // A path-scoped entry must not admit a tunnel (RFE-003).
+                e.path.is_none()
+            } else {
+                e.path.as_ref().is_none_or(|pp| pp.matches(&f.path))
+            }
     })
 }
 
@@ -242,12 +248,24 @@ fn eval_scope(p: &ScopePolicy, f: &RequestFacts, counters: &dyn RateCounter) -> 
             considered.push(t);
             continue;
         }
-        if !r.targets_match(f) {
+        let (targets_ok, ok, unknown) = if f.connect_time {
+            // Doubt only tightens: the whole verdict is `connect_matches`.
+            let m = r.connect_matches(f);
+            (m, m, r.is_restrictive() && !r.conditions.is_empty())
+        } else {
+            let tm = r.targets_match(f);
+            let (ok, unknown) = if tm {
+                r.conditions_match(f)
+            } else {
+                (false, false)
+            };
+            (tm, ok, unknown)
+        };
+        if !targets_ok {
             t.result = RuleResult::TargetMismatch;
             considered.push(t);
             continue;
         }
-        let (ok, unknown) = r.conditions_match(f);
         t.unknown_conditions = unknown;
         if !ok {
             t.result = RuleResult::ConditionsNotMet;
@@ -320,6 +338,19 @@ fn eval_scope(p: &ScopePolicy, f: &RequestFacts, counters: &dyn RateCounter) -> 
         ),
         DefaultAction::Block => finish(considered, None, Via::Nothing, None, None),
     }
+}
+
+/// (RFE-003) Whether an explicit allow rule of this scope is fully knowable at `CONNECT`
+/// time and matches (identity, host, port). Used by the open-lane `allowlist_only` check;
+/// the full evaluation still applies afterwards.
+pub fn connect_allow_admits(p: &ScopePolicy, f: &RequestFacts) -> bool {
+    p.ordered_rules.iter().any(|r| {
+        r.enabled
+            && r.action == Action::Allow
+            && !r.is_restrictive()
+            && r.identity_matches(&f.identity)
+            && r.connect_matches(f)
+    })
 }
 
 /// Evaluate both scopes and combine by strictness (ties: organization first).

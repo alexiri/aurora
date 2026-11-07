@@ -272,12 +272,16 @@ pub struct GovernanceEgress {
     /// `open` or `credentialed_only`.
     pub minimum_posture: String,
     pub baseline_allowlist: Vec<EgressEntry>,
+    /// (RFE-003) `enabled`, `allowlist_only` or `disabled`: floor of the open-lane
+    /// posture for every org and workspace.
+    pub open_lane_minimum: String,
 }
 impl Default for GovernanceEgress {
     fn default() -> Self {
         Self {
             minimum_posture: "open".into(),
             baseline_allowlist: vec![],
+            open_lane_minimum: "enabled".into(),
         }
     }
 }

@@ -39,6 +39,7 @@ use tokio::net::TcpListener;
 use uuid::Uuid;
 
 const TOKEN: &str = "aug_good";
+const BOOT: &str = "aub_browser";
 
 struct World {
     org: Uuid,
@@ -51,13 +52,19 @@ struct Static(Arc<World>);
 #[async_trait]
 impl CredentialResolver for Static {
     async fn resolve(&self, token: &str) -> Result<Option<RequestIdentity>, ResolveError> {
-        if token != TOKEN {
+        // `BOOT` is a boot credential minted with the `browser` capability (RFE-003).
+        if token != TOKEN && token != BOOT {
             return Ok(None);
         }
+        let boot = token == BOOT;
         let w = &self.0;
         Ok(Some(RequestIdentity {
             credential_id: Uuid::nil(),
-            kind: CredentialKind::Agent,
+            kind: if boot {
+                CredentialKind::Boot
+            } else {
+                CredentialKind::Agent
+            },
             agent_id: w.agent,
             workspace_id: w.ws,
             org_id: w.org,
@@ -65,6 +72,7 @@ impl CredentialResolver for Static {
             turn_id: None,
             context_label: None,
             principals: vec![w.agent],
+            capabilities: if boot { vec!["browser".into()] } else { vec![] },
         }))
     }
 }
@@ -743,7 +751,7 @@ async fn open_lane_policy_and_tunnel_row() {
     let connect = |target: String| {
         let auth = format!(
             "Proxy-Authorization: Basic {}\r\n",
-            base64::engine::general_purpose::STANDARD.encode(format!("open:{TOKEN}"))
+            base64::engine::general_purpose::STANDARD.encode(format!("open:{BOOT}"))
         );
         format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n{auth}\r\n")
     };

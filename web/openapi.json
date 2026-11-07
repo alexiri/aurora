@@ -18741,6 +18741,17 @@
           "default_action": {
             "$ref": "#/components/schemas/DefaultAction"
           },
+          "open_lane_posture": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OpenLanePosture",
+                "description": "(RFE-003) workspace scope only; absent = `enabled` (whole-draft replace). A\nworkspace can only tighten, so `enabled` adds no restriction beyond org and instance."
+              }
+            ]
+          },
           "revision": {
             "type": "integer",
             "format": "int64"
@@ -18838,6 +18849,7 @@
         "type": "object",
         "required": [
           "posture",
+          "open_lane",
           "org_allowlist",
           "baseline_allowlist"
         ],
@@ -18847,6 +18859,10 @@
             "items": {
               "$ref": "#/components/schemas/AllowlistEntry"
             }
+          },
+          "open_lane": {
+            "$ref": "#/components/schemas/Sourced_String",
+            "description": "(RFE-003) effective open-lane posture: `enabled` | `allowlist_only` | `disabled`."
           },
           "org_allowlist": {
             "type": "array",
@@ -19538,6 +19554,7 @@
         "type": "object",
         "required": [
           "minimum_posture",
+          "open_lane_minimum",
           "baseline_allowlist"
         ],
         "properties": {
@@ -19549,6 +19566,10 @@
           },
           "minimum_posture": {
             "type": "string"
+          },
+          "open_lane_minimum": {
+            "type": "string",
+            "description": "(RFE-003) `enabled` | `allowlist_only` | `disabled`."
           }
         }
       },
@@ -20635,6 +20656,15 @@
           }
         }
       },
+      "OpenLanePosture": {
+        "type": "string",
+        "description": "Open-lane posture (RFE-003), ordered by strictness\n(`enabled` < `allowlist_only` < `disabled`).",
+        "enum": [
+          "enabled",
+          "allowlist_only",
+          "disabled"
+        ]
+      },
       "Org": {
         "type": "object",
         "required": [
@@ -20705,6 +20735,15 @@
             },
             "default": []
           },
+          "open_lane": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OpenLanePosture",
+                "description": "(RFE-003) org open-lane posture; never looser than the instance minimum."
+              }
+            ],
+            "default": "enabled"
+          },
           "posture": {
             "oneOf": [
               {
@@ -20764,6 +20803,7 @@
             ],
             "default": {
               "allowlist": [],
+              "open_lane": "enabled",
               "posture": "open"
             }
           },
@@ -22602,6 +22642,7 @@
                 "default_action",
                 "uncredentialed_default",
                 "uncredentialed_allowlist",
+                "open_lane_posture",
                 "rule_count",
                 "created_at"
               ],
@@ -22627,6 +22668,9 @@
                 "number": {
                   "type": "integer",
                   "format": "int32"
+                },
+                "open_lane_posture": {
+                  "$ref": "#/components/schemas/OpenLanePosture"
                 },
                 "published_at": {
                   "type": [
@@ -24402,6 +24446,7 @@
           "default_action",
           "uncredentialed_default",
           "uncredentialed_allowlist",
+          "open_lane_posture",
           "rules",
           "created_at"
         ],
@@ -24428,6 +24473,10 @@
           "number": {
             "type": "integer",
             "format": "int32"
+          },
+          "open_lane_posture": {
+            "$ref": "#/components/schemas/OpenLanePosture",
+            "description": "(RFE-003) workspace open-lane posture; always `enabled` at org scope."
           },
           "published_at": {
             "type": [
@@ -24476,6 +24525,7 @@
           "default_action",
           "uncredentialed_default",
           "uncredentialed_allowlist",
+          "open_lane_posture",
           "rule_count",
           "created_at"
         ],
@@ -24501,6 +24551,9 @@
           "number": {
             "type": "integer",
             "format": "int32"
+          },
+          "open_lane_posture": {
+            "$ref": "#/components/schemas/OpenLanePosture"
           },
           "published_at": {
             "type": [
@@ -26303,9 +26356,17 @@
           }
         }
       },
+      "SimLane": {
+        "type": "string",
+        "enum": [
+          "request",
+          "open"
+        ]
+      },
       "SimReason": {
         "type": "string",
         "enum": [
+          "open_lane",
           "rule",
           "default_denied",
           "egress_denied",
@@ -26354,6 +26415,17 @@
               "null"
             ],
             "description": "Request body (UTF-8 text) for body conditions."
+          },
+          "lane": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SimLane",
+                "description": "(RFE-003) `request` (default) or `open`: `open` evaluates a browser tunnel under the\nopen-lane posture and the CONNECT-time semantics (`07`); `url` is `https://host[:port]`\nand `method`/`body` are ignored."
+              }
+            ]
           },
           "method": {
             "type": "string"

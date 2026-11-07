@@ -147,6 +147,7 @@ fn defaults_match_table() {
     );
     assert_eq!(r.governance.llm.minimum_posture, "open");
     assert_eq!(r.governance.egress.minimum_posture, "open");
+    assert_eq!(r.governance.egress.open_lane_minimum, "enabled");
     assert_eq!(r.agents.default_name, "Daneel");
     assert!(r.hosted.enabled);
     assert_eq!(r.hosted.idle_stop_secs, 1800);
@@ -792,4 +793,27 @@ fn proxy_tls_cert_and_key_come_together() {
             .to_string()
             .contains("gateway.proxy_tls.names")
     );
+}
+
+#[test]
+fn open_lane_minimum_is_validated_and_defaults_to_enabled() {
+    let toml = |v: &str| format!("{BASE}[governance.egress]\nopen_lane_minimum = \"{v}\"\n");
+    let api = load_with(&toml("allowlist_only"), &[])
+        .unwrap()
+        .api_config()
+        .unwrap();
+    assert_eq!(
+        api.governance.open_lane_minimum,
+        OpenLanePosture::AllowlistOnly
+    );
+    let api = load_with(&toml("disabled"), &[])
+        .unwrap()
+        .api_config()
+        .unwrap();
+    assert_eq!(api.governance.open_lane_minimum, OpenLanePosture::Disabled);
+    let e = load_with(&toml("sometimes"), &[])
+        .unwrap()
+        .api_config()
+        .unwrap_err();
+    assert!(e.has_key("governance.egress.open_lane_minimum"));
 }

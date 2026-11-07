@@ -25,6 +25,48 @@ pub enum EgressPosture {
     CredentialedOnly,
 }
 
+/// Open-lane posture (RFE-003), ordered by strictness
+/// (`enabled` < `allowlist_only` < `disabled`).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenLanePosture {
+    #[default]
+    Enabled,
+    AllowlistOnly,
+    Disabled,
+}
+
+impl OpenLanePosture {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "enabled" => Some(Self::Enabled),
+            "allowlist_only" => Some(Self::AllowlistOnly),
+            "disabled" => Some(Self::Disabled),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Enabled => "enabled",
+            Self::AllowlistOnly => "allowlist_only",
+            Self::Disabled => "disabled",
+        }
+    }
+}
+
+impl From<aurora_config::OpenLanePosture> for OpenLanePosture {
+    fn from(p: aurora_config::OpenLanePosture) -> Self {
+        match p {
+            aurora_config::OpenLanePosture::Enabled => Self::Enabled,
+            aurora_config::OpenLanePosture::AllowlistOnly => Self::AllowlistOnly,
+            aurora_config::OpenLanePosture::Disabled => Self::Disabled,
+        }
+    }
+}
+
 impl LlmPosture {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
@@ -108,6 +150,8 @@ impl OrgOrigin {
 pub struct OrgEgress {
     pub posture: EgressPosture,
     pub allowlist: Vec<AllowEntry>,
+    /// (RFE-003) org open-lane posture; never looser than the instance minimum.
+    pub open_lane: OpenLanePosture,
 }
 
 /// An egress allow-list entry in policy host/path pattern syntax.

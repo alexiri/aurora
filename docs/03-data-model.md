@@ -81,7 +81,7 @@ External identities linked to a user (OIDC).
 | slug | text unique not null | |
 | name | text not null | ≤80 |
 | app_posture | text CHECK in (`open`,`restricted`) default `open` | see `07 §App availability` |
-| governance | jsonb not null default `{}` | org LLM and egress governance document (`08 §11.2`); `{}` = defaults derived from the instance |
+| governance | jsonb not null default `{}` | org LLM and egress governance document (`08 §11.2`); `{}` = defaults derived from the instance; (phase 1, RFE-003) `egress.open_lane` = `enabled` \| `allowlist_only` \| `disabled` (default `enabled`), the org open-lane posture, not below the instance minimum (`08 §11.2`) |
 | governance_revision | bigint not null default 0 | optimistic concurrency for governance edits |
 | external_id | text unique not null | 32 random hex chars at creation; immutable; exposed to plugins as context variable `org_external_id` (e.g. AWS external id) |
 | settings | jsonb not null default `{}` | `{ "max_agents"?: int, "max_members"?: int, "sandbox_overrides"?: ResourceProfile }` |
@@ -338,6 +338,7 @@ Only consulted when `organizations.app_posture = 'restricted'`.
 | default_action | text CHECK in (`none`,`allow`,`block`) default `none` | the scope's Default Rule (credentialed requests) |
 | uncredentialed_default | text CHECK in (`none`,`block`) default `none` | workspace scope only (CHECK: `none` when `workspace_id IS NULL`; the org scope uses org governance, `08 §11.6`) |
 | uncredentialed_allowlist | jsonb not null default `[]` | `[{ "host": pattern, "path"?: pattern }]`, ≤500 entries |
+| open_lane_posture | text CHECK in (`enabled`,`allowlist_only`,`disabled`) not null default `enabled` | (phase 1, RFE-003) the workspace's open-lane posture (`08 §11`, `06 §Open-lane admission and posture`); can only tighten. CHECK: `enabled` when `workspace_id IS NULL` (org scope uses `organizations.governance.egress.open_lane`) |
 | draft_revision | bigint not null default 0 | optimistic concurrency for draft edits |
 | published_by | uuid null FK→users (set null) | |
 | published_at | timestamptz null | |
@@ -530,6 +531,7 @@ All tokens the gateway accepts.
 | conversation_id | uuid null FK→conversations (cascade) | kind=context |
 | turn_id | uuid null | kind=context (hosted) |
 | context_label | text null | kind=context (BYO), ≤128, sanitized |
+| capabilities | text[] not null default `{}` | (phase 1, RFE-003) credential capabilities; phase 1 value `browser` (open-lane use), settable on `boot` credentials only (`08 §7`) |
 | expires_at | timestamptz null | agent: null; boot: null until stop; context: turn end + grace |
 | revoked_at | timestamptz null | |
 | index | (agent_id, kind) | |
@@ -1091,21 +1093,6 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | `config.verified_email_autolink` | bool, default `false` | org-admin opt-in: the core may create `verified_email` user links from the connector's asserted `email`/`email_verified` (`13 §5.9`). Requires the `email_verified` capability. No column: `config` is `jsonb`. | 1 (RFE-001) |
-
-#### `policy_generations`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| open_lane_posture | text CHECK in (`enabled`,`allowlist_only`,`disabled`) not null default `enabled` | the workspace's open-lane posture (`08 §11`, `06 §Open-lane admission and posture`); can only tighten. CHECK: `enabled` when `workspace_id IS NULL` (org scope uses `organizations.governance.egress.open_lane`) | 1 (RFE-003) |
-
-#### `organizations` (jsonb key in `governance`)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| `governance.egress.open_lane` | `enabled` \| `allowlist_only` \| `disabled`, default `enabled` | org open-lane posture (`08 §11.2`); not below the instance minimum. No column: `governance` is `jsonb`. | 1 (RFE-003) |
-
-#### `gateway_credentials`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| capabilities | text[] not null default `{}` | credential capabilities; phase 1 value `browser` (open-lane use), settable on `boot` credentials only (`08 §7`) | 1 (RFE-003) |
 
 #### `users`
 | Planned column | Type | Notes | Phase |

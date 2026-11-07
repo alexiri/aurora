@@ -103,6 +103,9 @@ impl Runner {
         let mut caps = self.backend.capabilities();
         caps.image.clone_from(&self.settings.executor.image);
         caps.held_awake_ceiling = self.settings.held_awake_ceiling;
+        if let Some(image) = &self.settings.executor.image {
+            caps.image_capabilities = self.backend.image_capabilities(image).await;
+        }
         let max = caps.max_sandboxes;
         let max_attachment_bytes = caps.max_attachment_bytes;
         let reg = RegisterRequest {

@@ -278,6 +278,22 @@ function EgressTab({ form, patch, issues, readOnly, eff, orgId }: {
         ]}
       />
       <Errors messages={issuesUnder(issues, "/egress/posture")} />
+      <PostureSelect
+        label="Browser tunnels (open lane)"
+        value={form.openLane}
+        locked={form.openLaneLocked}
+        readOnly={readOnly}
+        onChange={(v) => patch({ openLane: v })}
+        options={[
+          { value: "enabled", label: "Enabled: browsers may open tunnels" },
+          { value: "allowlist_only", label: "Allow-list only: tunnels reach only allow-listed hosts" },
+          { value: "disabled", label: "Disabled: no browser tunnels" },
+        ]}
+      />
+      <p className="text-xs text-neutral-600">
+        Tunnels cannot be inspected or given credentials; <code>allowlist_only</code> limits them to the allow-list.
+      </p>
+      <Errors messages={issuesUnder(issues, "/egress/open_lane")} />
       <section aria-label="Organization allow-list" className="space-y-2">
         <h2 className="text-sm font-medium">Organization allow-list</h2>
         {form.allowlist.length === 0 ? <p className="text-sm text-neutral-600">No hosts allowed beyond the instance baseline.</p> : null}
