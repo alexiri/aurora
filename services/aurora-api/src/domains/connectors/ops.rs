@@ -120,6 +120,13 @@ async fn enqueue_with(
     correlation_id: Option<Uuid>,
 ) -> Result<Uuid, ApiError> {
     let id = Uuid::now_v7();
+    // Every `message.post` carries its op id as the invisible marker (docs/13 §4.2).
+    let mut payload = op.payload.clone();
+    if op.kind == "message.post"
+        && let Some(o) = payload.as_object_mut()
+    {
+        o.insert("op_marker".to_owned(), json!(id));
+    }
     let ins = ops::insert(
         tx,
         &InsertOp {
@@ -128,7 +135,7 @@ async fn enqueue_with(
             integration_id: op.integration_id,
             presence_id: op.presence_id,
             kind: &op.kind,
-            payload: &op.payload,
+            payload: &payload,
             dedupe_key: op.dedupe_key.as_deref(),
             correlation_id,
         },

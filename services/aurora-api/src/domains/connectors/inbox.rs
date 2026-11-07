@@ -36,7 +36,7 @@ pub trait InboxHandler: Send + Sync {
 
 /// The registered handlers (BE-072/073 add theirs here).
 pub fn handlers() -> Vec<Arc<dyn InboxHandler>> {
-    Vec::new()
+    crate::domains::channels::inbox::handlers()
 }
 
 fn backoff_secs(attempts: i32) -> f64 {
@@ -84,6 +84,7 @@ pub async fn process_batch(
 
 /// Start the processor on the current runtime (every replica; rows are claimed `SKIP LOCKED`).
 pub fn spawn(state: AppState) {
+    crate::domains::channels::mirror::init(&state.config.external_url);
     tokio::spawn(async move {
         let handlers = handlers();
         let mut rx = loop {

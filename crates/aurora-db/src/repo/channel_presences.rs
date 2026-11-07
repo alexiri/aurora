@@ -290,3 +290,56 @@ pub async fn forget_agent_routing(
         .await?;
     Ok(())
 }
+
+/// An active presence with its agent (inbox routing and commands).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PresenceAgent {
+    pub presence_id: Uuid,
+    pub mode: String,
+    pub platform_user_ref: Option<String>,
+    pub agent_id: Uuid,
+    pub agent_handle: String,
+    pub agent_name: String,
+    pub workspace_id: Uuid,
+}
+
+pub async fn active_with_agents<'e, E: PgExecutor<'e>>(
+    exec: E,
+    integration: Uuid,
+) -> Result<Vec<PresenceAgent>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT p.id AS presence_id, p.mode, p.platform_user_ref, a.id AS agent_id,
+                a.handle AS agent_handle, a.name AS agent_name, a.workspace_id
+           FROM channel_presences p JOIN agents a ON a.id = p.agent_id
+          WHERE p.integration_id=$1 AND p.status='active'
+          ORDER BY p.created_at, p.id",
+    )
+    .bind(integration)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Users who can own a workspace that has an active shared presence on the integration
+/// (org owners/admins and workspace owners), for "who can set this up" replies.
+pub async fn setup_owners<'e, E: PgExecutor<'e>>(
+    exec: E,
+    integration: Uuid,
+    limit: i64,
+) -> Result<Vec<(Uuid, String)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT DISTINCT u.id, u.display_name
+           FROM channel_presences p
+           JOIN agents a ON a.id = p.agent_id
+           JOIN workspaces w ON w.id = a.workspace_id
+           JOIN org_members m ON m.org_id = w.org_id AND m.status='active'
+           LEFT JOIN workspace_access wa ON wa.workspace_id = w.id AND wa.user_id = m.user_id
+           JOIN users u ON u.id = m.user_id
+          WHERE p.integration_id=$1 AND p.mode='shared' AND p.status='active'
+            AND (m.role IN ('owner','admin') OR wa.role='owner')
+          ORDER BY u.display_name, u.id LIMIT $2",
+    )
+    .bind(integration)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}

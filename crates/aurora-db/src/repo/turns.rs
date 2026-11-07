@@ -357,3 +357,18 @@ pub async fn bind_attachments(
     .await?;
     Ok(done.rows_affected())
 }
+
+/// The turn (or follow-up) a connector event already created in this conversation.
+pub async fn by_source_event(
+    conn: &mut PgConnection,
+    conversation_id: Uuid,
+    source_event_id: &str,
+) -> Result<Option<TurnRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM turns WHERE conversation_id = $1 AND source_event_id = $2"
+    ))
+    .bind(conversation_id)
+    .bind(source_event_id)
+    .fetch_optional(conn)
+    .await?)
+}

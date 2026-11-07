@@ -159,3 +159,38 @@ pub async fn approved_person_reach<'e, E: PgExecutor<'e>>(
     .fetch_one(exec)
     .await?)
 }
+
+/// A `left`/`expired` grant that is asked for again goes back to `pending`.
+pub async fn reopen_pending<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE reach_grants SET state='pending', revision=revision+1, updated_at=now()
+          WHERE id=$1 AND state IN ('left','expired')",
+    )
+    .bind(id)
+    .execute(exec)
+    .await?
+    .rows_affected()
+        > 0)
+}
+
+/// Space grants of an integration become `left` (bot removed from the space); `agent` narrows
+/// it to one agent (a dedicated bot was removed), `None` is every agent (the shared bot).
+pub async fn leave_space<'e, E: PgExecutor<'e>>(
+    exec: E,
+    integration: Uuid,
+    agent: Option<Uuid>,
+    space_ref: &str,
+) -> Result<u64, DbError> {
+    Ok(sqlx::query(
+        "UPDATE reach_grants SET state='left', revision=revision+1, updated_at=now()
+          WHERE integration_id=$1 AND subject_kind='space' AND subject_ref=$2
+            AND ($3::uuid IS NULL OR agent_id=$3)
+            AND state IN ('pending','approved')",
+    )
+    .bind(integration)
+    .bind(space_ref)
+    .bind(agent)
+    .execute(exec)
+    .await?
+    .rows_affected())
+}

@@ -12,9 +12,13 @@
 //! * plaintext credentials sent in a `credentials.validate` op payload are blanked once the op
 //!   finished.
 mod bindings;
+pub mod card_requests;
+pub mod commands;
 mod dto;
+pub mod inbox;
 mod integrations;
 mod links;
+pub mod mirror;
 pub mod presences;
 mod reach;
 mod routes;

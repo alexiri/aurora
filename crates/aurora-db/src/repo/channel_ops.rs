@@ -312,3 +312,16 @@ pub async fn scrub_validate_payloads<'e, E: PgExecutor<'e>>(
     .await?
     .rows_affected())
 }
+
+/// The op queued under a dedupe key.
+pub async fn by_dedupe_key<'e, E: PgExecutor<'e>>(
+    exec: E,
+    key: &str,
+) -> Result<Option<OpRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM channel_ops WHERE dedupe_key=$1"
+    ))
+    .bind(key)
+    .fetch_optional(exec)
+    .await?)
+}
