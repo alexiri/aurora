@@ -101,6 +101,9 @@ spec:
         {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
       ports: [{protocol: TCP, port: 4111}]
     {{- include "aurora.external" . | nindent 4 }}
+    {{- with .Values.networkPolicy.gatewayExtraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

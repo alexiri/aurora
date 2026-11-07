@@ -1,22 +1,13 @@
 #!/usr/bin/env bash
 # Edge configuration covers all route prefixes (docs/18 "Architecture guards", docs/15 "Networking").
-# Verifies the compose Caddyfile, the Helm Ingress and the Helm HTTPRoute:
+# Verifies the Helm Ingress and the Helm HTTPRoute (the compose Caddyfile is gone: phase 1, OPS-017), each
+# rendered with the chart defaults and with the kind dev profile (deploy/kind/values-dev.yaml):
 #   /v1/* -> api:4101, everything else -> web:4100, /internal and /metrics never routed to api.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 fail() { echo "edge-routes: FAIL: $*" >&2; exit 1; }
-
-# --- Caddyfile ---
-CF=deploy/compose/Caddyfile
-grep -Eq '@blocked path .*/internal' "$CF" && grep -Eq '@blocked path .*/metrics' "$CF" || fail "$CF does not block /internal and /metrics"
-awk '/handle @blocked/{f=1} f&&/respond 404/{ok=1} f&&/}/{f=0} END{exit !ok}' "$CF" || fail "$CF blocked matcher must respond 404"
-grep -Eq 'handle /v1/\*' "$CF" || fail "$CF has no 'handle /v1/*'"
-awk '/handle \/v1\/\*/{f=1} f&&/reverse_proxy aurora-api:4101/{ok=1} END{exit !ok}' "$CF" || fail "$CF /v1/* does not proxy to aurora-api:4101"
-grep -Eq 'reverse_proxy aurora-web:4100' "$CF" || fail "$CF has no default route to aurora-web:4100"
-if grep -E 'reverse_proxy' "$CF" | grep -Eq 'internal|metrics'; then fail "$CF proxies internal/metrics"; fi
-echo "edge-routes: Caddyfile ok"
 
 # --- Helm Ingress / HTTPRoute ---
 if ! command -v helm >/dev/null 2>&1; then
@@ -59,3 +50,4 @@ print("edge-routes: %s ok" % label)
 }
 check_render "helm Ingress"
 check_render "helm HTTPRoute" --set ingress.enabled=false --set gatewayApi.enabled=true
+check_render "kind dev profile Ingress" -f deploy/kind/values-dev.yaml

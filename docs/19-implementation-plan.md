@@ -136,7 +136,9 @@ probes pass on Kubernetes; performance budgets met; upgrade test green.
 
 **Phase 0 exit**: all milestones accepted; every SEC invariant has a passing
 proving test; the compose stack and the Helm chart install from scratch with
-documented steps.
+documented steps. (phase 1, OPS-017: this wording stays historical. From phase 1 the compose stack no longer
+exists; the equivalent exit check is the Helm chart installed from scratch on kind, `scripts/e2e/kind.sh --fresh`
+and `deploy/dev/kind-dev.sh up`.)
 
 ## Phase 1 — Mattermost connector
 

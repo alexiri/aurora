@@ -1,7 +1,5 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-compose := "podman compose -f deploy/compose/compose.yaml"
-
 # Start (or create) the dev Postgres on 127.0.0.1:55432.
 dev-db:
     podman start aurora-dev-pg 2>/dev/null || podman run -d --name aurora-dev-pg \
@@ -28,12 +26,23 @@ dev: migrate
     pnpm --dir web dev &
     wait
 
-compose-up:
-    bash deploy/compose/setup.sh
-    {{compose}} up -d
+# --- containerized dev stack: kind + Helm (OPS-017; docs/operator/install-kind-dev.md) ---
 
-compose-down:
-    {{compose}} down
+# Create the kind cluster `aurora-dev`, build + load the images, helm install. Flags: --llm-mock --connector-fake --no-sandbox. One URL: http://localhost:4000.
+kind-up *flags:
+    bash deploy/dev/kind-dev.sh up {{flags}}
+
+# Rebuild only the changed service images (api gateway hookhost runner connector-fake web sandbox; default: the core five), load them and restart their Deployments.
+kind-dev *services:
+    bash deploy/dev/kind-dev.sh dev {{services}}
+
+# Pods of the dev cluster.
+kind-status:
+    bash deploy/dev/kind-dev.sh status
+
+# Delete the dev cluster (the cargo cache volume is kept).
+kind-down:
+    bash deploy/dev/kind-dev.sh down
 
 # --- build, test and disk hygiene (OPS-016; docs/ops/build-performance.md) ---
 

@@ -15,7 +15,7 @@ done when its tests exist, pass in CI, and the security invariants it touches
 | **Conformance** | harness adapters, connectors, plugin packages against their contracts | `tests/conformance/*` | every PR (fake implementations); env-gated for live ones |
 | **End-to-end: gateway** | real gateway + API + hook host + Postgres + fixture plugins + mock upstreams/OAuth providers, black-box over the proxy port | `tests/e2e-gateway` | every PR |
 | **End-to-end: hosted** | real API, gateway, hook host, runner (podman backend), sandbox image with the `fake` harness, fake connector | `tests/e2e-hosted` | every PR on Linux CI with podman; nightly on Kubernetes (kind with a NetworkPolicy CNI) |
-| **Dashboard** | component tests; Playwright flows against the compose stack | vitest, Playwright | every PR |
+| **Dashboard** | component tests; Playwright flows against the host-process stack (`scripts/e2e/m1.sh`, default) or the kind dev stack (`m1.sh --kind`; phase 1, OPS-017: kind replaces the compose stack) | vitest, Playwright | every PR |
 | **Live** | `claude-code` adapter against a configured LiteLLM/Anthropic endpoint through the gateway; Mattermost connector against a Mattermost container (phase 1) | env-gated | nightly |
 | **Performance** | gateway overhead and throughput; due-work poll cost with 1 000 agents | criterion, k6 | nightly |
 
@@ -482,7 +482,7 @@ done when its tests exist, pass in CI, and the security invariants it touches
    and type-check.
 2. Unit + database + service + contract tests.
 3. Build images (multi-arch on main; amd64 on PRs).
-4. e2e-gateway, e2e-hosted (podman), dashboard Playwright on compose.
+4. e2e-gateway, e2e-hosted (podman), dashboard Playwright on the host-process stack (phase 1, OPS-017: was compose; `m1.sh --kind` runs it against the kind dev stack).
 5. Architecture guards.
 6. Nightly: Kubernetes e2e on kind, live suites, performance.
 

@@ -63,7 +63,7 @@ test("sign-up -> workspace -> invite -> accept", async ({ page, browser }) => {
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Email", { exact: true }).fill(emailB);
   await dialog.getByLabel("Role").selectOption("member");
-  await dialog.getByLabel("Research").check();
+  await dialog.getByLabel("Research").selectOption("member"); // P2-012: per-workspace access select (was a checkbox)
   await dialog.getByRole("button", { name: "Send invitation" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByText(emailB).first()).toBeVisible();

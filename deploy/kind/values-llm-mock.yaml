@@ -1,0 +1,24 @@
+# `llm-mock` profile (decision I-30; replaces the compose profile of the same name): endpoint
+# `litellm-mock` = the real LiteLLM proxy in front of VidaiMock, deployed by deploy/dev/llm-mock/llm-mock.yaml
+# into namespace aurora-dev-mock. It is NOT a model. The LLM key to give Aurora is the dev master key
+# `sk-aurora-mock-dev`.
+# SEC-09 / docs/06: the gateway refuses private destinations. Only the Service's fixed ClusterIP /32
+# is opened (not the cluster), and the gateway NetworkPolicy gets one extra egress rule to that namespace.
+config:
+  gateway:
+    allowed_private: ["10.96.100.40/32"]
+  llm:
+    endpoints:
+      - id: litellm-mock
+        provider: litellm
+        display_name: "LiteLLM (VidaiMock, dev only)"
+        base_url: http://litellm.aurora-dev-mock.svc.cluster.local:4000
+        dialects: ["anthropic_messages"]
+        default_model: scn-pong
+        models: ["claude-mock", "scn-pong", "scn-memory-tool", "scn-count", "scn-ratelimit", "scn-overload"]
+
+networkPolicy:
+  gatewayExtraEgress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: aurora-dev-mock}}
+      ports: [{protocol: TCP, port: 4000}]

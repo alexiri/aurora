@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # M1 acceptance: Playwright sign-up -> workspace -> invite -> accept (TEST-011).
-# Uses ports 4100 (web), 4101 (API), a dedicated DB `aurora_e2e`, and tears everything down.
+#   scripts/e2e/m1.sh [--kind] [playwright args]
+# Default target: the host-process stack. Uses ports 4100 (web), 4101 (API), a dedicated DB `aurora_e2e`,
+# and tears everything down.
+# --kind (phase 1, OPS-017): run against the kind dev stack instead (`just kind-up`; single URL
+# http://localhost:4000, the chart's Ingress). Nothing is started or torn down; the invitation links are read
+# from `kubectl logs` of the API pod. Needs signup_mode=open as in deploy/kind/values-dev.yaml.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
+KIND=0
+if [ "${1:-}" = "--kind" ]; then KIND=1; shift; fi
 DB=aurora_e2e
 ADMIN_URL="${AURORA_E2E_ADMIN_URL:-postgres://aurora:aurora@127.0.0.1:55432/postgres}"
 E2E_URL="${ADMIN_URL%/*}/$DB"
@@ -30,6 +37,19 @@ cleanup() {
   exit "$rc"
 }
 trap cleanup EXIT INT TERM
+
+if [ "$KIND" = 1 ]; then
+  CTX="kind-${AURORA_DEV_CLUSTER:-aurora-dev}"
+  curl -fsS -o /dev/null http://localhost:4000/v1/instance || { echo "no Aurora on http://localhost:4000: run 'just kind-up' first" >&2; exit 1; }
+  export AURORA_E2E_API_LOG="$TMP/api.log"; : >"$AURORA_E2E_API_LOG"
+  setsid kubectl --context "$CTX" -n aurora logs -f --since=1s --prefix=false --max-log-requests=5 \
+    -l app.kubernetes.io/component=api >"$AURORA_E2E_API_LOG" 2>&1 &
+  API_PID=$!
+  sleep 2
+  cd web
+  AURORA_E2E_BASE_URL=http://localhost:4000 pnpm exec playwright test e2e/m1.spec.ts "$@"
+  exit $?
+fi
 
 for port in 4100 4101; do
   if ss -ltn "sport = :$port" | grep -q LISTEN; then echo "port $port already in use" >&2; exit 1; fi

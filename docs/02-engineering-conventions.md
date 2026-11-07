@@ -44,7 +44,8 @@ aurora/
     sandbox/                  # Containerfile for the agent sandbox image (base + app layer)
     services/                 # Containerfiles for service images
   deploy/
-    compose/                  # compose.yaml, Caddyfile, .env.example, setup script
+    dev/                      # host-process dev config, kind dev flow (kind-dev.sh), LiteLLM/VidaiMock mock (phase 1, OPS-017)
+    kind/                     # kind cluster configs and Helm values profiles (e2e and dev)
     helm/aurora/              # Helm chart
   tests/
     e2e-gateway/              # black-box gateway suite

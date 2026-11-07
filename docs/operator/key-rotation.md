@@ -74,18 +74,6 @@ not yet received the new key refuses what the others sign with it.
 **If a key is compromised**, skip the wait in step 3: append a new key (1), activate it (2) and
 remove the compromised one right away. Expect the failures listed above.
 
-## Compose
-
-Edit `deploy/compose/.env` (setup.sh never overwrites it):
-
-```
-AURORA_SIGNING_KEY=v0:<current>,k3f9a1c2:<new>
-AURORA_SIGNING_ACTIVE_KEY=v0
-```
-
-then `podman compose up -d` (recreates the services). Repeat with the active id changed, then
-with the old entry removed.
-
 ## Helm
 
 With a generated Secret, `helm upgrade --set secrets.rotate.signing=true` (and/or

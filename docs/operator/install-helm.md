@@ -3,7 +3,7 @@
 This is the production install described in
 [docs/15 §Production](../15-deployment-operations.md#production-helm-deployhelmaurora).
 The chart is `deploy/helm/aurora/` (Chart `aurora` 0.1.0, appVersion 0.1.0, `kubeVersion >=1.30.0-0`).
-It renders the same `aurora.toml` structure as compose into the ConfigMap `<fullname>-config`.
+It renders the `aurora.toml` structure into the ConfigMap `<fullname>-config`.
 
 Names below use the release name `aurora`. The fullname is the release name when it
 contains `aurora`, otherwise `<release>-aurora`
@@ -300,6 +300,9 @@ Logs of all pods, events and `describe` output are written to `target/kind-logs/
 Re-running is safe: an existing release and both namespaces are removed first (the evaluation
 database lives on a PVC in the release namespace, so it is reset too).
 
+A persistent dev cluster with the single URL, a mock model and fast image iteration is
+[install-kind-dev.md](install-kind-dev.md) (phase 1, OPS-017).
+
 ## Post-install checks
 
 ```bash
@@ -307,8 +310,7 @@ kubectl -n aurora get pods
 kubectl -n aurora exec deploy/aurora-api -- /usr/local/bin/aurora-api bootstrap-admin --email you@example.org
 ```
 
-`bootstrap-admin` prints a one-time password-set link. It is the same subcommand as in
-[install-compose.md](install-compose.md#first-administrator). The `kubectl exec` line is
+`bootstrap-admin` prints a one-time password-set link. The `kubectl exec` line is
 not run here, and the image has no shell. The binary path is the image's `ENTRYPOINT`.
 
 Then register a runner ([runners.md](runners.md#add-a-runner)).

@@ -150,6 +150,6 @@ The full rationale is in [90-decisions.md](90-decisions.md).
 | Approval store | Memory or Redis | Postgres (gateway scales horizontally without Redis) |
 | Gateway control API | Same port as the proxy | Separate internal-only port, unreachable from sandboxes |
 | Editions | Cloud / Community / Enterprise | One edition |
-| Deployment | Docker Compose + Helm | podman compose + Helm |
+| Deployment | Docker Compose + Helm | Helm (production); the same chart on kind for development (phase 1, OPS-017; phase 0 used podman compose) |
 | Dashboard | Next.js with server actions calling services directly | Next.js as a pure client of the documented API |
 | Default agent | none | `Daneel` in every new workspace |

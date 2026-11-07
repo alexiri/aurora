@@ -57,7 +57,7 @@ postgres:
   storage: 5Gi
   storageClass: ""
 
-# ---- aurora.toml (same structure as compose; rendered into a ConfigMap) ------
+# ---- aurora.toml (rendered into a ConfigMap) ------
 # server.external_url and the runner/k8s keys are injected from the values above.
 config:
   server:
@@ -225,3 +225,7 @@ networkPolicy:
   externalEgress:
     cidr: 0.0.0.0/0
     except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+  # Extra egress rules appended to the gateway policy (raw NetworkPolicy `egress` entries), e.g. to
+  # open a private-range LLM endpoint that `gateway.allowed_private` also permits. Dev example:
+  # deploy/kind/values-llm-mock.yaml.
+  gatewayExtraEgress: []

@@ -1,0 +1,42 @@
+# Dev profile for deploy/dev/kind-dev.sh (OPS-017). Replaces the compose stack. Evaluation settings
+# only, never for production. Layer further profiles with extra -f files:
+#   values-llm-mock.yaml        LiteLLM + VidaiMock endpoint `litellm-mock` (decision I-30)
+#   values-connector-fake.yaml  the fake connector
+externalUrl: http://localhost:4000
+
+image:
+  registry: localhost/aurora-dev
+  tag: dev
+  pullPolicy: Never       # kind-dev.sh loads the images with `kind load image-archive`
+
+postgres:
+  enabled: true           # evaluation Postgres bundled in the chart
+
+# ingress-nginx (deploy/kind/ingress-nginx.yaml) publishes the single URL on 127.0.0.1:4000.
+ingress:
+  enabled: true
+  className: nginx
+
+podDisruptionBudget:
+  enabled: false
+
+api: {replicas: 1}
+gateway: {replicas: 1}
+hookhost: {replicas: 1}
+web: {replicas: 1}
+runner: {replicas: 1}
+
+config:
+  auth:
+    signup_mode: open
+    org_creation: anyone
+  hosted:
+    enabled: true
+    allow_fake_harness: true
+    idle_stop_secs: 30
+  runner:
+    image: localhost/aurora-dev/aurora-sandbox:dev
+    max_sandboxes: 4
+    capacity_wait_secs: 5
+  telemetry:
+    log_level: info

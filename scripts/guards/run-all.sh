@@ -14,7 +14,7 @@ bash scripts/guards/no-integration-names.sh
 echo "== dep-graph"
 bash scripts/guards/dep-graph.sh
 
-echo "== edge-routes (Caddyfile, Helm Ingress/HTTPRoute)"
+echo "== edge-routes (Helm Ingress/HTTPRoute)"
 bash scripts/guards/edge-routes.sh
 
 echo "== all guards passed"
