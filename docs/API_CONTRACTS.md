@@ -586,6 +586,13 @@ Rule: `can_see_conversation` (`04 §The access law`), `05 §Conversation visibil
 - C-48 **`ActionApproval.conversation_hidden`**: `bool`, always present. When the approval's workspace differs from its conversation's workspace, `conversation_id` and `turn_id` are `null` and `conversation_hidden` is `true` (D-47 clarification C); the frozen payload is never in any DTO. Within the same workspace the RFE-009 predicate (C-47) applies unchanged.
 - Audit: an owner (not the direct user) reading a direct conversation (`GET /v1/conversations/{id}`, `…/events`, `…/stream`, `GET /v1/attachments/{id}/content`) writes `conversation.owner_view` (target `conversation`, best-effort, once per actor, conversation and hour).
 
+### Phase 2 — RFE-017 (management API rate limiting, D-57)
+
+Rule: `05 §Conventions` "Rate limiting", SEC-50. No route is added or removed; the wire changes are the refusal shapes and headers below.
+
+- C-49 **`429 rate_limited`** on any authenticated `/v1/**` route (exempt: `/healthz`, `/readyz`, `/metrics`, `/internal/*`, `/v1/runner/*`, `/v1/connector/*`, `POST /v1/hooks/{token}`): body `{ "error": { "code": "rate_limited", "message", "details": { "scope": "general"|"class"|"org", "class": "general"|"write"|"message"|"upload"|"simulate"|"search"|"export"|"org"|"unauth", "limit": number, "per": "minute"|"hour", "retry_after_secs": number } } }`; headers `retry-after` (whole seconds, >= 1), `ratelimit-limit`, `ratelimit-remaining` (always `0` on a refusal), `ratelimit-reset` (= `retry-after`), `x-should-retry: true`. `class` is `unauth` and `scope` is `general` for the per-IP limits of unauthenticated traffic (120/min public GETs; 30/min for requests carrying a rejected bearer). The principal is `key:<api_key_id>`, `user:<user_id>` (all of the user's sessions) or `agent:<agent_id>`; a refused request consumes no token from any bucket.
+- C-50 **`429 too_many_streams`**: `GET /v1/conversations/{id}/stream`, `GET /v1/approvals/stream` and any GET with `?wait=<n>` (n > 0, long-poll) beyond 20 concurrent per principal answer `{ "error": { "code": "too_many_streams", "message", "details": { "scope": "streams", "limit": 20 } } }` with no `retry-after`; a slot is released when the response body ends or the client disconnects. Streams that are refused by authorization (non-2xx) release at once.
+
 ### W9 hook-host JSON encoding (C-18, C-19)
 
 - C-18 Internal snapshot route returns the exact canonical bytes so consumers verify `sha256(body) == x-snapshot-hash` without re-serialization.

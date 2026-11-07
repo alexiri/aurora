@@ -3,6 +3,7 @@ mod action_approvals;
 mod activity;
 mod admin;
 mod agents;
+mod api_ratelimit;
 mod approvals;
 mod apps_connections;
 mod apps_tools;

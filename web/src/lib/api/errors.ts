@@ -9,6 +9,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   signup_closed: "Sign-up is closed on this instance.",
   email_taken: "An account with this email already exists.",
   rate_limited: "Too many requests. Please wait a moment and try again.",
+  too_many_streams: "Too many open tabs or streams. Close some and reload.",
   csrf_rejected: "The request was rejected for security reasons. Reload the page and try again.",
   forbidden: "You do not have permission to do that.",
   not_found: "We could not find what you were looking for.",
