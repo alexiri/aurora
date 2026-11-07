@@ -6,12 +6,15 @@ It runs every phase-0 service on one host, with the edge on port 4000.
 For Kubernetes, see [install-helm.md](install-helm.md).
 
 Compose is for development and evaluation. The shipped `aurora.toml` uses the `fake`
-runner backend and `http://localhost:4000` as the public origin.
+runner backend (the `hosted` profile switches the runner to podman) and `http://localhost:4000` as the public origin.
 
 ## Prerequisites
 
 - podman with `podman compose`. The `justfile` calls `podman compose -f deploy/compose/compose.yaml`.
 - `openssl` (used by `setup.sh` to generate secrets).
+- For the `hosted` profile: an active rootless podman API socket
+  (`systemctl --user enable --now podman.socket`) and a sandbox image in your own podman
+  (see [Hosted agents](#hosted-agents-profile-hosted)).
 - Free host ports: **4000** (edge), **4102** (gateway proxy). Postgres and the API are not published.
 - Network access to pull `docker.io/library/postgres:16` and `docker.io/library/caddy:2`,
   and to build the Rust and web images.
@@ -39,9 +42,15 @@ cd deploy/compose
 - fills every empty secret: `POSTGRES_PASSWORD`, `AURORA_ENCRYPTION_KEYS` (`k1:<base64 32 bytes>`),
   `AURORA_ENCRYPTION_ACTIVE_KEY` (`k1`), `AURORA_SIGNING_KEY`, `AURORA_INTERNAL_SECRET`,
   `AURORA_RUNNER_SESSION_KEY`, `AURORA_RUNNER_TOKEN` (`aur_…`) and `AURORA_CONNECTOR_TOKEN` (`aun_…`);
+- writes `AURORA_UID` and `AURORA_GID` (your uid/gid; the hosted runner runs as this user) and
+  warns, with the fix, if `systemctl --user is-active podman.socket` is not active;
 - creates the `aurora-sandbox` network as `--internal --disable-dns --subnet 10.89.250.0/24`
   if it does not exist;
 - mints the gateway CA into the `aurora-ca` volume if the volume has none (see [section 2](#2-create-the-gateway-ca)).
+
+It also copies the public `ca.pem` out of the volume to `deploy/compose/ca/ca.pem` (git-ignored); compose
+mounts it read-only into the `api` service, which hands it to the runner when a sandbox boots. `ca.key` stays
+in the volume, readable only by the gateway.
 
 Do not run `podman compose down -v` unless you intend to delete the Postgres and CA volumes.
 
@@ -80,7 +89,8 @@ Optional profiles, set in `.env` under `COMPOSE_PROFILES` or with `--profile`:
 
 | Profile | Service | Notes |
 |---------|---------|-------|
-| `hosted` | `runner` | Needed for hosted agents. Mounts `${XDG_RUNTIME_DIR}/podman/podman.sock`. |
+| `hosted` | `runner` | Needed for hosted agents. Podman backend, mounts `${XDG_RUNTIME_DIR}/podman/podman.sock` (see [Hosted agents](#hosted-agents-profile-hosted)). |
+| `llm-mock` | `vidaimock`, `litellm` | Scripted mock model for `claude-code` agents; dev only ([llm-endpoints.md](llm-endpoints.md#running-with-the-mock-dev-and-e2e-only)). |
 | `connector-fake` | `connector-fake` | Test connector, control API on 4190. |
 
 ## 4. Verify
@@ -110,9 +120,51 @@ administrator creates the first organization (`POST /v1/orgs`), which also creat
 workspace and the hosted agent Daneel. Cookie-authenticated `curl` calls need an `Origin:
 http://localhost:4000` header (SEC-22).
 
-The `fake` runner backend never boots a sandbox, so a chat turn stays queued. The `podman`
-backend does not work from the compose `runner` container on a rootless host (the runner cannot
-connect to the mounted socket). See [runners.md](runners.md#podman-backend).
+## Hosted agents (profile `hosted`)
+
+Without the profile no runner exists, so chat turns stay queued. With `COMPOSE_PROFILES=hosted` the `runner`
+service starts with the **podman backend** (`AURORA__RUNNER__BACKEND=podman`), the sandbox image from
+`AURORA_SANDBOX_IMAGE` in `.env` (`runner.image`) and the `aurora-sandbox` network. It talks to the host's rootless podman,
+so sandboxes are ordinary containers of your user, named `aurora-sbx-*`.
+
+Why the runner runs as you: the socket is `srw-rw---- you:you`. Under rootless podman's default user namespace the
+image's distroless uid 65532 maps to a host sub-uid that cannot open it. The runner service therefore sets
+`userns_mode: keep-id` and `user: ${AURORA_UID}:${AURORA_GID}`, so it is the same uid as the socket owner. That is no more
+privilege than the socket access itself (whoever can open the socket can start any container as you), and no other
+service changes. Treat the `hosted` profile as giving the stack control of your user's podman.
+
+Before starting:
+
+1. `systemctl --user enable --now podman.socket` (`setup.sh` warns if it is not active).
+2. Build the sandbox image into your own podman. The default is `localhost/aurora-sandbox:0.1.0`, which runs the `fake`
+   harness only (`scripts/images/build-sandbox-min.sh aurora-sandbox:0.1.0`). For `claude-code` through the mock use
+   `AURORA_SANDBOX_IMAGE=localhost/aurora-llm-sandbox:0.1.0`, built with
+   `podman build -f scripts/e2e/llm.Containerfile -t localhost/aurora-llm-sandbox:0.1.0 .`.
+
+Then, in `deploy/compose/.env`: `COMPOSE_PROFILES=hosted,llm-mock` (and `AURORA_SANDBOX_IMAGE` as above), and `podman compose up -d`.
+
+Transcript of a clean run (project `aurora-o15`; AUDIT-001 follow-up OPS-015, evidence in
+[phase0-exit.md](../audit/phase0-exit.md#follow-up-ops-015)). All calls go to `localhost:4000`, with an `Origin: http://localhost:4000` header on
+cookie-authenticated calls:
+
+1. `bootstrap-admin --email o15@example.org` prints the reset link; `POST /v1/auth/password/reset` with its token and a password (204), then
+   `POST /v1/auth/login` (200).
+2. `POST /v1/orgs` `{"name":"O15","slug":"o15"}` (201) creates the org, the default workspace and the hosted agent Daneel.
+3. `PATCH /v1/agents/{agent}` `{"harness":"claude-code","model_endpoint_id":"litellm-mock","model_id":"scn-pong"}` (200).
+4. `POST /v1/workspaces/{ws}/secrets` `{"name":"litellm-mock-key","kind":"llm","llm":{"endpoint_id":"litellm-mock","auth_mode":"api_key"},"value":"sk-aurora-mock-dev"}` (201),
+   then `PUT /v1/agents/{agent}/grants/secrets/{secret}` `{}` (200).
+5. `POST /v1/agents/{agent}/conversations/direct` `{}` (200), then `POST /v1/conversations/{id}/messages` `{"text":"Reply with exactly the word: pong"}` (202).
+6. Events: `turn.queued`, `turn.started`, `text "pong"`, `turn.finished done`. A container `aurora-sbx-<id>` from the sandbox image ran in the host's podman.
+
+The model name chooses the mock scenario; the mock only replays scenario files and is not a model.
+
+Settings that make this work (all in `deploy/compose`): `aurora.toml` has `runner.sandbox_hosts`, `gateway.advertised_proxy_url = "http://aurora-gateway:4102"`
+(what sandboxes dial; the default derived from `external_url` is `localhost`, unreachable from a sandbox, so a BYO agent on the host uses
+`http://localhost:4102`) and `gateway.allowed_private = ["10.89.249.4/32"]` (the gateway refuses private destinations; only the static core address of the mock
+LiteLLM is opened, inert without the `llm-mock` profile). The `api` service mounts the public `ca.pem`.
+
+Cleanup: `podman compose down` leaves the sandbox containers and their `home-*` volumes (the runner owns them); remove them with
+`podman rm -f aurora-sbx-<id>` and `podman volume rm home-<id>`.
 
 ## Configuration in `deploy/compose/aurora.toml`
 
@@ -123,7 +175,10 @@ The shipped file sets:
 | `server.external_url` | `http://localhost:4000` | Public origin. Change it for any other host. |
 | `server.bind` | `0.0.0.0` | Sandbox-facing listeners (gateway 4102, runner channel 4105). |
 | `server.trusted_proxies` | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | Trusted `X-Forwarded-For` source (the edge). |
-| `runner.backend` | `"fake"` | Change to `"podman"` to run real sandboxes (see [runners.md](runners.md#podman-backend)). |
+| `runner.backend` | `"fake"` | The `hosted` profile overrides it to `podman` on the runner service (environment). |
+| `runner.sandbox_hosts` | gateway and runner sandbox addresses | `/etc/hosts` entries for sandboxes; used by the podman backend. |
+| `gateway.advertised_proxy_url` | `http://aurora-gateway:4102` | The proxy address sandboxes dial. |
+| `gateway.allowed_private` | `10.89.249.4/32` | The mock LiteLLM only. |
 | `runner.api_url` | `http://aurora-api:4101` | |
 | `hosted.enabled` | `true` | |
 | `telemetry.log_level` | `info` | |
@@ -145,9 +200,7 @@ If an earlier install left resources behind (the `aurora-sandbox` network, the f
 name (`COMPOSE_PROJECT_NAME=aurora-audit`) and `AURORA_VERSION` in `.env`, so you do not reuse
 old data or overwrite old images.
 
-Switching to real sandboxes also requires `runner.sandbox_hosts`
-(`{ "aurora-gateway" = "10.89.250.2", "aurora-runner" = "10.89.250.3" }`). The shipped
-file does not set it. Without it, sandboxes get no `/etc/hosts` entries for the gateway and runner.
+Static addresses on the core network: gateway `10.89.249.2`, runner `10.89.249.3` and, in the `llm-mock` profile, LiteLLM `10.89.249.4`.
 
 ## Bootstrap tokens in compose
 

@@ -30,6 +30,15 @@ set_if_empty AURORA_RUNNER_SESSION_KEY "$(b64)"
 set_if_empty AURORA_RUNNER_TOKEN "aur_$(openssl rand -hex 24)"
 set_if_empty AURORA_CONNECTOR_TOKEN "aun_$(openssl rand -hex 24)"
 
+set_if_empty AURORA_UID "$(id -u)"
+set_if_empty AURORA_GID "$(id -g)"
+
+# The hosted-profile runner talks to the rootless podman API socket (compose.yaml, service runner).
+if ! systemctl --user is-active --quiet podman.socket 2>/dev/null; then
+  echo "WARNING: podman.socket is not active; the hosted runner cannot start sandboxes." >&2
+  echo "         Fix: systemctl --user enable --now podman.socket" >&2
+fi
+
 # --gateway is required so compose can assign static IPs (10.89.250.2/.3).
 if ! podman network exists aurora-sandbox 2>/dev/null; then
   podman network create --internal --disable-dns --subnet 10.89.250.0/24 --gateway 10.89.250.1 aurora-sandbox
@@ -57,6 +66,13 @@ else
   podman run --rm -v "$CA_VOLUME:/ca" "$GATEWAY_IMAGE" generate-ca --out /ca
   echo "gateway CA written to volume $CA_VOLUME"
 fi
+
+# The API reads only the public ca.pem (gateway.ca_dir); export it from the volume to ./ca/ca.pem,
+# which compose bind-mounts into the api service. ca.key never leaves the volume.
+mkdir -p ca
+podman run --rm -v "$CA_VOLUME:/ca:ro" --entrypoint /bin/sh "$PROBE_IMAGE" -c 'cat /ca/ca.pem' >ca/ca.pem.tmp
+mv ca/ca.pem.tmp ca/ca.pem
+chmod 644 ca/ca.pem; chmod 755 ca
 
 cat <<MSG
 

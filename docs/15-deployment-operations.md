@@ -184,10 +184,17 @@ Services:
 | `hookhost` | aurora-hookhost | core | |
 | `web` | aurora-web | core | |
 | `edge` | `caddy:2` | core | publishes 4000 → routes as above |
-| `runner` (profile `hosted`) | aurora-runner | core, sandbox (`10.89.250.3`) | mounts the podman socket (`${XDG_RUNTIME_DIR}/podman/podman.sock` for rootless) with `security_opt: [label=disable]` |
+| `runner` (profile `hosted`) | aurora-runner | core, sandbox (`10.89.250.3`) | podman backend (`AURORA__RUNNER__BACKEND=podman`, `runner.image` from `AURORA_SANDBOX_IMAGE`, network `aurora-sandbox`); mounts the podman socket (`${XDG_RUNTIME_DIR}/podman/podman.sock` for rootless) with `security_opt: [label=disable]`; runs as the invoking user (`userns_mode: keep-id`, `user: ${AURORA_UID}:${AURORA_GID}`) |
 | `connector-fake` (profile `connector-fake`) | aurora-connector-fake | core | test control API published on 4190 |
 | `vidaimock` (profile `llm-mock`) | `ghcr.io/vidaiuk/vidaimock` pinned by digest | core | scripted Anthropic-API stand-in, config `deploy/compose/vidaimock/` mounted read-only; **not a model** |
 | `litellm` (profile `llm-mock`) | `ghcr.io/berriai/litellm` pinned by digest | core | real LiteLLM proxy, `deploy/compose/litellm.yaml`, dev master key `sk-aurora-mock-dev`; published on `127.0.0.1:4400`; endpoint `litellm-mock` in `aurora.toml` |
+
+The runner runs as the invoking user because the rootless socket is `srw-rw---- <user>:<user>` and the image's
+nonroot uid 65532 would map to an unprivileged sub-uid that cannot open it. That is no more privilege than the socket
+access itself; the other services keep the nonroot user. `setup.sh` writes `AURORA_UID`/`AURORA_GID`, warns when
+`systemctl --user is-active podman.socket` fails, and exports the public `ca.pem` to `deploy/compose/ca/` for the `api`
+service. The `hosted` profile needs `gateway.advertised_proxy_url = http://aurora-gateway:4102` and `runner.sandbox_hosts`
+(both in the shipped `aurora.toml`); `gateway.allowed_private` opens only the mock LiteLLM's static address.
 
 Networks: `core` (bridge) and `sandbox` (external, created by `setup.sh`,
 internal, DNS disabled). `COMPOSE_PROFILES=hosted` enables hosted agents.

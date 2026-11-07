@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ export function deleteErrorMessage(err: unknown): string {
 
 export function DeleteView({ onDeleted }: { onDeleted?: () => void }) {
   const [password, setPassword] = useState("");
+  const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
@@ -29,7 +31,7 @@ export function DeleteView({ onDeleted }: { onDeleted?: () => void }) {
     setError(null);
     try {
       await deleteAccount(password || null);
-      (onDeleted ?? (() => window.location.assign("/auth/login")))();
+      (onDeleted ?? (() => router.push("/auth/login")))();
     } catch (err) {
       setError(err);
       setPending(false);

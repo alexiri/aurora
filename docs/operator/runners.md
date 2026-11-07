@@ -91,20 +91,10 @@ Prerequisites on the host (standard podman, not checked by this repository): a r
 podman API socket (rootless: `systemctl --user enable --now podman.socket`) and the
 `aurora-sandbox` network. `deploy/compose/setup.sh` creates the network.
 
-To switch compose from the fake backend, set in `deploy/compose/aurora.toml`:
-
-```toml
-[runner]
-backend = "podman"
-sandbox_hosts = { "aurora-gateway" = "10.89.250.2", "aurora-runner" = "10.89.250.3" }
-```
-
-The compose file already mounts the podman socket and gives the runner its static address
-(`10.89.250.3`). **Known limit (AUDIT-001):** on a rootless host the runner container (uid 65532)
-fails at startup with ``podman socket `/run/podman/podman.sock` does not answer: ... Connect``, so
-this switch does not work from compose as shipped. Run `aurora-runner serve` on the host instead
-(as `scripts/e2e/hosted.sh` does). `compose/aurora.toml` does not set
-`sandbox_hosts` or `podman_socket` today (see [install-compose.md](install-compose.md#configuration-in-deploycomposeauroratoml)).
+Compose: the `hosted` profile selects this backend on the `runner` service, sets `runner.image` and
+`runner.sandbox_network`, and runs the runner as your uid with `userns_mode: keep-id` so it can open the rootless
+socket. `compose/aurora.toml` carries `sandbox_hosts`. See
+[install-compose.md](install-compose.md#hosted-agents-profile-hosted).
 
 ## Kubernetes backend
 
