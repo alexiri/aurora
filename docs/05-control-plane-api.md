@@ -26,7 +26,7 @@ interchangeable; all coordination is through Postgres.
 10. Platform-tool execution through the **tool registry** (`12`).
 11. Channel core: inbox, routing, speaker authorization, outbox operations,
     action tokens, messaging tools (`13`).
-12. Audit log, request-log reads, runtime usage.
+12. Audit log (best-effort and, from phase 2, atomic security-critical rows, `04 §Audit`), request-log reads, runtime usage.
 
 ## Internal structure
 
@@ -308,7 +308,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET/POST `/v1/orgs/{org}/invitations`; DELETE `/v1/invitations/{id}` | S/K | |
 | GET `/v1/invitations/preview?token=`; POST `/v1/invitations/accept` | none / SO | |
 | GET/POST `/v1/orgs/{org}/api-keys`; DELETE `/v1/api-keys/{id}` | S (POST: SO) | org keys |
-| GET `/v1/orgs/{org}/audit` | S/K | |
+| GET `/v1/orgs/{org}/audit` | S/K | (phase 2, RFE-008) filters `actor`, `action`, `target`, `critical=true` |
 | POST `/v1/orgs/{org}/freeze` `{ reason }`; POST `/v1/orgs/{org}/unfreeze` | S/K | (phase 2, RFE-006) org `owner` |
 | GET/PUT `/v1/orgs/{org}/app-availability` | S/K | posture + allow-list |
 | GET/PUT `/v1/orgs/{org}/governance` | S/K | org governance document (`08 §11.2`) with `revision`; PUT validates against the instance ceiling (422 `governance_invalid` / `governance_below_instance_minimum`) |
@@ -322,7 +322,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET/PATCH/DELETE `/v1/workspaces/{ws}` | S/K | name, timezone, memory_language |
 | GET `/v1/workspaces/{ws}/access`; PUT/DELETE `/v1/workspaces/{ws}/access/{user}` | S/K | bindings |
 | GET/POST `/v1/workspaces/{ws}/api-keys` | S (POST: SO) | workspace keys |
-| GET `/v1/workspaces/{ws}/audit` | S/K | |
+| GET `/v1/workspaces/{ws}/audit` | S/K | same filters |
 | GET `/v1/workspaces/{ws}/activity` | S/K | request log, filters: agent, conversation, decision, host, app |
 | GET `/v1/workspaces/{ws}/usage` | S/K | runtime + tokens |
 | POST `/v1/workspaces/{ws}/freeze` `{ reason }`; POST `/v1/workspaces/{ws}/unfreeze` | S/K | (phase 2, RFE-006) `can_own`; as for agents |

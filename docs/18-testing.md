@@ -181,6 +181,16 @@ done when its tests exist, pass in CI, and the security invariants it touches
   = false`); the dev IdP and `aurora_testkit::oidc` `sign_in` helper used by the
   Playwright flows; API keys and CLI device login unchanged.
 
+- (phase 2, RFE-008) Atomic audit (SEC-32): the audit coverage test enumerates
+  `SECURITY_CRITICAL_ACTIONS` against the route catalogue (every critical route
+  produces its row with `critical = true` in the same transaction); a
+  fault-injection hook makes the audit insert fail and every critical action
+  must return 503 `audit_unavailable` with **no** state change (policy publish,
+  grant put, role change, approval decide via dashboard/API/channel, plugin
+  approve, freeze, governance update); best-effort actions still succeed with the
+  hook on (`aurora_audit_dropped_total` increments); a repository-signature test
+  (critical mutations take the audit entry) guards against future bypass.
+
 ### Architecture guards (CI scripts)
 - No app/platform names in core paths (SEC-33).
 - Dependency graph: `aurora-gateway` and `aurora-api` do not depend on

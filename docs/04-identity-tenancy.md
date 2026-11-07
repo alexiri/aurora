@@ -413,6 +413,47 @@ original record, returns 200).
 
 ## Audit
 
-Every state-changing management action writes an `audit_log` row (best-effort,
-never failing the action). Actions are dotted names `<entity>.<verb>`. Secret
-values, tokens and credential JSON are never written to `metadata`.
+Every state-changing management action writes an `audit_log` row. Actions are
+dotted names `<entity>.<verb>`. Secret values, tokens and credential JSON are
+never written to `metadata`.
+
+**Two classes (phase 2, RFE-008, D-52).** Phase 0: every audit write was
+best-effort and never failed the action. That is right for high-volume, low-stakes
+rows and wrong for the actions SEC-32 exists for: a database hiccup — or an
+attacker timing one — must not silently lose the trail of a policy publish or a
+role change. From phase 2 actions are classified:
+
+- **Security-critical**: the audit row is written **in the same database
+  transaction as the change** (same `Transaction`, committed or rolled back
+  together). If the audit insert fails, the whole action fails and nothing is
+  changed (503 `audit_unavailable`, fail closed). The repository functions that
+  perform a critical mutation *require* the audit entry as an argument, so a
+  critical change without its row does not compile.
+- **Best-effort** (everything else): written after the change, failures logged and
+  counted (`aurora_audit_dropped_total`), never failing the action — as in phase 0.
+
+**The security-critical set** (defined once as `SECURITY_CRITICAL_ACTIONS` in
+`aurora-core` and listed here; `audit_log.critical` is set for these rows,
+`03 §Planned changes`):
+
+| Area | Actions |
+|------|---------|
+| Keys and credentials | `api_key.create`, `api_key.revoke` (personal, workspace, org), `agent.token_regenerate`, `cli_login.approve`, `secret.create`, `secret.update`, `secret.value_replace`, `secret.delete`, `secret.accept`, `connection.create`, `connection.update`, `connection.delete`, `oauth_client.create\|update\|delete`, `runner.provision\|token\|delete`, `connector.provision\|token\|approve\|delete` |
+| Grants | `grant.put`, `grant.delete` (connection and secret grants) |
+| Policy | `policy.publish`, `policy.rollback` (org and workspace) |
+| Plugins and registry | `plugin.approve\|reject\|disable\|enable\|uninstall`, `trusted_key.add\|remove`, `host_claim.decide` |
+| Approval decisions | `approval.decide`, `approval.batch_decide`, `action_approval.decide`, `reach.decide`, `agent_link.decide` (whatever the door: dashboard, API, channel click) |
+| Roles and membership | `org_member.add\|role_change\|suspend\|reactivate\|remove`, `org.transfer_ownership`, `invitation.create\|accept\|cancel`, `workspace_access.put\|delete`, `user.instance_admin_grant\|revoke`, `user.disable\|enable`, `user.delete` |
+| Freeze (RFE-006) | `agent.freeze\|unfreeze`, `workspace.freeze\|unfreeze`, `org.freeze\|unfreeze` |
+| Governance and tenant settings | `governance.update`, `app_availability.update`, `org.update`, `org.delete`, `workspace.delete`, `retention.update` (RFE-010/015) |
+| Channels | `channel_integration.create\|update\|delete\|autolink_enable\|autolink_disable` (RFE-001), `user_link.create\|delete` |
+| Data erasure and reassignment | `conversation.delete`, `transcript_event.redact`, `memory.redact`, `automation.reassign` (RFE-021) |
+
+Critical rows record `metadata.change` — the changed field names and, where
+non-secret, old → new values (e.g. `role: member → admin`) — and use `outcome =
+success`. Attempts refused by authorization (`outcome = denied`) are written
+best-effort (there is no transaction to join). Rows for the gateway's own writes
+(`approval.expire`, `approval.abandon`) stay best-effort system rows. Everything
+not listed — draft policy edits, agent and brief edits, memory and skill writes,
+schedules, webhooks, conversation reads, `conversation.owner_view` — is
+best-effort.

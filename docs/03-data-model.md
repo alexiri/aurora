@@ -177,7 +177,7 @@ Device-style CLI login.
 | metadata | jsonb not null default `{}` | never contains secret values |
 | index | (org_id, created_at desc), (workspace_id, created_at desc) | |
 
-Audit writes are best-effort and never fail the action (logged on failure).
+Audit writes are best-effort and never fail the action (logged on failure). (phase 2, RFE-008) Except for the **security-critical set** of `04 §Audit`, whose rows are written in the same transaction as the change and make the action fail if they cannot be written.
 
 ---
 
@@ -1152,3 +1152,8 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | last_outcome | CHECK gains `skipped_frozen` | fire skipped because the agent is effectively frozen (`10 §Schedules`); `schedule_runs.outcome` (open text) records `skipped_frozen` too | 2 (RFE-006) |
+
+#### `audit_log`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| critical | bool not null default false | true for rows of the security-critical set (`04 §Audit`); index (org_id, critical, created_at desc) so auditors can filter them | 2 (RFE-008) |

@@ -366,6 +366,9 @@ of unavailable apps are dropped; requests get `app_unavailable`).
 ## Audit and logs
 
 - Policy publish/rollback, grant changes, approval decisions, action-approval
-  decisions → `audit_log`.
+  decisions → `audit_log`. (phase 2, RFE-008) These are **security-critical**:
+  the audit row is inserted in the same transaction as the publish, grant write
+  or decision (`04 §Audit`), so a decision that cannot be audited is not made
+  (the decider gets 503 `audit_unavailable`; the approval stays `pending`).
 - Every proxied request → `request_log` with the deciding rule's
   `logical_id` and denormalized `rule_name` (survives deletion).

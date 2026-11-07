@@ -83,7 +83,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   connector offers `email_verified`), with the trust warning of `13 §5.9`;
   toggling it needs a confirm dialog.
 - **Skills**: org skills editor.
-- **API keys**, **Audit log**, **Settings** (name, slug, members can create
+- **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged), **Settings** (name, slug, members can create
   workspaces, limits), **Danger zone** (phase 2, RFE-006: **Freeze organization**
   for owners).
 
