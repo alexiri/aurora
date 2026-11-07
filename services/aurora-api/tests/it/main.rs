@@ -12,6 +12,7 @@ mod audit;
 mod auth;
 mod automation_continuity;
 mod avatars;
+mod byo;
 mod channels_cards;
 mod channels_inbox;
 mod channels_messaging;

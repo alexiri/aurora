@@ -1,4 +1,5 @@
 //! Instance ceiling (08 §11.1) built from configuration and the provider registry.
+use super::byo::ByoInstance;
 use super::model::{AllowEntry, EgressPosture, LlmPosture, OpenLanePosture};
 use crate::{KeyOriginRule, LlmError, OriginMethod, ProviderRegistry, Result};
 use aurora_config::RawConfig;
@@ -21,6 +22,8 @@ pub struct Instance {
     pub egress_minimum_posture: EgressPosture,
     /// (RFE-003) floor of the open-lane posture.
     pub open_lane_minimum: OpenLanePosture,
+    /// (RFE-025) the instance level of BYO governance.
+    pub byo: ByoInstance,
     pub require_key_origin: bool,
     pub endpoints: Vec<InstanceEndpoint>,
     /// Known LLM hosts (providers Aurora has no configured endpoint for).
@@ -43,6 +46,8 @@ impl Instance {
             OpenLanePosture::parse(&g.egress.open_lane_minimum).ok_or_else(|| {
                 LlmError::Config("governance.egress.open_lane_minimum: invalid value".into())
             })?;
+        let byo = ByoInstance::from_raw(&cfg.byo)
+            .ok_or_else(|| LlmError::Config("byo: invalid value".into()))?;
         let endpoints = registry
             .endpoints()
             .iter()
@@ -64,6 +69,7 @@ impl Instance {
             llm_minimum_posture,
             egress_minimum_posture,
             open_lane_minimum,
+            byo,
             require_key_origin: g.llm.require_key_origin,
             endpoints,
             known_llm_hosts: cfg.known_llm_hosts(),

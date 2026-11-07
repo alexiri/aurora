@@ -1905,6 +1905,16 @@
               }
             }
           },
+          "403": {
+            "description": "byo_disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "503": {
             "description": "gateway_ca_unavailable",
             "content": {
@@ -1963,6 +1973,16 @@
           },
           "401": {
             "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "byo_disabled",
             "content": {
               "application/json": {
                 "schema": {
@@ -2324,6 +2344,87 @@
           },
           "404": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/byo": {
+      "put": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Set a BYO agent's own source CIDR list and require-context flag (`can_own`; RFE-025).",
+        "operationId": "putAgentByo",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutByoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Agent"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "not_byo | byo_cidr_invalid | byo_cidr_outside_default",
             "content": {
               "application/json": {
                 "schema": {
@@ -4570,7 +4671,7 @@
             }
           },
           "403": {
-            "description": "hosted_agent_token_hidden",
+            "description": "hosted_agent_token_hidden | byo_not_permitted | byo_disabled",
             "content": {
               "application/json": {
                 "schema": {
@@ -14842,6 +14943,16 @@
               }
             }
           },
+          "403": {
+            "description": "byo_not_permitted | byo_disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -16672,6 +16783,17 @@
           "brief": {
             "type": "string"
           },
+          "byo": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ByoView",
+                "description": "(phase 2, RFE-025) BYO governance of a BYO agent; `null` for hosted agents and in\nresponses that do not load it."
+              }
+            ]
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -17186,6 +17308,13 @@
             ],
             "format": "uuid"
           },
+          "context_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`) that\nmade the request, if any."
+          },
           "conversation_id": {
             "type": [
               "string",
@@ -17676,6 +17805,94 @@
           "reassigned": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ByoPosture": {
+        "type": "string",
+        "description": "BYO posture, ordered by strictness (`enabled` < `owners_only` < `disabled`).",
+        "enum": [
+          "enabled",
+          "owners_only",
+          "disabled"
+        ]
+      },
+      "ByoPostureView": {
+        "type": "object",
+        "required": [
+          "value",
+          "level"
+        ],
+        "properties": {
+          "level": {
+            "type": "string",
+            "description": "`instance` | `org` | `workspace`."
+          },
+          "value": {
+            "type": "string",
+            "description": "`enabled` | `owners_only` | `disabled`."
+          }
+        }
+      },
+      "ByoView": {
+        "type": "object",
+        "description": "The `byo` object of an [`Agent`](super::dto::Agent) (BYO agents only).",
+        "required": [
+          "posture",
+          "posture_level",
+          "require_context",
+          "effective_require_context"
+        ],
+        "properties": {
+          "effective_require_context": {
+            "type": "boolean",
+            "description": "Instance ∨ org ∨ agent."
+          },
+          "effective_require_context_level": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Which layer switched it on: `instance` | `org` | `agent` (null = off)."
+          },
+          "effective_source_cidrs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The list the gateway enforces (agent, else org, else instance); `null` = unrestricted."
+          },
+          "effective_source_level": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Which layer the effective list comes from: `agent` | `org` | `instance` (null = none)."
+          },
+          "posture": {
+            "type": "string",
+            "description": "Effective BYO posture of the agent's workspace: `enabled` | `owners_only` | `disabled`."
+          },
+          "posture_level": {
+            "type": "string",
+            "description": "The layer that decided it: `instance` | `org` | `workspace`."
+          },
+          "require_context": {
+            "type": "boolean",
+            "description": "The agent's own require-context flag."
+          },
+          "source_cidrs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The agent's own source list (`null` = inherit)."
           }
         }
       },
@@ -18443,6 +18660,33 @@
           }
         }
       },
+      "ContainerByo": {
+        "type": "object",
+        "required": [
+          "posture",
+          "require_context"
+        ],
+        "properties": {
+          "posture": {
+            "type": "string",
+            "description": "Effective posture: `enabled` | `owners_only` | `disabled`."
+          },
+          "require_context": {
+            "type": "boolean",
+            "description": "Effective require-context flag; when `true`, `proxy_url` carries `<CONTEXT_TOKEN>`."
+          },
+          "source_cidrs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Effective source CIDR list; `null` = unrestricted."
+          }
+        }
+      },
       "ContainerConfig": {
         "type": "object",
         "required": [
@@ -18452,9 +18696,21 @@
           "ca_path",
           "proxy_ca_path",
           "llm_env",
-          "stubs"
+          "stubs",
+          "notes"
         ],
         "properties": {
+          "byo": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContainerByo",
+                "description": "(phase 2, RFE-025) Effective BYO controls, so the CLI can warn before the first request."
+              }
+            ]
+          },
           "ca_path": {
             "type": "string"
           },
@@ -18478,6 +18734,13 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "(phase 2, RFE-025) Human-readable notes, e.g. that a context credential is required."
           },
           "proxy_ca_path": {
             "type": "string",
@@ -19422,6 +19685,28 @@
           }
         }
       },
+      "EffectiveByo": {
+        "type": "object",
+        "description": "(phase 2, RFE-025) Effective org-level BYO controls (instance ∩ org); the workspace layer is\napplied per workspace/agent.",
+        "required": [
+          "posture",
+          "source_cidrs",
+          "require_context_credentials"
+        ],
+        "properties": {
+          "posture": {
+            "$ref": "#/components/schemas/Sourced_String",
+            "description": "`enabled` | `owners_only` | `disabled`."
+          },
+          "require_context_credentials": {
+            "$ref": "#/components/schemas/Sourced_bool"
+          },
+          "source_cidrs": {
+            "$ref": "#/components/schemas/Sourced_Option_Vec_String",
+            "description": "Default source CIDR list of BYO agents without their own; `null` = unrestricted."
+          }
+        }
+      },
       "EffectiveCredential": {
         "type": "object",
         "required": [
@@ -19537,9 +19822,13 @@
         "required": [
           "llm",
           "egress",
+          "byo",
           "non_compliant_secrets"
         ],
         "properties": {
+          "byo": {
+            "$ref": "#/components/schemas/EffectiveByo"
+          },
           "egress": {
             "$ref": "#/components/schemas/EffectiveEgress"
           },
@@ -20166,6 +20455,34 @@
         ],
         "description": "Injection recipe (`08 §5`)."
       },
+      "InstanceByo": {
+        "type": "object",
+        "description": "(phase 2, RFE-025) The instance level of BYO governance (`[byo]`).",
+        "required": [
+          "enabled",
+          "minimum_posture",
+          "default_source_cidrs",
+          "require_context_credentials"
+        ],
+        "properties": {
+          "default_source_cidrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "minimum_posture": {
+            "type": "string",
+            "description": "`enabled` | `owners_only` | `disabled`."
+          },
+          "require_context_credentials": {
+            "type": "boolean"
+          }
+        }
+      },
       "InstanceEgress": {
         "type": "object",
         "required": [
@@ -20229,9 +20546,13 @@
         "type": "object",
         "required": [
           "llm",
-          "egress"
+          "egress",
+          "byo"
         ],
         "properties": {
+          "byo": {
+            "$ref": "#/components/schemas/InstanceByo"
+          },
           "egress": {
             "$ref": "#/components/schemas/InstanceEgress"
           },
@@ -21341,6 +21662,36 @@
           }
         }
       },
+      "OrgByo": {
+        "type": "object",
+        "description": "`organizations.governance.byo` (no column: `governance` is `jsonb`).",
+        "properties": {
+          "posture": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ByoPosture",
+                "description": "Absent = inherit the instance floor."
+              }
+            ],
+            "default": null
+          },
+          "require_context_credentials": {
+            "type": "boolean",
+            "default": false
+          },
+          "source_cidrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Org default source list (≤32 CIDRs, each inside the instance default when that is set).",
+            "default": []
+          }
+        }
+      },
       "OrgEgress": {
         "type": "object",
         "properties": {
@@ -21411,6 +21762,15 @@
         "type": "object",
         "description": "Normalized organization governance document (`organizations.governance`).",
         "properties": {
+          "byo": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OrgByo",
+                "description": "(RFE-025) BYO posture, default source list and require-context default."
+              }
+            ],
+            "default": {}
+          },
           "egress": {
             "oneOf": [
               {
@@ -21833,6 +22193,17 @@
                 "brief": {
                   "type": "string"
                 },
+                "byo": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ByoView",
+                      "description": "(phase 2, RFE-025) BYO governance of a BYO agent; `null` for hosted agents and in\nresponses that do not load it."
+                    }
+                  ]
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -22052,6 +22423,13 @@
                     "null"
                   ],
                   "format": "uuid"
+                },
+                "context_label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`) that\nmade the request, if any."
                 },
                 "conversation_id": {
                   "type": [
@@ -23485,6 +23863,13 @@
                   ],
                   "format": "uuid"
                 },
+                "context_label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`), if any."
+                },
                 "conversation_id": {
                   "type": [
                     "string",
@@ -24299,9 +24684,27 @@
                 "updated_at"
               ],
               "properties": {
+                "byo_posture": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit)."
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
+                },
+                "effective_byo_posture": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ByoPostureView",
+                      "description": "(phase 2, RFE-025) The effective BYO posture and the layer that decided it; `null` in\nlist and create responses."
+                    }
+                  ]
                 },
                 "id": {
                   "type": "string",
@@ -24624,6 +25027,13 @@
       "PatchWorkspaceRequest": {
         "type": "object",
         "properties": {
+          "byo_posture": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(phase 2, RFE-025) `enabled` | `owners_only` | `disabled`; absent = unchanged, `null` =\ninherit. Tighten-only."
+          },
           "memory_language": {
             "type": [
               "string",
@@ -25295,12 +25705,26 @@
           "code": {
             "$ref": "#/components/schemas/WarningCode"
           },
+          "details": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "(phase 2, RFE-025) `{ rule_id, targets }` for `rule_applies_to_all_agents`."
+          },
           "message": {
             "type": "string"
           },
           "rule_logical_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "severity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(phase 2, RFE-025) `warning`; present on `rule_applies_to_all_agents`."
           }
         }
       },
@@ -25482,6 +25906,29 @@
             "$ref": "#/components/schemas/WorkspaceRole"
           }
         }
+      },
+      "PutByoRequest": {
+        "type": "object",
+        "description": "`PUT /v1/agents/{agent}/byo`.",
+        "required": [
+          "require_context"
+        ],
+        "properties": {
+          "require_context": {
+            "type": "boolean"
+          },
+          "source_cidrs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The agent's own source CIDR list; `null` = inherit the org/instance default."
+          }
+        },
+        "additionalProperties": false
       },
       "PutConnectionGrant": {
         "type": "object",
@@ -25883,6 +26330,13 @@
               "null"
             ],
             "format": "uuid"
+          },
+          "context_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`), if any."
           },
           "conversation_id": {
             "type": [
@@ -27278,6 +27732,32 @@
           }
         }
       },
+      "Sourced_Option_Vec_String": {
+        "type": "object",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "`instance` | `org`."
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          }
+        }
+      },
       "Sourced_String": {
         "type": "object",
         "required": [
@@ -28380,7 +28860,8 @@
         "enum": [
           "shadowed",
           "inert",
-          "overridden_by_org"
+          "overridden_by_org",
+          "rule_applies_to_all_agents"
         ]
       },
       "Webhook": {
@@ -28562,9 +29043,27 @@
           "updated_at"
         ],
         "properties": {
+          "byo_posture": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit)."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "effective_byo_posture": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ByoPostureView",
+                "description": "(phase 2, RFE-025) The effective BYO posture and the layer that decided it; `null` in\nlist and create responses."
+              }
+            ]
           },
           "id": {
             "type": "string",

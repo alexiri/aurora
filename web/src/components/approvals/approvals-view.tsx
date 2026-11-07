@@ -65,6 +65,11 @@ export function ApprovalCard({
         </dl>
       ) : null}
       {a.rule_name ? <p className="text-xs text-neutral-500">Rule: {a.rule_name}</p> : null}
+      {a.context_label ? (
+        <p className="text-xs text-neutral-500" data-testid="context-label">
+          Run: {a.context_label}
+        </p>
+      ) : null}
       {message ? (
         <p role="alert" className="text-sm text-amber-800">
           {message}

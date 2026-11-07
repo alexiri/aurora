@@ -14,11 +14,14 @@ pub struct WorkspaceRow {
     pub name: String,
     pub timezone: String,
     pub memory_language: String,
+    /// (RFE-025) `enabled` | `owners_only` | `disabled`; null = inherit.
+    pub byo_posture: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-const COLS: &str = "id, org_id, slug, name, timezone, memory_language, created_at, updated_at";
+const COLS: &str =
+    "id, org_id, slug, name, timezone, memory_language, byo_posture, created_at, updated_at";
 
 pub const SLUG_CONSTRAINT: &str = "workspaces_org_id_slug_key";
 
@@ -255,6 +258,21 @@ pub async fn get_access<'e, E: PgExecutor<'e>>(
     ))
     .bind(ws)
     .bind(user)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// (RFE-025) Sets the workspace BYO posture (`None` = inherit).
+pub async fn set_byo_posture<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    posture: Option<&str>,
+) -> Result<Option<WorkspaceRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "UPDATE workspaces SET byo_posture = $2, updated_at = now() WHERE id = $1 RETURNING {COLS}"
+    ))
+    .bind(id)
+    .bind(posture)
     .fetch_optional(exec)
     .await?)
 }

@@ -476,6 +476,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/byo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set a BYO agent's own source CIDR list and require-context flag (`can_own`; RFE-025). */
+        put: operations["putAgentByo"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/container-config": {
         parameters: {
             query?: never;
@@ -3299,6 +3316,7 @@ export interface components {
             /** @description Root-relative public path of the avatar (`/v1/public/avatars/{key}`), or null. */
             avatar_url?: string | null;
             brief: string;
+            byo?: null | components["schemas"]["ByoView"];
             /** Format: date-time */
             created_at: string;
             /** @description `low` | `medium` | `high` | `max`. */
@@ -3432,6 +3450,11 @@ export interface components {
             batch?: null | components["schemas"]["ApprovalBatch"];
             /** Format: uuid */
             connection_id?: string | null;
+            /**
+             * @description (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`) that
+             *     made the request, if any.
+             */
+            context_label?: string | null;
             /** Format: uuid */
             conversation_id?: string | null;
             /** Format: date-time */
@@ -3583,6 +3606,36 @@ export interface components {
         BulkReassignResponse: {
             /** Format: int64 */
             reassigned: number;
+        };
+        /**
+         * @description BYO posture, ordered by strictness (`enabled` < `owners_only` < `disabled`).
+         * @enum {string}
+         */
+        ByoPosture: "enabled" | "owners_only" | "disabled";
+        ByoPostureView: {
+            /** @description `instance` | `org` | `workspace`. */
+            level: string;
+            /** @description `enabled` | `owners_only` | `disabled`. */
+            value: string;
+        };
+        /** @description The `byo` object of an [`Agent`](super::dto::Agent) (BYO agents only). */
+        ByoView: {
+            /** @description Instance ∨ org ∨ agent. */
+            effective_require_context: boolean;
+            /** @description Which layer switched it on: `instance` | `org` | `agent` (null = off). */
+            effective_require_context_level?: string | null;
+            /** @description The list the gateway enforces (agent, else org, else instance); `null` = unrestricted. */
+            effective_source_cidrs?: string[] | null;
+            /** @description Which layer the effective list comes from: `agent` | `org` | `instance` (null = none). */
+            effective_source_level?: string | null;
+            /** @description Effective BYO posture of the agent's workspace: `enabled` | `owners_only` | `disabled`. */
+            posture: string;
+            /** @description The layer that decided it: `instance` | `org` | `workspace`. */
+            posture_level: string;
+            /** @description The agent's own require-context flag. */
+            require_context: boolean;
+            /** @description The agent's own source list (`null` = inherit). */
+            source_cidrs?: string[] | null;
         };
         ChangePasswordRequest: {
             current_password: string;
@@ -3795,7 +3848,16 @@ export interface components {
             /** @description `aun_…`, shown once. */
             token: string;
         };
+        ContainerByo: {
+            /** @description Effective posture: `enabled` | `owners_only` | `disabled`. */
+            posture: string;
+            /** @description Effective require-context flag; when `true`, `proxy_url` carries `<CONTEXT_TOKEN>`. */
+            require_context: boolean;
+            /** @description Effective source CIDR list; `null` = unrestricted. */
+            source_cidrs?: string[] | null;
+        };
         ContainerConfig: {
+            byo?: null | components["schemas"]["ContainerByo"];
             ca_path: string;
             ca_pem: string;
             env: {
@@ -3804,6 +3866,8 @@ export interface components {
             llm_env: {
                 [key: string]: string;
             };
+            /** @description (phase 2, RFE-025) Human-readable notes, e.g. that a context credential is required. */
+            notes: string[];
             /**
              * @description (phase 1, RFE-002) File holding the trust anchor for the HTTPS proxy leg (curl
              *     `--proxy-cacert`, git `http.proxySSLCAInfo`); same file as `ca_path`.
@@ -4065,6 +4129,17 @@ export interface components {
             /** @description Per tool of every granted connection. */
             tools: components["schemas"]["EffectiveTool"][];
         };
+        /**
+         * @description (phase 2, RFE-025) Effective org-level BYO controls (instance ∩ org); the workspace layer is
+         *     applied per workspace/agent.
+         */
+        EffectiveByo: {
+            /** @description `enabled` | `owners_only` | `disabled`. */
+            posture: components["schemas"]["Sourced_String"];
+            require_context_credentials: components["schemas"]["Sourced_bool"];
+            /** @description Default source CIDR list of BYO agents without their own; `null` = unrestricted. */
+            source_cidrs: components["schemas"]["Sourced_Option_Vec_String"];
+        };
         EffectiveCredential: {
             /** Format: uuid */
             id: string;
@@ -4094,6 +4169,7 @@ export interface components {
             provider: string;
         };
         EffectiveGovernance: {
+            byo: components["schemas"]["EffectiveByo"];
             egress: components["schemas"]["EffectiveEgress"];
             llm: components["schemas"]["EffectiveLlm"];
             non_compliant_secrets: components["schemas"]["NonCompliantSecret"][];
@@ -4262,6 +4338,14 @@ export interface components {
             pattern: string;
             replacement: string;
         };
+        /** @description (phase 2, RFE-025) The instance level of BYO governance (`[byo]`). */
+        InstanceByo: {
+            default_source_cidrs: string[];
+            enabled: boolean;
+            /** @description `enabled` | `owners_only` | `disabled`. */
+            minimum_posture: string;
+            require_context_credentials: boolean;
+        };
         InstanceEgress: {
             baseline_allowlist: components["schemas"]["AllowlistEntry"][];
             minimum_posture: string;
@@ -4276,6 +4360,7 @@ export interface components {
             provider: string;
         };
         InstanceGovernance: {
+            byo: components["schemas"]["InstanceByo"];
             egress: components["schemas"]["InstanceEgress"];
             llm: components["schemas"]["InstanceLlm"];
         };
@@ -4584,6 +4669,18 @@ export interface components {
             host: string;
             path?: string | null;
         };
+        /** @description `organizations.governance.byo` (no column: `governance` is `jsonb`). */
+        OrgByo: {
+            /** @default null */
+            posture: null | components["schemas"]["ByoPosture"];
+            /** @default false */
+            require_context_credentials: boolean;
+            /**
+             * @description Org default source list (≤32 CIDRs, each inside the instance default when that is set).
+             * @default []
+             */
+            source_cidrs: string[];
+        };
         OrgEgress: {
             /** @default [] */
             allowlist: components["schemas"]["OrgAllowEntry"][];
@@ -4616,6 +4713,8 @@ export interface components {
         };
         /** @description Normalized organization governance document (`organizations.governance`). */
         OrgGovernance: {
+            /** @default {} */
+            byo: components["schemas"]["OrgByo"];
             /**
              * @default {
              *       "allowlist": [],
@@ -4744,6 +4843,7 @@ export interface components {
                 /** @description Root-relative public path of the avatar (`/v1/public/avatars/{key}`), or null. */
                 avatar_url?: string | null;
                 brief: string;
+                byo?: null | components["schemas"]["ByoView"];
                 /** Format: date-time */
                 created_at: string;
                 /** @description `low` | `medium` | `high` | `max`. */
@@ -4804,6 +4904,11 @@ export interface components {
                 batch?: null | components["schemas"]["ApprovalBatch"];
                 /** Format: uuid */
                 connection_id?: string | null;
+                /**
+                 * @description (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`) that
+                 *     made the request, if any.
+                 */
+                context_label?: string | null;
                 /** Format: uuid */
                 conversation_id?: string | null;
                 /** Format: date-time */
@@ -5197,6 +5302,8 @@ export interface components {
                 bytes_up: number;
                 /** Format: uuid */
                 connection_id?: string | null;
+                /** @description (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`), if any. */
+                context_label?: string | null;
                 /** Format: uuid */
                 conversation_id?: string | null;
                 /** @description `agent` | `boot` | `context` */
@@ -5434,8 +5541,11 @@ export interface components {
         };
         Page_Workspace: {
             items: {
+                /** @description (phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit). */
+                byo_posture?: string | null;
                 /** Format: date-time */
                 created_at: string;
+                effective_byo_posture?: null | components["schemas"]["ByoPostureView"];
                 /** Format: uuid */
                 id: string;
                 memory_language: string;
@@ -5520,6 +5630,11 @@ export interface components {
             path_pattern?: string | null;
         };
         PatchWorkspaceRequest: {
+            /**
+             * @description (phase 2, RFE-025) `enabled` | `owners_only` | `disabled`; absent = unchanged, `null` =
+             *     inherit. Tighten-only.
+             */
+            byo_posture?: string | null;
             memory_language?: string | null;
             name?: string | null;
             timezone?: string | null;
@@ -5703,9 +5818,13 @@ export interface components {
         };
         PolicyWarning: {
             code: components["schemas"]["WarningCode"];
+            /** @description (phase 2, RFE-025) `{ rule_id, targets }` for `rule_applies_to_all_agents`. */
+            details?: Record<string, never> | null;
             message: string;
             /** Format: uuid */
             rule_logical_id: string;
+            /** @description (phase 2, RFE-025) `warning`; present on `rule_applies_to_all_agents`. */
+            severity?: string | null;
         };
         PolicyWarnings: {
             items: components["schemas"]["PolicyWarning"][];
@@ -5755,6 +5874,12 @@ export interface components {
         };
         PutAccessRequest: {
             role: components["schemas"]["WorkspaceRole"];
+        };
+        /** @description `PUT /v1/agents/{agent}/byo`. */
+        PutByoRequest: {
+            require_context: boolean;
+            /** @description The agent's own source CIDR list; `null` = inherit the org/instance default. */
+            source_cidrs?: string[] | null;
         };
         PutConnectionGrant: {
             allow_tools?: string[];
@@ -5877,6 +6002,8 @@ export interface components {
             bytes_up: number;
             /** Format: uuid */
             connection_id?: string | null;
+            /** @description (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`), if any. */
+            context_label?: string | null;
             /** Format: uuid */
             conversation_id?: string | null;
             /** @description `agent` | `boot` | `context` */
@@ -6279,6 +6406,11 @@ export interface components {
             /** @description Characters for text, base64 length for binary content. */
             size: number;
         };
+        Sourced_Option_Vec_String: {
+            /** @description `instance` | `org`. */
+            source: string;
+            value: null | string[];
+        };
         Sourced_String: {
             /** @description `instance` | `org`. */
             source: string;
@@ -6578,7 +6710,7 @@ export interface components {
             origin: components["schemas"]["StoredOrigin"];
         };
         /** @enum {string} */
-        WarningCode: "shadowed" | "inert" | "overridden_by_org";
+        WarningCode: "shadowed" | "inert" | "overridden_by_org" | "rule_applies_to_all_agents";
         Webhook: {
             /** Format: uuid */
             agent_id: string;
@@ -6637,8 +6769,11 @@ export interface components {
             name: string;
         };
         Workspace: {
+            /** @description (phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit). */
+            byo_posture?: string | null;
             /** Format: date-time */
             created_at: string;
+            effective_byo_posture?: null | components["schemas"]["ByoPostureView"];
             /** Format: uuid */
             id: string;
             memory_language: string;
@@ -7934,6 +8069,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description byo_disabled */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description gateway_ca_unavailable */
             503: {
                 headers: {
@@ -7978,6 +8122,15 @@ export interface operations {
             };
             /** @description Unauthenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description byo_disabled */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8215,6 +8368,60 @@ export interface operations {
                 content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putAgentByo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutByoRequest"];
+            };
+        };
+        responses: {
+            /** @description Agent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agent"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description not_byo | byo_cidr_invalid | byo_cidr_outside_default */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9558,7 +9765,7 @@ export interface operations {
                     "application/json": components["schemas"]["AgentToken"];
                 };
             };
-            /** @description hosted_agent_token_hidden */
+            /** @description hosted_agent_token_hidden | byo_not_permitted | byo_disabled */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -16133,6 +16340,15 @@ export interface operations {
             };
             /** @description Invalid */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description byo_not_permitted | byo_disabled */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

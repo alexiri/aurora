@@ -137,6 +137,8 @@ pub fn shadowed(rules: &[PolicyRule]) -> Vec<PolicyWarning> {
                     "\"{}\" never applies: the earlier rule \"{}\" already decides every request it would match.",
                     r.name, by.name
                 ),
+                severity: None,
+                details: None,
             });
         }
     }
@@ -158,6 +160,8 @@ pub fn overridden(ws_rules: &[PolicyRule], org_rules: &[PolicyRule]) -> Vec<Poli
                         "\"{}\" is fully overridden by the organization block rule \"{}\".",
                         r.name, o.name
                     ),
+                    severity: None,
+                    details: None,
                 })
         })
         .collect()
@@ -206,10 +210,73 @@ async fn inert(
                     "\"{}\" names a credential that no longer exists in this scope and matches nothing.",
                     r.name
                 ),
+                severity: None,
+                details: None,
             });
         }
     }
     Ok(out)
+}
+
+/// (phase 2, RFE-025) `rule_applies_to_all_agents` (07 §Injection selection): every enabled
+/// hand-written allow rule with empty identities that names credentials arms every agent of its
+/// scope, including agents created later. `byo_enabled` adds "and by members creating BYO
+/// agents" (the scope's effective BYO posture is `enabled`).
+pub fn applies_to_all_agents(rules: &[PolicyRule], byo_enabled: bool) -> Vec<PolicyWarning> {
+    rules
+        .iter()
+        .filter(|r| r.enabled && r.action == Action::Allow && r.identities.is_empty())
+        .filter_map(|r| {
+            let targets: Vec<&Target> = r
+                .targets
+                .iter()
+                .filter(|t| {
+                    matches!(
+                        t,
+                        Target::Connection { .. }
+                            | Target::AppConnections { .. }
+                            | Target::Secret { .. }
+                            | Target::Secrets { .. }
+                    )
+                })
+                .collect();
+            if targets.is_empty() {
+                return None;
+            }
+            let and_byo = if byo_enabled {
+                " and by members creating BYO agents"
+            } else {
+                ""
+            };
+            Some(PolicyWarning {
+                code: WarningCode::RuleAppliesToAllAgents,
+                rule_logical_id: r.logical_id,
+                message: format!(
+                    "\"{}\" applies to all agents, including agents created later{and_byo}.",
+                    r.name
+                ),
+                severity: Some("warning".into()),
+                details: Some(serde_json::json!({
+                    "rule_id": r.logical_id,
+                    "targets": targets,
+                })),
+            })
+        })
+        .collect()
+}
+
+/// Whether the scope's effective BYO posture is `enabled` (members may create BYO agents).
+async fn byo_enabled(state: &AppState, s: Scope) -> Result<bool, ApiError> {
+    use aurora_llm::governance::ByoPosture;
+    let org = crate::domains::agents::byo::org_byo(state, s.org).await?;
+    let ws = match s.ws {
+        Some(w) => aurora_db::repo::workspaces::get(&state.pool, w)
+            .await?
+            .and_then(|w| w.byo_posture),
+        None => None,
+    };
+    let eff = crate::domains::agents::byo::effective(state, &org, ws.as_deref(), None);
+    Ok(eff.posture == ByoPosture::Enabled)
 }
 
 async fn rules_for(state: &AppState, s: Scope, status: &str) -> Result<Vec<PolicyRule>, ApiError> {
@@ -227,6 +294,7 @@ pub async fn compute(state: &AppState, s: Scope) -> Result<PolicyWarnings, ApiEr
     let rules = rules_for(state, s, "draft").await?;
     let mut items = shadowed(&rules);
     items.extend(inert(state, s, &rules).await?);
+    items.extend(applies_to_all_agents(&rules, byo_enabled(state, s).await?));
     if s.ws.is_some() {
         let org = rules_for(
             state,

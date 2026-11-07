@@ -123,6 +123,11 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
                     <td className="py-2 pr-4 font-mono">
                       {e.method} {e.host}
                       {e.path}
+                      {e.context_label ? (
+                        <span className="mt-0.5 block font-sans text-xs text-neutral-500" data-testid="context-label">
+                          {e.context_label}
+                        </span>
+                      ) : null}
                     </td>
                     <td className="py-2 pr-4">
                       <span className={`rounded px-2 py-0.5 text-xs ${decisionClass(e.decision)}`}>{e.decision}</span>

@@ -70,6 +70,7 @@ impl CredentialResolver for Static {
             context_label: None,
             principals: vec![w.agent],
             capabilities: if boot { vec!["browser".into()] } else { vec![] },
+            byo: None,
         }))
     }
 }
@@ -332,6 +333,7 @@ async fn start(o: Opts) -> Env {
         egress_minimum_posture: o.egress_min,
         baseline_allowlist: Vec::<EgressEntry>::new(),
         open_lane_minimum: aurora_config::OpenLanePosture::Enabled,
+        byo: Default::default(),
     };
     let gsrc = Arc::new(TestGov {
         doc: Mutex::new(o.doc.clone()),

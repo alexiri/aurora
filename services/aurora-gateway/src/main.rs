@@ -133,8 +133,14 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         .connect_lazy(cfg.database_url.expose())?;
     let metrics = service::install_metrics(SERVICE);
     let hub = Hub::new();
-    let resolver = Arc::new(DbCredentialResolver::new(pool.clone()));
+    let resolver = Arc::new(DbCredentialResolver::new(pool.clone()).with_byo(
+        aurora_llm::governance::ByoInstance::from_config(&cfg.governance.byo),
+    ));
     hub.register(resolver.cache());
+    // (phase 2, RFE-025) Live BYO tunnels are re-evaluated on every invalidation that concerns
+    // them; registered after the identity cache so a re-resolve never sees a stale identity.
+    let tunnels = aurora_gateway::byo::TunnelRegistry::new(resolver.clone(), &cfg.external_url);
+    hub.register(tunnels.clone());
     let llm = Arc::new(aurora_llm::ProviderRegistry::from_config(&cfg.llm)?);
     let llm_hosts = llm.endpoint_hosts();
     let keys = cfg
@@ -335,16 +341,30 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let tls_task = tokio::spawn(proxy_tls.clone().run_refresh(REFRESH_INTERVAL, rx.clone()));
-    let proxy = Proxy::new(ProxyParts {
-        ca,
-        tls: proxy_tls,
-        resolver,
-        handler,
-        guard,
-        header_timeout: Duration::from_secs(cfg.gateway.upstream_header_timeout_secs),
-        extra_ca_pem,
-        egress_proxy: cfg.gateway.egress_proxy.clone(),
-    })?;
+    // `gateway.trusted_proxies` is validated as CIDRs at startup (docs/15).
+    let trusted_proxies = cfg
+        .gateway
+        .trusted_proxies
+        .iter()
+        .map(|c| aurora_core::cidr::Cidr::parse(c))
+        .collect::<Result<Vec<_>, _>>()?;
+    let proxy = Proxy::with_byo(
+        ProxyParts {
+            ca,
+            tls: proxy_tls,
+            resolver,
+            handler,
+            guard,
+            header_timeout: Duration::from_secs(cfg.gateway.upstream_header_timeout_secs),
+            extra_ca_pem,
+            egress_proxy: cfg.gateway.egress_proxy.clone(),
+        },
+        aurora_gateway::proxy::ByoParts {
+            trusted_proxies,
+            external_url: cfg.external_url.clone(),
+            tunnels: Some(tunnels),
+        },
+    )?;
     let proxy_listener = service::bind(bind, PROXY_PORT).await?;
     let internal_listener = service::bind(internal_bind, INTERNAL_PORT).await?;
     tokio::spawn(async move {

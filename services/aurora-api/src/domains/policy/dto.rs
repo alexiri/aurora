@@ -296,6 +296,9 @@ pub enum WarningCode {
     Shadowed,
     Inert,
     OverriddenByOrg,
+    /// (phase 2, RFE-025) an allow rule with empty identities selects credentials for every
+    /// agent, including agents created later.
+    RuleAppliesToAllAgents,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -303,6 +306,13 @@ pub struct PolicyWarning {
     pub code: WarningCode,
     pub rule_logical_id: Uuid,
     pub message: String,
+    /// (phase 2, RFE-025) `warning`; present on `rule_applies_to_all_agents`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
+    /// (phase 2, RFE-025) `{ rule_id, targets }` for `rule_applies_to_all_agents`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub details: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

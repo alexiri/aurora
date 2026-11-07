@@ -544,3 +544,93 @@ fn open_lane_admission_levels_and_path_entries() {
         NotAllowlisted
     );
 }
+
+#[test]
+fn byo_org_document_validation_and_layering() {
+    let i = inst();
+    // Default: the instance floor `owners_only`, no org settings, document unchanged.
+    assert_eq!(i.byo.minimum_posture, ByoPosture::OwnersOnly);
+    let d = validate(&json!({}), &i).unwrap();
+    assert!(d.byo.is_default());
+    assert!(serde_json::to_value(&d).unwrap().get("byo").is_none());
+
+    let d = validate(
+        &json!({"byo": {"posture": "disabled", "source_cidrs": ["203.0.113.0/24", "203.0.113.0/24"],
+                        "require_context_credentials": true}}),
+        &i,
+    )
+    .unwrap();
+    assert_eq!(d.byo.posture, Some(ByoPosture::Disabled));
+    assert_eq!(d.byo.source_cidrs, ["203.0.113.0/24"]);
+    assert!(d.byo.require_context_credentials);
+    // Round trip through storage.
+    let stored = serde_json::to_value(&d).unwrap();
+    assert_eq!(from_stored(&stored, &i).unwrap().byo, d.byo);
+
+    // Tighten-only: below the floor is refused.
+    assert_eq!(
+        codes(json!({"byo": {"posture": "enabled"}}), &i),
+        [(
+            "governance_below_instance_minimum",
+            "byo.posture".to_owned()
+        )]
+    );
+    let lax = cfg(|c| c.byo.minimum_posture = "enabled".into());
+    assert!(validate(&json!({"byo": {"posture": "enabled"}}), &lax).is_ok());
+    assert_eq!(
+        codes(json!({"byo": {"posture": "sometimes"}}), &i),
+        [("governance_invalid", "byo.posture".to_owned())]
+    );
+
+    // CIDR syntax, /0, host bits, size.
+    for bad in ["0.0.0.0/0", "::/0", "10.0.0.1/8", "nope", ""] {
+        assert_eq!(
+            codes(json!({"byo": {"source_cidrs": [bad]}}), &i),
+            [("governance_invalid", "byo.source_cidrs[0]".to_owned())],
+            "{bad}"
+        );
+    }
+    let many: Vec<String> = (0..33).map(|n| format!("10.{n}.0.0/16")).collect();
+    assert!(
+        codes(json!({"byo": {"source_cidrs": many}}), &i)
+            .iter()
+            .any(|(c, p)| *c == "governance_invalid" && p == "byo.source_cidrs")
+    );
+    assert!(
+        validate(&json!({"byo": {"source_cidrs": []}}), &i)
+            .unwrap()
+            .byo
+            .is_default()
+    );
+
+    // Subset of a non-empty instance default list.
+    let inst_list = cfg(|c| c.byo.default_source_cidrs = vec!["10.0.0.0/8".into()]);
+    assert!(
+        validate(
+            &json!({"byo": {"source_cidrs": ["10.4.0.0/16"]}}),
+            &inst_list
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        codes(
+            json!({"byo": {"source_cidrs": ["11.0.0.0/16"]}}),
+            &inst_list
+        ),
+        [("byo_cidr_outside_default", "byo.source_cidrs[0]".to_owned())]
+    );
+    assert_eq!(
+        codes(json!({"byo": {"source_cidrs": ["10.0.0.0/7"]}}), &inst_list),
+        [("byo_cidr_outside_default", "byo.source_cidrs[0]".to_owned())],
+        "a wider block is not a subset"
+    );
+}
+
+#[test]
+fn byo_stored_value_fails_closed() {
+    let i = inst();
+    let d = from_stored(&json!({"byo": {"posture": 5}}), &i).unwrap();
+    assert_eq!(d.byo.posture, Some(ByoPosture::Disabled));
+    let d = from_stored(&json!({"byo": "junk"}), &i).unwrap();
+    assert_eq!(d.byo.posture, Some(ByoPosture::Disabled));
+}

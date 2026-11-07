@@ -50,10 +50,16 @@ const eff = (over: Partial<EffectiveGovernance> = {}): EffectiveGovernance => ({
     ],
   },
   egress: { posture: { value: "credentialed_only", source: "instance" }, open_lane: { value: "enabled", source: "org" }, org_allowlist: [{ host: "pypi.org" }], baseline_allowlist: [{ host: "base.io", path: "/**" }] },
+  byo: {
+    posture: { value: "owners_only", source: "instance" },
+    source_cidrs: { value: null, source: "instance" },
+    require_context_credentials: { value: false, source: "instance" },
+  },
   non_compliant_secrets: [{ id: "s1", name: "my-key", workspace_id: null, reason: "mismatch" }],
   ...over,
 });
 const doc = {
+  byo: { posture: null, source_cidrs: [], require_context_credentials: false },
   llm: { posture: "open", endpoints: { anthropic: { allowed: true, key_scopes: ["organization"], allowed_models: ["m1"], origin: { allowed_organization_ids: ["org-1"], allowed_workspace_ids: [], allowed_team_ids: [] } } } },
   egress: { posture: "open", open_lane: "allowlist_only", allowlist: [{ host: "pypi.org" }, { host: "x.io", path: "/a/**" }] },
 };
@@ -105,7 +111,7 @@ describe("governance mapping", () => {
 const routes = (extra: Record<string, Handler> = {}) => ({
   "GET /v1/orgs/o1/governance/effective": () => json(200, eff()),
   "GET /v1/orgs/o1/governance": () => json(200, { document: doc, revision: 4 }),
-  "GET /v1/governance/instance": () => json(200, { llm: { allowed_key_scopes: [], minimum_posture: "open", require_key_origin: false, known_llm_hosts: [], endpoints: [] }, egress: { minimum_posture: "open", open_lane_minimum: "enabled", baseline_allowlist: [] } }),
+  "GET /v1/governance/instance": () => json(200, { llm: { allowed_key_scopes: [], minimum_posture: "open", require_key_origin: false, known_llm_hosts: [], endpoints: [] }, egress: { minimum_posture: "open", open_lane_minimum: "enabled", baseline_allowlist: [] }, byo: { enabled: true, minimum_posture: "owners_only", default_source_cidrs: [], require_context_credentials: false } }),
   "GET /v1/orgs/o1/workspaces": () => json(200, { items: [{ id: "w1", slug: "main", name: "Main" }], next_cursor: null }),
   "GET /v1/workspaces/w1/activity": () => json(200, { items: [{ host: "blocked.dev" }], next_cursor: null }),
   ...extra,

@@ -153,6 +153,18 @@ pub trait RequestHandler: Send + Sync + 'static {
 
     /// Called once per finished open-lane tunnel.
     fn tunnel_closed(&self, _report: TunnelReport) {}
+
+    /// (RFE-025) A BYO admission refusal that is due for a request-log row (the proxy rate
+    /// limits to one per credential per minute and counts every refusal itself).
+    fn byo_refused(
+        &self,
+        _identity: &Arc<RequestIdentity>,
+        _method: &str,
+        _host: &str,
+        _reason: crate::byo::Refusal,
+        _err: &ApiError,
+    ) {
+    }
 }
 
 /// Default handler: forwards everything unchanged.

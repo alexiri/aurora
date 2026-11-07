@@ -59,6 +59,9 @@ pub struct Approval {
     pub rule_name: Option<String>,
     pub summary: ApprovalSummary,
     pub batch: Option<ApprovalBatch>,
+    /// (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`) that
+    /// made the request, if any.
+    pub context_label: Option<String>,
     /// `pending` | `approved` | `denied` | `expired` | `abandoned`
     pub status: String,
     pub decided_by: Option<ApprovalDecider>,
@@ -107,6 +110,7 @@ impl From<ApprovalRow> for Approval {
                 label: r.batch_label,
                 total: r.batch_total,
             }),
+            context_label: r.context_label,
             status: r.status,
             decided_by: r.decided_by_user_id.map(|id| ApprovalDecider {
                 id,

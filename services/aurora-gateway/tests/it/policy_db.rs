@@ -102,6 +102,7 @@ async fn loads_view_and_invalidates_on_notify() {
         context_label: None,
         principals: vec![agent],
         capabilities: vec![],
+        byo: None,
     };
     let rv = resolver.resolve(&id, "api.example.com", 443).await.unwrap();
     assert_eq!(rv.ws_policy.ordered_rules.len(), 1);
@@ -191,6 +192,7 @@ async fn loads_view_and_invalidates_on_notify() {
         latency_ms: 3,
         bytes_up: 0,
         bytes_down: 0,
+        context_label: None,
     };
     repo::insert_request_log(p, &[row]).await.unwrap();
     let (cnt,): (i64,) = sqlx::query_as(

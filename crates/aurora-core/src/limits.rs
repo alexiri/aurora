@@ -25,6 +25,10 @@ pub const LLM_ORIGIN_RECHECK: Duration = Duration::from_secs(3600);
 pub const LLM_ORIGIN_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 /// entries per org / workspace.
 pub const EGRESS_ALLOWLIST_MAX: u32 = 500;
+/// (RFE-025) CIDRs per BYO source list (agent / org / instance).
+pub const BYO_CIDR_MAX: usize = 32;
+/// (RFE-025) one log line and one request-log row per credential per interval for BYO refusals.
+pub const BYO_REFUSAL_LOG_INTERVAL: Duration = Duration::from_secs(60);
 pub const REFRESH_LOCK_WAIT: Duration = Duration::from_secs(10);
 /// Entries per signing-key / internal-secret ring (`08 §4`, RFE-007).
 pub const KEYRING_MAX: usize = 4;

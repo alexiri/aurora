@@ -265,6 +265,7 @@ impl Holds {
             summary,
             batch_id: r.batch.batch_id.as_deref().map(clip),
             batch_label: r.batch.batch_label.as_deref().map(clip),
+            context_label: r.identity.context_label.as_deref().map(clip),
             batch_total: r.batch.batch_total.and_then(|n| i32::try_from(n).ok()),
             timeout_secs: self.timeout.as_secs_f64(),
         };

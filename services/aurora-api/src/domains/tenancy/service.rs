@@ -408,6 +408,73 @@ pub async fn remove_member(
     Ok(())
 }
 
+/// (phase 2, RFE-025) Sets the workspace's own BYO posture (`None` = inherit). Tighten-only: a
+/// value looser than the instance floor or the org posture is refused with 422
+/// `governance_below_instance_minimum`. The audit row `workspace.byo_posture.update` is written
+/// in the same transaction and the `workspace` scope is invalidated in gateways.
+pub async fn set_byo_posture(
+    s: &AppState,
+    c: &crate::http::auth::Caller,
+    a: &aurora_db::authz::WorkspaceAuth,
+    ws: Uuid,
+    before: workspaces::WorkspaceRow,
+    posture: Option<&str>,
+) -> Result<workspaces::WorkspaceRow, ApiError> {
+    use aurora_llm::governance::ByoPosture;
+    let new = match posture {
+        None => None,
+        Some(p) => Some(ByoPosture::parse(p).ok_or_else(|| {
+            ApiError::invalid_request(
+                "Invalid workspace.",
+                vec![aurora_core::FieldError::new(
+                    "/byo_posture",
+                    "must be enabled, owners_only, disabled or null",
+                )],
+            )
+        })?),
+    };
+    if let Some(v) = new {
+        // The inherited level: instance floor, strengthened by the org posture.
+        let org = crate::domains::agents::byo::org_byo(s, a.org_id).await?;
+        let inherited = org
+            .posture
+            .unwrap_or(ByoPosture::Enabled)
+            .max(s.gov_instance.byo.minimum_posture);
+        if v < inherited {
+            return Err(ApiError::unprocessable(
+                "governance_below_instance_minimum",
+                "The workspace BYO posture cannot be looser than the instance or organization posture.",
+            )
+            .with_details(serde_json::json!({
+                "fields": [{ "path": "/byo_posture", "message": format!("minimum is {}", inherited.as_str()) }]
+            })));
+        }
+    }
+    let mut tx = s.pool.begin().await.map_err(aurora_db::DbError::from)?;
+    let row = workspaces::set_byo_posture(&mut *tx, ws, new.map(ByoPosture::as_str))
+        .await?
+        .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
+    let ev = crate::audit::AuditEvent::new(
+        crate::audit::AuditActor::from_caller(c),
+        "workspace.byo_posture.update",
+        crate::audit::Outcome::Success,
+    )
+    .org(a.org_id)
+    .workspace(ws)
+    .target("workspace", ws)
+    .metadata(serde_json::json!({
+        "byo_posture": new.map(ByoPosture::as_str),
+        "previous": before.byo_posture,
+    }));
+    crate::audit::insert_tx(&mut tx, &ev).await.map_err(|e| {
+        tracing::error!(error = %e, "workspace.byo_posture.update audit write failed");
+        ApiError::unavailable("audit_unavailable", "The audit log is unavailable.")
+    })?;
+    aurora_db::repo::credentials::notify_gateway_invalidate(&mut *tx, "workspace", ws).await?;
+    tx.commit().await.map_err(aurora_db::DbError::from)?;
+    Ok(row)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -98,6 +98,11 @@ gateway:
     # `aurora-gateway generate-ca` and stores it as <release>-aurora-gateway-ca (never overwritten).
     existingSecret: ""
   proxy:
+    # (RFE-025) CIDRs of layer-4 load balancers that send a PROXY protocol v1/v2 header on 4102
+    # (rendered as gateway.trusted_proxies). BYO source CIDR lists are judged from the TLS peer, or
+    # from that header for peers in this list; X-Forwarded-For is never used. Empty: the peer is
+    # the client (use externalTrafficPolicy: Local or a source-preserving balancer).
+    trustedProxies: []
     service:
       type: ClusterIP     # LoadBalancer exposes 4102 to external BYO agents (bypasses the edge)
       loadBalancerSourceRanges: []

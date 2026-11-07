@@ -43,6 +43,17 @@ pub struct ProxyParts {
     pub egress_proxy: Option<String>,
 }
 
+/// (phase 2, RFE-025) BYO admission inputs of the listener.
+#[derive(Default)]
+pub struct ByoParts {
+    /// `gateway.trusted_proxies`: peers that must send a PROXY protocol header.
+    pub trusted_proxies: Vec<aurora_core::cidr::Cidr>,
+    /// Base of the `manage_url` links in refusals.
+    pub external_url: String,
+    /// Live-tunnel registry (closes BYO tunnels when their admission changes).
+    pub tunnels: Option<Arc<crate::byo::TunnelRegistry>>,
+}
+
 #[derive(Default)]
 struct Live {
     count: AtomicUsize,
@@ -67,6 +78,8 @@ pub struct Proxy {
     egress: Option<EgressProxy>,
     stop: watch::Sender<bool>,
     live: Arc<Live>,
+    byo: ByoParts,
+    refusals: crate::byo::RefusalLimiter,
 }
 
 /// Per-connection routing context.
@@ -77,10 +90,16 @@ struct Target {
     scheme: Scheme,
     host: String,
     port: u16,
+    /// Closes the tunnel (and its WebSockets) when its BYO admission changes (RFE-025).
+    kill: Option<watch::Receiver<bool>>,
 }
 
 impl Proxy {
     pub fn new(p: ProxyParts) -> Result<Arc<Self>, String> {
+        Self::with_byo(p, ByoParts::default())
+    }
+
+    pub fn with_byo(p: ProxyParts, byo: ByoParts) -> Result<Arc<Self>, String> {
         let egress = p
             .egress_proxy
             .as_deref()
@@ -102,7 +121,39 @@ impl Proxy {
             egress,
             stop: watch::channel(false).0,
             live: Arc::default(),
+            byo,
+            refusals: crate::byo::RefusalLimiter::default(),
         }))
+    }
+
+    /// (RFE-025) BYO admission checks 1 (posture) and 2 (source address): counted, logged at
+    /// most once per credential per minute, answered 403.
+    fn byo_gate(
+        &self,
+        identity: &Arc<RequestIdentity>,
+        client: std::net::IpAddr,
+        method: &str,
+        host: &str,
+    ) -> Result<(), ApiError> {
+        match crate::byo::admit(identity, client, &self.byo.external_url) {
+            Ok(()) => Ok(()),
+            Err((reason, err)) => {
+                metrics::counter!("aurora_gateway_byo_refused_total", "reason" => reason.label())
+                    .increment(1);
+                if self.refusals.should_log(identity.credential_id) {
+                    tracing::warn!(
+                        credential = %identity.credential_id,
+                        agent = %identity.agent_id,
+                        reason = reason.label(),
+                        source = %client,
+                        "BYO credential refused"
+                    );
+                    self.handler
+                        .byo_refused(identity, method, host, reason, &err);
+                }
+                Err(err)
+            }
+        }
     }
 
     fn track(&self) -> LiveGuard {
@@ -179,6 +230,7 @@ impl Proxy {
         let response_headers = std::mem::take(&mut prepared.response_headers);
         let retry = prepared.retry.take();
         // 13. forward
+        let kill = t.kill.clone();
         let resp = match self.upstream.send(prepared).await {
             Ok(r) => r,
             Err(e) => {
@@ -219,7 +271,7 @@ impl Proxy {
                     Ok(r2) => {
                         // The first response is dropped unread.
                         drop(replay);
-                        return self.finish(r2, hook, response_headers, upgrade_fut);
+                        return self.finish(r2, hook, response_headers, upgrade_fut, kill);
                     }
                     Err(e) => {
                         if let Some(h) = hook {
@@ -241,7 +293,7 @@ impl Proxy {
             hygiene::strip_hop_by_hop(resp.headers_mut());
             return resp;
         }
-        self.finish(resp, hook, response_headers, upgrade_fut)
+        self.finish(resp, hook, response_headers, upgrade_fut, kill)
     }
 
     /// 14-15. guidance replacement, request log, upgrade bridging, response hygiene.
@@ -251,6 +303,7 @@ impl Proxy {
         hook: Option<Box<dyn crate::pipeline::PostHook>>,
         response_headers: http::HeaderMap,
         upgrade_fut: Option<hyper::upgrade::OnUpgrade>,
+        kill: Option<watch::Receiver<bool>>,
     ) -> Response<Body> {
         if let Some(h) = hook
             && let Some(replacement) = h.on_response(resp.status(), resp.headers())
@@ -270,13 +323,24 @@ impl Proxy {
                 let _live = live;
                 if let (Ok(c), Ok(u)) = (client_up.await, upstream_up.await) {
                     let idle = aurora_core::limits::WEBSOCKET_IDLE_TIMEOUT;
-                    bridge(
+                    let pipe = bridge(
                         hyper_util::rt::TokioIo::new(c),
                         hyper_util::rt::TokioIo::new(u),
                         Some(idle),
                         stop,
-                    )
-                    .await;
+                    );
+                    // (RFE-025) A WebSocket dies with its BYO tunnel.
+                    match kill {
+                        Some(mut k) => {
+                            tokio::select! {
+                                _ = pipe => {}
+                                () = crate::byo::killed(&mut k) => {}
+                            }
+                        }
+                        None => {
+                            pipe.await;
+                        }
+                    }
                 }
             });
             let (p, _) = resp.into_parts();

@@ -50,6 +50,7 @@ fn gov_config(known_hosts: Vec<String>) -> aurora_config::Governance {
         egress_minimum_posture: aurora_config::EgressPosture::Open,
         baseline_allowlist: vec![],
         open_lane_minimum: aurora_config::OpenLanePosture::Enabled,
+        byo: Default::default(),
     }
 }
 
@@ -143,6 +144,7 @@ fn identity(s: &Scope) -> RequestIdentity {
         context_label: None,
         principals: vec![s.agent],
         capabilities: vec![],
+        byo: None,
     }
 }
 

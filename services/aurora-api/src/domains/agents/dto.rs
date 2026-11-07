@@ -26,6 +26,9 @@ pub struct Agent {
     pub brief: String,
     /// Root-relative public path of the avatar (`/v1/public/avatars/{key}`), or null.
     pub avatar_url: Option<String>,
+    /// (phase 2, RFE-025) BYO governance of a BYO agent; `null` for hosted agents and in
+    /// responses that do not load it.
+    pub byo: Option<super::byo::ByoView>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -51,6 +54,7 @@ impl From<AgentRow> for Agent {
                 .avatar_public_key
                 .as_deref()
                 .map(super::avatar::public_path),
+            byo: None,
             created_at: a.created_at,
             updated_at: a.updated_at,
         }
@@ -110,6 +114,20 @@ pub struct ContainerConfig {
     pub proxy_tls: Option<String>,
     pub llm_env: BTreeMap<String, String>,
     pub stubs: Vec<StubFile>,
+    /// (phase 2, RFE-025) Effective BYO controls, so the CLI can warn before the first request.
+    pub byo: Option<ContainerByo>,
+    /// (phase 2, RFE-025) Human-readable notes, e.g. that a context credential is required.
+    pub notes: Vec<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ContainerByo {
+    /// Effective posture: `enabled` | `owners_only` | `disabled`.
+    pub posture: String,
+    /// Effective source CIDR list; `null` = unrestricted.
+    pub source_cidrs: Option<Vec<String>>,
+    /// Effective require-context flag; when `true`, `proxy_url` carries `<CONTEXT_TOKEN>`.
+    pub require_context: bool,
 }
 
 #[derive(Serialize, ToSchema)]

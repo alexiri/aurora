@@ -19,7 +19,13 @@ async fn world() -> World {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("ca.pem"), "-----BEGIN CERTIFICATE-----\nX\n").unwrap();
     let d = dir.to_string_lossy().into_owned();
-    let h = Harness::with_config(move |c| c.gateway_ca_dir = d).await;
+    let h = Harness::with_config(move |c| {
+        c.gateway_ca_dir = d;
+        // These tests exercise the BYO lifecycle as a plain member; the governed default is
+        // covered in byo.rs (RFE-025).
+        c.governance.byo.minimum_posture = aurora_config::ByoPosture::Enabled;
+    })
+    .await;
     let org = h.org().await;
     let owner = h.user("o@x.io", false).await;
     let member = h.user("m@x.io", false).await;
@@ -370,6 +376,7 @@ async fn container_config_flags_an_operator_proxy_certificate() {
     let h = Harness::with_config(move |c| {
         c.gateway_ca_dir = d;
         c.gateway_proxy_operator_cert = true;
+        c.governance.byo.minimum_posture = aurora_config::ByoPosture::Enabled;
     })
     .await;
     let org = h.org().await;

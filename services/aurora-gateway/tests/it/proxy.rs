@@ -53,6 +53,7 @@ impl CredentialResolver for StaticResolver {
             context_label: None,
             principals: vec![id],
             capabilities: if boot { vec!["browser".into()] } else { vec![] },
+            byo: None,
         }))
     }
 }

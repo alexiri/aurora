@@ -114,6 +114,29 @@ export interface EndpointForm {
   locked: { permitted: boolean; key_scopes: boolean; allowed_models: boolean };
 }
 export type OpenLane = "enabled" | "allowlist_only" | "disabled";
+
+/** (phase 2, RFE-025) BYO posture, ordered by strictness. */
+export type ByoPosture = "enabled" | "owners_only" | "disabled";
+export const BYO_POSTURES: ByoPosture[] = ["enabled", "owners_only", "disabled"];
+export const byoRank = (p: string): number => Math.max(0, BYO_POSTURES.indexOf(p as ByoPosture));
+/** Postures at least as strict as `floor` (an org or workspace can only tighten). */
+export const byoOptionsFrom = (floor: string): ByoPosture[] => BYO_POSTURES.filter((p) => byoRank(p) >= byoRank(floor));
+
+export interface ByoForm {
+  /** "" = inherit the instance floor. */
+  posture: ByoPosture | "";
+  /** The instance floor: options below it are not offered. */
+  floor: ByoPosture;
+  /** The instance master switch is off: BYO is disabled everywhere and nothing here applies. */
+  instanceOff: boolean;
+  /** One CIDR per line / comma separated; empty = no org default list. */
+  sourceCidrs: string;
+  /** The instance default list (the org list must lie inside it when non-empty). */
+  instanceCidrs: string[];
+  requireContext: boolean;
+  requireContextLocked: boolean;
+}
+
 export interface GovForm {
   llmPosture: "open" | "sanctioned_only";
   llmPostureLocked: boolean;
@@ -124,6 +147,8 @@ export interface GovForm {
   openLane: OpenLane;
   openLaneLocked: boolean;
   allowlist: { host: string; path: string }[];
+  /** (RFE-025) BYO agents. */
+  byo: ByoForm;
 }
 
 export const splitList = (s: string): string[] =>
@@ -131,9 +156,14 @@ export const splitList = (s: string): string[] =>
 const joinList = (l: string[] | undefined) => (l ?? []).join("\n");
 
 /** Builds the editable form from the stored document, laid over the effective view (endpoint list + locks). */
-export function formFromDocument(doc: Partial<GovDocument> | null | undefined, eff: EffectiveGovernance): GovForm {
+export function formFromDocument(
+  doc: Partial<GovDocument> | null | undefined,
+  eff: EffectiveGovernance,
+  instance?: InstanceGovernance | null,
+): GovForm {
   const stored = doc?.llm?.endpoints ?? {};
   return {
+    byo: byoFormFrom(doc?.byo, eff, instance),
     llmPosture: (doc?.llm?.posture as GovForm["llmPosture"]) ?? (eff.llm.posture.value as GovForm["llmPosture"]),
     llmPostureLocked: eff.llm.posture.source === "instance",
     endpoints: eff.llm.endpoints.map((e) => {
@@ -163,11 +193,37 @@ export function formFromDocument(doc: Partial<GovDocument> | null | undefined, e
   };
 }
 
+function byoFormFrom(
+  stored: GovDocument["byo"] | undefined,
+  eff: EffectiveGovernance,
+  instance?: InstanceGovernance | null,
+): ByoForm {
+  const e = eff.byo;
+  // The floor: the instance's own value when known, else the effective value when the instance
+  // decided it (an org-decided value is stricter than the floor and says nothing about it).
+  const floor = (instance?.byo?.minimum_posture ?? (e.posture.source === "instance" ? e.posture.value : "enabled")) as ByoPosture;
+  return {
+    posture: (stored?.posture as ByoPosture | undefined) ?? "",
+    floor,
+    instanceOff: instance?.byo ? !instance.byo.enabled : false,
+    sourceCidrs: (stored?.source_cidrs ?? []).join("\n"),
+    instanceCidrs: instance?.byo?.default_source_cidrs ?? [],
+    requireContext: stored?.require_context_credentials ?? false,
+    requireContextLocked: e.require_context_credentials.source === "instance" && e.require_context_credentials.value,
+  };
+}
+
 /** Read-only form for members: shows effective values (locked flags kept for labelling). */
 export function formFromEffective(eff: EffectiveGovernance): GovForm {
   const base = formFromDocument(null, eff);
   return {
     ...base,
+    byo: {
+      ...base.byo,
+      posture: eff.byo.posture.value as ByoPosture,
+      sourceCidrs: (eff.byo.source_cidrs.value ?? []).join("\n"),
+      requireContext: eff.byo.require_context_credentials.value,
+    },
     llmPosture: eff.llm.posture.value as GovForm["llmPosture"],
     egressPosture: eff.egress.posture.value as GovForm["egressPosture"],
     openLane: eff.egress.open_lane.value as OpenLane,
@@ -200,7 +256,15 @@ export function formToDocument(f: GovForm): GovDocument {
       },
     };
   }
+  const cidrs = splitList(f.byo.sourceCidrs);
+  // The server normalizes an all-default `byo` away, so sending it always is harmless.
+  const byo: NonNullable<GovDocument["byo"]> = {
+    posture: f.byo.posture || null,
+    source_cidrs: cidrs,
+    require_context_credentials: f.byo.requireContext,
+  };
   return {
+    byo,
     llm: { posture: f.llmPosture, endpoints },
     egress: {
       posture: f.egressPosture,

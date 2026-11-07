@@ -14,6 +14,7 @@ import {
 import { errorMessage } from "@/lib/api/errors";
 import type { Agent } from "@/lib/api/queries";
 
+import { ByoSettings } from "./byo-settings";
 import { AgentRevealDialog, type Revealed } from "./reveal";
 
 function Snippet({ label, text }: { label: string; text: string }) {
@@ -38,13 +39,20 @@ function Snippet({ label, text }: { label: string; text: string }) {
   );
 }
 
-export function ConnectTab({ agent }: { agent: Agent }) {
+export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId?: string; canOwn?: boolean }) {
   const config = useContainerConfig(agent.id, true);
   const regen = useRegenerateToken(agent.id);
   const ca = useQuery({ queryKey: ["gateway-ca"] as const, queryFn: probeGatewayCa, retry: false });
   const [confirming, setConfirming] = useState(false);
   const [revealed, setRevealed] = useState<Revealed | null>(null);
   const snippets = agentSnippets(agent.handle, config.data);
+  // (RFE-025) Regeneration follows the creation rule: hidden for non-owners under `owners_only`.
+  const regenBlocked =
+    agent.byo?.posture === "disabled"
+      ? `BYO is disabled by ${agent.byo.posture_level}; tokens cannot be regenerated until it is loosened.`
+      : agent.byo?.posture === "owners_only" && !canOwn
+        ? "Under the owners-only BYO posture only workspace owners can regenerate this token."
+        : null;
 
   async function regenerate() {
     try {
@@ -59,6 +67,7 @@ export function ConnectTab({ agent }: { agent: Agent }) {
 
   return (
     <div className="max-w-3xl space-y-6">
+      <ByoSettings agent={agent} wsId={wsId} canOwn={canOwn} />
       <section className="space-y-2" aria-labelledby="tok-h">
         <h2 id="tok-h" className="text-lg font-medium">
           Agent token
@@ -66,7 +75,11 @@ export function ConnectTab({ agent }: { agent: Agent }) {
         <p className="text-sm text-neutral-600">
           Regenerating revokes the current token and any context credentials.
         </p>
-        {confirming ? (
+        {regenBlocked ? (
+          <p role="status" className="text-sm text-neutral-600">
+            {regenBlocked}
+          </p>
+        ) : confirming ? (
           <div role="alertdialog" aria-label="Confirm token regeneration" className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
             <p>Regenerate the token for @{agent.handle}? The previous token stops working immediately.</p>
             <div className="flex gap-2">
@@ -104,8 +117,19 @@ export function ConnectTab({ agent }: { agent: Agent }) {
         <Snippet label="aurora login" text={snippets.login} />
         <Snippet label="aurora run" text={snippets.run} />
         {snippets.env ? <Snippet label="env exports" text={snippets.env} /> : null}
+        {config.data?.notes?.map((n, i) => (
+          <p key={i} role="note" className="rounded-md bg-amber-50 p-3 text-sm text-amber-900">
+            {n}
+          </p>
+        ))}
         <p className="text-sm text-neutral-600">
-          Replace <code>&lt;AGENT_TOKEN&gt;</code> with your agent token.
+          Replace <code>&lt;AGENT_TOKEN&gt;</code> with your agent token
+          {agent.byo?.effective_require_context ? (
+            <>
+              {" "}(or <code>&lt;CONTEXT_TOKEN&gt;</code> with a credential minted by <code>aurora run</code>)
+            </>
+          ) : null}
+          .
         </p>
       </section>
 

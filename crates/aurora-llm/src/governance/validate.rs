@@ -1,11 +1,13 @@
 //! Validation and normalization of the org governance document (08 §11.2).
+use super::byo::{ByoPosture, OrgByo};
 use super::instance::{Instance, InstanceEndpoint};
 use super::model::{
     AllowEntry, BELOW_MIN, EgressPosture, GovernanceError, INVALID, LlmPosture, OpenLanePosture,
     OrgEgress, OrgEndpoint, OrgGovernance, OrgLlm, OrgOrigin,
 };
 use crate::OriginMethod;
-use aurora_core::limits::EGRESS_ALLOWLIST_MAX;
+use aurora_core::cidr::Cidr;
+use aurora_core::limits::{BYO_CIDR_MAX, EGRESS_ALLOWLIST_MAX};
 use aurora_policy::{HostPattern, PathPattern};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -15,6 +17,15 @@ use std::collections::BTreeMap;
 struct RawDoc {
     llm: Option<RawLlm>,
     egress: Option<RawEgress>,
+    byo: Option<RawByo>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawByo {
+    posture: Option<String>,
+    source_cidrs: Option<Vec<String>>,
+    require_context_credentials: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -68,6 +79,7 @@ pub fn default_for_new_org(inst: &Instance) -> OrgGovernance {
             allowlist: vec![],
             open_lane: inst.open_lane_minimum,
         },
+        byo: OrgByo::default(),
     }
 }
 
@@ -86,6 +98,8 @@ pub fn from_stored(
     if let Some(egress) = raw.get("egress") {
         doc.egress = serde_json::from_value(egress.clone())?;
     }
+    // A malformed `byo` never errors the whole document: it fails closed (08 §11.9).
+    doc.byo = OrgByo::from_stored(raw.get("byo"));
     Ok(doc)
 }
 
@@ -208,7 +222,62 @@ pub fn validate(
         }
     }
 
+    if let Some(b) = raw.byo {
+        out.byo = byo(b, inst, &mut errs);
+    }
+
     if errs.is_empty() { Ok(out) } else { Err(errs) }
+}
+
+/// `byo_cidr_outside_default`: an org source entry outside a non-empty instance default list.
+pub const BYO_CIDR_OUTSIDE_DEFAULT: &str = "byo_cidr_outside_default";
+
+fn byo(b: RawByo, inst: &Instance, errs: &mut Vec<GovernanceError>) -> OrgByo {
+    let mut out = OrgByo::default();
+    if let Some(p) = b.posture {
+        match ByoPosture::parse(&p) {
+            None => errs.push(GovernanceError::new(
+                INVALID,
+                "byo.posture",
+                "must be `enabled`, `owners_only` or `disabled`",
+            )),
+            Some(v) if v < inst.byo.minimum_posture => errs.push(GovernanceError::new(
+                BELOW_MIN,
+                "byo.posture",
+                "looser than the instance minimum BYO posture",
+            )),
+            Some(v) => out.posture = Some(v),
+        }
+    }
+    out.require_context_credentials = b.require_context_credentials.unwrap_or(false);
+    if let Some(list) = b.source_cidrs {
+        if list.len() > BYO_CIDR_MAX {
+            errs.push(GovernanceError::new(
+                INVALID,
+                "byo.source_cidrs",
+                format!("at most {BYO_CIDR_MAX} entries"),
+            ));
+        }
+        for (i, s) in dedup(&list).into_iter().enumerate() {
+            let path = format!("byo.source_cidrs[{i}]");
+            match Cidr::parse(&s) {
+                Err(e) => errs.push(GovernanceError::new(INVALID, path, format!("`{s}`: {e}"))),
+                Ok(c) => {
+                    let d = &inst.byo.default_source_cidrs;
+                    if !d.is_empty() && !d.iter().any(|o| o.contains_cidr(&c)) {
+                        errs.push(GovernanceError::new(
+                            BYO_CIDR_OUTSIDE_DEFAULT,
+                            path,
+                            "outside the instance default source list",
+                        ));
+                    } else {
+                        out.source_cidrs.push(c.to_string());
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 fn endpoint(

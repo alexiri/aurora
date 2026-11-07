@@ -81,7 +81,7 @@ External identities linked to a user (OIDC).
 | slug | text unique not null | |
 | name | text not null | ≤80 |
 | app_posture | text CHECK in (`open`,`restricted`) default `open` | see `07 §App availability` |
-| governance | jsonb not null default `{}` | org LLM and egress governance document (`08 §11.2`); `{}` = defaults derived from the instance; (phase 1, RFE-003) `egress.open_lane` = `enabled` \| `allowlist_only` \| `disabled` (default `enabled`), the org open-lane posture, not below the instance minimum (`08 §11.2`) |
+| governance | jsonb not null default `{}` | org LLM and egress governance document (`08 §11.2`); `{}` = defaults derived from the instance; (phase 1, RFE-003) `egress.open_lane` = `enabled` \| `allowlist_only` \| `disabled` (default `enabled`), the org open-lane posture, not below the instance minimum (`08 §11.2`); (phase 2, RFE-025) `byo` = `{ "posture"?: "enabled"\|"owners_only"\|"disabled", "source_cidrs"?: [cidr], "require_context_credentials"?: bool }`, the org BYO posture, default source list and require-context default (`08 §11.2`, `§11.9`) |
 | governance_revision | bigint not null default 0 | optimistic concurrency for governance edits |
 | external_id | text unique not null | 32 random hex chars at creation; immutable; exposed to plugins as context variable `org_external_id` (e.g. AWS external id) |
 | settings | jsonb not null default `{}` | `{ "max_agents"?: int, "max_members"?: int, "sandbox_overrides"?: ResourceProfile }` |
@@ -123,6 +123,7 @@ owner cannot be demoted or removed).
 | timezone | text not null default `UTC` | IANA name, validated with `chrono-tz` |
 | memory_language | text not null default `english` | Postgres text-search configuration name or `simple`; validated against `pg_ts_config` |
 | home_sync_generation | bigint not null default 0 | bumped when a workspace setting affects projections |
+| byo_posture | text null CHECK in (`enabled`,`owners_only`,`disabled`) | (phase 2, RFE-025) null = inherit; can only tighten (`08 §11.9`) |
 
 ### `workspace_access`
 | Column | Type | Notes |
@@ -415,6 +416,7 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 | decided_by_user_id | uuid null | |
 | decided_via | text null CHECK in (`dashboard`,`api`,`channel`) | |
 | decided_at | timestamptz null | |
+| context_label | text null | (phase 2, RFE-025) label of the BYO context credential that made the request, ≤128, sanitized; shown on the approval card (`08 §11.9`) |
 | deadline | timestamptz not null | |
 
 ### `request_log` — *no FKs*, range-partitioned by month on `ts`
@@ -440,6 +442,7 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 | injected | smallint not null default 0 | number of credentials injected |
 | latency_ms | int not null | |
 | bytes_up, bytes_down | bigint not null default 0 | |
+| context_label | text null | (phase 2, RFE-025) label of the BYO context credential (a labelled `aurora run`), ≤128, sanitized (`08 §11.9`) |
 
 Partitions are created ahead by the API (next 2 months) and dropped after
 `REQUEST_LOG_RETENTION`.
@@ -517,6 +520,8 @@ Reserved name; phase 0 rate limiting is in-memory per gateway replica (`07`).
 | resource_overrides | jsonb null | `ResourceProfile` (instance admins only) |
 | home_sync_generation | bigint not null default 0 | desired projection generation |
 | created_by | uuid null FK→users (set null) | |
+| byo_source_cidrs | text[] null | (phase 2, RFE-025) BYO only (CHECK `kind = 'byo'` when set); 1–32 CIDR strings (`cidr` syntax, no `/0`); null = inherit org/instance default list (`08 §11.9`). Validated by the API; never empty |
+| byo_require_context | bool not null default false | (phase 2, RFE-025) BYO only: credentialed requests must use a context credential (`08 §11.9`) |
 
 ### `gateway_credentials`
 All tokens the gateway accepts.
@@ -1210,22 +1215,6 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | approval_email_enabled | bool not null default true | per-user opt-out of approval e-mails | 2 (RFE-011a) |
-
-#### `agents` (BYO controls)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| byo_source_cidrs | text[] null | BYO only (CHECK `kind = 'byo'` when set); 1–32 CIDR strings (`cidr` syntax, no `/0`); null = inherit org/instance default list (`08 §11.9`). Validated by the API; never empty | 2 (RFE-025) |
-| byo_require_context | bool not null default false | BYO only: credentialed requests must use a context credential (`08 §11.9`) | 2 (RFE-025) |
-
-#### `workspaces` (BYO posture)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| byo_posture | text null CHECK in (`enabled`,`owners_only`,`disabled`) | null = inherit; can only tighten (`08 §11.9`) | 2 (RFE-025) |
-
-#### `organizations` (jsonb key in `governance`, BYO)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| `governance.byo` | `{ "posture"?: "enabled"\|"owners_only"\|"disabled", "source_cidrs"?: [cidr], "require_context_credentials"?: bool }` | org BYO posture, default source list and require-context default (`08 §11.2`, `§11.9`). No column: `governance` is `jsonb`. | 2 (RFE-025) |
 
 #### `gateway_credentials` (token age and use)
 | Planned column | Type | Notes | Phase |

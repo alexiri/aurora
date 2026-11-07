@@ -72,6 +72,34 @@ pub enum OpenLanePosture {
     AllowlistOnly,
     Disabled,
 }
+/// BYO posture, ordered by strictness (RFE-025): `enabled` < `owners_only` < `disabled`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ByoPosture {
+    Enabled,
+    OwnersOnly,
+    Disabled,
+}
+
+/// Resolved `[byo]` (RFE-025).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Byo {
+    pub enabled: bool,
+    pub minimum_posture: ByoPosture,
+    pub default_source_cidrs: Vec<String>,
+    pub require_context_credentials: bool,
+}
+
+impl Default for Byo {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            minimum_posture: ByoPosture::OwnersOnly,
+            default_source_cidrs: vec![],
+            require_context_credentials: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunnerBackend {
     Podman,
@@ -107,6 +135,8 @@ pub struct Governance {
     pub egress_minimum_posture: EgressPosture,
     pub baseline_allowlist: Vec<EgressEntry>,
     pub open_lane_minimum: OpenLanePosture,
+    /// (RFE-025) resolved `[byo]`.
+    pub byo: Byo,
 }
 
 #[derive(Debug, Clone)]
@@ -1284,6 +1314,7 @@ fn check_llm(c: &mut Ctx, l: &LlmSection, g: &GovernanceSection) {
 fn check_governance(c: &mut Ctx, raw: &RawConfig) -> Option<Governance> {
     let g = &raw.governance;
     let before = c.errors.len();
+    let byo = check_byo(c, raw);
     let llm_posture = match g.llm.minimum_posture.as_str() {
         "open" => Some(LlmPosture::Open),
         "sanctioned_only" => Some(LlmPosture::SanctionedOnly),
@@ -1362,6 +1393,7 @@ fn check_governance(c: &mut Ctx, raw: &RawConfig) -> Option<Governance> {
         egress_minimum_posture: egress_posture?,
         baseline_allowlist: g.egress.baseline_allowlist.clone(),
         open_lane_minimum: open_lane_minimum?,
+        byo: byo?,
     })
 }
 
@@ -1377,6 +1409,58 @@ fn resolve_governance_lossy(raw: &RawConfig) -> Governance {
         egress_minimum_posture: EgressPosture::Open,
         baseline_allowlist: g.egress.baseline_allowlist.clone(),
         open_lane_minimum: OpenLanePosture::Enabled,
+        byo: Byo {
+            enabled: raw.byo.enabled,
+            minimum_posture: ByoPosture::OwnersOnly,
+            default_source_cidrs: raw.byo.default_source_cidrs.clone(),
+            require_context_credentials: raw.byo.require_context_credentials,
+        },
+    }
+}
+
+fn check_byo(c: &mut Ctx, raw: &RawConfig) -> Option<Byo> {
+    let b = &raw.byo;
+    let minimum_posture = match b.minimum_posture.as_str() {
+        "enabled" => Some(ByoPosture::Enabled),
+        "owners_only" => Some(ByoPosture::OwnersOnly),
+        "disabled" => Some(ByoPosture::Disabled),
+        o => {
+            c.err(
+                "byo.minimum_posture",
+                format!("invalid value `{o}`; expected enabled, owners_only or disabled"),
+            );
+            None
+        }
+    };
+    check_cidr_list(c, "byo.default_source_cidrs", &b.default_source_cidrs, true);
+    check_cidr_list(
+        c,
+        "gateway.trusted_proxies",
+        &raw.gateway.trusted_proxies,
+        false,
+    );
+    Some(Byo {
+        enabled: b.enabled,
+        minimum_posture: minimum_posture?,
+        default_source_cidrs: b.default_source_cidrs.clone(),
+        require_context_credentials: b.require_context_credentials,
+    })
+}
+
+/// A CIDR list: strict syntax; `strict_list` also refuses `/0` and more than `BYO_CIDR_MAX`
+/// entries (BYO source lists). Trusted-proxy lists are not bounded but still refuse `/0`
+/// (trusting every peer would let any client forge its address).
+fn check_cidr_list(c: &mut Ctx, key: &str, list: &[String], strict_list: bool) {
+    if strict_list && list.len() > aurora_core::limits::BYO_CIDR_MAX {
+        c.err(
+            key,
+            format!("at most {} entries", aurora_core::limits::BYO_CIDR_MAX),
+        );
+    }
+    for (i, e) in list.iter().enumerate() {
+        if let Err(err) = aurora_core::cidr::Cidr::parse(e) {
+            c.err(format!("{key}[{i}]"), format!("`{e}`: {err}"));
+        }
     }
 }
 

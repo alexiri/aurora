@@ -1,6 +1,7 @@
 //! Single integration-test binary for this crate (OPS-016): one link instead of one per file.
 mod apps;
 mod ask_tool_hold;
+mod byo;
 mod check_snapshot;
 mod common;
 mod credentials;
