@@ -199,7 +199,7 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | MM-001 | Mattermost connector: crate, shared mode, conformance vs Mattermost container | 1 | done (70cf3c77; S-15) | — |
 | MM-002 | Mattermost dedicated mode (bot provisioning) + live scenario with the real core | 1 | in-progress | MM-001 |
 | P1-001 | RFE-001 auto-link opt-in; RFE-016 DeltaBus seam | 1 | done (ef1578e6) | — |
-| P1-002 | RFE-009 direct-conversation visibility | 1 | todo | — |
+| P1-002 | RFE-009 direct-conversation visibility | 1 | in-progress | — |
 | P1-003 | RFE-003 open-lane posture, CONNECT-time rules, browser capability | 1 | todo | — |
 | P1-004 | RFE-002 TLS-only gateway proxy listener | 1 | todo | — |
 | P1-005 | RFE-004 OIDC-only sign-in (dev IdP, tests/e2e migrate off passwords) | 1 | todo | OPS-016 preferred |
