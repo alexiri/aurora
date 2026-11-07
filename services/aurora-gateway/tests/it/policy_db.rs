@@ -101,6 +101,7 @@ async fn loads_view_and_invalidates_on_notify() {
         turn_id: None,
         context_label: None,
         principals: vec![agent],
+        capabilities: vec![],
     };
     let rv = resolver.resolve(&id, "api.example.com", 443).await.unwrap();
     assert_eq!(rv.ws_policy.ordered_rules.len(), 1);

@@ -75,6 +75,10 @@ pub struct ResolvedHost {
     pub unavailable_apps: HashSet<String>,
     /// Some active host entry of the snapshot covers this host.
     pub known_app_host: bool,
+    /// App ids whose active host entries cover this host (open-lane `app` targets).
+    pub host_apps: Vec<String>,
+    /// The workspace's published open-lane posture (RFE-003).
+    pub ws_open_lane: aurora_llm::governance::OpenLanePosture,
 }
 
 impl ResolvedHost {
@@ -421,6 +425,7 @@ impl Resolver {
         let registry = self.snapshots.as_ref().and_then(|s| s.current());
         let (mut conns, mut disabled_apps, mut unavailable_apps, mut known_app_host) =
             (Vec::new(), HashSet::new(), HashSet::new(), false);
+        let mut host_apps: Vec<String> = Vec::new();
         // Governed LLM hosts never serve app connections (SEC-37).
         if let Some(l) = registry
             .as_ref()
@@ -431,6 +436,7 @@ impl Resolver {
             let mut app_ids: Vec<String> = entries.iter().map(|e| e.app_id.clone()).collect();
             app_ids.sort();
             app_ids.dedup();
+            host_apps = app_ids.clone();
             if !app_ids.is_empty() {
                 let rows = self
                     .source
@@ -464,6 +470,10 @@ impl Resolver {
                 }
             }
         }
+        // An unparsable stored posture fails closed.
+        let ws_open_lane =
+            aurora_llm::governance::OpenLanePosture::parse(&ws_rows.open_lane_posture)
+                .unwrap_or(aurora_llm::governance::OpenLanePosture::Disabled);
         let mut org_policy = to_scope_policy(org_rows).map_err(fail)?;
         if let Some(g) = &gov {
             crate::governance::apply_egress_posture(&mut org_policy, g);
@@ -481,6 +491,8 @@ impl Resolver {
             disabled_apps,
             unavailable_apps,
             known_app_host,
+            host_apps,
+            ws_open_lane,
         })
     }
 }

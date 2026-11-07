@@ -44,6 +44,7 @@ pub struct GenerationRow {
     pub default_action: String,
     pub uncredentialed_default: String,
     pub uncredentialed_allowlist: serde_json::Value,
+    pub open_lane_posture: String,
     pub draft_revision: i64,
     pub published_by: Option<Uuid>,
     pub published_by_name: Option<String>,
@@ -59,7 +60,7 @@ pub struct GenerationSummaryRow {
 }
 
 const GEN_COLS: &str = "g.id, g.org_id, g.workspace_id, g.number, g.status, g.default_action, \
-    g.uncredentialed_default, g.uncredentialed_allowlist, g.draft_revision, g.published_by, \
+    g.uncredentialed_default, g.uncredentialed_allowlist, g.open_lane_posture, g.draft_revision, g.published_by, \
     u.display_name AS published_by_name, g.published_at, g.created_at";
 const GEN_FROM: &str = "FROM policy_generations g LEFT JOIN users u ON u.id = g.published_by";
 
@@ -191,6 +192,21 @@ pub async fn rules_of<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// The workspace's published open-lane posture (`enabled` when it has no published generation).
+pub async fn published_open_lane_posture<'e, E: PgExecutor<'e>>(
+    exec: E,
+    workspace: Uuid,
+) -> Result<String, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT open_lane_posture FROM policy_generations \
+         WHERE workspace_id = $1 AND status = 'published'",
+    )
+    .bind(workspace)
+    .fetch_optional(exec)
+    .await?
+    .unwrap_or_else(|| "enabled".to_owned()))
+}
+
 /// Replace the draft's settings and rules wholesale; returns the new `draft_revision`.
 pub async fn replace_draft(
     conn: &mut PgConnection,
@@ -198,17 +214,20 @@ pub async fn replace_draft(
     default_action: &str,
     uncredentialed_default: &str,
     allowlist: &serde_json::Value,
+    open_lane_posture: &str,
     rules: &[NewRule],
 ) -> Result<i64, DbError> {
     let rev: i64 = sqlx::query_scalar(
         "UPDATE policy_generations SET default_action = $2, uncredentialed_default = $3, \
-         uncredentialed_allowlist = $4, draft_revision = draft_revision + 1, updated_at = now() \
+         uncredentialed_allowlist = $4, open_lane_posture = $5, \
+         draft_revision = draft_revision + 1, updated_at = now() \
          WHERE id = $1 RETURNING draft_revision",
     )
     .bind(generation_id)
     .bind(default_action)
     .bind(uncredentialed_default)
     .bind(allowlist)
+    .bind(open_lane_posture)
     .fetch_one(&mut *conn)
     .await?;
     sqlx::query("DELETE FROM policy_rules WHERE generation_id = $1")
@@ -245,7 +264,8 @@ pub async fn copy_content(conn: &mut PgConnection, from: Uuid, to: Uuid) -> Resu
     sqlx::query(
         "UPDATE policy_generations t SET default_action = s.default_action, \
          uncredentialed_default = s.uncredentialed_default, \
-         uncredentialed_allowlist = s.uncredentialed_allowlist, updated_at = now() \
+         uncredentialed_allowlist = s.uncredentialed_allowlist, \
+         open_lane_posture = s.open_lane_posture, updated_at = now() \
          FROM policy_generations s WHERE s.id = $1 AND t.id = $2",
     )
     .bind(from)
@@ -343,6 +363,7 @@ pub async fn load_scope_rows(
         rows.default_action = d.default_action;
         rows.uncredentialed_default = d.uncredentialed_default;
         rows.uncredentialed_allowlist = d.uncredentialed_allowlist;
+        rows.open_lane_posture = d.open_lane_posture;
         rows.rules = rules_of(pool, d.id)
             .await?
             .into_iter()

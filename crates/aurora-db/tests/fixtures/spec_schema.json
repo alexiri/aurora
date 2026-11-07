@@ -301,6 +301,7 @@
     "gateway_credentials": [
       "agent_id",
       "boot_id",
+      "capabilities",
       "context_label",
       "conversation_id",
       "display_prefix",
@@ -455,6 +456,7 @@
       "draft_revision",
       "id",
       "number",
+      "open_lane_posture",
       "org_id",
       "published_at",
       "published_by",

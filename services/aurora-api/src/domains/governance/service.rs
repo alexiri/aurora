@@ -58,6 +58,10 @@ fn egress_posture(p: g::EgressPosture) -> String {
     .to_owned()
 }
 
+fn open_lane_posture(p: g::OpenLanePosture) -> String {
+    p.as_str().to_owned()
+}
+
 fn rule(r: &KeyOriginRule) -> OriginRule {
     OriginRule {
         method: r.method.as_str().to_owned(),
@@ -167,6 +171,7 @@ pub async fn effective(state: &AppState, org: Uuid) -> Result<EffectiveGovernanc
                 egress_posture(eff.egress_posture),
                 eff.egress_posture_source,
             ),
+            open_lane: sourced(open_lane_posture(eff.open_lane), eff.open_lane_source),
             org_allowlist: org_list,
             baseline_allowlist: baseline,
         },
@@ -277,6 +282,7 @@ pub fn instance(state: &AppState) -> InstanceGovernance {
         },
         egress: InstanceEgress {
             minimum_posture: egress_posture(i.egress_minimum_posture),
+            open_lane_minimum: open_lane_posture(i.open_lane_minimum),
             baseline_allowlist: i.baseline_allowlist.iter().map(allow).collect(),
         },
     }

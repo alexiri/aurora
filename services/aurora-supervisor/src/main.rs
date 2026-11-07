@@ -98,13 +98,22 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         ProxyMode::Mitm,
     )
     .await?;
-    let _open = spawn_proxy(
-        SocketAddr::new(lo, OPEN_PROXY_PORT),
-        upstream.clone(),
-        Credential::new("open", boot_token.clone()),
-        ProxyMode::ConnectOnly,
-    )
-    .await?;
+    // (RFE-003) The open proxy exists only for a sandbox booted with the `browser`
+    // capability; otherwise nothing listens on 3129 (the gateway also refuses the lane).
+    let _open = if doc.has_capability("browser") {
+        Some(
+            spawn_proxy(
+                SocketAddr::new(lo, OPEN_PROXY_PORT),
+                upstream.clone(),
+                Credential::new("open", boot_token.clone()),
+                ProxyMode::ConnectOnly,
+            )
+            .await?,
+        )
+    } else {
+        tracing::info!("no browser capability: open proxy not started");
+        None
+    };
 
     let chan = channel::spawn(ChannelConfig::new(
         &doc.runner_url,

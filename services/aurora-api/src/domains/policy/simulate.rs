@@ -8,6 +8,7 @@ use crate::domains::secrets::gov;
 use aurora_core::{ApiError, FieldError};
 use aurora_db::repo::gateway::{self, ScopePolicyRows};
 use aurora_db::repo::policy as repo;
+use aurora_llm::governance::{EffectiveGovernance, OpenLaneAdmission, OpenLanePosture};
 use aurora_policy::eval::{
     AllowEntry, BlockReason, RuleResult, ScopePolicy, UncredentialedDefault as Unc, Verdict, Via,
 };
@@ -154,6 +155,11 @@ pub async fn run(
         .to_ascii_lowercase();
     let port = url.port_or_known_default().unwrap_or(443);
     let path = url.path().to_owned();
+    if req.lane == Some(SimLane::Open)
+        && (url.scheme() != "https" || path != "/" || url.query().is_some())
+    {
+        return Err(field("/url", "the open lane takes https://host[:port]"));
+    }
     let use_draft = req.use_draft.unwrap_or(false);
 
     let org_rows = repo::load_scope_rows(&state.pool, org, None, use_draft).await?;
@@ -164,6 +170,9 @@ pub async fn run(
         .chain(&ws_rows.derived)
         .map(|(id, _)| *id)
         .collect();
+    // An unparsable stored posture fails closed.
+    let ws_posture =
+        OpenLanePosture::parse(&ws_rows.open_lane_posture).unwrap_or(OpenLanePosture::Disabled);
     let mut org_policy = to_scope_policy(org_rows)?;
     let ws_policy = to_scope_policy(ws_rows)?;
     let gov = gov::effective_for(state, org).await?;
@@ -184,6 +193,26 @@ pub async fn run(
         format!("{host}:{port}")
     };
     let is_llm_host = state.llm.is_endpoint_host(&host_port) || gov.is_known_llm_host(&host_port);
+    if req.lane == Some(SimLane::Open) {
+        return open_lane(
+            state,
+            OpenInput {
+                org: org_policy,
+                ws: ws_policy,
+                gov: &gov,
+                ws_posture,
+                derived: &derived,
+                host,
+                port,
+                is_llm_host,
+                identity: RequestIdentity {
+                    agent_id,
+                    principals: gateway::principals(&state.pool, ws).await?,
+                },
+            },
+        )
+        .await;
+    }
 
     // Candidates: active secrets whose host/path serve this request (08 §6: generic secrets
     // are never candidates on governed LLM hosts).
@@ -277,6 +306,8 @@ pub async fn run(
         winning_credential: winner.map(Cand::credential),
         is_llm_host,
         identity,
+        connect_time: false,
+        host_apps: Vec::new(),
     };
     let d = evaluate(&org_policy, &ws_policy, &facts, &MemoryCounter::new());
     let trace = SimTrace {
@@ -319,6 +350,133 @@ pub async fn run(
         guidance_code: guidance.map(str::to_owned),
         winning_credential,
         candidates,
+        trace,
+    })
+}
+
+struct OpenInput<'a> {
+    org: ScopePolicy,
+    ws: ScopePolicy,
+    gov: &'a EffectiveGovernance,
+    ws_posture: OpenLanePosture,
+    derived: &'a HashSet<Uuid>,
+    host: String,
+    port: u16,
+    is_llm_host: bool,
+    identity: RequestIdentity,
+}
+
+/// `lane: "open"` (RFE-003): the open-lane posture, then CONNECT-time rule semantics. The
+/// credential capability is a property of the sandbox boot and is not simulated; governed LLM
+/// hosts under `sanctioned_only` are refused by the gateway and are not simulated either.
+async fn open_lane(state: &AppState, i: OpenInput<'_>) -> Result<Simulation, ApiError> {
+    let host_apps: Vec<String> = if i.is_llm_host {
+        vec![]
+    } else {
+        match crate::domains::apps::service::snapshot(state).await? {
+            Some(snap) => {
+                let reserved = snap
+                    .reserved_hosts
+                    .iter()
+                    .any(|p| HostPattern::lenient(p).matches(&i.host, i.port));
+                let mut ids: Vec<String> = if reserved {
+                    vec![]
+                } else {
+                    snap.hosts
+                        .iter()
+                        .filter(|h| {
+                            h.claim_status == aurora_registry::snapshot::ClaimStatus::Active
+                        })
+                        .filter(|h| HostPattern::lenient(&h.host).matches(&i.host, i.port))
+                        .map(|h| h.app_id.clone())
+                        .collect()
+                };
+                ids.sort();
+                ids.dedup();
+                ids
+            }
+            None => vec![],
+        }
+    };
+    let facts = RequestFacts {
+        host: i.host,
+        port: i.port,
+        path: "/".into(),
+        query: None,
+        method: "CONNECT".into(),
+        body_prefix: Vec::new(),
+        truncated: false,
+        app_id: None,
+        tool_id: None,
+        tool_tags: Default::default(),
+        winning_credential: None,
+        is_llm_host: i.is_llm_host,
+        identity: i.identity,
+        connect_time: true,
+        host_apps,
+    };
+    let d = evaluate(&i.org, &i.ws, &facts, &MemoryCounter::new());
+    let trace = SimTrace {
+        organization: scope_trace(&d.trace.organization, i.derived),
+        workspace: scope_trace(&d.trace.workspace, i.derived),
+    };
+    let refused = |reason, code: &str| Simulation {
+        verdict: SimVerdict::Block,
+        reason: Some(reason),
+        guidance_code: Some(code.to_owned()),
+        winning_credential: None,
+        candidates: vec![],
+        trace: trace.clone(),
+    };
+    match i
+        .gov
+        .open_lane_admission(i.ws_posture, &i.org, &i.ws, &facts)
+    {
+        OpenLaneAdmission::Disabled => {
+            return Ok(refused(SimReason::OpenLane, "open_lane_disabled"));
+        }
+        OpenLaneAdmission::NotAllowlisted => {
+            return Ok(refused(SimReason::EgressDenied, "blocked_by_egress_policy"));
+        }
+        OpenLaneAdmission::Admitted => {}
+    }
+    let (verdict, reason, guidance) = match d.verdict {
+        Verdict::Allow => (SimVerdict::Allow, None, None),
+        // A tunnel is never held: the gateway refuses the CONNECT.
+        Verdict::NeedsApproval => (
+            SimVerdict::Block,
+            Some(SimReason::Rule),
+            Some("blocked_by_policy"),
+        ),
+        Verdict::RateLimited => (SimVerdict::RateLimited, Some(SimReason::Rule), None),
+        Verdict::Block {
+            reason: BlockReason::Rule,
+        } => (
+            SimVerdict::Block,
+            Some(SimReason::Rule),
+            Some("blocked_by_policy"),
+        ),
+        Verdict::Block {
+            reason: BlockReason::DefaultDenied,
+        } => (
+            SimVerdict::Block,
+            Some(SimReason::DefaultDenied),
+            Some("blocked_by_default_policy"),
+        ),
+        Verdict::Block {
+            reason: BlockReason::EgressDenied,
+        } => (
+            SimVerdict::Block,
+            Some(SimReason::EgressDenied),
+            Some("blocked_by_egress_policy"),
+        ),
+    };
+    Ok(Simulation {
+        verdict,
+        reason,
+        guidance_code: guidance.map(str::to_owned),
+        winning_credential: None,
+        candidates: vec![],
         trace,
     })
 }

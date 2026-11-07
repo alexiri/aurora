@@ -149,6 +149,8 @@ export interface DraftState {
   default_action: PolicyGeneration["default_action"];
   uncredentialed_default: PolicyGeneration["uncredentialed_default"];
   uncredentialed_allowlist: AllowlistEntry[];
+  /** (RFE-003) workspace open-lane posture. */
+  open_lane_posture: PolicyGeneration["open_lane_posture"];
   rules: RuleInput[];
 }
 
@@ -172,6 +174,7 @@ export function draftFromGeneration(g: PolicyGeneration): DraftState {
     default_action: g.default_action,
     uncredentialed_default: g.uncredentialed_default,
     uncredentialed_allowlist: g.uncredentialed_allowlist.map((e) => ({ host: e.host, path: e.path ?? null })),
+    open_lane_posture: g.open_lane_posture,
     rules: g.rules.map(ruleToInput),
   };
 }
@@ -194,6 +197,7 @@ export function toDraftRequest(s: DraftState, revision: number, scope: PolicySco
   };
   if (scope === "workspace") {
     body.uncredentialed_default = s.uncredentialed_default;
+    body.open_lane_posture = s.open_lane_posture;
     body.uncredentialed_allowlist = s.uncredentialed_allowlist
       .filter((e) => e.host.trim())
       .map((e) => (e.path?.trim() ? { host: e.host.trim(), path: e.path.trim() } : { host: e.host.trim() }));

@@ -819,3 +819,71 @@ fn base64_basic(s: &str) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(s)
 }
+
+/// P1-003 (RFE-003, SEC-41): open-lane probes against the real stack.
+#[tokio::test]
+async fn s16_open_lane_capability_posture_and_connect_time_rules() {
+    let f = fx(Opts::default()).await;
+    let target = host_of(&f.up);
+    let gw = f.st.gw_a.clone();
+    let ca = f.st.ca_pem.clone();
+    let browser = f.st.boot_credential(&f.agent, &["browser"]).await;
+    let plain_boot = f.st.boot_credential(&f.agent, &[]).await;
+
+    // Capability: a BYO token (or a boot credential without `browser`) that merely sets the
+    // username `open` gains nothing; only the boot credential with `browser` gets a tunnel.
+    for tok in [&f.token, &plain_boot] {
+        let (s, b) = raw_connect(&gw, &ca, "open", tok, &target).await;
+        assert_eq!(s, 403, "{b}");
+        assert!(b.contains("open_lane_not_permitted"), "{b}");
+    }
+    let (s, b) = raw_connect(&gw, &ca, "open", &browser, &target).await;
+    assert_eq!(s, 200, "{b}");
+
+    // CONNECT-time rules: a path-scoped block refuses the whole tunnel.
+    let host = f.up.address().ip().to_string();
+    f.api
+        .set_policy(
+            "none",
+            json!([{"name": "admin-only", "action": "block",
+                    "targets": [{"type": "network", "host": host, "path": "/admin/**"}]}]),
+        )
+        .await;
+    let (s, b) = raw_connect(&gw, &ca, "open", &browser, &target).await;
+    assert_eq!(s, 403, "{b}");
+    assert!(
+        b.contains("blocked_by_policy") && b.contains("connect_time"),
+        "{b}"
+    );
+    // ... while the request lane still reaches other paths.
+    assert_eq!(f.get(&gw, "/ok").await.0, 200);
+
+    // Posture: a workspace that disables the lane refuses tunnels.
+    f.api
+        .set_policy_with("none", json!([]), json!({"open_lane_posture": "disabled"}))
+        .await;
+    let (s, b) = raw_connect(&gw, &ca, "open", &browser, &target).await;
+    assert_eq!(s, 403, "{b}");
+    assert!(b.contains("open_lane_disabled"), "{b}");
+    // allowlist_only: refused until the host is on the workspace allow-list.
+    f.api
+        .set_policy_with(
+            "none",
+            json!([]),
+            json!({"open_lane_posture": "allowlist_only"}),
+        )
+        .await;
+    let (s, b) = raw_connect(&gw, &ca, "open", &browser, &target).await;
+    assert_eq!(s, 403, "{b}");
+    assert!(b.contains("blocked_by_egress_policy"), "{b}");
+    f.api
+        .set_policy_with(
+            "none",
+            json!([]),
+            json!({"open_lane_posture": "allowlist_only", "uncredentialed_allowlist": [{"host": host}]}),
+        )
+        .await;
+    let (s, b) = raw_connect(&gw, &ca, "open", &browser, &target).await;
+    assert_eq!(s, 200, "{b}");
+    f.st.finish().await;
+}

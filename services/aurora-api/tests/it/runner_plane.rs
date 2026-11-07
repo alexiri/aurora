@@ -994,3 +994,95 @@ async fn boot_end_parks_or_loses_processes_and_converts_watches() {
         assert_eq!(n, 1);
     }
 }
+
+// ---- P1-003 (RFE-003, SEC-41): the browser capability of a boot ----
+
+fn caps_with_image(declared: &[&str]) -> Value {
+    let mut v = caps_base(4);
+    v["image_capabilities"] = json!(declared);
+    v
+}
+
+/// Boot document capabilities and the capabilities of the minted `aub_` credential.
+async fn start_caps(
+    r: &Rig,
+    rep_host: &str,
+    declared: Option<&[&str]>,
+    handle: &str,
+) -> (Value, Vec<String>) {
+    let rep = match declared {
+        Some(d) => r.register_with(rep_host, caps_with_image(d)).await,
+        None => r.register(rep_host, 4).await,
+    };
+    r.agent_with_turn(handle).await;
+    let w = r.work(rep, 0).await;
+    let item = first(&w, "sandbox.start");
+    let doc = boot_doc(item);
+    let tok = doc["gateway"]["boot_token"].as_str().unwrap();
+    let db: Vec<String> = sqlx::query_scalar(
+        "SELECT unnest(capabilities) FROM gateway_credentials WHERE token_hash = $1",
+    )
+    .bind(&token::hash(tok)[..])
+    .fetch_all(r.h.pool())
+    .await
+    .unwrap();
+    (doc["capabilities"].clone(), db)
+}
+
+#[tokio::test]
+async fn image_label_sets_boot_capability_and_credential_capability() {
+    let r = rig().await;
+    let (doc, db) = start_caps(&r, "runner-a", Some(&["browser"]), "daneel").await;
+    assert_eq!(doc, json!(["browser"]));
+    assert_eq!(db, ["browser"]);
+}
+
+#[tokio::test]
+async fn image_without_the_label_gets_no_capability_fail_closed() {
+    let r = rig().await;
+    let (doc, db) = start_caps(&r, "runner-a", None, "daneel").await;
+    assert_eq!(doc, json!([]));
+    assert!(db.is_empty());
+    let r = rig().await;
+    let (doc, db) = start_caps(&r, "runner-a", Some(&["unknown"]), "daneel").await;
+    assert_eq!(doc, json!([]), "unknown capabilities are ignored");
+    assert!(db.is_empty());
+}
+
+#[tokio::test]
+async fn disabled_posture_removes_the_capability() {
+    // workspace posture
+    let r = rig().await;
+    sqlx::query(
+        "INSERT INTO policy_generations (id, org_id, workspace_id, number, status, open_lane_posture)
+         VALUES ($1,$2,$3,1,'published','disabled')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(r.org)
+    .bind(r.ws)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let (doc, db) = start_caps(&r, "runner-a", Some(&["browser"]), "daneel").await;
+    assert_eq!((doc, db.len()), (json!([]), 0));
+    // org posture
+    let r = rig().await;
+    sqlx::query("UPDATE organizations SET governance = $2 WHERE id = $1")
+        .bind(r.org)
+        .bind(json!({"egress": {"open_lane": "disabled"}}))
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let (doc, db) = start_caps(&r, "runner-a", Some(&["browser"]), "daneel").await;
+    assert_eq!((doc, db.len()), (json!([]), 0));
+    // allowlist_only keeps the capability (the gateway enforces the list)
+    let r = rig().await;
+    sqlx::query("UPDATE organizations SET governance = $2 WHERE id = $1")
+        .bind(r.org)
+        .bind(json!({"egress": {"open_lane": "allowlist_only"}}))
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let (doc, _) = start_caps(&r, "runner-a", Some(&["browser"]), "daneel").await;
+    assert_eq!(doc, json!(["browser"]));
+}

@@ -152,6 +152,11 @@ pub struct RunnerCapabilities {
     /// `max(1, max_sandboxes − 1)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held_awake_ceiling: Option<u32>,
+    /// (phase 1, RFE-003) Capabilities the sandbox image declares in its
+    /// `org.aurora.capabilities` label (docs/11 §The boot document); phase 1 defines
+    /// `browser`. Open vocabulary; absent = none (fail closed, also for older runners).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

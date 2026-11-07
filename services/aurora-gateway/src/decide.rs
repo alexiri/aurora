@@ -23,6 +23,7 @@ use crate::{Body, BoxError, guidance};
 use aurora_core::ApiError;
 use aurora_core::limits::{APPROVAL_BODY_PEEK, CONDITION_BODY_BUFFER};
 use aurora_db::repo::gateway as repo;
+use aurora_llm::governance::{OpenLaneAdmission, OpenLanePosture};
 use aurora_policy::eval::{BlockReason, Decision, MemoryCounter, RateCounter, Verdict};
 use aurora_policy::{Credential, RequestFacts, RequestIdentity, evaluate, selected_candidates};
 use bytes::{Bytes, BytesMut};
@@ -652,6 +653,8 @@ impl RequestHandler for PolicyHandler {
             winning_credential: winner.as_ref().map(Cand::credential),
             is_llm_host: rv.is_llm_host,
             identity: fi,
+            connect_time: false,
+            host_apps: Vec::new(),
         };
         let d = evaluate(
             &rv.org_policy,
@@ -1047,13 +1050,8 @@ impl RequestHandler for PolicyHandler {
                 return OpenLaneDecision::Deny(err);
             }
         };
-        if let Some(g) = &rv.governance
-            && rv.is_llm_host
-            && let Err(err) = Governance::check_open_lane(g, &format!("{host}:{port}"))
-        {
-            self.refuse(ctx, &err, "governance_refused");
-            return OpenLaneDecision::Deny(err);
-        }
+        // (RFE-003 a) Open-lane posture, before any policy evaluation. Facts are the
+        // CONNECT-time facts of `07 §CONNECT-time evaluation`: host/port/identity only.
         let facts = RequestFacts {
             host: host.to_owned(),
             port,
@@ -1068,7 +1066,66 @@ impl RequestHandler for PolicyHandler {
             winning_credential: None,
             is_llm_host: rv.is_llm_host,
             identity: facts_identity(identity),
+            connect_time: true,
+            host_apps: if rv.is_llm_host {
+                Vec::new()
+            } else {
+                rv.host_apps.clone()
+            },
         };
+        let admission = match &rv.governance {
+            Some(g) => {
+                g.open_lane_admission(rv.ws_open_lane, &rv.org_policy, &rv.ws_policy, &facts)
+            }
+            // Governance not wired (tests): the workspace's own posture still applies.
+            None => match rv.ws_open_lane {
+                OpenLanePosture::Enabled => OpenLaneAdmission::Admitted,
+                OpenLanePosture::Disabled => OpenLaneAdmission::Disabled,
+                OpenLanePosture::AllowlistOnly => {
+                    let listed = rv
+                        .ws_policy
+                        .uncredentialed_allowlist
+                        .iter()
+                        .any(|a| a.path.is_none() && a.host.matches(host, port));
+                    if listed || aurora_policy::connect_allow_admits(&rv.ws_policy, &facts) {
+                        OpenLaneAdmission::Admitted
+                    } else {
+                        OpenLaneAdmission::NotAllowlisted
+                    }
+                }
+            },
+        };
+        match admission {
+            OpenLaneAdmission::Admitted => {}
+            OpenLaneAdmission::Disabled => {
+                let url = if rv.ws_open_lane == OpenLanePosture::Disabled {
+                    self.url(&rv, "policy")
+                } else {
+                    format!("{}/o/{}/governance", self.external_url, rv.org_slug)
+                };
+                let err = guidance::open_lane_disabled(&url);
+                self.refuse(ctx, &err, "blocked");
+                return OpenLaneDecision::Deny(err);
+            }
+            OpenLaneAdmission::NotAllowlisted => {
+                let url = format!("{}/o/{}/governance", self.external_url, rv.org_slug);
+                let err = ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "blocked_by_egress_policy",
+                    format!("Browser tunnels are limited to allow-listed hosts and {host}:{port} is not on the allow-list. Review the egress allow-list at {url}"),
+                )
+                .with_details(json!({ "host": host, "port": port, "manage_url": url, "open_lane": true }));
+                self.refuse(ctx, &err, "egress_denied");
+                return OpenLaneDecision::Deny(err);
+            }
+        }
+        if let Some(g) = &rv.governance
+            && rv.is_llm_host
+            && let Err(err) = Governance::check_open_lane(g, &format!("{host}:{port}"))
+        {
+            self.refuse(ctx, &err, "governance_refused");
+            return OpenLaneDecision::Deny(err);
+        }
         let d = evaluate(
             &rv.org_policy,
             &rv.ws_policy,
@@ -1083,16 +1140,38 @@ impl RequestHandler for PolicyHandler {
                 OpenLaneDecision::Allow
             }
             Some((err, decision)) => {
-                // A needs-approval verdict refuses the CONNECT (06 §Lanes).
+                // (RFE-003) A needs-approval verdict refuses the CONNECT (a tunnel is never
+                // held); a block by rule says it was applied to the whole host.
                 let (err, decision) = if d.verdict == Verdict::NeedsApproval {
+                    let name = d
+                        .deciding_rule()
+                        .map(|r| r.name.clone())
+                        .unwrap_or_default();
+                    let url = self.url(&rv, "policy");
                     (
                         ApiError::new(
                             StatusCode::FORBIDDEN,
-                            "manual_approval_denied",
-                            "This destination needs manual approval, which the open lane cannot hold. Use the default proxy lane.",
-                        ),
+                            "blocked_by_policy",
+                            format!("The rule `{name}` requires approval, and a browser tunnel cannot be held for approval. Use the default proxy lane. Review policy at {url}"),
+                        )
+                        .with_details(json!({
+                            "rule_name": name, "reason": "approval_required",
+                            "connect_time": true, "manage_url": url
+                        })),
                         "approval_denied",
                     )
+                } else if matches!(
+                    d.verdict,
+                    Verdict::Block {
+                        reason: BlockReason::Rule
+                    }
+                ) {
+                    let details = err.details().cloned().unwrap_or_else(|| json!({}));
+                    let mut details = details;
+                    if let Some(o) = details.as_object_mut() {
+                        o.insert("connect_time".into(), json!(true));
+                    }
+                    (err.with_details(details), decision)
                 } else {
                     (err, decision)
                 };

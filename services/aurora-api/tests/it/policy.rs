@@ -497,3 +497,174 @@ async fn sec32_policy_publish_is_audited() {
     }
     assert_eq!(n, 1);
 }
+
+// ---- P1-003 (RFE-003): workspace open-lane posture and tunnel simulation ----
+
+impl W {
+    async fn sim_open(&self, url: &str, use_draft: bool) -> (u16, Value) {
+        self.call(
+            Method::POST,
+            &self.wsu("/simulate"),
+            &self.owner,
+            Some(
+                json!({"agent_id": self.agent, "method": "CONNECT", "url": url,
+                        "lane": "open", "use_draft": use_draft}),
+            ),
+        )
+        .await
+    }
+}
+
+#[tokio::test]
+async fn open_lane_posture_is_stored_published_and_workspace_only() {
+    let w = world().await;
+    let (_, v) = w.call(Method::GET, &w.wsu(""), &w.owner, None).await;
+    assert_eq!(v["published"]["open_lane_posture"], "enabled");
+    let wr = &w;
+    let put = |p: Value, rev: i64| async move {
+        let mut b = json!({"revision": rev, "default_action": "none", "rules": []});
+        b["open_lane_posture"] = p;
+        wr.call(Method::PUT, &wr.wsu("/draft"), &wr.owner, Some(b))
+            .await
+    };
+    let (s, v) = put(json!("allowlist_only"), 0).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["open_lane_posture"], "allowlist_only");
+    let (s, v) = put(json!("sometimes"), 1).await;
+    assert_eq!(s, 400, "{v}");
+    // not published yet: the published generation (what the gateway reads) still says enabled
+    let (_, v) = w.call(Method::GET, &w.wsu(""), &w.owner, None).await;
+    assert_eq!(v["published"]["open_lane_posture"], "enabled");
+    assert_eq!(v["draft"]["open_lane_posture"], "allowlist_only");
+    let (s, _) = w
+        .call(
+            Method::POST,
+            &w.wsu("/publish"),
+            &w.owner,
+            Some(json!({"revision": 1})),
+        )
+        .await;
+    assert_eq!(s, 200);
+    let (_, v) = w.call(Method::GET, &w.wsu(""), &w.owner, None).await;
+    assert_eq!(v["published"]["open_lane_posture"], "allowlist_only");
+    // the posture is carried by the next draft (a copy of the published generation)
+    assert_eq!(v["draft"]["open_lane_posture"], "allowlist_only");
+    // omitted on a whole-draft replace = enabled
+    let (s, v) = w
+        .call(
+            Method::PUT,
+            &w.wsu("/draft"),
+            &w.owner,
+            Some(json!({"revision": 0, "default_action": "none", "rules": []})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["open_lane_posture"], "enabled");
+    // org scope has no posture of its own
+    let (s, v) = w
+        .call(
+            Method::PUT,
+            &w.orgu("/draft"),
+            &w.owner,
+            Some(json!({"revision": 0, "default_action": "none", "rules": [], "open_lane_posture": "disabled"})),
+        )
+        .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "policy_invalid");
+}
+
+#[tokio::test]
+async fn simulate_open_lane_applies_posture_and_connect_time_rules() {
+    let w = world().await;
+    // path-scoped block: the request lane lets other paths through, the tunnel is refused
+    let (s, v) = w
+        .put(
+            &w.wsu("/draft"),
+            0,
+            "none",
+            json!([{"name": "admin", "action": "block",
+                    "targets": [{"type": "network", "host": "api.example.com", "path": "/admin/**"}]}]),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, v) = w.sim_open("https://api.example.com", true).await;
+    assert_eq!(v["verdict"], "block", "{v}");
+    assert_eq!(v["reason"], "rule");
+    assert_eq!(v["guidance_code"], "blocked_by_policy");
+    assert_eq!(v["winning_credential"], Value::Null);
+    let (_, v) = w
+        .call(
+            Method::POST,
+            &w.wsu("/simulate"),
+            &w.owner,
+            Some(json!({"agent_id": w.agent, "method": "GET", "url": "https://api.example.com/ok", "use_draft": true})),
+        )
+        .await;
+    assert_eq!(v["verdict"], "allow", "request lane unchanged");
+    // posture: disabled in the draft
+    let (s, v) = w
+        .call(
+            Method::PUT,
+            &w.wsu("/draft"),
+            &w.owner,
+            Some(json!({"revision": 1, "default_action": "none", "rules": [],
+                        "open_lane_posture": "disabled"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, v) = w.sim_open("https://api.example.com", true).await;
+    assert_eq!(v["verdict"], "block");
+    assert_eq!(v["reason"], "open_lane");
+    assert_eq!(v["guidance_code"], "open_lane_disabled");
+    // published posture is still enabled
+    let (_, v) = w.sim_open("https://api.example.com", false).await;
+    assert_eq!(v["verdict"], "allow");
+    // allowlist_only with and without a covering entry; a path entry never admits a tunnel
+    let wr = &w;
+    let put = |list: Value, rev: i64| async move {
+        wr.call(
+            Method::PUT,
+            &wr.wsu("/draft"),
+            &wr.owner,
+            Some(
+                json!({"revision": rev, "default_action": "none", "rules": [],
+                        "open_lane_posture": "allowlist_only", "uncredentialed_allowlist": list}),
+            ),
+        )
+        .await
+    };
+    let (_, v) = put(json!([]), 2).await;
+    assert_eq!(v["open_lane_posture"], "allowlist_only");
+    let (_, v) = w.sim_open("https://api.example.com", true).await;
+    assert_eq!(
+        (v["verdict"].as_str(), v["reason"].as_str()),
+        (Some("block"), Some("egress_denied")),
+        "{v}"
+    );
+    assert_eq!(v["guidance_code"], "blocked_by_egress_policy");
+    put(json!([{"host": "api.example.com", "path": "/**"}]), 3).await;
+    let (_, v) = w.sim_open("https://api.example.com", true).await;
+    assert_eq!(v["verdict"], "block");
+    put(json!([{"host": "api.example.com"}]), 4).await;
+    let (_, v) = w.sim_open("https://api.example.com", true).await;
+    assert_eq!(v["verdict"], "allow", "{v}");
+    // input: the open lane takes https://host[:port]
+    for bad in [
+        "http://api.example.com",
+        "https://api.example.com/x",
+        "https://api.example.com/?q=1",
+    ] {
+        let (s, v) = w.sim_open(bad, true).await;
+        assert_eq!(s, 400, "{bad}: {v}");
+    }
+    // members cannot simulate
+    let (s, _) = w
+        .call(
+            Method::POST,
+            &w.wsu("/simulate"),
+            &w.member,
+            Some(json!({"agent_id": w.agent, "method": "CONNECT", "url": "https://a.com", "lane": "open"})),
+        )
+        .await;
+    assert_eq!(s, 403);
+}

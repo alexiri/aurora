@@ -77,6 +77,8 @@ pub struct BootInput<'a> {
     pub ca_pem: &'a str,
     /// App stub files (`files` of the boot document), from [`AppBoot::files`].
     pub files: &'a [Value],
+    /// (RFE-003) Boot capabilities, see [`capabilities_for`].
+    pub capabilities: &'a [String],
 }
 
 /// Total stub content cap: the boot document (64 KiB, also an env var) must stay small.
@@ -186,6 +188,31 @@ pub async fn app_boot_for(state: &AppState, agent: &AgentRow) -> Result<AppBoot,
     Ok(app_boot(&agent.handle, &apps))
 }
 
+/// (phase 1, RFE-003) The boot capabilities of an agent's sandbox: what the sandbox image
+/// declares (`org.aurora.capabilities`, reported by the runner at registration) ∩ `browser`
+/// unless the effective open-lane posture (strictest of instance, org, workspace) is
+/// `disabled`. The boot credential is minted with the same set.
+pub async fn capabilities_for(
+    state: &AppState,
+    agent: &AgentRow,
+    caps: Option<&RunnerCapabilities>,
+) -> Result<Vec<String>, ApiError> {
+    use aurora_llm::governance::OpenLanePosture;
+    let declared: &[String] = caps.map_or(&[], |c| c.image_capabilities.as_slice());
+    if !declared.iter().any(|c| c == "browser") {
+        return Ok(vec![]);
+    }
+    let org = crate::domains::secrets::gov::effective_for(state, agent.org_id).await?;
+    let ws = aurora_db::repo::policy::published_open_lane_posture(&state.pool, agent.workspace_id)
+        .await?;
+    // An unparsable stored posture fails closed.
+    let ws = OpenLanePosture::parse(&ws).unwrap_or(OpenLanePosture::Disabled);
+    if org.open_lane.max(ws) == OpenLanePosture::Disabled {
+        return Ok(vec![]);
+    }
+    Ok(vec!["browser".to_owned()])
+}
+
 /// base64url(JSON) `AURORA_BOOT` document.
 pub fn boot_secret(s: &AppState, i: &BootInput<'_>) -> Result<SecretString, ApiError> {
     let host = if i.replica_host.contains(':') {
@@ -211,6 +238,8 @@ pub fn boot_secret(s: &AppState, i: &BootInput<'_>) -> Result<SecretString, ApiE
         },
         "ca_pem": i.ca_pem,
         "files": i.files,
+        // (phase 1, RFE-003) The supervisor starts the open proxy only with `browser`.
+        "capabilities": i.capabilities,
         "harness": {"id": i.harness, "capabilities_expected": []},
         "timezone": s.config.hosted.default_timezone,
     });

@@ -8,6 +8,7 @@ mod governance;
 mod governance_db;
 mod hold;
 mod listener_binds;
+mod open_lane;
 mod pipeline;
 mod policy_db;
 mod proxy;

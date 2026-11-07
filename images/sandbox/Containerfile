@@ -40,9 +40,17 @@ RUN dnf -y install --setopt=install_weak_deps=False epel-release \
     # No privilege escalation or package management for the agent.
     && rm -f /usr/bin/sudo /usr/bin/su /usr/bin/dnf* /usr/bin/yum /usr/bin/rpm* 2>/dev/null; true
 ENV PATH=/workspace/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Chromium wrapper: browsers go through the open proxy 127.0.0.1:3129, which exists only when the
+# sandbox booted with the `browser` capability (RFE-003).
+COPY images/sandbox/chromium-wrapper.sh /usr/local/bin/chromium-browser
+RUN ln -s chromium-browser /usr/local/bin/chromium
 
 # ---- sandbox: base + supervisor + pinned harness
 FROM base AS sandbox
+# (RFE-003) Capabilities this image supports; the runner reads the label at registration and the
+# API starts boots with `browser` only when it is declared (docs/11 §The boot document). A custom
+# image without Chromium omits it.
+LABEL org.aurora.capabilities="browser"
 # Pinned Claude Code CLI; must match PINNED_VERSION in
 # services/aurora-supervisor/src/adapters/claude_code/mod.rs.
 ARG CLAUDE_CODE_VERSION=2.1.319

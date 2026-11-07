@@ -80,6 +80,13 @@
             "null"
           ]
         },
+        "image_capabilities": {
+          "description": "(phase 1, RFE-003) Capabilities the sandbox image declares in its\n`org.aurora.capabilities` label (docs/11 §The boot document); phase 1 defines\n`browser`. Open vocabulary; absent = none (fail closed, also for older runners).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "max_attachment_bytes": {
           "format": "uint64",
           "minimum": 0,

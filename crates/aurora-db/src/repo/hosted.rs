@@ -636,6 +636,23 @@ pub async fn boot_app_inputs_hash(
     .flatten())
 }
 
+/// The capabilities the agent's current boot was started with (`resource_profile`); empty for
+/// boots recorded before capabilities existed (RFE-003).
+pub async fn boot_capabilities(
+    conn: &mut PgConnection,
+    agent: Uuid,
+) -> Result<Vec<String>, DbError> {
+    let v: Option<Option<serde_json::Value>> = sqlx::query_scalar(
+        "SELECT resource_profile->'capabilities' FROM sandboxes WHERE agent_id = $1",
+    )
+    .bind(agent)
+    .fetch_optional(conn)
+    .await?;
+    Ok(v.flatten()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default())
+}
+
 /// The image the agent's current boot used, recorded in `resource_profile` at boot (absent for
 /// boots recorded before it was).
 pub async fn boot_image(conn: &mut PgConnection, agent: Uuid) -> Result<Option<String>, DbError> {

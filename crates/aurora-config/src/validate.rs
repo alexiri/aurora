@@ -65,6 +65,13 @@ pub enum EgressPosture {
     Open,
     CredentialedOnly,
 }
+/// Open-lane posture, ordered by strictness (RFE-003).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OpenLanePosture {
+    Enabled,
+    AllowlistOnly,
+    Disabled,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunnerBackend {
     Podman,
@@ -99,6 +106,7 @@ pub struct Governance {
     pub origin_recheck_secs: u64,
     pub egress_minimum_posture: EgressPosture,
     pub baseline_allowlist: Vec<EgressEntry>,
+    pub open_lane_minimum: OpenLanePosture,
 }
 
 #[derive(Debug, Clone)]
@@ -1222,6 +1230,18 @@ fn check_governance(c: &mut Ctx, raw: &RawConfig) -> Option<Governance> {
             None
         }
     };
+    let open_lane_minimum = match g.egress.open_lane_minimum.as_str() {
+        "enabled" => Some(OpenLanePosture::Enabled),
+        "allowlist_only" => Some(OpenLanePosture::AllowlistOnly),
+        "disabled" => Some(OpenLanePosture::Disabled),
+        o => {
+            c.err(
+                "governance.egress.open_lane_minimum",
+                format!("invalid value `{o}`; expected enabled, allowlist_only or disabled"),
+            );
+            None
+        }
+    };
     for (i, s) in g.llm.allowed_key_scopes.iter().enumerate() {
         if !matches!(s.as_str(), "organization" | "workspace") {
             c.err(
@@ -1265,6 +1285,7 @@ fn check_governance(c: &mut Ctx, raw: &RawConfig) -> Option<Governance> {
         origin_recheck_secs: g.llm.origin_recheck_secs,
         egress_minimum_posture: egress_posture?,
         baseline_allowlist: g.egress.baseline_allowlist.clone(),
+        open_lane_minimum: open_lane_minimum?,
     })
 }
 
@@ -1279,6 +1300,7 @@ fn resolve_governance_lossy(raw: &RawConfig) -> Governance {
         origin_recheck_secs: g.llm.origin_recheck_secs,
         egress_minimum_posture: EgressPosture::Open,
         baseline_allowlist: g.egress.baseline_allowlist.clone(),
+        open_lane_minimum: OpenLanePosture::Enabled,
     }
 }
 

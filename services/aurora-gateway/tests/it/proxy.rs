@@ -32,13 +32,19 @@ struct StaticResolver;
 #[async_trait::async_trait]
 impl CredentialResolver for StaticResolver {
     async fn resolve(&self, token: &str) -> Result<Option<RequestIdentity>, ResolveError> {
-        if token != "aug_good" {
+        // `aub_browser` is a boot credential minted with the `browser` capability (RFE-003).
+        if token != "aug_good" && token != "aub_browser" {
             return Ok(None);
         }
+        let boot = token == "aub_browser";
         let id = Uuid::now_v7();
         Ok(Some(RequestIdentity {
             credential_id: id,
-            kind: CredentialKind::Agent,
+            kind: if boot {
+                CredentialKind::Boot
+            } else {
+                CredentialKind::Agent
+            },
             agent_id: id,
             workspace_id: id,
             org_id: id,
@@ -46,6 +52,7 @@ impl CredentialResolver for StaticResolver {
             turn_id: None,
             context_label: None,
             principals: vec![id],
+            capabilities: if boot { vec!["browser".into()] } else { vec![] },
         }))
     }
 }
@@ -487,7 +494,7 @@ async fn destination_guard() {
 #[tokio::test]
 async fn open_lane_does_not_terminate_tls() {
     let env = start(&["127.0.0.0/8"], Duration::from_secs(10)).await;
-    let (head, s) = connect_raw(env.proxy, Some("open:aug_good"), &env.https.to_string()).await;
+    let (head, s) = connect_raw(env.proxy, Some("open:aub_browser"), &env.https.to_string()).await;
     assert!(head.starts_with("HTTP/1.1 200"), "{head}");
     // Trusting only the upstream CA proves the upstream's own cert is shown.
     let tls = tls_client(&env.up_ca_pem, &[b"http/1.1"])
@@ -509,7 +516,7 @@ async fn open_lane_does_not_terminate_tls() {
     assert!(body.contains("path=/open"));
     // Open lane still hits the guard on CONNECT.
     let env = start(&[], Duration::from_secs(10)).await;
-    let (head, _) = connect_raw(env.proxy, Some("open:aug_good"), &env.https.to_string()).await;
+    let (head, _) = connect_raw(env.proxy, Some("open:aub_browser"), &env.https.to_string()).await;
     assert!(head.starts_with("HTTP/1.1 403"), "{head}");
 }
 

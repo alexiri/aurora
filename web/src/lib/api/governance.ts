@@ -113,12 +113,16 @@ export interface EndpointForm {
   team_ids: string;
   locked: { permitted: boolean; key_scopes: boolean; allowed_models: boolean };
 }
+export type OpenLane = "enabled" | "allowlist_only" | "disabled";
 export interface GovForm {
   llmPosture: "open" | "sanctioned_only";
   llmPostureLocked: boolean;
   endpoints: EndpointForm[];
   egressPosture: "open" | "credentialed_only";
   egressPostureLocked: boolean;
+  /** (RFE-003) browser tunnels (open lane). */
+  openLane: OpenLane;
+  openLaneLocked: boolean;
   allowlist: { host: string; path: string }[];
 }
 
@@ -153,6 +157,8 @@ export function formFromDocument(doc: Partial<GovDocument> | null | undefined, e
     }),
     egressPosture: (doc?.egress?.posture as GovForm["egressPosture"]) ?? (eff.egress.posture.value as GovForm["egressPosture"]),
     egressPostureLocked: eff.egress.posture.source === "instance",
+    openLane: (doc?.egress?.open_lane as OpenLane | undefined) ?? (eff.egress.open_lane.value as OpenLane),
+    openLaneLocked: eff.egress.open_lane.source === "instance",
     allowlist: (doc?.egress?.allowlist ?? eff.egress.org_allowlist).map((e) => ({ host: e.host, path: e.path ?? "" })),
   };
 }
@@ -164,6 +170,7 @@ export function formFromEffective(eff: EffectiveGovernance): GovForm {
     ...base,
     llmPosture: eff.llm.posture.value as GovForm["llmPosture"],
     egressPosture: eff.egress.posture.value as GovForm["egressPosture"],
+    openLane: eff.egress.open_lane.value as OpenLane,
     endpoints: base.endpoints.map((f, i) => {
       const e = eff.llm.endpoints[i];
       return {
@@ -197,6 +204,7 @@ export function formToDocument(f: GovForm): GovDocument {
     llm: { posture: f.llmPosture, endpoints },
     egress: {
       posture: f.egressPosture,
+      open_lane: f.openLane,
       allowlist: f.allowlist
         .filter((e) => e.host.trim())
         .map((e) => (e.path.trim() ? { host: e.host.trim(), path: e.path.trim() } : { host: e.host.trim() })),

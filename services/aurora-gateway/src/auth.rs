@@ -33,6 +33,18 @@ pub struct RequestIdentity {
     pub context_label: Option<String>,
     /// `{agent_id} + users with can_use on the workspace`.
     pub principals: Vec<Uuid>,
+    /// Credential capabilities (`gateway_credentials.capabilities`, 08 §7); only `boot`
+    /// credentials can hold any. Phase 1: `browser` (open-lane use, RFE-003).
+    pub capabilities: Vec<String>,
+}
+
+/// Capability that admits the open lane (RFE-003).
+pub const CAP_BROWSER: &str = "browser";
+
+impl RequestIdentity {
+    pub fn has_capability(&self, cap: &str) -> bool {
+        self.kind == CredentialKind::Boot && self.capabilities.iter().any(|c| c == cap)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

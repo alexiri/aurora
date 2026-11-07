@@ -379,6 +379,21 @@ impl PodmanBackend {
     }
 }
 
+/// OCI label through which a sandbox image declares its capabilities (docs/11).
+const CAPABILITIES_LABEL: &str = "org.aurora.capabilities";
+
+/// Comma list → trimmed, de-duplicated, non-empty tokens.
+fn parse_capabilities(label: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for t in label.unwrap_or_default().split(',') {
+        let t = t.trim();
+        if !t.is_empty() && !out.iter().any(|o| o == t) {
+            out.push(t.to_owned());
+        }
+    }
+    out
+}
+
 #[async_trait]
 impl Backend for PodmanBackend {
     fn id(&self) -> &'static str {
@@ -409,6 +424,26 @@ impl Backend for PodmanBackend {
             // Filled in by the runner from `runner.image` at registration.
             image: None,
             held_awake_ceiling: None,
+            image_capabilities: vec![],
+        }
+    }
+
+    async fn image_capabilities(&self, image: &str) -> Vec<String> {
+        if let Err(e) = self.ensure_image(image).await {
+            tracing::warn!(error = %e, image, "cannot read image capabilities; reporting none");
+            return Vec::new();
+        }
+        match self.docker.inspect_image(image).await {
+            Ok(i) => parse_capabilities(
+                i.config
+                    .and_then(|c| c.labels)
+                    .and_then(|l| l.get(CAPABILITIES_LABEL).cloned())
+                    .as_deref(),
+            ),
+            Err(e) => {
+                tracing::warn!(error = %e, image, "cannot inspect image; reporting no capabilities");
+                Vec::new()
+            }
         }
     }
 
@@ -604,6 +639,17 @@ impl Backend for PodmanBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capabilities_label_is_parsed_fail_closed() {
+        assert!(parse_capabilities(None).is_empty());
+        assert!(parse_capabilities(Some("")).is_empty());
+        assert_eq!(parse_capabilities(Some("browser")), ["browser"]);
+        assert_eq!(
+            parse_capabilities(Some(" browser, ,browser,future ")),
+            ["browser", "future"]
+        );
+    }
 
     #[test]
     fn volume_names_are_restricted() {

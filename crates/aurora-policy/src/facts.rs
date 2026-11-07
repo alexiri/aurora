@@ -91,6 +91,14 @@ pub struct RequestFacts {
     #[serde(default)]
     pub is_llm_host: bool,
     pub identity: RequestIdentity,
+    /// Open-lane tunnel judged at `CONNECT` time (07 §CONNECT-time evaluation,
+    /// RFE-003): only host, port and identity are knowable and nothing is injected.
+    #[serde(default)]
+    pub connect_time: bool,
+    /// Apps whose snapshot host index serves `host` (used by `app` targets at
+    /// `CONNECT` time, where no tool is known).
+    #[serde(default)]
+    pub host_apps: Vec<String>,
 }
 
 impl RequestFacts {

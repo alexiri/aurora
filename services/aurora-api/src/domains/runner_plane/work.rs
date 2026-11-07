@@ -215,8 +215,10 @@ async fn mint_start(
     let image = caps
         .and_then(|c| c.image.clone())
         .unwrap_or_else(boot::default_image);
+    let capabilities = boot::capabilities_for(s, &agent_row, caps).await?;
     let profile = serde_json::json!({
         "boot_image": image,
+        "capabilities": capabilities,
         "cpu_millis": resources.cpu_millis, "memory_mib": resources.memory_mib,
         "pids": resources.pids, "home_gib": home_gib,
         "app_inputs_hash": app_boot.hash,
@@ -231,6 +233,7 @@ async fn mint_start(
         &profile,
         &token::hash(boot_tok.expose()),
         &token::display_prefix(boot_tok.expose()),
+        &capabilities,
     )
     .await?;
     let secret = boot::boot_secret(
@@ -247,6 +250,7 @@ async fn mint_start(
             boot_token: boot_tok.expose(),
             ca_pem,
             files: &app_boot.files,
+            capabilities: &capabilities,
         },
     )?;
     let labels = BTreeMap::from([

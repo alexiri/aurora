@@ -110,9 +110,17 @@ pub struct BootDocument {
     pub harness: BootHarness,
     #[serde(default)]
     pub timezone: Option<String>,
+    /// (RFE-003) What the sandbox may do beyond ordinary traffic; phase 1: `browser`.
+    /// Absent = none, so nothing listens on the open proxy port.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 impl BootDocument {
+    pub fn has_capability(&self, cap: &str) -> bool {
+        self.capabilities.iter().any(|c| c == cap)
+    }
+
     /// Decode and validate the raw (base64url JSON) document.
     pub fn parse(raw: &str) -> Result<Self, BootError> {
         let raw = raw.trim();
