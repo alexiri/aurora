@@ -204,12 +204,12 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | P1-004 | RFE-002 TLS-only gateway proxy listener | 1 | in-progress | — |
 | P1-005 | RFE-004 OIDC-only sign-in (dev IdP, tests/e2e migrate off passwords) | 1 | todo | OPS-016 preferred |
 | MM-003 | Target Mattermost 11.7 (11.7.15 pinned by digest) | 1 | done (3ecf14ce) | MM-001 |
-| OPS-019 | CI green + fast (`rust-test` disk fix, sharded nextest, one compile), actions off Node 20 | 1 | done (build 10m, shards 3-5m, e2e-gateway green; e2e-hosted → FIX-008) | OPS-016 for test layout |
+| OPS-019 | CI green + fast (`rust-test` disk fix, sharded nextest, one compile), actions off Node 20 | 1 | done; master CI fully green (run 42382511618: build 15m cold, shards 2.5-3m, e2e-gateway 6.6m, e2e-hosted 12.7m) | OPS-016 for test layout |
 | OPS-020 | CI builds images and pushes to ghcr.io after green tests (shared builder stage, cache) | 1 | todo | OPS-019, OPS-016 |
 | OPS-021 | Dependabot (cargo, npm, actions, docker; grouped) | 4 | todo | OPS-019/020 |
 | OPS-017 | kind replaces compose | 1 | todo | OPS-016 |
 | OPS-018 | Live reload | 1 | todo | OPS-016, OPS-017 |
-| FIX-008 | Podman backend tolerates `stopped`/unknown container states (CI e2e-hosted on podman 4.9) | 1 | merged; verifying on CI | — |
+| FIX-008 | Podman backend tolerates `stopped`/unknown container states (CI e2e-hosted on podman 4.9) | 1 | done; CI e2e-hosted 9/9 on ubuntu-24.04 (run 42382511618) | — |
 | P2-005..P2-025 | Phase-2 RFE tasks (briefs in docs/tasks/P2-*.md) | 2 | P2-007, P2-017 in-progress; rest briefed | P2-025 after P1-004 |
 | P2-CAT / P2-DBL | Built-in app catalogue; gateway database lane (`21`) | 2 | to be briefed | — |
 
