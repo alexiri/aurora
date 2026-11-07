@@ -14,6 +14,7 @@ import { ConnectTab } from "./connect-tab";
 import { DeleteZone } from "./delete-zone";
 import { MemoryTab } from "@/components/memory/memory-tab";
 import { SkillsTab } from "@/components/skills/skills-tab";
+import { AgentChannelsTab } from "@/components/channels/agent-channels-tab";
 import { PeersTab } from "@/components/peers/peers-tab";
 import { SchedulesTab } from "@/components/schedules/schedules-tab";
 import { WebhooksTab } from "@/components/webhooks/webhooks-tab";
@@ -27,7 +28,7 @@ export function AgentPage() {
   const wsId = resolved.data?.workspace?.id;
   const agents = useAgents(wsId);
   const workspace = useWorkspace(wsId);
-  const [tab, setTab] = useState<"chat" | "instructions" | "access" | "connect" | "computer" | "memory" | "skills" | "schedules" | "webhooks" | "peers">("instructions");
+  const [tab, setTab] = useState<"chat" | "instructions" | "access" | "connect" | "computer" | "memory" | "skills" | "schedules" | "webhooks" | "peers" | "channels">("instructions");
 
   if (resolved.isPending || (wsId && agents.isPending)) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
@@ -47,6 +48,7 @@ export function AgentPage() {
           { id: "schedules" as const, label: "Schedules" },
           { id: "webhooks" as const, label: "Webhooks" },
           { id: "peers" as const, label: "Peers" },
+          { id: "channels" as const, label: "Channels" },
         ]),
     { id: "access" as const, label: "Access" },
     ...(byo
@@ -85,6 +87,10 @@ export function AgentPage() {
         {tab === "schedules" && !byo ? <SchedulesTab agentId={agent.id} defaultTimezone={workspace.data?.timezone} /> : null}
         {tab === "webhooks" && !byo ? <WebhooksTab agentId={agent.id} /> : null}
         {tab === "peers" && !byo ? <PeersTab agentId={agent.id} /> : null}
+        {tab === "channels" && !byo && workspace.data ? (
+          <AgentChannelsTab agentId={agent.id} orgId={workspace.data.org_id} canOwn={workspace.data.my_role === "owner"} />
+        ) : null}
+        {tab === "channels" && !byo && workspace.isPending ? <Loading /> : null}
         {tab === "computer" && !byo ? <ComputerTab agentId={agent.id} /> : null}
         {tab === "instructions" ? (
           <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} />
