@@ -132,6 +132,7 @@ argon2 = "0.5"
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport", "tokio1", "aws-lc-rs", "hostname"] }
 zeroize = { version = "1.8", features = ["derive"] }
 base64 = "0.22"
+crc32fast = "1"
 hex = "0.4"
 rustix = { version = "1", default-features = false, features = ["std", "process"] }
 

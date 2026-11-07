@@ -260,3 +260,45 @@ async fn child_exit_mid_turn_yields_one_error() {
     let ev = collect(rx).await;
     assert_eq!(ev.iter().filter(|e| e.is_terminal()).count(), 1);
 }
+
+#[tokio::test]
+async fn purge_session_removes_every_stored_file_of_that_session_only() {
+    let home = std::env::temp_dir().join(format!("aurora-purge-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let c = home.join(".claude");
+    let proj = c.join("projects/-workspace");
+    for d in [
+        proj.join("sess-1"),
+        proj.join("sess-2"),
+        c.join("session-env/sess-1"),
+        c.join("file-history/sess-1"),
+        c.join("todos"),
+    ] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    for f in [
+        proj.join("sess-1.jsonl"),
+        proj.join("sess-2.jsonl"),
+        proj.join("sess-1/subagent.jsonl"),
+        c.join("todos/sess-1-agent-sess-1.json"),
+        c.join("todos/sess-2-agent-sess-2.json"),
+    ] {
+        std::fs::write(f, "secret").unwrap();
+    }
+    let a = ClaudeCodeAdapter::with_launcher(Arc::new(Mock::new(None, REPLY)))
+        .config_home(home.clone());
+    let wd = home.join("workspace");
+    a.purge_session(&wd, "sess-1").await.unwrap();
+    assert!(!proj.join("sess-1.jsonl").exists() && !proj.join("sess-1").exists());
+    assert!(!c.join("session-env/sess-1").exists() && !c.join("file-history/sess-1").exists());
+    assert!(!c.join("todos/sess-1-agent-sess-1.json").exists());
+    assert!(
+        proj.join("sess-2.jsonl").exists() && c.join("todos/sess-2-agent-sess-2.json").exists()
+    );
+    // idempotent, and a path-shaped reference is refused without touching anything
+    a.purge_session(&wd, "sess-1").await.unwrap();
+    assert!(a.purge_session(&wd, "../projects").await.is_err());
+    assert!(a.purge_session(&wd, "").await.is_err());
+    assert!(proj.join("sess-2").exists());
+    let _ = std::fs::remove_dir_all(&home);
+}

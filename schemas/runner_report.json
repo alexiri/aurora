@@ -258,6 +258,27 @@
       ],
       "type": "object"
     },
+    "SessionPurged": {
+      "description": "(phase 2, RFE-010) Outcome of a [`SessionPurge`]; `ok = false` keeps the purge pending.",
+      "properties": {
+        "conversation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "session_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "session_ref",
+        "ok"
+      ],
+      "type": "object"
+    },
     "SessionReport": {
       "properties": {
         "conversation_id": {
@@ -574,6 +595,24 @@
           "properties": {
             "kind": {
               "const": "session"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SessionPurged"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "session.purged"
             }
           },
           "required": [

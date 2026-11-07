@@ -10,20 +10,20 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-struct Rig {
-    h: Harness,
-    org: Uuid,
-    ws: Uuid,
-    tok: String,
-    cookie: String,
-    rep: Uuid,
+pub(crate) struct Rig {
+    pub(crate) h: Harness,
+    pub(crate) org: Uuid,
+    pub(crate) ws: Uuid,
+    pub(crate) tok: String,
+    pub(crate) cookie: String,
+    pub(crate) rep: Uuid,
 }
 
-struct Live {
-    agent: Uuid,
-    conv: Uuid,
-    sb: String,
-    boot: String,
+pub(crate) struct Live {
+    pub(crate) agent: Uuid,
+    pub(crate) conv: Uuid,
+    pub(crate) sb: String,
+    pub(crate) boot: String,
 }
 
 fn caps() -> Value {
@@ -36,7 +36,7 @@ fn caps() -> Value {
     })
 }
 
-async fn rig() -> Rig {
+pub(crate) async fn rig() -> Rig {
     let dir = std::env::temp_dir().join(format!("aurora-ca-{}", Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("ca.pem"), "-----BEGIN CERTIFICATE-----\nX\n").unwrap();
@@ -90,7 +90,12 @@ async fn rig() -> Rig {
 }
 
 impl Rig {
-    async fn runner(&self, replica: Option<Uuid>, uri: &str, body: Value) -> (u16, Value) {
+    pub(crate) async fn runner(
+        &self,
+        replica: Option<Uuid>,
+        uri: &str,
+        body: Value,
+    ) -> (u16, Value) {
         let b = bearer(&self.tok);
         let rid = replica.map(|r| r.to_string());
         let mut hd = vec![("authorization", b.as_str())];
@@ -101,7 +106,7 @@ impl Rig {
         (s.as_u16(), v)
     }
 
-    async fn work(&self) -> Vec<Value> {
+    pub(crate) async fn work(&self) -> Vec<Value> {
         let (s, v) = self
             .runner(
                 Some(self.rep),
@@ -113,11 +118,11 @@ impl Rig {
         v["items"].as_array().unwrap().clone()
     }
 
-    async fn report(&self, lv: &Live, body: Value) -> String {
+    pub(crate) async fn report(&self, lv: &Live, body: Value) -> String {
         self.report_on(&self.h.app, lv, body).await
     }
 
-    async fn report_on(&self, app: &axum::Router, lv: &Live, mut body: Value) -> String {
+    pub(crate) async fn report_on(&self, app: &axum::Router, lv: &Live, mut body: Value) -> String {
         body["report_id"] = json!(Uuid::now_v7());
         body["sandbox_id"] = json!(lv.sb);
         body["boot_id"] = json!(lv.boot);
@@ -140,7 +145,12 @@ impl Rig {
             .to_owned()
     }
 
-    async fn user_call(&self, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
+    pub(crate) async fn user_call(
+        &self,
+        m: Method,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (u16, Value) {
         let (s, _, v) = self
             .h
             .send(
@@ -153,7 +163,7 @@ impl Rig {
         (s.as_u16(), v)
     }
 
-    async fn agent(&self, handle: &str, grant: bool) -> Uuid {
+    pub(crate) async fn agent(&self, handle: &str, grant: bool) -> Uuid {
         let id = Uuid::now_v7();
         sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) VALUES ($1,$2,$3,$4,$4,'hosted','fake')")
             .bind(id).bind(self.org).bind(self.ws).bind(handle).execute(self.h.pool()).await.unwrap();
@@ -175,7 +185,7 @@ impl Rig {
         id
     }
 
-    async fn direct(&self, agent: Uuid) -> Uuid {
+    pub(crate) async fn direct(&self, agent: Uuid) -> Uuid {
         let (s, v) = self
             .user_call(
                 Method::POST,
@@ -187,7 +197,7 @@ impl Rig {
         v["id"].as_str().unwrap().parse().unwrap()
     }
 
-    async fn say(&self, conv: Uuid, text: &str) -> Value {
+    pub(crate) async fn say(&self, conv: Uuid, text: &str) -> Value {
         let (s, v) = self
             .user_call(
                 Method::POST,
@@ -200,7 +210,7 @@ impl Rig {
     }
 
     /// Message, start, running, channel, ready, home sync; returns after `home.synced`.
-    async fn boot(&self, handle: &str) -> Live {
+    pub(crate) async fn boot(&self, handle: &str) -> Live {
         let agent = self.agent(handle, true).await;
         let conv = self.direct(agent).await;
         self.say(conv, "hello").await;
@@ -284,7 +294,7 @@ impl Rig {
         lv
     }
 
-    async fn deliver(&self) -> Value {
+    pub(crate) async fn deliver(&self) -> Value {
         let items = self.work().await;
         items
             .into_iter()
@@ -292,7 +302,7 @@ impl Rig {
             .expect("turn.deliver")
     }
 
-    async fn events(&self, conv: Uuid) -> Vec<(String, Value)> {
+    pub(crate) async fn events(&self, conv: Uuid) -> Vec<(String, Value)> {
         let rows: Vec<(String, Value)> = sqlx::query_as(
             "SELECT type, payload FROM transcript_events WHERE conversation_id = $1 ORDER BY seq",
         )
@@ -303,7 +313,7 @@ impl Rig {
         rows
     }
 
-    async fn turn_status(&self, id: &str) -> (String, Option<String>) {
+    pub(crate) async fn turn_status(&self, id: &str) -> (String, Option<String>) {
         sqlx::query_as("SELECT status, error_code FROM turns WHERE id = $1::uuid")
             .bind(id)
             .fetch_one(self.h.pool())

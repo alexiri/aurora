@@ -558,6 +558,8 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | last_seq | bigint not null default 0 | incremented atomically per durable event |
 | app_turn_streak | int not null default 0 | bot-authored consecutive turns |
 | last_activity_at | timestamptz not null | churn column |
+| archived_at | timestamptz null | hidden from default lists; a person message unarchives (`10 §Archive, delete, redaction, retention, export`); phase 2, RFE-010 |
+| archived_by_user_id | uuid null FK→users (set null) | phase 2, RFE-010 |
 
 ### `turns`
 | Column | Type | Notes |
@@ -604,6 +606,19 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | turn_id | uuid null | |
 | type | text not null | canonical vocabulary (`10 §Transcript events`) |
 | payload | jsonb not null | bounded (≤64 KiB serialized) |
+| redacted_at | timestamptz null | set when the payload was replaced by the redaction marker `{ "redacted": true, "redacted_at", "redacted_by", "reason"? }` (≤64 KiB bound unchanged); phase 2, RFE-010 |
+| redacted_by_user_id | uuid null FK→users (set null) | phase 2, RFE-010 |
+
+### `session_purges`
+Pending deletions of harness session files after a conversation delete or a `reset_session` redaction (phase 2, RFE-010; `12 §Session purge`).
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| agent_id | uuid FK→agents (cascade) | |
+| conversation_id | uuid null | the conversation that is gone (no FK) |
+| session_ref | text not null | `harness_session_ref` to purge |
+| leased_until | timestamptz null | live-delivery lease: the `session.purge` work item is re-sent after it lapses |
+| done_at | timestamptz null | stamped on `session.purged { ok: true }`; index (agent_id) WHERE done_at IS NULL |
 
 ### `attachments`
 | Column | Type | Notes |
@@ -1143,28 +1158,6 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | critical | bool not null default false | true for rows of the security-critical set (`04 §Audit`); index (org_id, critical, created_at desc) so auditors can filter them | 2 (RFE-008) |
-
-#### `conversations`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| archived_at | timestamptz null | hidden from default lists; a person message unarchives (`10 §Archive, delete, redaction, retention, export`) | 2 (RFE-010) |
-| archived_by_user_id | uuid null FK→users (set null) | | 2 (RFE-010) |
-
-#### `transcript_events`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| redacted_at | timestamptz null | set when the payload was replaced by the redaction marker `{ "redacted": true, "redacted_at", "redacted_by", "reason"? }` (≤64 KiB bound unchanged) | 2 (RFE-010) |
-| redacted_by_user_id | uuid null FK→users (set null) | | 2 (RFE-010) |
-
-#### `session_purges` (new table)
-Pending deletions of harness session files after a conversation delete or a `reset_session` redaction.
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| id | uuid pk | | 2 (RFE-010) |
-| agent_id | uuid FK→agents (cascade) | | 2 (RFE-010) |
-| conversation_id | uuid null | the conversation that is gone (no FK) | 2 (RFE-010) |
-| session_ref | text not null | `harness_session_ref` to purge | 2 (RFE-010) |
-| created_at / done_at | timestamptz / null | row deleted or stamped on `session.purged`; index (agent_id) WHERE done_at IS NULL | 2 (RFE-010) |
 
 #### `organizations` (jsonb key in `settings`)
 | Planned column | Type | Notes | Phase |

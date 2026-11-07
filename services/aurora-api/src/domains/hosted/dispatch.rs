@@ -23,6 +23,7 @@ const ARM_LIMIT: i64 = 16;
 /// Lease on a home sync / abort delivery before it is re-sent.
 const SYNC_LEASE_SECS: f64 = 60.0;
 const ABORT_LEASE_SECS: f64 = 30.0;
+const PURGE_LEASE_SECS: f64 = 30.0;
 
 /// Side effects the caller performs after the transaction commits.
 #[derive(Default)]
@@ -87,6 +88,7 @@ pub async fn arms(
     after: &mut After,
 ) -> Result<(), ApiError> {
     arm4_signals(tx, runner, replica, items).await?;
+    arm4b_purges(tx, runner, replica, items).await?;
     arm5_home_sync(s, tx, runner, replica, items).await?;
     arm6_dispatch(s, tx, runner, replica, items, after).await?;
     arm7_steer(tx, runner, replica, items).await?;
@@ -112,6 +114,34 @@ async fn arm4_signals(
             t.sandbox_id,
             t.boot_id,
             WorkItemBody::TurnSendNow(TurnRef { turn_id: t.turn_id }),
+        ));
+    }
+    Ok(())
+}
+
+/// (RFE-010) Live `session.purge` for deleted conversations; re-sent each lease until the
+/// supervisor reports `session.purged`. Sandboxes that are not running get it with the home sync
+/// at their next boot.
+async fn arm4b_purges(
+    tx: &mut PgConnection,
+    runner: Uuid,
+    replica: Uuid,
+    items: &mut Vec<WorkItem>,
+) -> Result<(), ApiError> {
+    for p in
+        aurora_db::repo::lifecycle::claim_live(tx, runner, replica, PURGE_LEASE_SECS, ARM_LIMIT)
+            .await?
+    {
+        let Some(conversation_id) = p.conversation_id else {
+            continue;
+        };
+        items.push(item(
+            p.sandbox_id,
+            p.boot_id,
+            WorkItemBody::SessionPurge(aurora_protocol::runner::SessionPurge {
+                conversation_id,
+                session_ref: p.session_ref,
+            }),
         ));
     }
     Ok(())

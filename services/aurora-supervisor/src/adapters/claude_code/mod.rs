@@ -54,6 +54,8 @@ const INIT_GRACE: Duration = Duration::from_secs(2);
 pub struct ClaudeCodeAdapter {
     launcher: Arc<dyn Launcher>,
     hold_timeout: Duration,
+    /// Directory holding the CLI's `.claude/` state; `None` = `$HOME`.
+    config_home: Option<std::path::PathBuf>,
 }
 
 impl Default for ClaudeCodeAdapter {
@@ -67,7 +69,15 @@ impl ClaudeCodeAdapter {
         Self {
             launcher,
             hold_timeout: DEFAULT_HOLD,
+            config_home: None,
         }
+    }
+
+    /// Where the CLI keeps `.claude/` (default `$HOME`); used by [`HarnessAdapter::purge_session`].
+    #[must_use]
+    pub fn config_home(mut self, dir: std::path::PathBuf) -> Self {
+        self.config_home = Some(dir);
+        self
     }
 
     #[must_use]
@@ -113,6 +123,73 @@ impl HarnessAdapter for ClaudeCodeAdapter {
         s.ensure_child().await?;
         Ok(Box::new(s))
     }
+
+    /// Removes everything the CLI stored for the session: the transcript (`projects/*/<ref>.jsonl`
+    /// and its sidecar directory), todos, session env and file history. Idempotent.
+    async fn purge_session(
+        &self,
+        working_dir: &std::path::Path,
+        session_ref: &str,
+    ) -> Result<(), HarnessError> {
+        if !crate::harness::is_safe_session_ref(session_ref) {
+            return Err(HarnessError::new(
+                "invalid_session_ref",
+                "unsafe session reference",
+            ));
+        }
+        let mut roots = Vec::new();
+        match &self.config_home {
+            Some(h) => roots.push(h.join(".claude")),
+            None => {
+                if let Some(h) = std::env::var_os("HOME") {
+                    roots.push(std::path::PathBuf::from(h).join(".claude"));
+                }
+            }
+        }
+        roots.push(working_dir.join(".claude"));
+        roots.dedup();
+        let session_ref = session_ref.to_owned();
+        tokio::task::spawn_blocking(move || purge_claude_files(&roots, &session_ref))
+            .await
+            .map_err(|e| HarnessError::new("purge_failed", e.to_string()))?
+            .map_err(|e| HarnessError::new("purge_failed", e.to_string()))
+    }
+}
+
+fn remove_any(p: &std::path::Path) -> std::io::Result<()> {
+    let r = match std::fs::symlink_metadata(p) {
+        Ok(m) if m.is_dir() => std::fs::remove_dir_all(p),
+        Ok(_) => std::fs::remove_file(p),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    match r {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+fn purge_claude_files(roots: &[std::path::PathBuf], session_ref: &str) -> std::io::Result<()> {
+    for root in roots {
+        // projects/<encoded cwd>/<ref>.jsonl and projects/<encoded cwd>/<ref>/
+        if let Ok(rd) = std::fs::read_dir(root.join("projects")) {
+            for proj in rd.flatten() {
+                remove_any(&proj.path().join(format!("{session_ref}.jsonl")))?;
+                remove_any(&proj.path().join(session_ref))?;
+            }
+        }
+        remove_any(&root.join("session-env").join(session_ref))?;
+        remove_any(&root.join("file-history").join(session_ref))?;
+        if let Ok(rd) = std::fs::read_dir(root.join("todos")) {
+            let prefix = format!("{session_ref}-");
+            for f in rd.flatten() {
+                if f.file_name().to_string_lossy().starts_with(&prefix) {
+                    remove_any(&f.path())?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 struct Live {

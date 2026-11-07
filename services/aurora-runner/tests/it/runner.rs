@@ -449,6 +449,10 @@ async fn executor_serializes_per_sandbox_and_forwards_socket_work() {
     for kind in [
         WorkItemBody::TurnAbort(aurora_protocol::runner::TurnRef { turn_id: turn }),
         WorkItemBody::TurnSendNow(aurora_protocol::runner::TurnRef { turn_id: turn }),
+        WorkItemBody::SessionPurge(aurora_protocol::runner::SessionPurge {
+            conversation_id: turn,
+            session_ref: "sess-1".into(),
+        }),
     ] {
         exec.submit(WorkItem {
             item_id: Uuid::new_v4(),
@@ -466,8 +470,12 @@ async fn executor_serializes_per_sandbox_and_forwards_socket_work() {
     assert!(exec.drain(Duration::from_secs(5)).await);
     let sent = hub.sent();
     let kinds: Vec<&str> = sent.iter().map(|(_, f)| f.kind.as_str()).collect();
-    assert_eq!(kinds, vec!["turn.abort", "turn.send_now"]);
+    assert_eq!(kinds, vec!["turn.abort", "turn.send_now", "session.purge"]);
     assert_eq!(sent[0].1.body, json!({ "turn_id": turn }));
+    assert_eq!(
+        sent[2].1.body,
+        json!({ "conversation_id": turn, "session_ref": "sess-1" })
+    );
     wait_for(|| true).await;
 }
 

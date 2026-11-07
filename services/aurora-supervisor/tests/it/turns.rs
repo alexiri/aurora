@@ -20,6 +20,8 @@ const CONV: &str = "00000000-0000-0000-0000-0000000000c1";
 
 struct Runner {
     listener: TcpListener,
+    /// The supervisor's working directory (its home).
+    dir: std::path::PathBuf,
 }
 
 struct Conn {
@@ -131,13 +133,14 @@ async fn start(gateway: aurora_supervisor::proxy::GatewayUpstream) -> (Runner, C
     let chan = channel::spawn(cfg);
     let mut sc = SupervisorConfig::new(gateway, "aub_boot");
     sc.progress_interval = Duration::from_millis(100);
-    sc.working_dir = crate::common::TempDir::new().keep();
+    let dir = crate::common::TempDir::new().keep();
+    sc.working_dir = dir.clone();
     let sup = Supervisor::new(sc, chan.sender, Arc::new(FakeHarness));
     tokio::spawn(sup.run(chan.inbound));
     tokio::spawn(async move {
         let _ = chan.task.await;
     });
-    let runner = Runner { listener };
+    let runner = Runner { listener, dir };
     let mut conn = runner.accept(0, 0, 0).await;
     assert_eq!(conn.hello["hello"]["bootstrap_token"], "aup_test");
     assert_eq!(conn.hello["hello"]["protocol"], 1);
@@ -354,4 +357,92 @@ async fn spent_bootstrap_is_fatal() {
     .unwrap();
     let r = timeout(T, chan.task).await.unwrap().unwrap();
     assert!(matches!(r, Err(channel::ChannelError::Rejected(4409))));
+}
+
+fn marker(dir: &std::path::Path, session_ref: &str) -> std::path::PathBuf {
+    dir.join(".fake-sessions").join(session_ref)
+}
+
+#[tokio::test]
+async fn session_purge_deletes_the_stored_session_and_reports() {
+    let (gw, _) = stub_gateway().await;
+    let (r, mut c) = start(gw).await;
+    c.home_sync().await;
+    c.deliver(TURN, "hello", "auc_t").await;
+    c.next_of("turn.result").await;
+    let sref = format!("fake-{CONV}");
+    assert!(
+        marker(&r.dir, &sref).exists(),
+        "the fake harness stored a session"
+    );
+
+    // an unsafe reference is refused and nothing outside the session store is touched
+    c.send(
+        "session.purge",
+        json!({"conversation_id": CONV, "session_ref": "../../etc/passwd"}),
+    )
+    .await;
+    let bad = c.next_of("session.purged").await;
+    assert_eq!(bad["ok"], false);
+    assert!(marker(&r.dir, &sref).exists());
+
+    c.send(
+        "session.purge",
+        json!({"conversation_id": CONV, "session_ref": sref}),
+    )
+    .await;
+    let done = c.next_of("session.purged").await;
+    assert_eq!(
+        (done["ok"].as_bool(), done["conversation_id"].as_str()),
+        (Some(true), Some(CONV))
+    );
+    assert_eq!(done["session_ref"], sref);
+    assert!(!marker(&r.dir, &sref).exists(), "session files deleted");
+    // idempotent
+    c.send(
+        "session.purge",
+        json!({"conversation_id": CONV, "session_ref": sref}),
+    )
+    .await;
+    assert_eq!(c.next_of("session.purged").await["ok"], true);
+}
+
+#[tokio::test]
+async fn purges_in_the_home_sync_run_before_the_sandbox_accepts_a_turn() {
+    let (gw, _) = stub_gateway().await;
+    let (r, mut c) = start(gw).await;
+    // A parked sandbox still holds the files of a conversation deleted while it was stopped.
+    let sref = "fake-deleted";
+    std::fs::create_dir_all(r.dir.join(".fake-sessions")).unwrap();
+    std::fs::write(marker(&r.dir, sref), b"old").unwrap();
+    c.send(
+        "home.sync",
+        json!({"generation": 1, "part_index": 0, "part_count": 3, "part": {"kind": "render_inputs",
+            "entries": [{"purges": [{"conversation_id": CONV, "session_ref": sref}]}]}}),
+    )
+    .await;
+    c.send(
+        "home.sync",
+        json!({"generation": 1, "part_index": 1, "part_count": 3, "part": {"kind": "manifest", "entries": []}}),
+    )
+    .await;
+    c.send(
+        "home.sync",
+        json!({"generation": 1, "part_index": 2, "part_count": 3, "part": {"kind": "final", "entries": []}}),
+    )
+    .await;
+    // purged is reported before the sync is acknowledged (so before any turn can be dispatched)
+    let purged = c.next().await;
+    assert_eq!(purged["kind"], "session.purged", "{purged}");
+    assert_eq!(
+        (
+            purged["body"]["ok"].as_bool(),
+            purged["body"]["session_ref"].as_str()
+        ),
+        (Some(true), Some(sref))
+    );
+    assert!(!marker(&r.dir, sref).exists());
+    c.next_of("home.synced").await;
+    c.deliver(TURN, "hello", "auc_t").await;
+    assert_eq!(c.next_of("turn.result").await["status"], "done");
 }

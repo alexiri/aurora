@@ -10,6 +10,7 @@ use aurora_db::bus::{self, Channel};
 use aurora_db::repo::agents::{self, AgentRow};
 use aurora_db::repo::audit::{self as audit_repo, NewAudit};
 use aurora_db::repo::conversations::{self as convs, ConversationRow, NewConversation};
+use aurora_db::repo::lifecycle;
 use aurora_db::repo::transcript;
 use aurora_db::repo::turns::{self, Created, NewTurn, TurnRow};
 use aurora_db::repo::users;
@@ -53,7 +54,7 @@ pub async fn load_conversation(
     Ok(load_conversation_auth(state, c, id).await?.0)
 }
 
-async fn load_conversation_auth(
+pub(super) async fn load_conversation_auth(
     state: &AppState,
     c: &Caller,
     id: Uuid,
@@ -327,7 +328,11 @@ pub async fn create_turn_capped(
         return Err(conv_404());
     }
     match m.speaker_kind {
-        "person" => convs::reset_app_turn_streak(&mut *conn, conv.id).await?,
+        "person" => {
+            convs::reset_app_turn_streak(&mut *conn, conv.id).await?;
+            // A person-authored message unarchives the conversation (RFE-010).
+            lifecycle::set_archived(&mut *conn, conv.id, false, None).await?;
+        }
         "bot" | "agent" => {
             let streak = convs::get(&mut *conn, conv.id)
                 .await?
@@ -527,7 +532,7 @@ pub async fn promote_one(
     Ok(Some(t))
 }
 
-async fn speaker_label(state: &AppState, c: &Caller) -> Result<String, ApiError> {
+pub(super) async fn speaker_label(state: &AppState, c: &Caller) -> Result<String, ApiError> {
     let name = users::find_by_id(&state.pool, c.user_id)
         .await?
         .map(|u| u.display_name)
@@ -597,7 +602,7 @@ pub async fn post_message(
     })
 }
 
-async fn load_turn(state: &AppState, c: &Caller, id: Uuid) -> Result<TurnRow, ApiError> {
+pub(super) async fn load_turn(state: &AppState, c: &Caller, id: Uuid) -> Result<TurnRow, ApiError> {
     let t = turns::get(&state.pool, id)
         .await?
         .filter(|t| t.role == "turn")

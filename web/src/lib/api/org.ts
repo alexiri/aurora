@@ -186,3 +186,24 @@ export function usePatchOrg(orgId: string) {
 
 export const deleteOrg = (orgId: string, confirm: string) =>
   unwrap(api.DELETE("/v1/orgs/{org}", { params: { path: { org: orgId } }, body: { confirm } }));
+
+export type Retention = components["schemas"]["Retention"];
+
+/** Conversation retention window (org owner/admin; others get 403, which hides the banner). */
+export function useRetention(orgId: string | undefined) {
+  return useQuery({
+    queryKey: ["orgs", orgId, "retention"] as const,
+    queryFn: () => unwrap(api.GET("/v1/orgs/{org}/retention", { params: { path: { org: orgId! } } })),
+    enabled: !!orgId,
+    retry: false,
+  });
+}
+
+export function usePutRetention(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (conversations_days: number | null) =>
+      unwrap(api.PUT("/v1/orgs/{org}/retention", { params: { path: { org: orgId } }, body: { conversations_days } })),
+    onSuccess: (r) => qc.setQueryData(["orgs", orgId, "retention"], r),
+  });
+}

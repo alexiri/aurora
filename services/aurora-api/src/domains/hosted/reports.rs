@@ -79,6 +79,7 @@ pub async fn apply(
             | ReportBody::SteerResult(_)
             | ReportBody::SendNowResult(_)
             | ReportBody::Session(_)
+            | ReportBody::SessionPurged(_)
             | ReportBody::ProcessState(_)
             | ReportBody::WatchFired(_)
             | ReportBody::GateResult(_)
@@ -143,6 +144,25 @@ pub async fn apply(
             res(
                 r,
                 if ok {
+                    ReportStatus::Applied
+                } else {
+                    ReportStatus::Duplicate
+                },
+                None,
+            )
+        }
+        ReportBody::SessionPurged(sp) => {
+            let done = aurora_db::repo::lifecycle::complete_purge(
+                tx,
+                facts.agent_id,
+                sp.conversation_id,
+                &sp.session_ref,
+                sp.ok,
+            )
+            .await?;
+            res(
+                r,
+                if done {
                     ReportStatus::Applied
                 } else {
                     ReportStatus::Duplicate

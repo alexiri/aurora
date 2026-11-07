@@ -4,6 +4,7 @@
 //! (through the session proxy), `[[sleep: 2s]]`, `[[fail: code]]`, `[[steer-accept]]`. Without any
 //! directive the turn echoes the text word by word.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -52,12 +53,44 @@ impl HarnessAdapter for FakeHarness {
             .resume_ref
             .clone()
             .unwrap_or_else(|| format!("fake-{}", opts.conversation_id));
+        // A marker file stands in for the stored session so purges are observable in tests.
+        if let Some(dir) = fake_session_dir(&opts.working_dir)
+            && std::fs::create_dir_all(&dir).is_ok()
+        {
+            let _ = std::fs::write(dir.join(&session_ref), b"fake session");
+        }
         Ok(Box::new(FakeSession {
             opts,
             session_ref,
             turn: None,
         }))
     }
+
+    async fn purge_session(
+        &self,
+        working_dir: &Path,
+        session_ref: &str,
+    ) -> Result<(), HarnessError> {
+        if !crate::harness::is_safe_session_ref(session_ref) {
+            return Err(HarnessError::new(
+                "invalid_session_ref",
+                "unsafe session reference",
+            ));
+        }
+        if let Some(dir) = fake_session_dir(working_dir) {
+            match std::fs::remove_file(dir.join(session_ref)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(HarnessError::new("purge_failed", e.to_string())),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Where the fake harness keeps its session marker files (`<home>/.fake-sessions`).
+pub fn fake_session_dir(working_dir: &Path) -> Option<PathBuf> {
+    Some(working_dir.join(".fake-sessions"))
 }
 
 struct ActiveTurn {

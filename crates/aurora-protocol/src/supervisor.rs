@@ -16,8 +16,8 @@ use crate::common::{
 };
 use crate::runner::{
     Code, GateResult, HomeSync, HomeSynced, MemoryWrite, PortsState, ProcessStates, SendNowResult,
-    SessionRelease, SessionReport, SteerResult, SupervisorReady, TurnDeliver, TurnEvent,
-    TurnMessage, TurnNotice, TurnRef, TurnResult, WatchFired,
+    SessionPurge, SessionPurged, SessionRelease, SessionReport, SteerResult, SupervisorReady,
+    TurnDeliver, TurnEvent, TurnMessage, TurnNotice, TurnRef, TurnResult, WatchFired,
 };
 use crate::tools::{ToolCallBody, ToolError, ToolResult};
 
@@ -175,6 +175,7 @@ tagged_open! {
         TurnAbort(TurnRef) = "turn.abort",
         TurnNotice(TurnNotice) = "turn.notice",
         SessionRelease(SessionRelease) = "session.release",
+        SessionPurge(SessionPurge) = "session.purge",
         HomeSync(HomeSync) = "home.sync",
         ToolResult(ToolResult) = "tool.result",
         MemoryWriteResult(MemoryWriteResult) = "memory.write.result",
@@ -197,6 +198,7 @@ tagged_open! {
         SteerResult(SteerResult) = "steer.result",
         SendNowResult(SendNowResult) = "send_now.result",
         Session(SessionReport) = "session",
+        SessionPurged(SessionPurged) = "session.purged",
         ProcessState(ProcessStates) = "process.state",
         WatchFired(WatchFired) = "watch.fired",
         GateResult(GateResult) = "gate.result",

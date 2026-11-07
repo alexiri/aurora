@@ -1,6 +1,6 @@
 use super::bus::BusMsg;
 use super::dto::*;
-use super::service;
+use super::{lifecycle, service};
 use crate::app::AppState;
 use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
@@ -39,6 +39,167 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(abort_turn))
         .routes(routes!(send_now))
         .routes(routes!(continue_conversation))
+        .routes(routes!(archive_conversation))
+        .routes(routes!(unarchive_conversation))
+        .routes(routes!(delete_conversation))
+        .routes(routes!(redact_event))
+        .routes(routes!(redact_turn))
+        .routes(routes!(export_conversation))
+        .routes(routes!(get_retention, put_retention))
+}
+
+/// Archive a conversation (hidden from default lists; a person message unarchives).
+#[utoipa::path(post, path = "/conversations/{id}/archive", operation_id = "archiveConversation", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Conversation id")),
+    responses((status = 200, body = Conversation), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn archive_conversation(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Conversation>, ApiError> {
+    Ok(Json(lifecycle::set_archived(&s, &c, id, true).await?))
+}
+
+/// Unarchive a conversation.
+#[utoipa::path(post, path = "/conversations/{id}/unarchive", operation_id = "unarchiveConversation", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Conversation id")),
+    responses((status = 200, body = Conversation), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn unarchive_conversation(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Conversation>, ApiError> {
+    Ok(Json(lifecycle::set_archived(&s, &c, id, false).await?))
+}
+
+/// Permanently delete a conversation with its transcript, attachments and harness session files.
+#[utoipa::path(delete, path = "/conversations/{id}", operation_id = "deleteConversation", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Conversation id")),
+    responses((status = 204, description = "Deleted"), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope),
+        (status = 409, description = "conversation_active", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn delete_conversation(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    lifecycle::delete(&s, &c, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Redact one transcript event in place (irreversible, audited).
+#[utoipa::path(post, path = "/conversations/{id}/events/{seq}/redact", operation_id = "redactConversationEvent", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Conversation id"), ("seq" = i64, Path, description = "Event seq")),
+    request_body = RedactRequest,
+    responses((status = 200, body = RedactResult), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn redact_event(
+    c: Caller,
+    State(s): State<AppState>,
+    Path((id, seq)): Path<(Uuid, i64)>,
+    Json(req): Json<RedactRequest>,
+) -> Result<Json<RedactResult>, ApiError> {
+    Ok(Json(
+        lifecycle::redact(&s, &c, id, lifecycle::Target::Event(seq), &req).await?,
+    ))
+}
+
+/// Redact every event of a turn (irreversible, audited).
+#[utoipa::path(post, path = "/turns/{id}/redact", operation_id = "redactTurn", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Turn id")),
+    request_body = RedactRequest,
+    responses((status = 200, body = RedactResult), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn redact_turn(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<RedactRequest>,
+) -> Result<Json<RedactResult>, ApiError> {
+    let t = service::load_turn(&s, &c, id).await?;
+    Ok(Json(
+        lifecycle::redact(&s, &c, t.conversation_id, lifecycle::Target::Turn(id), &req).await?,
+    ))
+}
+
+/// Export a conversation as `aurora.conversation.v1` JSON (or a zip with the attachment files).
+#[utoipa::path(get, path = "/conversations/{id}/export", operation_id = "exportConversation", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Conversation id"), ExportQuery),
+    responses((status = 200, description = "application/json, or application/zip with attachments=zip"),
+        (status = 400, body = ErrorEnvelope), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope),
+        (status = 422, description = "export_too_large", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn export_conversation(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<ExportQuery>,
+) -> Result<Response, ApiError> {
+    let zip = match q.attachments.as_deref() {
+        None | Some("none") => false,
+        Some("zip") => true,
+        Some(_) => {
+            return Err(ApiError::invalid_request(
+                "Invalid request.",
+                vec![FieldError::new("/attachments", "must be `none` or `zip`")],
+            ));
+        }
+    };
+    let out = lifecycle::export(&s, &c, id, q.after_seq, zip).await?;
+    Ok((
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                out.content_type.to_owned(),
+            ),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", out.filename),
+            ),
+            (axum::http::header::CACHE_CONTROL, "no-store".to_owned()),
+        ],
+        out.bytes,
+    )
+        .into_response())
+}
+
+/// The organization's conversation retention window (org `owner`/`admin`).
+#[utoipa::path(get, path = "/orgs/{org}/retention", operation_id = "getOrgRetention", tag = "orgs",
+    params(("org" = Uuid, Path, description = "Organization id")),
+    responses((status = 200, body = Retention), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn get_retention(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(org): Path<Uuid>,
+) -> Result<Json<Retention>, ApiError> {
+    Ok(Json(lifecycle::get_retention(&s, &c, org).await?))
+}
+
+/// Set or clear the conversation retention window (org `owner`/`admin`, audited).
+#[utoipa::path(put, path = "/orgs/{org}/retention", operation_id = "putOrgRetention", tag = "orgs",
+    params(("org" = Uuid, Path, description = "Organization id")),
+    request_body = PutRetention,
+    responses((status = 200, body = Retention), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 422, description = "retention_invalid | retention_above_instance_maximum", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn put_retention(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(org): Path<Uuid>,
+    Json(b): Json<PutRetention>,
+) -> Result<Json<Retention>, ApiError> {
+    Ok(Json(lifecycle::put_retention(&s, &c, org, b).await?))
 }
 
 /// Conversations of an agent, most recently active first.
@@ -67,9 +228,12 @@ async fn list_conversations(
     let rows = convs::list_for_agent(
         &s.pool,
         agent,
-        q.kind.as_deref(),
-        c.user_id,
-        owns,
+        &convs::ListFilter {
+            kind: q.kind.as_deref(),
+            viewer: c.user_id,
+            viewer_owns: owns,
+            archived: q.archived.unwrap_or(false),
+        },
         p.after.map(|a| (a.t, a.id)),
         p.fetch(),
     )
@@ -346,6 +510,9 @@ async fn stream(
                         if conversation == st.conv {
                             let payload = match kind.as_str() {
                                 "activity" => serde_json::json!({"turn_id": turn, "line": text}),
+                                "event.redacted" => {
+                                    serde_json::json!({"seq": text.parse::<i64>().unwrap_or(0)})
+                                }
                                 _ => {
                                     let mut p = serde_json::json!({"turn_id": turn, "delta": text});
                                     if let Some(m) = message_id {

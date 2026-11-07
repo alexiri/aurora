@@ -185,12 +185,23 @@ async fn render_inputs(
         })
         .collect();
     let schedules = schedules_summary(&hosted::home_schedules(conn, agent).await?);
+    // (RFE-010) Stored harness sessions of deleted conversations: the supervisor deletes them
+    // before it accepts any turn (`12 §Session purge`).
+    let purges: Vec<Value> = aurora_db::repo::lifecycle::pending_for_agent(conn, agent)
+        .await?
+        .into_iter()
+        .filter_map(|p| {
+            p.conversation_id
+                .map(|c| json!({"conversation_id": c, "session_ref": p.session_ref}))
+        })
+        .collect();
     Ok(json!({
         "agent": {"name": inputs.name, "handle": inputs.handle, "workspace": inputs.workspace_name},
         "brief": if inputs.brief.trim().is_empty() { Value::Null } else { json!(inputs.brief) },
         "apps": apps, "channels": channels, "peers": peers,
         "memory_language": inputs.memory_language,
         "schedules": schedules,
+        "purges": purges,
         "timezone": inputs.timezone,
     }))
 }

@@ -8,6 +8,7 @@ import { Markdown } from "@/components/apps/markdown";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
+import { useRetention } from "@/lib/api/org";
 import { useCanApprove, useDecide } from "@/lib/api/approvals";
 import { ApiError } from "@/lib/api/client";
 import { attachmentUrl, canThumbnail, formatBytes, uploadAttachment, uploadErrorMessage, type Attachment } from "@/lib/api/attachments";
@@ -21,6 +22,8 @@ import {
   type TranscriptState,
 } from "@/lib/chat/transcript";
 import { useTranscript } from "@/lib/chat/use-transcript";
+
+import { ConversationActions, RedactButton } from "./conversation-actions";
 
 const s = (v: unknown): string => (typeof v === "string" ? v : "");
 
@@ -140,6 +143,15 @@ function ActionApprovalNote({ summary, wsId }: { summary: string; wsId: string }
 
 export function EventView({ ev, state, wsId, base, convId }: { ev: TranscriptEvent; state: TranscriptState; wsId: string; base: string; convId: string }) {
   const p = ev.payload;
+  if (p.redacted === true) {
+    // RFE-010: the content was replaced in place; only the marker remains.
+    return (
+      <p className="text-xs italic text-neutral-600">
+        Content redacted{s(p.redacted_by) ? ` by ${s(p.redacted_by)}` : ""}
+        {s(p.reason) ? ` (${s(p.reason)})` : ""}.
+      </p>
+    );
+  }
   switch (ev.type) {
     case "turn.queued":
       return (
@@ -220,7 +232,14 @@ function Transcript({ state, wsId, base, convId }: { state: TranscriptState; wsI
   return (
     <div className="space-y-2" aria-live="polite">
       {state.events.map((ev) => (
-        <EventView key={ev.seq} ev={ev} state={state} wsId={wsId} base={base} convId={convId} />
+        <div key={ev.seq}>
+          <EventView ev={ev} state={state} wsId={wsId} base={base} convId={convId} />
+          {(ev.type === "turn.queued" || ev.type === "text") && ev.payload.redacted !== true && ev.seq ? (
+            <div className={ev.type === "turn.queued" ? "text-right" : ""}>
+              <RedactButton convId={convId} seq={ev.seq} />
+            </div>
+          ) : null}
+        </div>
       ))}
       {deltas.map((d) => (
         <div key={d.messageId} className="max-w-[90%] rounded-md border border-dashed border-neutral-300 p-2">
@@ -232,9 +251,11 @@ function Transcript({ state, wsId, base, convId }: { state: TranscriptState; wsI
   );
 }
 
-export function ChatTab({ agentId, wsId, base }: { agentId: string; wsId: string; base: string }) {
+export function ChatTab({ agentId, wsId, base, orgId }: { agentId: string; wsId: string; base: string; orgId?: string }) {
   const direct = useDirectConversation(agentId);
-  const list = useConversations(agentId);
+  const [showArchived, setShowArchived] = useState(false);
+  const list = useConversations(agentId, showArchived);
+  const retention = useRetention(orgId);
   const [picked, setPicked] = useState<string | null>(null);
   if (direct.isPending) return <Loading />;
   if (direct.isError) return <ErrorState error={direct.error} onRetry={() => void direct.refetch()} />;
@@ -242,20 +263,54 @@ export function ChatTab({ agentId, wsId, base }: { agentId: string; wsId: string
   const convs = list.data?.items ?? [];
   // RFE-009: other members' direct conversations (owners only; the API returns them with
   // `direct_user`) are listed apart, read-only, and marked as visible to workspace owners.
-  const others = convs.filter((c) => c.id !== direct.data.id && c.kind !== "direct");
-  const memberDirects = convs.filter((c) => c.id !== direct.data.id && c.kind === "direct" && c.direct_user);
+  const others = showArchived ? [] : convs.filter((c) => c.id !== direct.data.id && c.kind !== "direct");
+  const memberDirects = showArchived ? [] : convs.filter((c) => c.id !== direct.data.id && c.kind === "direct" && c.direct_user);
+  const archivedItems = showArchived ? convs : [];
+  const days = retention.data?.conversations_days ?? null;
   const pickedDirect = memberDirects.find((c) => c.id === picked) ?? null;
   return (
+    <div className="space-y-3">
+      {days ? (
+        <p role="note" className="rounded bg-neutral-100 p-2 text-xs text-neutral-700">
+          Your organization deletes conversations after {days} days without activity.
+        </p>
+      ) : null}
     <div className="grid gap-4 md:grid-cols-[14rem_1fr]">
       <nav aria-label="Conversations" className="space-y-1 text-sm">
         <button
           type="button"
-          onClick={() => setPicked(null)}
-          aria-current={!picked}
-          className={`block w-full rounded px-2 py-1 text-left ${!picked ? "bg-neutral-100 font-medium" : ""}`}
+          aria-pressed={showArchived}
+          onClick={() => {
+            setShowArchived((v) => !v);
+            setPicked(null);
+          }}
+          className="block w-full rounded border border-neutral-300 px-2 py-1 text-left text-xs"
         >
-          Direct chat
+          {showArchived ? "Back to conversations" : "Archived"}
         </button>
+        {showArchived && archivedItems.length === 0 ? <p className="px-2 text-xs text-neutral-600">No archived conversations.</p> : null}
+        {archivedItems.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => setPicked(c.id)}
+            aria-current={picked === c.id}
+            className={`block w-full rounded px-2 py-1 text-left ${picked === c.id ? "bg-neutral-100 font-medium" : ""}`}
+          >
+            <span className="mr-1 rounded-full border border-neutral-300 px-1.5 text-xs">{c.kind}</span>
+            {c.title ?? c.external_ref}
+          </button>
+        ))}
+        {showArchived ? null : (
+          <button
+            type="button"
+            onClick={() => setPicked(null)}
+            aria-current={!picked}
+            className={`block w-full rounded px-2 py-1 text-left ${!picked ? "bg-neutral-100 font-medium" : ""}`}
+          >
+            Direct chat
+          </button>
+        )}
         {others.map((c) => (
           <button
             key={c.id}
@@ -286,16 +341,26 @@ export function ChatTab({ agentId, wsId, base }: { agentId: string; wsId: string
           </div>
         ) : null}
       </nav>
-      <ChatPane
-        key={convId}
-        agentId={agentId}
-        wsId={wsId}
-        base={base}
-        convId={convId}
-        direct={convId === direct.data.id ? direct.data : null}
-        ownerView={pickedDirect?.direct_user?.display_name ?? null}
-        ownDirect={convId === direct.data.id}
-      />
+      {showArchived && !picked ? (
+        <EmptyState title="Archived conversations">Pick one to read it, export it or unarchive it.</EmptyState>
+      ) : (
+        <ChatPane
+          key={convId}
+          agentId={agentId}
+          wsId={wsId}
+          base={base}
+          convId={convId}
+          direct={convId === direct.data.id ? direct.data : null}
+          ownerView={pickedDirect?.direct_user?.display_name ?? null}
+          ownDirect={convId === direct.data.id}
+          archived={showArchived}
+          onGone={() => {
+            setPicked(null);
+            setShowArchived(false);
+          }}
+        />
+      )}
+    </div>
     </div>
   );
 }
@@ -308,6 +373,8 @@ export function ChatPane({
   direct,
   ownerView = null,
   ownDirect = false,
+  archived = false,
+  onGone,
 }: {
   agentId: string;
   wsId: string;
@@ -317,6 +384,9 @@ export function ChatPane({
   /** Display name of the person whose direct conversation an owner is reading (read-only). */
   ownerView?: string | null;
   ownDirect?: boolean;
+  /** The conversation is archived (RFE-010): offer Unarchive instead of Archive. */
+  archived?: boolean;
+  onGone?: () => void;
 }) {
   const qc = useQueryClient();
   const { state, loading, error, live } = useTranscript(convId);
@@ -376,6 +446,7 @@ export function ChatPane({
 
   return (
       <section aria-label="Chat" className="space-y-3">
+        {onGone ? <ConversationActions agentId={agentId} convId={convId} archived={archived} onGone={onGone} /> : null}
         {ownDirect || direct ? (
           <p role="note" className="rounded bg-neutral-100 p-2 text-xs text-neutral-700">
             Only you and workspace owners can see this conversation.

@@ -16,6 +16,9 @@ pub const OP_LEASE_SWEEP_EVERY: Duration = Duration::from_secs(10);
 pub const ATTACHMENT_SWEEP_EVERY: Duration = Duration::from_secs(3600);
 /// Action-approval and peer-task expiry (docs/05 §Background jobs).
 pub const ACTION_SWEEP_EVERY: Duration = Duration::from_secs(60);
+/// Conversation retention sweep (phase 2, RFE-010, singleton).
+pub const RETENTION_SWEEP_EVERY: Duration = Duration::from_secs(24 * 3600);
+const RETENTION_JOB: &str = "conversation_retention";
 pub const PARTITION_EVERY: Duration = Duration::from_secs(24 * 3600);
 pub const PARTITIONS_AHEAD: u32 = 2;
 const PARTITION_JOB: &str = "request_log_partitions";
@@ -34,6 +37,19 @@ pub async fn sweep_attachments(pool: &PgPool) -> Result<usize, aurora_core::ApiE
     let rows = crate::domains::attachments::sweep_pending(pool).await?;
     let orphans = crate::domains::attachments::sweep_orphan_blobs(pool).await?;
     Ok(rows + orphans)
+}
+
+/// Delete conversations past their org's retention window (singleton). `Ok(None)` when another
+/// replica holds the lock, otherwise the number of conversations deleted.
+pub async fn sweep_conversation_retention(
+    pool: &PgPool,
+    ceiling: Option<u32>,
+) -> Result<Option<usize>, aurora_core::ApiError> {
+    let ran = aurora_db::jobs::try_singleton(pool, RETENTION_JOB, || {
+        crate::domains::conversations::lifecycle::sweep_retention(pool, ceiling)
+    })
+    .await?;
+    ran.transpose()
 }
 
 /// Create upcoming partitions and drop expired ones (singleton). `Ok(false)` when
@@ -56,7 +72,22 @@ pub async fn maintain_request_log(
 }
 
 /// Start all jobs on the current runtime. Tasks end with the runtime.
-pub fn spawn(pool: PgPool, retention_days: u32) {
+pub fn spawn(pool: PgPool, retention_days: u32, conversation_days_max: Option<u32>) {
+    let rp = pool.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(RETENTION_SWEEP_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            match sweep_conversation_retention(&rp, conversation_days_max).await {
+                Ok(Some(n)) if n > 0 => tracing::info!(deleted = n, "conversation retention sweep"),
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e.message(), "conversation retention sweep failed")
+                }
+            }
+        }
+    });
     let ap = pool.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(ACTION_SWEEP_EVERY);

@@ -1,6 +1,6 @@
 //! Vendor-neutral harness adapter interface (`docs/12-supervisor-harness.md` §Harness interface).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use aurora_protocol::runner::{HarnessEventWire, ModelChoice, Recall, SendNowOutcome};
@@ -224,6 +224,22 @@ pub trait HarnessAdapter: Send + Sync {
         &self,
         opts: SessionOptions,
     ) -> Result<Box<dyn HarnessSession>, HarnessError>;
+    /// (phase 2, RFE-010) Delete the stored files of one session (`12 §Session purge`). No session
+    /// may be live for it; idempotent (nothing to delete is success).
+    async fn purge_session(
+        &self,
+        working_dir: &Path,
+        session_ref: &str,
+    ) -> Result<(), HarnessError>;
+}
+
+/// A harness session reference is an opaque token, but it names files on disk: only a short,
+/// path-safe token is ever turned into a path (`purge_session` implementations call this).
+pub fn is_safe_session_ref(r: &str) -> bool {
+    !r.is_empty()
+        && r.len() <= 128
+        && r.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 #[async_trait]

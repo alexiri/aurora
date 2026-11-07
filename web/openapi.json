@@ -2441,6 +2441,15 @@
             }
           },
           {
+            "name": "archived",
+            "in": "query",
+            "description": "(phase 2, RFE-010) `true` lists archived conversations; default `false` hides them.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -6921,6 +6930,129 @@
             "api_key": []
           }
         ]
+      },
+      "delete": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Permanently delete a conversation with its transcript, attachments and harness session files.",
+        "operationId": "deleteConversation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "conversation_active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/conversations/{id}/archive": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Archive a conversation (hidden from default lists; a person message unarchives).",
+        "operationId": "archiveConversation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
       }
     },
     "/v1/conversations/{id}/attachments": {
@@ -7127,6 +7259,190 @@
         ]
       }
     },
+    "/v1/conversations/{id}/events/{seq}/redact": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Redact one transcript event in place (irreversible, audited).",
+        "operationId": "redactConversationEvent",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "seq",
+            "in": "path",
+            "description": "Event seq",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedactResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/conversations/{id}/export": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Export a conversation as `aurora.conversation.v1` JSON (or a zip with the attachment files).",
+        "operationId": "exportConversation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "after_seq",
+            "in": "query",
+            "description": "Export events with `seq` greater than this (paging past `export_too_large`).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "attachments",
+            "in": "query",
+            "description": "`none` (default) or `zip` (JSON plus the attachment files).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "application/json, or application/zip with attachments=zip"
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "export_too_large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/conversations/{id}/messages": {
       "post": {
         "tags": [
@@ -7253,6 +7569,67 @@
               "text/event-stream": {
                 "schema": {
                   "$ref": "#/components/schemas/TranscriptEvent"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/conversations/{id}/unarchive": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Unarchive a conversation.",
+        "operationId": "unarchiveConversation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -10601,6 +10978,156 @@
         ]
       }
     },
+    "/v1/orgs/{org}/retention": {
+      "get": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "The organization's conversation retention window (org `owner`/`admin`).",
+        "operationId": "getOrgRetention",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Retention"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "Set or clear the conversation retention window (org `owner`/`admin`, audited).",
+        "operationId": "putOrgRetention",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutRetention"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Retention"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "retention_invalid | retention_above_instance_maximum",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/orgs/{org}/secrets": {
       "get": {
         "tags": [
@@ -12947,6 +13474,87 @@
           },
           "409": {
             "description": "turn_finished",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/turns/{id}/redact": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Redact every event of a turn (irreversible, audited).",
+        "operationId": "redactTurn",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Turn id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedactResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -17977,6 +18585,14 @@
             "format": "int64",
             "description": "Consecutive bot/agent turns since the last person-authored turn or `continue` (C-27)."
           },
+          "archived_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "(phase 2, RFE-010) set while the conversation is archived (hidden from default lists)."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -21917,6 +22533,14 @@
                   "format": "int64",
                   "description": "Consecutive bot/agent turns since the last person-authored turn or `continue` (C-27)."
                 },
+                "archived_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time",
+                  "description": "(phase 2, RFE-010) set while the conversation is archived (hidden from default lists)."
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -24923,6 +25547,19 @@
           }
         }
       },
+      "PutRetention": {
+        "type": "object",
+        "properties": {
+          "conversations_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Absent = unchanged, `null` = none."
+          }
+        }
+      },
       "RateLimit": {
         "type": "object",
         "required": [
@@ -25098,6 +25735,45 @@
             "propertyNames": {
               "type": "string"
             }
+          }
+        }
+      },
+      "RedactRequest": {
+        "type": "object",
+        "description": "(phase 2, RFE-010) `POST .../redact` body.",
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the content is removed (max 500 characters); recorded in the audit row."
+          },
+          "reset_session": {
+            "type": "boolean",
+            "description": "Also start a fresh harness session on the next turn (the agent forgets the conversation)."
+          }
+        }
+      },
+      "RedactResult": {
+        "type": "object",
+        "description": "(phase 2, RFE-010) Result of a redaction.",
+        "required": [
+          "redacted_seqs",
+          "session_reset"
+        ],
+        "properties": {
+          "redacted_seqs": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Sequence numbers whose payload was replaced by this call (empty when already redacted)."
+          },
+          "session_reset": {
+            "type": "boolean",
+            "description": "A session reset was queued."
           }
         }
       },
@@ -25368,6 +26044,28 @@
           "revision": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "Retention": {
+        "type": "object",
+        "description": "(phase 2, RFE-010) `GET/PUT /orgs/{org}/retention`.",
+        "properties": {
+          "conversations_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Delete conversations idle for this many days (7..=3650); null = keep forever."
+          },
+          "conversations_days_max": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The instance maximum, when one is configured."
           }
         }
       },

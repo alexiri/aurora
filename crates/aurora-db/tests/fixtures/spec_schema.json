@@ -263,6 +263,8 @@
     "conversations": [
       "agent_id",
       "app_turn_streak",
+      "archived_at",
+      "archived_by_user_id",
       "direct_user_id",
       "external_ref",
       "harness_session_epoch",
@@ -656,6 +658,14 @@
       "value_version",
       "workspace_id"
     ],
+    "session_purges": [
+      "agent_id",
+      "conversation_id",
+      "done_at",
+      "id",
+      "leased_until",
+      "session_ref"
+    ],
     "sessions": [
       "expires_at",
       "id",
@@ -707,6 +717,8 @@
     "transcript_events": [
       "conversation_id",
       "payload",
+      "redacted_at",
+      "redacted_by_user_id",
       "seq",
       "turn_id",
       "type"

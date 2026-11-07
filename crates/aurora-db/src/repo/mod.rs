@@ -30,6 +30,7 @@ pub mod grants;
 pub mod hosted;
 pub mod identities;
 pub mod invitations;
+pub mod lifecycle;
 pub mod link_requests;
 pub mod members;
 pub mod memory;

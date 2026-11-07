@@ -691,3 +691,107 @@ async fn s8b_gateway_and_runner_ops_ports_unreachable_from_sandbox() {
         "SEC-09: runner ops port :4106 reachable from the sandbox"
     );
 }
+
+/// Poll until `check` holds or `secs` pass.
+async fn eventually(secs: u64, mut check: impl FnMut() -> bool) -> bool {
+    let end = std::time::Instant::now() + Duration::from_secs(secs);
+    while std::time::Instant::now() < end {
+        if check() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    check()
+}
+
+/// RFE-010 / SEC-47: deleting a conversation also deletes the harness session files in the agent's
+/// home: live while the sandbox runs, and (when it is parked) before the next turn after it boots.
+#[tokio::test]
+async fn s9_deleted_conversation_session_files_are_purged_live_and_after_a_park() {
+    if !enabled() {
+        return;
+    }
+    let (st, api) = fx(Opts {
+        idle_stop_secs: Some(10),
+    })
+    .await;
+    // The fake harness stores a marker file per session: `/workspace/.fake-sessions/<session ref>`.
+    let conv = api.direct().await;
+    run_turn(&st, &api, &conv, "[[say: remember the codeword]]").await;
+    let marker = format!("/workspace/.fake-sessions/fake-{conv}");
+    let c = containers();
+    assert_eq!(c.len(), 1, "{c:?}");
+    assert_eq!(
+        exec_in(&c[0], &format!("test -f {marker}")).0,
+        0,
+        "session stored"
+    );
+
+    // Live: the running sandbox receives `session.purge` and removes the files.
+    let (s, b) = api
+        .call(
+            reqwest::Method::DELETE,
+            &format!("/v1/conversations/{conv}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{b}");
+    let cn = c[0].clone();
+    let m2 = marker.clone();
+    let gone = eventually(60, move || exec_in(&cn, &format!("test ! -e {m2}")).0 == 0).await;
+    assert!(gone, "session files purged live\n{}", st.log_tails());
+    let pending: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM session_purges WHERE done_at IS NULL")
+            .fetch_one(st.pool())
+            .await
+            .unwrap();
+    assert_eq!(pending, 0, "the purge row completes on `session.purged`");
+
+    // Parked: delete while the sandbox is stopped; the purge runs at the next boot, before any turn.
+    let conv2 = api.direct().await;
+    assert_ne!(conv, conv2, "a new direct conversation is created");
+    run_turn(&st, &api, &conv2, "[[say: second secret]]").await;
+    let marker2 = format!("/workspace/.fake-sessions/fake-{conv2}");
+    st.wait_sandbox(&api, "stopped", 120).await;
+    assert!(containers().is_empty(), "parked");
+    let (s, b) = api
+        .call(
+            reqwest::Method::DELETE,
+            &format!("/v1/conversations/{conv2}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{b}");
+    let queued: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM session_purges WHERE done_at IS NULL")
+            .fetch_one(st.pool())
+            .await
+            .unwrap();
+    assert_eq!(queued, 1, "waits for the sandbox to boot");
+    let conv3 = api.direct().await;
+    run_turn(&st, &api, &conv3, "[[say: wake up]]").await;
+    let c = containers();
+    assert_eq!(c.len(), 1, "{c:?}");
+    assert_eq!(
+        exec_in(&c[0], &format!("test ! -e {marker2}")).0,
+        0,
+        "the parked session's files were purged before the next turn\n{}",
+        st.log_tails()
+    );
+    let cn = c[0].clone();
+    assert_eq!(
+        exec_in(
+            &cn,
+            &format!("test -f /workspace/.fake-sessions/fake-{conv3}")
+        )
+        .0,
+        0
+    );
+    let pending: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM session_purges WHERE done_at IS NULL")
+            .fetch_one(st.pool())
+            .await
+            .unwrap();
+    assert_eq!(pending, 0);
+    st.finish().await;
+}

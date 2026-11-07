@@ -111,6 +111,19 @@ impl ConversationBus {
         Ok(tx.subscribe())
     }
 
+    /// (RFE-010) Tell open streams that the payload of event `seq` was replaced.
+    pub async fn publish_redacted(&self, pool: &PgPool, conversation: Uuid, seq: i64) {
+        send(
+            &*self.delta_bus(pool),
+            conversation,
+            Uuid::nil(),
+            "event.redacted",
+            (None, None),
+            &seq.to_string(),
+        )
+        .await;
+    }
+
     /// Publish an ephemeral delta (never stored). `text.delta`/`thinking.delta` are coalesced per
     /// `(conversation, turn, kind, message)`. Emitted when 100 ms passed since the last emit or
     /// 2 000 chars are buffered, otherwise held and flushed by a short timer. Activity lines

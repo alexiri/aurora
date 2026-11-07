@@ -518,11 +518,15 @@ pub struct TlsSection {
 #[serde(default, deny_unknown_fields)]
 pub struct RetentionSection {
     pub request_log_days: u32,
+    /// (phase 2, RFE-010) Instance maximum of an org's conversation retention window, 7..=3650
+    /// days. `None` = no ceiling. The instance can only tighten what orgs choose.
+    pub conversation_days_max: Option<u32>,
 }
 impl Default for RetentionSection {
     fn default() -> Self {
         Self {
             request_log_days: 30,
+            conversation_days_max: None,
         }
     }
 }
