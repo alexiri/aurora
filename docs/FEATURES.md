@@ -5,7 +5,7 @@ invariants `SEC-nn` (`17`). Phase 0 = M0–M7 (in scope now). Phase 1–4 are ou
 of scope until phase 0 exits (`MASTER_SPEC` "Phases are real").
 
 Status: `todo` · `planned` (briefs written) · `in-progress` · `done` (acceptance evidence in PROGRESS.md) · `blocked`.
-Last reconciled with git history: 2026-11-07 (after OPS-011 merge, 3f97f950).
+Last reconciled with git history: 2026-11-07 (after FE-060 merge, 1fe32db7).
 
 | Requirement ID | Feature | Priority | Backend tasks | Frontend tasks | Dependencies | Status | Evidence |
 |---|---|---|---|---|---|---|---|
@@ -43,12 +43,12 @@ Last reconciled with git history: 2026-11-07 (after OPS-011 merge, 3f97f950).
 | M5/10§attachments | Attachments in/out (BlobStore, routes, `file.in` S-11, `send_file`) | P0 | BE-064, RUN-005 | FE-051 | M4 | done; e2e todo (TEST-014) | attachments 9; runner inbound 3, supervisor inbound 9 |
 | M5/07§actions | Action approvals, agent links, peer tasks, app-turn cap, agent tools | P0 | BE-065 | FE-051 | API-005 | done | action_approvals 10, peer_tasks 12 |
 | M5/12§catalogue | Full phase-0 platform tool catalogue | P0 | BE-060..065; apps tools BE-066 (done); messaging tools BE-075 | — | — | in-progress | |
-| M5/12§claude-code | `claude-code` adapter + conformance | P0 | SUP-004 | — | SUP-001 | done offline; live conformance via LiteLLM + scripted mock (I-30, TEST-017) todo | adapter tests |
+| M5/12§claude-code | `claude-code` adapter + conformance | P0 | SUP-004 | — | SUP-001 | done; live conformance via LiteLLM + VidaiMock (I-30, TEST-017) passes | conformance; hosted claude-code e2e 2/2 | adapter tests |
 | M5/18 | Hosted M5 suites (18) | P0 | TEST-014 | — | M5 above, FIX-002 | todo | |
 | M6/13§content | Neutral content, cards, action tokens, capabilities/fallbacks | P0 | CHAN-001 | — | — | done | channels tests; I-26 |
 | M6/13§contract | Connector contract v1 types, SDK, fake connector | P0 | CON-001, TEST-015 fixes | — | CHAN-001 | done | connector tests; FUP-M6 closed |
 | M6/13§plane | Registration, approval, ownership, config feed, inbox, ops, correlated ops, files | P0 | BE-070, BE-071 | — | API-006 | done (BE-070, BE-071) | connectors 12, connector_ops 11 |
-| M6/13§core | Inbox processing, routing, linking, reach, bindings, commands, mirror, cards, presence, messaging tools | P0 | BE-072..075 | FE-060 | BE-071 | in-progress (BE-074 management done; BE-072/073 running) | channels_mgmt 20 |
+| M6/13§core | Inbox processing, routing, linking, reach, bindings, commands, mirror, cards, presence, messaging tools | P0 | BE-072..075 | FE-060 | BE-071 | in-progress (BE-072/073/074 + FE-060 done; BE-075 messaging, FIX-004 remain) | channels_mgmt 20, channels_inbox 23, channels_cards 16; web channels 17 |
 | M6/13§7 | Conformance suite (fake core) + e2e channel scenario | P0 | TEST-015, TEST-016 | — | CON-001 / BE-075 | conformance done (12/12); e2e todo | `scripts/conformance.sh` |
 | M7/11§k8s | Kubernetes runner backend | P0 | RUN-004 | — | RUN-003 | done | k8s_mock 15, unit 15; kind e2e 4/4 (OPS-011) |
 | M7/15§helm | Helm chart (jobs, policies, namespaces, RBAC, routing) | P0 | OPS-010 | — | — | done (FUP-M7) | `helm lint`, `helm template`; ConfigMap loads (RUN-004) |
