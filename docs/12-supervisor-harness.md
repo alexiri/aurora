@@ -36,7 +36,13 @@ stdin/stdout, logs on stderr) for tests and the dev loop. Identical vocabulary.
 
 All listen on 127.0.0.1 only and forward to the gateway proxy address from the
 boot document. Each strips any client-supplied `Proxy-Authorization` and adds
-its own.
+its own. (phase 1, RFE-002) The upstream connection to the gateway is **TLS**
+(rustls): the forwarder verifies the gateway's proxy certificate against the
+boot document's `ca_pem` and `gateway.server_name`, refuses to proceed on any
+verification failure (the client gets 502 `gateway_tls_failed` with no
+credential sent) and never falls back to plaintext. The client-facing side stays
+plain HTTP on loopback: it carries no credentials and is unreachable from outside
+the sandbox (`11 §The boot document`).
 
 | Listener | Credential added | Lane | Used by |
 |----------|------------------|------|---------|

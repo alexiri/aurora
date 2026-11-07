@@ -10,12 +10,74 @@ container, horizontally scalable.
 
 | Port | Name | Reachable from | Serves |
 |------|------|----------------|--------|
-| 4102 | **proxy** | sandboxes, BYO agents | `CONNECT host:port`; absolute-form `http://` requests; (phase 2) database wire protocols sniffed by first bytes. **Nothing else**: origin-form requests get 400 `not_a_proxy_request`. |
+| 4102 | **proxy** | sandboxes, BYO agents | Phase 0: plain TCP. **From phase 1 (RFE-002): TLS only** (see *Proxy listener TLS* below): inside the TLS session, `CONNECT host:port`; absolute-form `http://` requests; (phase 2) database wire protocols (the database lane's transport is specified with that lane and MUST also be TLS-only). **Nothing else**: origin-form requests get 400 `not_a_proxy_request`. |
 | 4103 | **internal** | API replicas and monitoring only | `GET /healthz`, `GET /readyz` (snapshot loaded + DB reachable), `GET /metrics`, `GET /internal/v1/status` (instance id, snapshot hash, cache sizes, pending holds). Auth: `Authorization: Bearer <internal secret>` except health/metrics. |
 
 The proxy port is raw TCP and cannot sit behind an HTTP path router. External
-BYO agents reach it directly (LoadBalancer/NodePort; VPN recommended). The
-advertised address is configured separately (`gateway.advertised_proxy_url`).
+BYO agents reach it directly (LoadBalancer/NodePort). The advertised address is
+configured separately (`gateway.advertised_proxy_url`). Phase 0 said "VPN
+recommended" because the listener was plaintext; from phase 1 the listener is
+TLS-only and that caveat no longer applies (restricting source networks remains
+good practice).
+
+### Proxy listener TLS (phase 1, RFE-002)
+
+Owner decision (D-44): **one TLS proxy listener, used by in-cluster and external
+clients alike; no plaintext listener exists.** `Proxy-Authorization` (the `aug_`,
+`aub_`, `auc_` token) and the `CONNECT` preamble therefore never cross a network
+unencrypted.
+
+- **Protocol**: TLS 1.2+ (rustls, aws-lc-rs provider; TLS 1.3 preferred, no
+  legacy suites) terminated *before* any HTTP parsing. ALPN offers only
+  `http/1.1` (proxy requests are HTTP/1.1; `h2` is not offered on this
+  listener). Inside the session the semantics are exactly those of this
+  document (authentication, lanes, errors). The client's `CONNECT` tunnel then
+  carries the *inner* TLS (or the open-lane byte pipe) over the outer TLS session.
+- **A plaintext connection** (first bytes are not a TLS ClientHello) is closed
+  immediately without a response (nothing parseable to answer, and no credential
+  is read); the gateway counts it in `gateway_proxy_plaintext_refused_total`.
+- **Server certificate source** (default, recommended): a **leaf issued by the
+  gateway CA** (`ca.pem`), `serverAuth` EKU, ECDSA P-256, validity
+  `PROXY_TLS_LEAF_VALIDITY` (30 days), regenerated in memory and hot-swapped
+  when < 10 days remain (no restart, no stored key). Rationale: every hosted
+  sandbox and every BYO container config already trusts this CA, so no new trust
+  distribution is needed. The SAN set is the union of: the host of
+  `gateway.advertised_proxy_url`; the sandbox-facing proxy address in the boot
+  document (`11`); the in-cluster service names (`aurora-gateway`,
+  `aurora-gateway.<ns>`, `aurora-gateway.<ns>.svc`,
+  `aurora-gateway.<ns>.svc.cluster.local`) and the fixed compose address
+  (`10.89.250.2`) when running there; and `gateway.proxy_tls.names` (extra DNS
+  names/IPs, e.g. a LoadBalancer hostname). A client connecting by a name not in
+  the SAN set fails verification — operators add the name, they do not disable
+  verification. Because `aurora-gateway generate-ca` mints the CA with
+  `pathlen 0` the proxy leaf is a leaf of that CA (no intermediate).
+- **Optional operator-supplied certificate**: `gateway.proxy_tls.cert_file` +
+  `key_file` (PEM chain + key, reloaded on change) replace the CA-issued leaf —
+  for example a publicly trusted certificate on the external name so BYO hosts
+  need no CA for the outer leg. The certificate must cover every name clients
+  use; startup refuses a missing/unreadable pair or an expired certificate,
+  naming the key. Clients that use this mode still need `ca.pem` for the *inner*
+  MITM leaves (unchanged).
+- **Client side**: every Aurora-controlled client verifies the server
+  certificate against the gateway CA bundle (plus the system roots when an
+  operator certificate is in use) and the name it dialled: the supervisor's
+  loopback forwarder (`12`), `aurora run`, and the container config (`08 §10`).
+  Verification is never optional.
+- **Client caveats for BYO tooling** (documented in the dashboard Connect tab
+  and the operator guide): the proxy URL is `https://…` and the HTTPS proxy leg
+  must be trusted *separately* from the origin leg by clients that distinguish
+  them (curl and git need `--proxy-cacert` / `http.proxySSLCAInfo`; the
+  container config sets the equivalent env where one exists and
+  `proxy_ca_path` otherwise); Node's global `fetch`/`https` need an HTTPS-capable
+  proxy agent (`undici` `ProxyAgent`, `https-proxy-agent`); Python needs
+  `urllib3` ≥ 2 (TLS-in-TLS) on Python ≥ 3.10; Go's `net/http` and Chromium
+  support `https://` proxies natively; stock Java (`HttpsURLConnection`) does
+  **not** speak TLS to a proxy and needs a client library that does. A tool that
+  cannot talk to an HTTPS proxy cannot use the gateway directly; the supported
+  workaround is a local forwarder (`aurora run --forward`, which listens on
+  loopback and speaks TLS upstream — the same pattern as the sandbox
+  supervisor) rather than a plaintext listener. The conformance matrix in `18`
+  pins which clients are verified.
 
 ### Subcommands
 

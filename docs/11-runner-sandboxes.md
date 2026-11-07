@@ -172,7 +172,7 @@ environment or memory), removes it from its environment and never passes it on.
   "sandbox_id": "…", "boot_id": "…", "agent": { "id": "…", "handle": "daneel", "name": "Daneel" },
   "runner_url": "ws://aurora-runner:4105/v1/supervisor",
   "bootstrap_token": "aup_…",
-  "gateway": { "proxy": "aurora-gateway:4102", "boot_token": "aub_…" },
+  "gateway": { "proxy": "aurora-gateway:4102", "tls": true, "server_name": "aurora-gateway", "boot_token": "aub_…" },
   "ca_pem": "-----BEGIN CERTIFICATE-----…",
   "files": [ { "path": "/workspace/.config/…", "mode": "0600", "content_b64": "…", "only_if_absent_or_sentinel": true } ],
   "harness": { "id": "claude-code", "capabilities_expected": [ "resume", "steer" ] },
@@ -188,6 +188,18 @@ Non-secret environment set on the container by the runner: `TZ`, `HOME=/workspac
 `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`), and app `env` entries
 from the snapshot. The proxy URL carries **no credentials**: the supervisor's
 loopback forwarder adds them (`12 §Loopback proxies`).
+
+(phase 1, RFE-002) `gateway.proxy` is **always dialled with TLS**: the
+forwarder verifies the gateway's proxy certificate against `ca_pem` and the name
+`gateway.server_name` (default: the host part of `proxy`, which MUST be in the
+certificate's SAN set, `06 §Proxy listener TLS`); `gateway.tls` is `true` and any
+other value is refused at start. The only non-TLS proxy hop left is the
+**client → loopback forwarder** leg on `127.0.0.1` *inside the sandbox's own
+network namespace*, which carries no credentials (the URL has none; the
+forwarder adds them) and never leaves the sandbox, so `HTTPS_PROXY` in the
+container environment stays `http://127.0.0.1:3128` — that is the documented
+exception to "`HTTPS_PROXY=https://…` everywhere", and it is not an
+agent-reachable listener on any other interface.
 
 ## Lifecycle
 

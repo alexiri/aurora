@@ -34,6 +34,14 @@ done when its tests exist, pass in CI, and the security invariants it touches
   API.
 - Refresh concurrency: two gateway processes, a mock provider that revokes on a
   second use of a refresh token; no revocation occurs (SEC-27).
+- (phase 1, RFE-002) Proxy listener TLS: plaintext first bytes closed with no
+  credential read (SEC-40); CA-issued leaf covers every SAN source of
+  `06 §Proxy listener TLS` and is hot-renewed < 10 days before expiry without
+  dropping tunnels; operator certificate mode (valid, expired, missing key →
+  startup refusal); wrong server name and untrusted CA refused by the supervisor
+  forwarder and by `aurora run`; ALPN is `http/1.1` only; a client matrix (curl
+  with `--proxy-cacert`, Node `undici` ProxyAgent, Python `requests`/`urllib3` 2,
+  Go, Chromium) completes `CONNECT` through the TLS listener.
 - Cache invalidation: every write listed in `05 §Gateway cache invalidation`
   changes the next request's outcome without waiting for TTL.
 

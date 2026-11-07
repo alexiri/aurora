@@ -8,7 +8,7 @@ implementation repo and checked in (CI fails on drift).
 
 | # | Contract | Direction | Auth | Owner doc |
 |---|----------|-----------|------|-----------|
-| W1 | Proxy protocol | agent → gateway :4102 | `Proxy-Authorization` gateway credential | `06` |
+| W1 | Proxy protocol | agent → gateway :4102 | `Proxy-Authorization` gateway credential; (phase 1, RFE-002) carried inside a TLS session — TLS-only listener | `06` |
 | W2 | Management API | browser/CLI/SDK → API `/v1` | session / API key | `05` |
 | W3 | Gateway signals | API → gateways (`NOTIFY`), gateways → DB | DB roles | `05`, `06` |
 | W4 | Gateway internal | API/monitoring → gateway :4103 | internal secret | `06` |

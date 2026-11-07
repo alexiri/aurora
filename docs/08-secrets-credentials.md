@@ -429,13 +429,14 @@ Rules: never overwrite a file that lacks the sentinel; `mkdir -p`; mode 0600.
 
 ```json
 {
-  "proxy_url": "http://x:aug_…@gateway.example.org:4102",
+  "proxy_url": "https://x:aug_…@gateway.example.org:4102",
   "env": { "HTTPS_PROXY": "…", "HTTP_PROXY": "…", "https_proxy": "…", "http_proxy": "…",
            "NO_PROXY": "localhost,127.0.0.1", "SSL_CERT_FILE": "/aurora/ca.pem",
            "NODE_EXTRA_CA_CERTS": "/aurora/ca.pem", "REQUESTS_CA_BUNDLE": "/aurora/ca.pem",
            "CURL_CA_BUNDLE": "/aurora/ca.pem", "GIT_SSL_CAINFO": "/aurora/ca.pem" },
   "ca_pem": "-----BEGIN CERTIFICATE-----…",
   "ca_path": "/aurora/ca.pem",
+  "proxy_ca_path": "/aurora/ca.pem",
   "llm_env": { "ANTHROPIC_BASE_URL": "…", "ANTHROPIC_AUTH_TOKEN": "aurora-placeholder" },
   "stubs": [ { "path": "…", "content": "…", "mode": "0600" } ]
 }
@@ -446,6 +447,18 @@ creation/regeneration (otherwise `proxy_url` contains `<AGENT_TOKEN>` and the
 CLI substitutes its stored token). Hosted agents are refused (403
 `hosted_agent_token_hidden`). `aurora run -- <cmd>` applies this to a child
 process (writes the CA to a temp file, sets env, builds a combined CA bundle).
+
+(phase 1, RFE-002) Phase 0 emitted `http://…:4102` because the gateway listener
+was plaintext. From phase 1 the gateway proxy listener is **TLS-only**, so
+`proxy_url` and every `*_PROXY` variable are `https://…` (the CLI refuses to
+emit or accept an `http://` gateway URL for a non-loopback host). `ca_pem` is
+the CA that signs both the proxy listener's certificate (outer leg) and the
+MITM leaves (inner leg); `proxy_ca_path` names the file for clients that take a
+separate trust anchor for the proxy leg (curl `--proxy-cacert`, git
+`http.proxySSLCAInfo`). If the operator configured
+`gateway.proxy_tls.cert_file`, `ca_pem` is still the MITM CA and the response
+adds `proxy_tls: "operator_certificate"` so the CLI uses the system roots for the
+outer leg. Client caveats are in `06 §Proxy listener TLS`.
 
 ## 11. LLM and egress governance
 

@@ -71,6 +71,7 @@ runs), configured external secret stores.
 | SEC-37 | Generic secrets and app connections can never inject on a governed LLM host. | 08, 09 | API validation tests; validator tests; gateway candidate tests |
 | SEC-38 | Under `credentialed_only`, uncredentialed traffic in both lanes reaches only allow-listed destinations or explicit allow rules. | 07, 08 §11 | e2e-gateway and e2e-hosted (browser via the open lane) |
 | SEC-39 | Governance only tightens downwards: an org cannot be looser than the instance, and no workspace setting or rule can loosen the org's LLM or egress governance. | 07, 08 §11 | evaluator corpus; API validation tests |
+| SEC-40 | (phase 1, RFE-002) The gateway proxy listener accepts TLS only; gateway credentials (`Proxy-Authorization`) and the `CONNECT` preamble never cross a network in cleartext, for sandboxes and BYO agents alike; every Aurora client verifies the listener certificate against the gateway CA (or the operator certificate) and the dialled name, and never falls back to plaintext. | 06, 08 §10, 11, 12, 15 | e2e-gateway: plaintext connect refused without reading a credential; TLS client with wrong name/untrusted CA refused; supervisor forwarder fails closed (no plaintext) when verification fails; container-config contains no `http://` gateway URL |
 
 ## Residual risks (accepted, documented to operators)
 

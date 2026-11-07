@@ -179,6 +179,7 @@ overridden by the named configuration key (`15`).
 | `CONDITION_BODY_BUFFER` | 256 KiB (4 KiB–8 MiB) | `gateway.condition_body_bytes` | 07 |
 | `UPSTREAM_HEADER_TIMEOUT` | 300 s | `gateway.upstream_header_timeout_secs` | 06 |
 | `WEBSOCKET_IDLE_TIMEOUT` | 600 s | — | 06 |
+| `PROXY_TLS_LEAF_VALIDITY` | (phase 1, RFE-002) 30 days; renewed when < 10 days remain | — | 06 |
 | `REQUEST_LOG_FLUSH` | 5 s or 500 rows | — | 06 |
 | `REQUEST_LOG_RETENTION` | 30 days | `retention.request_log_days` | 15 |
 | `BATCH_HEADER_MAX` | 128 chars | — | 06 |

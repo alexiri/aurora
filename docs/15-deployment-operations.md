@@ -81,7 +81,9 @@ Setup tooling generates every secret and **never overwrites** an existing one.
 | `hosted.allow_fake_harness` | `false` | api | tests/dev |
 | `hosted.default_timezone` | `UTC` | api | for new workspaces |
 | `hosted.idle_stop_secs`, `hosted.background_cap_secs`, `hosted.turn_ceiling_secs`, `hosted.turn_stall_secs` | `02 §Limits` | api | |
-| `gateway.advertised_proxy_url` | derived from external host + `:4102` | api, gateway | what BYO agents are told |
+| `gateway.advertised_proxy_url` | derived from external host + `:4102` | api, gateway | what BYO agents are told; (phase 1, RFE-002) always `https://host:port` — startup refuses an `http://` value |
+| `gateway.proxy_tls.names` | `[]` | gateway | (phase 1, RFE-002) extra DNS names/IPs for the CA-issued proxy certificate (LoadBalancer hostname, extra service names) |
+| `gateway.proxy_tls.cert_file`, `gateway.proxy_tls.key_file` | — | gateway | (phase 1, RFE-002) optional operator-supplied proxy certificate chain + key (both or neither); replaces the CA-issued leaf for the outer leg |
 | `gateway.allowed_private` | `[]` | gateway | private destinations allowed |
 | `gateway.egress_proxy` | — | gateway | upstream forward proxy |
 | `gateway.condition_body_bytes` | 262144 | gateway | 4 KiB–8 MiB |
@@ -152,8 +154,13 @@ removed from the list automatically.
   `/v1/runner/work`, `/v1/connector/ops/claim`), read timeouts ≥ 60 s, HTTP/2,
   and it MUST **set** (overwrite) `X-Forwarded-For` / `X-Forwarded-Proto`.
 - The gateway proxy port 4102 is raw TCP and bypasses the edge. In-cluster and
-  sandbox agents use it directly; external BYO agents need a TCP load
-  balancer/NodePort (VPN recommended).
+  sandbox agents use it directly; external BYO agents need a TCP (layer-4,
+  **TLS passthrough**) load balancer or NodePort. (phase 1, RFE-002) The
+  listener is **TLS-only** for everyone; there is no plaintext variant and the
+  "VPN recommended" caveat of phase 0 is dropped. Do not terminate TLS in front
+  of it unless the front end re-encrypts to the gateway; the load balancer's
+  hostname MUST be listed in the certificate (`gateway.advertised_proxy_url`
+  host or `gateway.proxy_tls.names`).
 - Runners and connectors may run outside the cluster: they only need outbound
   HTTPS to `external_url` (`/v1/runner/*`, `/v1/connector/*` are routed by the
   edge). A connector's own platform-callback port is exposed only to its
@@ -180,7 +187,7 @@ Services:
 | `postgres` | `postgres:16` | core | volume `aurora-pg` |
 | `migrate` | aurora-api `migrate` | core | one-shot; `api` depends on its successful completion |
 | `api` | aurora-api | core | |
-| `gateway` | aurora-gateway | core, sandbox (`10.89.250.2`) | volume `aurora-ca`; publishes 4102 |
+| `gateway` | aurora-gateway | core, sandbox (`10.89.250.2`) | volume `aurora-ca`; publishes 4102 (TLS-only from phase 1; the CA-issued leaf covers `aurora-gateway`, `10.89.250.2` and `localhost`/`127.0.0.1` for host-side tools) |
 | `hookhost` | aurora-hookhost | core | |
 | `web` | aurora-web | core | |
 | `edge` | `caddy:2` | core | publishes 4000 → routes as above |
@@ -222,6 +229,11 @@ restarting it invalidates in-flight turns (bootstrap tokens are single use).
 - **Services**: api (4101, and 4111 internal), web, gateway proxy (4102,
   optionally `LoadBalancer` for external BYO agents), gateway internal (4103),
   hookhost (4104), runner (4105, only reachable from the sandboxes namespace).
+  (phase 1, RFE-002) The gateway proxy Service port 4102 is TLS: the chart
+  renders `gateway.proxy_tls.names` from the Service names plus the configured
+  LoadBalancer/NodePort hostname, and an `existingSecret` option for an
+  operator certificate; the optional `LoadBalancer` MUST be layer 4 (no TLS
+  termination).
 - **Routing**: Ingress or Gateway API `HTTPRoute` (values toggle) implementing
   the edge rules.
 - **NetworkPolicies**: default deny in both namespaces, then:
