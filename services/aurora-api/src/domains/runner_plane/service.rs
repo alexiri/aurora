@@ -27,6 +27,17 @@ pub async fn register(
     let caps =
         serde_json::to_value(&req.capabilities).map_err(|e| ApiError::internal(e.to_string()))?;
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+    let advertised = |c: Option<aurora_protocol::runner::RunnerCapabilities>| {
+        c.and_then(|c| c.image)
+            .unwrap_or_else(super::boot::default_image)
+    };
+    let (old_image, new_image) = (
+        advertised(super::work::caps_of(runner)),
+        advertised(Some(req.capabilities.clone())),
+    );
+    if old_image != new_image {
+        aurora_db::repo::hosted::backfill_boot_image(&mut tx, runner.id, &old_image).await?;
+    }
     runners::register(
         &mut tx,
         runner.id,

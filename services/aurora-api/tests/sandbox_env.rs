@@ -405,3 +405,22 @@ async fn an_unavailable_app_contributes_no_env_or_stubs_and_flags_restart() {
     assert_eq!(env_of(&start2, "APP_A_BASE"), None);
     assert!(doc2["files"].as_array().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn a_boot_recorded_without_an_image_flags_only_when_the_image_is_known_to_differ() {
+    let mut w = world().await;
+    w.reregister("sandbox:A").await;
+    let agent = w.agent("legacy").await;
+    w.start(agent).await;
+    // A boot recorded before the image was stored.
+    sqlx::query("UPDATE sandboxes SET resource_profile = resource_profile - 'boot_image' WHERE agent_id = $1")
+        .bind(agent)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(w.sandbox(agent).await["restart_to_update"], false);
+    w.reregister("sandbox:A").await;
+    assert_eq!(w.sandbox(agent).await["restart_to_update"], false);
+    w.reregister("sandbox:B").await;
+    assert_eq!(w.sandbox(agent).await["restart_to_update"], true);
+}

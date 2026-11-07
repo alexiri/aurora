@@ -648,6 +648,27 @@ pub async fn boot_image(conn: &mut PgConnection, agent: Uuid) -> Result<Option<S
     .flatten())
 }
 
+/// Boots started before `boot_image` was recorded: when their runner starts advertising a different
+/// image, pin them to the image it advertised until now (what they booted with), so the new image
+/// is known to differ and `restart_to_update` flags.
+pub async fn backfill_boot_image(
+    conn: &mut PgConnection,
+    runner: Uuid,
+    previous_image: &str,
+) -> Result<u64, DbError> {
+    Ok(sqlx::query(
+        "UPDATE sandboxes SET resource_profile = COALESCE(resource_profile, '{}'::jsonb)
+                                                 || jsonb_build_object('boot_image', $2::text)
+         WHERE runner_id = $1 AND state IN ('starting', 'running')
+           AND COALESCE(resource_profile, '{}'::jsonb) ? 'boot_image' IS FALSE",
+    )
+    .bind(runner)
+    .bind(previous_image)
+    .execute(conn)
+    .await?
+    .rows_affected())
+}
+
 pub async fn sandbox_view(
     conn: &mut PgConnection,
     agent: Uuid,
