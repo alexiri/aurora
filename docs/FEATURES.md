@@ -5,7 +5,7 @@ invariants `SEC-nn` (`17`). Phase 0 = M0–M7 (in scope now). Phase 1–4 are ou
 of scope until phase 0 exits (`MASTER_SPEC` "Phases are real").
 
 Status: `todo` · `planned` (briefs written) · `in-progress` · `done` (acceptance evidence in PROGRESS.md) · `blocked`.
-Last reconciled with git history: 2026-11-07 evening (after FIX-003 merge, 75f73761).
+Last reconciled with git history: 2026-11-07 late night (after FIX-005 merge, bb9ca8d6).
 
 | Requirement ID | Feature | Priority | Backend tasks | Frontend tasks | Dependencies | Status | Evidence |
 |---|---|---|---|---|---|---|---|
@@ -52,7 +52,7 @@ Last reconciled with git history: 2026-11-07 evening (after FIX-003 merge, 75f73
 | M6/13§7 | Conformance suite (fake core) + e2e channel scenario | P0 | TEST-015, TEST-016 | — | CON-001 / BE-075 | done | `scripts/conformance.sh` 12/12; `scripts/e2e/channels.sh` 6/6 |
 | M7/11§k8s | Kubernetes runner backend | P0 | RUN-004 | — | RUN-003 | done | k8s_mock 15, unit 15; kind e2e 4/4 (OPS-011) |
 | M7/15§helm | Helm chart (jobs, policies, namespaces, RBAC, routing) | P0 | OPS-010 | — | — | done (FUP-M7) | `helm lint`, `helm template`; ConfigMap loads (RUN-004) |
-| M7/18 | kind e2e, SEC-02 on k8s, performance budgets, upgrade test | P0 | OPS-011 | — | RUN-004 | kind e2e done (OPS-011: 4/4, SEC-02/SEC-09 in-cluster); perf + upgrade (OPS-014) in progress | |
+| M7/18 | kind e2e, SEC-02 on k8s, performance budgets, upgrade test | P0 | OPS-011 | — | RUN-004 | done: kind e2e 4/4 (OPS-011), perf budgets PASS + upgrade 31/31 (OPS-014); image-only restart flag fix in FIX-007 | |
 | M7/15§docs | Operator docs (install, LLM endpoints, runners, plugins, backups) | P0 | OPS-012 (+ OPS-013, FIX-003 for the gaps it found) | — | — | done | `docs/operator/` |
 | SEC-01..39 | Security invariants, each with a proving test (`17`) | P0 | per milestone + TEST-018 | — | — | 38/39 proven (`docs/tests/security-coverage.md`); SEC-30 avatars → BE-067 | proven so far: SEC-01/02/09/24/25/26/34 (TEST-013; SEC-02/09 also on k8s, OPS-011), SEC-35..39 (GW-005, TEST-020), CSRF (BE-010); full map at final audit |
 | P1/20 | Mattermost connector | P1 (later phase) | — | — | Phase 0 exit | out of scope now | |
