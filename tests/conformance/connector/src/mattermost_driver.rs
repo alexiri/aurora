@@ -22,7 +22,9 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
 use async_trait::async_trait;
-use aurora_protocol::connector::{EventKind, Integration, SharedBot};
+use aurora_protocol::connector::{
+    AgentRef, EventKind, Integration, Presence, PresenceMode, SharedBot,
+};
 use futures::{SinkExt, StreamExt};
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -83,6 +85,7 @@ pub struct MattermostDriver {
     ready_url: String,
     control_url: String,
     sfx: String,
+    integration: Uuid,
     bot_id: String,
     bot_name: String,
     bot_token_id: String,
@@ -126,6 +129,7 @@ pub async fn start(opts: StartOptions) -> anyhow::Result<Harness> {
         ready_url: String::new(),
         control_url: String::new(),
         sfx: sfx.clone(),
+        integration: Uuid::now_v7(),
         bot_id: String::new(),
         bot_name: format!("cb{sfx}"),
         bot_token_id: String::new(),
@@ -179,7 +183,7 @@ pub async fn start(opts: StartOptions) -> anyhow::Result<Harness> {
         .trim_start_matches("http://")
         .trim_start_matches("https://")
         .to_owned();
-    let integration = Uuid::now_v7();
+    let integration = d.integration;
     core.add_integration_with(Integration {
         id: integration,
         org_id: Uuid::now_v7(),
@@ -214,6 +218,10 @@ pub async fn start(opts: StartOptions) -> anyhow::Result<Harness> {
             format!("{}{}", Uuid::now_v7().simple(), Uuid::now_v7().simple()),
         ),
         ("AURORA_MM_TEST_CONTROL".to_owned(), "true".to_owned()),
+        (
+            "AURORA_CONNECTOR_TOKEN_CHECK_SECS".to_owned(),
+            "2".to_owned(),
+        ),
     ];
     if let Some(c) = &opts.capabilities {
         envs.push(("AURORA_MM_CAPABILITIES".into(), c.join(",")));
@@ -615,8 +623,8 @@ impl PlatformDriver for MattermostDriver {
             email_verified_visible: false,
             // Every Mattermost account has an email address.
             users_without_email: false,
-            // Dedicated bots are MM-002.
-            dedicated_presences: false,
+            // Dedicated bots (MM-002): the admin token is part of the integration.
+            dedicated_presences: true,
             // No Mattermost action makes the connector call `POST /link-start` in shared mode.
             link_start_action: false,
         }
@@ -918,11 +926,94 @@ impl PlatformDriver for MattermostDriver {
 
     async fn presence_removed(
         &self,
-        _bot_ref: &str,
-        _presence_id: Option<Uuid>,
-        _reason: &str,
+        bot_ref: &str,
+        presence_id: Option<Uuid>,
+        reason: &str,
     ) -> Result<Ack> {
-        bail!("dedicated presences are MM-002 (see PlatformQuirks::dedicated_presences)")
+        // A dedicated bot the core knows (the scenario's `B2`, presence `presence_id`).
+        let pid = presence_id.context("a presence id is needed")?;
+        let name = format!("db{}", self.sfx);
+        let bot = self
+            .admin(
+                Method::POST,
+                "/bots",
+                Some(json!({"username": name, "display_name": "Scout", "description": "conformance"})),
+            )
+            .await?;
+        let bot_id = bot["user_id"].as_str().context("bot id")?.to_owned();
+        self.admin(
+            Method::POST,
+            &format!("/teams/{}/members", self.team_id),
+            Some(json!({"team_id": self.team_id, "user_id": bot_id})),
+        )
+        .await?;
+        let tok = self
+            .admin(
+                Method::POST,
+                &format!("/users/{bot_id}/tokens"),
+                Some(json!({"description": "conformance"})),
+            )
+            .await?;
+        self.probe.set_alias(bot_ref, &bot_id);
+        self.probe.add_presence(Presence {
+            id: pid,
+            integration_id: self.integration,
+            mode: PresenceMode::Dedicated,
+            agent: AgentRef {
+                id: Uuid::now_v7(),
+                handle: "scout".into(),
+                name: "Scout".into(),
+                avatar_url: None,
+            },
+            platform_user_ref: Some(bot_id.clone()),
+            handle: Some(name),
+            credentials: Some(json!({"token": tok["token"], "token_id": tok["id"]})),
+            credentials_version: Some(1),
+            status: "active".into(),
+        });
+        // The connector opens the bot's socket at its next config poll.
+        let end = tokio::time::Instant::now() + WAIT;
+        loop {
+            let seen = match self.http.get(format!("{}/bots", self.control_url)).send().await {
+                Ok(r) => r.text().await.unwrap_or_default().contains(&bot_id),
+                Err(_) => false,
+            };
+            if seen {
+                break;
+            }
+            if tokio::time::Instant::now() >= end {
+                bail!("the connector never picked up the dedicated bot");
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if reason == "token_revoked" {
+            self.admin(
+                Method::POST,
+                "/users/tokens/revoke",
+                Some(json!({"token_id": tok["id"]})),
+            )
+            .await?;
+        } else {
+            self.admin(Method::POST, &format!("/bots/{bot_id}/disable"), None)
+                .await?;
+        }
+        Ok(Ack::Accepted)
+    }
+
+    async fn bot_profile(&self, bot_ref: &str) -> Result<Option<BotProfile>> {
+        let id = self.user_id(bot_ref);
+        let bot = self
+            .admin(Method::GET, &format!("/bots/{id}?include_deleted=true"), None)
+            .await?;
+        let user = self.admin(Method::GET, &format!("/users/{id}"), None).await?;
+        Ok(Some(BotProfile {
+            username: bot["username"].as_str().unwrap_or_default().to_owned(),
+            display_name: bot["display_name"].as_str().unwrap_or_default().to_owned(),
+            active: bot["delete_at"].as_i64().unwrap_or(0) == 0,
+            has_icon: user["last_picture_update"].as_i64().unwrap_or(0) > 0
+                || bot["last_icon_update"].as_i64().unwrap_or(0) > 0,
+        }))
     }
 
     async fn inject(&self, f: Failure) -> Result<()> {

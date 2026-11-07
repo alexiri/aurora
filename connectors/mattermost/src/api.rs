@@ -196,6 +196,34 @@ impl Mm {
             })
     }
 
+    /// `POST /users/{id}/image` (multipart field `image`).
+    pub async fn set_user_image(
+        &self,
+        token: &str,
+        user_id: &str,
+        bytes: Vec<u8>,
+        content_type: &str,
+    ) -> R<()> {
+        let boundary = format!("aurora{}", uuid::Uuid::now_v7().simple());
+        let ext = content_type.rsplit('/').next().unwrap_or("png");
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"avatar.{ext}\"\r\nContent-Type: {content_type}\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(&bytes);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let resp = self
+            .http
+            .post(format!("{}/api/v4/users/{user_id}/image", self.base))
+            .bearer_auth(token)
+            .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| map_transport(&e))?;
+        check(resp).await.map(|_| ())
+    }
+
     /// Streams `GET /files/{id}` into memory, refusing more than `max_bytes`.
     pub async fn download_file(&self, token: &str, id: &str, max_bytes: u64) -> R<Vec<u8>> {
         let mut resp = self

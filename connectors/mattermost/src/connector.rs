@@ -15,8 +15,8 @@ use crate::api::{Mm, R};
 use crate::integ::{Integ, Settings, lock};
 use crate::ops;
 
-/// Capabilities of this task's manifest (`docs/20 §Manifest`). `presence_dedicated`
-/// stays off until MM-002 ships bot provisioning.
+/// Capabilities of the manifest (`docs/20 §Manifest`). `presence_dedicated` is narrowed
+/// away per integration when there is no working system-admin token.
 pub const DEFAULT_CAPABILITIES: &[&str] = &[
     "threads",
     "edits",
@@ -27,6 +27,7 @@ pub const DEFAULT_CAPABILITIES: &[&str] = &[
     "commands",
     "history",
     "presence_shared",
+    "presence_dedicated",
     "email_verified",
     "ephemeral",
 ];
@@ -464,6 +465,7 @@ impl Connector for MattermostConnector {
             .unwrap_or_else(|e| e.into_inner())
             .insert(integration.id, integ.clone());
         tokio::spawn(integ.clone().run_socket());
+        integ.sync_bot_sockets();
         tokio::spawn(Self::register_command(self.shared.clone(), integ.clone()));
         let shared = self.shared.clone();
         let (h, id) = (handle.clone(), integration.id);
@@ -489,6 +491,7 @@ impl Connector for MattermostConnector {
             .integration(handle.id())
             .ok_or_else(|| ConnectorError("integration is not open".into()))?;
         integ.update(&integration, &presences, &self.declared);
+        integ.sync_bot_sockets();
         Ok(())
     }
 

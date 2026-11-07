@@ -23,7 +23,6 @@
 #   - s02/s05  other users' email_verified flag (Mattermost 11.7 hides it over REST),
 #              and "a person with no email" (every Mattermost account has one)
 #   - s05      the POST /link-start step (no person-initiated action in shared mode)
-#   - s08(a)   presence.removed for a dedicated presence (dedicated mode is MM-002)
 # Extra arguments are passed to `cargo test` (after `--`).
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

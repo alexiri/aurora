@@ -122,6 +122,17 @@ pub struct Post {
     pub reactions: Vec<(String, String)>,
 }
 
+/// A bot account as the platform shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BotProfile {
+    pub username: String,
+    pub display_name: String,
+    /// Disabled/deleted bots cannot post or log in.
+    pub active: bool,
+    /// The bot has a custom picture.
+    pub has_icon: bool,
+}
+
 /// An interactive element the platform shows on a post.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Button {
@@ -205,6 +216,11 @@ pub trait PlatformDriver: Send + Sync {
     /// A platform-side "link my account" action: the connector calls the
     /// core's `POST /link-start` for `user_ref` and returns the sign-in URL.
     async fn request_link(&self, user_ref: &str) -> Result<String>;
+
+    /// A dedicated bot as the platform shows it (`None`: the driver cannot tell).
+    async fn bot_profile(&self, _bot_ref: &str) -> Result<Option<BotProfile>> {
+        Ok(None)
+    }
 
     /// Everything posted on the platform (optionally one space), oldest first.
     async fn posts(&self, space_ref: Option<&str>) -> Result<Vec<Post>>;

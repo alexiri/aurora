@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use crate::api::{R, is_mm_id};
 use crate::events::{MmChannel, MmPost, MmUser, author, display_name, rfc3339_ms};
 use crate::integ::{Integ, bad_shape, posts_of};
+use crate::presence;
 use crate::render::{CardCtx, emoji_name, neutralize_tokens, render_attachment, render_text};
 
 /// Mattermost's default `MaxPostSize` (`message_max_chars` of the manifest).
@@ -553,14 +554,22 @@ pub async fn execute(
         OpPayload::SpacesList(l) => spaces_list(integ, l).await,
         OpPayload::SpaceMembers(m) => space_members(integ, m).await,
         OpPayload::HistoryRead(h) => history_read(integ, h).await,
-        // Dedicated presences are MM-002; the manifest does not offer them yet.
-        OpPayload::PresenceProvision(_)
-        | OpPayload::PresenceDeprovision(_)
-        | OpPayload::PresenceRename(_)
-        | OpPayload::PresenceSetIcon(_) => Err(err(
-            ErrorCode::Unsupported,
-            "dedicated presences are not enabled for this connector",
-        )),
+        OpPayload::PresenceProvision(p) => {
+            need(integ, Capability::PresenceDedicated)?;
+            presence::provision(integ, op, p).await
+        }
+        OpPayload::PresenceDeprovision(c) => {
+            need(integ, Capability::PresenceDedicated)?;
+            presence::deprovision(integ, op, c).await
+        }
+        OpPayload::PresenceRename(c) => {
+            need(integ, Capability::PresenceDedicated)?;
+            presence::rename(integ, op, c).await
+        }
+        OpPayload::PresenceSetIcon(c) => {
+            need(integ, Capability::PresenceDedicated)?;
+            presence::set_icon(integ, op, c).await
+        }
         OpPayload::CredentialsValidate(_) => Err(err(
             ErrorCode::Invalid,
             "credentials.validate is handled by the connector, not an integration",

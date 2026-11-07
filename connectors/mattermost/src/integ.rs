@@ -1,7 +1,7 @@
 //! One served integration: its Mattermost client, caches, event emission, the
 //! WebSocket loop with catch-up, and the inbound event handlers (docs/20 §Transport).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::{Duration, Instant};
@@ -62,6 +62,11 @@ pub struct Settings {
     /// Key of the interactive-action signatures.
     pub hmac_key: Vec<u8>,
     pub catchup_window: Duration,
+    /// Base URL of the Aurora API (the only origin avatars are fetched from).
+    pub api_url: Option<String>,
+    /// How often a socket's token is checked with a REST call: Mattermost keeps a
+    /// socket open after its token is revoked.
+    pub token_check: Duration,
     /// Test profile: declare only these capabilities.
     pub capabilities: Option<Vec<String>>,
     pub test_control: bool,
@@ -89,6 +94,16 @@ pub struct Integ {
     channels: Mutex<HashMap<String, (Instant, MmChannel)>>,
     ready: AtomicBool,
     catching_up: AtomicBool,
+    /// Bots this connector disabled itself (`presence.deprovision`): their
+    /// `user_updated` is not a `presence.removed`.
+    retired: Mutex<HashSet<String>>,
+    /// Dedicated bots with a running socket task: presence id → token it uses.
+    bot_sockets: Mutex<HashMap<Uuid, String>>,
+    /// Bumped whenever the presences change (wakes the per-bot socket tasks).
+    bots_gen: tokio::sync::watch::Sender<u64>,
+    /// `(kind, channel, user)` of recent membership events: the same change is seen
+    /// on every bot's socket.
+    recent_membership: Mutex<HashMap<String, (Instant, Option<Uuid>)>>,
 }
 
 /// Capabilities left after the integration's own narrowing (`config._capabilities`).
@@ -182,6 +197,10 @@ impl Integ {
             channels: Mutex::new(HashMap::new()),
             ready: AtomicBool::new(false),
             catching_up: AtomicBool::new(false),
+            retired: Mutex::new(HashSet::new()),
+            bot_sockets: Mutex::new(HashMap::new()),
+            bots_gen: tokio::sync::watch::channel(0).0,
+            recent_membership: Mutex::new(HashMap::new()),
         })
     }
 
@@ -207,6 +226,53 @@ impl Integ {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    pub fn retire_bot(&self, user_id: &str) {
+        lock(&self.retired).insert(user_id.to_owned());
+    }
+
+    /// GET with the shared bot's token; a bot that is not in the channel (a DM of a
+    /// dedicated bot) gets 403/404, which the admin token (required for dedicated
+    /// mode) can still read.
+    pub async fn read(&self, path: &str, q: &[(&str, &str)]) -> R<Value> {
+        let d = self.snapshot();
+        match self.mm.get_q(&d.bot_token, path, q).await {
+            Err(e)
+                if matches!(
+                    e.code,
+                    aurora_protocol::connector::ErrorCode::Forbidden
+                        | aurora_protocol::connector::ErrorCode::NotFound
+                ) =>
+            {
+                match d.admin_token {
+                    Some(a) => self.mm.get_q(&a, path, q).await,
+                    None => Err(e),
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// Starts a socket task for every dedicated bot that has none (or whose token
+    /// changed), and wakes the running tasks so removed bots' tasks end.
+    pub fn sync_bot_sockets(self: &Arc<Self>) {
+        let wanted: HashMap<Uuid, String> = self
+            .snapshot()
+            .presences
+            .iter()
+            .map(|(id, p)| (*id, p.token.clone()))
+            .collect();
+        let mut running = lock(&self.bot_sockets);
+        running.retain(|id, _| wanted.contains_key(id));
+        for (id, token) in wanted {
+            if running.get(&id) != Some(&token) {
+                running.insert(id, token.clone());
+                tokio::spawn(self.clone().run_bot_socket(id, token));
+            }
+        }
+        drop(running);
+        self.bots_gen.send_modify(|g| *g += 1);
     }
 
     pub fn has(&self, cap: &str) -> bool {
@@ -242,8 +308,7 @@ impl Integ {
         {
             return Ok(u.clone());
         }
-        let token = self.snapshot().bot_token;
-        let v = self.mm.get(&token, &format!("/users/{id}")).await?;
+        let v = self.read(&format!("/users/{id}"), &[]).await?;
         let u: MmUser = serde_json::from_value(v).map_err(bad_shape)?;
         lock(&self.users).insert(id.to_owned(), (Instant::now(), u.clone()));
         Ok(u)
@@ -303,8 +368,7 @@ impl Integ {
         {
             return Ok(c.clone());
         }
-        let token = self.snapshot().bot_token;
-        let v = self.mm.get(&token, &format!("/channels/{id}")).await?;
+        let v = self.read(&format!("/channels/{id}"), &[]).await?;
         let c: MmChannel = serde_json::from_value(v).map_err(bad_shape)?;
         lock(&self.channels).insert(id.to_owned(), (Instant::now(), c.clone()));
         Ok(c)
@@ -330,12 +394,7 @@ impl Integ {
     }
 
     async fn file_info(&self, id: &str) -> Option<MmFileInfo> {
-        let token = self.snapshot().bot_token;
-        let v = self
-            .mm
-            .get(&token, &format!("/files/{id}/info"))
-            .await
-            .ok()?;
+        let v = self.read(&format!("/files/{id}/info"), &[]).await.ok()?;
         serde_json::from_value(v).ok()
     }
 
@@ -453,7 +512,7 @@ impl Integ {
         self.emit(id, kind, &payload).await;
     }
 
-    async fn handle_membership(&self, ev: &WsEvent, added: bool) {
+    async fn handle_membership(&self, ev: &WsEvent, added: bool, via: Option<Uuid>) {
         let event_at = now_ms();
         let Some(user_id) = ev.str_field("user_id") else {
             return;
@@ -477,6 +536,20 @@ impl Integ {
                 .filter(|r| *r != user_id)
                 .map(str::to_owned)
         };
+        {
+            // Every bot in the channel sees the same change on its own socket.
+            let key = format!("{added}:{channel_id}:{user_id}");
+            let mut recent = lock(&self.recent_membership);
+            recent.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(5));
+            // Only a copy seen on a different socket is a duplicate; the same change
+            // repeated on one socket is a new one (the bot left and came back).
+            match recent.get(&key) {
+                Some((_, first)) if *first != via => return,
+                _ => {
+                    recent.insert(key, (Instant::now(), via));
+                }
+            }
+        }
         tracing::debug!(%channel_id, ?actor_ref, added, "bot membership change");
         let payload = BotMembership {
             space: space(&channel),
@@ -500,14 +573,11 @@ impl Integ {
     /// The post is written just after the membership change; the one nearest to
     /// the event wins (the bot may have been added to the same channel before).
     async fn adder_of(&self, channel_id: &str, bot_id: &str, event_at: i64) -> Option<String> {
-        let token = self.snapshot().bot_token;
         for _ in 0..4 {
             tokio::time::sleep(Duration::from_millis(250)).await;
             let since = (event_at - 60_000).to_string();
             let Ok(v) = self
-                .mm
-                .get_q(
-                    &token,
+                .read(
                     &format!("/channels/{channel_id}/posts"),
                     &[("since", &since)],
                 )
@@ -550,8 +620,7 @@ impl Integ {
         if self.bots().contains(user) {
             return;
         }
-        let token = self.snapshot().bot_token;
-        let Ok(p) = self.mm.get(&token, &format!("/posts/{post}")).await else {
+        let Ok(p) = self.read(&format!("/posts/{post}"), &[]).await else {
             return;
         };
         let Some(channel) = p.get("channel_id").and_then(Value::as_str) else {
@@ -585,6 +654,9 @@ impl Integ {
         {
             return;
         }
+        if lock(&self.retired).contains(id) {
+            return;
+        }
         let presence_id = self
             .snapshot()
             .presences
@@ -604,7 +676,7 @@ impl Integ {
         .await;
     }
 
-    pub async fn handle_ws_event(self: &Arc<Self>, ev: WsEvent) {
+    pub async fn handle_ws_event(self: &Arc<Self>, ev: WsEvent, via: Option<Uuid>) {
         tracing::debug!(event = %ev.event, seq = ev.seq, "websocket event");
         match ev.event.as_str() {
             "posted" => {
@@ -622,8 +694,8 @@ impl Integ {
                     self.handle_changed(&p, true).await;
                 }
             }
-            "user_added" => self.handle_membership(&ev, true).await,
-            "user_removed" => self.handle_membership(&ev, false).await,
+            "user_added" => self.handle_membership(&ev, true, via).await,
+            "user_removed" => self.handle_membership(&ev, false, via).await,
             "reaction_added" => self.handle_reaction(&ev).await,
             "user_updated" => self.handle_user_updated(&ev).await,
             _ => {}
@@ -638,34 +710,42 @@ impl Integ {
         let window = self.settings.catchup_window;
         let since = now_ms() - i64::try_from(window.as_millis()).unwrap_or(i64::MAX / 2);
         let d = self.snapshot();
-        let path = format!("/users/{}/teams/{}/channels", d.bot_id, self.team_id);
-        let channels: Vec<MmChannel> = match self
-            .mm
-            .get(&d.bot_token, &path)
-            .await
-            .and_then(|v| serde_json::from_value(v).map_err(bad_shape))
-        {
-            Ok(c) => c,
-            Err(e) => return tracing::warn!(error = %e.message, "catch-up could not list channels"),
-        };
+        // The shared bot and every dedicated bot, each with its own channels and DMs.
+        let mut bots: Vec<(String, String)> = vec![(d.bot_id.clone(), d.bot_token.clone())];
+        bots.extend(
+            d.presences
+                .values()
+                .map(|p| (p.user_id.clone(), p.token.clone())),
+        );
         let mut posts: Vec<MmPost> = Vec::new();
-        for ch in channels
-            .iter()
-            .filter(|c| c.kind != "O" || !c.id.is_empty())
-        {
-            let s = since.to_string();
-            match self
+        for (bot_id, token) in &bots {
+            let path = format!("/users/{bot_id}/teams/{}/channels", self.team_id);
+            let channels: Vec<MmChannel> = match self
                 .mm
-                .get_q(
-                    &d.bot_token,
-                    &format!("/channels/{}/posts", ch.id),
-                    &[("since", &s)],
-                )
+                .get(token, &path)
                 .await
+                .and_then(|v| serde_json::from_value(v).map_err(bad_shape))
             {
-                Ok(v) => posts.extend(posts_of(&v)),
+                Ok(c) => c,
                 Err(e) => {
-                    tracing::warn!(error = %e.message, channel = %ch.id, "catch-up fetch failed")
+                    tracing::warn!(error = %e.message, "catch-up could not list channels");
+                    continue;
+                }
+            };
+            for ch in channels
+                .iter()
+                .filter(|c| c.kind != "O" || !c.id.is_empty())
+            {
+                let s = since.to_string();
+                match self
+                    .mm
+                    .get_q(token, &format!("/channels/{}/posts", ch.id), &[("since", &s)])
+                    .await
+                {
+                    Ok(v) => posts.extend(posts_of(&v)),
+                    Err(e) => {
+                        tracing::warn!(error = %e.message, channel = %ch.id, "catch-up fetch failed")
+                    }
                 }
             }
         }
@@ -686,17 +766,55 @@ impl Integ {
 
     // -------------------------------------------------------------- socket
 
-    /// Runs until ownership is lost: connect, authenticate, read; reconnect with
-    /// jittered backoff; catch up after every (re)connect and on `seq` gaps.
+    async fn report_token_revoked(&self, bot: &Option<(Uuid, String)>, user_id: &str) {
+        if lock(&self.retired).contains(user_id) {
+            return;
+        }
+        let payload = PresenceRemoved {
+            presence_id: bot.as_ref().map(|(id, _)| *id),
+            bot_ref: user_id.to_owned(),
+            reason: PresenceRemovedReason::TokenRevoked,
+        };
+        self.emit(
+            format!("presence_removed:{user_id}:token_revoked:{}", now_ms()),
+            EventKind::PresenceRemoved,
+            &payload,
+        )
+        .await;
+    }
+
+    /// The shared bot's socket; runs until ownership is lost.
     pub async fn run_socket(self: Arc<Self>) {
+        self.socket_loop(None).await;
+    }
+
+    /// A dedicated bot's socket; ends when its presence is gone or its token changed.
+    async fn run_bot_socket(self: Arc<Self>, presence: Uuid, token: String) {
+        self.socket_loop(Some((presence, token))).await;
+    }
+
+    /// Connect, authenticate, read; reconnect with jittered backoff; catch up after
+    /// every (re)connect and on `seq` gaps. `bot` is `None` for the shared bot.
+    async fn socket_loop(self: Arc<Self>, bot: Option<(Uuid, String)>) {
         let mut backoff = Duration::from_millis(250);
         let mut auth_reported = false;
         let url = self.mm.websocket_url();
+        let mut gen_rx = self.bots_gen.subscribe();
         loop {
             if self.handle.is_closed() {
                 return;
             }
-            let token = self.snapshot().bot_token;
+            // (user id, token) this socket authenticates as.
+            let (user_id, token) = match &bot {
+                None => {
+                    let d = self.snapshot();
+                    (d.bot_id, d.bot_token)
+                }
+                Some((id, mine)) => match self.snapshot().presences.get(id) {
+                    Some(p) if &p.token == mine => (p.user_id.clone(), p.token.clone()),
+                    _ => return,
+                },
+            };
             let conn = tokio::select! {
                 c = WsConn::connect(&url, &token) => c,
                 () = self.handle.closed() => return,
@@ -705,14 +823,39 @@ impl Integ {
                 Ok(mut conn) => {
                     backoff = Duration::from_millis(250);
                     auth_reported = false;
-                    self.ready.store(true, Ordering::Relaxed);
+                    if bot.is_none() {
+                        self.ready.store(true, Ordering::Relaxed);
+                    }
                     let me = self.clone();
                     tokio::spawn(async move { me.catch_up_once().await });
                     let mut last_seq: Option<i64> = None;
+                    let mut check = tokio::time::interval(self.settings.token_check);
+                    check.reset();
                     loop {
                         let next = tokio::select! {
+                            _ = check.tick() => {
+                                let dead = matches!(
+                                    self.mm.get(&token, "/users/me").await,
+                                    Err(e) if e.code == aurora_protocol::connector::ErrorCode::CredentialDead
+                                );
+                                if dead {
+                                    if !auth_reported {
+                                        auth_reported = true;
+                                        self.report_token_revoked(&bot, &user_id).await;
+                                    }
+                                    break;
+                                }
+                                continue;
+                            }
                             n = conn.next_event() => n,
                             () = self.handle.closed() => return,
+                            _ = gen_rx.changed(), if bot.is_some() => {
+                                // Presences changed: keep going only while ours is unchanged.
+                                let still = bot.as_ref().is_some_and(|(id, mine)| {
+                                    self.snapshot().presences.get(id).is_some_and(|p| &p.token == mine)
+                                });
+                                if still { continue } else { return }
+                            }
                         };
                         match next {
                             Ok(Some(ev)) => {
@@ -725,7 +868,8 @@ impl Integ {
                                 }
                                 last_seq = Some(ev.seq);
                                 let me = self.clone();
-                                tokio::spawn(async move { me.handle_ws_event(ev).await });
+                                let via = bot.as_ref().map(|(id, _)| *id);
+                                tokio::spawn(async move { me.handle_ws_event(ev, via).await });
                             }
                             Ok(None) => break,
                             Err(e) => {
@@ -734,24 +878,15 @@ impl Integ {
                             }
                         }
                     }
-                    self.ready.store(false, Ordering::Relaxed);
+                    if bot.is_none() {
+                        self.ready.store(false, Ordering::Relaxed);
+                    }
                 }
                 Err(WsError::Auth) => {
-                    tracing::error!("mattermost refused the bot token on the websocket");
+                    tracing::error!("mattermost refused a bot token on the websocket");
                     if !auth_reported {
                         auth_reported = true;
-                        let bot = self.snapshot().bot_id;
-                        let payload = PresenceRemoved {
-                            presence_id: None,
-                            bot_ref: bot.clone(),
-                            reason: PresenceRemovedReason::TokenRevoked,
-                        };
-                        self.emit(
-                            format!("presence_removed:{bot}:token_revoked:{}", now_ms()),
-                            EventKind::PresenceRemoved,
-                            &payload,
-                        )
-                        .await;
+                        self.report_token_revoked(&bot, &user_id).await;
                     }
                 }
                 Err(e) => tracing::warn!(error = %e, "websocket connect failed"),

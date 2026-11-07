@@ -1,8 +1,9 @@
 # aurora-connector-mattermost
 
 The Mattermost connector (connector contract v1, `docs/20`). **Shared mode** (MM-001): one bot
-per integration, bindings and DM defaults handled by the core. Dedicated bots (`presence.*`,
-`presence_dedicated`) are MM-002; this manifest declares `presence_dedicated: false`.
+per integration, bindings and DM defaults handled by the core. **Dedicated mode** (MM-002): one
+bot account per agent (`presence.*`, `presence_dedicated`), offered only when the integration has a
+working system-admin token.
 
 ## Run
 
@@ -70,7 +71,6 @@ All twelve scenarios run; these steps inside them are skipped on Mattermost:
 | s02 | `author.email_verified == Some(true)` (asserted to be `None`) | Mattermost (11.7 and 12) does not expose other users' flag over REST |
 | s05 | `author.email == None` for a user without an email | every Mattermost account has an email |
 | s05 | `request_link` → `POST /link-start` | no person-initiated action triggers it in shared mode; the private delivery of a sign-in link (ephemeral post) is still asserted with a placeholder URL |
-| s08 (a) | `presence.removed` for a dedicated presence (`B2`, presence id) | dedicated mode is MM-002; part (b), dead credentials → `credential_dead`, runs |
 
 s04 additionally waits for the `bot.added` event whose actor is `U1`: the bot was put into the
 channel by the harness first, which Mattermost reports like any other add.
