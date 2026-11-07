@@ -1,76 +1,133 @@
 "use client";
 
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { useState, type ComponentType, type ReactNode, type SVGProps } from "react";
 
-import { useCanApprove } from "@/lib/api/approvals";
+import { useCanApprove, usePendingApprovals } from "@/lib/api/approvals";
 import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspaces } from "@/lib/api/queries";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { cn } from "@/lib/utils";
 
-import { Menu, MenuContent, MenuItem, MenuLabel, MenuTrigger } from "./ui/menu";
+import { ThemeSwitch } from "./theme/theme-switch";
+import { Avatar } from "./agent-avatar";
+import { AuroraLogo } from "./ui/aurora-logo";
+import {
+  ActivityIcon,
+  BotIcon,
+  BookIcon,
+  BuildingIcon,
+  CheckCircleIcon,
+  ChevronsUpDownIcon,
+  HomeIcon,
+  KeyIcon,
+  LinkIcon,
+  LockIcon,
+  MenuIcon,
+  MessageIcon,
+  PlugIcon,
+  ScaleIcon,
+  ScrollIcon,
+  ServerIcon,
+  SettingsIcon,
+  ShieldIcon,
+  TrashIcon,
+  UserIcon,
+  UsersIcon,
+  XIcon,
+} from "./ui/icons";
+import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "./ui/menu";
 
-const SECTIONS = ["Conversations", "Memory", "Connections"];
+type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
-function SwitcherButton({ label, value }: { label: string; value: string }) {
+function NavItem({
+  href,
+  label,
+  active,
+  icon: Icon,
+  badge,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+  icon: IconType;
+  badge?: ReactNode;
+}) {
   return (
-    <button
-      type="button"
-      aria-label={`${label}: ${value}`}
-      className="flex items-center gap-1 rounded-md px-2 py-1 text-sm hover:bg-neutral-100"
-    >
-      <span className="text-neutral-500">{label}</span>
-      <span className="font-medium">{value}</span>
-      <span aria-hidden>▾</span>
-    </button>
+    <li>
+      <Link
+        href={href}
+        aria-current={active ? "page" : undefined}
+        className={cn(
+          "flex min-h-9 items-center gap-2.5 rounded-control px-2.5 py-1.5 text-sm",
+          active ? "bg-subtle font-semibold text-ink" : "text-ink-2 hover:bg-subtle hover:text-ink",
+        )}
+      >
+        <Icon className={cn("size-4 shrink-0", active ? "text-accent" : "text-muted")} />
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        {badge}
+      </Link>
+    </li>
   );
 }
 
-function OrgSwitcher({ orgSlug }: { orgSlug?: string }) {
+function ContextSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: string }) {
   const orgs = useOrgs();
-  const current = orgs.data?.items.find((o) => o.slug === orgSlug);
+  const resolved = useResolve(orgSlug);
+  const workspaces = useWorkspaces(resolved.data?.org.id);
+  const org = orgs.data?.items.find((o) => o.slug === orgSlug);
+  const ws = workspaces.data?.items.find((w) => w.slug === wsSlug);
+  const orgName = org?.name ?? orgSlug;
+  const wsName = ws?.name ?? wsSlug;
   return (
     <Menu>
       <MenuTrigger asChild>
-        <SwitcherButton label="Org" value={current?.name ?? orgSlug ?? "…"} />
+        <button
+          type="button"
+          aria-label={
+            orgName ? `Switch context: ${orgName}${wsName ? ` / ${wsName}` : ""}` : "Switch organization or workspace"
+          }
+          className="flex min-h-11 w-full items-center gap-2.5 rounded-control border border-line bg-surface px-2.5 py-1.5 text-left hover:bg-subtle"
+        >
+          <Avatar name={orgName ?? "?"} tintKey={orgSlug} size={28} className="rounded-md" />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-semibold text-ink">{orgName ?? "Select organization"}</span>
+            <span className="block truncate text-xs text-muted">{wsName ?? (orgSlug ? "All workspaces" : "No workspace")}</span>
+          </span>
+          <ChevronsUpDownIcon className="size-4 shrink-0 text-muted" />
+        </button>
       </MenuTrigger>
-      <MenuContent>
+      <MenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-60">
         <MenuLabel>Organizations</MenuLabel>
         {orgs.isPending ? <MenuItem disabled>Loading…</MenuItem> : null}
         {orgs.isError ? <MenuItem disabled>Could not load organizations</MenuItem> : null}
         {orgs.data?.items.map((o) => (
           <MenuItem key={o.id} asChild>
-            <Link href={`/o/${o.slug}`}>{o.name}</Link>
+            <Link href={`/o/${o.slug}`} className={cn(o.slug === orgSlug && "font-semibold")}>
+              {o.name}
+            </Link>
           </MenuItem>
         ))}
-      </MenuContent>
-    </Menu>
-  );
-}
-
-function WorkspaceSwitcher({ orgSlug, wsSlug }: { orgSlug: string; wsSlug?: string }) {
-  const resolved = useResolve(orgSlug);
-  const workspaces = useWorkspaces(resolved.data?.org.id);
-  const current = workspaces.data?.items.find((w) => w.slug === wsSlug);
-  return (
-    <Menu>
-      <MenuTrigger asChild>
-        <SwitcherButton label="Workspace" value={current?.name ?? wsSlug ?? "All"} />
-      </MenuTrigger>
-      <MenuContent>
-        <MenuLabel>Workspaces</MenuLabel>
-        {workspaces.isPending ? <MenuItem disabled>Loading…</MenuItem> : null}
-        {workspaces.isError ? <MenuItem disabled>Could not load workspaces</MenuItem> : null}
-        {workspaces.data?.items.length === 0 ? <MenuItem disabled>No workspaces</MenuItem> : null}
-        {workspaces.data?.items.map((w) => (
-          <MenuItem key={w.id} asChild>
-            <Link href={`/o/${orgSlug}/w/${w.slug}`}>{w.name}</Link>
-          </MenuItem>
-        ))}
-        <MenuItem asChild>
-          <Link href={`/o/${orgSlug}`}>All workspaces…</Link>
-        </MenuItem>
+        {orgSlug ? (
+          <>
+            <MenuSeparator />
+            <MenuLabel>Workspaces</MenuLabel>
+            {workspaces.isPending ? <MenuItem disabled>Loading…</MenuItem> : null}
+            {workspaces.isError ? <MenuItem disabled>Could not load workspaces</MenuItem> : null}
+            {workspaces.data?.items.length === 0 ? <MenuItem disabled>No workspaces</MenuItem> : null}
+            {workspaces.data?.items.map((w) => (
+              <MenuItem key={w.id} asChild>
+                <Link href={`/o/${orgSlug}/w/${w.slug}`} className={cn(w.slug === wsSlug && "font-semibold")}>
+                  {w.name}
+                </Link>
+              </MenuItem>
+            ))}
+            <MenuItem asChild>
+              <Link href={`/o/${orgSlug}`}>All workspaces…</Link>
+            </MenuItem>
+          </>
+        ) : null}
       </MenuContent>
     </Menu>
   );
@@ -91,13 +148,18 @@ function UserMenu() {
       <MenuTrigger asChild>
         <button
           type="button"
-          className="rounded-md px-2 py-1 text-sm hover:bg-neutral-100"
+          className="flex min-h-11 w-full items-center gap-2.5 rounded-control px-2.5 py-1.5 text-left hover:bg-subtle"
           aria-label={name ? `Account menu for ${name}` : "Account menu"}
         >
-          {name ?? "Account"} <span aria-hidden>▾</span>
+          <Avatar name={name ?? "?"} tintKey={me.data?.user.email} size={28} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-semibold text-ink">{name ?? "Account"}</span>
+            {me.data?.user.is_instance_admin ? <span className="block text-xs text-muted">Instance admin</span> : null}
+          </span>
+          <ChevronsUpDownIcon className="size-4 shrink-0 text-muted" />
         </button>
       </MenuTrigger>
-      <MenuContent align="end">
+      <MenuContent align="start" side="top" className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-56">
         {me.data ? <MenuLabel>{me.data.user.email}</MenuLabel> : null}
         <MenuItem asChild>
           <Link href="/account">Account</Link>
@@ -113,14 +175,14 @@ function UserMenu() {
   );
 }
 
-const ORG_LINKS = [
-  { path: "policy", label: "Policy" },
-  { path: "skills", label: "Skills" },
-  { path: "members", label: "Members" },
-  { path: "channels", label: "Channels" },
-  { path: "api-keys", label: "API keys" },
-  { path: "audit", label: "Audit log" },
-  { path: "settings", label: "Settings" },
+const ORG_LINKS: { path: string; label: string; icon: IconType }[] = [
+  { path: "policy", label: "Policy", icon: ShieldIcon },
+  { path: "skills", label: "Skills", icon: BookIcon },
+  { path: "members", label: "Members", icon: UsersIcon },
+  { path: "channels", label: "Channels", icon: MessageIcon },
+  { path: "api-keys", label: "API keys", icon: KeyIcon },
+  { path: "audit", label: "Audit log", icon: ScrollIcon },
+  { path: "settings", label: "Settings", icon: SettingsIcon },
 ];
 
 function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
@@ -129,26 +191,31 @@ function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
   const role = org.data?.my_role;
   const admin = role === "owner" || role === "admin";
   const base = `/o/${orgSlug}`;
-  const link = (href: string, label: string, active: boolean) => (
-    <li key={href}>
-      <Link
-        href={href}
-        aria-current={active ? "page" : undefined}
-        className={cn("block rounded px-2 py-1.5", active ? "bg-neutral-100 font-medium" : "hover:bg-neutral-50")}>
-        {label}
-      </Link>
-    </li>
+  const item = (href: string, label: string, icon: IconType, active: boolean) => (
+    <NavItem key={href} href={href} label={label} icon={icon} active={active} />
   );
   return (
-    <nav aria-label="Organization" className="w-48 border-r border-neutral-200 p-3">
-      <ul className="space-y-1 text-sm">
-        {link(base, "Workspaces", pathname === base)}
-        {link(`${base}/credentials`, "Credentials", pathname.startsWith(`${base}/credentials`))}
-        {link(`${base}/apps`, "Apps", pathname.startsWith(`${base}/apps`))}
-        {link(`${base}/governance`, "Governance", pathname.startsWith(`${base}/governance`))}
-        {admin ? ORG_LINKS.map((l) => link(`${base}/${l.path}`, l.label, pathname.startsWith(`${base}/${l.path}`))) : null}
+    <nav aria-label="Organization">
+      <ul className="space-y-0.5">
+        {item(base, "Workspaces", BuildingIcon, pathname === base)}
+        {item(`${base}/credentials`, "Credentials", KeyIcon, pathname.startsWith(`${base}/credentials`))}
+        {item(`${base}/apps`, "Apps", PlugIcon, pathname.startsWith(`${base}/apps`))}
+        {item(`${base}/governance`, "Governance", ScaleIcon, pathname.startsWith(`${base}/governance`))}
+        {admin ? ORG_LINKS.map((l) => item(`${base}/${l.path}`, l.label, l.icon, pathname.startsWith(`${base}/${l.path}`))) : null}
       </ul>
     </nav>
+  );
+}
+
+/** Pending-count pill; the query only runs where the approvals page exists (RFE-012). */
+function PendingPill({ wsId }: { wsId: string }) {
+  const pending = usePendingApprovals(wsId);
+  const n = pending.data?.items.length ?? 0;
+  if (n === 0) return null;
+  return (
+    <span className="rounded-full bg-pending-soft px-1.5 text-[11px] font-semibold leading-5 tabular-nums text-pending-ink">
+      {n}
+    </span>
   );
 }
 
@@ -169,37 +236,108 @@ export function WorkspaceNav({
   const admin = role === "owner" || role === "admin";
   // Phase 2, RFE-012: the approvals page exists only for `can_approve` users.
   const canApprove = useCanApprove(wsId);
-  const link = (href: string, label: string, active: boolean) => (
-    <li key={href}>
-      <Link
-        href={href}
-        aria-current={active ? "page" : undefined}
-        className={cn("block rounded px-2 py-1.5", active ? "bg-neutral-100 font-medium" : "hover:bg-neutral-50")}
-      >
-        {label}
-      </Link>
-    </li>
+  const item = (href: string, label: string, icon: IconType, active: boolean, badge?: ReactNode) => (
+    <NavItem key={href} href={href} label={label} icon={icon} active={active} badge={badge} />
   );
   return (
-    <nav aria-label="Workspace" className="w-48 border-r border-neutral-200 p-3">
-      <ul className="space-y-1 text-sm">
-        {link(base, "Overview", pathname === base)}
-        {link(`${base}/agents`, "Agents", pathname.startsWith(`${base}/agents`))}
-        {link(`${base}/credentials`, "Credentials", pathname.startsWith(`${base}/credentials`))}
-        {link(`${base}/policy`, "Policy", pathname.startsWith(`${base}/policy`))}
-        {canApprove ? link(`${base}/approvals`, "Approvals", pathname.startsWith(`${base}/approvals`)) : null}
-        {link(`${base}/activity`, "Activity", pathname.startsWith(`${base}/activity`))}
-        {SECTIONS.map((s) => (
-          <li key={s}>
-            <span aria-disabled="true" className="block cursor-not-allowed rounded px-2 py-1.5 text-neutral-400">
-              {s} <span className="text-xs">(coming soon)</span>
-            </span>
-          </li>
-        ))}
-        {admin ? link(`/o/${orgSlug}/members`, "Members", false) : null}
-        {link(`${base}/settings`, "Settings", pathname.startsWith(`${base}/settings`))}
+    <nav aria-label="Workspace">
+      <ul className="space-y-0.5">
+        {item(base, "Overview", HomeIcon, pathname === base)}
+        {item(`${base}/agents`, "Agents", BotIcon, pathname.startsWith(`${base}/agents`))}
+        {item(`${base}/credentials`, "Credentials", KeyIcon, pathname.startsWith(`${base}/credentials`))}
+        {item(`${base}/policy`, "Policy", ShieldIcon, pathname.startsWith(`${base}/policy`))}
+        {canApprove && wsId
+          ? item(`${base}/approvals`, "Approvals", CheckCircleIcon, pathname.startsWith(`${base}/approvals`), <PendingPill wsId={wsId} />)
+          : null}
+        {item(`${base}/activity`, "Activity", ActivityIcon, pathname.startsWith(`${base}/activity`))}
+        {admin ? item(`/o/${orgSlug}/members`, "Members", UsersIcon, false) : null}
+        {item(`${base}/settings`, "Settings", SettingsIcon, pathname.startsWith(`${base}/settings`))}
       </ul>
     </nav>
+  );
+}
+
+const ACCOUNT_LINKS: { href: string; label: string; icon: IconType }[] = [
+  { href: "/account", label: "Profile", icon: UserIcon },
+  { href: "/account/security", label: "Security", icon: LockIcon },
+  { href: "/account/api-keys", label: "API keys", icon: KeyIcon },
+  { href: "/account/channels", label: "Channels", icon: LinkIcon },
+  { href: "/account/delete", label: "Delete account", icon: TrashIcon },
+];
+
+function AccountNavList({ pathname }: { pathname: string }) {
+  return (
+    <nav aria-label="Account">
+      <ul className="space-y-0.5">
+        {ACCOUNT_LINKS.map((l) => (
+          <NavItem key={l.href} href={l.href} label={l.label} icon={l.icon} active={pathname === l.href} />
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+const ADMIN_LINKS: { href: string; label: string; icon: IconType }[] = [
+  { href: "/admin/users", label: "Users", icon: UsersIcon },
+  { href: "/admin/plugins", label: "Plugins", icon: PlugIcon },
+  { href: "/admin/connectors", label: "Connectors", icon: LinkIcon },
+  { href: "/admin/host-claims", label: "Host claims", icon: ServerIcon },
+  { href: "/admin/oauth-clients", label: "OAuth clients", icon: KeyIcon },
+  { href: "/admin/trusted-keys", label: "Trusted keys", icon: ShieldIcon },
+];
+
+function AdminNavList({ pathname }: { pathname: string }) {
+  return (
+    <nav aria-label="Administration">
+      <ul className="space-y-0.5">
+        {ADMIN_LINKS.map((l) => (
+          <NavItem key={l.href} href={l.href} label={l.label} icon={l.icon} active={pathname.startsWith(l.href)} />
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+function SidebarContent({
+  orgSlug,
+  wsSlug,
+  wsId,
+  pathname,
+}: {
+  orgSlug?: string;
+  wsSlug?: string;
+  wsId?: string;
+  pathname: string;
+}) {
+  const base = orgSlug && wsSlug ? `/o/${orgSlug}/w/${wsSlug}` : null;
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-4 p-4">
+      <Link href="/" className="block self-start rounded-md" aria-label="Aurora home">
+        <AuroraLogo className="h-[38px] w-auto" />
+      </Link>
+      {orgSlug ? (
+        <ContextSwitcher orgSlug={orgSlug} wsSlug={wsSlug} />
+      ) : (
+        <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
+          {pathname.startsWith("/admin") ? "Instance admin" : pathname.startsWith("/account") ? "Account" : ""}
+        </p>
+      )}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {base ? (
+          <WorkspaceNav base={base} orgSlug={orgSlug!} wsId={wsId} pathname={pathname} />
+        ) : orgSlug ? (
+          <OrgNav orgSlug={orgSlug} pathname={pathname} />
+        ) : pathname.startsWith("/admin") ? (
+          <AdminNavList pathname={pathname} />
+        ) : pathname.startsWith("/account") ? (
+          <AccountNavList pathname={pathname} />
+        ) : null}
+      </div>
+      <div className="space-y-2 border-t border-line pt-3">
+        <ThemeSwitch />
+        <UserMenu />
+      </div>
+    </div>
   );
 }
 
@@ -207,32 +345,62 @@ export function AppShell({ children }: { children: ReactNode }) {
   useUnauthorizedRedirect();
   const params = useParams<{ org?: string; ws?: string }>();
   const pathname = usePathname();
+  const [navOpen, setNavOpen] = useState(false);
   const orgSlug = params.org;
   const wsSlug = params.ws;
-  const base = orgSlug && wsSlug ? `/o/${orgSlug}/w/${wsSlug}` : null;
   const wsId = useResolve(orgSlug, wsSlug).data?.workspace?.id;
+  const side = { orgSlug, wsSlug, wsId, pathname };
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="flex items-center gap-2 border-b border-neutral-200 px-4 py-2">
-        <Link href="/" className="mr-2 font-semibold">
-          Aurora
-        </Link>
-        <nav aria-label="Context" className="flex items-center gap-1">
-          {orgSlug ? <OrgSwitcher orgSlug={orgSlug} /> : null}
-          {orgSlug ? <WorkspaceSwitcher orgSlug={orgSlug} wsSlug={wsSlug} /> : null}
-        </nav>
-        <div className="ml-auto">
-          <UserMenu />
+    <div className="min-h-screen md:flex">
+      <aside
+        aria-label="Sidebar"
+        className="sticky top-0 hidden h-screen w-64 shrink-0 border-r border-line bg-surface md:block"
+      >
+        <SidebarContent {...side} />
+      </aside>
+
+      <div className="min-w-0 flex-1">
+        <div className="sticky top-0 z-30 flex items-center justify-between border-b border-line bg-surface px-4 py-2 md:hidden">
+          <Link href="/" aria-label="Aurora home" className="rounded-md">
+            <AuroraLogo className="h-8 w-auto" />
+          </Link>
+          <DialogPrimitive.Root open={navOpen} onOpenChange={setNavOpen}>
+            <DialogPrimitive.Trigger asChild>
+              <button
+                type="button"
+                aria-label="Open menu"
+                className="inline-flex size-11 items-center justify-center rounded-control text-ink hover:bg-subtle"
+              >
+                <MenuIcon className="size-5" />
+              </button>
+            </DialogPrimitive.Trigger>
+            <DialogPrimitive.Portal>
+              <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-scrim" />
+              <DialogPrimitive.Content
+                className="fixed inset-y-0 left-0 z-50 w-[min(18rem,calc(100vw-3rem))] border-r border-line bg-surface text-ink shadow-pop"
+                // Close the drawer after following a link.
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest("a[href]")) setNavOpen(false);
+                }}
+              >
+                <DialogPrimitive.Title className="sr-only">Navigation</DialogPrimitive.Title>
+                <DialogPrimitive.Description className="sr-only">Site navigation menu</DialogPrimitive.Description>
+                <DialogPrimitive.Close asChild>
+                  <button
+                    type="button"
+                    aria-label="Close menu"
+                    className="absolute right-2 top-2 inline-flex size-11 items-center justify-center rounded-control text-ink-2 hover:bg-subtle"
+                  >
+                    <XIcon className="size-5" />
+                  </button>
+                </DialogPrimitive.Close>
+                <SidebarContent {...side} />
+              </DialogPrimitive.Content>
+            </DialogPrimitive.Portal>
+          </DialogPrimitive.Root>
         </div>
-      </header>
-      <div className="flex flex-1">
-        {base ? (
-          <WorkspaceNav base={base} orgSlug={orgSlug!} wsId={wsId} pathname={pathname} />
-        ) : orgSlug ? (
-          <OrgNav orgSlug={orgSlug} pathname={pathname} />
-        ) : null}
-        <main className="flex-1 p-6">{children}</main>
+        <main className="mx-auto w-full max-w-[1160px] px-4 py-6 md:px-8 md:py-8">{children}</main>
       </div>
     </div>
   );

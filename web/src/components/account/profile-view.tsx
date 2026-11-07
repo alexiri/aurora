@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
+import { ThemeSwitch } from "@/components/theme/theme-switch";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { useUpdateMe } from "@/lib/api/account";
@@ -69,12 +70,12 @@ function ProfileForm({ me }: { me: Me }) {
         </select>
       </Field>
       {update.error && Object.keys(fe).length === 0 ? (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger-ink">
           {errorMessage(update.error)}
         </p>
       ) : null}
       {saved ? (
-        <p role="status" className="text-sm text-green-700">
+        <p role="status" className="text-sm text-accent-ink">
           Profile saved.
         </p>
       ) : null}
@@ -89,5 +90,16 @@ export function ProfileView() {
   const me = useSession();
   if (me.isPending) return <Loading />;
   if (me.isError) return <ErrorState error={me.error} onRetry={() => me.refetch()} />;
-  return <ProfileForm key={me.dataUpdatedAt} me={me.data} />;
+  return (
+    <div className="space-y-8">
+      <ProfileForm key={me.dataUpdatedAt} me={me.data} />
+      <section aria-labelledby="appearance-heading" className="max-w-md space-y-2">
+        <h2 id="appearance-heading" className="font-display text-base font-semibold">
+          Appearance
+        </h2>
+        <p className="text-sm text-ink-2">Stored in this browser only.</p>
+        <ThemeSwitch />
+      </section>
+    </div>
+  );
 }
