@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "RunnerConfig": {
+      "properties": {
+        "idle_stop_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "orphan_grace_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "poll_wait_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reconcile_interval_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "poll_wait_secs",
+        "reconcile_interval_secs",
+        "orphan_grace_secs",
+        "idle_stop_secs"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "config": {
+      "$ref": "#/$defs/RunnerConfig"
+    },
+    "protocol": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "replica_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "runner_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "runner_id",
+    "replica_id",
+    "protocol",
+    "config"
+  ],
+  "title": "RegisterResponse",
+  "type": "object"
+}

@@ -1,0 +1,296 @@
+{
+  "$defs": {
+    "BoundedString256": {
+      "maxLength": 256,
+      "type": "string"
+    },
+    "BoundedString32": {
+      "maxLength": 32,
+      "type": "string"
+    },
+    "Decision": {
+      "enum": [
+        "approve",
+        "deny"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Token payload `{ jti, kind, integration_id, subject_id, data, exp }`.",
+  "oneOf": [
+    {
+      "properties": {
+        "data": {
+          "properties": {
+            "decision": {
+              "$ref": "#/$defs/Decision"
+            }
+          },
+          "required": [
+            "decision"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "const": "approval.decide",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "data": {
+          "properties": {
+            "agent_id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "batch_id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "decision": {
+              "$ref": "#/$defs/Decision"
+            }
+          },
+          "required": [
+            "batch_id",
+            "agent_id",
+            "decision"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "const": "approval.batch_decide",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "data": {
+          "properties": {
+            "decision": {
+              "$ref": "#/$defs/Decision"
+            }
+          },
+          "required": [
+            "decision"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "const": "action_approval.decide",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "data": {
+          "properties": {
+            "decision": {
+              "$ref": "#/$defs/Decision"
+            }
+          },
+          "required": [
+            "decision"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "const": "reach.decide",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "data": {
+          "properties": {
+            "allowed_agent_ids": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "space_ref": {
+              "$ref": "#/$defs/BoundedString256"
+            }
+          },
+          "required": [
+            "space_ref",
+            "allowed_agent_ids"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "const": "binding.choose",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "data": {
+          "properties": {
+            "allowed_agent_ids": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "allowed_agent_ids"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "const": "dm_default.choose",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "data": {
+          "properties": {
+            "turn_id": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "turn_id"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "const": "turn.stop",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "data": {
+          "properties": {
+            "turn_id": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "turn_id"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "const": "followup.send_now",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "data": {
+          "properties": {
+            "decision": {
+              "$ref": "#/$defs/Decision"
+            },
+            "side": {
+              "$ref": "#/$defs/BoundedString32"
+            }
+          },
+          "required": [
+            "side",
+            "decision"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "const": "agent_link.decide",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "data"
+      ],
+      "type": "object"
+    }
+  ],
+  "properties": {
+    "exp": {
+      "description": "Expiry, unix seconds.",
+      "format": "int64",
+      "type": "integer"
+    },
+    "integration_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "jti": {
+      "description": "Token id; the key of the single-use ledger.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "subject_id": {
+      "description": "The card / approval / batch the token is bound to.",
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "jti",
+    "integration_id",
+    "subject_id",
+    "exp"
+  ],
+  "title": "Claims",
+  "type": "object"
+}

@@ -1,0 +1,11 @@
+- name: list items injects bearer
+  connection: {{ credentials: {{ api_token: "tok" }}, metadata: {{}} }}
+  request: {{ method: GET, url: "https://api.example.com/v1/items" }}
+  expect:
+    app: {id}
+    tool: list_items
+    upstream: {{ headers: {{ authorization: "Bearer tok" }}, url: "https://api.example.com/v1/items" }}
+- name: close item summary
+  connection: {{ credentials: {{ api_token: "tok" }} }}
+  request: {{ method: POST, url: "https://api.example.com/v1/items/123/close" }}
+  expect: {{ tool: close_item, summary: {{ title: Close item, fields: {{ Item: "123" }} }} }}

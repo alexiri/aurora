@@ -1,0 +1,131 @@
+{
+  "$defs": {
+    "BoundedString64": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "JsonContent": {
+      "properties": {
+        "value": true
+      },
+      "required": [
+        "value"
+      ],
+      "type": "object"
+    },
+    "TextContent": {
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "ToolContent": {
+      "anyOf": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TextContent"
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "text"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/JsonContent"
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "json"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "description": "unknown kind; consumers log and skip",
+          "properties": {
+            "type": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ToolError": {
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/BoundedString64"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`{ call_id, ok: true, content }` or `{ call_id, ok: false, error }`.",
+  "properties": {
+    "call_id": {
+      "type": "string"
+    },
+    "content": {
+      "items": {
+        "$ref": "#/$defs/ToolContent"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ToolError"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ok": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "call_id",
+    "ok"
+  ],
+  "title": "ToolResult",
+  "type": "object"
+}

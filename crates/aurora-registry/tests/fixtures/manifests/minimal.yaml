@@ -1,0 +1,12 @@
+package: { id: todoist, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: aurora, name: Todoist }
+apps:
+  - about: { id: todoist, name: Todoist }
+    credentials: [ { name: api_token, secret: true } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: API token, type: secret, required: true } ]
+    hosts:
+      - match: { host: api.todoist.com, path_prefix: /rest }
+        inject:
+          - bearer: "{credentials.api_token}"

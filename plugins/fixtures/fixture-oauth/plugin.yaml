@@ -1,0 +1,124 @@
+package:
+  id: fixture-oauth
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Fixture OAuth
+  description: Phase 0 fixture, one shared OAuth client used by two apps
+oauth_clients:
+  - id: acme
+    authorize_url: https://auth.oauth.example.test/authorize
+    token_url: https://auth.oauth.example.test/token
+    pkce: true
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: Client ID }
+      - { name: client_secret, label: Client secret, secret: true }
+    setup_note: "Create an OAuth client of type Web application."
+apps:
+  - about:
+      id: oauth-mail
+      name: OAuth mail
+      description: Mail service with a query-string callback
+      category: testing
+      api_docs: https://docs.oauth.example.test/mail
+      web_hosts: [mail.oauth.example.test]
+      label_hint: Account email
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: email }
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: acme
+        scopes:
+          - { scope: "mail.read", name: Read mail, access: read }
+          - { scope: "mail.send", name: Send mail, access: write }
+        default_scopes: ["mail.read", "mail.send"]
+        authorize_params: { access_type: offline, prompt: consent }
+        access_levels:
+          - { id: user, label: My account }
+          - { id: shared, label: Shared mailbox, authorize_params: { mailbox: shared } }
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://api.oauth.example.test/mail/v1/profile"
+          expect_status: [200]
+          label: /email
+          metadata: { email: /email }
+    hosts:
+      - match: { host: api.oauth.example.test, path_prefix: /mail }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: auth.oauth.example.test, path_prefix: /sdk }
+        inject: []
+        intercept:
+          oauth_token_endpoint: { path: /sdk/token, method: POST }
+    token:
+      kind: oauth2_refresh
+      client: acme
+      refresh_field: refresh_token
+      rotate_refresh_token: true
+      max_lifetime_secs: 3600
+      stale_codes:
+        - { status: 401, body_contains: INVALID_SESSION }
+      reauth_codes: [invalid_grant]
+    tools:
+      read:
+        wildcard: { id: all_read, name: All read operations }
+        items:
+          - { id: list_messages, name: List messages, host: api.oauth.example.test, path: /mail/v1/messages, methods: [GET] }
+      write:
+        items:
+          - { id: send_message, name: Send message, host: api.oauth.example.test, path: /mail/v1/messages/send, methods: [POST] }
+    approvals:
+      send_message:
+        title: Send email
+        fields:
+          - { label: To, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_header: To } ] }
+          - { label: Subject, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_header: Subject } ] }
+        link: "https://mail.oauth.example.test/inbox"
+  - about:
+      id: oauth-cal
+      name: OAuth calendar
+      description: Calendar service whose provider returns the code in the URL fragment
+      category: testing
+      api_docs: https://docs.oauth.example.test/calendar
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: acme
+        scopes:
+          - { scope: "cal.read", name: Read calendar, access: read }
+        default_scopes: ["cal.read"]
+        callback: fragment
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+    hosts:
+      - match: { host: cal.oauth.example.test }
+        inject:
+          - bearer: "{credentials.access_token}"
+    token:
+      kind: oauth2_refresh
+      client: acme
+      refresh_field: refresh_token
+      rotate_refresh_token: false
+      reauth_codes: [invalid_grant, unauthorized_client]
+    tools:
+      read:
+        items:
+          - { id: list_events, name: List events, host: cal.oauth.example.test, path: /v1/events, methods: [GET] }

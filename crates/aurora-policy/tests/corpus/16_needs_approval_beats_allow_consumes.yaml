@@ -1,0 +1,5 @@
+description: needs_approval is stricter than allow; the org rate-limit counter is consumed
+org: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: rl, action: allow, rate_limit: {count: 3, per: day}}]}
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: appr, action: allow, require_approval: true}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: needs_approval, hits: 1}

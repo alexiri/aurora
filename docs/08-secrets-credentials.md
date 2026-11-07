@@ -153,6 +153,58 @@ value on the connect path, never per request.
 `AURORA_SIGNING_KEY` (32 bytes, base64) is the root for derived keys:
 `HKDF-SHA256(root, info = "aurora:<purpose>:v1")`.
 
+**Keyring-style lists (phase 2, RFE-007, D-51).** Phase 0 held one static value
+for each of `AURORA_SIGNING_KEY` and `AURORA_INTERNAL_SECRET`, with no rotation.
+From phase 2 both accept the **same shape as the encryption keyring** (§3):
+
+- `AURORA_SIGNING_KEY` = comma-separated `<key_id>:<base64 32 bytes>` (at most
+  `KEYRING_MAX` = 4 entries); `AURORA_SIGNING_ACTIVE_KEY` = the id used for
+  everything new. Key ids match `[a-z0-9]{1,16}`.
+- `AURORA_INTERNAL_SECRET` = comma-separated `<key_id>:<base64 ≥32 bytes>`;
+  `AURORA_INTERNAL_ACTIVE_KEY` = the id senders use.
+- **Backward compatible**: a value with no `:` is a one-entry ring with id `v0`,
+  active (the active variable may then be omitted). A list without its `*_ACTIVE_KEY`
+  fails startup naming the variable. Every service validates its ring at startup.
+- **Verify with any, sign with active.** Receivers accept anything signed or
+  presented with *any* key in their ring; producers use only the active key.
+  Nothing else widens: a key id outside the ring is refused.
+- **Derived artifacts carry their key id** so verification is one lookup:
+  AEAD states (`oauth-state`, `oidc-state`, `link-state`) are prefixed with the id
+  (`<key_id>.` before the base64url envelope); **action tokens** become
+  `v2.<key_id>.<b64url(payload)>.<b64url(HMAC)>` (`13 §4.4`); artifacts without an
+  id (phase 0, `v1.` tokens, unprefixed states) are verified by trying each key
+  (≤4, constant-time). Avatar public keys are *stored* values, so rotation does
+  not affect them. TTLs (`OAUTH_STATE_TTL` 10 min, `ACTION_TOKEN_TTL` ≤ 24 h) bound
+  how long an old key must stay in the ring.
+- **Internal secret on the wire**: `Authorization: Bearer <base64 secret>` plus
+  `X-Aurora-Key-Id: <key_id>` (not secret); the receiver compares in constant time
+  against that key, or — header absent (legacy/rolling) — against every key in
+  its ring. `GET /internal/v1/status` on the gateway and hook host, and `aurora-api
+  keys status`, report the **ids** (and a short fingerprint, never values) of each
+  service's ring and active key so an operator can verify convergence.
+
+**Rotation procedure** (rolling, no downtime; identical for the signing key and the
+internal secret):
+
+1. `aurora-api keys generate --kind signing|internal` prints a fresh
+   `<key_id>:<base64>` entry. Append it to the ring **on every service that holds
+   the ring** (signing key: api; internal secret: api, gateway, hookhost) but do
+   **not** change the active id. Roll the services; they now *accept* the new key.
+2. Confirm convergence (`keys status` / the status endpoints show the new id on
+   every replica). Only then set `*_ACTIVE_KEY` to the new id and roll again:
+   producers now use the new key while the old one still verifies in-flight
+   artifacts.
+3. After the old key's longest artifact lifetime (≥ 25 h for the signing key, the
+   action-token TTL plus margin; ≥ 5 min for the internal secret), remove it from
+   the ring and roll. If the old key is **compromised**, do this immediately:
+   in-flight states fail (users retry), outstanding chat-card tokens fail (the card
+   shows "expired", a new card is posted by the next approval event), nothing else.
+4. Setup tooling and Helm hooks only ever **append** (never overwrite) ring entries.
+
+Out of scope for phase 2 (owner decision: option a only): `AURORA_RUNNER_SESSION_KEY`
+and the gateway CA stay single static values with no orchestrated rotation, and no
+KMS-wrapping of the inline keyring is specified (`17 §Residual risks`).
+
 | Purpose | Use |
 |---------|-----|
 | `oauth-state` | AEAD for app-connect OAuth state |
@@ -162,7 +214,8 @@ value on the connect path, never per request.
 | `link-state` | AEAD for account-link landing pages |
 
 `AURORA_RUNNER_SESSION_KEY` (shared by runner replicas and the API) is separate
-(`11`). `AURORA_INTERNAL_SECRET` authenticates API ↔ gateway-internal ↔ hook host.
+(`11`) and remains a single static value. `AURORA_INTERNAL_SECRET` authenticates
+API ↔ gateway-internal ↔ hook host (a ring from phase 2, above).
 
 ## 5. Secrets
 
@@ -366,13 +419,79 @@ workspace secret it uses and records usage.
 
 | Kind | Prefix | Minted | Expires / revoked |
 |------|--------|--------|-------------------|
-| `agent` | `aug_` | BYO agent creation; `POST /v1/agents/{a}/token` (regenerate revokes the previous one and all of the agent's `context` credentials) | never expires; revoked on regenerate / agent delete |
+| `agent` | `aug_` | BYO agent creation; `POST /v1/agents/{a}/token` (regenerate revokes the previous one and all of the agent's `context` credentials) | phase 0–2: never expires; **from phase 3 (RFE-013)** expires at `created + effective maximum age` when one is configured (below), otherwise still never; revoked on regenerate / agent delete. (phase 2, RFE-025) refused while the effective BYO posture is `disabled` and, when the agent has an effective source list, outside it (§11.9) |
 | `boot` | `aub_` | each `sandbox.start` claim, bound to `boot_id` | revoked when the boot ends (stop report, failure, reconcile) |
 | `context` (hosted) | `auc_` | each `turn.deliver`, bound to agent, conversation, turn | `expires_at = now + TURN_CEILING + grace` at mint; set to `now + CONTEXT_CREDENTIAL_GRACE` when the turn ends |
 | `context` (BYO) | `auc_` | `POST /v1/agent/context-credentials` authenticated with the agent token: `{ "label": string ≤128, "conversation_id"?: uuid, "ttl_secs"?: 60..86400 (default 3600) }` | at `expires_at`; revoked with the agent token |
 
 Context credentials are for **attribution**, not isolation: conversations of
 one agent share a sandbox. The security boundary is the agent.
+
+(phase 2, RFE-025) **Governed BYO.** Creating a BYO agent or regenerating its
+token is subject to the BYO posture (`§11.9`); a BYO `agent`/`context` credential
+is admitted only from the effective source CIDR list of its agent; and an agent
+with `byo_require_context` may use its `aug_` token only to mint `auc_`
+credentials and for uncredentialed traffic.
+
+(phase 3, RFE-013, D-60) **Agent token maximum age.** Phase 0–2 `aug_` tokens
+never expired. From phase 3 an operator and each org may set an **optional
+maximum age** for BYO agent tokens; the default is **none** (tokens still never
+expire, so nothing changes unless someone opts in).
+
+- **Setting.** Instance: `governance.agent_tokens.max_age_days` (`15`; absent =
+  none). Org: `governance.agent_tokens.max_age_days` in the org governance
+  document (`§11.2`; absent = none). `AGENT_TOKEN_MAX_AGE_MIN`…`MAX` = 1…3 650 days
+  (422 `governance_invalid` outside). **Tighten-only**: the effective value is the
+  smaller of the values set; an org value above the instance value is refused (422
+  `governance_below_instance_minimum`).
+- **At mint** (BYO creation and `POST /v1/agents/{a}/token`; the regenerate flow
+  is unchanged otherwise): `gateway_credentials.expires_at = now + effective
+  maximum age`, null when none. BYO `context` credentials never outlive the token
+  that minted them: `expires_at = least(requested expiry, the agent token's
+  expires_at)`.
+- **When the setting is introduced or tightened** the API, in the same
+  transaction as the governance change (instance: at API start, as a system
+  action), sets for every live `agent` credential of the scope
+  `expires_at = least(expires_at, greatest(created_at + max_age, now +
+  AGENT_TOKEN_RETROFIT_GRACE))` (grace 7 days), so existing integrations get a week
+  to rotate rather than breaking at once, and invalidates the `org` scope.
+  Loosening or removing a limit **never extends** an existing expiry: regenerate
+  to obtain a fresh one. The change is part of the audited `governance.update`
+  (metadata `agent_tokens_retrofitted: n`).
+- **Expired token.** The gateway rejects it like a revoked one: 407
+  `proxy_auth_required` with `details.reason = "agent_token_expired"`; the API's
+  agent-token routes answer 401 `agent_token_expired`. The caller regenerates in
+  the dashboard (any actor allowed to regenerate under the BYO posture, §11.9).
+  The expiry is checked on every request (the cached identity carries `expires_at`).
+- **Visibility and staleness.** `gateway_credentials.last_used_at` (new churn
+  column: written by the gateway on authentication and by the API on agent-token
+  routes, at most once per minute per credential) and `expires_at` are shown
+  on the agent's Connect tab and in agent lists. A token is **stale** when it has
+  not been used for `AGENT_TOKEN_STALE_DAYS` (30) days (never used counts from
+  `created_at`) and **expiring** within `AGENT_TOKEN_EXPIRING_DAYS` (14) days;
+  `GET /v1/workspaces/{ws}/agent-tokens` (`can_own`) and `GET
+  /v1/orgs/{org}/agent-tokens` (org owner/admin) list them with `?stale=true`
+  and `?expiring_within_days=n` filters, so owners can regenerate or delete
+  unused identities. Listing never returns token material.
+
+(phase 2, RFE-005) A hosted `context` credential also carries the turn's
+**speaker** (`gateway_credentials.speaker_user_id`, copied from
+`turns.speaker_user_id` at mint when the speaker is a person; null otherwise).
+Policy `user` identities match only this value (`07`). `boot`, `agent` and BYO
+`context` credentials never carry a speaker. Because conversations of one agent
+share a sandbox, a compromised agent process could borrow another concurrent
+turn's credential; speaker-bound rules are therefore *attribution*, not
+isolation (`17 §Residual risks`) — pair sensitive grants with agent-level rules and
+approvals.
+
+(phase 1, RFE-003) **Capabilities.** `gateway_credentials.capabilities` (text
+array, default empty; open vocabulary, unknown values ignored) records what a
+credential may do beyond ordinary MITM traffic. Phase 1 defines one: `browser`
+— permission to use the **open lane** (`06 §Open-lane admission and posture`).
+It can be set only on `boot` credentials, by the API when it mints the boot
+token for a `sandbox.start` whose boot document carries the capability
+(`11 §The boot document`); `agent` and `context` credentials always have an
+empty set. It is fixed at mint time (a new boot gets a new credential).
 
 ## 8. OAuth token lifecycle (gateway)
 
@@ -399,7 +518,10 @@ access-token expiry. The **gateway** refreshes (it is on the request path).
    CAS failure → discard the new ref and re-read (someone else won).
 6. `invalid_grant` (or the manifest's `token.reauth_codes`) → `status =
    reauth_required`, `reauth_required_at = now()`; only a user reconnect clears
-   it. Transient errors (5xx, timeouts) → `credential_unavailable` for this
+   it. (phase 3, RFE-022: `reauth_required` is also set, with a `plugin_major_upgrade`
+   reason, when a plugin major upgrade activates and the connection's stored
+   credential keys no longer satisfy the new manifest's required fields,
+   `09 §10`.) Transient errors (5xx, timeouts) → `credential_unavailable` for this
    request, no state change.
 7. Release the lock.
 
@@ -429,13 +551,14 @@ Rules: never overwrite a file that lacks the sentinel; `mkdir -p`; mode 0600.
 
 ```json
 {
-  "proxy_url": "http://x:aug_…@gateway.example.org:4102",
+  "proxy_url": "https://x:aug_…@gateway.example.org:4102",
   "env": { "HTTPS_PROXY": "…", "HTTP_PROXY": "…", "https_proxy": "…", "http_proxy": "…",
            "NO_PROXY": "localhost,127.0.0.1", "SSL_CERT_FILE": "/aurora/ca.pem",
            "NODE_EXTRA_CA_CERTS": "/aurora/ca.pem", "REQUESTS_CA_BUNDLE": "/aurora/ca.pem",
            "CURL_CA_BUNDLE": "/aurora/ca.pem", "GIT_SSL_CAINFO": "/aurora/ca.pem" },
   "ca_pem": "-----BEGIN CERTIFICATE-----…",
   "ca_path": "/aurora/ca.pem",
+  "proxy_ca_path": "/aurora/ca.pem",
   "llm_env": { "ANTHROPIC_BASE_URL": "…", "ANTHROPIC_AUTH_TOKEN": "aurora-placeholder" },
   "stubs": [ { "path": "…", "content": "…", "mode": "0600" } ]
 }
@@ -446,6 +569,20 @@ creation/regeneration (otherwise `proxy_url` contains `<AGENT_TOKEN>` and the
 CLI substitutes its stored token). Hosted agents are refused (403
 `hosted_agent_token_hidden`). `aurora run -- <cmd>` applies this to a child
 process (writes the CA to a temp file, sets env, builds a combined CA bundle).
+
+(phase 1, RFE-002) Phase 0 emitted `http://…:4102` because the gateway listener
+was plaintext. From phase 1 the gateway proxy listener is **TLS-only**, so
+`proxy_url` and every `*_PROXY` variable are `https://…` (the CLI refuses to
+emit or accept an `http://` gateway URL for a non-loopback host). `ca_pem` is
+the CA that signs both the proxy listener's certificate (outer leg) and the
+MITM leaves (inner leg); `proxy_ca_path` names the file for clients that take a
+separate trust anchor for the proxy leg (curl `--proxy-cacert`, git
+`http.proxySSLCAInfo`). If the operator configured
+`gateway.proxy_tls.cert_file`, `ca_pem` is still the MITM CA and the response
+adds `proxy_tls: "operator_certificate"` so the CLI uses the system roots for the
+outer leg. Client caveats are in `06 §Proxy listener TLS`.
+
+(phase 2, RFE-025) For a BYO agent the response adds `byo: { posture, source_cidrs: [..] | null, require_context: bool }` (effective values), so the CLI can warn "this host's address is not in the agent's source list" before the first request, and `notes: [..]` when a context credential is required (`§11.9`). Both routes answer 403 `byo_disabled` while the effective posture is `disabled`.
 
 ## 11. LLM and egress governance
 
@@ -458,9 +595,9 @@ above, enforced at several points.
 
 | Level | Who | Where stored | Can |
 |-------|-----|--------------|-----|
-| **Instance ceiling** | operator | configuration `[governance]` and `[[llm.endpoints]]` (`15`) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org; set the known-LLM-hosts list and an egress baseline allow-list |
-| **Organization governance** | org owners/admins | `organizations.governance` (`03`) | permit a subset of endpoints; restrict key scopes per endpoint; narrow origin rules and model allow-lists; choose the LLM posture and the egress posture (never looser than the instance minimum); maintain the org egress allow-list |
-| **Workspace policy** | workspace owners | the workspace's policy generation (`07`) | block destinations with rules; set the workspace's own uncredentialed default to `block` with its own allow-list (it cannot loosen the org) |
+| **Instance ceiling** | operator | configuration `[governance]`, `[byo]` (phase 2, RFE-025) and `[[llm.endpoints]]` (`15`) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org (including, from phase 1, the **open-lane** minimum, RFE-003); set the known-LLM-hosts list and an egress baseline allow-list; (phase 3, RFE-013) set a maximum age for BYO agent tokens; (phase 2, RFE-025) switch BYO agents off (`byo.enabled`) and set the BYO posture floor and default source CIDRs |
+| **Organization governance** | org owners/admins | `organizations.governance` (`03`) | permit a subset of endpoints; restrict key scopes per endpoint; narrow origin rules and model allow-lists; choose the LLM posture and the egress posture (never looser than the instance minimum); maintain the org egress allow-list; (phase 3, RFE-013) set a stricter maximum age for BYO agent tokens; (phase 2, RFE-025) choose the org **BYO posture** and default BYO source CIDRs |
+| **Workspace policy** | workspace owners | the workspace's policy generation (`07`) | block destinations with rules; set the workspace's own uncredentialed default to `block` with its own allow-list (it cannot loosen the org); (phase 1, RFE-003) set the workspace's **open-lane posture** (`enabled` \| `allowlist_only` \| `disabled`; it can only tighten); (phase 2, RFE-025) set the workspace's **BYO posture** (`enabled` \| `owners_only` \| `disabled`; it can only tighten) |
 | **Agent grants and rules** | workspace owners | grants, rules (`07`) | decide which permitted keys each agent may use |
 
 Effective settings are computed, never stored: `effective = instance ∩ org`
@@ -488,7 +625,16 @@ for optimistic concurrency):
   },
   "egress": {
     "posture": "open | credentialed_only",
-    "allowlist": [ { "host": "pypi.org" }, { "host": "*.githubusercontent.com", "path": "/**" } ]
+    "allowlist": [ { "host": "pypi.org" }, { "host": "*.githubusercontent.com", "path": "/**" } ],
+    "open_lane": "enabled | allowlist_only | disabled"
+  },
+  "byo": {
+    "posture": "enabled | owners_only | disabled",
+    "source_cidrs": ["203.0.113.0/24", "2001:db8::/32"],
+    "require_context_credentials": false
+  },
+  "agent_tokens": {
+    "max_age_days": 90
   }
 }
 ```
@@ -506,8 +652,22 @@ Rules (422 `governance_invalid` / `governance_below_instance_minimum`):
   shared instance pins its own Anthropic organization). An `origin` narrowing on
   an endpoint whose instance method is `endpoint` is refused, except
   `allowed_team_ids` which upgrades the check to `litellm_team`.
-- Postures cannot be below the instance minimums.
+- Postures cannot be below the instance minimums. (phase 1, RFE-003)
+  `egress.open_lane` (default `enabled`; absent = `enabled`) follows the same
+  rule with the order `enabled` < `allowlist_only` < `disabled`: it cannot be
+  looser than `governance.egress.open_lane_minimum`. Under `allowlist_only` the
+  org's `egress.allowlist` (∪ the instance baseline) is the list tunnels are
+  checked against (`06 §Open-lane admission and posture`).
 - Allow-list entries use the policy host/path patterns (`07`); ≤500 entries.
+- (phase 3, RFE-013) `agent_tokens.max_age_days` (absent = none) follows §7: 1…3 650, never above the instance value; changing it applies the retrofit rule of §7 to the org's live agent tokens.
+- (phase 2, RFE-025) `byo` (absent = all defaults) follows §11.9: `posture`
+  (default absent = the instance floor) cannot be looser than the instance floor
+  (order `enabled` < `owners_only` < `disabled`); `source_cidrs` is a list of ≤32
+  CIDRs (absent/empty = no org default; each entry must lie inside the instance
+  `byo.default_source_cidrs` when that list is non-empty, else 422
+  `byo_cidr_outside_default`); `require_context_credentials` (default `false`)
+  can only be switched on when the instance leaves it off. Invalid CIDRs, `/0`
+  prefixes or more than 32 entries → 422 `governance_invalid`.
 
 Changing governance re-evaluates every LLM secret of the org against the new
 effective rules **using the stored origin** (no provider calls): secrets that
@@ -563,6 +723,13 @@ operator chose not to restrict that endpoint).
   (§11.3). Requests to **known LLM hosts** (providers Aurora has no configured
   endpoint for) are refused outright.
 
+(phase 3, RFE-023) **Relation to the policy Default Rule.** The credentialed Default
+Rule (`07 §Evaluation`) deliberately does **not** apply to governed LLM hosts: the
+model loop is credentialed traffic and must not be bricked by a default-deny of
+tool credentials. This section — posture, endpoint and scope permissions, key
+origin, model allow-lists — *is* the control for LLM traffic. Explicit policy
+rules naming an LLM host still win (`07 §Why the Default Rule skips LLM hosts`).
+
 ### 11.5 Model allow-lists
 
 When the effective `allowed_models` for an endpoint is non-empty, every request
@@ -586,6 +753,15 @@ any proxy check.
   are unaffected (they are governed by grants, rules and the credentialed
   default). Refusal: 403 `blocked_by_egress_policy`.
 
+(phase 1, RFE-003) The **open-lane posture** is a separate, orthogonal control
+for the tunnel lane only: `enabled` (default) / `allowlist_only` (tunnels reach
+only allow-listed hosts, even when the egress posture is `open`) / `disabled`
+(no tunnels). It is set per level (instance `governance.egress.open_lane_minimum`,
+org `egress.open_lane`, workspace policy `open_lane_posture`), tightens
+downwards only, and the effective value is the strictest. Admission order and
+errors: `06 §Open-lane admission and posture`; CONNECT-time rule semantics:
+`07 §CONNECT-time evaluation`.
+
 The org posture is evaluated as the org scope's *uncredentialed default*; a
 workspace may set its own uncredentialed default to `block` in its policy
 generation (`07 §Evaluation`). Typical allow-list contents: package registries,
@@ -602,6 +778,9 @@ otherwise hosted agents cannot install packages.
 | API: model selection and pickers | only usable keys; only allowed models |
 | Gateway step *governance* (`06`) | endpoint/scope permitted and stored origin compliant for the selected LLM key; `sanctioned_only` (no agent-supplied LLM credentials, no unconfigured providers); model allow-list |
 | Gateway policy evaluation (`07`) | uncredentialed default per scope (`credentialed_only`) with allow-lists |
+| Gateway open-lane admission (`06`, phase 1) | `browser` capability on the credential; effective open-lane posture (`disabled` / `allowlist_only`) before policy; CONNECT-time rule semantics |
+| API: BYO agent create / token regenerate (phase 2, RFE-025) | effective BYO posture (`disabled` refuses; `owners_only` needs `can_own`) |
+| Gateway credential admission (phase 2, RFE-025) | BYO posture `disabled` refuses `aug_`/BYO `auc_`; the source CIDR check; context credential required for credentialed requests |
 | Gateway before injection | origin preflight for unseen key values |
 | Gateway after response | origin backstop |
 
@@ -613,3 +792,77 @@ Aurora's network control can reach providers directly; that is a matter for
 endpoint and network policy. A model reachable through some other API (a
 self-hosted proxy, a SaaS that embeds a model) is not recognizable by host;
 only `credentialed_only` egress closes that route.
+
+### 11.9 BYO posture and source restriction (phase 2, RFE-025, D-59)
+
+Phase 0/1: any member with `can_use` could create a BYO agent and receive an
+`aug_` token that works from anywhere that can reach the proxy port. From phase 2
+BYO is governed like the rest of this section. **Hosted agents are unaffected**
+(they are controlled by `hosted.enabled`).
+
+**(a) BYO posture.** Three values, ordered `enabled` < `owners_only` < `disabled`:
+
+| Posture | Create a BYO agent / regenerate its token | Existing BYO credentials |
+|---|---|---|
+| `enabled` | `can_use` (phase 0 behaviour) | work |
+| `owners_only` (default) | `can_own` of the workspace (org owners/admins included) | work |
+| `disabled` | nobody (403 `byo_disabled`) | refused by the gateway (403 `byo_disabled`), live tunnels closed |
+
+- **Layers**: instance master switch `byo.enabled` (boolean, default `true`;
+  `false` ⇒ effective posture `disabled` everywhere, whatever org or workspace
+  say) → instance floor `byo.minimum_posture` (default `owners_only`) → org
+  `governance.byo.posture` → workspace `workspaces.byo_posture` (`03 §Planned
+  changes`). **Effective = the strictest** of the layers (absent/null = inherit).
+  Orgs and workspaces can only tighten; a value below the floor is refused
+  (422 `governance_below_instance_minimum`).
+- Because the default floor is `owners_only`, a deployment that wants phase 0
+  behaviour sets `byo.minimum_posture = "enabled"`. Existing BYO agents and
+  tokens are untouched by the upgrade.
+- Refusals at creation/regeneration: 403 `byo_not_permitted` (posture
+  `owners_only`, caller lacks `can_own`; `details.posture`, `details.level`) and 403
+  `byo_disabled` (`details.level` = `instance`\|`org`\|`workspace`, `details.manage_url`).
+  `POST /v1/agent/context-credentials` and `GET /v1/agent/container-config` with
+  an agent token also answer 403 `byo_disabled` when disabled. Container-config
+  viewing for an existing agent (token placeholder) stays `can_use`.
+- Tightening to `disabled` **never deletes or revokes** anything: agents, tokens
+  and homes stay; the gateway simply refuses them, so loosening again restores
+  service instantly (invalidation scopes `agent`/`workspace`/`org`; the instance
+  switch is read from configuration at start, so changing `byo.enabled` is a
+  rolling restart). The dashboard marks affected agents "BYO disabled by
+  <level>".
+
+**(b) Source restriction.** `agents.byo_source_cidrs` (≤32 IPv4/IPv6 CIDRs; null =
+no agent list) restricts where the credentials of a BYO agent may be used from.
+The **effective list** is the agent's list if set, else the org default
+(`governance.byo.source_cidrs`), else the instance default
+(`byo.default_source_cidrs`), else *unrestricted*. Lists are tighten-only along
+that chain: when an outer list is non-empty, every entry of an inner list must
+lie inside it (422 `byo_cidr_outside_default`). `/0` prefixes (`0.0.0.0/0`,
+`::/0`) and an empty array are refused (422 `byo_cidr_invalid`); clearing the
+agent list means `null` (inherit). Editing an agent's list needs `can_own`
+(security-critical audit action `agent.byo_settings.update`). The check
+applies to `aug_` and BYO `auc_` credentials only, at every connect-time
+admission (`06 §BYO admission`), and refuses with 403 `source_not_permitted`.
+Plain `aub_`/hosted `auc_` are not subject to it.
+
+**(d) Context credentials required.** `agents.byo_require_context` (default
+`false`) makes the gateway refuse, for that agent, any request that would
+**inject a credential** (the request has at least one selected candidate,
+`07 §Injection selection`) when it is authenticated with the agent token
+(`aug_`) instead of a context credential (`auc_`) — 403 `context_credential_required`
+(`details.mint = "POST /v1/agent/context-credentials"`). Uncredentialed traffic
+is unaffected. The effective value is `instance byo.require_context_credentials
+∨ org governance.byo.require_context_credentials ∨ agent`; it can only be
+switched **on** by outer layers. Every injected request of such an agent therefore
+carries a labelled run (`context_label`, ≤128, sanitized, in the request log and
+approval cards). `aurora run -- <cmd>` mints one context credential per run
+(label `aurora run: <command line, truncated>`, `ttl_secs` default 3600, flag
+`--ttl 60..86400`) and uses it as the proxy credential; the container config's
+`proxy_url` for such an agent carries the placeholder `<CONTEXT_TOKEN>` and says
+so in `notes`.
+
+**(c)** The policy editor and `…/policy/warnings` flag allow rules with empty identities that select credentials (`07 §Injection selection`, `rule_applies_to_all_agents`).
+
+**Residual**: a token is a bearer secret and can still be shared; the CIDR list
+restricts network position, not identity, and users behind a shared NAT satisfy
+a list that contains their egress address (`17 §Residual risks`).

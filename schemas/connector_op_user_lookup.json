@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "limit": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "query": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "user_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "title": "UserLookupOp",
+  "type": "object"
+}

@@ -1,0 +1,82 @@
+{{- $full := include "aurora.fullname" . -}}
+{{- $ns := .Values.sandboxes.namespace -}}
+{{- if .Values.sandboxes.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    kubernetes.io/metadata.name: {{ $ns }}
+    app.kubernetes.io/name: aurora
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+{{- end }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sandboxes
+  namespace: {{ $ns }}
+spec:
+  hard:
+    pods: {{ .Values.sandboxes.quota.pods | quote }}
+    requests.cpu: {{ .Values.sandboxes.quota.requestsCpu | quote }}
+    requests.memory: {{ .Values.sandboxes.quota.requestsMemory | quote }}
+    limits.cpu: {{ .Values.sandboxes.quota.limitsCpu | quote }}
+    limits.memory: {{ .Values.sandboxes.quota.limitsMemory | quote }}
+    persistentvolumeclaims: {{ .Values.sandboxes.quota.pvcs | quote }}
+    requests.storage: {{ .Values.sandboxes.quota.storage | quote }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: sandboxes
+  namespace: {{ $ns }}
+spec:
+  limits:
+    - type: Container
+      defaultRequest: {{- toYaml .Values.sandboxes.limitRange.defaultRequest | nindent 8 }}
+      default: {{- toYaml .Values.sandboxes.limitRange.default | nindent 8 }}
+      max: {{- toYaml .Values.sandboxes.limitRange.max | nindent 8 }}
+{{- if .Values.runner.enabled }}
+---
+# Runner RBAC (docs/11 Backend kubernetes): Pods/PVCs/Secrets in the sandbox namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $full }}-runner
+  namespace: {{ $ns }}
+rules:
+  - apiGroups: [""]
+    resources: [pods, persistentvolumeclaims, secrets]
+    verbs: [create, get, list, watch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $full }}-runner
+  namespace: {{ $ns }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $full }}-runner}
+subjects:
+  - {kind: ServiceAccount, name: {{ $full }}-runner, namespace: {{ .Release.Namespace }}}
+---
+# get Services in the core namespace (gateway/runner ClusterIP lookup).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $full }}-runner-services
+rules:
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $full }}-runner-services
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $full }}-runner-services}
+subjects:
+  - {kind: ServiceAccount, name: {{ $full }}-runner}
+{{- end }}

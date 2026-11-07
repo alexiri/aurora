@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "boot_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "sandbox_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sandbox_id",
+    "boot_id"
+  ],
+  "title": "ChannelClaimResponse",
+  "type": "object"
+}

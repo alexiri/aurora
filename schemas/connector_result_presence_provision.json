@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "credentials": true,
+    "handle": {
+      "type": "string"
+    },
+    "platform_user_ref": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "platform_user_ref",
+    "handle",
+    "credentials"
+  ],
+  "title": "PresenceProvisionResult",
+  "type": "object"
+}

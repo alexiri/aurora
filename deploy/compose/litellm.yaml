@@ -1,0 +1,35 @@
+# LiteLLM proxy for the `llm-mock` compose profile (decision I-30). The real proxy, pinned image,
+# in front of VidaiMock (deploy/compose/vidaimock/). Dev only: the master key below comes from
+# LITELLM_MASTER_KEY (compose default `sk-aurora-mock-dev`) and protects nothing.
+#
+# One alias per VidaiMock scenario: `scn-<id>` is sent upstream as model `scn-<id>`, which selects
+# vidaimock/scenarios/anthropic/<id>.*. `claude-mock` and any `claude-*` id get the plain text answer.
+model_list:
+  - model_name: claude-mock
+    litellm_params: &up
+      model: anthropic/claude-mock
+      api_base: http://vidaimock:8100
+      api_key: mock-upstream-key
+  - model_name: scn-pong
+    litellm_params: { <<: *up, model: anthropic/scn-pong }
+  - model_name: scn-count
+    litellm_params: { <<: *up, model: anthropic/scn-count }
+  - model_name: scn-steer
+    litellm_params: { <<: *up, model: anthropic/scn-steer }
+  - model_name: scn-memory-tool
+    litellm_params: { <<: *up, model: anthropic/scn-memory-tool }
+  - model_name: scn-overload
+    litellm_params: { <<: *up, model: anthropic/scn-overload }
+  - model_name: scn-ratelimit
+    litellm_params: { <<: *up, model: anthropic/scn-ratelimit }
+  # Claude Code also asks for its small/fast model (a claude-haiku-* id).
+  - model_name: "claude-*"
+    litellm_params: { <<: *up, model: "anthropic/*" }
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  drop_params: true
+  telemetry: false
+  num_retries: 0

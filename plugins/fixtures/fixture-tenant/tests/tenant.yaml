@@ -1,0 +1,24 @@
+- name: basic auth and header templates on the tenant host
+  connection:
+    credentials: { api_token: "secret" }
+    metadata: { email: "agent@example.test" }
+    tenant_host: acme.tenant.example.test
+  request: { method: GET, url: "https://acme.tenant.example.test/api/v2/tickets" }
+  expect:
+    app: tenant-desk
+    tool: list_tickets
+    upstream:
+      url: "https://acme.tenant.example.test/api/v2/tickets"
+      headers:
+        # base64("agent@example.test/token:secret")
+        authorization: "Basic YWdlbnRAZXhhbXBsZS50ZXN0L3Rva2VuOnNlY3JldA=="
+        x-fixture: tenant
+- name: rewrite_host sends the request to the stored tenant host
+  connection:
+    credentials: { api_token: "secret" }
+    tenant_host: acme.tenant.example.test
+  request: { method: GET, url: "https://gw.tenant.example.test/api/v2/tickets" }
+  expect:
+    upstream:
+      url: "https://acme.tenant.example.test/api/v2/tickets"
+      headers: { x-via: gateway }

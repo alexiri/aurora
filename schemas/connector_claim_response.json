@@ -1,0 +1,63 @@
+{
+  "$defs": {
+    "OpKind": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "Operation": {
+      "properties": {
+        "attempt": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "integration_id": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/OpKind"
+        },
+        "maybe_sent": {
+          "default": false,
+          "type": "boolean"
+        },
+        "op_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "payload": {
+          "default": null
+        },
+        "presence_id": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op_id",
+        "kind"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "ops": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Operation"
+      },
+      "type": "array"
+    }
+  },
+  "title": "ClaimResponse",
+  "type": "object"
+}

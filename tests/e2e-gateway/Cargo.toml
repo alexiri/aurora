@@ -1,0 +1,29 @@
+[package]
+name = "aurora-e2e-gateway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+aurora-core = { workspace = true }
+aurora-config = { workspace = true }
+aurora-crypto = { workspace = true }
+aurora-secrets = { workspace = true }
+aurora-testkit = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+base64 = { workspace = true }
+anyhow = { workspace = true }

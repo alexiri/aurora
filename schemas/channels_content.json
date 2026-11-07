@@ -1,0 +1,254 @@
+{
+  "$defs": {
+    "Block": {
+      "oneOf": [
+        {
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "header",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "pairs": {
+              "items": {
+                "$ref": "#/$defs/Field"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "fields",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "pairs"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "context",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "type": {
+              "const": "link",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "label",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "items": {
+              "items": {
+                "$ref": "#/$defs/ButtonItem"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "buttons",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "items"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "options": {
+              "items": {
+                "$ref": "#/$defs/SelectOption"
+              },
+              "type": "array"
+            },
+            "placeholder": {
+              "type": "string"
+            },
+            "token": {
+              "type": "string"
+            },
+            "type": {
+              "const": "select",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "placeholder",
+            "options",
+            "token"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "token": {
+              "type": "string"
+            },
+            "type": {
+              "const": "input",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "label",
+            "token"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ButtonItem": {
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/ButtonStyle",
+          "default": "default"
+        },
+        "token": {
+          "description": "Opaque action token; connectors never interpret it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "token"
+      ],
+      "type": "object"
+    },
+    "ButtonStyle": {
+      "enum": [
+        "primary",
+        "danger",
+        "default"
+      ],
+      "type": "string"
+    },
+    "Card": {
+      "properties": {
+        "blocks": {
+          "items": {
+            "$ref": "#/$defs/Block"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "blocks"
+      ],
+      "type": "object"
+    },
+    "Field": {
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "type": "object"
+    },
+    "SelectOption": {
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "card": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Card"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "text": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "title": "Content",
+  "type": "object"
+}

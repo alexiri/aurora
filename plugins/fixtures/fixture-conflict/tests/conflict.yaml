@@ -1,0 +1,7 @@
+- name: sole package claims the host
+  connection: { credentials: { api_token: "ct" } }
+  request: { method: GET, url: "https://api.bearer.example.test/rest/v2/things" }
+  expect:
+    app: conflict-demo
+    tool: list_things
+    upstream: { headers: { x-conflict-token: "ct" } }

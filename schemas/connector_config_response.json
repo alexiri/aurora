@@ -1,0 +1,227 @@
+{
+  "$defs": {
+    "AgentRef": {
+      "properties": {
+        "avatar_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "handle": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "handle",
+        "name"
+      ],
+      "type": "object"
+    },
+    "Binding": {
+      "properties": {
+        "agent_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "followups_need_mention": {
+          "default": false,
+          "type": "boolean"
+        },
+        "integration_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "listen": {
+          "$ref": "#/$defs/ListenMode"
+        },
+        "space_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "integration_id",
+        "space_ref",
+        "agent_id",
+        "listen"
+      ],
+      "type": "object"
+    },
+    "Integration": {
+      "properties": {
+        "config": {
+          "default": null
+        },
+        "credentials": {
+          "default": null,
+          "description": "Decrypted platform credentials (never log)."
+        },
+        "credentials_version": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "org_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "shared_bot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SharedBot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "type": "string"
+        },
+        "tenant_label": {
+          "type": "string"
+        },
+        "tenant_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "org_id",
+        "tenant_ref",
+        "tenant_label",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ListenMode": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "Presence": {
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AgentRef"
+        },
+        "credentials": true,
+        "credentials_version": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "handle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "integration_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/PresenceMode"
+        },
+        "platform_user_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "integration_id",
+        "mode",
+        "agent",
+        "status"
+      ],
+      "type": "object"
+    },
+    "PresenceMode": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "SharedBot": {
+      "properties": {
+        "display_name": {
+          "type": "string"
+        },
+        "handle": {
+          "type": "string"
+        },
+        "platform_user_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform_user_ref",
+        "handle",
+        "display_name"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "etag": {
+      "type": "string"
+    },
+    "integrations": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Integration"
+      },
+      "type": "array"
+    },
+    "lease_secs": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "presences": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Presence"
+      },
+      "type": "array"
+    },
+    "space_bindings": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Binding"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "etag",
+    "lease_secs"
+  ],
+  "title": "ConfigResponse",
+  "type": "object"
+}

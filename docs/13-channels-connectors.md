@@ -109,7 +109,8 @@ Shapes:
 // Binding
 { "integration_id", "space_ref", "agent_id", "listen": "mentions"|"all", "followups_need_mention": false }
 // Operation
-{ "op_id", "kind", "integration_id"?, "presence_id"?, "attempt": 1, "maybe_sent": false, "payload": {} }
+{ "op_id", "kind", "integration_id"?, "presence_id"?, "attempt": 1, "maybe_sent": false, "payload": {},
+  "credentials"?: {} }   // phase 3, RFE-024: decrypted at claim time, only for self-contained presence.deprovision
 ```
 
 ### 4.1 Inbound events (platform → neutral)
@@ -117,6 +118,9 @@ Shapes:
 `InboundEvent = { event_id, integration_id, kind, occurred_at, payload }`.
 `event_id` is the platform's own id (or a deterministic hash of platform ids
 when the platform has none) — the core dedupes on `(connector, event_id)`.
+(phase 3, RFE-018) `event_id` values beginning with `api:` are reserved for
+API idempotency keys (`05 §Idempotency keys`): such an event is `rejected` with
+code `reserved_event_id`.
 
 | Kind | Payload |
 |------|---------|
@@ -144,6 +148,56 @@ when the platform has none) — the core dedupes on `(connector, event_id)`.
 | `presence.provision` | `{ agent: { handle, name, avatar_url } }` → `{ platform_user_ref, handle, credentials }` |
 | `presence.deprovision` / `presence.rename` / `presence.set_icon` | `{ presence_id, … }` |
 | `credentials.validate` | `{ config, credentials }` → `{ tenant_ref, tenant_label, shared_bot?, capabilities? }` — `capabilities` may only **narrow** the manifest's for this integration (e.g. no `ephemeral` without an admin token); stored in `channel_integrations.config._capabilities` and used by the core for fallbacks |
+
+**Self-contained deprovision operations** (phase 3, RFE-024, D-67). Phase 0–2
+enqueued `presence.deprovision` "before the delete commits", but the delete then
+cascaded away the presence (and, for an org, the integration) rows the connector
+needs, and `channel_ops.integration_id` itself cascades — so the op could be
+unexecutable by construction. From phase 3 a deprovision op carries **everything
+needed to act**, and is committed **in the same transaction as the delete, before
+the cascade**:
+
+- **Ordering guarantee.** Agent, workspace and org deletion (and presence detach)
+  run as one database transaction in which the API (1) inserts one
+  `presence.deprovision` op per *dedicated* presence about to disappear, then (2)
+  performs the delete/cascade. Either both commit or neither does: there is no
+  deleted presence without its op, and no op for a presence that still exists.
+  (Sealing of credential copies happens just before the transaction, below.)
+- **Op shape.** `integration_id = NULL` (so the integration's deletion cannot
+  cascade the op away, and any live replica of the connector may claim it — the
+  existing rule for ops without an integration), `presence_id` set (no FK),
+  `connector_id` set, and a payload
+  `{ presence_id, reason: "detached"|"agent_deleted"|"workspace_deleted"|"org_deleted",
+     platform_user_ref, handle, tenant_ref, tenant_label, config: {…non-secret
+     integration setup fields…}, credentials_ref }`. `credentials_ref` is a **fresh
+     SecretRef** holding a copy of the integration credentials the connector needs
+     to administer the bot (for Mattermost the admin token, `20`), sealed under a
+     context bound to the op (`SealContext` purpose `channel_op_deprovision`, the op
+     id) so it cannot be opened for any other row. Bot-level credentials of the
+     presence are included only when the connector's manifest says deprovision needs
+     them. Nothing else about the integration, agent or org is copied.
+- **Delivery.** At claim time the core opens `credentials_ref` and returns the
+  decrypted credentials in the claimed `Operation` as `credentials` (the same
+  treatment as `GET /config`, over the same connector authentication); the stored
+  payload never holds plaintext.
+- **Lifetime of the copy.** When the op reaches a terminal state (`done`,
+  `failed`, `dropped`) — or on the periodic channel-ledger pruning, whichever is
+  first — the core `discard`s `credentials_ref` and replaces it with `null`. If the
+  transaction aborts (the delete fails) the API discards the refs it sealed
+  (best effort; an orphaned sealed copy is unreadable without its op context and is
+  removed by the pruning job when no op references it).
+- **Retries.** `unavailable` is retried with the usual backoff until
+  `DEPROVISION_RETRY_WINDOW` (24 h) rather than `OP_MAX_ATTEMPTS`;
+  `credential_dead` / `forbidden` → `failed`; `not_found` → `dropped` (the bot is
+  already gone). Shared presences have no bot of their own and enqueue nothing.
+- **Skipped / failed deprovision is a documented residual.** If the connector is
+  down or uninstalled for longer than the window, or the stored credentials were
+  revoked, the bot **stays on the platform**. The core records a best-effort audit
+  row `presence.deprovision_failed` (`metadata: { connector_id, tenant_label,
+  platform_user_ref, handle, error_code }`, org-scoped; ledgers survive org
+  deletion), counts `aurora_channel_deprovision_failed_total`, and `15` tells
+  operators how to remove such bots by hand. The integration's *shared bot* is
+  operator-installed and is **not** deprovisioned by org deletion (also documented).
 
 **Delivery**: operations are claimed with a lease and retried until a
 definitive result. Every `message.post` carries `op_marker` (= op id); connectors
@@ -189,7 +243,7 @@ integration) are claimable by any live replica of the connector.
 
 ### 4.4 Action tokens
 
-`v1.<b64url(payload)>.<b64url(HMAC-SHA256(action-token key, payload))>`, payload
+Phase 0: `v1.<b64url(payload)>.<b64url(HMAC-SHA256(action-token key, payload))>`; (phase 2, RFE-007) `v2.<key_id>.<b64url(payload)>.<b64url(HMAC-SHA256(action-token key of key_id, payload))>` signed with the active signing key and verified with the ring entry named by `key_id` (`v1.` tokens: try each ring key; `08 §4`), payload
 JSON `{ jti, kind, integration_id, subject_id, data, exp }`. Kinds:
 `approval.decide {decision}`, `approval.batch_decide {batch_id, agent_id,
 decision}`, `action_approval.decide {decision}`, `reach.decide {decision}`,
@@ -211,7 +265,7 @@ must match the event's. The connector never interprets tokens.
 | `native_status` | placeholder post as above |
 | `presence_dedicated` / `presence_shared` | only the other mode is offered |
 | `user_tokens` | read-as-user / send-as-user features hidden (phase 0 implements none) |
-| `email_verified` | linking always uses the sign-in link |
+| `email_verified` | linking always uses the sign-in link (phase 1, RFE-001: also whenever the integration's `verified_email_autolink` is `false`, which is the default; the platform email then only pre-fills the flow) |
 | `files` | the core enforces min(core caps, platform caps) |
 | `commands` | settings only in the dashboard |
 | `history` | no mid-thread context; `read_conversation` unavailable |
@@ -225,6 +279,11 @@ idempotent). Steps:
 
 1. **Integration**: must be `active` and belong to the posting connector.
 2. **Echo guard**: author is one of this integration's bots → ignore.
+2a. (phase 2, RFE-006) **Frozen**: if the resolved agent is effectively frozen
+   (`04 §Freeze`), no turn is created and no sandbox is started; reply once per
+   (space/thread, person) per `FREEZE_REPLY_INTERVAL` with the platform-voice
+   line "<Agent> is paused by an administrator." and stop. (The same check applies
+   after step 3 resolves the agent; shown here for the reader.)
 3. **Target agent**:
    - addressed to a **dedicated** bot (DM to it, or it is mentioned) → its agent;
    - **shared** bot in a DM: an existing thread link for `(space, thread_ref)`
@@ -235,12 +294,26 @@ idempotent). Steps:
      if the bot was mentioned, reply that the space is not set up and name who
      can set it up (owners of workspaces with shared presences on this
      integration); stop.
-4. **Speaker**: user link → Aurora user. No link and the event reports a
-   platform-verified email equal to a verified Aurora user's email → create
-   link (`verified_email`). Otherwise create a `link_requests` row and send the
-   person an ephemeral (or DM) message with a sign-in link; stop. Bot authors:
-   allowed only through an approved `person` reach grant for the bot, metered
-   by the app-turn cap.
+4. **Speaker**: user link → Aurora user. No link:
+   - Phase 0: when the event reports a platform-verified email equal to a
+     verified Aurora user's email → create the link (`verified_email`).
+   - **From phase 1 (RFE-001) this is opt-in and off by default.** Auto-linking
+     is attempted only when **all** hold: the integration's
+     `config.verified_email_autolink` is `true` (set by an org owner/admin,
+     §5.9), the integration's effective capabilities include `email_verified`,
+     the event carries `author.email_verified = true`, and the email equals a
+     *verified* Aurora user's email who is an **active member of the
+     integration's org**. Then create the link (`method = verified_email`),
+     audit `user_link.create` (`via: verified_email`; in the security-critical audit
+     set of `04 §Audit` from phase 2, RFE-008) and continue.
+   - Otherwise (the default) create a `link_requests` row — storing the
+     platform email, if the event had one, as `platform_email_hint` — and send
+     the person an ephemeral (or DM) message with a sign-in link; stop. The hint
+     only **pre-fills** the sign-in (`login_hint` to the OIDC provider) and the
+     confirm page; it never authorizes anything and need not match the Aurora
+     account the person signs in with.
+   Bot authors: allowed only through an approved `person` reach grant for the
+   bot, metered by the app-turn cap.
 5. **Authorization**: `can_use(user, agent workspace)` or an approved reach
    grant (person = author, or space = this space). Otherwise send a polite
    refusal **before anything reaches the agent**, create/refresh a `pending`
@@ -258,8 +331,10 @@ idempotent). Steps:
    include them in the turn text as a labelled, sanitized "earlier messages
    (untrusted)" block.
 9. **Files**: `file.fetch` each file (correlated), creating `bound`
-   attachments or `failed` ones with a reason.
-10. **Turn**: create the turn (door `thread`, `source_event_id = event_id`,
+   attachments or `failed` ones with a reason (phase 2, RFE-015: `quota_exceeded`
+   when the org's attachment quota would be exceeded; the person is told in
+   platform voice and the turn still runs).
+10. **Turn**: create the turn (door `thread`, `source_event_id = event_id`; (phase 3, RFE-018) event ids starting with the reserved prefix `api:` were already rejected at ingest, `§POST /events`,
     speaker). A turn already created by a crashed earlier attempt is found by
     `source_event_id` and not duplicated.
 11. **Receipt**: `reaction.add` (neutral `eyes`) or `status.set` or placeholder.
@@ -310,8 +385,12 @@ prefix) onto these names: `help`, `agents` (agents this person can reach here),
 For every `action.invoked`: verify token signature, expiry, single use and
 integration; resolve the clicker through the user link (unlinked → link prompt,
 no action); apply the access law for the subject's workspace (`can_use` for
-approvals, action approvals, reach decisions, stop/send-now; `can_own` for
-bindings and reach); then act. **The platform never authorizes.** The card is
+approvals, action approvals, reach decisions, stop/send-now — phase 2, RFE-012:
+`can_approve` for approvals, action approvals and agent-link decisions, `can_use`
+for stop/send-now; `can_own` for
+bindings and reach; phase 1, RFE-009: for subjects that name a `direct`
+conversation, additionally `can_see_conversation`, so only that person or an
+owner can act); then act. **The platform never authorizes.** The card is
 then settled (`message.update`, or a new message without `edits`).
 
 ### 5.6 Approval cards
@@ -320,7 +399,10 @@ On `aurora_approval created` for an approval naming a conversation with thread
 links: post a card into the most recently used thread link (`dedupe_key =
 approval:<id>`, `channel_cards` row): header "Approval needed", summary title
 and fields, context (agent, rule, expiry), buttons Approve/Deny (and
-Approve all / Deny all for batches with total > 1). On decision/expiry the card
+Approve all / Deny all for batches with total > 1); (phase 2, RFE-012) the context
+line says "needs an approver", and a click or `approve <code>` by a linked user
+who is not `can_approve` is refused with an ephemeral "Only approvers can decide
+this" and changes nothing (the card stays pending). On decision/expiry the card
 is settled with who decided and how. Action approvals, reach requests and agent
 link requests use the same pattern.
 
@@ -333,7 +415,9 @@ link requests use the same pattern.
   `active`. Platforms without provisioning use `presence_setup` fields (manual
   token paste) validated by `credentials.validate`.
 - **Detach / agent delete** → `presence.deprovision` op (best effort), row
-  deleted.
+  deleted. (phase 3, RFE-024) The op is **self-contained** and enqueued in the same
+  transaction as the delete, before the cascade (`§4.2`, *Self-contained
+  deprovision operations*).
 - **Removal detection**: `presence.removed` events or `credential_dead`
   results → `disabled`; messaging tools explain; dashboard offers Re-attach or
   Detach.
@@ -352,11 +436,32 @@ through `POST /v1/connector/credentials` (CAS on `credentials_version`).
 
 ### 5.9 User linking
 
-Verified-email auto-link (5.1 step 4); sign-in link: `link_requests` token →
-`<external>/link/channel?token=aui_…` dashboard page → the signed-in person
-confirms → `POST /v1/channel-links/confirm` creates the user link; org admins
-may create links manually. A platform user links to at most one Aurora user
-per integration; people manage their links under Account.
+Phase 0: verified-email auto-link (5.1 step 4) or the sign-in link. **From
+phase 1 (RFE-001) the sign-in link is the default and only automatic path**:
+
+- **Sign-in link** (always available): `link_requests` token →
+  `<external>/link/channel?token=aui_…` dashboard page → the person signs in
+  (OIDC, `04`), the page shows the integration, the platform account's
+  handle/display name and the platform email hint if any, and the person
+  **confirms explicitly** → `POST /v1/channel-links/confirm` (session-only)
+  creates the user link (`method = sign_in_link`). The confirming user must be
+  an active member of the integration's org (else 403 `not_org_member`; the
+  link-request is not consumed). The token is single use and expires after 30
+  min.
+- **Verified-email auto-link** (opt-in): the org-admin setting
+  `channel_integrations.config.verified_email_autolink` (boolean, default
+  `false`). Setting it `true` requires the `email_verified` capability for the
+  integration (else 422 `autolink_unsupported`), is audited
+  (`channel_integration.autolink_enable` / `.autolink_disable`,
+  security-critical set from phase 2) and the dashboard states the consequence: *"This extends
+  trust to the connector: it can create links, and therefore speak and approve
+  as any of your members whose verified email it asserts."* Disabling it does
+  not remove existing links; org admins may delete links
+  (`DELETE /v1/user-links/{id}`), and the dashboard lists each link's
+  `method` so autolinked ones can be reviewed.
+- Org admins may create links manually (`method = admin`). A platform user
+  links to at most one Aurora user per integration; people manage their links
+  under Account.
 
 ### 5.10 Messaging tools
 
@@ -387,7 +492,9 @@ Available to an agent only while it has an `active` presence.
 ## 6. Invariants (enforced by the core)
 
 1. **The core authorizes; the platform never does** — speakers, reach,
-   bindings, clicks (5.1, 5.5).
+   bindings, clicks (5.1, 5.5). (phase 1, RFE-001) A connector-asserted email
+   mints a user link only under the explicit, audited per-integration opt-in
+   (5.9); by default every link is confirmed by the signed-in person.
 2. **No unauthorized input reaches an agent**; refusals are sent as operations.
 3. **At-least-once in, at-most-once out**: inbox dedupe by event id; claimed
    ops with markers.

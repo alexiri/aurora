@@ -1,0 +1,36 @@
+{
+  "$defs": {
+    "ProvisionAgent": {
+      "properties": {
+        "avatar_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "handle": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle",
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "agent": {
+      "$ref": "#/$defs/ProvisionAgent"
+    }
+  },
+  "required": [
+    "agent"
+  ],
+  "title": "PresenceProvisionOp",
+  "type": "object"
+}

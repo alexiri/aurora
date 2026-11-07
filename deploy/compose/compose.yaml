@@ -1,0 +1,227 @@
+# Aurora development / single-host stack (docs/15 §Development).
+# Setup:  ./setup.sh   Start: podman compose up -d   (from this directory or -f)
+# Healthchecks: distroless images have no curl/shell, so only postgres has a
+# healthcheck; other services use depends_on service_started. Verify health from
+# the host: curl localhost:4000/v1/instance (api via edge), localhost:4102 (gateway).
+name: aurora
+
+x-env: &aurora-env
+  AURORA_CONFIG: /etc/aurora/aurora.toml
+  AURORA_DATABASE_URL: postgres://aurora:${POSTGRES_PASSWORD:?run setup.sh}@postgres:5432/aurora
+  AURORA_ENCRYPTION_KEYS: ${AURORA_ENCRYPTION_KEYS:?run setup.sh}
+  AURORA_ENCRYPTION_ACTIVE_KEY: ${AURORA_ENCRYPTION_ACTIVE_KEY:-k1}
+  AURORA_SIGNING_KEY: ${AURORA_SIGNING_KEY:?run setup.sh}
+  AURORA_INTERNAL_SECRET: ${AURORA_INTERNAL_SECRET:?run setup.sh}
+  AURORA_RUNNER_SESSION_KEY: ${AURORA_RUNNER_SESSION_KEY:?run setup.sh}
+  AURORA_RUNNER_TOKEN: ${AURORA_RUNNER_TOKEN:?run setup.sh}
+  AURORA_CONNECTOR_TOKEN: ${AURORA_CONNECTOR_TOKEN:?run setup.sh}
+  AURORA_BOOTSTRAP_RUNNER_TOKEN: ${AURORA_RUNNER_TOKEN}
+  AURORA_BOOTSTRAP_CONNECTOR_TOKENS: fake:${AURORA_CONNECTOR_TOKEN}
+
+x-cfg: &aurora-cfg
+  - ./aurora.toml:/etc/aurora/aurora.toml:ro
+
+services:
+  postgres:
+    image: docker.io/library/postgres:16
+    environment:
+      POSTGRES_USER: aurora
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run setup.sh}
+      POSTGRES_DB: aurora
+    volumes:
+      - aurora-pg:/var/lib/postgresql/data
+    networks: [core]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aurora -d aurora"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    image: aurora-api:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/Containerfile, target: api }
+    command: ["migrate"]
+    environment: *aurora-env
+    volumes: *aurora-cfg
+    networks: [core]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    image: aurora-api:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/Containerfile, target: api }
+    command: ["serve"]
+    environment: *aurora-env
+    # The API hands the gateway CA certificate (public half only, as in the Helm chart) to the
+    # runner for sandbox boot; without it the runner's work poll fails with gateway_ca_unavailable.
+    # setup.sh copies ca.pem out of the aurora-ca volume into ./ca/. ca.key stays gateway-only.
+    volumes:
+      - ./aurora.toml:/etc/aurora/aurora.toml:ro
+      - ./ca/ca.pem:/var/lib/aurora/ca/ca.pem:ro
+    networks:
+      core:
+        aliases: [aurora-api]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  gateway:
+    image: aurora-gateway:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/Containerfile, target: gateway }
+    command: ["serve"]
+    # SEC-09: :4103 listens only on the core-network IP, never on the sandbox network.
+    environment:
+      <<: *aurora-env
+      AURORA__GATEWAY__INTERNAL_BIND: 10.89.249.2
+    volumes:
+      - ./aurora.toml:/etc/aurora/aurora.toml:ro
+      - aurora-ca:/var/lib/aurora/ca
+    networks:
+      core:
+        ipv4_address: 10.89.249.2
+        aliases: [aurora-gateway]
+      sandbox:
+        ipv4_address: 10.89.250.2
+    ports:
+      - "4102:4102"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  hookhost:
+    image: aurora-hookhost:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/Containerfile, target: hookhost }
+    command: ["serve"]
+    environment: *aurora-env
+    volumes: *aurora-cfg
+    networks:
+      core:
+        aliases: [aurora-hookhost]
+    depends_on:
+      api: { condition: service_started }
+    restart: unless-stopped
+
+  web:
+    image: aurora-web:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/web.Containerfile }
+    networks:
+      core:
+        aliases: [aurora-web]
+    restart: unless-stopped
+
+  edge:
+    image: docker.io/library/caddy:2
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks: [core]
+    ports:
+      - "4000:4000"
+    depends_on:
+      api: { condition: service_started }
+      web: { condition: service_started }
+    restart: unless-stopped
+
+  runner:
+    profiles: [hosted]
+    image: aurora-runner:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/Containerfile, target: runner }
+    command: ["serve"]
+    # SEC-09: :4106 listens only on the core-network IP, never on the sandbox network.
+    environment:
+      <<: *aurora-env
+      AURORA__RUNNER__OPS_BIND: 10.89.249.3
+      # The hosted profile runs real sandboxes: podman backend, the sandbox image on the host's
+      # podman, and the internal sandbox network that setup.sh creates (sandbox_hosts is in aurora.toml).
+      AURORA__RUNNER__BACKEND: podman
+      AURORA__RUNNER__IMAGE: ${AURORA_SANDBOX_IMAGE:-localhost/aurora-sandbox:0.1.0}
+      AURORA__RUNNER__SANDBOX_NETWORK: aurora-sandbox
+    volumes:
+      - ./aurora.toml:/etc/aurora/aurora.toml:ro
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/podman/podman.sock:/run/podman/podman.sock
+    security_opt: [label=disable]
+    # Rootless podman socket access. The socket is `srw-rw---- <you>:<you>`. Under the default user
+    # namespace the image's nonroot uid 65532 maps to a host sub-uid that cannot open it. keep-id
+    # maps the invoking user to the same uid inside the container, and the runner runs as that
+    # uid (AURORA_UID/AURORA_GID, written to .env by setup.sh). This is no more privilege than the
+    # socket access itself: whoever can open the socket can already start any container as that
+    # user. Only this service changes; the other services keep the image's nonroot user.
+    userns_mode: keep-id
+    user: "${AURORA_UID:-1000}:${AURORA_GID:-1000}"
+    networks:
+      core:
+        ipv4_address: 10.89.249.3
+      sandbox:
+        ipv4_address: 10.89.250.3
+    depends_on:
+      api: { condition: service_started }
+    restart: unless-stopped
+
+  connector-fake:
+    profiles: [connector-fake]
+    image: aurora-connector-fake:${AURORA_VERSION:-dev}
+    build: { context: ../.., dockerfile: images/services/Containerfile, target: connector-fake }
+    command: ["serve"]
+    environment: *aurora-env
+    volumes: *aurora-cfg
+    networks: [core]
+    ports:
+      - "4190:4190"
+    depends_on:
+      api: { condition: service_started }
+    restart: unless-stopped
+
+  # --- llm-mock profile (decision I-30): the real LiteLLM proxy in front of VidaiMock, a scripted
+  # Anthropic-API stand-in. It is NOT a model; dev/e2e only (docs/operator/llm-endpoints.md).
+  vidaimock:
+    profiles: [llm-mock]
+    # VidaiMock v0.4.0 (Apache-2.0), multi-arch index digest; see vidaimock/README.md.
+    image: ghcr.io/vidaiuk/vidaimock@sha256:c306a4e87637976bfd9034d0275ae6932497b18ee71614c46a0f143f393127c6
+    command: ["--host", "0.0.0.0", "--port", "8100", "--config-dir", "/config", "--isolated", "--mode", "benchmark"]
+    volumes:
+      - ./vidaimock:/config:ro
+    networks:
+      core:
+        aliases: [vidaimock]
+    restart: unless-stopped
+
+  litellm:
+    profiles: [llm-mock]
+    # LiteLLM v1.108.2-lts, pinned by digest.
+    image: ghcr.io/berriai/litellm@sha256:d8b4ac356743d647a13bb93f45b941fcd5f5354122cfd205948a1b192790389d
+    command: ["--config", "/etc/litellm/litellm.yaml", "--port", "4000"]
+    environment:
+      # Dev-only dummy key. Never reuse; it is the LLM key you give Aurora for endpoint `litellm-mock`.
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-aurora-mock-dev}
+      LITELLM_TELEMETRY: "False"
+    volumes:
+      - ./litellm.yaml:/etc/litellm/litellm.yaml:ro
+    networks:
+      core:
+        # Static so aurora.toml can open exactly this address to agents (gateway.allowed_private).
+        ipv4_address: 10.89.249.4
+        aliases: [litellm]
+    ports:
+      - "127.0.0.1:4400:4000"
+    depends_on:
+      vidaimock: { condition: service_started }
+    restart: unless-stopped
+
+networks:
+  core:
+    ipam:
+      config:
+        - subnet: 10.89.249.0/24
+          # Dynamic addresses come from the upper half so they cannot take the static ones
+          # (gateway 10.89.249.2, runner 10.89.249.3) that start order would otherwise race for.
+          ip_range: 10.89.249.128/25
+  sandbox:
+    external: true
+    name: aurora-sandbox
+
+volumes:
+  aurora-pg: {}
+  # Fixed name (not project-prefixed) so setup.sh mints the gateway CA into the volume the gateway mounts.
+  aurora-ca:
+    name: aurora-ca

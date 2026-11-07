@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "message_ref": {
+      "type": "string"
+    },
+    "thread_ref": {
+      "default": "",
+      "type": "string"
+    }
+  },
+  "required": [
+    "message_ref"
+  ],
+  "title": "MessagePostResult",
+  "type": "object"
+}

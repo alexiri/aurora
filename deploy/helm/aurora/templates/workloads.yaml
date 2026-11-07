@@ -1,0 +1,68 @@
+{{- $r := . -}}
+{{- $full := include "aurora.fullname" . -}}
+{{- $common := list "AURORA_ENCRYPTION_KEYS" "AURORA_ENCRYPTION_ACTIVE_KEY" "AURORA_INTERNAL_SECRET" -}}
+{{- $apiKeys := concat $common (list "AURORA_SIGNING_KEY" "AURORA_RUNNER_SESSION_KEY") -}}
+{{- $apiEnv := include "aurora.env" (dict "root" . "db" true "keys" $apiKeys) -}}
+{{- if .Values.api.bootstrap.runnerToken }}
+{{- $apiEnv = printf "%s\n- name: AURORA_BOOTSTRAP_RUNNER_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_RUNNER_TOKEN}}" $apiEnv (include "aurora.secretName" .) }}
+{{- end }}
+{{ include "aurora.workload" (dict "root" . "name" "api" "spec" .Values.api "caCert" true "image" (include "aurora.image" (dict "root" . "name" "aurora-api")) "args" (list "serve") "env" $apiEnv "pluginsMount" true "ports" (list (dict "name" "http" "port" 4101) (dict "name" "internal" "port" 4111))) }}
+---
+{{ include "aurora.workload" (dict "root" . "name" "hookhost" "spec" .Values.hookhost "image" (include "aurora.image" (dict "root" . "name" "aurora-hookhost")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_INTERNAL_SECRET"))) "ports" (list (dict "name" "http" "port" 4104))) }}
+---
+{{ include "aurora.workload" (dict "root" . "name" "web" "spec" .Values.web "image" (include "aurora.image" (dict "root" . "name" "aurora-web")) "env" (include "aurora.env" (dict "root" .)) "ports" (list (dict "name" "http" "port" 4100))) }}
+---
+{{/* gateway: Service for 4103 (internal) is separate from the proxy Service (4102) */}}
+{{ include "aurora.workload" (dict "root" . "name" "gateway" "spec" .Values.gateway "ca" true "image" (include "aurora.image" (dict "root" . "name" "aurora-gateway")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "db" true "keys" $common)) "ports" (list (dict "name" "internal" "port" 4103) (dict "name" "proxy" "port" 4102 "skipService" true))) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-gateway-proxy
+  labels: {{- include "aurora.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+  {{- with .Values.gateway.proxy.service.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.gateway.proxy.service.type }}
+  selector: {{- include "aurora.selector" (dict "root" . "component" "gateway") | nindent 4 }}
+  ports:
+    - {name: proxy, port: 4102, targetPort: 4102}
+  {{- with .Values.gateway.proxy.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges: {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- if .Values.runner.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $full }}-runner
+  labels: {{- include "aurora.labels" . | nindent 4 }}
+---
+{{ include "aurora.workload" (dict "root" . "name" "runner" "spec" .Values.runner "serviceAccount" (printf "%s-runner" $full) "image" (include "aurora.image" (dict "root" . "name" "aurora-runner")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_RUNNER_SESSION_KEY" "AURORA_RUNNER_TOKEN"))) "ports" (list (dict "name" "http" "port" 4105))) }}
+{{- end }}
+{{- range .Values.connectors }}
+{{- $c := . }}
+---
+{{ include "aurora.workload" (dict "root" $r "name" (printf "connector-%s" .id) "spec" (dict "replicas" (default 1 .replicas) "resources" (default (dict "requests" (dict "cpu" "50m" "memory" "64Mi")) .resources) "extraEnv" (default (list) .env)) "image" (include "aurora.image" (dict "root" $r "name" (printf "aurora-connector-%s" .id) "override" .image)) "args" (list "serve") "env" (printf "%s\n- name: AURORA_CONNECTOR_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: %s}}" (include "aurora.env" (dict "root" $r)) .tokenSecret.name .tokenSecret.key) "ports" (list (dict "name" "callback" "port" (default 4190 .callbackPort)))) }}
+{{- if and .callbackIngress .callbackIngress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $full }}-connector-{{ .id }}
+  labels: {{- include "aurora.labels" $r | nindent 4 }}
+spec:
+  {{- with $r.Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ .callbackIngress.host | quote }}
+      http:
+        paths:
+          - path: {{ default "/" .callbackIngress.path }}
+            pathType: Prefix
+            backend: {service: {name: {{ $full }}-connector-{{ .id }}, port: {number: {{ default 4190 .callbackPort }}}}}
+{{- end }}
+{{- end }}

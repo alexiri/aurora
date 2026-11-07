@@ -1,0 +1,10 @@
+# Test configuration for aurora-api integration tests. Production defaults
+# (invite_only sign-up, org creation by instance admins) unless a test mutates
+# the config. Independent of deploy/dev/*.
+[server]
+external_url = "http://localhost:4100"
+bind = "127.0.0.1"
+
+[runner]
+backend = "fake"
+api_url = "http://localhost:4101"

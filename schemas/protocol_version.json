@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "pattern": "^(runner|supervisor|connector|hookhost)/[1-9][0-9]*$",
+  "title": "ProtocolVersion",
+  "type": "string"
+}

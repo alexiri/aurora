@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "BoundedString64": {
+      "maxLength": 64,
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Error body shape returned by the core on 4xx/5xx (`code` open vocabulary).",
+  "properties": {
+    "code": {
+      "$ref": "#/$defs/BoundedString64"
+    },
+    "message": {
+      "default": "",
+      "type": "string"
+    }
+  },
+  "required": [
+    "code"
+  ],
+  "title": "ErrorBody",
+  "type": "object"
+}

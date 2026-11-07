@@ -1,0 +1,169 @@
+{{- $full := include "aurora.fullname" . -}}
+{{- $secret := include "aurora.secretName" . -}}
+{{- $ca := include "aurora.caSecretName" . -}}
+{{- $genSecrets := not .Values.secrets.existingSecret -}}
+{{- $genCA := not .Values.gateway.ca.existingSecret -}}
+{{- if or $genSecrets $genCA }}
+# Hook ServiceAccount + Role: may only read/create/patch Secrets in the release namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $full }}-hooks
+  annotations:
+    "helm.sh/hook": pre-install
+    "helm.sh/hook-weight": "-20"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $full }}-hooks
+  annotations:
+    "helm.sh/hook": pre-install
+    "helm.sh/hook-weight": "-20"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $full }}-hooks
+  annotations:
+    "helm.sh/hook": pre-install
+    "helm.sh/hook-weight": "-20"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $full }}-hooks}
+subjects:
+  - {kind: ServiceAccount, name: {{ $full }}-hooks}
+{{- end }}
+{{- if $genSecrets }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $full }}-secrets
+  labels: {{- include "aurora.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ $full }}-hooks
+      {{- include "aurora.podSecurity" . | nindent 6 }}
+      containers:
+        - name: secrets
+          image: {{ .Values.hookImage | quote }}
+          {{- include "aurora.containerSecurity" . | nindent 10 }}
+          env:
+            - {name: NAME, value: {{ $secret | quote }}}
+            - {name: PG_ENABLED, value: {{ .Values.postgres.enabled | quote }}}
+            - {name: PG_HOST, value: {{ printf "%s-postgres" $full | quote }}}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              export HOME=/tmp
+              kubectl get secret "$NAME" >/dev/null 2>&1 || kubectl create secret generic "$NAME"
+              # Idempotent: only keys that are absent are written; existing values are never overwritten.
+              have() { [ -n "$(kubectl get secret "$NAME" -o "jsonpath={.data.$1}")" ]; }
+              put() { case "$2" in ""|k1:|aur_|aun_) echo "empty generated value for $1" >&2; exit 1;; esac; have "$1" || kubectl patch secret "$NAME" -p "{\"stringData\":{\"$1\":\"$2\"}}" >/dev/null; }
+              # The hook image (alpine/k8s) has no openssl: read /dev/urandom. A generator that
+              # printed nothing would store an empty value, so every put refuses empty values.
+              b64() { head -c 32 /dev/urandom | base64 | tr -d '\n'; }
+              hex() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+              put AURORA_ENCRYPTION_KEYS "k1:$(b64)"
+              put AURORA_ENCRYPTION_ACTIVE_KEY k1
+              put AURORA_SIGNING_KEY "$(b64)"
+              put AURORA_INTERNAL_SECRET "$(b64)"
+              put AURORA_RUNNER_SESSION_KEY "$(b64)"
+              put AURORA_RUNNER_TOKEN "aur_$(hex)"
+              put AURORA_CONNECTOR_TOKEN "aun_$(hex)"
+              if [ "$PG_ENABLED" = "true" ]; then
+                put POSTGRES_PASSWORD "$(hex)"
+                pw="$(kubectl get secret "$NAME" -o 'jsonpath={.data.POSTGRES_PASSWORD}' | base64 -d)"
+                put AURORA_DATABASE_URL "postgres://aurora:${pw}@${PG_HOST}:5432/aurora"
+              fi
+      volumes: [{name: tmp, emptyDir: {}}]
+{{- end }}
+{{- if $genCA }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $full }}-gateway-ca
+  labels: {{- include "aurora.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install
+    "helm.sh/hook-weight": "-9"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ $full }}-hooks
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "aurora.podSecurity" . | nindent 6 }}
+      initContainers:
+        - name: generate-ca
+          image: {{ include "aurora.image" (dict "root" . "name" "aurora-gateway") | quote }}
+          args: ["generate-ca", "--out", "/ca"]
+          {{- include "aurora.containerSecurity" . | nindent 10 }}
+          volumeMounts: [{name: ca, mountPath: /ca}]
+      containers:
+        - name: store
+          image: {{ .Values.hookImage | quote }}
+          {{- include "aurora.containerSecurity" . | nindent 10 }}
+          env: [{name: NAME, value: {{ $ca | quote }}}]
+          volumeMounts: [{name: ca, mountPath: /ca, readOnly: true}, {name: tmp, mountPath: /tmp}]
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              export HOME=/tmp
+              if kubectl get secret "$NAME" >/dev/null 2>&1; then echo "CA secret exists; not overwriting"; exit 0; fi
+              kubectl create secret generic "$NAME" --from-file=ca.pem=/ca/ca.pem --from-file=ca.key=/ca/ca.key
+      volumes: [{name: ca, emptyDir: {}}, {name: tmp, emptyDir: {}}]
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $full }}-migrate
+  labels: {{- include "aurora.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10   # tolerates the evaluation Postgres still starting
+  template:
+    metadata:
+      labels: {{- include "aurora.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "aurora.podSecurity" . | nindent 6 }}
+      containers:
+        - name: migrate
+          image: {{ include "aurora.image" (dict "root" . "name" "aurora-api") | quote }}
+          args: ["migrate"]
+          {{- include "aurora.containerSecurity" . | nindent 10 }}
+          env:
+            {{- include "aurora.env" (dict "root" . "db" true "keys" (list "AURORA_ENCRYPTION_KEYS" "AURORA_ENCRYPTION_ACTIVE_KEY" "AURORA_INTERNAL_SECRET" "AURORA_SIGNING_KEY" "AURORA_RUNNER_SESSION_KEY")) | nindent 12 }}
+          volumeMounts: [{name: config, mountPath: /etc/aurora, readOnly: true}, {name: tmp, mountPath: /tmp}]
+      volumes:
+        - {name: config, configMap: {name: {{ $full }}-config}}
+        - {name: tmp, emptyDir: {}}

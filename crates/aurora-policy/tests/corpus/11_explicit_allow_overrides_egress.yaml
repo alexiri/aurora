@@ -1,0 +1,6 @@
+description: an explicit network allow rule beats the uncredentialed default
+workspace:
+  uncredentialed_default: block
+  ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: net-allow, action: allow, targets: [{type: network, host: api.example.com, methods: [GET]}]}]
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: allow, workspace_rule: net-allow}

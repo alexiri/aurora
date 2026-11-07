@@ -1,0 +1,86 @@
+# CI stages 1–2 (docs/18-testing.md §CI pipeline) + architecture guards.
+name: ci
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  DATABASE_URL: postgres://aurora:aurora@127.0.0.1:5432/aurora
+  SQLX_CLI_VERSION: 0.8.6
+
+jobs:
+  rust-lint:
+    runs-on: ubuntu-latest
+    services:
+      postgres: &pg
+        image: postgres:16
+        env: { POSTGRES_USER: aurora, POSTGRES_PASSWORD: aurora, POSTGRES_DB: aurora }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U aurora" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "rustfmt, clippy" }
+      - uses: Swatinem/rust-cache@v2
+      - name: sqlx-cli
+        run: cargo install sqlx-cli --version "$SQLX_CLI_VERSION" --no-default-features --features postgres,rustls --locked
+      - name: migrate (sqlx macros check online, I-05)
+        run: sqlx migrate run --source crates/aurora-db/migrations
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  rust-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  rust-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres: *pg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: sqlx-cli
+        run: cargo install sqlx-cli --version "$SQLX_CLI_VERSION" --no-default-features --features postgres,rustls --locked
+      - run: sqlx migrate run --source crates/aurora-db/migrations
+      - run: cargo test --workspace --all-features
+
+  web:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: web } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: API client drift (openapi.json → schema.d.ts)
+        run: pnpm gen:api && git diff --exit-code -- src/lib/api/schema.d.ts
+
+  guards:
+    runs-on: ubuntu-latest
+    services:
+      postgres: *pg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: bash scripts/guards/run-all.sh
+      - name: schema extract is current
+        run: python3 scripts/extract-schema.py --check
+      - name: sqlx-cli
+        run: cargo install sqlx-cli --version "$SQLX_CLI_VERSION" --no-default-features --features postgres,rustls --locked
+      - run: sqlx migrate run --source crates/aurora-db/migrations
+      - name: migrated schema matches 03
+        run: cargo test -p aurora-db --test schema_matches_spec

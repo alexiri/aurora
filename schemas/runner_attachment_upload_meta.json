@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Attachment upload metadata carried in headers (`HDR_*`); body is the file bytes.",
+  "properties": {
+    "boot_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "caption": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "conversation_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "filename": {
+      "type": "string"
+    },
+    "sandbox_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "turn_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sandbox_id",
+    "boot_id",
+    "conversation_id",
+    "turn_id",
+    "filename"
+  ],
+  "title": "AttachmentUploadMeta",
+  "type": "object"
+}

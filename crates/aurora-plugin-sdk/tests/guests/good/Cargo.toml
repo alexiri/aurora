@@ -1,0 +1,17 @@
+[package]
+name = "guest-good"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aurora-plugin-sdk = { path = "../../.." }
+
+[workspace]
+
+[profile.release]
+opt-level = "s"
+panic = "abort"

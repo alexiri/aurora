@@ -1,0 +1,568 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+use aurora_config::*;
+use std::path::PathBuf;
+
+const KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; // 32 zero bytes
+
+fn secrets() -> Vec<(String, String)> {
+    let k = format!("main:{KEY}");
+    [
+        ("AURORA_DATABASE_URL", "postgres://u:pw@db/aurora"),
+        ("AURORA_ENCRYPTION_KEYS", k.as_str()),
+        ("AURORA_ENCRYPTION_ACTIVE_KEY", "main"),
+        ("AURORA_SIGNING_KEY", KEY),
+        ("AURORA_INTERNAL_SECRET", KEY),
+        ("AURORA_RUNNER_SESSION_KEY", KEY),
+        ("AURORA_RUNNER_TOKEN", "aur_abc"),
+        ("AURORA_CONNECTOR_TOKEN", "aun_abc"),
+    ]
+    .iter()
+    .map(|(a, b)| (a.to_string(), b.to_string()))
+    .collect()
+}
+
+fn write(name: &str, text: &str) -> PathBuf {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("aurora-config-test-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join(name);
+    std::fs::write(&p, text).unwrap();
+    p
+}
+
+fn load_with(toml: &str, extra: &[(&str, &str)]) -> Result<RawConfig> {
+    let p = write("c.toml", toml);
+    let mut e = secrets();
+    e.extend(extra.iter().map(|(a, b)| (a.to_string(), b.to_string())));
+    load(Some(&p), e.into_iter())
+}
+
+const BASE: &str = "[server]\nexternal_url = \"https://aurora.example.org\"\n";
+
+#[test]
+fn toml_only_and_api_validates() {
+    let raw = load_with(BASE, &[]).unwrap();
+    let api = raw.api_config().unwrap();
+    assert_eq!(api.external_url, "https://aurora.example.org");
+    assert_eq!(api.max_connections, 20);
+    assert_eq!(api.advertised_proxy_url, "http://aurora.example.org:4102");
+    assert_eq!(api.keyring.active, "main");
+}
+
+#[test]
+fn env_overrides_nested_and_typed() {
+    let raw = load_with(
+        &format!("{BASE}[runner]\nbackend = \"podman\"\n"),
+        &[
+            ("AURORA__RUNNER__K8S__NAMESPACE", "aur"),
+            ("AURORA__RUNNER__BACKEND", "fake"),
+            ("AURORA__RUNNER__MAX_SANDBOXES", "8"),
+            ("AURORA__AUTH__INSTANCE_ADMINS", "[\"a@b.c\"]"),
+            ("AURORA__TELEMETRY__LOG_LEVEL", "debug"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(raw.runner.k8s.namespace.as_deref(), Some("aur"));
+    assert_eq!(raw.runner.backend.as_deref(), Some("fake"));
+    assert_eq!(raw.runner.max_sandboxes, 8);
+    assert_eq!(raw.auth.instance_admins, vec!["a@b.c"]);
+    assert_eq!(raw.telemetry.log_level, "debug");
+}
+
+#[test]
+fn env_only_without_file() {
+    let mut e = secrets();
+    e.push(("AURORA_CONFIG".into(), "/nonexistent/x.toml".into()));
+    assert!(load(None, e.clone().into_iter()).is_err()); // explicit path must exist
+    e.pop();
+    e.push((
+        "AURORA__SERVER__EXTERNAL_URL".into(),
+        "https://x.example".into(),
+    ));
+    // default path normally absent in test environments
+    if !std::path::Path::new(DEFAULT_CONFIG_PATH).exists() {
+        let raw = load(None, e.into_iter()).unwrap();
+        raw.api_config().unwrap();
+    }
+}
+
+#[test]
+fn file_secret() {
+    let f = write("secret", &format!("{KEY}\n"));
+    let mut e: Vec<(String, String)> = secrets()
+        .into_iter()
+        .filter(|(k, _)| k != "AURORA_SIGNING_KEY")
+        .collect();
+    e.push(("AURORA_SIGNING_KEY_FILE".into(), f.display().to_string()));
+    let p = write("c2.toml", BASE);
+    let raw = load(Some(&p), e.into_iter()).unwrap();
+    assert_eq!(raw.env_secrets.signing_key.unwrap().expose(), KEY);
+}
+
+#[test]
+fn unknown_key_names_path() {
+    let e = load_with(&format!("{BASE}[gateway]\nbogus = 1\n"), &[]).unwrap_err();
+    assert!(e.has_key("gateway.bogus"), "{e}");
+    let e = load_with(BASE, &[("AURORA__SERVER__NOPE", "x")]).unwrap_err();
+    assert!(e.has_key("server.nope"), "{e}");
+    let e = load_with("top = 1\n", &[]).unwrap_err();
+    assert!(e.has_key("top"), "{e}");
+}
+
+#[test]
+fn collects_multiple_errors() {
+    let raw = load_with(
+        "[auth]\nsignup_mode = \"nope\"\n[gateway]\ncondition_body_bytes = 10\n",
+        &[],
+    )
+    .unwrap();
+    let mut raw = raw;
+    raw.env_secrets.signing_key = None;
+    let e = raw.api_config().unwrap_err();
+    for k in [
+        "server.external_url",
+        "auth.signup_mode",
+        "AURORA_SIGNING_KEY",
+    ] {
+        assert!(e.has_key(k), "missing {k}: {e}");
+    }
+    let e = raw.gateway_config().unwrap_err();
+    assert!(e.has_key("gateway.condition_body_bytes"), "{e}");
+}
+
+#[test]
+fn defaults_match_table() {
+    let r = RawConfig::default();
+    assert_eq!(r.server.bind, "0.0.0.0");
+    assert_eq!(r.auth.signup_mode, "invite_only");
+    assert_eq!(r.auth.org_creation, "instance_admins");
+    assert_eq!(r.auth.session_idle_secs, 1_209_600);
+    assert_eq!(r.auth.session_absolute_secs, 2_592_000);
+    assert_eq!(r.secrets.default_store, "inline");
+    assert_eq!(r.llm.enabled_providers, ["litellm", "anthropic"]);
+    assert_eq!(
+        r.governance.llm.allowed_key_scopes,
+        ["organization", "workspace"]
+    );
+    assert_eq!(r.governance.llm.minimum_posture, "open");
+    assert_eq!(r.governance.egress.minimum_posture, "open");
+    assert_eq!(r.agents.default_name, "Daneel");
+    assert!(r.hosted.enabled);
+    assert_eq!(r.hosted.idle_stop_secs, 1800);
+    assert_eq!(r.gateway.condition_body_bytes, 262_144);
+    assert_eq!(r.gateway.upstream_header_timeout_secs, 300);
+    assert_eq!(r.gateway.ca_dir, "/var/lib/aurora/ca");
+    assert_eq!(r.approvals.timeout_secs, 300);
+    assert_eq!(r.runner.max_sandboxes, 4);
+    assert_eq!(r.runner.sandbox_memory_mib, 2048);
+    assert_eq!(r.runner.orphan_reap, "reap");
+    assert_eq!(r.retention.request_log_days, 30);
+    assert_eq!(r.telemetry.log_level, "info");
+}
+
+#[test]
+fn per_service_validation() {
+    let raw = load_with("", &[]).unwrap();
+    assert!(raw.api_config().unwrap_err().has_key("server.external_url"));
+    assert!(
+        raw.gateway_config()
+            .unwrap_err()
+            .has_key("server.external_url")
+    );
+    assert!(raw.hookhost_config().is_ok());
+    assert!(raw.connector_config().is_ok());
+    assert!(raw.runner_config().unwrap_err().has_key("runner.backend"));
+
+    let raw = load_with(
+        "[runner]\nbackend = \"docker\"\napi_url = \"http://a:1\"\n",
+        &[],
+    )
+    .unwrap();
+    assert!(raw.runner_config().unwrap_err().has_key("runner.backend"));
+    let raw = load_with(
+        "[runner]\nbackend = \"fake\"\napi_url = \"http://a:1\"\n",
+        &[],
+    )
+    .unwrap();
+    let r = raw.validate_for(Service::Runner).unwrap();
+    assert!(matches!(r, ServiceConfig::Runner(r) if r.held_awake_ceiling == 3));
+}
+
+#[test]
+fn secret_format_errors() {
+    let mut raw = load_with(BASE, &[]).unwrap();
+    raw.env_secrets.encryption_active_key = Some(Redacted::new("other".into()));
+    raw.env_secrets.internal_secret = Some(Redacted::new("AAAA".into()));
+    let e = raw.api_config().unwrap_err();
+    assert!(e.has_key("AURORA_ENCRYPTION_ACTIVE_KEY"));
+    assert!(e.has_key("AURORA_INTERNAL_SECRET"));
+}
+
+#[test]
+fn governance_example_parses_and_validates() {
+    let toml = format!(
+        r#"{BASE}
+[[llm.endpoints]]
+id = "central"
+provider = "litellm"
+base_url = "https://llm.example.org"
+key_origin = {{ method = "endpoint" }}
+
+[[llm.endpoints]]
+id = "anthropic"
+provider = "anthropic"
+key_origin = {{ method = "provider_account", allowed_organization_ids = ["abc"] }}
+
+[governance.llm]
+allowed_key_scopes = ["organization", "workspace"]
+minimum_posture = "sanctioned_only"
+require_key_origin = true
+
+[governance.egress]
+minimum_posture = "credentialed_only"
+baseline_allowlist = [ {{ host = "pypi.org" }}, {{ host = "*.githubusercontent.com" }} ]
+"#
+    );
+    let raw = load_with(&toml, &[]).unwrap();
+    let api = raw.api_config().unwrap();
+    assert_eq!(
+        api.governance.llm_minimum_posture,
+        LlmPosture::SanctionedOnly
+    );
+    assert_eq!(
+        api.governance.egress_minimum_posture,
+        EgressPosture::CredentialedOnly
+    );
+    assert!(
+        !api.governance
+            .known_llm_hosts
+            .contains(&"api.anthropic.com".to_string())
+    );
+    assert!(
+        api.governance
+            .known_llm_hosts
+            .contains(&"api.openai.com".to_string())
+    );
+    raw.gateway_config().unwrap();
+
+    let bad = toml.replace("key_origin = { method = \"endpoint\" }", "");
+    let e = load_with(&bad, &[]).unwrap().api_config().unwrap_err();
+    assert!(e.has_key("llm.endpoints[0].key_origin"), "{e}");
+}
+
+#[test]
+fn known_hosts_extra_and_endpoint_removal() {
+    let raw = load_with(
+        "[governance.llm]\nknown_llm_hosts_extra = [\"llm.corp\"]\n[[llm.endpoints]]\nid = \"o\"\nprovider = \"openai\"\nbase_url = \"https://api.openai.com/v1\"\n",
+        &[],
+    )
+    .unwrap();
+    let h = raw.known_llm_hosts();
+    assert!(h.contains(&"llm.corp".to_string()));
+    assert!(!h.contains(&"api.openai.com".to_string()));
+    assert!(h.contains(&"api.anthropic.com".to_string()));
+}
+
+#[test]
+fn secrets_never_in_debug() {
+    let mut raw = load_with(
+        &format!("{BASE}[email]\nsmtp_url = \"smtp://u:smtppass@mail:25\"\nfrom = \"a@b.c\"\n[[secrets.stores]]\nid = \"v\"\nkind = \"vault\"\ntoken = \"vaulttoken\"\n"),
+        &[],
+    )
+    .unwrap();
+    raw.env_secrets.runner_token = Some(Redacted::new("aur_topsecret".into()));
+    let api = raw.api_config().unwrap();
+    let dbg = format!("{raw:?} {api:?}");
+    for s in ["smtppass", "vaulttoken", "aur_topsecret", "pw@db", KEY] {
+        assert!(!dbg.contains(s), "leaked {s}");
+    }
+    assert!(dbg.contains("[redacted]"));
+}
+
+#[test]
+fn oidc_provider_defaults_alias_and_domain_validation() {
+    let p = "[[auth.oidc_providers]]\nid = \"corp\"\nissuer_url = \"https://idp.example.org\"\nclient_id = \"c\"\nclient_secret_env = \"CORP_SECRET\"\n";
+    let raw = load_with(
+        &format!("{BASE}{p}allowed_email_domains = [\"example.org\"]\n"),
+        &[("CORP_SECRET", "s3cret")],
+    )
+    .unwrap();
+    let a = raw.api_config().unwrap();
+    let o = &a.auth.oidc_providers[0];
+    assert_eq!(o.issuer, "https://idp.example.org");
+    assert!(o.require_email_verified);
+    assert_eq!(o.scopes, ["openid", "email", "profile"]);
+    assert_eq!(a.oidc_client_secrets["corp"].expose(), "s3cret");
+
+    let bad = load_with(
+        &format!("{BASE}{p}allowed_email_domains = [\"@\"]\n"),
+        &[("CORP_SECRET", "s3cret")],
+    )
+    .unwrap();
+    let err = bad.api_config().unwrap_err().to_string();
+    assert!(err.contains("allowed_email_domains"), "{err}");
+}
+
+#[test]
+fn internal_and_ops_bind_resolve_and_validate() {
+    // Defaults fall back to server.bind.
+    let raw = load_with(BASE, &[]).unwrap();
+    assert_eq!(raw.gateway_config().unwrap().internal_bind, "0.0.0.0");
+    let toml = format!(
+        "{BASE}bind = \"127.0.0.2\"\n[gateway]\ninternal_bind = \"127.0.0.3\"\n[runner]\nbackend = \"fake\"\napi_url = \"http://a:1\"\nops_bind = \"127.0.0.3\"\n"
+    );
+    let raw = load_with(&toml, &[]).unwrap();
+    assert_eq!(raw.gateway_config().unwrap().internal_bind, "127.0.0.3");
+    assert_eq!(raw.runner_config().unwrap().ops_bind, "127.0.0.3");
+
+    let bad = format!(
+        "{BASE}[gateway]\ninternal_bind = \"not-an-ip\"\n[runner]\nbackend = \"fake\"\napi_url = \"http://a:1\"\nops_bind = \"nope\"\n"
+    );
+    let raw = load_with(&bad, &[]).unwrap();
+    assert!(
+        raw.gateway_config()
+            .unwrap_err()
+            .has_key("gateway.internal_bind")
+    );
+    assert!(raw.runner_config().unwrap_err().has_key("runner.ops_bind"));
+}
+
+#[test]
+fn overlap_warning_logic() {
+    assert!(bind_overlap_warning("0.0.0.0", "0.0.0.0").is_some());
+    assert!(bind_overlap_warning("10.0.0.1", "10.0.0.1").is_some());
+    assert!(bind_overlap_warning("10.0.0.1", "0.0.0.0").is_some());
+    assert!(bind_overlap_warning("10.89.250.2", "10.89.249.2").is_none());
+    assert!(bind_overlap_warning("127.0.0.2", "127.0.0.3").is_none());
+    assert!(bind_overlap_warning("0.0.0.0", "127.0.0.1").is_none());
+}
+
+#[test]
+fn k8s_core_namespace_is_accepted() {
+    let raw = load_with(
+        &format!(
+            "{BASE}[runner]\nbackend = \"kubernetes\"\napi_url = \"http://api:4101\"\n\
+             [runner.k8s]\nnamespace = \"sbx\"\ncore_namespace = \"core\"\n"
+        ),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(raw.runner.k8s.core_namespace.as_deref(), Some("core"));
+    let r = raw.runner_config().unwrap();
+    assert_eq!(r.backend, RunnerBackend::Kubernetes);
+    assert_eq!(r.runner.k8s.core_namespace.as_deref(), Some("core"));
+    // Unset by default (the backend resolves the pod's own namespace).
+    let raw = load_with(BASE, &[]).unwrap();
+    assert!(raw.runner.k8s.core_namespace.is_none());
+}
+
+/// The ConfigMap TOML as rendered by the chart (`helm template t deploy/helm/aurora`).
+const HELM_RENDERED_TOML: &str = r#"
+[database]
+  max_connections = 20
+
+[gateway]
+  ca_dir = "/var/lib/aurora/ca"
+  internal_bind = "0.0.0.0"
+
+[hosted]
+  enabled = true
+
+[runner]
+  api_url = "http://t-aurora-api:4101"
+  backend = "kubernetes"
+  ops_bind = "0.0.0.0"
+  [runner.k8s]
+    core_namespace = "default"
+    gateway_service = "t-aurora-gateway-proxy"
+    namespace = "aurora-sandboxes"
+    runner_service = "t-aurora-runner"
+
+[server]
+  bind = "0.0.0.0"
+  external_url = "https://aurora.example.org"
+  trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+
+[telemetry]
+  log_level = "info"
+"#;
+
+fn assert_helm_toml_loads(toml: &str) {
+    let raw = load_with(toml, &[]).unwrap();
+    let r = raw.runner_config().unwrap();
+    assert_eq!(r.backend, RunnerBackend::Kubernetes);
+    let k = &r.runner.k8s;
+    assert_eq!(k.namespace.as_deref(), Some("aurora-sandboxes"));
+    assert!(k.core_namespace.is_some());
+    assert!(k.gateway_service.is_some() && k.runner_service.is_some());
+}
+
+#[test]
+fn helm_rendered_runner_config_loads() {
+    assert_helm_toml_loads(HELM_RENDERED_TOML);
+}
+
+/// Renders the chart with `helm template t <chart> --set-json <each arg>` and returns the
+/// ConfigMap `aurora.toml`. `None` when `helm` is not installed.
+fn helm_rendered_toml(set_json: &[&str]) -> Option<String> {
+    let chart = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/helm/aurora");
+    let mut cmd = std::process::Command::new("helm");
+    cmd.args(["template", "t"]).arg(&chart);
+    for s in set_json {
+        cmd.args(["--set-json", s]);
+    }
+    let Ok(out) = cmd.output() else {
+        eprintln!("helm not installed: skipping live chart render");
+        return None;
+    };
+    assert!(
+        out.status.success(),
+        "helm template failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let mut toml = String::new();
+    let mut inside = false;
+    for line in text.lines() {
+        if line.trim_end() == "  aurora.toml: |" {
+            inside = true;
+        } else if inside {
+            if let Some(l) = line.strip_prefix("    ") {
+                toml.push_str(l);
+                toml.push('\n');
+            } else if line.trim().is_empty() {
+                toml.push('\n');
+            } else {
+                break;
+            }
+        }
+    }
+    assert!(toml.contains("[runner.k8s]"), "ConfigMap TOML not found");
+    Some(toml)
+}
+
+/// Renders the real chart when `helm` is installed and loads the ConfigMap TOML.
+#[test]
+fn live_helm_template_config_loads() {
+    let Some(toml) = helm_rendered_toml(&[]) else {
+        return;
+    };
+    assert_helm_toml_loads(&toml);
+}
+
+/// OPS-013: `runner.k8s.nodeSelector` / `tolerations` and the plugin directory render into
+/// the ConfigMap TOML and load.
+#[test]
+fn helm_rendered_scheduling_and_plugins_load() {
+    let Some(toml) = helm_rendered_toml(&[
+        r#"runner.k8s.nodeSelector={"kubernetes.io/os":"linux","aurora.example.org/sandbox":"true"}"#,
+        r#"runner.k8s.tolerations=[{"key":"sandbox","operator":"Exists","effect":"NoSchedule"}]"#,
+        r#"plugins.source="pvc""#,
+        r#"plugins.pvcName="plugins-data""#,
+    ]) else {
+        return;
+    };
+    assert_helm_toml_loads(&toml);
+    let raw = load_with(&toml, &[]).unwrap();
+    assert_eq!(raw.plugins.dir, "/var/lib/aurora/plugins");
+    let r = raw.runner_config().unwrap();
+    assert_eq!(
+        r.runner
+            .k8s
+            .node_selector
+            .get("kubernetes.io/os")
+            .map(String::as_str),
+        Some("linux")
+    );
+    assert_eq!(
+        r.runner
+            .k8s
+            .node_selector
+            .get("aurora.example.org/sandbox")
+            .map(String::as_str),
+        Some("true")
+    );
+    assert_eq!(r.runner.k8s.tolerations.len(), 1);
+    assert_eq!(r.runner.k8s.tolerations[0]["key"].as_str(), Some("sandbox"));
+    assert_eq!(
+        r.runner.k8s.tolerations[0]["effect"].as_str(),
+        Some("NoSchedule")
+    );
+}
+
+/// OPS-013: `deploy/dev/aurora.dev.toml` (used by `just dev`) loads for the API, gateway and
+/// hook host run as host processes, with their localhost URLs.
+#[test]
+fn dev_config_loads_for_host_processes() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/dev/aurora.dev.toml");
+    let raw = load(Some(&path), secrets().into_iter()).unwrap();
+    raw.api_config().unwrap();
+    raw.gateway_config().unwrap();
+    raw.hookhost_config().unwrap();
+    assert_eq!(raw.gateway.ca_dir, "deploy/dev/ca");
+    assert_eq!(raw.api.hookhost_url, "http://127.0.0.1:4104");
+    assert_eq!(raw.gateway.hookhost_url, "http://127.0.0.1:4104");
+    assert_eq!(raw.hookhost.api_internal_url, "http://127.0.0.1:4111");
+}
+
+#[test]
+fn bootstrap_connector_tokens_are_validated_and_resolved() {
+    let ok = load_with(
+        BASE,
+        &[(
+            "AURORA_BOOTSTRAP_CONNECTOR_TOKENS",
+            "fake:aun_abc123, slack-2:aun_def456",
+        )],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap();
+    let ids: Vec<&str> = ok
+        .bootstrap_connector_tokens
+        .iter()
+        .map(|(i, _)| i.as_str())
+        .collect();
+    assert_eq!(ids, ["fake", "slack-2"]);
+    // Ids follow the stored `connectors.id` shape; bad entries fail startup validation.
+    for bad in [
+        "Fake:aun_x1",
+        "a_b:aun_x1",
+        "x:aun_x1",
+        "fake:notatoken",
+        "fake",
+    ] {
+        let e = load_with(BASE, &[("AURORA_BOOTSTRAP_CONNECTOR_TOKENS", bad)])
+            .unwrap()
+            .api_config()
+            .unwrap_err();
+        assert!(e.has_key("AURORA_BOOTSTRAP_CONNECTOR_TOKENS"), "{bad}: {e}");
+    }
+}
+
+/// SEC-13: the hook host is configured with its internal secret only: no database
+/// URL, keyring, signing key or session keys are needed, and none are carried.
+#[test]
+fn sec13_hookhost_holds_no_keys_or_database_credentials() {
+    let only_internal = [("AURORA_INTERNAL_SECRET".to_string(), KEY.to_string())];
+    let raw = load(None, only_internal.into_iter()).unwrap();
+    let c = raw
+        .hookhost_config()
+        .expect("hookhost needs only the internal secret");
+    let dbg = format!("{c:?}");
+    for needle in [
+        "database",
+        "encryption",
+        "signing",
+        "runner_session",
+        "postgres://",
+    ] {
+        assert!(!dbg.to_lowercase().contains(needle), "{needle} in {dbg}");
+    }
+    // Even with every secret present in the environment, none leaks into its config.
+    let raw = load_with("", &[]).unwrap();
+    let dbg = format!("{:?}", raw.hookhost_config().unwrap());
+    for needle in ["pw@db", KEY, "aur_abc", "aun_abc"] {
+        assert!(!dbg.contains(needle), "{needle} in {dbg}");
+    }
+}

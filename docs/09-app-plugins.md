@@ -94,6 +94,7 @@ oauth_clients:
   - id: google
     authorize_url: https://accounts.google.com/o/oauth2/v2/auth
     token_url: https://oauth2.googleapis.com/token
+    # authorize_url may be templated the same way (S-14)
     # or tenant-derived: token_url: { template: "https://{connection.tenant_host}/oauth/token", zone: "*.zendesk.com" }
     pkce: true                    # S256
     client_auth: body             # body | basic
@@ -154,8 +155,15 @@ metadata:                       # stored in clear, non-secret
     refresh_token: /refresh_token
     expires_in: /expires_in     # special: converted to credentials_expires_at
     scope: /scope               # special: becomes connection.scopes
+  fields:                       # optional (S-14); only store: metadata | tenant_host
+    - { name: subdomain, label: Host, type: text, store: tenant_host, required: true, placeholder: "acme.zendesk.com" }
   probe: { … }                  # optional, names the account
 ```
+`fields` on `oauth2` exist so a **first** connect with a templated `authorize_url`/`token_url`
+can take `connection.tenant_host` from the form. The host is validated (`tenant` zone, DNS
+name only: no IP literal, userinfo, port or path) **before** the authorize redirect or any
+outbound request and is carried in the encrypted state. `store: credentials` (and `json_file`)
+is rejected (`oauth_field_store`): credentials come from the token response only.
 
 **`fields`** (API keys, credential imports)
 ```yaml
@@ -546,7 +554,55 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
 - **Trust revocation**: revoking a key disables every package it signed; their
   connections stop injecting and show why; nothing is deleted.
 - **App ids and tool ids are immutable**; credential fields may only be added
-  (optional) within a major version.
+  (optional) within a major version. A **major** version may change `credentials`
+  incompatibly; what that does to live connections is defined next.
+- **Major-version upgrade and live connections** (phase 3, RFE-022, D-65).
+  Phase 0–2 left this undefined (connections would simply fail at injection time
+  with `credential_unavailable`). A *major upgrade* is an activation of version
+  *N.x* superseding a previously active *M.y* of the same package with `N > M`
+  (semver major). Upgrades are **not refused** while connections exist (unlike app
+  removal). In the **same transaction as the activation**:
+  1. For every app of the package present in the new version, every live
+     `app_connections` row of that app (any org, any scope; statuses `active` and
+     `reauth_required`) is checked: the **required fields** of the new manifest
+     (`credentials` entries without `optional: true`) must all be among the
+     connection's **stored credential keys** (`app_connections.credential_keys`,
+     names only, recorded whenever credentials are sealed; never values — `03 §Planned
+     changes`). For a legacy row with unknown keys, the keys are derived from the
+     required fields of the manifest of its recorded `app_version` (if that package
+     version is still stored), otherwise the row is treated as **not satisfying**
+     (fail closed).
+  2. A connection that fails the check becomes `status = reauth_required`,
+     `reauth_required_at = now()` and `status_reason = "plugin_major_upgrade:
+     <package_id> <old_version> -> <new_version>; missing: <field names>"`
+     (≤ 300 chars, field *names* only). Its gateway caches are invalidated
+     (`connection` scope). A connection that satisfies the check is left `active`
+     and keeps its `app_version` until its next reconnect (diagnostics only).
+  3. Disabled and `orphaned` connections are not touched.
+  4. The count per app and in total goes into the audit row (`plugin.approve`
+     metadata `connections_reauth: n`, or the system row `plugin.activate` for an
+     automatic activation).
+  Effects: the gateway answers 403 `connection_reauth_required` with the
+  reconnect URL (`06`), exactly as for a refused refresh; the connections page and
+  the connection card show the reason ("`<app>` was upgraded to a version with
+  different credential fields — reconnect"); a **reconnect** (§11 *Connect flow*
+  step 6) clears the state and records the new `app_version`. Nothing is deleted,
+  grants and rules naming the connection keep working after the reconnect.
+  Credential *templates* therefore never run against a vocabulary they were not
+  connected with: a renamed field cannot surface as a confusing
+  `credential_unavailable` at injection time.
+- **Approval screen warning.** Every pending version that is a major upgrade shows
+  **"N connections will need reconnecting"** (count of connections that fail the
+  check right now, per app, no tenant names). `GET /v1/admin/plugins/{id}` returns
+  `impact: { major_upgrade: bool, from_version, connections_total, connections_needing_reauth, by_app: [{ app_id, connections, needing_reauth }] }`;
+  the dashboard shows it as a banner and as a mandatory section of the permissions
+  review (`14`). The count is advisory (connections can change before approval);
+  the activation transaction recomputes. **A major upgrade that would put at least
+  one connection into `reauth_required` is never activated automatically** — not
+  even a `builtin` package whose permissions did not widen: it stays
+  `pending_approval` (reason `breaks_connections`) until an instance admin approves,
+  so the warning is always seen. A major upgrade with `needing_reauth = 0`
+  follows the ordinary rules.
 - **Removing an app** (upgrade without it, or uninstall) with live connections
   is refused unless `force`; forced removal marks connections `orphaned`.
 - **New tools arrive blocked** in custom grants; removed tools make referencing
@@ -562,7 +618,7 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
    challenge); `hook` with authorize: call `connect.authorize`. The **state** is
    AEAD-encrypted (purpose `oauth-state`, TTL `OAUTH_STATE_TTL`) and carries
    `{nonce, app_id, method_id, scope, workspace_id, org_id, user_id, client_id,
-   access_level, pkce_verifier, reconnect_connection_id, continuation}`; it is
+   access_level, pkce_verifier, reconnect_connection_id, continuation, scopes (requested), tenant_host, metadata}`; it is
    also set as a `__Host-aurora_oauth` cookie bound to the browser.
 3. `GET /v1/oauth/callback`: state must decrypt, be unexpired, match the cookie
    and the session user. Fragment-mode providers land on a bridge page that

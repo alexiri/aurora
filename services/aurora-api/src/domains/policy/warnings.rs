@@ -1,0 +1,285 @@
+//! Authoring warnings (07 §Authoring): `shadowed`, `inert`, `overridden_by_org`.
+//! Computed on the scope's draft (what the author is editing); `overridden_by_org`
+//! compares against the organization's published rules.
+use super::dto::*;
+use super::validate::Scope;
+use crate::app::AppState;
+use aurora_core::ApiError;
+use aurora_db::repo::policy as repo;
+use aurora_policy::HostPattern;
+use std::collections::HashMap;
+use uuid::Uuid;
+
+fn identities_cover(a: &[Identity], b: &[Identity]) -> bool {
+    a.is_empty() || (!b.is_empty() && b.iter().all(|x| a.contains(x)))
+}
+
+fn tools_cover(a: &Option<Vec<String>>, b: &Option<Vec<String>>) -> bool {
+    match (a, b) {
+        (None, _) => true,
+        (Some(a), _) if a.is_empty() => true,
+        (Some(_), None) => false,
+        (Some(_), Some(b)) if b.is_empty() => false,
+        (Some(a), Some(b)) => b.iter().all(|t| a.contains(t)),
+    }
+}
+
+fn scope_covers(a: ScopeSel, b: ScopeSel) -> bool {
+    a == ScopeSel::Any || a == b
+}
+
+fn host_covers(a: &str, b: &str) -> bool {
+    if a.eq_ignore_ascii_case(b) {
+        return true;
+    }
+    if b.contains('*') || a.contains(':') {
+        return false;
+    }
+    let bare = b.rsplit_once(':').map_or(b, |(h, _)| h);
+    HostPattern::lenient(a).matches(bare, 0)
+}
+
+fn path_covers(a: &Option<String>, b: &Option<String>) -> bool {
+    match (a, b) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some(a), Some(b)) => {
+            a == b
+                || a.strip_suffix("**")
+                    .is_some_and(|prefix| b.starts_with(prefix))
+        }
+    }
+}
+
+fn methods_cover(a: &Option<Vec<String>>, b: &Option<Vec<String>>) -> bool {
+    match (a, b) {
+        (None, _) => true,
+        (Some(a), _) if a.is_empty() => true,
+        (Some(_), None) => false,
+        (Some(_), Some(b)) if b.is_empty() => false,
+        (Some(a), Some(b)) => b.iter().all(|m| a.contains(m)),
+    }
+}
+
+fn target_covers(a: &Target, b: &Target) -> bool {
+    use Target::*;
+    if a == b {
+        return true;
+    }
+    match (a, b) {
+        (
+            App {
+                app_id: x,
+                tools: t,
+            },
+            App {
+                app_id: y,
+                tools: u,
+            },
+        ) => x == y && tools_cover(t, u),
+        (Connection { id: x, tools: t }, Connection { id: y, tools: u }) => {
+            x == y && tools_cover(t, u)
+        }
+        (
+            AppConnections {
+                app_id: x,
+                scope: s,
+                tools: t,
+            },
+            AppConnections {
+                app_id: y,
+                scope: r,
+                tools: u,
+            },
+        ) => x == y && scope_covers(*s, *r) && tools_cover(t, u),
+        (Secrets { scope: s, kind: k }, Secrets { scope: r, kind: j }) => {
+            scope_covers(*s, *r) && (k.is_none() || k == j)
+        }
+        (
+            Network {
+                host: h,
+                path: p,
+                methods: m,
+            },
+            Network {
+                host: g,
+                path: q,
+                methods: n,
+            },
+        ) => host_covers(h, g) && path_covers(p, q) && methods_cover(m, n),
+        _ => false,
+    }
+}
+
+/// `a` decides every request `b` would match (first-match semantics).
+fn rule_covers(a: &PolicyRule, b: &PolicyRule) -> bool {
+    a.enabled
+        && a.conditions.is_empty()
+        && identities_cover(&a.identities, &b.identities)
+        && (a.targets.is_empty()
+            || (!b.targets.is_empty()
+                && b.targets
+                    .iter()
+                    .all(|bt| a.targets.iter().any(|at| target_covers(at, bt)))))
+}
+
+pub fn shadowed(rules: &[PolicyRule]) -> Vec<PolicyWarning> {
+    let mut out = Vec::new();
+    for (i, r) in rules.iter().enumerate() {
+        if !r.enabled {
+            continue;
+        }
+        if let Some(by) = rules[..i].iter().find(|e| rule_covers(e, r)) {
+            out.push(PolicyWarning {
+                code: WarningCode::Shadowed,
+                rule_logical_id: r.logical_id,
+                message: format!(
+                    "\"{}\" never applies: the earlier rule \"{}\" already decides every request it would match.",
+                    r.name, by.name
+                ),
+            });
+        }
+    }
+    out
+}
+
+pub fn overridden(ws_rules: &[PolicyRule], org_rules: &[PolicyRule]) -> Vec<PolicyWarning> {
+    ws_rules
+        .iter()
+        .filter(|r| r.enabled && r.action == Action::Allow)
+        .filter_map(|r| {
+            org_rules
+                .iter()
+                .find(|o| o.action == Action::Block && rule_covers(o, r))
+                .map(|o| PolicyWarning {
+                    code: WarningCode::OverriddenByOrg,
+                    rule_logical_id: r.logical_id,
+                    message: format!(
+                        "\"{}\" is fully overridden by the organization block rule \"{}\".",
+                        r.name, o.name
+                    ),
+                })
+        })
+        .collect()
+}
+
+async fn inert(
+    state: &AppState,
+    s: Scope,
+    rules: &[PolicyRule],
+) -> Result<Vec<PolicyWarning>, ApiError> {
+    let (mut secrets, mut conns) = (Vec::new(), Vec::new());
+    for r in rules {
+        for t in &r.targets {
+            match t {
+                Target::Secret { id } => secrets.push(*id),
+                Target::Connection { id, .. } => conns.push(*id),
+                _ => {}
+            }
+        }
+    }
+    let sec: HashMap<Uuid, Option<Uuid>> = repo::secret_scopes(&state.pool, s.org, &secrets)
+        .await?
+        .into_iter()
+        .collect();
+    let con: HashMap<Uuid, Option<Uuid>> = repo::connection_scopes(&state.pool, s.org, &conns)
+        .await?
+        .into_iter()
+        .collect();
+    let alive = |m: &HashMap<Uuid, Option<Uuid>>, id: &Uuid| match m.get(id) {
+        None => false,
+        Some(None) => true,
+        Some(Some(w)) => s.ws == Some(*w),
+    };
+    let mut out = Vec::new();
+    for r in rules.iter().filter(|r| r.enabled) {
+        let gone = r.targets.iter().any(|t| match t {
+            Target::Secret { id } => !alive(&sec, id),
+            Target::Connection { id, .. } => !alive(&con, id),
+            _ => false,
+        });
+        if gone {
+            out.push(PolicyWarning {
+                code: WarningCode::Inert,
+                rule_logical_id: r.logical_id,
+                message: format!(
+                    "\"{}\" names a credential that no longer exists in this scope and matches nothing.",
+                    r.name
+                ),
+            });
+        }
+    }
+    Ok(out)
+}
+
+async fn rules_for(state: &AppState, s: Scope, status: &str) -> Result<Vec<PolicyRule>, ApiError> {
+    let Some(g) = repo::generation_by_status(&state.pool, s.org, s.ws, status).await? else {
+        return Ok(Vec::new());
+    };
+    repo::rules_of(&state.pool, g.id)
+        .await?
+        .into_iter()
+        .map(rule_dto)
+        .collect()
+}
+
+pub async fn compute(state: &AppState, s: Scope) -> Result<PolicyWarnings, ApiError> {
+    let rules = rules_for(state, s, "draft").await?;
+    let mut items = shadowed(&rules);
+    items.extend(inert(state, s, &rules).await?);
+    if s.ws.is_some() {
+        let org = rules_for(
+            state,
+            Scope {
+                org: s.org,
+                ws: None,
+            },
+            "published",
+        )
+        .await?;
+        items.extend(overridden(&rules, &org));
+    }
+    Ok(PolicyWarnings { items })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule(name: &str, action: Action, host: &str) -> PolicyRule {
+        PolicyRule {
+            logical_id: Uuid::now_v7(),
+            priority: 0,
+            name: name.into(),
+            description: None,
+            enabled: true,
+            identities: vec![],
+            targets: vec![Target::Network {
+                host: host.into(),
+                path: None,
+                methods: None,
+            }],
+            action,
+            require_approval: false,
+            rate_limit: None,
+            conditions: vec![],
+        }
+    }
+
+    #[test]
+    fn wildcard_shadows_exact() {
+        let w = shadowed(&[
+            rule("all", Action::Allow, "*.example.com"),
+            rule("one", Action::Block, "api.example.com"),
+        ]);
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].code, WarningCode::Shadowed);
+        assert!(
+            shadowed(&[
+                rule("one", Action::Block, "api.example.com"),
+                rule("all", Action::Allow, "*.example.com"),
+            ])
+            .is_empty()
+        );
+    }
+}

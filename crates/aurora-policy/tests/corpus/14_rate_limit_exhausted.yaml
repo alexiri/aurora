@@ -1,0 +1,5 @@
+description: exhausted counter yields rate_limited and no hit
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: rl, action: allow, rate_limit: {count: 3, per: hour}}]}
+counters: [{rule: 00000000-0000-0000-0000-0000000000a1, agent: 00000000-0000-0000-0000-000000000001, n: 3}]
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: rate_limited, hits: 0}

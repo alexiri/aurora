@@ -1,0 +1,131 @@
+{
+  "$defs": {
+    "HarnessId": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "HomeDurability": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "Range": {
+      "properties": {
+        "max": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ],
+      "type": "object"
+    },
+    "ResourceRanges": {
+      "properties": {
+        "cpu": {
+          "$ref": "#/$defs/Range"
+        },
+        "home_gib": {
+          "$ref": "#/$defs/Range"
+        },
+        "memory_mib": {
+          "$ref": "#/$defs/Range"
+        },
+        "pids": {
+          "$ref": "#/$defs/Range"
+        }
+      },
+      "required": [
+        "cpu",
+        "memory_mib",
+        "pids",
+        "home_gib"
+      ],
+      "type": "object"
+    },
+    "RunnerCapabilities": {
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "harnesses": {
+          "items": {
+            "$ref": "#/$defs/HarnessId"
+          },
+          "type": "array"
+        },
+        "held_awake_ceiling": {
+          "description": "`runner.held_awake_ceiling` (docs/11 §Stop): running-but-idle sandboxes above this make\ndue-work evict for a waiting start. Absent from older runners: the API derives\n`max(1, max_sandboxes − 1)`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "home_durability": {
+          "$ref": "#/$defs/HomeDurability"
+        },
+        "image": {
+          "description": "The sandbox image this runner starts (`runner.image`); the single source of truth the\nAPI reports in `SandboxView.image`. Absent from older runners.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_attachment_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_sandboxes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "resources": {
+          "$ref": "#/$defs/ResourceRanges"
+        }
+      },
+      "required": [
+        "backend",
+        "home_durability",
+        "resources",
+        "max_sandboxes",
+        "harnesses",
+        "max_attachment_bytes"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "advertised_host": {
+      "type": "string"
+    },
+    "backend": {
+      "type": "string"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/RunnerCapabilities"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "version",
+    "backend",
+    "capabilities",
+    "advertised_host"
+  ],
+  "title": "RegisterRequest",
+  "type": "object"
+}

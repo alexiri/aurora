@@ -1,0 +1,203 @@
+//! BE-073's implementation of the [`CardRequests`] seam used by inbox processing (BE-072):
+//! `binding.choose` and `dm_default.choose` menus and `reach.decide` DMs to the owners.
+
+use super::build;
+use super::{Minter, NewPost, capabilities, dashboard_url_for, post_card};
+use crate::domains::channels::card_requests::{
+    AgentChoice, BindingChoose, CardRequests, DmDefaultChoose, ReachDecide,
+};
+use aurora_core::ApiError;
+use aurora_crypto::DerivedKeys;
+use aurora_db::DbError;
+use aurora_protocol::connector::{Sender, Target};
+use chrono::Utc;
+use sqlx::PgConnection;
+use std::sync::Arc;
+use uuid::Uuid;
+
+/// Requests of one kind to the same place are deduplicated within this window (seconds).
+const REQUEST_WINDOW_SECS: i64 = 600;
+const REACH_WINDOW_SECS: i64 = 24 * 3600;
+
+pub struct CardsImpl {
+    keys: Arc<DerivedKeys>,
+    external_url: String,
+}
+
+impl CardsImpl {
+    pub fn new(keys: Arc<DerivedKeys>, external_url: &str) -> Self {
+        Self {
+            keys,
+            external_url: external_url.to_owned(),
+        }
+    }
+
+    fn minter(&self, integration_id: Uuid) -> Minter<'_> {
+        Minter {
+            keys: &self.keys,
+            integration_id,
+        }
+    }
+}
+
+/// Picker entries for agent ids (labels are agent names; unknown ids are dropped).
+async fn choices(tx: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<AgentChoice>, ApiError> {
+    let rows: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT id, name FROM agents WHERE id = ANY($1) ORDER BY name, id")
+            .bind(ids)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(DbError::from)?;
+    Ok(rows
+        .into_iter()
+        .map(|(agent_id, label)| AgentChoice { agent_id, label })
+        .collect())
+}
+
+async fn agent_name(tx: &mut PgConnection, id: Uuid) -> Result<String, ApiError> {
+    let name: Option<String> = sqlx::query_scalar("SELECT name FROM agents WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(DbError::from)?;
+    Ok(name.unwrap_or_else(|| "an agent".to_owned()))
+}
+
+fn bucket(secs: i64) -> i64 {
+    Utc::now().timestamp() / secs
+}
+
+#[async_trait::async_trait]
+impl CardRequests for CardsImpl {
+    fn renders_cards(&self) -> bool {
+        true
+    }
+
+    async fn binding_choose(
+        &self,
+        tx: &mut PgConnection,
+        req: BindingChoose,
+    ) -> Result<(), ApiError> {
+        let agents = choices(tx, &req.allowed_agent_ids).await?;
+        if agents.is_empty() {
+            return Ok(());
+        }
+        let caps = capabilities(tx, req.integration_id).await?;
+        let card_id = Uuid::now_v7();
+        let card = build::binding_choose(
+            &self.minter(req.integration_id),
+            card_id,
+            &req.space_ref,
+            &agents,
+        )?;
+        // 13 §5.3: the select is DMed to the person who added the bot.
+        post_card(
+            tx,
+            &caps,
+            NewPost {
+                integration_id: req.integration_id,
+                subject_kind: "binding",
+                subject_id: card_id,
+                card_id,
+                target: Target::User {
+                    user_ref: req.actor_ref.clone(),
+                },
+                sender: Sender::shared(),
+                card,
+                dashboard_url: Some(dashboard_url_for(&self.external_url, "/")),
+                approval_code: None,
+                dedupe_key: format!(
+                    "binding:{}:{}:{}:{}",
+                    req.integration_id,
+                    req.space_ref,
+                    req.actor_ref,
+                    bucket(REQUEST_WINDOW_SECS)
+                ),
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn dm_default_choose(
+        &self,
+        tx: &mut PgConnection,
+        req: DmDefaultChoose,
+    ) -> Result<(), ApiError> {
+        let agents = choices(tx, &req.allowed_agent_ids).await?;
+        if agents.is_empty() {
+            return Ok(());
+        }
+        let caps = capabilities(tx, req.integration_id).await?;
+        let card_id = Uuid::now_v7();
+        let card = build::dm_default_choose(&self.minter(req.integration_id), card_id, &agents)?;
+        post_card(
+            tx,
+            &caps,
+            NewPost {
+                integration_id: req.integration_id,
+                subject_kind: "binding",
+                subject_id: card_id,
+                card_id,
+                // Sent to the person directly: the card is bound to its addressee (`user:<ref>`),
+                // which the click handler enforces ("only they may set their own default").
+                target: Target::User {
+                    user_ref: req.user_ref.clone(),
+                },
+                sender: Sender::shared(),
+                card,
+                dashboard_url: Some(dashboard_url_for(&self.external_url, "/")),
+                approval_code: None,
+                dedupe_key: format!(
+                    "dm_default:{}:{}:{}",
+                    req.integration_id,
+                    req.user_ref,
+                    bucket(REQUEST_WINDOW_SECS)
+                ),
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn reach_decide(&self, tx: &mut PgConnection, req: ReachDecide) -> Result<(), ApiError> {
+        if req.owners.is_empty() {
+            return Ok(());
+        }
+        let agent_label = agent_name(tx, req.agent_id).await?;
+        let caps = capabilities(tx, req.integration_id).await?;
+        for (_, owner) in &req.owners {
+            let card = build::reach(
+                &self.minter(req.integration_id),
+                req.grant_id,
+                &agent_label,
+                &req.subject_label,
+            )?;
+            post_card(
+                tx,
+                &caps,
+                NewPost {
+                    integration_id: req.integration_id,
+                    subject_kind: "reach",
+                    subject_id: req.grant_id,
+                    card_id: Uuid::now_v7(),
+                    target: Target::User {
+                        user_ref: owner.clone(),
+                    },
+                    sender: Sender::shared(),
+                    card,
+                    dashboard_url: Some(dashboard_url_for(&self.external_url, "/")),
+                    approval_code: None,
+                    dedupe_key: format!(
+                        "reach:{}:{}:{}",
+                        req.grant_id,
+                        owner,
+                        bucket(REACH_WINDOW_SECS)
+                    ),
+                },
+            )
+            .await?;
+        }
+        Ok(())
+    }
+}

@@ -1,0 +1,76 @@
+{
+  "$defs": {
+    "Author": {
+      "properties": {
+        "display_name": {
+          "type": "string"
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "email_verified": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/AuthorKind"
+        },
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "kind",
+        "display_name"
+      ],
+      "type": "object"
+    },
+    "AuthorKind": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "HistoryMessage": {
+      "properties": {
+        "at": {
+          "type": "string"
+        },
+        "author": {
+          "$ref": "#/$defs/Author"
+        },
+        "message_ref": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message_ref",
+        "author",
+        "text",
+        "at"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "messages": {
+      "items": {
+        "$ref": "#/$defs/HistoryMessage"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "messages"
+  ],
+  "title": "HistoryResult",
+  "type": "object"
+}

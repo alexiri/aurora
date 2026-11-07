@@ -1,0 +1,74 @@
+package:
+  id: fixture-bearer
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Fixture Bearer
+  description: Phase 0 fixture, API-key connect with bearer injection
+apps:
+  - about:
+      id: bearer-demo
+      name: Bearer demo
+      description: Tasks service reached with a static API token
+      category: testing
+      api_docs: https://docs.bearer.example.test/api
+      web_hosts: [app.bearer.example.test]
+      label_hint: Project name
+    credentials:
+      - { name: api_token, secret: true }
+    metadata:
+      - { name: org }
+    connect:
+      - id: api_key
+        kind: fields
+        fields:
+          - name: api_token
+            label: API token
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "token"
+            help_url: https://app.bearer.example.test/settings/tokens
+        probe:
+          method: GET
+          url: "https://api.bearer.example.test/rest/v2/projects"
+          expect_status: [200]
+          label: /name
+          metadata: { org: /org/name }
+    hosts:
+      - match: { host: api.bearer.example.test, path_prefix: /rest }
+        inject:
+          - bearer: "{credentials.api_token}"
+    token:
+      kind: static
+    tools:
+      read:
+        wildcard: { id: all_read, name: All read operations }
+        items:
+          - { id: list_tasks, name: List tasks, host: api.bearer.example.test, path: /rest/v2/tasks, methods: [GET] }
+          - { id: get_task, name: Get task, host: api.bearer.example.test, path: "/rest/v2/tasks/*", methods: [GET] }
+      write:
+        wildcard: { id: all_write, name: All write operations }
+        items:
+          - { id: close_task, name: Complete task, host: api.bearer.example.test, path: "/rest/v2/tasks/*/close", methods: [POST] }
+          - { id: move_task, name: Move task, host: api.bearer.example.test, path: "/rest/v2/tasks/*/move", methods: [POST] }
+    approvals:
+      close_task:
+        title: Complete task
+        fields:
+          - { label: Task, source: path, segment: 4 }
+      move_task:
+        title: Move task
+        fields:
+          - { label: Task, source: path, segment: 4 }
+          - { label: Project, source: query, name: project }
+        link: "https://app.bearer.example.test/tasks/{path.4}"
+    agent:
+      instructions: |
+        Use the Bearer demo REST API v2. Task ids are strings.
+      env:
+        - { name: BEARER_DEMO_API_BASE, value: "https://api.bearer.example.test/rest/v2" }
+      stubs:
+        - { path: ".config/bearer-demo/config.json", mode: "0600", content: '{"token":"aurora-managed"}' }
+      default_blocklist: [registry.example.test]

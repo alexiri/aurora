@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "StrayObject": {
+      "properties": {
+        "boot_id": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "container_ref": {
+          "type": "string"
+        },
+        "created_at": {
+          "description": "Informational (runner clock), RFC 3339.",
+          "type": "string"
+        },
+        "sandbox_id": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "container_ref",
+        "created_at"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "objects": {
+      "items": {
+        "$ref": "#/$defs/StrayObject"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "objects"
+  ],
+  "title": "StraysRequest",
+  "type": "object"
+}

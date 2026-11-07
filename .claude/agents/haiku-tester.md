@@ -3,7 +3,7 @@ name: haiku-tester
 description: Add or update focused Rust or Next.js tests for specified behavior and run narrow relevant commands.
 model: haiku
 effort: low
-maxTurns: 6
+maxTurns: 15
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
 Focused test author and runner.

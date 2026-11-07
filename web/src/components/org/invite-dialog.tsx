@@ -1,0 +1,98 @@
+"use client";
+
+import { useState, type FormEvent } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { Field, inputClass } from "@/components/ui/field";
+import { errorMessage, fieldErrors } from "@/lib/api/errors";
+import { useCreateInvitation, validateInvite } from "@/lib/api/org";
+import { useWorkspaces } from "@/lib/api/queries";
+
+export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => void }) {
+  const create = useCreateInvitation(orgId);
+  const workspaces = useWorkspaces(orgId);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<"admin" | "member">("member");
+  const [wsIds, setWsIds] = useState<string[]>([]);
+  const [clientErr, setClientErr] = useState("");
+  const fe = create.error ? fieldErrors(create.error) : {};
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    const msg = validateInvite({ email, role });
+    if (msg) return setClientErr(msg);
+    setClientErr("");
+    create.mutate(
+      { email: email.trim(), role, workspace_ids: wsIds },
+      { onSuccess: onDone },
+    );
+  }
+
+  return (
+    <form onSubmit={submit} noValidate className="space-y-4">
+      <Field id="inv-email" label="Email" error={clientErr || fe.email}>
+        <input
+          id="inv-email"
+          type="email"
+          className={inputClass}
+          value={email}
+          autoComplete="off"
+          onChange={(e) => setEmail(e.target.value)}
+        />
+      </Field>
+      <Field id="inv-role" label="Role" error={fe.role}>
+        <select
+          id="inv-role"
+          className={inputClass}
+          value={role}
+          onChange={(e) => setRole(e.target.value as "admin" | "member")}
+        >
+          <option value="member">member</option>
+          <option value="admin">admin</option>
+        </select>
+      </Field>
+      {workspaces.data && workspaces.data.items.length > 0 ? (
+        <fieldset className="space-y-1">
+          <legend className="text-sm font-medium">Workspace access (optional)</legend>
+          {workspaces.data.items.map((w) => (
+            <label key={w.id} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={wsIds.includes(w.id)}
+                onChange={(e) =>
+                  setWsIds((cur) => (e.target.checked ? [...cur, w.id] : cur.filter((x) => x !== w.id)))
+                }
+              />
+              {w.name}
+            </label>
+          ))}
+        </fieldset>
+      ) : null}
+      {create.error && Object.keys(fe).length === 0 ? (
+        <p role="alert" className="text-sm text-red-700">
+          {errorMessage(create.error)}
+        </p>
+      ) : null}
+      <div className="flex justify-end">
+        <Button type="submit" disabled={create.isPending}>
+          {create.isPending ? "Inviting…" : "Send invitation"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+export function InviteDialog({ orgId }: { orgId: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button>Invite member</Button>
+      </DialogTrigger>
+      <DialogContent title="Invite a member" description="They will receive a link to join this organization.">
+        <InviteForm orgId={orgId} onDone={() => setOpen(false)} />
+      </DialogContent>
+    </Dialog>
+  );
+}

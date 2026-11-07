@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "file_ref": {
+      "type": "string"
+    },
+    "max_bytes": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "file_ref",
+    "max_bytes"
+  ],
+  "title": "FileFetchOp",
+  "type": "object"
+}

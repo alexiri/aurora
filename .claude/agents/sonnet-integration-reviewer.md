@@ -3,7 +3,7 @@ name: sonnet-integration-reviewer
 description: Read-only review of Rust and Next.js API alignment, auth/error handling, and cross-stack test coverage.
 model: sonnet
 effort: medium
-maxTurns: 10
+maxTurns: 20
 tools: Read, Grep, Glob, Bash
 ---
 Perform a focused, read-only integration review.

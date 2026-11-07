@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# M1 acceptance: Playwright sign-up -> workspace -> invite -> accept (TEST-011).
+# Uses ports 4100 (web), 4101 (API), a dedicated DB `aurora_e2e`, and tears everything down.
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+DB=aurora_e2e
+ADMIN_URL="${AURORA_E2E_ADMIN_URL:-postgres://aurora:aurora@127.0.0.1:55432/postgres}"
+E2E_URL="${ADMIN_URL%/*}/$DB"
+TMP="$(mktemp -d)"
+API_PID=""; WEB_PID=""; DB_CREATED=0
+
+cleanup() {
+  local rc=$?
+  trap - EXIT INT TERM
+  for p in "$WEB_PID" "$API_PID"; do
+    [ -n "$p" ] && kill -TERM -- "-$p" 2>/dev/null || { [ -n "$p" ] && kill "$p" 2>/dev/null; }
+  done
+  sleep 1
+  for p in "$WEB_PID" "$API_PID"; do
+    [ -n "$p" ] && kill -KILL -- "-$p" 2>/dev/null
+  done
+  if [ "$DB_CREATED" = 1 ]; then
+    psql "$ADMIN_URL" -qc "DROP DATABASE IF EXISTS $DB WITH (FORCE)" >/dev/null 2>&1 || echo "WARN: could not drop $DB" >&2
+  fi
+  [ "$rc" -ne 0 ] && [ -f "$TMP/api.log" ] && { echo "--- API log tail ---"; tail -n 20 "$TMP/api.log" | cut -c1-400; }
+  [ "$rc" -ne 0 ] && [ -f "$TMP/web.log" ] && { echo "--- web log tail ---"; tail -n 20 "$TMP/web.log"; }
+  rm -rf "$TMP"
+  exit "$rc"
+}
+trap cleanup EXIT INT TERM
+
+for port in 4100 4101; do
+  if ss -ltn "sport = :$port" | grep -q LISTEN; then echo "port $port already in use" >&2; exit 1; fi
+done
+
+cargo build -p aurora-api || { echo "cargo build failed" >&2; exit 1; }
+
+psql "$ADMIN_URL" -qc "DROP DATABASE IF EXISTS $DB WITH (FORCE)" -c "CREATE DATABASE $DB" || exit 1
+DB_CREATED=1
+
+# Config: dev config as-is (external_url http://localhost:4100; `next dev` only serves
+# HMR/client assets to localhost, not 127.0.0.1, so the browser must use localhost).
+cp deploy/dev/aurora.dev.toml "$TMP/aurora.toml"
+
+set +u
+. deploy/dev/env.sh
+set -u
+export AURORA_CONFIG="$TMP/aurora.toml"
+export AURORA_DATABASE_URL="$E2E_URL"
+
+target/debug/aurora-api migrate >"$TMP/migrate.log" 2>&1 || { echo "migrate failed" >&2; exit 1; }
+
+export AURORA_E2E_API_LOG="$TMP/api.log"
+setsid target/debug/aurora-api serve >"$AURORA_E2E_API_LOG" 2>&1 &
+API_PID=$!
+
+# Dev server: production builds do not proxy /v1 (edge proxy does that), so use `next dev`.
+(cd web && AURORA_API_URL=http://127.0.0.1:4101 exec setsid pnpm dev >"$TMP/web.log" 2>&1) &
+WEB_PID=$!
+
+wait_for() { # url
+  for _ in $(seq 1 120); do
+    curl -fsS -o /dev/null "$1" 2>/dev/null && return 0
+    sleep 1
+  done
+  echo "timeout waiting for $1" >&2; return 1
+}
+wait_for http://127.0.0.1:4101/v1/instance || exit 1
+wait_for http://localhost:4100/auth/login || exit 1
+
+cd web
+pnpm exec playwright test e2e/m1.spec.ts "$@"

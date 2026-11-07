@@ -1,0 +1,27 @@
+- name: list tasks injects bearer
+  connection: { credentials: { api_token: "tok" }, metadata: {} }
+  request: { method: GET, url: "https://api.bearer.example.test/rest/v2/tasks" }
+  expect:
+    app: bearer-demo
+    tool: list_tasks
+    upstream: { headers: { authorization: "Bearer tok" }, url: "https://api.bearer.example.test/rest/v2/tasks" }
+- name: agent supplied authorization is overwritten
+  connection: { credentials: { api_token: "tok" } }
+  request:
+    method: GET
+    url: "https://api.bearer.example.test/rest/v2/tasks/42"
+    headers: { authorization: "Bearer agent-guess" }
+  expect:
+    tool: get_task
+    upstream: { headers: { authorization: "Bearer tok" } }
+- name: close task summary uses path segment
+  connection: { credentials: { api_token: "tok" } }
+  request: { method: POST, url: "https://api.bearer.example.test/rest/v2/tasks/123/close" }
+  expect: { tool: close_task, summary: { title: "Complete task", fields: { Task: "123" } } }
+- name: move task summary uses path and query
+  connection: { credentials: { api_token: "tok" } }
+  request: { method: POST, url: "https://api.bearer.example.test/rest/v2/tasks/9/move?project=inbox" }
+  expect: { tool: move_task, summary: { title: "Move task", fields: { Task: "9", Project: "inbox" } } }
+- name: unrelated host is not matched
+  request: { method: GET, url: "https://other.example.test/rest/v2/tasks" }
+  expect: { unmatched: true }

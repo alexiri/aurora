@@ -1,0 +1,41 @@
+{
+  "$defs": {
+    "Space": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/SpaceKind"
+        },
+        "label": {
+          "default": "",
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "SpaceKind": {
+      "maxLength": 64,
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "spaces": {
+      "items": {
+        "$ref": "#/$defs/Space"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "spaces"
+  ],
+  "title": "SpacesResult",
+  "type": "object"
+}

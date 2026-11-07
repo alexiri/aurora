@@ -1,0 +1,188 @@
+package:
+  id: demo
+  version: 1.2.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: Demo
+  description: Demo package
+  homepage: https://example.org
+permissions:
+  hooks: [connect.authorize, connect.exchange, token.mint, approval.summarize]
+  egress:
+    connect.exchange: [github.com]
+    token.mint: [api.github.com]
+  context: [org_external_id, agent_name]
+oauth_clients:
+  - id: google
+    authorize_url: https://accounts.google.com/o/oauth2/v2/auth
+    token_url: https://oauth2.googleapis.com/token
+    pkce: true
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: Client ID }
+      - { name: client_secret, label: Client secret, secret: true }
+    setup_note: "Create an OAuth client of type Web application."
+  - id: zen
+    authorize_url: https://example.zendesk.com/oauth/authorizations/new
+    token_url: { template: "https://{connection.tenant_host}/oauth/token", zone: "*.zendesk.com" }
+apps:
+  - about:
+      id: gmail
+      name: Gmail
+      description: Read and send email
+      category: communication
+      api_docs: https://developers.google.com/gmail/api
+      web_hosts: [mail.google.com]
+      connect_note: { text: "An admin must enable API access first.", url: "https://example.org" }
+      label_hint: Account email
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: email }
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: google
+        scopes:
+          - { scope: "https://www.googleapis.com/auth/gmail.readonly", name: Read mail, access: read }
+        default_scopes: ["https://www.googleapis.com/auth/gmail.readonly"]
+        authorize_params: { access_type: offline }
+        access_levels:
+          - { id: user, label: My account }
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+          expect_status: [200]
+          label: /emailAddress
+          metadata: { email: /emailAddress }
+    hosts:
+      - match: { host: gmail.googleapis.com, path_prefix: /gmail }
+        inject:
+          - bearer: "{credentials.access_token}"
+          - header: { name: x-org, value: "{context.org_external_id}" }
+          - query: { name: key, value: "{metadata.email}" }
+          - remove_header: x-goog-api-key
+          - path_template: { prefix: "me", value: "{metadata.email}" }
+          - path_regex: { pattern: "^/old/(.*)$", replacement: "/new/{metadata.email}" }
+        passthrough: [registry_token_challenge]
+        intercept:
+          oauth_token_endpoint: { path: /token, method: POST }
+    token:
+      kind: oauth2_refresh
+      client: google
+      refresh_field: refresh_token
+      rotate_refresh_token: true
+      max_lifetime_secs: 3600
+      extra_params: { audience: "{credentials.refresh_token}" }
+      stale_codes:
+        - { status: 401, body_contains: INVALID_SESSION_ID }
+      reauth_codes: [invalid_grant]
+    tools:
+      read:
+        wildcard: { id: all_read, name: All read operations }
+        items:
+          - { id: list_messages, name: List messages, host: gmail.googleapis.com, path: /gmail/v1/users/*/messages, methods: [GET] }
+      write:
+        items:
+          - { id: send_message, name: Send message, host: gmail.googleapis.com, path: /gmail/v1/users/*/messages/send, methods: [POST] }
+    approvals:
+      send_message:
+        title: Send email
+        fields:
+          - { label: To, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_header: To } ] }
+          - { label: Id, source: path, segment: 4 }
+          - { label: Q, source: query, name: q }
+          - { label: Agent, source: header, name: user-agent }
+          - { label: Op, source: body, steps: [ { graphql: operation_name } ] }
+        link: "https://mail.google.com/mail/u/0/#inbox"
+        summarize: hook
+    agent:
+      instructions: |
+        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      env:
+        - { name: GMAIL_API_BASE, value: "https://gmail.googleapis.com" }
+      stubs:
+        - { path: ".config/gcloud/adc.json", mode: "0600", content: "{}" }
+      default_blocklist: [registry.npmjs.org]
+  - about:
+      id: zendesk
+      name: Zendesk
+      web_hosts: [www.zendesk.com]
+    credentials:
+      - { name: api_token, secret: true }
+    metadata:
+      - { name: email }
+    connect:
+      - id: api_key
+        kind: fields
+        fields:
+          - { name: subdomain, label: Subdomain, store: tenant_host }
+          - { name: api_token, label: API token, type: secret, required: true, help_url: "https://example.org" }
+          - { name: kind, label: Kind, type: select, options: [ { value: a, label: A, warning: careful } ] }
+          - { name: sa, label: Key, type: json_file, show_when: { field: kind, equals: a }, json_map: { email: /client_email } }
+        probe:
+          url: "https://{connection.tenant_host}/api/v2/users/me"
+          label: /user/name
+    hosts:
+      - match: { host: "*.zendesk.com" }
+        tenant: { field: connection.tenant_host, zone: "*.zendesk.com" }
+        rewrite_host: { template: "{connection.tenant_host}", zone: "*.zendesk.com" }
+        inject:
+          - basic: { user: "{metadata.email}/token", password: "{credentials.api_token}" }
+    tools:
+      read:
+        items:
+          - { id: list_tickets, name: List tickets, host: "*.zendesk.com", path: /api/v2/tickets, methods: [GET] }
+  - about:
+      id: github
+      name: GitHub
+    credentials:
+      - { name: token, secret: true }
+    connect:
+      - id: github_app
+        kind: hook
+        authorize: true
+        fields: []
+    hosts:
+      - match: { host: api.github.com }
+        inject: []
+        transform:
+          git_commit_trailer: { trailer: "Co-authored-by: {context.agent_name}" }
+    token:
+      kind: hook
+    tools:
+      write:
+        items:
+          - { id: create_issue, name: Create issue, host: api.github.com, path: /graphql, methods: [POST], graphql: mutation }
+  - about:
+      id: s3
+      name: S3
+    credentials:
+      - { name: access_key_id, secret: true }
+      - { name: secret_access_key, secret: true }
+      - { name: session_token, secret: true, optional: true }
+    metadata:
+      - { name: region }
+    hosts:
+      - match: { host: "s3.*.amazonaws.com" }
+        inject: []
+        finalize:
+          aws_sigv4:
+            region: "{metadata.region}"
+            service: s3
+            access_key: "{credentials.access_key_id}"
+            secret_key: "{credentials.secret_access_key}"
+            session_token: "{credentials.session_token}"
+  - about:
+      id: pgdb
+      name: Postgres
+    database: { engine: postgres }

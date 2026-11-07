@@ -1,0 +1,800 @@
+{
+  "$defs": {
+    "AttachmentRef": {
+      "properties": {
+        "attachment_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "attachment_id",
+        "filename",
+        "size"
+      ],
+      "type": "object"
+    },
+    "BoundedString64": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "Empty": {
+      "description": "An empty JSON object body (`{}`).",
+      "type": "object"
+    },
+    "FileIn": {
+      "description": "One chunk of an inbound attachment (decision S-11). Frames of one `(turn_id, attachment_id)` are\nsent in `index` order, `last` on the final one; `size` and `sha256` describe the whole file and\nrepeat on every frame. `filename` is untrusted (the supervisor sanitizes it).",
+      "properties": {
+        "attachment_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "data_b64": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "index": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last": {
+          "type": "boolean"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "attachment_id",
+        "filename",
+        "index",
+        "last",
+        "size",
+        "sha256",
+        "data_b64"
+      ],
+      "type": "object"
+    },
+    "FileResult": {
+      "properties": {
+        "attachment_id": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "upload_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "upload_id",
+        "ok"
+      ],
+      "type": "object"
+    },
+    "Gate": {
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "timeout_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command",
+        "timeout_secs"
+      ],
+      "type": "object"
+    },
+    "HomeSync": {
+      "properties": {
+        "generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "part": {
+          "$ref": "#/$defs/HomeSyncPart"
+        },
+        "part_count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "part_index": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "generation",
+        "part_index",
+        "part_count",
+        "part"
+      ],
+      "type": "object"
+    },
+    "HomeSyncKind": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "HomeSyncPart": {
+      "properties": {
+        "entries": {
+          "description": "Entry shape per part kind is defined in `12 §Sync protocol` (not typed here).",
+          "items": true,
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/HomeSyncKind"
+        }
+      },
+      "required": [
+        "kind",
+        "entries"
+      ],
+      "type": "object"
+    },
+    "JsonContent": {
+      "properties": {
+        "value": true
+      },
+      "required": [
+        "value"
+      ],
+      "type": "object"
+    },
+    "MemoryWriteResult": {
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "ok"
+      ],
+      "type": "object"
+    },
+    "ModelChoice": {
+      "properties": {
+        "base_url": {
+          "type": "string"
+        },
+        "client_env": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "dialect": {
+          "type": "string"
+        },
+        "effort": {
+          "type": "string"
+        },
+        "endpoint_id": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "endpoint_id",
+        "base_url",
+        "dialect",
+        "model",
+        "effort",
+        "client_env"
+      ],
+      "type": "object"
+    },
+    "Recall": {
+      "properties": {
+        "index": {
+          "type": "string"
+        },
+        "snippets": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "index",
+        "snippets"
+      ],
+      "type": "object"
+    },
+    "SecretString": {
+      "description": "A secret-bearing string: serializes transparently, never printed by `Debug`.",
+      "type": "string"
+    },
+    "SessionInfo": {
+      "properties": {
+        "epoch": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "resume_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "epoch"
+      ],
+      "type": "object"
+    },
+    "SessionRelease": {
+      "properties": {
+        "conversation_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id"
+      ],
+      "type": "object"
+    },
+    "ShutdownBody": {
+      "properties": {
+        "grace_secs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "TextContent": {
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "ToolContent": {
+      "anyOf": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TextContent"
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "text"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/JsonContent"
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "json"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "description": "unknown kind; consumers log and skip",
+          "properties": {
+            "type": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ToolError": {
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/BoundedString64"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "ToolResult": {
+      "description": "`{ call_id, ok: true, content }` or `{ call_id, ok: false, error }`.",
+      "properties": {
+        "call_id": {
+          "type": "string"
+        },
+        "content": {
+          "items": {
+            "$ref": "#/$defs/ToolContent"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "call_id",
+        "ok"
+      ],
+      "type": "object"
+    },
+    "TurnDeliver": {
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/AttachmentRef"
+          },
+          "type": "array"
+        },
+        "context_credential": {
+          "$ref": "#/$defs/SecretString",
+          "description": "`auc_…`"
+        },
+        "conversation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "gate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Gate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input": {
+          "$ref": "#/$defs/TurnInput"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelChoice"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionInfo"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "turn_id",
+        "session",
+        "model",
+        "context_credential",
+        "input",
+        "attachments"
+      ],
+      "type": "object"
+    },
+    "TurnInput": {
+      "properties": {
+        "door": {
+          "type": "string"
+        },
+        "notices": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "recall": {
+          "$ref": "#/$defs/Recall"
+        },
+        "speaker_label": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "speaker_label",
+        "door",
+        "recall",
+        "notices"
+      ],
+      "type": "object"
+    },
+    "TurnMessage": {
+      "properties": {
+        "followup_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "speaker_label": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "followup_id",
+        "text",
+        "speaker_label"
+      ],
+      "type": "object"
+    },
+    "TurnNotice": {
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "text"
+      ],
+      "type": "object"
+    },
+    "TurnRef": {
+      "properties": {
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/TurnDeliver"
+        },
+        "kind": {
+          "const": "turn.deliver"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/TurnMessage"
+        },
+        "kind": {
+          "const": "turn.message"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/TurnRef"
+        },
+        "kind": {
+          "const": "turn.send_now"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/TurnRef"
+        },
+        "kind": {
+          "const": "turn.abort"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/TurnNotice"
+        },
+        "kind": {
+          "const": "turn.notice"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/SessionRelease"
+        },
+        "kind": {
+          "const": "session.release"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/HomeSync"
+        },
+        "kind": {
+          "const": "home.sync"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/ToolResult"
+        },
+        "kind": {
+          "const": "tool.result"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/MemoryWriteResult"
+        },
+        "kind": {
+          "const": "memory.write.result"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/FileResult"
+        },
+        "kind": {
+          "const": "file.result"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/FileIn"
+        },
+        "kind": {
+          "const": "file.in"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/ShutdownBody"
+        },
+        "kind": {
+          "const": "shutdown"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/Empty"
+        },
+        "kind": {
+          "const": "ack"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "unknown kind; consumers log and skip",
+      "properties": {
+        "kind": {
+          "maxLength": 64,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    }
+  ],
+  "description": "`{ seq, ack, kind, body }`. `M` is the direction's message union.",
+  "properties": {
+    "ack": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "seq": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "seq",
+    "ack"
+  ],
+  "title": "Frame",
+  "type": "object"
+}

@@ -1,0 +1,37 @@
+# Minimal development config. Secrets are NOT read from this file; supply them
+# via the environment (see deploy/dev/env.sh):
+#   AURORA_DATABASE_URL, AURORA_ENCRYPTION_KEYS (id:base64-32),
+#   AURORA_SIGNING_KEY, AURORA_INTERNAL_SECRET, AURORA_RUNNER_SESSION_KEY (base64),
+#   AURORA_RUNNER_TOKEN (aur_...), AURORA_CONNECTOR_TOKEN (aun_...)
+[server]
+# The dashboard (pnpm dev, :4100) is the single origin; it proxies /v1/* to
+# the API on :4101 (docs/15 §Networking: one URL).
+external_url = "http://localhost:4100"
+bind = "127.0.0.1"
+
+[gateway]
+# SEC-09: internal listener (:4103) never on a sandbox-reachable address.
+internal_bind = "127.0.0.1"
+# Minted by `just dev` (aurora-gateway generate-ca); gitignored.
+ca_dir = "deploy/dev/ca"
+hookhost_url = "http://127.0.0.1:4104"
+
+[api]
+# The API runs on the host, so reach the hook host on localhost (not the compose alias).
+hookhost_url = "http://127.0.0.1:4104"
+
+[hookhost]
+api_internal_url = "http://127.0.0.1:4111"
+
+[runner]
+ops_bind = "127.0.0.1"
+backend = "fake"
+api_url = "http://localhost:4101"
+
+[auth]
+# Dev convenience; production default is invite_only / instance_admins.
+signup_mode = "open"
+org_creation = "anyone"
+
+[telemetry]
+log_level = "info"

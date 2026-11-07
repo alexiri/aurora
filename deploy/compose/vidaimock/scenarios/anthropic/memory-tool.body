@@ -1,0 +1,1 @@
+{"id":"msg_scn_memory_tool","type":"message","role":"assistant","model":"{{ json.model }}","content":[{"type":"tool_use","id":"toolu_scn_memory_1","name":"mcp__aurora__memory_save","input":{"key":"conformance","content":"Saved by the conformance run."}}],"stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":16,"output_tokens":24}}

@@ -8,15 +8,15 @@ implementation repo and checked in (CI fails on drift).
 
 | # | Contract | Direction | Auth | Owner doc |
 |---|----------|-----------|------|-----------|
-| W1 | Proxy protocol | agent → gateway :4102 | `Proxy-Authorization` gateway credential | `06` |
+| W1 | Proxy protocol | agent → gateway :4102 | `Proxy-Authorization` gateway credential; (phase 1, RFE-002) carried inside a TLS session — TLS-only listener | `06` |
 | W2 | Management API | browser/CLI/SDK → API `/v1` | session / API key | `05` |
 | W3 | Gateway signals | API → gateways (`NOTIFY`), gateways → DB | DB roles | `05`, `06` |
-| W4 | Gateway internal | API/monitoring → gateway :4103 | internal secret | `06` |
+| W4 | Gateway internal | API/monitoring → gateway :4103 | internal secret (ring from phase 2, `08 §4`) | `06` |
 | W5 | Runner plane | runner → API `/v1/runner` | `aur_` + replica | this doc |
 | W6 | Supervisor channel | supervisor → runner :4105 (WebSocket) | bootstrap token / HMAC session | this doc |
 | W7 | Platform tools | harness → MCP bridge → supervisor → runner → API | stamped identity | this doc, `12` |
 | W8 | Connector contract | connector → API `/v1/connector` | `aun_` + replica | `13` |
-| W9 | Hook host | API/gateway → hookhost :4104; hookhost → API :4111 | internal secret | `09` |
+| W9 | Hook host | API/gateway → hookhost :4104; hookhost → API :4111 | internal secret (ring from phase 2, `08 §4`) | `09` |
 | W10 | Platform callbacks | chat platform → connector | connector-defined | `20` |
 | W11 | Upstream | gateway → internet | guarded resolver | `06` |
 | W12 | CLI / BYO | CLI → API; BYO agent → gateway | API key / agent token | `05`, `08` |
@@ -29,7 +29,7 @@ implementation repo and checked in (CI fails on drift).
 | Versioning | Machine planes send `X-Aurora-Protocol: <plane>/<n>` (`runner/1`, `supervisor/1`, `connector/1`, `hookhost/1`). The API accepts N and N−1; unknown future versions → 426 with the supported range. |
 | Open vocabularies | error codes, reason codes, capability names, connector ids, event/report kinds: unknown values are logged and skipped, never fatal. |
 | Sender-side bounds | sizes, counts and string lengths enforced by producers (limits registry). |
-| Idempotency | report ids, event sequence numbers, `source_event_id`, op ids, claim leases. |
+| Idempotency | report ids, event sequence numbers, `source_event_id`, op ids, claim leases; (phase 3, RFE-018) the management API's `Idempotency-Key` on message creation (`05 §Idempotency keys`). |
 | Time | the API's database clock is truth; timestamps from runners, supervisors and connectors are informational only. |
 | Untrusted text | sanitized at the boundary where it enters platform voice. |
 | Secrets in logs | never; URLs only in redacted form. |
@@ -43,8 +43,8 @@ All requests: `Authorization: Bearer aur_…`; after registration also
 
 | Call | Request → Response |
 |------|--------------------|
-| `POST /register` | `{ version, backend, capabilities: RunnerCapabilities, advertised_host }` → `{ runner_id, replica_id, protocol: 1, config: { poll_wait_secs, reconcile_interval_secs, orphan_grace_secs, idle_stop_secs } }` |
-| `POST /work` | `{ wait_secs ≤ 25, capacity: { running, max } }` → `{ items: [WorkItem] }` (also the heartbeat) |
+| `POST /register` | `{ version, backend, capabilities: RunnerCapabilities (optional `image`: the runner's `runner.image`, which the API reports as the sandbox image and uses in `sandbox.start` specs; optional `held_awake_ceiling`: the runner's `runner.held_awake_ceiling`, used for eviction, default `max(1, max_sandboxes − 1)`), advertised_host }` → `{ runner_id, replica_id, protocol: 1, config: { poll_wait_secs, reconcile_interval_secs, orphan_grace_secs, idle_stop_secs } }` |
+| `POST /work` | `{ wait_secs ≤ 25, capacity: { running, max } }` → `{ items: [WorkItem], reconciler: bool }` (also the heartbeat; `reconciler` is true only for the oldest live replica of this runner, computed at poll time — spec fix S-08) |
 | `POST /reports` | `{ reports: [Report] }` (≤ 200, ≤ 1 MiB) → `{ results: [{ report_id, status: "applied"|"duplicate"|"fenced"|"invalid", detail? }] }` |
 | `POST /channel/claim` | `{ bootstrap_token }` → `{ sandbox_id, boot_id }` or 409 `bootstrap_spent` / 404 |
 | `POST /channel/hold` | `{ sandbox_id, boot_id }` → `{ ok }` (records `channel_replica_id`; also used after HMAC-session reconnects) |
@@ -60,7 +60,10 @@ All requests: `Authorization: Bearer aur_…`; after registration also
 
 `RunnerCapabilities`: `{ backend, home_durability: "resident"|"snapshot",
 resources: { cpu: {min,max}, memory_mib: {min,max}, pids: {min,max}, home_gib:
-{min,max} }, max_sandboxes, harnesses: ["claude-code","fake"], max_attachment_bytes }`.
+{min,max} }, max_sandboxes, harnesses: ["claude-code","fake"], max_attachment_bytes,
+image_capabilities?: ["browser"] }` (phase 1, RFE-003: the capabilities the
+sandbox image declares via its `org.aurora.capabilities` label, read by the
+runner when it registers; open vocabulary, absent = none).
 
 ### Work items
 
@@ -77,12 +80,13 @@ All carry `{ item_id, kind, sandbox_id, boot_id }`.
 | `turn.abort` | `{ turn_id }` |
 | `turn.notice` | `{ turn_id, text }` (platform notice steered into the live run, e.g. ceiling warning) |
 | `session.release` | `{ conversation_id }` (surface changed; release idle session) |
+| `session.purge` | (phase 2, RFE-010) `{ conversation_id, session_ref }` — delete the stored harness session files (`12 §Session purge`) |
 
 `ModelChoice`: `{ provider, endpoint_id, base_url, dialect, model, effort,
 client_env: [[k,v]] }`. `TurnInput`: `{ text, speaker_label, door, recall: {
 index, snippets: [] }, notices: [] }`. `HomeSyncPart`: `{ kind: "skills" |
 "memory" | "render_inputs" | "tools" | "manifest" | "final", entries: [...] }`
-(`12 §Sync protocol`).
+(`12 §Sync protocol`). (phase 3, RFE-020) `skills` parts carry the agent's **effective** set only; the three tiers and their precedence are resolved by the API, so the wire format is unchanged.
 
 ### Reports
 
@@ -107,6 +111,7 @@ are dropped.
 | `watch.fired` | `{ watch_id, detail }` | watch turn |
 | `gate.result` | `{ turn_id, outcome: "quiet"|"wake"|"failed", output? }` | schedule run outcome |
 | `ports.state` | `{ ports: [int] }` | `listening_ports` |
+| `session.purged` | (phase 2, RFE-010) `{ conversation_id, session_ref, ok }` | completes the `session_purges` row (`ok = false` keeps it pending) |
 
 `turns.last_event_n` is maintained by the API for event idempotency.
 
@@ -128,19 +133,22 @@ are dropped.
 - Ping/pong every 20 s; 60 s silence = dead connection.
 
 Runner → supervisor kinds: `turn.deliver`, `turn.message`, `turn.send_now`,
-`turn.abort`, `turn.notice`, `session.release`, `home.sync`, `tool.result`,
+`turn.abort`, `turn.notice`, `session.release`, `session.purge` (phase 2, RFE-010), `home.sync`, `tool.result`,
 `memory.write.result`, `file.result`, `shutdown`.
 
 Supervisor → runner kinds: `ready`, `home.synced`, `turn.started`, `turn.event`
 (`{ turn_id, n, event }`), `turn.progress`, `turn.result`, `steer.result`,
 `send_now.result`, `session`, `process.state`, `watch.fired`, `gate.result`,
 `ports.state`, `tool.call`, `memory.write`, `file.part` (`{ upload_id, index,
-data_b64 }` ≤ 192 KiB decoded), `file.commit` (`{ upload_id, conversation_id,
+data_b64 }` ≤ 144 KiB decoded, so the base64 frame stays under `WS_FRAME_MAX`; spec fix S-06), `file.commit` (`{ upload_id, conversation_id,
 turn_id, filename, caption?, sha256, size }`).
 
 The runner translates frames 1:1 into work items / reports / plane calls,
 adding `sandbox_id` and `boot_id` from the authenticated channel (never from the
-frame body). Unknown kinds are logged and dropped.
+frame body). Reports derived from supervisor frames use a deterministic
+`report_id = UUIDv5(NAMESPACE_AURORA_REPORT, boot_id ‖ ":" ‖ seq)` so a frame
+replayed after a runner restart deduplicates at the API (spec fix S-07).
+Unknown kinds are logged and dropped.
 
 ---
 

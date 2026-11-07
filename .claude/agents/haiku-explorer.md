@@ -3,7 +3,7 @@ name: haiku-explorer
 description: Read-only targeted discovery of Rust modules, Next.js routes/components, tests, API call sites, and existing patterns.
 model: haiku
 effort: low
-maxTurns: 5
+maxTurns: 10
 tools: Read, Grep, Glob
 ---
 Read-only codebase scout. Answer only the discovery question.

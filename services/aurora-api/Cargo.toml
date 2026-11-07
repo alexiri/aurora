@@ -1,0 +1,70 @@
+[package]
+name = "aurora-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "aurora_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aurora-api"
+path = "src/main.rs"
+
+[dependencies]
+aurora-core = { workspace = true, features = ["service"] }
+aurora-config = { workspace = true }
+axum = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+aurora-db = { workspace = true }
+aurora-channels = { workspace = true }
+aurora-protocol = { workspace = true }
+sqlx = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+aurora-supervisor = { path = "../aurora-supervisor" }
+chrono-tz = { workspace = true }
+croner = { workspace = true }
+http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_path_to_error = { workspace = true }
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+uuid = { workspace = true }
+futures = { workspace = true }
+argon2 = { workspace = true }
+lettre = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+aws-lc-rs = { workspace = true }
+aurora-secrets = { workspace = true }
+aurora-llm = { workspace = true }
+aurora-policy = { workspace = true }
+aurora-crypto = { workspace = true }
+aurora-registry = { workspace = true }
+serde_yaml = { workspace = true }
+sha2 = { workspace = true }
+reqwest = { workspace = true }
+openidconnect = { workspace = true }
+percent-encoding = { workspace = true }
+image = { workspace = true }
+
+[dev-dependencies]
+aurora-secrets = { workspace = true, features = ["memory-store"] }
+wiremock = { workspace = true }
+aurora-testkit = { workspace = true }
+percent-encoding = { workspace = true }
+http-body-util = { workspace = true }
+tower = { workspace = true }
+chrono = { workspace = true }
+tracing-subscriber = { workspace = true }
+aurora-supervisor = { path = "../aurora-supervisor" }

@@ -1,0 +1,51 @@
+{
+  "$defs": {
+    "PlatformUser": {
+      "properties": {
+        "display_name": {
+          "type": "string"
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "email_verified": {
+          "default": false,
+          "type": "boolean"
+        },
+        "handle": {
+          "type": "string"
+        },
+        "is_bot": {
+          "default": false,
+          "type": "boolean"
+        },
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "display_name",
+        "handle"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "users": {
+      "items": {
+        "$ref": "#/$defs/PlatformUser"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "users"
+  ],
+  "title": "UsersResult",
+  "type": "object"
+}

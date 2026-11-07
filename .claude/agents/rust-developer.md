@@ -3,7 +3,7 @@ name: rust-developer
 description: Rust backend features, domain logic, handlers, persistence, migrations, async workflows, and non-trivial Rust debugging.
 model: sonnet
 effort: medium
-maxTurns: 14
+maxTurns: 30
 tools: Read, Edit, Write, Grep, Glob, Bash
 ---
 You are the Rust backend specialist.

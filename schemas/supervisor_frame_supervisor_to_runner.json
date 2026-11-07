@@ -1,0 +1,736 @@
+{
+  "$defs": {
+    "BoundedString64": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "Empty": {
+      "description": "An empty JSON object body (`{}`).",
+      "type": "object"
+    },
+    "FileCommit": {
+      "properties": {
+        "caption": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conversation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "upload_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "upload_id",
+        "conversation_id",
+        "turn_id",
+        "filename",
+        "sha256",
+        "size"
+      ],
+      "type": "object"
+    },
+    "FilePart": {
+      "properties": {
+        "data_b64": {
+          "type": "string"
+        },
+        "index": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "upload_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "upload_id",
+        "index",
+        "data_b64"
+      ],
+      "type": "object"
+    },
+    "GateOutcome": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "GateResult": {
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/GateOutcome"
+        },
+        "output": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "HarnessEventWire": {
+      "additionalProperties": true,
+      "description": "Harness event as carried on the wire. `12` lists the event kinds (text\ndelta, thinking delta, activity, tool started/finished, correction, message\njoined, sent-now, session ref, usage, done, error) but not their fields, so\nthe payload is kept open.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/BoundedString64"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "HarnessId": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "HarnessInfo": {
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/BoundedString64"
+          },
+          "type": "array"
+        },
+        "id": {
+          "$ref": "#/$defs/HarnessId"
+        }
+      },
+      "required": [
+        "id",
+        "capabilities"
+      ],
+      "type": "object"
+    },
+    "HomeSynced": {
+      "properties": {
+        "generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "generation"
+      ],
+      "type": "object"
+    },
+    "MemoryWrite": {
+      "description": "Memory write payload (also the W6 `memory.write` body).",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "content"
+      ],
+      "type": "object"
+    },
+    "PortsState": {
+      "properties": {
+        "ports": {
+          "items": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "ports"
+      ],
+      "type": "object"
+    },
+    "ProcessState": {
+      "description": "Provisional shape: `16` names the type but never defines it.",
+      "properties": {
+        "busy": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit_code": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "process_id": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/ProcessStatus"
+        },
+        "tail": {
+          "description": "Last output, at most `PROCESS_TAIL` bytes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "process_id",
+        "state"
+      ],
+      "type": "object"
+    },
+    "ProcessStates": {
+      "properties": {
+        "processes": {
+          "items": {
+            "$ref": "#/$defs/ProcessState"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "processes"
+      ],
+      "type": "object"
+    },
+    "ProcessStatus": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "SendNowOutcome": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "SendNowResult": {
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/SendNowOutcome"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "SessionReport": {
+      "properties": {
+        "conversation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "epoch": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "session_ref",
+        "epoch"
+      ],
+      "type": "object"
+    },
+    "SteerOutcome": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "SteerResult": {
+      "properties": {
+        "followup_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/SteerOutcome"
+        }
+      },
+      "required": [
+        "followup_id",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "SupervisorReady": {
+      "properties": {
+        "harness": {
+          "$ref": "#/$defs/HarnessInfo"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "harness"
+      ],
+      "type": "object"
+    },
+    "ToolCallBody": {
+      "description": "`tool.call` frame body (supervisor -> runner): a call without identity.",
+      "properties": {
+        "args": true,
+        "call_id": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "call_id",
+        "conversation_id",
+        "tool",
+        "args"
+      ],
+      "type": "object"
+    },
+    "TurnEvent": {
+      "description": "Single event frame (W6 `turn.event`).",
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/HarnessEventWire"
+        },
+        "n": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "n",
+        "event"
+      ],
+      "type": "object"
+    },
+    "TurnRef": {
+      "properties": {
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id"
+      ],
+      "type": "object"
+    },
+    "TurnResult": {
+      "properties": {
+        "error_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoundedString64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error_message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/TurnStatus"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "usage": {
+          "description": "Shape unspecified in `16`/`12`; kept open."
+        }
+      },
+      "required": [
+        "turn_id",
+        "status"
+      ],
+      "type": "object"
+    },
+    "TurnStatus": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "WatchFired": {
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "watch_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "watch_id",
+        "detail"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/SupervisorReady"
+        },
+        "kind": {
+          "const": "ready"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/HomeSynced"
+        },
+        "kind": {
+          "const": "home.synced"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/TurnRef"
+        },
+        "kind": {
+          "const": "turn.started"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/TurnEvent"
+        },
+        "kind": {
+          "const": "turn.event"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/TurnRef"
+        },
+        "kind": {
+          "const": "turn.progress"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/TurnResult"
+        },
+        "kind": {
+          "const": "turn.result"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/SteerResult"
+        },
+        "kind": {
+          "const": "steer.result"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/SendNowResult"
+        },
+        "kind": {
+          "const": "send_now.result"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/SessionReport"
+        },
+        "kind": {
+          "const": "session"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/ProcessStates"
+        },
+        "kind": {
+          "const": "process.state"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/WatchFired"
+        },
+        "kind": {
+          "const": "watch.fired"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/GateResult"
+        },
+        "kind": {
+          "const": "gate.result"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/PortsState"
+        },
+        "kind": {
+          "const": "ports.state"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/ToolCallBody"
+        },
+        "kind": {
+          "const": "tool.call"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/MemoryWrite"
+        },
+        "kind": {
+          "const": "memory.write"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/FilePart"
+        },
+        "kind": {
+          "const": "file.part"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/FileCommit"
+        },
+        "kind": {
+          "const": "file.commit"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/Empty"
+        },
+        "kind": {
+          "const": "ack"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "unknown kind; consumers log and skip",
+      "properties": {
+        "kind": {
+          "maxLength": 64,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    }
+  ],
+  "description": "`{ seq, ack, kind, body }`. `M` is the direction's message union.",
+  "properties": {
+    "ack": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "seq": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "seq",
+    "ack"
+  ],
+  "title": "Frame",
+  "type": "object"
+}

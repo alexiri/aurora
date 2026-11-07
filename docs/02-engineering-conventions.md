@@ -27,7 +27,7 @@ aurora/
     aurora-connector-sdk/     # helper crate for connector authors: contract client, register/config/ops loops, conformance runner
     aurora-testkit/           # shared test utilities: ephemeral Postgres, mock upstreams, mock OAuth server, fixtures
   services/
-    aurora-api/               # bin: control plane (subcommands: serve, migrate, bootstrap-admin, secrets, plugins, openapi)
+    aurora-api/               # bin: control plane (subcommands: serve, migrate, bootstrap-admin, secrets, plugins, openapi; phase 2, RFE-007: keys {generate,status})
     aurora-gateway/           # bin: gateway (subcommands: serve, generate-ca, check-snapshot)
     aurora-hookhost/          # bin: hook host
     aurora-runner/            # bin: runner (backends: podman, kubernetes, fake)
@@ -74,7 +74,7 @@ loaders live in `aurora-db`.
 | JSON Schema | `schemars` (generate), `jsonschema` (validate at receivers where serde alone is insufficient) |
 | OpenAPI | `utoipa` (+ `utoipa-axum`); the API serves `/v1/openapi.json` |
 | WebSocket | `tokio-tungstenite` |
-| Crypto | `aws-lc-rs` (AES-256-GCM, HKDF, HMAC, SHA-256), `ed25519-dalek` (package/manifest signatures), `argon2` (passwords) |
+| Crypto | `aws-lc-rs` (AES-256-GCM, HKDF, HMAC, SHA-256), `ed25519-dalek` (package/manifest signatures), `argon2` (passwords; phase 0 only, removed with password sign-in in phase 1, RFE-004) |
 | OIDC | `openidconnect` |
 | WebAssembly | `wasmtime` (component model, epoch interruption), `wit-bindgen` (guest SDK) |
 | Kubernetes | `kube`, `k8s-openapi` |
@@ -174,11 +174,26 @@ overridden by the named configuration key (`15`).
 | Name | Value | Config key | Used in |
 |------|-------|-----------|---------|
 | `GATEWAY_RESOLVE_CACHE_TTL` | 60 s | `gateway.resolve_cache_ttl_secs` | 06 |
-| `APPROVAL_TIMEOUT` | 300 s | `approvals.timeout_secs` | 06, 07 |
+| `GATEWAY_DB_PROBE_INTERVAL` | (phase 3, RFE-014) 5 s, probe timeout 2 s, 2 consecutive failures = unreachable | — | 06 |
+| `GATEWAY_LISTEN_GRACE` | (phase 3, RFE-014) 30 s of LISTEN loss (database reachable) before the gateway reports `degraded`; reconnect backoff 0.5 s → 10 s | — | 06 |
+| `REQUEST_LOG_OUTAGE_BUFFER` | (phase 3, RFE-014) 10 000 request-log rows buffered in memory during a database outage | — | 06 |
+| `APPROVAL_TIMEOUT` | 300 s (the default of rules without their own timeout) | `approvals.timeout_secs` | 06, 07 |
+| `APPROVAL_TIMEOUT_MIN` / `APPROVAL_TIMEOUT_MAX` | (phase 2, RFE-011a) 60 s / 3 600 s default (configurable up to 14 400 s, always < `TURN_CEILING − TURN_CEILING_WARNING`) | `approvals.max_timeout_secs` | 07 |
+| `APPROVAL_NOTIFY_DELAY` / `APPROVAL_WATCHER_TTL` | (phase 2, RFE-011a) 20 s / 45 s | — | 07 |
+| `APPROVAL_EMAIL_PER_USER_HOUR` | (phase 2, RFE-011a) 20 e-mails per user per hour (rest digested) | — | 07 |
 | `APPROVAL_BODY_PEEK` | 16 KiB | — | 06 |
 | `CONDITION_BODY_BUFFER` | 256 KiB (4 KiB–8 MiB) | `gateway.condition_body_bytes` | 07 |
 | `UPSTREAM_HEADER_TIMEOUT` | 300 s | `gateway.upstream_header_timeout_secs` | 06 |
 | `WEBSOCKET_IDLE_TIMEOUT` | 600 s | — | 06 |
+| `KEYRING_MAX` | (phase 2, RFE-007) 4 entries per signing-key / internal-secret ring | — | 08 §4 |
+| `FREEZE_REPLY_INTERVAL` | (phase 2, RFE-006) 10 min per (space/thread, person) | — | 04, 13 |
+| `OIDC_AUTH_RATE` | (phase 1, RFE-004) 20 / min / IP for each of OIDC `start` and `callback` | — | 04 |
+| `PROXY_TLS_LEAF_VALIDITY` | (phase 1, RFE-002) 30 days; renewed when < 10 days remain | — | 06 |
+| `BYO_CIDR_MAX` | (phase 2, RFE-025) 32 CIDRs per agent / org / instance list | — | 08 §11.9 |
+| `AGENT_TOKEN_MAX_AGE_MIN` / `_MAX` | (phase 3, RFE-013) 1 / 3 650 days (optional agent-token maximum age; default none) | `governance.agent_tokens.max_age_days` | 08 §7 |
+| `AGENT_TOKEN_RETROFIT_GRACE` | (phase 3, RFE-013) 7 days minimum remaining life for existing tokens when a maximum age is introduced or tightened | — | 08 §7 |
+| `AGENT_TOKEN_STALE_DAYS` / `AGENT_TOKEN_EXPIRING_DAYS` | (phase 3, RFE-013) 30 days unused / 14 days to expiry | — | 08 §7, 14 |
+| `BYO_REFUSAL_LOG_INTERVAL` | (phase 2, RFE-025) one log line and one request-log row per credential per minute for gateway BYO refusals | — | 06 |
 | `REQUEST_LOG_FLUSH` | 5 s or 500 rows | — | 06 |
 | `REQUEST_LOG_RETENTION` | 30 days | `retention.request_log_days` | 15 |
 | `BATCH_HEADER_MAX` | 128 chars | — | 06 |
@@ -216,6 +231,11 @@ overridden by the named configuration key (`15`).
 | `ATTACH_OUT_DAILY_PER_CONVERSATION` | 200 MiB | — | 10 |
 | `ATTACH_CAPTION_MAX` | 500 chars | — | 10 |
 | `ATTACH_PENDING_TTL` | 24 h | — | 10 |
+| `ATTACH_ORG_QUOTA_DEFAULT` / `ATTACH_ORG_QUOTA_MAX` | (phase 2, RFE-015) 10 GiB / 50 GiB per org (`0` = unlimited) | `attachments.default_org_quota_mib` / `attachments.org_quota_mib_max` | 10 |
+| `ATTACH_QUOTA_NOTICE` | (phase 2, RFE-015) notices at 80 % and 100 % of the org quota | — | 10 |
+| `RETENTION_MIN_DAYS` / `RETENTION_MAX_DAYS` | (phase 2, RFE-010) 7 / 3 650 days (org conversation and attachment windows) | `retention.conversation_days_max` caps the upper bound | 10 |
+| `RETENTION_SWEEP_BATCH` | (phase 2, RFE-010) 200 conversations per transaction, ≤ 5 000 per org per run | — | 10 |
+| `EXPORT_MAX` | (phase 2, RFE-010) 256 MiB and 200 000 events per export | — | 10 |
 | `SCHEDULE_FIRE_LEASE` | 5 min | — | 10 |
 | `SCHEDULE_FAILURE_DISABLE` | 5 consecutive | — | 10 |
 | `GATE_TIMEOUT` | 30 s | — | 12 |
@@ -232,6 +252,7 @@ overridden by the named configuration key (`15`).
 | `INBOX_LEASE` / `OP_LEASE` | 60 s / 60 s | — | 13 |
 | `OP_MAX_ATTEMPTS` | 10 (exponential backoff 2 s → 10 min) | — | 13 |
 | `CHANNEL_LEDGER_RETENTION` | 7 days | — | 13 |
+| `DEPROVISION_RETRY_WINDOW` | (phase 3, RFE-024) 24 h of retries for a self-contained `presence.deprovision` op (then `failed`, residual) | — | 13 |
 | `ACTION_TOKEN_TTL` | approval deadline, else 24 h | — | 13 |
 | `APP_TURN_CAP` | 5 consecutive bot-authored turns | — | 07 |
 | `PEER_TASK_BUDGET` / `PEER_TASK_TTL` | 20 messages / 24 h | — | 07 |
@@ -244,4 +265,8 @@ overridden by the named configuration key (`15`).
 | `AGENT_SNIPPET_MAX` | 2 000 chars per app | — | 09 |
 | `AVATAR_MAX` | 512 KiB (PNG/JPEG/WebP) | — | 10 |
 | `SSE_KEEPALIVE` | 15 s | — | 05 |
+| `API_RATE_*` | (phase 2, RFE-017) buckets of `05 §Conventions`: general 600/min (burst 120), write 120/min (30), message 30/min (10), upload 20/min (5), simulate 20/min (5), search 30/min (10), export 6/h (2), org 3 000/min (600) | `ratelimit.api.*` | 05 |
+| `API_RATE_UNAUTH` | (phase 2, RFE-017) 120 / min / IP public GETs; 30 / min / IP for requests with a rejected bearer | — | 05 |
+| `API_STREAMS_PER_PRINCIPAL` | (phase 2, RFE-017) 20 concurrent SSE connections + long-polls | — | 05 |
+| `DELTA_COALESCE` | (phase 1, RFE-016) 100 ms or 2 000 chars per turn per delta | `events.delta_coalesce_ms` (100–500) | 05 |
 | `LONG_POLL_MAX` | 30 s | — | 05 |

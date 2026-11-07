@@ -1,0 +1,247 @@
+//! Skills (docs/10 §Skills, 03 §7): agent- and organization-tier instruction bundles + files.
+
+use crate::DbError;
+use chrono::{DateTime, Utc};
+use sqlx::PgConnection;
+use uuid::Uuid;
+
+const COLS: &str = "id, org_id, agent_id, name, description, body, enabled, created_by_kind, \
+                    created_at, updated_at";
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SkillRow {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    /// Null => organization skill.
+    pub agent_id: Option<Uuid>,
+    pub name: String,
+    pub description: String,
+    pub body: String,
+    pub enabled: bool,
+    pub created_by_kind: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct FileRow {
+    pub skill_id: Uuid,
+    pub path: String,
+    pub content: Vec<u8>,
+    pub executable: bool,
+}
+
+pub async fn get(conn: &mut PgConnection, id: Uuid) -> Result<Option<SkillRow>, DbError> {
+    Ok(
+        sqlx::query_as(&format!("SELECT {COLS} FROM skills WHERE id = $1"))
+            .bind(id)
+            .fetch_optional(conn)
+            .await?,
+    )
+}
+
+/// Row lock: serializes concurrent edits (and file uploads) of one skill.
+pub async fn get_for_update(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<SkillRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM skills WHERE id = $1 FOR UPDATE"
+    ))
+    .bind(id)
+    .fetch_optional(conn)
+    .await?)
+}
+
+pub async fn get_agent_named(
+    conn: &mut PgConnection,
+    agent: Uuid,
+    name: &str,
+) -> Result<Option<SkillRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM skills WHERE agent_id = $1 AND name = $2"
+    ))
+    .bind(agent)
+    .bind(name)
+    .fetch_optional(conn)
+    .await?)
+}
+
+pub async fn get_org_named(
+    conn: &mut PgConnection,
+    org: Uuid,
+    name: &str,
+) -> Result<Option<SkillRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM skills WHERE org_id = $1 AND agent_id IS NULL AND name = $2"
+    ))
+    .bind(org)
+    .bind(name)
+    .fetch_optional(conn)
+    .await?)
+}
+
+pub async fn list_agent(conn: &mut PgConnection, agent: Uuid) -> Result<Vec<SkillRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM skills WHERE agent_id = $1 ORDER BY name"
+    ))
+    .bind(agent)
+    .fetch_all(conn)
+    .await?)
+}
+
+pub async fn list_org(conn: &mut PgConnection, org: Uuid) -> Result<Vec<SkillRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM skills WHERE org_id = $1 AND agent_id IS NULL ORDER BY name"
+    ))
+    .bind(org)
+    .fetch_all(conn)
+    .await?)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn insert(
+    conn: &mut PgConnection,
+    org: Uuid,
+    agent: Option<Uuid>,
+    name: &str,
+    description: &str,
+    body: &str,
+    enabled: bool,
+    created_by_kind: &str,
+) -> Result<SkillRow, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "INSERT INTO skills (id, org_id, agent_id, name, description, body, enabled, created_by_kind)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING {COLS}"
+    ))
+    .bind(Uuid::now_v7())
+    .bind(org)
+    .bind(agent)
+    .bind(name)
+    .bind(description)
+    .bind(body)
+    .bind(enabled)
+    .bind(created_by_kind)
+    .fetch_one(conn)
+    .await?)
+}
+
+pub async fn update(
+    conn: &mut PgConnection,
+    id: Uuid,
+    description: &str,
+    body: &str,
+    enabled: bool,
+) -> Result<SkillRow, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "UPDATE skills SET description = $2, body = $3, enabled = $4, updated_at = now()
+         WHERE id = $1 RETURNING {COLS}"
+    ))
+    .bind(id)
+    .bind(description)
+    .bind(body)
+    .bind(enabled)
+    .fetch_one(conn)
+    .await?)
+}
+
+pub async fn touch(conn: &mut PgConnection, id: Uuid) -> Result<(), DbError> {
+    sqlx::query("UPDATE skills SET updated_at = now() WHERE id = $1")
+        .bind(id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+pub async fn delete(conn: &mut PgConnection, id: Uuid) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM skills WHERE id = $1")
+        .bind(id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// Files (with content) of the given skills, ordered by path.
+pub async fn files(conn: &mut PgConnection, skills: &[Uuid]) -> Result<Vec<FileRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT skill_id, path, content, executable FROM skill_files
+         WHERE skill_id = ANY($1) ORDER BY skill_id, path",
+    )
+    .bind(skills)
+    .fetch_all(conn)
+    .await?)
+}
+
+pub async fn file(
+    conn: &mut PgConnection,
+    skill: Uuid,
+    path: &str,
+) -> Result<Option<FileRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT skill_id, path, content, executable FROM skill_files
+         WHERE skill_id = $1 AND path = $2",
+    )
+    .bind(skill)
+    .bind(path)
+    .fetch_optional(conn)
+    .await?)
+}
+
+/// Inserts or replaces a file. `executable = None` keeps the existing bit (false when new).
+pub async fn upsert_file(
+    conn: &mut PgConnection,
+    skill: Uuid,
+    path: &str,
+    content: &[u8],
+    executable: Option<bool>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO skill_files (skill_id, path, content, executable)
+         VALUES ($1,$2,$3,coalesce($4,false))
+         ON CONFLICT (skill_id, path) DO UPDATE SET content = EXCLUDED.content,
+            executable = coalesce($4, skill_files.executable), updated_at = now()",
+    )
+    .bind(skill)
+    .bind(path)
+    .bind(content)
+    .bind(executable)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_file(
+    conn: &mut PgConnection,
+    skill: Uuid,
+    path: &str,
+) -> Result<bool, DbError> {
+    Ok(
+        sqlx::query("DELETE FROM skill_files WHERE skill_id = $1 AND path = $2")
+            .bind(skill)
+            .bind(path)
+            .execute(conn)
+            .await?
+            .rows_affected()
+            > 0,
+    )
+}
+
+/// Bumps the home sync generation of one agent (agent-tier skill change).
+pub async fn bump_agent(conn: &mut PgConnection, agent: Uuid) -> Result<(), DbError> {
+    sqlx::query("UPDATE agents SET home_sync_generation = home_sync_generation + 1 WHERE id = $1")
+        .bind(agent)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// Bumps every agent of the organization (org-tier skill change).
+pub async fn bump_org(conn: &mut PgConnection, org: Uuid) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE agents SET home_sync_generation = home_sync_generation + 1 WHERE org_id = $1",
+    )
+    .bind(org)
+    .execute(conn)
+    .await?;
+    Ok(())
+}

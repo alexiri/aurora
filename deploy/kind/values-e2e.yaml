@@ -1,0 +1,35 @@
+# Test values for scripts/e2e/kind.sh (OPS-011). Evaluation settings only, never for production.
+externalUrl: http://localhost:4100
+
+image:
+  registry: localhost/aurora-e2e
+  tag: e2e
+  pullPolicy: Never       # images are loaded with `kind load image-archive`
+
+postgres:
+  enabled: true           # evaluation Postgres bundled in the chart
+
+# kind has no ingress controller: the test reaches the API through `kubectl port-forward`.
+ingress:
+  enabled: false
+
+api: {replicas: 1}
+gateway: {replicas: 1}
+hookhost: {replicas: 1}
+web: {replicas: 1}
+runner: {replicas: 1}
+
+config:
+  auth:
+    signup_mode: open
+    org_creation: anyone
+  hosted:
+    enabled: true
+    allow_fake_harness: true
+    idle_stop_secs: 30     # park/wake scenario
+  runner:
+    image: localhost/aurora-e2e/aurora-sandbox:e2e   # kind load image-archive name (kind.sh)
+    max_sandboxes: 4
+    capacity_wait_secs: 5
+  telemetry:
+    log_level: info

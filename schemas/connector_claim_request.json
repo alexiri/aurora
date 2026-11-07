@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "max": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "wait_secs": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "max",
+    "wait_secs"
+  ],
+  "title": "ClaimRequest",
+  "type": "object"
+}

@@ -7,7 +7,7 @@
 | **Edge proxy** | Caddy (compose) / Ingress or Gateway API (k8s) | Single external origin; routes `/v1/*` to API, everything else to web | 4000 (compose) | none | browsers, CLI, webhooks |
 | **Web dashboard** | `aurora-web` (Next.js) | Human UI; a pure client of the API | 4100 | none | edge proxy |
 | **API server (control plane)** | `aurora-api` | Owns the database; management API; identity; conversation plane; due-work engine; plugin registry compiler; channel core; platform-tool execution | 4101 public (`/v1`); 4111 internal (`/internal`, hook host only) | **Postgres** | edge proxy, runners, connectors; hook hosts on 4111 |
-| **Gateway** | `aurora-gateway` | Agent-facing forward proxy: auth, policy, approval holds, credential injection; database lane (phase 2) | **4102** proxy; **4103** internal control | reads Postgres; writes approvals, request log, refreshed credentials | agents (4102); API only (4103) |
+| **Gateway** | `aurora-gateway` | Agent-facing forward proxy: auth, policy, approval holds, credential injection; database lane (phase 2) | **4102** proxy (TLS-only from phase 1); **4103** internal control | reads Postgres; writes approvals, request log, refreshed credentials | agents (4102); API only (4103) |
 | **Hook host** | `aurora-hookhost` | Runs plugin WebAssembly hooks in wasmtime | 4104 (internal) | none (module cache) | API, gateway |
 | **Runner** | `aurora-runner` | Starts/parks/reaps sandboxes via a backend; relays supervisor traffic | 4105 (sandbox-facing WebSocket) | none | supervisors only |
 | **Supervisor** | `aurora-supervisor` (in sandbox image) | Harness driver, home projection, platform-tool bridge, process manager, loopback proxies | loopback only | home volume | nothing (dials runner) |
@@ -52,6 +52,11 @@ cross-replica signal goes through Postgres `LISTEN/NOTIFY` (see `05`).
 reads configuration directly from Postgres, caches per (credential, host) for
 ≤60 s and is told to drop caches via `NOTIFY`, so the API is never on the
 request path. Gateway replicas are interchangeable (approvals live in Postgres).
+(phase 3, RFE-014) If Postgres becomes unreachable the gateway **degrades** rather
+than stops: it serves what its caches already hold, for at most the cache TTL,
+and refuses everything that needs new state (fail closed); after a lost LISTEN
+connection it reconnects first and flushes afterwards (`06 §Operation during a
+Postgres outage`).
 
 **Compute plane** — runners and sandboxes. A runner never touches the database;
 it speaks HTTP to the API (long-poll for work, post reports) and hosts the
@@ -66,7 +71,10 @@ database, no keys, no ambient network. It is called only on slow paths.
    BYO client) is untrusted. Its only egress is the gateway proxy port. Real
    credentials never enter a sandbox. The *network* enforces this — an
    internal-only sandbox network (podman) or NetworkPolicy (Kubernetes), with
-   DNS egress denied — not application code.
+   DNS egress denied — not application code. (phase 2, RFE-025) A BYO client is
+   outside that network: the creation, source address and attribution of BYO
+   credentials are governed by the BYO posture, source CIDR list and optional
+   context-credential requirement (`08 §11.9`), enforced at the gateway.
 2. **Sandbox ↔ control plane.** The sandbox never talks to the API. The
    supervisor talks only to the runner over a WebSocket admitted by a
    single-use bootstrap token, then by an HMAC session. The runner stamps
@@ -88,7 +96,12 @@ database, no keys, no ambient network. It is called only on slow paths.
 7. **Connectors.** A connector is untrusted towards the core: it cannot act as
    a user, cannot authorize anything, and sees only the credentials of its own
    platform's integrations and presences. The core authorizes every click and
-   every speaker.
+   every speaker. (phase 1, RFE-001) A connector also cannot **mint user
+   links** by assertion: the core cannot tell which binary holds a connector
+   token, so a link is created only when the signed-in Aurora person confirms
+   it (sign-in link). The one exception is the per-integration, org-admin
+   opt-in `verified_email_autolink` (default **off**), which explicitly extends
+   trust to that connector's `email`/`email_verified` claims (`13 §5.9`).
 8. **Secrets.** Only the API, the gateway and (phase 3) the configured
    external stores ever see plaintext. The hook host sees one connection's
    plaintext per call. Connectors see their own platform credentials.
@@ -101,7 +114,9 @@ database, no keys, no ambient network. It is called only on slow paths.
 
 1. The agent's HTTP client uses the gateway as `HTTPS_PROXY` and trusts the
    gateway CA. Inside a sandbox the proxy is a loopback forwarder run by the
-   supervisor, which adds the right gateway credential.
+   supervisor, which adds the right gateway credential and reaches the
+   gateway over TLS (phase 1, RFE-002: the gateway proxy listener is TLS-only,
+   in-cluster and external alike).
 2. `CONNECT host:443` with `Proxy-Authorization`. The gateway resolves the
    credential → agent, workspace, org (+ conversation, turn).
 3. Connect-time resolution (cached ≤60 s): policy views (org + workspace),
@@ -204,7 +219,7 @@ creates a turn in the schedule's run conversation. The sandbox wakes as in B.
 
 - **Registries keyed by ids with load-time completeness checks** (LLM providers,
   sandbox backends, harness adapters, secret stores, platform tools,
-  mechanisms). Adding one is a module plus one registration line. An id with no
+  mechanisms; from phase 1 also the delta bus, `05 §The delta bus seam`). Adding one is a module plus one registration line. An id with no
   implementation fails at startup, loudly.
 - **Every wire message is schema-validated at the receiver.** Codes, provider
   ids and reasons are **open bounded strings**: unknown values degrade (treated

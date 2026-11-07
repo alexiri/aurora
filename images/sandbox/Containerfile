@@ -1,0 +1,63 @@
+# syntax=docker/dockerfile:1
+# Sandbox image (docs/11 §Sandbox image).
+#   podman build -f images/sandbox/Containerfile --target sandbox-min -t aurora-sandbox-min:dev .
+# Targets: base (OS + tools), sandbox (base + supervisor + harness), sandbox-min (OS + supervisor, e2e).
+# The CERN AlmaLinux 10 base is the default; override with
+#   --build-arg ALMA_BASE=docker.io/library/almalinux:10
+ARG ALMA_BASE=gitlab-registry.cern.ch/linuxsupport/alma10-base
+
+# ---- supervisor, built against an older glibc than the AlmaLinux runtime
+FROM docker.io/library/rust:1-bookworm AS supervisor-builder
+WORKDIR /build
+ENV CARGO_TERM_COLOR=never
+COPY . .
+RUN rm -f rust-toolchain.toml
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/build/target \
+    cargo build --release --locked -p aurora-supervisor \
+    && mkdir /out && cp target/release/aurora-supervisor /out/
+
+# ---- OS: AlmaLinux 10 with the unprivileged `agent` user and an empty /workspace
+FROM ${ALMA_BASE} AS os
+RUN dnf -y install --setopt=install_weak_deps=False shadow-utils glibc-common \
+    && useradd --uid 1000 --user-group --home-dir /workspace --no-create-home --shell /bin/bash agent \
+    && mkdir -p /workspace /run/aurora /opt/aurora \
+    && chown 1000:1000 /workspace \
+    && dnf clean all && rm -rf /var/cache/dnf /var/log/dnf* /tmp/*
+WORKDIR /workspace
+
+# ---- base: developer tool set (rebuilt rarely)
+FROM os AS base
+RUN dnf -y install --setopt=install_weak_deps=False epel-release \
+    && dnf -y install --setopt=install_weak_deps=False \
+         git curl jq ripgrep fd-find less openssh-clients python3 python3-pip \
+         nodejs npm gcc gcc-c++ make unzip zip procps-ng \
+    && (dnf -y install --setopt=install_weak_deps=False chromium || echo "chromium unavailable") \
+    && dnf clean all && rm -rf /var/cache/dnf \
+    && pip3 install --no-cache-dir uv \
+    && npm config set prefix /workspace/.local --global \
+    # No privilege escalation or package management for the agent.
+    && rm -f /usr/bin/sudo /usr/bin/su /usr/bin/dnf* /usr/bin/yum /usr/bin/rpm* 2>/dev/null; true
+ENV PATH=/workspace/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+# ---- sandbox: base + supervisor + pinned harness
+FROM base AS sandbox
+# Pinned Claude Code CLI; must match PINNED_VERSION in
+# services/aurora-supervisor/src/adapters/claude_code/mod.rs.
+ARG CLAUDE_CODE_VERSION=2.1.319
+RUN mkdir -p /opt/aurora/harness/claude-code \
+ && npm install --prefix /opt/aurora/harness/claude-code --no-audit --no-fund \
+      @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+ && /opt/aurora/harness/claude-code/node_modules/.bin/claude --version
+COPY --from=supervisor-builder /out/aurora-supervisor /usr/local/bin/aurora-supervisor
+USER 1000:1000
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/aurora-supervisor", "run"]
+
+# ---- sandbox-min: OS + supervisor only (e2e)
+FROM os AS sandbox-min
+COPY --from=supervisor-builder /out/aurora-supervisor /usr/local/bin/aurora-supervisor
+USER 1000:1000
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/aurora-supervisor", "run"]

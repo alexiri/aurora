@@ -1,0 +1,158 @@
+{
+  "$defs": {
+    "Author": {
+      "properties": {
+        "display_name": {
+          "type": "string"
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "email_verified": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/AuthorKind"
+        },
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "kind",
+        "display_name"
+      ],
+      "type": "object"
+    },
+    "AuthorKind": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "FileRef": {
+      "properties": {
+        "content_type": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ref",
+        "name",
+        "size",
+        "content_type"
+      ],
+      "type": "object"
+    },
+    "Mention": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/MentionKind"
+        },
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "MentionKind": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "Space": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/SpaceKind"
+        },
+        "label": {
+          "default": "",
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "SpaceKind": {
+      "maxLength": 64,
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "addressed_bot_ref": {
+      "default": "",
+      "type": "string"
+    },
+    "author": {
+      "$ref": "#/$defs/Author"
+    },
+    "bot_mentioned": {
+      "default": false,
+      "type": "boolean"
+    },
+    "files": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/FileRef"
+      },
+      "type": "array"
+    },
+    "mentions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Mention"
+      },
+      "type": "array"
+    },
+    "message_ref": {
+      "type": "string"
+    },
+    "space": {
+      "$ref": "#/$defs/Space"
+    },
+    "text": {
+      "description": "Neutral markup; untrusted.",
+      "type": "string"
+    },
+    "thread_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "space",
+    "message_ref",
+    "author",
+    "text"
+  ],
+  "title": "MessagePosted",
+  "type": "object"
+}

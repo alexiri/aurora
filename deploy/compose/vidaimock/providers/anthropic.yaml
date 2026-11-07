@@ -1,0 +1,29 @@
+# Aurora-owned Anthropic /v1/messages provider (decision I-30). Replaces the bundled `anthropic`
+# provider (run with --isolated). Scenario playback: the LiteLLM model alias `scn-<id>` reaches
+# VidaiMock as model `scn-<id>`, which selects scenarios/anthropic/<id>.{sse,body,status}.
+# A model that does not start with `scn-` gets the plain text answer from templates/aurora/.
+name: "aurora-anthropic"
+matcher: "^/v1/messages$"
+priority: 100
+response_template: "aurora/message.json.j2"
+error_template: "aurora/error.json.j2"
+response_headers:
+  request-id: "req_{{ uuid | replace(from='-', to='') }}"
+  x-scenario: "{{ scenario | default(value='none') }}"
+# Tool-calling scenarios come in pairs: `<id>-tool` is the first answer (tool_use) and
+# `<id>-tool-final` the answer once the request history holds a tool_result. Selection is by
+# model name only; nothing sniffs the message text.
+scenarios:
+  dir: "anthropic"
+  key: >-
+    {% if json.model is starting_with('scn-') %}{% set id = json.model | replace(from='scn-', to='') %}{% if id is ending_with('-tool') and has_tool_result(messages=json.messages | default(value=[]), provider='anthropic') %}{{ id }}-final{% else %}{{ id }}{% endif %}{% endif %}
+stream:
+  enabled: true
+  frame_format: raw
+  lifecycle:
+    on_start:
+      template_path: "aurora/stream/start.j2"
+    on_chunk:
+      template_path: "aurora/stream/delta.j2"
+    on_stop:
+      template_path: "aurora/stream/stop.j2"

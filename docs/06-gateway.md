@@ -10,12 +10,74 @@ container, horizontally scalable.
 
 | Port | Name | Reachable from | Serves |
 |------|------|----------------|--------|
-| 4102 | **proxy** | sandboxes, BYO agents | `CONNECT host:port`; absolute-form `http://` requests; (phase 2) database wire protocols sniffed by first bytes. **Nothing else**: origin-form requests get 400 `not_a_proxy_request`. |
-| 4103 | **internal** | API replicas and monitoring only | `GET /healthz`, `GET /readyz` (snapshot loaded + DB reachable), `GET /metrics`, `GET /internal/v1/status` (instance id, snapshot hash, cache sizes, pending holds). Auth: `Authorization: Bearer <internal secret>` except health/metrics. |
+| 4102 | **proxy** | sandboxes, BYO agents | Phase 0: plain TCP. **From phase 1 (RFE-002): TLS only** (see *Proxy listener TLS* below): inside the TLS session, `CONNECT host:port`; absolute-form `http://` requests; (phase 2) database wire protocols (the database lane's transport is specified with that lane and MUST also be TLS-only). **Nothing else**: origin-form requests get 400 `not_a_proxy_request`. |
+| 4103 | **internal** | API replicas and monitoring only | `GET /healthz`, `GET /readyz` (phase 0–2: snapshot loaded + DB reachable; **from phase 3 (RFE-014)** three states — `ready` 200, `degraded` 200 (serving from cache), `down` 503; `?strict=true` makes `degraded` 503; see *Operation during a Postgres outage*), `GET /metrics`, `GET /internal/v1/status` (instance id, snapshot hash, cache sizes, pending holds). Auth: `Authorization: Bearer <internal secret>` except health/metrics (phase 2, RFE-007: any key of the internal-secret ring, `X-Aurora-Key-Id` naming it; the status response lists the ring's key **ids**, `08 §4`). |
 
 The proxy port is raw TCP and cannot sit behind an HTTP path router. External
-BYO agents reach it directly (LoadBalancer/NodePort; VPN recommended). The
-advertised address is configured separately (`gateway.advertised_proxy_url`).
+BYO agents reach it directly (LoadBalancer/NodePort). The advertised address is
+configured separately (`gateway.advertised_proxy_url`). Phase 0 said "VPN
+recommended" because the listener was plaintext; from phase 1 the listener is
+TLS-only and that caveat no longer applies (restricting source networks remains
+good practice).
+
+### Proxy listener TLS (phase 1, RFE-002)
+
+Owner decision (D-44): **one TLS proxy listener, used by in-cluster and external
+clients alike; no plaintext listener exists.** `Proxy-Authorization` (the `aug_`,
+`aub_`, `auc_` token) and the `CONNECT` preamble therefore never cross a network
+unencrypted.
+
+- **Protocol**: TLS 1.2+ (rustls, aws-lc-rs provider; TLS 1.3 preferred, no
+  legacy suites) terminated *before* any HTTP parsing. ALPN offers only
+  `http/1.1` (proxy requests are HTTP/1.1; `h2` is not offered on this
+  listener). Inside the session the semantics are exactly those of this
+  document (authentication, lanes, errors). The client's `CONNECT` tunnel then
+  carries the *inner* TLS (or the open-lane byte pipe) over the outer TLS session.
+- **A plaintext connection** (first bytes are not a TLS ClientHello) is closed
+  immediately without a response (nothing parseable to answer, and no credential
+  is read); the gateway counts it in `gateway_proxy_plaintext_refused_total`.
+- **Server certificate source** (default, recommended): a **leaf issued by the
+  gateway CA** (`ca.pem`), `serverAuth` EKU, ECDSA P-256, validity
+  `PROXY_TLS_LEAF_VALIDITY` (30 days), regenerated in memory and hot-swapped
+  when < 10 days remain (no restart, no stored key). Rationale: every hosted
+  sandbox and every BYO container config already trusts this CA, so no new trust
+  distribution is needed. The SAN set is the union of: the host of
+  `gateway.advertised_proxy_url`; the sandbox-facing proxy address in the boot
+  document (`11`); the in-cluster service names (`aurora-gateway`,
+  `aurora-gateway.<ns>`, `aurora-gateway.<ns>.svc`,
+  `aurora-gateway.<ns>.svc.cluster.local`) and the fixed compose address
+  (`10.89.250.2`) when running there; and `gateway.proxy_tls.names` (extra DNS
+  names/IPs, e.g. a LoadBalancer hostname). A client connecting by a name not in
+  the SAN set fails verification — operators add the name, they do not disable
+  verification. Because `aurora-gateway generate-ca` mints the CA with
+  `pathlen 0` the proxy leaf is a leaf of that CA (no intermediate).
+- **Optional operator-supplied certificate**: `gateway.proxy_tls.cert_file` +
+  `key_file` (PEM chain + key, reloaded on change) replace the CA-issued leaf —
+  for example a publicly trusted certificate on the external name so BYO hosts
+  need no CA for the outer leg. The certificate must cover every name clients
+  use; startup refuses a missing/unreadable pair or an expired certificate,
+  naming the key. Clients that use this mode still need `ca.pem` for the *inner*
+  MITM leaves (unchanged).
+- **Client side**: every Aurora-controlled client verifies the server
+  certificate against the gateway CA bundle (plus the system roots when an
+  operator certificate is in use) and the name it dialled: the supervisor's
+  loopback forwarder (`12`), `aurora run`, and the container config (`08 §10`).
+  Verification is never optional.
+- **Client caveats for BYO tooling** (documented in the dashboard Connect tab
+  and the operator guide): the proxy URL is `https://…` and the HTTPS proxy leg
+  must be trusted *separately* from the origin leg by clients that distinguish
+  them (curl and git need `--proxy-cacert` / `http.proxySSLCAInfo`; the
+  container config sets the equivalent env where one exists and
+  `proxy_ca_path` otherwise); Node's global `fetch`/`https` need an HTTPS-capable
+  proxy agent (`undici` `ProxyAgent`, `https-proxy-agent`); Python needs
+  `urllib3` ≥ 2 (TLS-in-TLS) on Python ≥ 3.10; Go's `net/http` and Chromium
+  support `https://` proxies natively; stock Java (`HttpsURLConnection`) does
+  **not** speak TLS to a proxy and needs a client library that does. A tool that
+  cannot talk to an HTTPS proxy cannot use the gateway directly; the supported
+  workaround is a local forwarder (`aurora run --forward`, which listens on
+  loopback and speaks TLS upstream — the same pattern as the sandbox
+  supervisor) rather than a plaintext listener. The conformance matrix in `18`
+  pins which clients are verified.
 
 ### Subcommands
 
@@ -41,32 +103,130 @@ advertised address is configured separately (`gateway.advertised_proxy_url`).
   **open lane**.
 - `<token>`: an `aug_`, `aub_` or `auc_` credential. Lookup by SHA-256 hash in
   `gateway_credentials` (cached `GATEWAY_RESOLVE_CACHE_TTL`, invalidated by
-  `aurora_gateway_invalidate` scope `credential`/`agent`). Rejected when revoked,
+  `aurora_gateway_invalidate` scope `credential`/`agent`). (phase 3, RFE-013: an `agent` credential with a maximum age carries `expires_at`; once past it the answer is 407 `proxy_auth_required` with `details.reason = "agent_token_expired"`; the gateway writes `last_used_at` at most once a minute per credential.) Rejected when revoked,
   expired, the agent's workspace/org is gone, or the org has no active owner
   (org suspended). Context credentials are accepted until
   `expires_at` (turn end + `CONTEXT_CREDENTIAL_GRACE`).
+- (phase 2, RFE-006) Also rejected when the agent is **effectively frozen**
+  (agent, workspace or org, `04 §Freeze`): 403 `frozen` (`details.level`), not
+  407 — the credential is fine, the principal is paused. The frozen flags are part
+  of the cached identity (invalidated by scopes `agent`, `workspace`, `org`); on
+  such an invalidation the gateway **closes the live tunnels and WebSockets** of
+  the affected credentials and answers requests held for approval with 403
+  `frozen`.
 - Resolution yields the **request identity**: `{ credential_id, kind,
   agent_id, workspace_id, org_id, conversation_id?, turn_id?, context_label?,
-  principals }` where `principals = {agent_id} ∪ {user ids with can_use on the
-  workspace}` (resolved once per connect, cached with the credential).
+  principals }` where, in phase 0, `principals = {agent_id} ∪ {user ids with
+  can_use on the workspace}` (resolved once per connect, cached with the
+  credential).
+  **From phase 2 (RFE-005, D-49)** the roster is gone: `principals = {agent_id}`
+  and the identity carries `speaker_user_id?` — the person who authored the turn
+  the credential is bound to. It is set only for **hosted `context` credentials**
+  (minted by the API at `turn.deliver` from `turns.speaker_user_id` when the turn's
+  `speaker_kind = person`; stored in `gateway_credentials.speaker_user_id`) and
+  only while that user still has `can_use` on the workspace (checked at connect
+  resolution; invalidated with the `workspace`/`org` scopes). Every other
+  credential — `boot`, `agent` (BYO), BYO `context` (the agent mints those itself,
+  so a conversation id it names proves nothing), and context credentials of
+  turns with no person speaker (schedule, webhook, watch, peer, system, bot or
+  agent speakers) — has **no speaker**.
+
+### BYO admission (phase 2, RFE-025)
+
+For `aug_` credentials and BYO `auc_` credentials (kinds `agent` and BYO
+`context`) the gateway applies three more checks, in this order, **after** the
+credential has authenticated (so an unauthenticated prober learns nothing) and
+the freeze check, and before the lane is chosen. They run for every `CONNECT` and
+absolute-form request (the identity cache carries the inputs; no DB on the hot path).
+
+1. **BYO posture** (`08 §11.9`). Effective posture `disabled` — instance
+   `byo.enabled = false`, instance floor, org or workspace — → **403
+   `byo_disabled`** (`details.level`), not 407. The posture is part of the cached
+   identity (invalidated by scopes `agent`, `workspace`, `org`); on such an
+   invalidation the gateway closes the live tunnels and WebSockets of the affected
+   BYO credentials and answers requests held for approval with 403 `byo_disabled`
+   (approvals `abandoned`), exactly as for `frozen`.
+2. **Source address.** If the agent has an **effective source list**
+   (`08 §11.9`), the client address must lie inside one of its CIDRs, else **403
+   `source_not_permitted`** (`details.source` = the address the gateway saw,
+   `details.manage_url`). The client address is **only** the transport peer of
+   the TLS connection, with one exception: when the peer lies inside
+   `gateway.trusted_proxies` (CIDRs, default empty; the gateway's own key — the
+   API's `server.trusted_proxies` does not apply), the connection **must begin
+   with a PROXY protocol v1/v2 header** and the address in it is used (a layer-4
+   load balancer or NodePort SNAT hides the real address otherwise; configure the
+   balancer to send PROXY or to preserve the source address). A connection from a
+   trusted proxy without that header, or a PROXY header from any other peer, is
+   closed before the TLS handshake. HTTP headers (`X-Forwarded-For`, `Forwarded`)
+   are **never** consulted: the client controls everything inside the tunnel.
+   IPv4-mapped IPv6 peers are normalised to IPv4 before matching. Behind a NAT
+   the list must contain the NAT's egress address; if the gateway only ever sees
+   a load balancer's address (no PROXY header, balancer not preserving source),
+   every request fails closed.
+   A refusal is counted (`aurora_gateway_byo_refused_total{reason}`,
+   `reason ∈ posture|source|context_required`), logged at most once per
+   credential per minute, and recorded as one `request_log` row per credential
+   per minute (`outcome = blocked`, `reason = source_not_permitted`) so owners can
+   see attempted use of a leaked token.
+3. **Context credential required.** Applies later, in the MITM pipeline, once
+   injection selection has run: if the agent's effective `byo_require_context`
+   is true, the credential is an `aug_` (not `auc_`), and at least one candidate
+   is selected (`07 §Injection selection`) → **403 `context_credential_required`**
+   before any approval is created or any value fetched (`details.mint`). Open-lane
+   tunnels are not affected (BYO credentials never get the lane anyway).
 
 ## Lanes
 
 | Lane | Selected by | Gateway sees | Injection | Approvals |
 |------|-------------|--------------|-----------|-----------|
 | **MITM** (default) | any username except `open` | method, path, headers, bounded body prefix | yes | held per request |
-| **Open** (tunnel) | username `open` | host and port only | **never** | a decision that would need approval refuses the CONNECT |
+| **Open** (tunnel) | username `open` **and** a credential holding the `browser` capability (phase 1, RFE-003) | host and port only | **never** | a decision that would need approval refuses the CONNECT |
 | **Database** (phase 2) | DB wire protocol on the proxy port | each statement | gateway logs in with stored credentials | statement-level, same machinery (`21`) |
 
 The open lane exists for browsers (TLS interception breaks bot defences and
 browsers cannot install the CA). It keeps credential auth, host-level policy
 (block / approval → refuse with 403 / rate limit → 429), the destination guard,
 and writes one request-log row per tunnel with byte counts. It never applies
-the credentialed Default Rule and never injects; it **does** apply the
+the credentialed Default Rule and never injects (the Default Rule also never applies to governed LLM hosts, `07 §Why the Default Rule skips LLM hosts`, RFE-023); it **does** apply the
 uncredentialed default (`07 §Evaluation`), so under the `credentialed_only`
 egress posture browsers reach only allow-listed hosts, and it applies the LLM
 posture (governed LLM hosts are refused under `sanctioned_only`, since nothing
 can be injected in a tunnel).
+
+### Open-lane admission and posture (phase 1, RFE-003)
+
+Phase 0 gave every credential the open lane unconditionally (any client that set
+the username `open` got an uncredentialed tunnel under the default `open` egress
+posture). From phase 1 the open lane is admitted in this order, **before** any
+policy evaluation, with the first failure refusing the `CONNECT`:
+
+1. **Capability** (RFE-003 c). The authenticated credential must hold the
+   **`browser` capability** (`gateway_credentials.capabilities`, `08 §7`). Only
+   `aub_` boot credentials can hold it, and only when the sandbox's boot was
+   started with it (`11 §The boot document`: the sandbox image declares it and
+   the effective posture is not `disabled`). `aug_` BYO agent tokens and `auc_`
+   context credentials never hold it → 403 `open_lane_not_permitted`. A client
+   that merely sets the username `open` therefore gains nothing.
+2. **Posture** (RFE-003 a). The **effective open-lane posture** is the strictest
+   of instance, org and workspace (`08 §11.1`), ordered `enabled` <
+   `allowlist_only` < `disabled`:
+   - `disabled` → 403 `open_lane_disabled` (details `manage_url`);
+   - `allowlist_only` → the target host:port must be covered by the allow-list
+     of **every level that sets `allowlist_only`**: instance → the instance
+     baseline allow-list; org → org egress allow-list ∪ baseline; workspace → the
+     workspace's `uncredentialed_allowlist`. Matching uses the CONNECT-time
+     semantics of `07 §CONNECT-time evaluation` (an allow-list entry that carries
+     a `path` does **not** admit a tunnel). An explicit allow rule that is fully
+     knowable at CONNECT time also admits (as for `credentialed_only`). Otherwise
+     403 `blocked_by_egress_policy` with `details.open_lane = true`;
+   - `enabled` → no extra restriction.
+3. Then: destination guard, LLM posture, **CONNECT-time policy evaluation**
+   (`07 §CONNECT-time evaluation`), tunnel, one request-log row.
+
+The posture is read from the cached effective governance and the workspace's
+published policy generation (no DB on the hot path; invalidation scopes `org`
+and `workspace`), so changing it takes effect for the next `CONNECT`; open
+tunnels end at the idle limit or when the client closes them.
 
 ## MITM lane: connect-time resolution
 
@@ -224,15 +384,18 @@ both directions.
    for the tool → `approval.summarize` hook (only if declared; bounded call to
    the hook host with the body prefix ≤ `APPROVAL_BODY_PEEK`, no egress) →
    generic redacting summarizer. Raw bodies are never stored.
-2. `INSERT INTO approvals (…, status='pending', deadline=now()+APPROVAL_TIMEOUT,
-   gateway_instance_id)`; `NOTIFY aurora_approval created`. Failure to insert →
+2. `INSERT INTO approvals (…, status='pending', deadline=now()+<effective timeout>,
+   gateway_instance_id)`; `NOTIFY aurora_approval created`. (phase 2, RFE-011a) The
+   effective timeout comes from the matching rules (`07 §Approval deadlines`,
+   default `APPROVAL_TIMEOUT`) and is part of the cached rule data, so the hold
+   needs no extra lookup. Failure to insert →
    503 `approval_store_unavailable` (fail closed).
 3. Wait on the instance's LISTEN connection for `decided` of that id, with a
    2 s poll fallback reading the row. Keep the client connection open; do not
    read further body bytes.
 4. `approved` → continue at step 9. `denied` → 403 `manual_approval_denied`
    (`details.approval_id`). Deadline reached → the gateway sets
-   `status='expired'` (`WHERE status='pending'`) and answers 403
+   `status='expired'` (`WHERE status='pending'`; phase 2: and `resolved_at`) and answers 403
    `manual_approval_expired`. Client disconnect → `status='abandoned'`.
 5. On SIGTERM, every held request is answered 503 `gateway_restarting`
    (`retry-after: 1`) and its approval marked `abandoned`.
@@ -249,11 +412,14 @@ dashboard URL to fix the problem when one exists.
 | Code | Status | When | `details` |
 |------|--------|------|-----------|
 | `proxy_auth_required` | 407 | missing/invalid/expired credential | — |
+| `frozen` | 403 | (phase 2, RFE-006) the agent, its workspace or its org is frozen | `level` |
 | `not_a_proxy_request` | 400 | origin-form request on 4102 | — |
+| `open_lane_not_permitted` | 403 | (phase 1, RFE-003) open lane requested by a credential without the `browser` capability | — |
+| `open_lane_disabled` | 403 | (phase 1, RFE-003) effective open-lane posture is `disabled` | `manage_url` |
 | `destination_refused` | 403 | destination guard | `host` |
 | `method_override_refused` | 400 | step 3 | — |
 | `ambiguous_path` | 400 | step 3 | — |
-| `blocked_by_policy` | 403 | rule block | `rule_name`, `method`, `path`, `manage_url` |
+| `blocked_by_policy` | 403 | rule block (open lane, phase 1: `connect_time: true`; an approval-requiring rule matched at CONNECT time adds `reason: "approval_required"`) | `rule_name`, `method`, `path`, `manage_url` |
 | `blocked_by_default_policy` | 403 | default-deny | `manage_url` |
 | `blocked_by_egress_policy` | 403 | uncredentialed default (`credentialed_only`) | `host`, `manage_url` (org egress allow-list) |
 | `llm_provider_not_permitted` | 403 | governed LLM host not permitted for the org | `host` |
@@ -267,6 +433,7 @@ dashboard URL to fix the problem when one exists.
 | `manual_approval_denied` / `manual_approval_expired` | 403 | holds | `approval_id` |
 | `gateway_restarting` | 503 | shutdown during hold | — |
 | `approval_store_unavailable` | 503 | cannot persist hold | — |
+| `gateway_degraded` | 503 | (phase 3, RFE-014) database unreachable and the identity, host or credential value is not in cache (fail closed for new state); not for an invalid token | `reason` (`database_unavailable` \| `credential_store_unavailable`), `retry-after: 5` |
 | `multiple_connections` / `multiple_providers` | 409 | step 9 | `choices`, `header: "x-aurora-connection-id"` |
 | `connection_not_found` | 404 | stale/ungranted id | — |
 | `connection_reauth_required` | 403 | refresh refused earlier | `connection_id`, `reconnect_url` |
@@ -297,7 +464,7 @@ injected (the agent should see the real upstream error).
 
 | Cache | Key | TTL | Invalidated by |
 |-------|-----|-----|----------------|
-| Credential → identity | token hash | 60 s | `credential`, `agent`, `workspace`, `org`, `all`; `aurora_auth_revoked` |
+| Credential → identity | token hash | 60 s | `credential`, `agent`, `workspace`, `org`, `all`; `aurora_auth_revoked` (phase 2, RFE-025: the identity carries the effective BYO posture, source list and require-context flag; the instance switch comes from configuration) |
 | ResolvedHost | `org/ws/credential/host` | 60 s | `org`, `workspace`, `agent`, `connection`, `all` |
 | Plaintext values | `(SecretRef, version)` | 60 s | `connection`, `workspace`, `org`, `all` (zeroized on eviction) |
 | Effective governance (`08 §11`) | org | 60 s | `org`, `all` |
@@ -305,8 +472,111 @@ injected (the agent should see the real upstream error).
 | Leaf certificates | host | until near expiry | never |
 | Registry snapshot | content hash | until replaced | `aurora_registry` (+ 30 s poll of the active hash) |
 
-On LISTEN connection loss the gateway flushes all caches except leaf
-certificates, then reconnects.
+Phase 0–2: on LISTEN connection loss the gateway flushes all caches except
+leaf certificates, then reconnects. **From phase 3 (RFE-014) the order is
+reversed — reconnect first, flush after** (see *Operation during a Postgres
+outage*): the flush no longer destroys the only state that could carry the data
+plane through a database blip.
+
+## Operation during a Postgres outage (phase 3, RFE-014, D-61)
+
+Phase 0–2 left this unspecified, and flushing every cache on LISTEN loss turned a
+database blip into a full data-plane outage. The decision (fail closed for *new*
+state, no cliff for *existing* state) is now explicit, with its availability
+consequence stated: **an outage of Postgres degrades the gateway to what its
+caches already know, for at most `GATEWAY_RESOLVE_CACHE_TTL`, and refuses
+everything else.**
+
+**States.** The gateway tracks one of three states, exposed by `/readyz`,
+`/internal/v1/status` and the `aurora_gateway_state` gauge:
+
+| State | Condition | Behaviour |
+|---|---|---|
+| `ready` | database reachable, LISTEN connection established, snapshot loaded | normal |
+| `degraded` | snapshot loaded, but the database is unreachable **or** the LISTEN connection is down | serve from cache, refuse new state (below) |
+| `down` | no snapshot loaded (e.g. started while the database was unreachable), or draining (SIGTERM) | refuses new `CONNECT`s: 503 `gateway_degraded` / `gateway_restarting` |
+
+*Unreachable* = a readiness probe (`SELECT 1`, every `GATEWAY_DB_PROBE_INTERVAL` = 5 s,
+timeout 2 s) failed twice in a row, **or** a hot-path query failed with a
+connection-class error (pool acquire timeout 2 s, connection reset, `57P01`/`08xxx`
+SQLSTATE) — whichever comes first. Recovery needs one successful probe **and** an
+established LISTEN subscription. A statement-level error (constraint, permission,
+query bug) is not an outage and does not change the state.
+
+**(a) Serving during an outage.** Nothing is extended: no cache entry is served
+past its TTL, and nothing is refreshed.
+- **Served** while their cache entry is within TTL: the credential → identity entry
+  and the ResolvedHost entry for `(credential, host)` (so existing agents keep
+  working for the rest of their TTL), the plaintext cache (60 s), the effective
+  governance and posture, the registry snapshot (kept in memory indefinitely),
+  all open tunnels, WebSockets and in-flight requests (they need no database),
+  and in-memory rate limits.
+- **Refused** (fail closed, 503 `gateway_degraded`, `retry-after: 5`,
+  `details.reason = "database_unavailable"`, `x-should-retry: true`):
+  a credential not in the identity cache (it is **not** answered 407 — the gateway
+  cannot tell an invalid token from an unreadable store, and a client must not
+  conclude that its token is bad); a host with no ResolvedHost entry; a request
+  that needs a **new approval hold** (cannot persist it) →
+  `approval_store_unavailable`; a credential that needs refresh or a plaintext
+  not in the plaintext cache (inline-store values and OAuth refresh need Postgres)
+  → 503 `gateway_degraded` (`details.reason = "credential_store_unavailable"`);
+  context credentials minted by the API after the outage began (not yet cached).
+- Uncredentialed traffic whose identity and host entries are cached is served by
+  policy as usual; traffic that would have required a lookup is refused, so
+  **default-deny is never weakened** by degradation.
+- **Existing holds** keep waiting in memory until their deadline; a decision
+  cannot arrive while the database is down, so a hold whose deadline passes is
+  answered `manual_approval_expired`, and its `approvals` row is updated on
+  recovery (idempotent `UPDATE … WHERE status = 'pending'`, retried until it
+  succeeds). The hold's fallback poll failing is **never** read as a denial or an
+  approval.
+- **Request log.** Rows are buffered in memory during the outage, up to
+  `REQUEST_LOG_OUTAGE_BUFFER` (10 000 rows); the oldest are dropped beyond that
+  (`aurora_gateway_request_log_dropped_total`) and the buffer is flushed on
+  recovery. (`last_used_at` writes are skipped.) Never blocks requests.
+- **Revocation lag.** NOTIFY cannot arrive while the database or the LISTEN
+  connection is down, so a revocation, freeze, posture change or policy publish
+  takes effect at the latest when the affected entries' TTL runs out. This is the
+  same bound as phase 0's listener-loss window and is the price of availability;
+  operators who prefer less exposure lower `gateway.resolve_cache_ttl_secs`
+  (shorter outage tolerance), those who prefer more raise it (longer revocation
+  lag). Raising it above 300 s makes the gateway log a warning at start.
+
+**(b) LISTEN loss: reconnect first, flush after.** On loss of the LISTEN
+connection the gateway (1) sets `listener_connected = false` (state `degraded`
+only if the database is also unreachable or the listener has been down more than
+`GATEWAY_LISTEN_GRACE` = 30 s; a brief reconnect does not flap readiness),
+(2) **keeps all caches** and keeps serving under the rules above, (3) reconnects
+with jittered exponential backoff (0.5 s → 10 s), (4) after the new connection
+has re-issued `LISTEN` on every channel — so any invalidation from then on is
+received — **flushes** every cache except leaf certificates (invalidations sent
+during the gap were missed; the flush covers them) and re-polls the active
+registry hash, then (5) returns to `ready`. Entries are repopulated on demand
+(each miss is a database lookup, so a flush right after recovery is bounded by
+the pool; misses are coalesced per key). If the reconnect itself keeps failing the
+state stays `degraded` and entries age out at their TTL: at no time is anything
+served beyond TTL.
+
+**(c) Observability.**
+- `/readyz` (internal listener, unauthenticated like the other health routes):
+  `ready` → 200 `{ "state": "ready" }`; **`degraded` → 200**
+  `{ "state": "degraded", "reason": "database_unavailable" | "listener_down",
+  "since": ts, "cache_entries": n, "cache_oldest_age_secs": n }` — still 200 so
+  orchestrators keep it in rotation (pulling every gateway out because the
+  database is down would turn "degraded" into "down"); `down` → 503
+  `{ "state": "down", "reason": "snapshot_not_loaded" | "draining" }`. Monitors
+  that must alert on degraded call `GET /readyz?strict=true`, which answers 503
+  for `degraded` as well.
+- `/internal/v1/status` adds `state`, `db_unreachable_since`, `listener_connected`,
+  `cache` sizes and `request_log_buffered`.
+- Metrics: `aurora_gateway_state{state}` (1 for the current state),
+  `aurora_gateway_db_unreachable_seconds` (0 when reachable),
+  `aurora_gateway_degraded_requests_total{outcome="served_from_cache"|"refused", reason}`,
+  `aurora_gateway_listener_reconnects_total`,
+  `aurora_gateway_cache_flush_total{reason="listener_reconnect"|"invalidate_all"}`,
+  `aurora_gateway_request_log_buffered`, `aurora_gateway_request_log_dropped_total`.
+  A transition logs one structured line (`gateway.state_change`, from, to,
+  reason). Alert guidance: `15 §Observability`.
 
 ## Registry snapshot loading
 
@@ -329,8 +599,9 @@ backend is a later-phase trait implementation (`CounterStore`).
 
 - Request log: in-memory batch flushed every `REQUEST_LOG_FLUSH` via `COPY`;
   on flush failure the batch is retried once, then dropped with a metric (never
-  blocks requests). Never records secret values, bodies or raw query strings.
-- Metrics (Prometheus): requests by lane/decision/status, upstream latency
+  blocks requests); (phase 3, RFE-014) during a database outage rows are
+  buffered up to `REQUEST_LOG_OUTAGE_BUFFER` instead and flushed on recovery. Never records secret values, bodies or raw query strings.
+- Metrics (Prometheus; phase 3, RFE-014 adds the state and degraded-mode series listed under *Operation during a Postgres outage*): requests by lane/decision/status, upstream latency
   histogram, holds pending, cache hit ratios, refresh/mint outcomes, snapshot
   hash info gauge.
 - `gateway_instances` heartbeat every 15 s (used to abandon orphaned holds).

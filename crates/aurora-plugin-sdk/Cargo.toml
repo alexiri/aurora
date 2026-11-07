@@ -1,0 +1,21 @@
+[package]
+name = "aurora-plugin-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Guest SDK for Aurora app-plugin hooks (wasm32-wasip2)"
+
+# Generated wit-bindgen code contains `unsafe`, so the workspace-wide
+# `unsafe_code = "forbid"` cannot apply to this crate.
+[lints.rust]
+unsafe_code = "allow"
+unused_must_use = "deny"
+
+[dependencies]
+wit-bindgen = { workspace = true }
+
+[dev-dependencies]
+aurora-registry = { workspace = true }
+aurora-hook-wit = { workspace = true }

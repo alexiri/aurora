@@ -1,0 +1,47 @@
+# Aurora compose configuration (mounted at /etc/aurora/aurora.toml).
+# Secrets come from the environment (.env), never from this file.
+[server]
+external_url = "http://localhost:4000"
+bind = "0.0.0.0"
+# Caddy (edge) is on the core network; trust its X-Forwarded-For.
+trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+
+# SEC-09: gateway :4103 and runner :4106 are bound to their static core-network
+# IPs (compose.yaml sets AURORA__GATEWAY__INTERNAL_BIND / AURORA__RUNNER__OPS_BIND)
+# so they are never listening on the sandbox network. `bind` above only serves
+# the sandbox-facing :4102 / :4105.
+[runner]
+backend = "fake"
+api_url = "http://aurora-api:4101"
+# Used only by the podman backend (the `hosted` profile selects it in compose.yaml); inert for `fake`.
+sandbox_hosts = { "aurora-gateway" = "10.89.250.2", "aurora-runner" = "10.89.250.3" }
+
+# SEC-09 / docs/06: the gateway refuses private destinations. The llm-mock profile's LiteLLM has the
+# static core address 10.89.249.4; only that /32 is opened (not the core network, which holds the
+# API and Postgres). Inert unless that profile runs.
+[gateway]
+# What hosted sandboxes dial (runner.sandbox_hosts maps aurora-gateway to the gateway's sandbox-network
+# address). The default, derived from server.external_url, would be localhost:4102, which is not
+# reachable from a sandbox. Agents connecting from the host itself use http://localhost:4102 instead.
+advertised_proxy_url = "http://aurora-gateway:4102"
+allowed_private = ["10.89.249.4/32"]
+
+[hosted]
+enabled = true
+
+[telemetry]
+log_level = "info"
+
+# Mock LLM endpoint for the `llm-mock` compose profile (decision I-30): the real LiteLLM proxy in
+# front of VidaiMock, a scripted stand-in that is NOT a model (docs/operator/llm-endpoints.md).
+# Inert unless that profile runs (`COMPOSE_PROFILES=hosted,llm-mock`). The LLM key to give Aurora is
+# the dev master key `sk-aurora-mock-dev` (LITELLM_MASTER_KEY in compose.yaml). Default governance
+# permits it; no key-origin rule is set because the key is the operator's own.
+[[llm.endpoints]]
+id = "litellm-mock"
+provider = "litellm"
+display_name = "LiteLLM (VidaiMock, dev only)"
+base_url = "http://litellm:4000"
+dialects = ["anthropic_messages"]
+default_model = "scn-pong"
+models = ["claude-mock", "scn-pong", "scn-memory-tool", "scn-count", "scn-ratelimit", "scn-overload"]

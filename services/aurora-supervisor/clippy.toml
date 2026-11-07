@@ -1,0 +1,7 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "spawn through aurora_supervisor::spawn (SEC-34, I-23)" },
+  { path = "tokio::process::Command::new", reason = "spawn through aurora_supervisor::spawn (SEC-34, I-23)" },
+]

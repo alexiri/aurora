@@ -1,0 +1,5 @@
+description: org Default Rule block applies to injected traffic even when workspace allows
+org: {default_action: block}
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: ws-allow, action: allow}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, app_id: gh, tool_id: t1, winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: gh, scope: workspace}, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: block, reason: default_denied, workspace_rule: ws-allow}

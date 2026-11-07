@@ -1,0 +1,50 @@
+{
+  "$defs": {
+    "EventKind": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "InboundEvent": {
+      "properties": {
+        "event_id": {
+          "description": "The platform's own id (or deterministic hash); the core dedupes on `(connector, event_id)`.",
+          "type": "string"
+        },
+        "integration_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/EventKind"
+        },
+        "occurred_at": {
+          "description": "RFC 3339; informational only.",
+          "type": "string"
+        },
+        "payload": true
+      },
+      "required": [
+        "event_id",
+        "integration_id",
+        "kind",
+        "occurred_at",
+        "payload"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "events": {
+      "items": {
+        "$ref": "#/$defs/InboundEvent"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "events"
+  ],
+  "title": "EventsRequest",
+  "type": "object"
+}

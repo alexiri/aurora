@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "space_ref": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "space_ref"
+  ],
+  "title": "SpaceMembersOp",
+  "type": "object"
+}

@@ -1,0 +1,5 @@
+description: allow-list path mismatch is egress_denied; org allow-list is not widened by workspace
+org: {uncredentialed_default: block, uncredentialed_allowlist: [{host: other.example.com}]}
+workspace: {uncredentialed_allowlist: [{host: api.example.com}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: block, reason: egress_denied}

@@ -1,0 +1,4 @@
+description: truncated body makes a block condition unknown, which matches (doubt tightens)
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: blk, action: block, conditions: [{on: body, op: contains, value: DROP TABLE}]}]}
+facts: {host: api.example.com, port: 443, path: /q, method: POST, body: 'select 1', truncated: true, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: block, reason: rule, workspace_rule: blk}

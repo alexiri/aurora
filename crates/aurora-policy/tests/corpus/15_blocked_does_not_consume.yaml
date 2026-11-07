@@ -1,0 +1,5 @@
+description: a blocked request does not consume quota of the other scope's rate-limit rule
+org: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: rl, action: allow, rate_limit: {count: 3, per: day}}]}
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: blk, action: block}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: block, hits: 0}

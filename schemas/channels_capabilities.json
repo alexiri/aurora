@@ -1,0 +1,14 @@
+{
+  "$defs": {
+    "Capability": {
+      "maxLength": 64,
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "items": {
+    "$ref": "#/$defs/Capability"
+  },
+  "title": "Array_of_Capability",
+  "type": "array"
+}

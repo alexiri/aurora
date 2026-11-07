@@ -1,0 +1,6 @@
+# /v1/messages/count_tokens (Claude Code may call it). Fixed answer.
+name: "aurora-anthropic-count-tokens"
+matcher: "^/v1/messages/count_tokens$"
+priority: 100
+response_template: "aurora/count_tokens.json.j2"
+error_template: "aurora/error.json.j2"

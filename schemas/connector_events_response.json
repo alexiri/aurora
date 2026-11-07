@@ -1,0 +1,49 @@
+{
+  "$defs": {
+    "ErrorCode": {
+      "maxLength": 64,
+      "type": "string"
+    },
+    "RejectedEvent": {
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "event_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "code"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "accepted": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "duplicates": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "rejected": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RejectedEvent"
+      },
+      "type": "array"
+    }
+  },
+  "title": "EventsResponse",
+  "type": "object"
+}

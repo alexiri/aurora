@@ -1,0 +1,5 @@
+description: rate-limited allow below the limit is allowed and reports one hit
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: rl, action: allow, rate_limit: {count: 3, per: minute}}]}
+counters: [{rule: 00000000-0000-0000-0000-0000000000a1, agent: 00000000-0000-0000-0000-000000000001, n: 2}]
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: allow, hits: 1}

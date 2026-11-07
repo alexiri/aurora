@@ -1,0 +1,20 @@
+[package]
+name = "aurora-summary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+aurora-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+aurora-registry = { workspace = true }
+base64 = { workspace = true }
+graphql-parser = { workspace = true }
+mail-parser = { workspace = true }
+percent-encoding = { workspace = true }

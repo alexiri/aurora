@@ -1,0 +1,39 @@
+- name: graphql query selects the read tool
+  connection: { credentials: { token: "gt" } }
+  request:
+    method: POST
+    url: "https://api.forge.example.test/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"query Repos { viewer { login } }","operationName":"Repos"}'
+  expect:
+    app: forge-demo
+    tool: gql_query
+    upstream: { headers: { authorization: "Bearer gt" } }
+- name: graphql mutation selects the write tool and summarizes
+  connection: { credentials: { token: "gt" } }
+  request:
+    method: POST
+    url: "https://api.forge.example.test/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"mutation CreateIssue { createIssue(input: {title: \"x\"}) { id } }","operationName":"CreateIssue"}'
+  expect:
+    tool: gql_mutation
+    summary: { title: "GraphQL mutation", fields: { Operation: CreateIssue } }
+- name: unparseable graphql body matches no tool (fail closed)
+  connection: { credentials: { token: "gt" } }
+  request:
+    method: POST
+    url: "https://api.forge.example.test/graphql"
+    headers: { content-type: application/json }
+    body: 'not json'
+  expect: { app: forge-demo }
+- name: git fetch advertisement
+  connection: { credentials: { token: "gt" } }
+  request: { method: GET, url: "https://git.forge.example.test/org/repo.git/info/refs?service=git-upload-pack" }
+  expect:
+    tool: git_fetch
+    upstream: { headers: { authorization: "Basic eC1hY2Nlc3MtdG9rZW46Z3Q=" } }
+- name: git push is the write tool
+  connection: { credentials: { token: "gt" } }
+  request: { method: POST, url: "https://git.forge.example.test/org/repo.git/git-receive-pack" }
+  expect: { tool: git_push }

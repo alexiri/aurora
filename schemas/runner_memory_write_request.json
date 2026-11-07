@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Memory write payload (also the W6 `memory.write` body).",
+  "properties": {
+    "boot_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "content": {
+      "type": "string"
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "key": {
+      "type": "string"
+    },
+    "sandbox_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "sandbox_id",
+    "boot_id",
+    "key",
+    "content"
+  ],
+  "title": "MemoryWriteRequest",
+  "type": "object"
+}

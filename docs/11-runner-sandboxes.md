@@ -172,7 +172,8 @@ environment or memory), removes it from its environment and never passes it on.
   "sandbox_id": "…", "boot_id": "…", "agent": { "id": "…", "handle": "daneel", "name": "Daneel" },
   "runner_url": "ws://aurora-runner:4105/v1/supervisor",
   "bootstrap_token": "aup_…",
-  "gateway": { "proxy": "aurora-gateway:4102", "boot_token": "aub_…" },
+  "gateway": { "proxy": "aurora-gateway:4102", "tls": true, "server_name": "aurora-gateway", "boot_token": "aub_…" },
+  "capabilities": [ "browser" ],
   "ca_pem": "-----BEGIN CERTIFICATE-----…",
   "files": [ { "path": "/workspace/.config/…", "mode": "0600", "content_b64": "…", "only_if_absent_or_sentinel": true } ],
   "harness": { "id": "claude-code", "capabilities_expected": [ "resume", "steer" ] },
@@ -188,6 +189,31 @@ Non-secret environment set on the container by the runner: `TZ`, `HOME=/workspac
 `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`), and app `env` entries
 from the snapshot. The proxy URL carries **no credentials**: the supervisor's
 loopback forwarder adds them (`12 §Loopback proxies`).
+
+(phase 1, RFE-003) **`capabilities`** (array, absent = empty) lists what the
+sandbox may do beyond ordinary traffic; phase 1 defines `browser`. Its source:
+the **sandbox image declares** the capabilities it supports in the OCI label
+`org.aurora.capabilities` (comma list; the default `aurora-sandbox` image
+declares `browser` because it ships headless Chromium and its wrapper); the
+runner reports them at registration as `RunnerCapabilities.image_capabilities`
+(`16 §W5`; absent ⇒ none, fail closed); at `sandbox.start` the API sets
+`capabilities = image_capabilities ∩ {browser unless the effective open-lane
+posture is disabled for the agent's workspace}` and mints the boot credential
+with the same set. The supervisor starts the open proxy `127.0.0.1:3129` **only
+if `browser` is present**; the gateway independently refuses the open lane for a
+credential without it (`06`). An image without the label never gets a tunnel.
+
+(phase 1, RFE-002) `gateway.proxy` is **always dialled with TLS**: the
+forwarder verifies the gateway's proxy certificate against `ca_pem` and the name
+`gateway.server_name` (default: the host part of `proxy`, which MUST be in the
+certificate's SAN set, `06 §Proxy listener TLS`); `gateway.tls` is `true` and any
+other value is refused at start. The only non-TLS proxy hop left is the
+**client → loopback forwarder** leg on `127.0.0.1` *inside the sandbox's own
+network namespace*, which carries no credentials (the URL has none; the
+forwarder adds them) and never leaves the sandbox, so `HTTPS_PROXY` in the
+container environment stays `http://127.0.0.1:3128` — that is the documented
+exception to "`HTTPS_PROXY=https://…` everywhere", and it is not an
+agent-reachable listener on any other interface.
 
 ## Lifecycle
 
@@ -227,6 +253,9 @@ and the dashboard's "awake because…" badge.
 
 - **Idle**: no keep-awake reason and `now − last_engaged_at ≥ IDLE_STOP` →
 `stop_reason = idle`.
+- **Frozen** (phase 2, RFE-006): the agent is effectively frozen (`04 §Freeze`) →
+`stop_reason = frozen`, regardless of keep-awake reasons; the home volume is kept
+and a frozen agent is never started or reconciled away.
 - **Cap**: the background cap expired → `cap`.
 - **Evict**: a runner over its held-awake ceiling (`max(1, max_sandboxes − 1)`,
 override `runner.held_awake_ceiling`) needs a slot for a start; the
@@ -273,7 +302,7 @@ Two installations sharing a daemon or cluster never touch each other's objects
 Built from `images/sandbox/Containerfile`, published as
 `aurora-sandbox:<version>`:
 
-- **Base layer** (rebuilt rarely, tagged by content hash): AlmaLinux 10 ([gitlab-registry.cern.ch/linuxsupport/alma10-base](http://gitlab-registry.cern.ch/linuxsupport/alma10-base)), `git`, `curl`, `jq`, `ripgrep`, `fd-find`, `less`,`openssh-client`, `python3` + `pip` + `venv` + `uv`, Node.js LTS + npm, `build-essential`, `chromium` (headless), `unzip`, `zip`, `procps`, `tini`-free.
+- **Base layer** (rebuilt rarely, tagged by content hash): AlmaLinux 10 (phase 0–2 named the CERN registry image `gitlab-registry.cern.ch/linuxsupport/alma10-base`; **from phase 3 (RFE-019, D-63)** the specified base is the **public official AlmaLinux image**, `docker.io/library/almalinux:10`, pinned by digest in `images/sandbox/Containerfile` as `ARG SANDBOX_BASE_IMAGE=docker.io/library/almalinux:10@sha256:<digest recorded at release>`; a deployment that must use a private or mirrored base overrides the build argument `SANDBOX_BASE_IMAGE` — the package set and the image labels do not depend on which base is used; this deployment's override is the CERN `alma10-base` image, `15 §Deployment-specific settings example`), `git`, `curl`, `jq`, `ripgrep`, `fd-find`, `less`,`openssh-client`, `python3` + `pip` + `venv` + `uv`, Node.js LTS + npm, `build-essential`, `chromium` (headless), `unzip`, `zip`, `procps`, `tini`-free. (phase 1, RFE-003) The image carries the label `org.aurora.capabilities=browser` (it ships the Chromium wrapper); a custom image without Chromium omits it and its sandboxes get no open-lane listener.
 
 - **App layer**: `aurora-supervisor` binary, pinned harness runtimes (Claude Code
 CLI at a pinned version installed under `/opt/aurora/harness/claude-code`),

@@ -1,0 +1,117 @@
+{
+  "$defs": {
+    "OutFile": {
+      "properties": {
+        "attachment_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "download_url": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "attachment_id",
+        "name",
+        "download_url"
+      ],
+      "type": "object"
+    },
+    "Sender": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SharedTag"
+        },
+        {
+          "properties": {
+            "presence_id": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "presence_id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SharedTag": {
+      "description": "`\"shared\"` marker of [`Sender::Shared`].",
+      "enum": [
+        "shared"
+      ],
+      "type": "string"
+    },
+    "Target": {
+      "anyOf": [
+        {
+          "properties": {
+            "space_ref": {
+              "type": "string"
+            },
+            "thread_ref": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "space_ref"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "user_ref": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_ref"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "content": {
+      "description": "`aurora_channels::Content` as JSON."
+    },
+    "ephemeral_to": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "files": {
+      "items": {
+        "$ref": "#/$defs/OutFile"
+      },
+      "type": "array"
+    },
+    "op_marker": {
+      "type": "string"
+    },
+    "sender": {
+      "$ref": "#/$defs/Sender"
+    },
+    "target": {
+      "$ref": "#/$defs/Target"
+    }
+  },
+  "required": [
+    "target",
+    "sender",
+    "content",
+    "op_marker"
+  ],
+  "title": "MessagePostOp",
+  "type": "object"
+}

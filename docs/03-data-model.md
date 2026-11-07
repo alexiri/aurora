@@ -155,7 +155,8 @@ Device-style CLI login.
 | status | text CHECK in (`pending`,`approved`,`denied`,`expired`,`consumed`) | |
 | approved_by | uuid null FK→users (cascade) | |
 | workspace_id | uuid null FK→workspaces (cascade) | chosen at approval |
-| api_key_id | uuid null FK→api_keys (cascade) | minted on approval, token returned once on consume |
+| api_key_id | uuid null FK→api_keys (cascade) | minted on consume (nothing reversible is stored), token returned once; spec fix S-04 |
+| hostname | text null | sanitized client hostname from `POST /v1/auth/cli` (key name `CLI on <hostname>`); spec fix S-04 |
 | expires_at | timestamptz | 10 min |
 
 ### `audit_log` — *no FKs*
@@ -176,7 +177,7 @@ Device-style CLI login.
 | metadata | jsonb not null default `{}` | never contains secret values |
 | index | (org_id, created_at desc), (workspace_id, created_at desc) | |
 
-Audit writes are best-effort and never fail the action (logged on failure).
+Audit writes are best-effort and never fail the action (logged on failure). (phase 2, RFE-008) Except for the **security-critical set** of `04 §Audit`, whose rows are written in the same transaction as the change and make the action fail if they cannot be written.
 
 ---
 
@@ -221,6 +222,7 @@ Audit writes are best-effort and never fail the action (logged on failure).
 | credentials_version | bigint not null default 1 | CAS authority for refresh/mint writes |
 | credentials_expires_at | timestamptz null | access-token expiry (refresh trigger) |
 | scopes | text[] not null default `{}` | granted scopes |
+| requested_scopes | text[] not null default `{}` | scopes requested at authorize time; `missing_scopes = requested_scopes − scopes` (I-33) |
 | metadata | jsonb not null default `{}` | non-secret, plugin-declared keys only |
 | tenant_host | text null | for tenant-bound hosts |
 | oauth_client_id | uuid null FK→app_oauth_clients (restrict) | which client minted it |
@@ -274,6 +276,7 @@ The project's built-in publisher key (`aurora`) is compiled in and never stored.
 | source | text CHECK in (`builtin`,`directory`,`upload`) | |
 | status | text CHECK in (`pending_approval`,`active`,`superseded`,`rejected`,`disabled`,`invalid`) | |
 | status_reason | text null | |
+| violations | jsonb not null default '[]' | validation violations for status invalid; spec fix S-05 |
 | approved_by | uuid null FK→users (set null) | |
 | approved_at | timestamptz null | |
 | unique | (package_id, version, digest) | |
@@ -312,9 +315,10 @@ supports, then greatest `activated_at`.
 ### `org_app_availability`
 | Column | Type | Notes |
 |---|---|---|
-| org_id | uuid FK→organizations (cascade) | pk part |
-| app_id | text | pk part |
+| org_id | uuid FK→organizations (cascade) | |
+| app_id | text | |
 | workspace_id | uuid null FK→workspaces (cascade) | null ⇒ whole org |
+| unique | (org_id, app_id, workspace_id) NULLS NOT DISTINCT | spec fix S-01 (was pk (org_id, app_id), contradicting `07 §App availability`) |
 
 Only consulted when `organizations.app_posture = 'restricted'`.
 
@@ -583,6 +587,12 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | last_event_n | int not null default 0 | highest applied supervisor event number (`16 §W5` idempotency) |
 | partial unique | (conversation_id) WHERE role=`turn` AND status IN (`queued`,`dispatched`,`running`) | one active turn per conversation |
 
+### `turn_answer_buffers`
+| Column | Type | Notes |
+|---|---|---|
+| turn_id | uuid pk FK→turns (cascade) | |
+| msgs | jsonb not null default `[]` | answer-rule buffer `[{id,text,reply_to?}]` (text after the turn's last tool call, `10 §Transcript events`); written with each `turn.events` batch, deleted when `turn.result` emits the durable `text` events; spec fix FUP-M4.1 |
+
 ### `transcript_events`
 | Column | Type | Notes |
 |---|---|---|
@@ -654,7 +664,7 @@ Phase 0 blob backend (`postgres`).
 |---|---|---|
 | id | uuid pk | |
 | org_id | uuid FK→organizations (restrict) | |
-| agent_id | uuid null FK→agents (cascade) | null ⇒ org skill |
+| agent_id | uuid null FK→agents (cascade) | null ⇒ org skill (phase 3, RFE-020: or a workspace skill when `workspace_id` is set, `03 §Planned changes`) |
 | name | text not null | `[a-z0-9]+(-[a-z0-9]+)*` ≤64, immutable; `aurora-*` reserved |
 | description | text not null | single line ≤500 |
 | body | text not null | `SKILL.md` body |
@@ -812,6 +822,7 @@ Phase 0 blob backend (`postgres`).
 | listening_ports | int[] not null default `{}` | churn column |
 | failure_code | text null; failure_message text null | |
 | resource_profile | jsonb null | effective profile of current boot |
+| start_failures | int not null default 0 | consecutive failed starts (backoff); reset on running; spec fix S-10 |
 
 ### `runtime_intervals` — *no FKs*
 | Column | Type | Notes |
@@ -1059,3 +1070,240 @@ view `gateway_users`), `api_keys`), `agents`, `gateway_credentials`, `secrets`,
 credentials_expires_at, status, status_reason, reauth_required_at,
 last_used_at)` on `app_connections`; `UPDATE (last_used_at, origin)` on `secrets`;
 `EXECUTE` on `pg_advisory_lock` family; `LISTEN` is implicit.
+
+---
+
+## Planned changes (later phases)
+
+This section lists schema and document-shape changes that later phases will
+introduce. It is **normative for those phases** but is *not* part of the
+phase-0 schema: the tables above are machine-checked against the migrations
+(`scripts/extract-schema.py`), and this section deliberately uses level-4
+headings and a different header so that the extractor ignores it. A migration
+for a planned change lands with its phase; the corresponding rows move into the
+tables above in the same change (and this section shrinks).
+
+#### `channel_integrations` (jsonb key in `config`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `config.verified_email_autolink` | bool, default `false` | org-admin opt-in: the core may create `verified_email` user links from the connector's asserted `email`/`email_verified` (`13 §5.9`). Requires the `email_verified` capability. No column: `config` is `jsonb`. | 1 (RFE-001) |
+
+#### `link_requests`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| platform_email_hint | citext null | email the platform asserted for the person; used only to pre-fill the sign-in (`login_hint`) and the confirm page; never authorizes | 1 (RFE-001) |
+
+#### `policy_generations`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| open_lane_posture | text CHECK in (`enabled`,`allowlist_only`,`disabled`) not null default `enabled` | the workspace's open-lane posture (`08 §11`, `06 §Open-lane admission and posture`); can only tighten. CHECK: `enabled` when `workspace_id IS NULL` (org scope uses `organizations.governance.egress.open_lane`) | 1 (RFE-003) |
+
+#### `organizations` (jsonb key in `governance`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `governance.egress.open_lane` | `enabled` \| `allowlist_only` \| `disabled`, default `enabled` | org open-lane posture (`08 §11.2`); not below the instance minimum. No column: `governance` is `jsonb`. | 1 (RFE-003) |
+
+#### `gateway_credentials`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| capabilities | text[] not null default `{}` | credential capabilities; phase 1 value `browser` (open-lane use), settable on `boot` credentials only (`08 §7`) | 1 (RFE-003) |
+
+#### `users`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| password_hash | (existing column) | cleared (`NULL`) by the phase-1 migration and ignored from phase 1 (RFE-004); the column is dropped by the contract migration in a later release (`15 §Upgrades`, expand → migrate → contract) | 1 → drop later (RFE-004) |
+
+#### `email_tokens`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| (whole table) | — | unused from phase 1 (no e-mail verification or password reset, RFE-004); existing rows are ignored and the table is dropped by the contract migration in a later release | 1 → drop later (RFE-004) |
+
+#### `sessions`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| reauth_at | timestamptz null | last successful OIDC re-authentication (`04 §OIDC`); account deletion needs it within 10 min | 1 (RFE-004) |
+
+#### `gateway_credentials` (speaker)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| speaker_user_id | uuid null (no FK; set null semantics by revocation on user delete) | kind=`context` hosted only: the person who authored the turn (`turns.speaker_user_id` when `speaker_kind = person`); null for every other credential. Policy `user` identities match only this (`07`) | 2 (RFE-005) |
+
+#### `request_log`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| speaker_user_id | uuid null | the request identity's speaker (no FK, ledger table); lets operators see which person's turn caused a request | 2 (RFE-005) |
+
+#### `agents`, `workspaces`, `organizations` (freeze)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| frozen_at | timestamptz null | set ⇒ frozen at this level (`04 §Freeze`); effective freeze of an agent = agent ∨ workspace ∨ org | 2 (RFE-006) |
+| frozen_by_user_id | uuid null FK→users (set null) | | 2 (RFE-006) |
+| frozen_reason | text null | 1..500 chars, sanitized; required when `frozen_at` is set | 2 (RFE-006) |
+| frozen_authority | text null CHECK in (`workspace_owner`,`org_admin`,`instance_admin`) | highest authority of the freezer; lifting needs at least this | 2 (RFE-006) |
+
+(The same four columns on each of the three tables; a CHECK keeps them all null or all set.)
+
+#### `sandboxes`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| stop_reason | CHECK gains `frozen` | agent effectively frozen (`11`) | 2 (RFE-006) |
+
+#### `schedules`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| last_outcome | CHECK gains `skipped_frozen` | fire skipped because the agent is effectively frozen (`10 §Schedules`); `schedule_runs.outcome` (open text) records `skipped_frozen` too | 2 (RFE-006) |
+
+#### `audit_log`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| critical | bool not null default false | true for rows of the security-critical set (`04 §Audit`); index (org_id, critical, created_at desc) so auditors can filter them | 2 (RFE-008) |
+
+#### `conversations`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| archived_at | timestamptz null | hidden from default lists; a person message unarchives (`10 §Archive, delete, redaction, retention, export`) | 2 (RFE-010) |
+| archived_by_user_id | uuid null FK→users (set null) | | 2 (RFE-010) |
+
+#### `transcript_events`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| redacted_at | timestamptz null | set when the payload was replaced by the redaction marker `{ "redacted": true, "redacted_at", "redacted_by", "reason"? }` (≤64 KiB bound unchanged) | 2 (RFE-010) |
+| redacted_by_user_id | uuid null FK→users (set null) | | 2 (RFE-010) |
+
+#### `session_purges` (new table)
+Pending deletions of harness session files after a conversation delete or a `reset_session` redaction.
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 2 (RFE-010) |
+| agent_id | uuid FK→agents (cascade) | | 2 (RFE-010) |
+| conversation_id | uuid null | the conversation that is gone (no FK) | 2 (RFE-010) |
+| session_ref | text not null | `harness_session_ref` to purge | 2 (RFE-010) |
+| created_at / done_at | timestamptz / null | row deleted or stamped on `session.purged`; index (agent_id) WHERE done_at IS NULL | 2 (RFE-010) |
+
+#### `organizations` (jsonb key in `settings`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `settings.retention` | `{ "conversations_days"?: int\|null, "attachments_days"?: int\|null, "attachment_quota_mib"?: int\|null }` | per-org retention (RFE-010) and attachment limits (RFE-015); null/absent = keep forever / unlimited. No column: `settings` is `jsonb`. | 2 (RFE-010/015) |
+
+#### `attachments`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| purged_at | timestamptz null | bytes deleted (retention or explicit delete); the row stays for the transcript chip; content GET answers 410 | 2 (RFE-015) |
+| purge_reason | text null CHECK in (`retention`,`deleted`) | | 2 (RFE-015) |
+| `failure_reason` | (existing column) gains the value `quota_exceeded` | open vocabulary, no schema change | 2 (RFE-015) |
+
+#### `org_storage_usage` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| org_id | uuid pk FK→organizations (cascade) | | 2 (RFE-015) |
+| attachment_bytes | bigint not null default 0 | transactional counter of non-purged attachment bytes; reconciled daily from `attachments` | 2 (RFE-015) |
+| updated_at | timestamptz not null | churn column | 2 (RFE-015) |
+
+#### `workspace_access`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| role | CHECK gains `approver` → in (`owner`,`approver`,`member`) | `approver` = chats and decides approvals (`04 §The access law`); the migration does **not** change existing rows (members stay members) | 2 (RFE-012) |
+
+#### `invitations`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| approver_workspace_ids | uuid[] not null default `{}` | workspaces bound as `approver` on accept (disjoint from `workspace_ids`, which stay `member`) | 2 (RFE-012) |
+
+#### `policy_rules`, `grants`, `derived_rules` (approval timeout)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| policy_rules.approval_timeout_secs | int null | only with `require_approval`; 60 … `approvals.max_timeout_secs`; null = no preference (`07 §Approval deadlines`) | 2 (RFE-011a) |
+| grants.ask_timeout_secs | int null | custom connection grants with `ask_tools`; compiled into the derived ask rule | 2 (RFE-011a) |
+| derived_rules.rule | jsonb gains `approval_timeout_secs` | same field as in `policy_rules` | 2 (RFE-011a) |
+
+#### `approvals`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| resolved_at | timestamptz null | set on every terminal transition (approve, deny, expire, abandon); the stall clock restarts here (`07 §Approval deadlines`). Gateway role may write it with `status` | 2 (RFE-011a) |
+
+#### `approval_watchers` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| replica_id | uuid | API replica holding the connection; pk part | 2 (RFE-011a) |
+| user_id | uuid FK→users (cascade) | pk part | 2 (RFE-011a) |
+| workspace_id | uuid FK→workspaces (cascade) | pk part; the workspace whose approvals the connection watches | 2 (RFE-011a) |
+| last_seen_at | timestamptz not null | churn column; live when within `APPROVAL_WATCHER_TTL` | 2 (RFE-011a) |
+
+#### `approval_notifications` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| approval_id | uuid | gateway or action approval id; pk part (no FK: approval history survives) | 2 (RFE-011a) |
+| user_id | uuid FK→users (cascade) | pk part | 2 (RFE-011a) |
+| kind | text CHECK in (`gateway`,`action`) | | 2 (RFE-011a) |
+| sent_at | timestamptz not null | insert-on-conflict claim makes the e-mail idempotent across replicas; pruned with the daily retention pruning | 2 (RFE-011a) |
+
+#### `users`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| approval_email_enabled | bool not null default true | per-user opt-out of approval e-mails | 2 (RFE-011a) |
+
+#### `schedules`, `webhooks` (anchor)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| anchor | text not null CHECK in (`creator`,`workspace`) default `creator` | fire-time authority: the creator's access (`creator`) or "an active owner exists" (`workspace`); `creator_user_id` stays as provenance (`04 §Fire-time authority`) | 2 (RFE-021) |
+
+#### `agents` (BYO controls)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| byo_source_cidrs | text[] null | BYO only (CHECK `kind = 'byo'` when set); 1–32 CIDR strings (`cidr` syntax, no `/0`); null = inherit org/instance default list (`08 §11.9`). Validated by the API; never empty | 2 (RFE-025) |
+| byo_require_context | bool not null default false | BYO only: credentialed requests must use a context credential (`08 §11.9`) | 2 (RFE-025) |
+
+#### `workspaces` (BYO posture)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| byo_posture | text null CHECK in (`enabled`,`owners_only`,`disabled`) | null = inherit; can only tighten (`08 §11.9`) | 2 (RFE-025) |
+
+#### `organizations` (jsonb key in `governance`, BYO)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `governance.byo` | `{ "posture"?: "enabled"\|"owners_only"\|"disabled", "source_cidrs"?: [cidr], "require_context_credentials"?: bool }` | org BYO posture, default source list and require-context default (`08 §11.2`, `§11.9`). No column: `governance` is `jsonb`. | 2 (RFE-025) |
+
+#### `gateway_credentials` (token age and use)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| expires_at | (existing column) | kind=`agent`: null unless an effective maximum age is configured, then `created + max age` (`08 §7`); BYO `context` credentials are capped by it | 3 (RFE-013) |
+| last_used_at | timestamptz null | churn column: set by the gateway on successful authentication and by the API on agent-token routes, ≤1 write/min/credential; drives the stale-token views. Gateway role gains `UPDATE (last_used_at)` on `gateway_credentials` | 3 (RFE-013) |
+
+#### `organizations` (jsonb key in `governance`, agent token age)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `governance.agent_tokens.max_age_days` | int 1…3650 \| absent | org maximum age of BYO agent tokens; absent = none; never above the instance value (`08 §7`). No column: `governance` is `jsonb`. | 3 (RFE-013) |
+
+#### `turns` (idempotency)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| source_event_id | (existing column and partial unique index `(conversation_id, source_event_id)`) | no schema change. Phase 3 adds a **value convention**: turns and follow-ups created by `POST …/messages` with an `Idempotency-Key` store `api:<user_id>:<key>` (≤ 170 chars); connector event ids starting with `api:` are rejected (`13`). Promoted turns keep null (`10 §Turns`) | 3 (RFE-018) |
+
+#### `skills` (workspace tier)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| workspace_id | uuid null FK→workspaces (cascade) | non-null ⇒ **workspace-tier** skill (`10 §Skills`). CHECK: `workspace_id IS NULL OR agent_id IS NULL` (agent skills keep `workspace_id` null; their workspace is the agent's). Tier = agent (`agent_id` set) \| workspace (`workspace_id` set) \| org (both null) | 3 (RFE-020) |
+| unique | (workspace_id, name) WHERE workspace_id IS NOT NULL | new partial unique index; the existing org-tier index becomes `(org_id, name) WHERE agent_id IS NULL AND workspace_id IS NULL` (migration replaces it); the agent-tier index is unchanged | 3 (RFE-020) |
+| index | (workspace_id) WHERE workspace_id IS NOT NULL | effective-set computation and home-sync bumps | 3 (RFE-020) |
+
+Home-sync generation (`12 §Sync protocol`, I-32): a change to a workspace-tier skill
+or its files bumps `workspaces.home_sync_generation` (database trigger, as for the
+other projection inputs); no new counter is needed. `skill_files` is unchanged.
+
+#### `app_connections` (credential field names)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| credential_keys | text[] null | **names** (never values) of the fields present in the sealed credential JSON; maintained by the API/gateway/hook host wherever credentials are sealed (connect, reconnect, refresh, mint). Null = unknown (legacy rows; the phase-3 migration fills what it can by reading inline-store values once). Used by the plugin major-upgrade check (`09 §10`). Gateway role keeps its column-level `UPDATE` list plus `credential_keys` | 3 (RFE-022) |
+| status_reason | (existing column) | gains the open-vocabulary form `plugin_major_upgrade: <package> <old> -> <new>; missing: <names>` (≤300 chars) when set by an upgrade | 3 (RFE-022) |
+
+#### `plugin_packages` (activation hold)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| status_reason | (existing column, open vocabulary) | gains the value `breaks_connections`: for a major upgrade held in `pending_approval` because it would set connections to `reauth_required` (`09 §10`) | 3 (RFE-022) |
+
+#### `channel_ops` (self-contained deprovision)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| payload | (existing column) | for `presence.deprovision`: `{ presence_id, reason, platform_user_ref, handle, tenant_ref, tenant_label, config, credentials_ref }`; `credentials_ref` is a SecretRef sealed under the op id (`purpose channel_op_deprovision`), nulled and discarded at the terminal state (`13 §4.2`) | 3 (RFE-024) |
+| integration_id | (existing column) | `NULL` for deprovision ops (so the cascade of `channel_integrations` cannot delete them); `presence_id` has no FK; `connector_id` is set | 3 (RFE-024) |
+| index | (kind, status) WHERE kind = `presence.deprovision` AND status IN (`pending`,`claimed`) | the pruning job finds deprovision ops whose sealed copy must be discarded | 3 (RFE-024) |
