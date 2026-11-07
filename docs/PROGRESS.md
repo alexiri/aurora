@@ -204,7 +204,7 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | P1-004 | RFE-002 TLS-only gateway proxy listener | 1 | todo | — |
 | P1-005 | RFE-004 OIDC-only sign-in (dev IdP, tests/e2e migrate off passwords) | 1 | todo | OPS-016 preferred |
 | MM-003 | Target Mattermost 11.7 (production version) | 1 | in-progress (inside the MM-002 lane, first) | MM-001 |
-| OPS-019 | CI green + fast (`rust-test` disk fix, sharded nextest, one compile), actions off Node 20 | 1 | in-progress (interim disk fix d52e3162 on master) | OPS-016 for test layout |
+| OPS-019 | CI green + fast (`rust-test` disk fix, sharded nextest, one compile), actions off Node 20 | 1 | merged (3ef66e54); verifying on GitHub | OPS-016 for test layout |
 | OPS-020 | CI builds images and pushes to ghcr.io after green tests (shared builder stage, cache) | 1 | todo | OPS-019, OPS-016 |
 | OPS-021 | Dependabot (cargo, npm, actions, docker; grouped) | 4 | todo | OPS-019/020 |
 | OPS-017 | kind replaces compose | 1 | todo | OPS-016 |
