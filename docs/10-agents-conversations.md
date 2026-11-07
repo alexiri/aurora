@@ -77,7 +77,11 @@ state kept; reversible with `unfreeze`. Full rules: `04 §Freeze`.
 
 Cascades in the database to everything it owns (conversations included; the sandbox home, which holds harness session files, is destroyed with it). Before the delete commits, the
 API enqueues connector `presence.deprovision` operations for dedicated
-presences and revokes all gateway credentials. The sandbox and home volume are
+presences and revokes all gateway credentials. (phase 3, RFE-024) The operations
+are **self-contained** (they snapshot the bot reference and a sealed, op-bound copy
+of the credentials needed) and are inserted **in the same transaction as the
+delete, before the cascade**, so a committed delete always has its operations and
+a rolled-back one has none (`13 §4.2`, `04 §Deletion semantics`). The sandbox and home volume are
 destroyed by runner reconciliation (anything the control plane no longer knows
 is destroyed, `11 §Reconcile`).
 

@@ -299,6 +299,23 @@ done when its tests exist, pass in CI, and the security invariants it touches
   members and agents cannot anchor, audit rows (`automation.reassign`) are atomic.
 - Security probes inside a real sandbox (SEC-01, 02, 09, 26, 34).
 
+### Self-contained deprovision (phase 3, RFE-024, SEC-58)
+- Atomicity: delete of an agent/workspace/org with dedicated presences commits the
+  ops with the delete; an injected failure after the op inserts (or in the cascade)
+  rolls back both; detach of a single presence likewise.
+- Self-containment: with the integration, presence, agent and org rows deleted, a
+  *different* connector replica claims the op (integration_id NULL) and the fake
+  connector executes deprovision from payload + `credentials` alone; Mattermost
+  conformance: token revoke + bot disable with only the payload; unknown bot → 404 →
+  `dropped`.
+- Credential copy: sealed under the op context (open under another context fails
+  `SecretRefMismatch`), plaintext only in the claim response, `discard`ed and nulled
+  on done/failed/dropped and by pruning; ext-store managed versions deleted; never in
+  logs or audit metadata.
+- Retry/failure: `unavailable` retried for `DEPROVISION_RETRY_WINDOW` (clock test),
+  `credential_dead` → failed with `presence.deprovision_failed` audit and metric;
+  shared presence enqueues nothing; org deletion does not touch the shared bot.
+
 ### Channels
 - Core with the fake connector: every scenario of the connector conformance
   suite plus routing matrix (dedicated vs shared, DM default, bindings, listen

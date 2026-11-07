@@ -354,6 +354,12 @@ restarting it invalidates in-flight turns (bootstrap tokens are single use).
   latencies, holds pending, refresh/mint outcomes, due-work arm durations and
   items, sandboxes by state, turns by status, inbox/ops depth and age,
   connector replicas live, hook calls/errors/duration, snapshot hash info.
+- (phase 3, RFE-024) **Orphaned bots.** Alert on `aurora_channel_deprovision_failed_total`
+  and on audit rows `presence.deprovision_failed`: the named bot account was not
+  removed on the chat platform (connector down > 24 h or credentials revoked) and
+  must be removed by hand (Mattermost: System Console → Integrations → Bot
+  Accounts, disable/delete `platform_user_ref`). An org's shared bot is never
+  deprovisioned by Aurora.
 - Logs: JSON to stdout, correlation ids per `02 §Coding rules`.
 - Tracing: optional OTLP export; `traceparent` propagated API ↔ gateway-internal
   ↔ hookhost ↔ runner ↔ connector calls.

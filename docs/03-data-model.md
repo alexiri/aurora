@@ -1300,3 +1300,10 @@ other projection inputs); no new counter is needed. `skill_files` is unchanged.
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | status_reason | (existing column, open vocabulary) | gains the value `breaks_connections`: for a major upgrade held in `pending_approval` because it would set connections to `reauth_required` (`09 §10`) | 3 (RFE-022) |
+
+#### `channel_ops` (self-contained deprovision)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| payload | (existing column) | for `presence.deprovision`: `{ presence_id, reason, platform_user_ref, handle, tenant_ref, tenant_label, config, credentials_ref }`; `credentials_ref` is a SecretRef sealed under the op id (`purpose channel_op_deprovision`), nulled and discarded at the terminal state (`13 §4.2`) | 3 (RFE-024) |
+| integration_id | (existing column) | `NULL` for deprovision ops (so the cascade of `channel_integrations` cannot delete them); `presence_id` has no FK; `connector_id` is set | 3 (RFE-024) |
+| index | (kind, status) WHERE kind = `presence.deprovision` AND status IN (`pending`,`claimed`) | the pruning job finds deprovision ops whose sealed copy must be discarded | 3 (RFE-024) |

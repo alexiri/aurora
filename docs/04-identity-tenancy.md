@@ -476,6 +476,17 @@ original record, returns 200).
 - **Org deletion**: owner only, typed confirmation; hand-written service deletes
   children in dependency order, enqueues connector deprovisioning, then deletes
   the org. Ledgers (`audit_log`, `request_log`, `runtime_*`) remain.
+- **Deprovision ordering and content (phase 3, RFE-024).** For agent, workspace and
+  org deletion the connector `presence.deprovision` operations are **inserted in
+  the same transaction as the delete, before the cascade**, and are
+  **self-contained**: each snapshots the presence's `platform_user_ref`, handle, the
+  integration's tenant and non-secret config, and a sealed, op-bound copy of the
+  credentials needed (`13 §4.2`, *Self-contained deprovision operations*), with
+  `integration_id = NULL` so neither the presence nor the integration (nor the
+  org) deleting can take the op with it. A failed or impossible deprovision
+  (connector down beyond 24 h, credentials revoked) leaves the bot on the
+  platform: an accepted, documented residual with an audit row
+  (`presence.deprovision_failed`) so operators can remove it by hand.
 
 ## Audit
 

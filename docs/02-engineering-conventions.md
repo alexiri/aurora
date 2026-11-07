@@ -252,6 +252,7 @@ overridden by the named configuration key (`15`).
 | `INBOX_LEASE` / `OP_LEASE` | 60 s / 60 s | — | 13 |
 | `OP_MAX_ATTEMPTS` | 10 (exponential backoff 2 s → 10 min) | — | 13 |
 | `CHANNEL_LEDGER_RETENTION` | 7 days | — | 13 |
+| `DEPROVISION_RETRY_WINDOW` | (phase 3, RFE-024) 24 h of retries for a self-contained `presence.deprovision` op (then `failed`, residual) | — | 13 |
 | `ACTION_TOKEN_TTL` | approval deadline, else 24 h | — | 13 |
 | `APP_TURN_CAP` | 5 consecutive bot-authored turns | — | 07 |
 | `PEER_TASK_BUDGET` / `PEER_TASK_TTL` | 20 messages / 24 h | — | 07 |
