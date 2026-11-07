@@ -1,0 +1,10 @@
+{
+  "id": "msg_{{ uuid | replace(from='-', to='') }}",
+  "type": "message",
+  "role": "assistant",
+  "model": "{{ json.model | default(value='claude-mock') }}",
+  "content": [{"type": "text", "text": "Mock model response."}],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {"input_tokens": 16, "output_tokens": 4}
+}

@@ -1,0 +1,1 @@
+{"id":"msg_scn_steer","type":"message","role":"assistant","model":"{{ json.model }}","content":[{"type":"text","text":"base one two three four five"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":16,"output_tokens":12}}

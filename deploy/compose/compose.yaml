@@ -154,6 +154,40 @@ services:
       api: { condition: service_started }
     restart: unless-stopped
 
+  # --- llm-mock profile (decision I-30): the real LiteLLM proxy in front of VidaiMock, a scripted
+  # Anthropic-API stand-in. It is NOT a model; dev/e2e only (docs/operator/llm-endpoints.md).
+  vidaimock:
+    profiles: [llm-mock]
+    # VidaiMock v0.4.0 (Apache-2.0), multi-arch index digest; see vidaimock/README.md.
+    image: ghcr.io/vidaiuk/vidaimock@sha256:c306a4e87637976bfd9034d0275ae6932497b18ee71614c46a0f143f393127c6
+    command: ["--host", "0.0.0.0", "--port", "8100", "--config-dir", "/config", "--isolated", "--mode", "benchmark"]
+    volumes:
+      - ./vidaimock:/config:ro
+    networks:
+      core:
+        aliases: [vidaimock]
+    restart: unless-stopped
+
+  litellm:
+    profiles: [llm-mock]
+    # LiteLLM v1.108.2-lts, pinned by digest.
+    image: ghcr.io/berriai/litellm@sha256:d8b4ac356743d647a13bb93f45b941fcd5f5354122cfd205948a1b192790389d
+    command: ["--config", "/etc/litellm/litellm.yaml", "--port", "4000"]
+    environment:
+      # Dev-only dummy key. Never reuse; it is the LLM key you give Aurora for endpoint `litellm-mock`.
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-aurora-mock-dev}
+      LITELLM_TELEMETRY: "False"
+    volumes:
+      - ./litellm.yaml:/etc/litellm/litellm.yaml:ro
+    networks:
+      core:
+        aliases: [litellm]
+    ports:
+      - "127.0.0.1:4400:4000"
+    depends_on:
+      vidaimock: { condition: service_started }
+    restart: unless-stopped
+
 networks:
   core:
     ipam:

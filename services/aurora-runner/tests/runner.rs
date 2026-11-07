@@ -48,6 +48,7 @@ fn settings(url: &str) -> RunnerSettings {
         executor: ExecutorSettings {
             max_concurrency: 4,
             shutdown_flush: Duration::from_millis(100),
+            image: None,
         },
         drain_timeout: Duration::from_secs(5),
         min_empty_poll: Duration::from_millis(20),

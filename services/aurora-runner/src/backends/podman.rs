@@ -345,7 +345,8 @@ impl Backend for PodmanBackend {
                 home_gib: Range { min: 1, max: 100 },
             },
             max_sandboxes: self.s.max_sandboxes,
-            harnesses: vec![HarnessId::Fake],
+            // The sandbox image decides whether the CLI is present; docs/16 lists both ids.
+            harnesses: vec![HarnessId::ClaudeCode, HarnessId::Fake],
             max_attachment_bytes: 25 * 1024 * 1024,
         }
     }

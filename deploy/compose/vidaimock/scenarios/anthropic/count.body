@@ -1,0 +1,1 @@
+{"id":"msg_scn_count","type":"message","role":"assistant","model":"{{ json.model }}","content":[{"type":"text","text":"1 - next"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":16,"output_tokens":5}}
