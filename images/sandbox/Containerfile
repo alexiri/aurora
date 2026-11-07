@@ -6,15 +6,32 @@
 #   --build-arg ALMA_BASE=docker.io/library/almalinux:10
 ARG ALMA_BASE=gitlab-registry.cern.ch/linuxsupport/alma10-base
 
-# ---- supervisor, built against an older glibc than the AlmaLinux runtime
-FROM docker.io/library/rust:1-bookworm AS supervisor-builder
+# ---- supervisor, built against an older glibc than the AlmaLinux runtime (OPS-020: cargo-chef deps
+# layer + lld, same design as images/services/Containerfile; target/ stays in layers for the gha cache)
+ARG RUST_IMAGE=docker.io/library/rust:1-bookworm
+FROM ${RUST_IMAGE} AS chef
+ARG CARGO_CHEF_VERSION=0.1.78
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends clang lld \
+    && rm -rf /var/lib/apt/lists/* \
+    && cargo install cargo-chef --locked --version ${CARGO_CHEF_VERSION}
 WORKDIR /build
-ENV CARGO_TERM_COLOR=never
+ENV CARGO_TERM_COLOR=never CARGO_INCREMENTAL=0 RUSTFLAGS="-C link-arg=-fuse-ld=lld"
+
+FROM chef AS planner
+COPY . .
+RUN rm -f rust-toolchain.toml && cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS supervisor-builder
+COPY --from=planner /build/recipe.json recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    cargo chef cook --release --locked --recipe-path recipe.json -p aurora-supervisor
 COPY . .
 RUN rm -f rust-toolchain.toml
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     cargo build --release --locked -p aurora-supervisor \
     && mkdir /out && cp target/release/aurora-supervisor /out/
 

@@ -19,6 +19,18 @@ One OCI image per component, all tagged with the Aurora version
 | `aurora-connector-mattermost` | phase 1 |
 | `aurora-sandbox` | sandbox image (`11 §Sandbox image`) — not a service; referenced by the runner. (phase 3, RFE-019) Built on the public official AlmaLinux image by default; a private or mirrored base is a **build-time** override (`SANDBOX_BASE_IMAGE`, see below), not a runtime configuration key |
 
+(phase 1, OPS-020) **Registry and tags.** CI builds and publishes every image to
+`ghcr.io/alexiri/aurora-<name>` (`api`, `gateway`, `hookhost`, `runner`, `web`,
+`connector-fake`, `connector-mattermost`, `sandbox`, `sandbox-min`) with `GITHUB_TOKEN`, only after the
+lint, test, e2e, web and guard jobs of the same workflow run are green. Pushes to `master` and `v*` tags
+publish; pull requests build without pushing. Tags: `sha-<short>` (every publish), `master` (moving),
+`<version>` and `<major>.<minor>` from a `vX.Y.Z` git tag, and `latest` only for the newest
+non-prerelease semver tag. Images carry OCI labels (source, revision, version, license
+`GPL-3.0-or-later`) plus SBOM and max-mode provenance attestations. The Helm chart defaults to
+`image.registry: ghcr.io/alexiri` with the chart `appVersion` as tag. The six service images are copies of a
+single compile of the workspace (`images/services/Containerfile`, cargo-chef dependency layer, lld).
+`aurora-sandbox-min` is the slim e2e sandbox (OS + supervisor).
+
 Service images are distroless (`gcr.io/distroless/cc` or equivalent), run as
 non-root, contain only their binary, and are multi-arch (amd64, arm64).
 

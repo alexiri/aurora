@@ -6,7 +6,9 @@
 externalUrl: https://aurora.example.org
 
 image:
-  registry: ""            # e.g. registry.example.org/aurora (empty = bare image names)
+  # Published by CI (OPS-020): ghcr.io/alexiri/aurora-<component>. Override for a mirror or private
+  # registry (e.g. registry.example.org/aurora); "" = bare image names (locally built images).
+  registry: ghcr.io/alexiri
   tag: ""                 # defaults to .Chart.AppVersion
   pullPolicy: IfNotPresent
   pullSecrets: []         # [{name: regcred}]
