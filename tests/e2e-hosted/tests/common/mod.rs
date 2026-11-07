@@ -201,13 +201,23 @@ hookhost_url = "http://127.0.0.1:9"
             cfg: dir.join("cfg.toml"),
             dir,
         };
+        // The API re-hashes the stored snapshot (`active_snapshot`): the hash must be real.
+        let snapshot = json!({"format": 1, "contract": 1, "packages": [], "oauth_clients": [],
+                              "apps": [], "hosts": [], "reserved_hosts": []});
+        let hash: String = {
+            use sha2::{Digest, Sha256};
+            Sha256::digest(aurora_registry::snapshot::canonical_bytes(&snapshot))
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect()
+        };
         sqlx::query(
             "INSERT INTO registry_snapshots (id, contract, content_hash, snapshot, compiled_by, activated_at) \
-             VALUES ($1, 1, 'e2e-empty', $2, 'e2e', now())",
+             VALUES ($1, 1, $2, $3, 'e2e', now())",
         )
         .bind(uuid::Uuid::now_v7())
-        .bind(json!({"format": 1, "contract": 1, "packages": [], "oauth_clients": [],
-                     "apps": [], "hosts": [], "reserved_hosts": []}))
+        .bind(&hash)
+        .bind(&snapshot)
         .execute(stack.pool())
         .await
         .unwrap();
@@ -659,4 +669,341 @@ pub fn transcript_text(events: &[Value]) -> String {
         .map(|e| e.to_string())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+// ------------------------------------------------------------------------------------------------
+// TEST-016: fake connector process manager (channels e2e).
+// ------------------------------------------------------------------------------------------------
+
+/// What `provision_connector` hands out: the anchor token and the manifest signature the fake
+/// binary sends with `register` (I-28: the core verifies it against a trusted key).
+pub struct ConnectorKit {
+    pub token: String,
+    pub signature: String,
+    pub digest: String,
+    /// Instance-admin session.
+    pub admin: Api,
+}
+
+impl Stack {
+    /// Make `admin` an instance admin, trust a fresh publisher key for `aurora`, create the
+    /// connector `fake` (token) and sign the manifest of `FakeConnector::default()`.
+    pub async fn provision_connector(&self, api: &Api, email: &str) -> ConnectorKit {
+        use aurora_connector_sdk::Connector;
+        use sha2::{Digest, Sha256};
+        sqlx::query("UPDATE users SET is_instance_admin = true WHERE email = $1")
+            .bind(email)
+            .execute(self.pool())
+            .await
+            .unwrap();
+        // The session cache holds the flag as of sign-in: log in again.
+        let admin = api.relogin(email).await;
+        let key = aurora_crypto::generate_signing_key().unwrap();
+        let key_id = aurora_registry::builder::PackageBuilder::key_id(&key);
+        let (s, v) = admin
+            .post(
+                "/v1/admin/trusted-keys",
+                json!({"publisher": "e2e-fake", "name": "e2e-fake", "public_key": key_id}),
+            )
+            .await;
+        assert_eq!(s, 201, "trusted key: {v}");
+        let (s, v) = admin
+            .post(
+                "/v1/admin/connectors",
+                json!({"id": "fake", "display_name": "Fake"}),
+            )
+            .await;
+        assert_eq!(s, 201, "create connector: {v}");
+        let token = v["token"].as_str().unwrap().to_owned();
+        let manifest = aurora_connector_fake::FakeConnector::default()
+            .with_publisher("e2e-fake")
+            .manifest();
+        let canon = serde_json::to_value(&manifest).unwrap();
+        let d: [u8; 32] = Sha256::digest(aurora_registry::snapshot::canonical_bytes(&canon)).into();
+        let signature = aurora_registry::builder::PackageBuilder::sign_digest(&key, &key_id, &d);
+        let digest = d.iter().map(|b| format!("{b:02x}")).collect();
+        ConnectorKit {
+            token,
+            signature,
+            digest,
+            admin,
+        }
+    }
+
+    /// Spawn a fake connector replica (control API on `port`).
+    pub fn spawn_fake(&mut self, kit: &ConnectorKit, port: u16) -> Fake {
+        let log = self.dir.join(format!("fake-{port}.log"));
+        let f = std::fs::File::create(&log).unwrap();
+        let child = Command::new(bin("aurora-connector-fake"))
+            .arg("serve")
+            .env("AURORA_CORE_URL", format!("http://{API_IP}:4101"))
+            .env("AURORA_CONNECTOR_TOKEN", &kit.token)
+            .env("AURORA_FAKE_CONTROL", "true")
+            .env("AURORA_FAKE_PORT", port.to_string())
+            .env("AURORA_FAKE_MANIFEST_SIGNATURE", &kit.signature)
+            .env("AURORA_FAKE_PUBLISHER", "e2e-fake")
+            .stdout(Stdio::from(f.try_clone().unwrap()))
+            .stderr(Stdio::from(f))
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        self.logs.push(log);
+        Fake {
+            port,
+            child: Some(child),
+            http: reqwest::Client::new(),
+        }
+    }
+
+    /// Approve the connector once a replica registered (digest of the announced manifest).
+    pub async fn approve_connector(&self, kit: &ConnectorKit) {
+        let admin = &kit.admin;
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let (s, v) = admin.get("/v1/admin/connectors").await;
+            assert_eq!(s, 200, "{v}");
+            let c = v["items"]
+                .as_array()
+                .and_then(|a| a.iter().find(|c| c["id"] == "fake"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            if c["status"] == "active" {
+                return;
+            }
+            if c["status"] == "pending_approval" {
+                assert_eq!(
+                    c["manifest_digest"].as_str(),
+                    Some(kit.digest.as_str()),
+                    "the core computed another digest than the test: {c}"
+                );
+                let (s, v) = admin
+                    .post(
+                        "/v1/admin/connectors/fake/approve",
+                        json!({"manifest_digest": kit.digest}),
+                    )
+                    .await;
+                assert_eq!(s, 200, "approve: {v}");
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "connector never registered: {c}\n{}",
+                self.log_tails()
+            );
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
+}
+
+impl Api {
+    /// A second session of the same user (fresh principal, e.g. after an SQL promotion).
+    pub async fn relogin(&self, email: &str) -> Api {
+        let http = reqwest::Client::new();
+        let r = http
+            .post(format!("{}/v1/auth/login", self.base))
+            .header("origin", ORIGIN)
+            .json(&json!({"email": email, "password": "correct horse battery staple 42"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200, "login: {}", r.text().await.unwrap());
+        let cookie = r
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .map(|s| s.split(';').next().unwrap().to_owned())
+            .collect::<Vec<_>>()
+            .join("; ");
+        Api {
+            http,
+            base: self.base.clone(),
+            cookie,
+            org: self.org.clone(),
+            ws: self.ws.clone(),
+            daneel: self.daneel.clone(),
+        }
+    }
+}
+
+/// Posts made through the connector: the shared bot appears as `shared-bot`, a dedicated bot as
+/// its own ref; people are `U…`.
+pub fn is_bot_author(a: &Value) -> bool {
+    a.as_str()
+        .is_some_and(|a| a == "shared-bot" || a.starts_with('B'))
+}
+
+/// A running fake connector replica and its `/fake/*` control API.
+pub struct Fake {
+    pub port: u16,
+    child: Option<Child>,
+    http: reqwest::Client,
+}
+
+impl Fake {
+    fn url(&self, p: &str) -> String {
+        format!("http://127.0.0.1:{}{p}", self.port)
+    }
+
+    pub async fn ctl(&self, p: &str, body: Value) -> (u16, Value) {
+        let r = self
+            .http
+            .post(self.url(p))
+            .json(&body)
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .unwrap();
+        let s = r.status().as_u16();
+        (s, r.json().await.unwrap_or(Value::Null))
+    }
+
+    pub async fn ctl_get(&self, p: &str) -> Value {
+        match self
+            .http
+            .get(self.url(p))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+        {
+            Ok(r) => r.json().await.unwrap_or(Value::Null),
+            Err(_) => Value::Null,
+        }
+    }
+
+    /// Integrations this replica currently serves (ownership).
+    pub async fn open_integrations(&self) -> Vec<String> {
+        self.ctl_get("/fake/status").await["integrations"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub async fn wait_serving(&self, secs: u64) {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        while self.open_integrations().await.is_empty() {
+            assert!(
+                Instant::now() < deadline,
+                "replica :{} never took an integration",
+                self.port
+            );
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    pub async fn user(&self, reference: &str, email: Option<&str>, verified: bool, bot: bool) {
+        let (s, v) = self
+            .ctl(
+                "/fake/users",
+                json!({"ref": reference, "display_name": reference, "email": email,
+                       "email_verified": verified, "is_bot": bot}),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+    }
+
+    /// DM the shared bot as `author`; returns the platform message ref.
+    pub async fn dm(&self, author: &str, text: &str) -> String {
+        let (s, v) = self
+            .ctl(
+                "/fake/messages",
+                // Unique ids: the fake's counters restart per process, but the core dedupes
+                // inbound events by id across replicas of the same integration.
+                json!({"author_ref": author, "text": text,
+                       "event_id": format!("ev-{}-{}", self.port, uuid::Uuid::now_v7()),
+                       "message_ref": format!("x{}-{}", self.port, uuid::Uuid::now_v7())}),
+            )
+            .await;
+        assert_eq!((s, v["ack"].as_str()), (200, Some("accepted")), "{v}");
+        v["message_ref"].as_str().unwrap().to_owned()
+    }
+
+    /// Messages on the platform (optionally one space).
+    pub async fn posted(&self, space: Option<&str>) -> Vec<Value> {
+        let p = match space {
+            Some(s) => format!("/fake/posted?space_ref={s}"),
+            None => "/fake/posted".into(),
+        };
+        self.ctl_get(&p).await["messages"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Wait for a bot-authored message in `space` whose text contains `needle`.
+    pub async fn wait_text(&self, space: &str, needle: &str, secs: u64) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        loop {
+            for m in self.posted(Some(space)).await {
+                if is_bot_author(&m["author_ref"])
+                    && m["text"].as_str().is_some_and(|t| t.contains(needle))
+                {
+                    return m;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no message containing {needle:?} in {space}: {:?}",
+                self.posted(None).await
+            );
+            tokio::time::sleep(Duration::from_millis(400)).await;
+        }
+    }
+
+    /// First button labelled `label` on a card in `space`: `(token, message_ref)`.
+    pub async fn find_button(&self, space: &str, label: &str) -> Option<(String, String)> {
+        for m in self.posted(Some(space)).await {
+            let blocks = m["card"]["blocks"].as_array().cloned().unwrap_or_default();
+            for b in blocks {
+                for it in b["items"].as_array().cloned().unwrap_or_default() {
+                    if it["label"] == label && b["type"] == "buttons" {
+                        return Some((
+                            it["token"].as_str()?.to_owned(),
+                            m["message_ref"].as_str()?.to_owned(),
+                        ));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub async fn wait_button(&self, space: &str, label: &str, secs: u64) -> (String, String) {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        loop {
+            if let Some(b) = self.find_button(space, label).await {
+                return b;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no {label:?} button in {space}: {:?}",
+                self.posted(None).await
+            );
+            tokio::time::sleep(Duration::from_millis(400)).await;
+        }
+    }
+
+    /// Click a card button as `clicker`.
+    pub async fn click(&self, token: &str, clicker: &str, space: &str, msg: &str) -> Value {
+        let (s, v) = self
+            .ctl(
+                "/fake/actions",
+                json!({"token": token, "clicker_ref": clicker, "space_ref": space,
+                       "message_ref": msg}),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        v
+    }
+
+    /// SIGKILL the process (no retire: the ownership lease has to lapse).
+    pub async fn kill(&mut self) {
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill().await;
+        }
+    }
 }

@@ -44,6 +44,7 @@ pub struct FakeConnector {
     caps: CapabilitySet,
     sinks: Arc<Mutex<BTreeMap<Uuid, EventSink>>>,
     core: Mutex<Option<Arc<CoreClient>>>,
+    publisher: String,
 }
 
 impl Default for FakeConnector {
@@ -62,7 +63,15 @@ impl FakeConnector {
             caps,
             sinks: Arc::new(Mutex::new(BTreeMap::new())),
             core: Mutex::new(None),
+            publisher: "aurora".into(),
         }
+    }
+
+    /// Manifest publisher (default `aurora`, which the core reserves for the project key: a
+    /// core that verifies the manifest signature needs another, trusted publisher).
+    pub fn with_publisher(mut self, publisher: &str) -> Self {
+        self.publisher = publisher.to_owned();
+        self
     }
 
     /// The names this connector declares as capabilities.
@@ -452,7 +461,15 @@ impl FakeConnector {
                 if token.is_empty() || token == "dead" {
                     return Err(OpError::new(ErrorCode::CredentialDead, "token rejected"));
                 }
-                ok(json!({"tenant_ref": "fake-tenant", "tenant_label": "Fake Workspace"}))
+                let mut res =
+                    json!({"tenant_ref": "fake-tenant", "tenant_label": "Fake Workspace"});
+                // `{"token": .., "shared_bot": true}` provisions the integration's shared bot.
+                if c.credentials.get("shared_bot").and_then(Value::as_bool) == Some(true) {
+                    res["shared_bot"] = json!({
+                        "platform_user_ref": "B1", "handle": "daneel", "display_name": "Daneel"
+                    });
+                }
+                ok(res)
             }
             OpPayload::Other => Err(OpError::new(
                 ErrorCode::Unsupported,
@@ -512,7 +529,7 @@ impl Connector for FakeConnector {
                 id: "fake".into(),
                 version: env!("CARGO_PKG_VERSION").into(),
                 contract: 1,
-                publisher: "aurora".into(),
+                publisher: self.publisher.clone(),
             },
             about: ManifestAbout {
                 name: "Fake".into(),

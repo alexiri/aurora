@@ -145,7 +145,16 @@ impl CoreClient {
     async fn into_error(resp: reqwest::Response) -> ClientError {
         let status = resp.status().as_u16();
         let body = resp.text().await.unwrap_or_default();
-        let parsed: Option<ErrorBody> = serde_json::from_str(&body).ok();
+        // The core wraps errors in the API envelope `{"error": {code, message}}`; accept a bare
+        // `{code, message}` as well.
+        #[derive(serde::Deserialize)]
+        struct Envelope {
+            error: ErrorBody,
+        }
+        let parsed: Option<ErrorBody> = serde_json::from_str::<Envelope>(&body)
+            .map(|e| e.error)
+            .or_else(|_| serde_json::from_str::<ErrorBody>(&body))
+            .ok();
         let (code, message) = match parsed {
             Some(b) => (b.code.as_str().to_owned(), b.message),
             None => (String::new(), body.chars().take(200).collect()),

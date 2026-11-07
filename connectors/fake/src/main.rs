@@ -45,6 +45,12 @@ struct Cli {
         value_delimiter = ','
     )]
     capabilities: Option<Vec<String>>,
+    /// Detached signature over the manifest digest (test profile; the core verifies it).
+    #[arg(long, global = true, env = "AURORA_FAKE_MANIFEST_SIGNATURE")]
+    manifest_signature: Option<String>,
+    /// Manifest publisher (test profile; must match the key that signed the manifest).
+    #[arg(long, global = true, env = "AURORA_FAKE_PUBLISHER")]
+    publisher: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -68,7 +74,17 @@ async fn main() -> ExitCode {
     );
     tracing::info!(instance_id = %instance, "starting");
     let Command::Serve = cli.command;
-    match serve(&cfg, &cli.core_url, cli.control, cli.port, cli.capabilities).await {
+    match serve(
+        &cfg,
+        &cli.core_url,
+        cli.control,
+        cli.port,
+        cli.capabilities,
+        cli.manifest_signature,
+        cli.publisher,
+    )
+    .await
+    {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!(error = %e, "fatal");
@@ -84,15 +100,21 @@ async fn serve(
     control_api: bool,
     port: u16,
     capabilities: Option<Vec<String>>,
+    manifest_signature: Option<String>,
+    publisher: Option<String>,
 ) -> std::io::Result<()> {
     let metrics = service::install_metrics(SERVICE);
-    let fake = Arc::new(match &capabilities {
+    let mut fake = match &capabilities {
         Some(names) => {
             let names: Vec<&str> = names.iter().map(String::as_str).collect();
             FakeConnector::new(&names)
         }
         None => FakeConnector::default(),
-    });
+    };
+    if let Some(p) = &publisher {
+        fake = fake.with_publisher(p);
+    }
+    let fake = Arc::new(fake);
     let mut app = service::ops_router(metrics, vec![]);
     if control_api {
         tracing::warn!("test control API mounted at /fake/*");
@@ -104,11 +126,11 @@ async fn serve(
     let listener = service::bind("0.0.0.0", port).await?;
 
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
-    let runtime = tokio::spawn(aurora_connector_sdk::run(
-        fake.clone(),
-        RuntimeConfig::new(core_url, cfg.token.expose()),
-        stop_rx,
-    ));
+    let mut rt = RuntimeConfig::new(core_url, cfg.token.expose());
+    if let Some(sig) = manifest_signature {
+        rt.manifest_signature = sig;
+    }
+    let runtime = tokio::spawn(aurora_connector_sdk::run(fake.clone(), rt, stop_rx));
     let served = service::serve_all(vec![(listener, app)]).await;
     let _ = stop_tx.send(true);
     match runtime.await {
