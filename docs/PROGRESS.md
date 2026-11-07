@@ -200,29 +200,29 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | MM-002 | Mattermost dedicated mode + live scenario with the real core | 1 | done (3ecf14ce) | MM-001 |
 | P1-001 | RFE-001 auto-link opt-in; RFE-016 DeltaBus seam | 1 | done (ef1578e6) | — |
 | P1-002 | RFE-009 direct-conversation visibility | 1 | done (fff11f50) | — |
-| P1-003 | RFE-003 open-lane posture, CONNECT-time rules, browser capability | 1 | in-progress | — |
+| P1-003 | RFE-003 open-lane posture, CONNECT-time rules, browser capability | 1 | done (14532e24; 839 Rust tests on master, SEC-41). Follow-ups: FU-P1-003a k8s backend reports no image capabilities (no browser on k8s, fail closed; mechanism to decide); FU-P1-003b chromium wrapper untested on the full sandbox image; FU-P1-003c gateway e2e `h1_held_request_gets_hook_summary_without_egress` relies on a 3 s sleep (fails above load ~17) | — |
 | P1-004 | RFE-002 TLS-only gateway proxy listener | 1 | done (df211a2c); upgrade 36/36 | — |
-| P1-005 | RFE-004 OIDC-only sign-in (dev IdP, tests/e2e migrate off passwords) | 1 | todo | OPS-016 preferred |
+| P1-005 | RFE-004 OIDC-only sign-in (dev IdP, tests/e2e migrate off passwords) | 1 | todo (next free lane; touches every password-signup test helper, so run with few lanes) | OPS-016, OPS-017 |
 | MM-003 | Target Mattermost 11.7 (11.7.15 pinned by digest) | 1 | done (3ecf14ce) | MM-001 |
 | OPS-019 | CI green + fast (`rust-test` disk fix, sharded nextest, one compile), actions off Node 20 | 1 | done; master CI fully green (run 42382511618: build 15m cold, shards 2.5-3m, e2e-gateway 6.6m, e2e-hosted 12.7m) | OPS-016 for test layout |
 | OPS-020 | CI builds images and pushes to ghcr.io after green tests (shared builder stage, cache) | 1 | done: run 42400978710 published all six service images + web + sandbox (builder 15.5 min warm, 782 s of it compiling the 20 workspace crates → OPS-023) | OPS-019, OPS-016 |
 | OPS-022 | Multi-arch images (amd64 + arm64) on native arm64 runners | 5 | deferred (owner 2026-11-07: no arm deployment planned; images are amd64 only until then) | OPS-020 |
 | OPS-021 | Dependabot (cargo, npm, actions, docker; grouped) | 4 | todo | OPS-019/020 |
-| OPS-017 | kind replaces compose | 1 | in-progress | OPS-016 |
-| OPS-018 | Live reload | 1 | todo | OPS-016, OPS-017 |
-| OPS-023 | Faster image builds: sccache in the builder (local cache mount, CI GHA backend via secrets); host-built dev images for kind | 1 | briefed | OPS-017 (owns kind.sh) |
+| OPS-017 | kind replaces compose | 1 | done (883a3928, I-42): compose removed; `just kind-up`, `just kind-dev <svc>` 33-42 s loop; kind.sh 4/4, llm.sh, m1.sh host + --kind. Follow-ups: FU-OPS-017a hosted claude-code through llm-mock inside kind not proven (needs llm.Containerfile sandbox image); FU-OPS-017b docs 04/06/11 and gateway `proxy_tls.rs` "fixed compose address" still mention compose (cleanup) | OPS-016 |
+| OPS-018 | Live reload | 1 | in-progress | OPS-016, OPS-017 |
+| OPS-023 | Faster image builds: sccache in the release builder (local cache mount, CI GHA backend via secrets); kind.sh e2e on the OPS-017 dev build path | 1 | briefed | OPS-017 (done), after OPS-018 (kind dev files) |
 | FIX-008 | Podman backend tolerates `stopped`/unknown container states (CI e2e-hosted on podman 4.9) | 1 | done; CI e2e-hosted 9/9 on ubuntu-24.04 (run 42382511618) | — |
-| P2-005..P2-025 | Phase-2 RFE tasks (briefs in docs/tasks/P2-*.md) | 2 | P2-007, P2-012, P2-017 done; P2-021 in-progress; rest briefed | P2-025 after P1-003 (both edit gateway admission) |
+| P2-005..P2-025 | Phase-2 RFE tasks (briefs in docs/tasks/P2-*.md) | 2 | P2-007, P2-012, P2-017, P2-021 done (5716ccdb, SEC-51, D-69; FU-P2-021a: anchored automations must stop when their agent is frozen → P2-006); P2-010, P2-025 in-progress; rest briefed | — |
 | P2-CAT / P2-DBL | Built-in app catalogue; gateway database lane (`21`) | 2 | to be briefed | — |
-| P2-UI | Dashboard visual design + brand (`14 §Visual design`, D-68, I-40, I-41): stage 1 light/dark tokens, theme switch, brand mark/icons, fonts, primitives, shell; stage 2 screens; stage 3 token sweep + guards | 2 | briefed (2026-11-07) | stage 1 before other phase-2 dashboard work; auth screens coordinate with P1-005 |
+| P2-UI | Dashboard visual design + brand (`14 §Visual design`, D-68, I-40, I-41): stage 1 light/dark tokens, theme switch, brand mark/icons, fonts, primitives, shell; stage 2 screens; stage 3 token sweep + guards | 2 | stage 1 done (merged after 883a3928: tokens, themes, brand, fonts, primitives, sidebar shell; screenshots reviewed by owner); stage 2 next (note: the Tabs primitive must scroll within itself at 390 px — the agent page currently widens the page) | stage 1 before other phase-2 dashboard work; auth screens coordinate with P1-005 |
 
 ### Phase 1 developer tooling (owner, 2026-11-08)
 
 | Task | Summary | Status |
 |---|---|---|
 | OPS-016 | Faster builds/tests (lld, one test binary per crate, nextest, sccache, dev incremental), lane clean-up scripts | briefed (first task of phase 1) |
-| OPS-017 | kind + Helm replaces podman compose for dev/test (evaluate, migrate, remove compose) | briefed |
-| OPS-018 | Live reload: Next.js HMR, Rust watch→rebuild→restart with socket handover, Tilt for kind, dev-only supervisor bind mount | briefed (after OPS-016) |
+| OPS-017 | kind + Helm replaces podman compose for dev/test (evaluate, migrate, remove compose) | done |
+| OPS-018 | Live reload: Next.js HMR, Rust watch→rebuild→restart with socket handover, Tilt for kind, dev-only supervisor bind mount | in-progress |
 
 ## Open spec issues (found by PROTO-001; S-06..S-11 resolved)
 
@@ -250,6 +250,7 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 
 ## Recently completed
 
+- 2026-11-07 (evening): P2-012 approver role (SEC-28), P2-021 automation reassignment (SEC-51), P1-003 open lane (SEC-41), OPS-017 kind replaces compose, P2-UI stage 1, OPS-020 images on ghcr.io (all six); shared sccache for lanes fixed (per-worktree linker path and CARGO_TARGET_DIR kept out of cache keys); OPS-022 deferred to phase 5 (owner).
 - 2026-11-08: BE-067 avatars (SEC-30; 39/39 SEC proven), FIX-006 (apps/gateway follow-ups, S-14, I-33), FIX-007 (image restart flag, availability); code frozen for AUDIT-001.
 - 2026-11-07 (late night): TEST-018 SEC coverage (38/39; SEC-30 → BE-067), OPS-014 perf PASS + upgrade 31/31, FIX-005 runtime follow-ups.
 - 2026-11-07 (night): TEST-014 (hosted coverage; S-13 memory encoded-size bound), TEST-016 channels e2e 6/6.
