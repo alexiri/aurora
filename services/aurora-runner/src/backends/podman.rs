@@ -348,6 +348,9 @@ impl Backend for PodmanBackend {
             // The sandbox image decides whether the CLI is present; docs/16 lists both ids.
             harnesses: vec![HarnessId::ClaudeCode, HarnessId::Fake],
             max_attachment_bytes: 25 * 1024 * 1024,
+            // Filled in by the runner from `runner.image` at registration.
+            image: None,
+            held_awake_ceiling: None,
         }
     }
 

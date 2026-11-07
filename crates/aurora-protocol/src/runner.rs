@@ -143,6 +143,15 @@ pub struct RunnerCapabilities {
     pub max_sandboxes: u32,
     pub harnesses: Vec<HarnessId>,
     pub max_attachment_bytes: u64,
+    /// The sandbox image this runner starts (`runner.image`); the single source of truth the
+    /// API reports in `SandboxView.image`. Absent from older runners.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// `runner.held_awake_ceiling` (docs/11 §Stop): running-but-idle sandboxes above this make
+    /// due-work evict for a waiting start. Absent from older runners: the API derives
+    /// `max(1, max_sandboxes − 1)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_awake_ceiling: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

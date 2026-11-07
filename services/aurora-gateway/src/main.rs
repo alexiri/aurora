@@ -101,12 +101,18 @@ async fn main() -> ExitCode {
     let cfg: GatewayConfig = aurora_config::load(cli.config.as_deref(), std::env::vars())
         .and_then(|raw| raw.gateway_config())
         .unwrap_or_else(|e| exit_config(e));
-    let instance = service::init_tracing(SERVICE, &cfg.telemetry.log_level);
+    let instance = service::init_telemetry(
+        SERVICE,
+        &cfg.telemetry.log_level,
+        cfg.telemetry.otlp_endpoint.as_deref(),
+    );
     tracing::info!(instance_id = %instance, "starting");
     let Command::Serve = cli.command else {
         return ExitCode::FAILURE;
     };
-    match serve(cfg).await {
+    let result = serve(cfg).await;
+    service::telemetry_shutdown();
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!(error = %e, "fatal");
@@ -156,9 +162,13 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     hub.register(governance.clone());
     let snapshots = SnapshotStore::new();
     let policy_resolver = Arc::new(
-        Resolver::new(Arc::new(DbSource(pool.clone())), llm)
-            .with_governance(governance.clone())
-            .with_snapshots(snapshots.clone()),
+        Resolver::with_ttl(
+            Arc::new(DbSource(pool.clone())),
+            llm,
+            Duration::from_secs(cfg.gateway.resolve_cache_ttl_secs),
+        )
+        .with_governance(governance.clone())
+        .with_snapshots(snapshots.clone()),
     );
     hub.register(policy_resolver.cache());
     // `gateway.hookhost_url` (docs/15); bearer = the configured internal secret (W9).
@@ -199,7 +209,8 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         })
         .with_governance(governance)
         .with_tokens(tokens)
-        .with_summarizer(summarizer),
+        .with_summarizer(summarizer)
+        .with_condition_body_limit(cfg.gateway.condition_body_bytes as usize),
     );
     let reqlog_task = tokio::spawn(reqlog.run(FLUSH_INTERVAL, rx.clone()));
     let snapshot_task = tokio::spawn(snapshots.clone().run(pool.clone(), rx.clone()));
@@ -249,7 +260,8 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             ("invalidation", listener_check),
             ("registry", snapshot_check),
         ],
-    );
+    )
+    .layer(axum::middleware::from_fn(service::trace_context));
     let ca = Arc::new(Ca::load(Path::new(&cfg.gateway.ca_dir))?);
     let bind = cfg.server.bind.as_str();
     let internal_bind = cfg.internal_bind.as_str();

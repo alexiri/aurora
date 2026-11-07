@@ -64,7 +64,7 @@ pub async fn poll(
     Ok(WorkResponse { items, reconciler })
 }
 
-fn caps_of(runner: &RunnerRow) -> Option<RunnerCapabilities> {
+pub(crate) fn caps_of(runner: &RunnerRow) -> Option<RunnerCapabilities> {
     runner
         .capabilities
         .as_ref()
@@ -85,6 +85,11 @@ fn stop_item(c: sandboxes::StopClaim) -> Option<WorkItem> {
     })
 }
 
+/// Held-awake ceiling for eviction (docs/11 §Stop).
+fn held_awake_ceiling(configured: Option<u32>, max_slots: i64) -> i64 {
+    configured.map_or_else(|| (max_slots - 1).max(1), i64::from)
+}
+
 /// One evaluation of arms 1-3 in a single transaction.
 async fn compute(
     s: &AppState,
@@ -98,7 +103,8 @@ async fn compute(
     } else {
         caps.as_ref().map_or(1, |c| c.max_sandboxes)
     });
-    let ceiling = (max_slots - 1).max(1);
+    // The runner's registered `runner.held_awake_ceiling`, else `max(1, max_sandboxes − 1)`.
+    let ceiling = held_awake_ceiling(caps.as_ref().and_then(|c| c.held_awake_ceiling), max_slots);
     let hosted = &s.config.hosted;
     let default_harness = hosted.default_harness.as_str();
 
@@ -248,7 +254,18 @@ async fn mint_start(
         ("aurora.sandbox".to_owned(), c.sandbox_id.to_string()),
         ("aurora.boot".to_owned(), boot_id.to_string()),
     ]);
-    let spec = boot::spec(app_boot.env, secret, home_ref, home_gib, resources, labels);
+    let image = caps
+        .and_then(|c| c.image.clone())
+        .unwrap_or_else(boot::default_image);
+    let spec = boot::spec(
+        image,
+        app_boot.env,
+        secret,
+        home_ref,
+        home_gib,
+        resources,
+        labels,
+    );
     Ok((
         WorkItem {
             item_id: Uuid::now_v7(),
@@ -258,4 +275,17 @@ async fn mint_start(
         },
         revoked,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::held_awake_ceiling;
+
+    #[test]
+    fn ceiling_is_derived_unless_configured() {
+        assert_eq!(held_awake_ceiling(None, 4), 3);
+        assert_eq!(held_awake_ceiling(None, 1), 1);
+        assert_eq!(held_awake_ceiling(Some(2), 4), 2);
+        assert_eq!(held_awake_ceiling(Some(7), 1), 7);
+    }
 }

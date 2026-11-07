@@ -84,12 +84,27 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
     if r.armed_watch {
         reasons.push("watch".to_owned());
     }
+    // The image is whatever the owning runner advertised (`runner.image`).
+    let image = if running {
+        let caps = match r.runner_id {
+            Some(rid) => aurora_db::repo::runners::get(&s.pool, rid)
+                .await?
+                .and_then(|row| crate::domains::runner_plane::work::caps_of(&row)),
+            None => None,
+        };
+        Some(
+            caps.and_then(|c| c.image)
+                .unwrap_or_else(boot::default_image),
+        )
+    } else {
+        None
+    };
     Ok(SandboxView {
         agent_id: agent,
         state: r.state,
         boot_id: r.boot_id,
         runner_id: r.runner_id,
-        image: running.then(|| format!("aurora-sandbox:{}", env!("CARGO_PKG_VERSION"))),
+        image,
         started_at: r.started_at,
         keep_awake_reasons: reasons,
         failure_code: r.failure_code,

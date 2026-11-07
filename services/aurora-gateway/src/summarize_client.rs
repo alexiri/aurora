@@ -140,6 +140,7 @@ impl Summarizer for HttpSummarizer {
                     self.base
                 ))
                 .bearer_auth(&self.secret)
+                .headers(aurora_core::telemetry::headers())
                 .json(&body)
                 .send()
                 .await

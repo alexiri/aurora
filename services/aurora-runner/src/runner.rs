@@ -33,6 +33,8 @@ pub enum RunnerError {
 
 #[derive(Debug, Clone)]
 pub struct RunnerSettings {
+    /// `runner.held_awake_ceiling` (resolved), advertised at registration.
+    pub held_awake_ceiling: Option<u32>,
     pub api_url: String,
     pub token: String,
     pub version: String,
@@ -47,6 +49,7 @@ pub struct RunnerSettings {
 impl RunnerSettings {
     pub fn from_config(cfg: &RunnerConfig) -> Self {
         Self {
+            held_awake_ceiling: Some(cfg.held_awake_ceiling),
             api_url: cfg.api_url.clone(),
             token: cfg.token.expose().clone(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -97,7 +100,9 @@ impl Runner {
     pub async fn run(self, mut shutdown: watch::Receiver<bool>) -> Result<(), RunnerError> {
         let s = &self.settings;
         let api = Arc::new(ApiClient::new(&s.api_url, &s.token, s.retry)?);
-        let caps = self.backend.capabilities();
+        let mut caps = self.backend.capabilities();
+        caps.image.clone_from(&self.settings.executor.image);
+        caps.held_awake_ceiling = self.settings.held_awake_ceiling;
         let max = caps.max_sandboxes;
         let max_attachment_bytes = caps.max_attachment_bytes;
         let reg = RegisterRequest {

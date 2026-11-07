@@ -17,6 +17,18 @@ struct Rig {
 }
 
 fn caps(max: u32) -> Value {
+    caps_with(max, None)
+}
+
+fn caps_with(max: u32, ceiling: Option<u32>) -> Value {
+    let mut v = caps_base(max);
+    if let Some(c) = ceiling {
+        v["held_awake_ceiling"] = json!(c);
+    }
+    v
+}
+
+fn caps_base(max: u32) -> Value {
     json!({
         "backend": "fake", "home_durability": "resident",
         "resources": {"cpu": {"min": 250, "max": 4000}, "memory_mib": {"min": 256, "max": 8192},
@@ -79,12 +91,16 @@ impl Rig {
     }
 
     async fn register(&self, host: &str, max: u32) -> Uuid {
+        self.register_with(host, caps(max)).await
+    }
+
+    async fn register_with(&self, host: &str, capabilities: Value) -> Uuid {
         let (s, v) = self
             .call(
                 None,
                 "/v1/runner/register",
                 Some(
-                    json!({"version": "0.1", "backend": "fake", "capabilities": caps(max),
+                    json!({"version": "0.1", "backend": "fake", "capabilities": capabilities,
                             "advertised_host": host}),
                 ),
             )
@@ -264,6 +280,11 @@ async fn start_item_has_valid_boot_document_and_tokens_match_db() {
     let item = first(&w, "sandbox.start");
     let sb = item["sandbox_id"].as_str().unwrap();
     let boot = item["boot_id"].as_str().unwrap();
+    // A runner that advertises no image gets the versioned default in the start item.
+    assert_eq!(
+        item["spec"]["image"],
+        format!("aurora-sandbox:{}", env!("CARGO_PKG_VERSION"))
+    );
     let doc = boot_doc(item);
     assert_eq!(doc["v"], 1);
     assert_eq!(doc["boot_id"], boot);
@@ -720,4 +741,39 @@ async fn replayed_reports_through_a_second_app_state_have_no_double_effects() {
         .await
         .unwrap();
     assert_eq!(n, 1);
+}
+
+/// Two idle running sandboxes, then a third agent's start: eviction happens iff the idle count
+/// exceeds the runner's registered ceiling (default `max(1, max_sandboxes - 1)`).
+async fn evicts(ceiling: Option<u32>) -> bool {
+    let r = rig().await;
+    let rep = r.register_with("runner-a", caps_with(4, ceiling)).await;
+    for h in ["idle-a", "idle-b"] {
+        let agent = r.agent_with_turn(h).await;
+        let w = r.work(rep, 0).await;
+        let item = first(&w, "sandbox.start");
+        let (sb, boot) = (
+            item["sandbox_id"].as_str().unwrap(),
+            item["boot_id"].as_str().unwrap(),
+        );
+        r.report(rep, Uuid::now_v7(), sb, boot, "running").await;
+        sqlx::query("UPDATE turns SET status = 'done' WHERE agent_id = $1")
+            .bind(agent)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+    }
+    r.agent_with_turn("waiting").await;
+    let w = r.work(rep, 0).await;
+    w["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| i["kind"] == "sandbox.stop" && i["reason"] == "evict")
+}
+
+#[tokio::test]
+async fn eviction_uses_the_runners_registered_ceiling() {
+    assert!(evicts(Some(1)).await, "2 idle > ceiling 1 must evict");
+    assert!(!evicts(None).await, "default ceiling is not exceeded");
 }

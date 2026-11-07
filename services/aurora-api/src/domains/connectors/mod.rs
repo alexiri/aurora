@@ -5,6 +5,7 @@
 //! * connector plane — `/v1/connector/*` authenticated with the `aun_…` anchor token
 //!   (`plane.rs`, `auth.rs`; machine plane, excluded from the dashboard OpenAPI document).
 mod admin;
+pub use admin::bootstrap_tokens;
 mod auth;
 pub mod bus;
 mod dto;

@@ -227,6 +227,14 @@ fn world() -> Arc<World> {
 
 /// `mk` builds the rows from the world and a secret ref pointing at a stored value.
 async fn start(mk: impl FnOnce(&World, &SecretRef) -> Rows, llm: LlmSection) -> Env {
+    start_with(mk, llm, None).await
+}
+
+async fn start_with(
+    mk: impl FnOnce(&World, &SecretRef) -> Rows,
+    llm: LlmSection,
+    body_limit: Option<usize>,
+) -> Env {
     let w = world();
     let mem = Arc::new(MemoryStore::new("mem"));
     mem.preload("k1", None, b"s3cr3t");
@@ -259,14 +267,18 @@ async fn start(mk: impl FnOnce(&World, &SecretRef) -> Rows, llm: LlmSection) -> 
     let plaintext = Arc::new(PlaintextCache::new(Arc::new(SecretVault::new(reg))));
     let captured = Arc::new(Capture::default());
     let log = RequestLog::new(captured.clone());
-    let handler = Arc::new(PolicyHandler::new(PolicyHandlerParts {
+    let mut handler = PolicyHandler::new(PolicyHandlerParts {
         resolver: resolver.clone(),
         plaintext,
         log: log.clone(),
         external_url: "https://aurora.test/".into(),
         holds: None,
         touch_pool: None,
-    }));
+    });
+    if let Some(n) = body_limit {
+        handler = handler.with_condition_body_limit(n);
+    }
+    let handler = Arc::new(handler);
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();
@@ -760,4 +772,48 @@ async fn open_lane_policy_and_tunnel_row() {
     let tunnel = rows.iter().find(|r| r.decision == "allow").unwrap();
     assert_eq!(tunnel.lane, "open");
     assert!(tunnel.bytes_up > 0 && tunnel.bytes_down > 0, "{tunnel:?}");
+}
+
+/// Absolute-form POST with `payload` through the proxy; returns the status code.
+async fn post_status(env: &Env, payload: &str) -> u16 {
+    let mut s = TcpStream::connect(env.proxy).await.unwrap();
+    let req = format!(
+        "POST http://{}/x HTTP/1.1\r\nHost: {}\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        env.up,
+        env.up,
+        auth(),
+        payload.len()
+    );
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut out = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut out)).await;
+    String::from_utf8_lossy(&out)
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
+/// `gateway.condition_body_bytes`: a body condition beyond the buffered prefix does not
+/// match; raising the limit makes it match.
+#[tokio::test]
+async fn condition_body_limit_is_configurable() {
+    let mk = |w: &World, v: &SecretRef| {
+        let s = secret(w, "s", json!({"kind":"bearer"}), v);
+        let mut rows = Rows::default();
+        rows.ws.default_action = "block".into();
+        rows.ws.rules.push(rule(
+            "grant",
+            "allow",
+            json!([{"type":"secret","id":s.id}]),
+            json!({"conditions":[{"on":"body","op":"contains","value":"needle"}]}),
+        ));
+        rows.secrets.push(s);
+        rows
+    };
+    let payload = format!("{}needle", "a".repeat(20_000));
+    let small = start_with(mk, no_llm(), Some(4096)).await; // clamped up to APPROVAL_BODY_PEEK (16 KiB)
+    assert_eq!(post_status(&small, &payload).await, 403, "limit 16 KiB");
+    let big = start_with(mk, no_llm(), Some(32_768)).await;
+    assert_eq!(post_status(&big, &payload).await, 200, "limit 32 KiB");
 }

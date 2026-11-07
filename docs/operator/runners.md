@@ -49,7 +49,7 @@ installs. It does not replace the admin route for a second runner.
 | `runner.backend` | — (required) | `podman`, `kubernetes` or `fake`. Set in config, never detected. |
 | `runner.ops_bind` | `server.bind` | Address of the ops listener (4106, health and metrics). Must not be sandbox-reachable (SEC-09). |
 | `runner.advertised_host` | — | Host sandboxes use to reach the runner's WebSocket. |
-| `runner.image` | `aurora-sandbox:<version>` | Sandbox image. |
+| `runner.image` | `aurora-sandbox:<version>` | Sandbox image. The single source of truth: the runner starts it, advertises it at registration and the API reports it as the sandbox `image`. |
 | `runner.max_sandboxes` | `4` | Concurrent sandboxes on this runner. |
 | `runner.sandbox_memory_mib` | `2048` | Per-sandbox memory. |
 | `runner.sandbox_cpus` | `1` | Per-sandbox CPUs. |
@@ -61,8 +61,9 @@ installs. It does not replace the admin route for a second runner.
 | `runner.capacity_wait_secs` | `300` | How long a start waits for capacity. |
 | `server.bind` | `0.0.0.0` | Also the default bind of the sandbox-facing channel listener, port 4105. |
 
-`runner.held_awake_ceiling` is parsed and validated, but no runtime code reads it
-(**not yet implemented**).
+`runner.held_awake_ceiling` overrides the eviction ceiling `max(1, max_sandboxes − 1)`. The runner
+reports it at registration and the API's due-work eviction uses that value for the runner; the
+key is set only in the runner's config.
 
 Start-up checks: the runner validates the backend and the sandbox network, and warns
 when the ops bind overlaps the sandbox-facing bind.

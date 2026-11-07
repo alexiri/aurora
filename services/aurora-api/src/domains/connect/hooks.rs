@@ -85,6 +85,7 @@ impl HookClient {
             .http
             .post(format!("{}/internal/v1/hooks/{hook}", self.base))
             .bearer_auth(&self.bearer)
+            .headers(aurora_core::telemetry::headers())
             .json(&body)
             .send()
             .await

@@ -505,3 +505,37 @@ fn dev_config_loads_for_host_processes() {
     assert_eq!(raw.gateway.hookhost_url, "http://127.0.0.1:4104");
     assert_eq!(raw.hookhost.api_internal_url, "http://127.0.0.1:4111");
 }
+
+#[test]
+fn bootstrap_connector_tokens_are_validated_and_resolved() {
+    let ok = load_with(
+        BASE,
+        &[(
+            "AURORA_BOOTSTRAP_CONNECTOR_TOKENS",
+            "fake:aun_abc123, slack-2:aun_def456",
+        )],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap();
+    let ids: Vec<&str> = ok
+        .bootstrap_connector_tokens
+        .iter()
+        .map(|(i, _)| i.as_str())
+        .collect();
+    assert_eq!(ids, ["fake", "slack-2"]);
+    // Ids follow the stored `connectors.id` shape; bad entries fail startup validation.
+    for bad in [
+        "Fake:aun_x1",
+        "a_b:aun_x1",
+        "x:aun_x1",
+        "fake:notatoken",
+        "fake",
+    ] {
+        let e = load_with(BASE, &[("AURORA_BOOTSTRAP_CONNECTOR_TOKENS", bad)])
+            .unwrap()
+            .api_config()
+            .unwrap_err();
+        assert!(e.has_key("AURORA_BOOTSTRAP_CONNECTOR_TOKENS"), "{bad}: {e}");
+    }
+}

@@ -63,6 +63,29 @@ pub async fn insert<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// Bootstrap upsert (`AURORA_BOOTSTRAP_CONNECTOR_TOKENS`): creates the connector as
+/// `awaiting_registration`, or re-sets the token of an existing one. Registration state
+/// (manifest, status, approval) is never touched.
+pub async fn upsert_bootstrap<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: &str,
+    token_hash: &[u8],
+    display_name: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO connectors (id, token_hash, display_name, status)
+         VALUES ($1,$2,$3,'awaiting_registration')
+         ON CONFLICT (id) DO UPDATE SET token_hash = EXCLUDED.token_hash, updated_at = now()
+         WHERE connectors.token_hash <> EXCLUDED.token_hash",
+    )
+    .bind(id)
+    .bind(token_hash)
+    .bind(display_name)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
 pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,
     id: &str,

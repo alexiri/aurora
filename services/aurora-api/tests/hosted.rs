@@ -32,7 +32,8 @@ fn caps() -> Value {
         "backend": "fake", "home_durability": "resident",
         "resources": {"cpu": {"min": 250, "max": 4000}, "memory_mib": {"min": 256, "max": 8192},
                       "pids": {"min": 64, "max": 4096}, "home_gib": {"min": 1, "max": 100}},
-        "max_sandboxes": 4, "harnesses": ["fake"], "max_attachment_bytes": 1048576
+        "max_sandboxes": 4, "harnesses": ["fake"], "max_attachment_bytes": 1048576,
+        "image": "registry.example/aurora-sandbox:9.9.9"
     })
 }
 
@@ -209,6 +210,10 @@ impl Rig {
         let (sb, boot) = (
             start["sandbox_id"].as_str().unwrap().to_owned(),
             start["boot_id"].as_str().unwrap().to_owned(),
+        );
+        assert_eq!(
+            start["spec"]["image"],
+            "registry.example/aurora-sandbox:9.9.9"
         );
         let raw = start["spec"]["boot_secret"].as_str().unwrap();
         let doc: Value = serde_json::from_slice(
@@ -623,6 +628,8 @@ async fn sandbox_restart_and_models_routes() {
         )
         .await;
     assert_eq!((s, v["state"].as_str()), (200, Some("running")));
+    // The runner-advertised image is the single source of truth (`runner.image`).
+    assert_eq!(v["image"], "registry.example/aurora-sandbox:9.9.9", "{v}");
     assert_eq!(v["keep_awake_reasons"][0], "turn");
     let d = r.deliver().await;
     let turn = d["turn_id"].as_str().unwrap().to_owned();

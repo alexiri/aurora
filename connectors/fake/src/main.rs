@@ -61,7 +61,11 @@ async fn main() -> ExitCode {
     let cfg: ConnectorConfig = aurora_config::load(cli.config.as_deref(), std::env::vars())
         .and_then(|raw| raw.connector_config())
         .unwrap_or_else(|e| exit_config(e));
-    let instance = service::init_tracing(SERVICE, &cfg.telemetry.log_level);
+    let instance = service::init_telemetry(
+        SERVICE,
+        &cfg.telemetry.log_level,
+        cfg.telemetry.otlp_endpoint.as_deref(),
+    );
     tracing::info!(instance_id = %instance, "starting");
     let Command::Serve = cli.command;
     match serve(&cfg, &cli.core_url, cli.control, cli.port, cli.capabilities).await {

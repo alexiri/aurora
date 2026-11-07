@@ -184,7 +184,14 @@ pub fn boot_secret(s: &AppState, i: &BootInput<'_>) -> Result<SecretString, ApiE
     ))
 }
 
+/// Image named in a start item when the runner did not advertise one (older runners). The
+/// runner applies its own `runner.image` regardless (docs/11 §Sandbox image).
+pub fn default_image() -> String {
+    format!("aurora-sandbox:{}", env!("CARGO_PKG_VERSION"))
+}
+
 pub fn spec(
+    image: String,
     env: Pairs,
     boot_secret: SecretString,
     home_ref: String,
@@ -193,7 +200,7 @@ pub fn spec(
     labels: BTreeMap<String, String>,
 ) -> SandboxSpec {
     SandboxSpec {
-        image: format!("aurora-sandbox:{}", env!("CARGO_PKG_VERSION")),
+        image,
         env,
         boot_secret,
         home_ref,

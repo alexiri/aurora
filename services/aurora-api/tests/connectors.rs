@@ -26,7 +26,11 @@ fn hd(c: &str) -> [(&str, &str); 2] {
 }
 
 async fn world() -> W {
-    let h = Harness::new().await;
+    world_with(|_| {}).await
+}
+
+async fn world_with(mutate: impl FnOnce(&mut aurora_config::ApiConfig)) -> W {
+    let h = Harness::with_config(mutate).await;
     let root = h.user("root@x.io", true).await;
     let (_, tok) = h.good_session(root).await;
     let admin = cookie(&tok);
@@ -1143,4 +1147,50 @@ async fn manifest_assets_and_strings_are_validated() {
         assert_eq!(s, 400, "{name}: {v}");
     }
     assert_eq!(w.connector("fake").await["status"], "awaiting_registration");
+}
+
+#[tokio::test]
+async fn bootstrap_tokens_upsert_connectors_awaiting_registration() {
+    let tok = "aun_bootstraptoken0123456789abcdef";
+    let w = world_with(|c| {
+        c.bootstrap_connector_tokens =
+            vec![("fake".into(), aurora_config::Redacted::new(tok.into()))];
+    })
+    .await;
+    aurora_api::domains::connectors::bootstrap_tokens(&w.h.state)
+        .await
+        .unwrap();
+    // Idempotent.
+    aurora_api::domains::connectors::bootstrap_tokens(&w.h.state)
+        .await
+        .unwrap();
+    let c = w.connector("fake").await;
+    assert_eq!(c["status"], "awaiting_registration", "{c}");
+    // The bootstrap token authenticates registration; approval is still required.
+    let (st, _) = w.register(tok, &base_manifest("fake")).await;
+    assert_eq!(st, "pending_approval");
+    // Re-applying leaves registration state alone.
+    aurora_api::domains::connectors::bootstrap_tokens(&w.h.state)
+        .await
+        .unwrap();
+    assert_eq!(w.connector("fake").await["status"], "pending_approval");
+}
+
+#[tokio::test]
+async fn allow_unsigned_auto_approves_connector_manifests() {
+    let w = world_with(|c| c.plugins.allow_unsigned = true).await;
+    let tok = w.provision("fake").await;
+    let (st, _) = w.register(&tok, &base_manifest("fake")).await;
+    assert_eq!(st, "active");
+    let c = w.connector("fake").await;
+    assert_eq!(c["status"], "active", "{c}");
+    assert!(c["widening"].as_array().unwrap().is_empty());
+    // A widening manifest is auto-approved too.
+    let wide = manifest(
+        "fake",
+        json!({"threads": true, "reactions": true, "edits": true, "files": {"max_bytes": 10}}),
+        json!(["actions", "commands"]),
+        json!([{"name": "token", "label": "Token", "type": "secret"}]),
+    );
+    assert_eq!(w.register(&tok, &wide).await.0, "active");
 }
