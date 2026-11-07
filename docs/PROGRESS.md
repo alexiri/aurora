@@ -22,6 +22,8 @@ their dependencies near completion (adaptive planning).
 
 ## Milestone status
 
+**Phase 0 exit (docs/19): met.** All milestones accepted; 39/39 SEC invariants proven; compose and Helm install from scratch with documented steps (`docs/audit/phase0-exit.md`, AUDIT-001 + OPS-015). Awaiting owner approval to merge `phase0` → `master`.
+
 | Milestone | Status | Acceptance evidence |
 |---|---|---|
 | M0 | done (CI never executed on GitHub — no remote) | schema guard, compose up, guards, cargo-deny |
@@ -29,9 +31,9 @@ their dependencies near completion (adaptive planning).
 | M2 | done (core) — follow-ups FUP-M2 | `scripts/e2e/gateway.sh` 11 scenarios pass; governance SEC-35..39 service tests (GW-005, TEST-020); hold tests incl. two replicas |
 | M3 | done (core) — follow-ups FUP-M3 | plugin lifecycle/ingestion, apps/connect/grants, hook host + WIT + SDK, CLI plugin, fixtures 33/33 (`scripts/fixtures/build.sh`), e2e-gateway 15/15 incl. hooks |
 | M4 | done (core) — follow-ups FUP-M4; sandbox env gap (FUP-M7 item from RUN-004) | `AURORA_TEST_PODMAN=1 bash scripts/e2e/hosted.sh` 9/9 (scenarios 1–8 + 8b SEC probes) after SEC-FIX-01/02 |
-| M5 | in progress: all backend features done (memory, skills, schedules, webhooks, processes/watches, attachments, action approvals, links, peer tasks, app-turn cap) and their UI (FE-050/051); sandbox env/stubs (FIX-002) in progress; apps tools, TEST-014 todo; live conformance blocked (no LiteLLM endpoint) | schedules 5, webhooks 11, memory 7, skills 5 |
-| M6 | in progress: aurora-channels (CHAN-001), connector contract + SDK + fake connector (CON-001), API-006 contract done; BE-070 done, BE-071 in progress, TEST-015 conformance done; BE-072..075, FE-060, TEST-016 todo | — |
-| M7 | in progress: Helm chart (OPS-010), kubernetes backend (RUN-004), kind e2e (OPS-011: `bash scripts/e2e/kind.sh --fresh` 4/4 incl. SEC-02/SEC-09 with enforced NetworkPolicy), operator docs (OPS-012/013) done; perf budgets + upgrade test (OPS-014), FIX-003 todo | k8s_mock 15 |
+| M5 | done | schedules, webhooks, memory, skills, attachments, action approvals, peers; claude-code live conformance via LiteLLM + VidaiMock (TEST-017); `docs/tests/hosted-coverage.md` |
+| M6 | done | `scripts/conformance.sh` 12/12; `scripts/e2e/channels.sh` 6/6 (TEST-016); channel service suites |
+| M7 | done | `scripts/e2e/kind.sh --fresh` 4/4; `scripts/perf/gateway.sh` PASS; `UPGRADE_STRICT=1 scripts/e2e/upgrade.sh` 32/32; operator docs |
 
 ## Requirement coverage
 
@@ -151,7 +153,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | SPEC-RFE-P12 | Spec updates for phase 1+2 design-review items | spec | done (e3ba8cd3) | 80 decisions | Sonnet + Opus review | D-43..D-58, SEC-40..51; report `docs/tasks/SPEC-RFE-P12-report.md` (14 choices made) |
 | SPEC-RFE-P3 | Spec updates for phase 3 design-review items + RFE-025 | spec | done | SPEC-RFE-P12 | Sonnet + Opus review | D-59..D-67, SEC-52..58 |
 | AUDIT-001 | Phase-0 exit verification from scratch | audit | done (baabe11f) | all | Sonnet (worktree) + Opus review | `docs/audit/phase0-exit.md`: all green after 2 fixes (log formatter, compose IPAM); open: compose hosted backend → OPS-015 |
-| OPS-015 | Compose hosted profile runs real podman sandboxes; hosted.sh scope; deny/lint warnings | Ops | in-progress | AUDIT-001 | Sonnet (worktree) | |
+| OPS-015 | Compose hosted profile runs real podman sandboxes; hosted.sh scope; deny/lint warnings | Ops | done (8a22e765) | AUDIT-001 | Sonnet (worktree) | clean compose install answers a chat from a podman sandbox (`docs/audit/phase0-exit.md`) |
 | TEST-018 | Security invariant coverage SEC-01..39 (`docs/tests/security-coverage.md`) | tests | done (13ac4bba) | 39 rows; 14 tests/guards added; SEC-18..20 proven via TEST-016; SEC-30 avatars → BE-067 |
 | BE-067 | Agent avatars: upload, re-encode to 256² PNG, rotating public URL, presence.set_icon (SEC-30) | both | done (4f7101df) | BE-064 | Sonnet (worktree) | avatars 7; web 149; I-31, C-41; SEC-30 proven |
 | OPS-014 | Gateway performance budgets (18) + upgrade test | Ops | done (51f6732c) | OPS-011 | Sonnet (worktree) | `bash scripts/perf/gateway.sh` PASS: (a) p50 0.033/p99 0.175 ms, (b) 11 563 rps/core, (c) p99 4.36 ms; `bash scripts/e2e/upgrade.sh` 31/31 (image-only restart flag → FIX-007) |
