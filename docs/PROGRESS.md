@@ -147,7 +147,8 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | TEST-017 | VidaiMock (pinned, Aurora scenario files) behind real LiteLLM (I-30); live claude-code conformance + hosted CLI e2e | e2e | done (dab35c24) | smoke 8/8; live conformance pass; hosted claude-code e2e 2/2 | SUP-004, TEST-013 | Sonnet (worktree) | |
 | FIX-005 | Spec-required runtime follow-ups: SSE closes on revocation, durable answer text, render inputs (apps/channels/peers), model-list cache | Rust | in-progress | — | Sonnet (worktree) | |
 | FIX-006 | Spec-required apps/gateway follow-ups (FUP-M2/M3): missing_scopes, tenant_host from fields, governance doc typing, GW-011 ask-hold test | both | todo | — | — | |
-| TEST-018 | Security invariant coverage SEC-01..39 (`docs/tests/security-coverage.md`) | tests | in-progress | — | Sonnet (worktree) | |
+| TEST-018 | Security invariant coverage SEC-01..39 (`docs/tests/security-coverage.md`) | tests | done (13ac4bba) | 39 rows; 14 tests/guards added; SEC-18..20 proven via TEST-016; SEC-30 avatars → BE-067 |
+| BE-067 | Agent avatars: upload, re-encode to 256² PNG, rotating public URL, presence.set_icon (SEC-30) | both | todo (ready) | BE-064 | Sonnet (worktree) | | — | Sonnet (worktree) | |
 | OPS-014 | Gateway performance budgets (18) + upgrade test (baseline 8ba42973 → HEAD, running sandboxes) | Ops | in-progress | OPS-011 | Sonnet (worktree) | |
 
 ## Open spec issues (found by PROTO-001; S-06..S-11 resolved)
