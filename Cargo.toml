@@ -118,6 +118,8 @@ tar = "0.4"
 psl = "2"
 pulldown-cmark = { version = "0.13", default-features = false }
 sha2 = "0.10"
+# avatar re-encode (I-31): png/jpeg/webp decoders + png encoder only
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 hmac = "0.12"
 arc-swap = "1"
 

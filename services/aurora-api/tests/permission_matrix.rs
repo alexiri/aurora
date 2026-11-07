@@ -158,6 +158,11 @@ const fn r(m: &'static str, p: &'static str, g: G, so: bool) -> Row {
 /// Routes that are not checked against the principal matrix, with reasons.
 const EXEMPT: &[(&str, &str, &str)] = &[
     (
+        "GET",
+        "/v1/public/avatars/{key}",
+        "public capability: unguessable current avatar key in path (05 auth class P)",
+    ),
+    (
         "POST",
         "/v1/hooks/{token}",
         "public capability: token in path (05 auth class P)",
@@ -399,6 +404,9 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/workspaces/{ws}/secrets", G::WsOwn, false),
     // ---- agents (agent id resolves to its workspace) ----
     r("GET", "/v1/agents/{agent}", G::WsUse, false),
+    r("GET", "/v1/agents/{agent}/avatar", G::WsUse, false),
+    r("PUT", "/v1/agents/{agent}/avatar", G::WsUse, false),
+    r("DELETE", "/v1/agents/{agent}/avatar", G::WsUse, false),
     r("PATCH", "/v1/agents/{agent}", G::WsUse, false),
     r("DELETE", "/v1/agents/{agent}", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/conversations", G::WsUse, false),
@@ -710,6 +718,19 @@ async fn seed(h: &Harness, n: u32) -> Fx {
     let agent: Uuid = sqlx::query_scalar("SELECT id FROM agents WHERE workspace_id=$1 LIMIT 1")
         .bind(ws)
         .fetch_one(h.pool())
+        .await
+        .unwrap();
+    // The seeded agent has an avatar so `GET .../avatar` has a 200 outcome to compare against.
+    sqlx::query("INSERT INTO blobs (key, content) VALUES ($1, $2)")
+        .bind(format!("matrix-avatar-{n}"))
+        .bind(&b"png"[..])
+        .execute(h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET avatar_blob_key=$2, avatar_public_key=$2 WHERE id=$1")
+        .bind(agent)
+        .bind(format!("matrix-avatar-{n}"))
+        .execute(h.pool())
         .await
         .unwrap();
     let ws2 = h.workspace(org).await;

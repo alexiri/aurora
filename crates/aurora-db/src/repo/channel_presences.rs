@@ -216,6 +216,19 @@ pub async fn dedicated_for_agent<'e, E: PgExecutor<'e>>(
     )
 }
 
+/// Active dedicated presences of an agent (avatar sync).
+pub async fn active_dedicated_for_agent<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent: Uuid,
+) -> Result<Vec<DeprovisionTarget>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "{TARGETS} AND p.agent_id=$1 AND p.status='active' ORDER BY p.id"
+    ))
+    .bind(agent)
+    .fetch_all(exec)
+    .await?)
+}
+
 pub async fn dedicated_for_workspace<'e, E: PgExecutor<'e>>(
     exec: E,
     workspace: Uuid,

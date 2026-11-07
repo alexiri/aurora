@@ -56,6 +56,7 @@ sha2 = { workspace = true }
 reqwest = { workspace = true }
 openidconnect = { workspace = true }
 percent-encoding = { workspace = true }
+image = { workspace = true }
 
 [dev-dependencies]
 aurora-secrets = { workspace = true, features = ["memory-store"] }

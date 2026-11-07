@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import type { Agent } from "@/lib/api/queries";
 
+import { AgentAvatar } from "./agent-avatar";
 import { EmptyState } from "./states";
 
 export function AgentsList({ agents, base }: { agents: readonly Agent[]; base?: string }) {
@@ -10,6 +11,7 @@ export function AgentsList({ agents, base }: { agents: readonly Agent[]; base?: 
     <ul className="divide-y divide-neutral-200 rounded-md border border-neutral-200" aria-label="Agents">
       {agents.map((a) => (
         <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 p-3">
+          <AgentAvatar name={a.name} url={a.avatar_url} />
           {base ? (
             <Link href={`${base}/${a.handle}`} className="font-medium underline-offset-2 hover:underline">
               {a.name}

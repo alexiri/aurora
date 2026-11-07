@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
+        .merge(super::avatar::router())
         .routes(routes!(list_agents, create_agent))
         .routes(routes!(get_agent, patch_agent, delete_agent))
         .routes(routes!(regenerate_token))
