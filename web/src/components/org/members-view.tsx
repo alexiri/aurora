@@ -5,7 +5,7 @@ import { useState } from "react";
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { OffboardingDialog } from "@/components/automations/offboarding-dialog";
 import { inputClass } from "@/components/ui/field";
 import { errorMessage } from "@/lib/api/errors";
 import {
@@ -19,6 +19,7 @@ import {
   type OrgMember,
   type OrgRole,
 } from "@/lib/api/org";
+import { useOrgOffboarding } from "@/lib/api/automations";
 import { useInstance } from "@/lib/api/queries";
 
 import { InviteDialog } from "./invite-dialog";
@@ -95,12 +96,56 @@ export function MemberRow({
   );
 }
 
+function OffboardDialog({
+  orgId,
+  target,
+  members,
+  busy,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  orgId: string;
+  target: { m: OrgMember; mode: "remove" | "suspend" } | null;
+  members: OrgMember[];
+  busy: boolean;
+  error: unknown;
+  onConfirm: (reassignTo: string | undefined) => void;
+  onClose: () => void;
+}) {
+  const q = useOrgOffboarding(orgId, target?.m.user_id ?? null);
+  const suspend = target?.mode === "suspend";
+  const email = target?.m.email ?? "";
+  return (
+    <OffboardingDialog
+      open={target !== null}
+      title={suspend ? "Suspend member?" : "Remove member?"}
+      description={
+        suspend
+          ? `${email} will be signed out and lose access until reactivated.`
+          : `${email} will lose access to this organization and its workspaces.`
+      }
+      who={target?.m.display_name || email}
+      confirmLabel={suspend ? "Suspend member" : "Remove member"}
+      query={q}
+      candidates={members
+        .filter((x) => x.status === "active" && x.user_id !== target?.m.user_id)
+        .map((x) => ({ id: x.user_id, label: `${x.display_name} (${x.email})` }))}
+      busy={busy}
+      error={error}
+      onConfirm={onConfirm}
+      onClose={onClose}
+    />
+  );
+}
+
 function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
   const members = useAllMembers(orgId);
   const patch = usePatchMember(orgId);
   const remove = useRemoveMember(orgId);
   const [err, setErr] = useState<unknown>(null);
-  const [target, setTarget] = useState<OrgMember | null>(null);
+  const [target, setTarget] = useState<{ m: OrgMember; mode: "remove" | "suspend" } | null>(null);
+  const [dialogErr, setDialogErr] = useState<unknown>(null);
 
   if (members.isPending) return <Loading />;
   if (members.isError) return <ErrorState error={members.error} onRetry={() => members.refetch()} />;
@@ -144,9 +189,11 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
                   }}
                   onStatus={(status) => {
                     setErr(null);
-                    patch.mutate({ user: m.user_id, body: { status } }, { onError });
+                    // RFE-021: suspending shows what it would disable first.
+                    if (status === "suspended") setTarget({ m, mode: "suspend" });
+                    else patch.mutate({ user: m.user_id, body: { status } }, { onError });
                   }}
-                  onRemove={() => setTarget(m)}
+                  onRemove={() => setTarget({ m, mode: "remove" })}
                 />
               ))}
             </tbody>
@@ -162,31 +209,27 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
           Load more
         </Button>
       ) : null}
-      <Dialog open={target !== null} onOpenChange={(o) => !o && setTarget(null)}>
-        <DialogContent
-          title="Remove member?"
-          description={`${target?.email ?? ""} will lose access to this organization and its workspaces.`}
-        >
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setTarget(null)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={remove.isPending}
-              onClick={() => {
-                if (!target) return;
-                setErr(null);
-                remove.mutate(target.user_id, {
-                  onError,
-                  onSettled: () => setTarget(null),
-                });
-              }}
-            >
-              Remove member
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <OffboardDialog
+        orgId={orgId}
+        target={target}
+        members={items}
+        busy={busy}
+        error={dialogErr}
+        onClose={() => {
+          setTarget(null);
+          setDialogErr(null);
+        }}
+        onConfirm={(reassign_to) => {
+          if (!target) return;
+          setDialogErr(null);
+          const done = { onSuccess: () => setTarget(null), onError: (e: unknown) => setDialogErr(e) };
+          if (target.mode === "remove") {
+            remove.mutate({ user: target.m.user_id, reassign_to }, done);
+          } else {
+            patch.mutate({ user: target.m.user_id, body: { status: "suspended", reassign_to } }, done);
+          }
+        }}
+      />
     </div>
   );
 }

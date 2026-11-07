@@ -85,10 +85,16 @@ export function usePatchMember(orgId: string) {
 export function useRemoveMember(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (user: string) =>
-      unwrap(
-        api.DELETE("/v1/orgs/{org}/members/{user}", { params: { path: { org: orgId, user } } }),
-      ),
+    // RFE-021: `reassign_to` (a user id or "workspace") reassigns the person's schedules and
+    // webhooks in the same transaction as the removal.
+    mutationFn: (v: string | { user: string; reassign_to?: string }) => {
+      const { user, reassign_to } = typeof v === "string" ? { user: v, reassign_to: undefined } : v;
+      return unwrap(
+        api.DELETE("/v1/orgs/{org}/members/{user}", {
+          params: { path: { org: orgId, user }, query: reassign_to ? { reassign_to } : {} },
+        }),
+      );
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["orgs", orgId, "members"] }),
   });
 }

@@ -705,6 +705,7 @@ Phase 0 blob backend (`postgres`).
 | fire_lease_until | timestamptz null | claim clock |
 | last_fire_at | timestamptz null | |
 | last_outcome | text null CHECK in (`ok`,`failed`,`skipped_busy`,`gated_quiet`) | |
+| anchor | text not null default `creator` CHECK in (`creator`,`workspace`) | fire-time authority: the creator's access (`creator`) or "an active owner exists" (`workspace`); `creator_user_id` stays as provenance (`04 §Fire-time authority`) |
 
 ### `schedule_runs`
 | Column | Type | Notes |
@@ -731,6 +732,7 @@ Phase 0 blob backend (`postgres`).
 | creator_user_id | uuid null FK→users (set null) | |
 | origin_conversation_id | uuid null FK→conversations (set null) | |
 | run_conversation_id | uuid null FK→conversations (set null) | |
+| anchor | text not null default `creator` CHECK in (`creator`,`workspace`) | fire-time authority: the creator's access (`creator`) or "an active owner exists" (`workspace`); `creator_user_id` stays as provenance (`04 §Fire-time authority`) |
 
 ### `webhook_deliveries`
 | Column | Type | Notes |
@@ -1237,11 +1239,6 @@ Pending deletions of harness session files after a conversation delete or a `res
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | approval_email_enabled | bool not null default true | per-user opt-out of approval e-mails | 2 (RFE-011a) |
-
-#### `schedules`, `webhooks` (anchor)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| anchor | text not null CHECK in (`creator`,`workspace`) default `creator` | fire-time authority: the creator's access (`creator`) or "an active owner exists" (`workspace`); `creator_user_id` stays as provenance (`04 §Fire-time authority`) | 2 (RFE-021) |
 
 #### `agents` (BYO controls)
 | Planned column | Type | Notes | Phase |

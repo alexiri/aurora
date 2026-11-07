@@ -10,6 +10,7 @@ mod apps_tools;
 mod attachments;
 mod audit;
 mod auth;
+mod automation_continuity;
 mod avatars;
 mod channels_cards;
 mod channels_inbox;

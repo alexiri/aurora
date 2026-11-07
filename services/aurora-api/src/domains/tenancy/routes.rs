@@ -3,6 +3,7 @@ use super::service;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::agents::dto::Agent;
+use crate::domains::automations::service::{Acting, To, reassign_all};
 use crate::http::auth::{Caller, Principal, SessionCaller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -268,7 +269,8 @@ async fn patch_member(
     let auth = c.org(&s, org).await?;
     auth.require_admin()?;
     let actor_role = parse_org_role(auth.role.as_str());
-    let row = service::patch_member(&s, org, actor_role, user, &req).await?;
+    let actor = AuditActor::from_caller(&c);
+    let row = service::patch_member(&s, org, actor_role, user, &req, &actor).await?;
     audit::record(
         &s,
         event(&c, "member.update").org(org).target("user", user).metadata(json!({
@@ -280,7 +282,7 @@ async fn patch_member(
 
 /// Remove a member (owner/admin).
 #[utoipa::path(delete, path = "/orgs/{org}/members/{user}", operation_id = "removeMember", tag = "orgs",
-    params(("org" = Uuid, Path, description = "Organization id"), ("user" = Uuid, Path, description = "User id")),
+    params(("org" = Uuid, Path, description = "Organization id"), ("user" = Uuid, Path, description = "User id"), ReassignQuery),
     responses((status = 204, description = "Removed"), (status = 403, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
@@ -288,10 +290,25 @@ async fn remove_member(
     c: Caller,
     State(s): State<AppState>,
     Path((org, user)): Path<(Uuid, Uuid)>,
+    Query(q): Query<ReassignQuery>,
 ) -> Result<StatusCode, ApiError> {
     let auth = c.org(&s, org).await?;
     auth.require_admin()?;
-    service::remove_member(&s, org, parse_org_role(auth.role.as_str()), user).await?;
+    let reassign = q
+        .reassign_to
+        .as_deref()
+        .map(|v| To::parse("/reassign_to", v))
+        .transpose()?;
+    let actor = AuditActor::from_caller(&c);
+    service::remove_member(
+        &s,
+        org,
+        parse_org_role(auth.role.as_str()),
+        user,
+        reassign,
+        &actor,
+    )
+    .await?;
     audit::record(&s, event(&c, "member.remove").org(org).target("user", user));
     Ok(StatusCode::NO_CONTENT)
 }
@@ -548,7 +565,7 @@ async fn put_access(
 
 /// Remove a user's workspace binding (`can_own`).
 #[utoipa::path(delete, path = "/workspaces/{ws}/access/{user}", operation_id = "deleteAccess", tag = "workspaces",
-    params(("ws" = Uuid, Path, description = "Workspace id"), ("user" = Uuid, Path, description = "User id")),
+    params(("ws" = Uuid, Path, description = "Workspace id"), ("user" = Uuid, Path, description = "User id"), ReassignQuery),
     responses((status = 204, description = "Removed"), (status = 403, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
@@ -556,9 +573,15 @@ async fn delete_access(
     c: Caller,
     State(s): State<AppState>,
     Path((ws, user)): Path<(Uuid, Uuid)>,
+    Query(q): Query<ReassignQuery>,
 ) -> Result<StatusCode, ApiError> {
     let a = c.workspace(&s, ws).await?;
     require_own(&a)?;
+    let reassign = q
+        .reassign_to
+        .as_deref()
+        .map(|v| To::parse("/reassign_to", v))
+        .transpose()?;
     if let Some(m) = authz::org_membership(&s.pool, user, a.org_id).await?
         && m.role.is_admin()
     {
@@ -567,9 +590,31 @@ async fn delete_access(
             "Organization owners and admins have implicit access.",
         ));
     }
-    if !workspaces::unbind_user(&s.pool, ws, user).await? {
+    // RFE-021: reassignment and the unbind commit or roll back together.
+    let mut tx = s.pool.begin().await.map_err(aurora_db::DbError::from)?;
+    if let Some(to) = reassign {
+        let actor = AuditActor::from_caller(&c);
+        let acting = Acting {
+            actor: &actor,
+            org: a.org_id,
+            workspace: ws,
+        };
+        if to == To::User(user) {
+            return Err(ApiError::invalid_request(
+                "Invalid request.",
+                vec![aurora_core::FieldError::new(
+                    "/reassign_to",
+                    "must differ from the person being removed",
+                )],
+            ));
+        }
+        crate::domains::automations::service::ensure_target(&mut tx, to, ws).await?;
+        reassign_all(&mut tx, &acting, user, to, true, true, None).await?;
+    }
+    if !workspaces::unbind_user(&mut *tx, ws, user).await? {
         return Err(ApiError::not_found("Binding not found."));
     }
+    tx.commit().await.map_err(aurora_db::DbError::from)?;
     audit::record(
         &s,
         event(&c, "workspace_access.remove")

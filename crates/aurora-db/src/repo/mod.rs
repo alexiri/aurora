@@ -8,6 +8,7 @@ pub mod api_keys;
 pub mod approvals;
 pub mod attachments;
 pub mod audit;
+pub mod automations;
 pub mod availability;
 pub mod blobs;
 pub mod channel_cards;

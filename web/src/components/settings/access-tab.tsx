@@ -12,6 +12,8 @@ import {
   usePutAccess,
   type AccessBinding,
 } from "@/lib/api/account";
+import { OffboardingDialog } from "@/components/automations/offboarding-dialog";
+import { useWorkspaceOffboarding } from "@/lib/api/automations";
 import { errorMessage } from "@/lib/api/errors";
 
 type Role = "owner" | "member";
@@ -94,16 +96,20 @@ function Row({
   b,
   wsId,
   canOwn,
+  candidates,
   onError,
 }: {
   b: AccessBinding;
   wsId: string;
   canOwn: boolean;
+  candidates: { id: string; label: string }[];
   onError: (e: unknown) => void;
 }) {
   const put = usePutAccess(wsId);
   const del = useDeleteAccess(wsId);
   const busy = put.isPending || del.isPending;
+  const [confirm, setConfirm] = useState(false);
+  const offboarding = useWorkspaceOffboarding(wsId, confirm ? b.user_id : null);
   return (
     <tr className="border-t border-neutral-200">
       <td className="py-2 pr-4">
@@ -142,11 +148,32 @@ function Row({
             size="sm"
             disabled={busy}
             aria-label={`Remove ${b.email}`}
-            onClick={() => del.mutate(b.user_id, { onError })}
+            onClick={() => setConfirm(true)}
           >
             Remove
           </Button>
         ) : null}
+        <OffboardingDialog
+          open={confirm}
+          title="Remove access?"
+          description={`${b.email} will lose access to this workspace.`}
+          who={b.display_name || b.email}
+          confirmLabel="Remove access"
+          query={offboarding}
+          candidates={candidates}
+          busy={del.isPending}
+          error={del.error}
+          onClose={() => {
+            setConfirm(false);
+            del.reset();
+          }}
+          onConfirm={(reassign_to) =>
+            del.mutate(
+              { user: b.user_id, reassign_to },
+              { onSuccess: () => setConfirm(false), onError },
+            )
+          }
+        />
       </td>
     </tr>
   );
@@ -194,7 +221,16 @@ export function AccessTab({
           </thead>
           <tbody>
             {items.map((b) => (
-              <Row key={b.user_id} b={b} wsId={wsId} canOwn={canOwn} onError={setErr} />
+              <Row
+                key={b.user_id}
+                b={b}
+                wsId={wsId}
+                canOwn={canOwn}
+                candidates={items
+                  .filter((x) => x.user_id !== b.user_id)
+                  .map((x) => ({ id: x.user_id, label: `${x.display_name} (${x.email})` }))}
+                onError={setErr}
+              />
             ))}
           </tbody>
         </table>

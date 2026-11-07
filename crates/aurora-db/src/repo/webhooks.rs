@@ -20,6 +20,8 @@ pub struct WebhookRow {
     pub consecutive_failures: i32,
     pub creator_user_id: Option<Uuid>,
     pub creator_name: Option<String>,
+    /// `creator` | `workspace` (RFE-021): the fire-time authority.
+    pub anchor: String,
     pub origin_conversation_id: Option<Uuid>,
     pub run_conversation_id: Option<Uuid>,
     pub last_delivery_at: Option<DateTime<Utc>>,
@@ -29,7 +31,7 @@ pub struct WebhookRow {
 
 const COLS: &str = "w.id, w.agent_id, w.name, w.instructions, w.display_prefix, w.verification, \
     w.enabled, w.disabled_reason, w.consecutive_failures, w.creator_user_id, \
-    (SELECT u.display_name FROM users u WHERE u.id = w.creator_user_id) AS creator_name, \
+    (SELECT u.display_name FROM users u WHERE u.id = w.creator_user_id) AS creator_name, w.anchor, \
     w.origin_conversation_id, w.run_conversation_id, \
     (SELECT max(d.created_at) FROM webhook_deliveries d WHERE d.webhook_id = w.id) \
         AS last_delivery_at, w.created_at, w.updated_at";
@@ -55,6 +57,7 @@ pub struct NewWebhook<'a> {
     pub display_prefix: &'a str,
     pub verification: Option<&'a Value>,
     pub creator_user_id: Option<Uuid>,
+    pub anchor: &'a str,
     pub origin_conversation_id: Option<Uuid>,
 }
 
@@ -116,8 +119,8 @@ pub async fn count_for_agent<'e, E: PgExecutor<'e>>(exec: E, agent: Uuid) -> Res
 pub async fn insert(conn: &mut PgConnection, n: &NewWebhook<'_>) -> Result<WebhookRow, DbError> {
     sqlx::query(
         "INSERT INTO webhooks (id, agent_id, name, instructions, token_hash, display_prefix,
-            verification, creator_user_id, origin_conversation_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+            verification, creator_user_id, anchor, origin_conversation_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
     )
     .bind(n.id)
     .bind(n.agent_id)
@@ -127,10 +130,62 @@ pub async fn insert(conn: &mut PgConnection, n: &NewWebhook<'_>) -> Result<Webho
     .bind(n.display_prefix)
     .bind(n.verification)
     .bind(n.creator_user_id)
+    .bind(n.anchor)
     .bind(n.origin_conversation_id)
     .execute(&mut *conn)
     .await?;
     get(&mut *conn, n.id).await?.ok_or(DbError::NotFound)
+}
+
+/// RFE-021: change the fire-time authority (creator and/or anchor); `re_enable` also clears
+/// `disabled_reason` and the failure count.
+pub async fn set_authority(
+    conn: &mut PgConnection,
+    id: Uuid,
+    creator: Option<Uuid>,
+    anchor: &str,
+    re_enable: bool,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE webhooks SET creator_user_id = $2, anchor = $3, updated_at = now(),
+            enabled = enabled OR $4, disabled_reason = CASE WHEN $4 THEN NULL ELSE disabled_reason END,
+            consecutive_failures = CASE WHEN $4 THEN 0 ELSE consecutive_failures END
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(creator)
+    .bind(anchor)
+    .bind(re_enable)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// RFE-021: webhooks of a workspace whose creator is `user` (any state), locked for update;
+/// optionally narrowed to `ids`.
+pub async fn lock_by_creator(
+    conn: &mut PgConnection,
+    workspace: Uuid,
+    user: Uuid,
+    ids: Option<&[Uuid]>,
+) -> Result<Vec<WebhookRow>, DbError> {
+    let locked: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT w.id FROM webhooks w JOIN agents a ON a.id = w.agent_id
+         WHERE a.workspace_id = $1 AND w.creator_user_id = $2
+           AND ($3::uuid[] IS NULL OR w.id = ANY($3))
+         ORDER BY w.id FOR UPDATE OF w",
+    )
+    .bind(workspace)
+    .bind(user)
+    .bind(ids)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM webhooks w WHERE w.id = ANY($1) ORDER BY w.id"
+    ))
+    .bind(&locked)
+    .fetch_all(conn)
+    .await?)
 }
 
 /// Full-row edit of the user-controlled fields.

@@ -30,7 +30,10 @@ pub struct Webhook {
     pub disabled_reason: Option<String>,
     /// Display prefix of the capability token (the full URL is shown once).
     pub url_prefix: String,
+    /// Provenance when `anchor = workspace`; the fire-time authority when `anchor = creator`.
     pub created_by: Option<WebhookCreator>,
+    /// `creator` | `workspace` (RFE-021): whose access authorizes each delivery.
+    pub anchor: String,
     pub last_delivery_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -62,6 +65,7 @@ impl From<WebhookRow> for Webhook {
                 id,
                 display_name: r.creator_name.unwrap_or_default(),
             }),
+            anchor: r.anchor,
             last_delivery_at: r.last_delivery_at,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -129,6 +133,8 @@ pub struct CreateWebhookRequest {
     pub name: String,
     pub instructions: String,
     pub verification: Option<VerificationInput>,
+    /// `creator` (default) or `workspace`; `workspace` needs `can_own` (RFE-021).
+    pub anchor: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -139,6 +145,8 @@ pub struct UpdateWebhookRequest {
     pub verification: Option<VerificationInput>,
     /// `true` re-enables (clears the failure count; the caller becomes the authority anchor).
     pub enabled: Option<bool>,
+    /// `creator` | `workspace`; changing it needs `can_own` and is audited (RFE-021).
+    pub anchor: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]

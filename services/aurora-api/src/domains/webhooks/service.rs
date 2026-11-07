@@ -47,6 +47,8 @@ pub struct Create {
     pub name: String,
     pub instructions: String,
     pub verification: Option<VerificationInput>,
+    /// `creator` or `workspace` (RFE-021).
+    pub anchor: &'static str,
 }
 
 #[derive(Default)]
@@ -206,6 +208,7 @@ pub async fn create(
         &prefix,
         &verification,
         creator,
+        c.anchor,
         origin,
     )
     .await;
@@ -234,6 +237,7 @@ async fn insert(
     prefix: &str,
     verification: &Option<Value>,
     creator: Option<Uuid>,
+    anchor: &str,
     origin: Option<Uuid>,
 ) -> Result<WebhookRow, ApiError> {
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
@@ -260,6 +264,7 @@ async fn insert(
             display_prefix: prefix,
             verification: verification.as_ref(),
             creator_user_id: creator,
+            anchor,
             origin_conversation_id: origin,
         },
     )
@@ -272,7 +277,10 @@ async fn insert(
 pub fn apply_enabled(r: &mut WebhookRow, enabled: Option<bool>, actor: Option<Uuid>) {
     match enabled {
         Some(true) if !r.enabled => {
-            if r.disabled_reason.as_deref() == Some("authorization") && actor.is_some() {
+            if r.disabled_reason.as_deref() == Some("authorization")
+                && r.anchor == "creator"
+                && actor.is_some()
+            {
                 r.creator_user_id = actor;
             }
             r.enabled = true;

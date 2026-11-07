@@ -30,6 +30,8 @@ pub struct Create {
     pub timezone: Option<String>,
     pub gate_command: Option<String>,
     pub gate_description: Option<String>,
+    /// `creator` or `workspace` (RFE-021); tools always pass `creator`.
+    pub anchor: &'static str,
 }
 
 #[derive(Default)]
@@ -120,6 +122,7 @@ pub async fn create(
             gate_command: c.gate_command.as_deref(),
             gate_description: c.gate_description.as_deref(),
             creator_user_id: creator,
+            anchor: c.anchor,
             origin_conversation_id: origin,
             next_fire_at: Some(next),
         },

@@ -332,6 +332,12 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/orgs/{org}/members", G::Admin, false),
     r("PATCH", "/v1/orgs/{org}/members/{user}", G::Admin, false),
     r("DELETE", "/v1/orgs/{org}/members/{user}", G::Admin, false),
+    r(
+        "GET",
+        "/v1/orgs/{org}/members/{user}/offboarding",
+        G::Admin,
+        false,
+    ),
     r("GET", "/v1/orgs/{org}/oauth-clients", G::Admin, false),
     r("POST", "/v1/orgs/{org}/oauth-clients", G::Admin, false),
     r("PATCH", "/v1/oauth-clients/{id}", G::Admin, false),
@@ -357,6 +363,18 @@ const ROWS: &[Row] = &[
         false,
     ),
     r("GET", "/v1/workspaces/{ws}/activity", G::WsUse, false),
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/members/{user}/offboarding",
+        G::WsOwn,
+        false,
+    ),
+    r(
+        "POST",
+        "/v1/workspaces/{ws}/automations/reassign",
+        G::WsOwn,
+        false,
+    ),
     r("GET", "/v1/workspaces/{ws}/agents", G::WsUse, false),
     r("POST", "/v1/workspaces/{ws}/agents", G::WsUse, false),
     r("GET", "/v1/workspaces/{ws}/api-keys", G::WsOwn, false),
@@ -428,12 +446,14 @@ const ROWS: &[Row] = &[
     r("DELETE", "/v1/schedules/{id}", G::WsUse, false),
     r("GET", "/v1/schedules/{id}", G::WsUse, false),
     r("PATCH", "/v1/schedules/{id}", G::WsUse, false),
+    r("PUT", "/v1/schedules/{id}/creator", G::WsOwn, false),
     r("POST", "/v1/schedules/{id}/run-now", G::WsUse, false),
     r("GET", "/v1/schedules/{id}/runs", G::WsUse, false),
     r("DELETE", "/v1/webhooks/{id}", G::WsUse, false),
     r("GET", "/v1/webhooks/{id}", G::WsUse, false),
     r("PATCH", "/v1/webhooks/{id}", G::WsUse, false),
     r("GET", "/v1/webhooks/{id}/deliveries", G::WsUse, false),
+    r("PUT", "/v1/webhooks/{id}/creator", G::WsOwn, false),
     r("POST", "/v1/webhooks/{id}/rotate", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/memories", G::WsUse, false),
     r("POST", "/v1/agents/{agent}/memories", G::WsUse, false),
@@ -899,6 +919,12 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ("POST", "/v1/orgs/{org}/workspaces") => json!({"name": "Matrix extra"}),
         ("POST", "/v1/secrets/{id}/accept") => json!({"value": "v"}),
         ("PUT", "/v1/workspaces/{ws}/access/{user}") => json!({"role": "member"}),
+        ("PUT", "/v1/schedules/{id}/creator" | "/v1/webhooks/{id}/creator") => {
+            json!({"user_id": fx.victim})
+        }
+        ("POST", "/v1/workspaces/{ws}/automations/reassign") => {
+            json!({"from_user_id": fx.victim, "to": "workspace"})
+        }
         ("POST", "/v1/workspaces/{ws}/agents") => json!({"name": "Matrix agent", "kind": "byo"}),
         ("POST", "/v1/workspaces/{ws}/policy/simulate") => {
             json!({"agent_id": fx.agent, "method": "GET", "url": "https://example.com/"})

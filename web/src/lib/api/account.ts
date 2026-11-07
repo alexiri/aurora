@@ -124,10 +124,15 @@ export function usePutAccess(wsId: string) {
 export function useDeleteAccess(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (user: string) =>
-      unwrap(
-        api.DELETE("/v1/workspaces/{ws}/access/{user}", { params: { path: { ws: wsId, user } } }),
-      ),
+    // RFE-021: `reassign_to` reassigns the person's schedules and webhooks of this workspace.
+    mutationFn: (v: string | { user: string; reassign_to?: string }) => {
+      const { user, reassign_to } = typeof v === "string" ? { user: v, reassign_to: undefined } : v;
+      return unwrap(
+        api.DELETE("/v1/workspaces/{ws}/access/{user}", {
+          params: { path: { ws: wsId, user }, query: reassign_to ? { reassign_to } : {} },
+        }),
+      );
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: accountKeys.access(wsId) }),
   });
 }

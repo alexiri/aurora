@@ -2,11 +2,16 @@ use super::dto::*;
 use super::{receive, service};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
-use crate::http::auth::Caller;
+use crate::domains::automations::{
+    dto::ReassignCreatorRequest,
+    service::{self as auto, Acting, To},
+};
+use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::Page;
 use aurora_core::ApiError;
+use aurora_db::DbError;
 use aurora_db::repo::{agents, webhooks::WebhookRow};
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -21,6 +26,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_webhooks, create_webhook))
         .routes(routes!(get_webhook, update_webhook, delete_webhook))
         .routes(routes!(rotate_webhook))
+        .routes(routes!(reassign_creator))
         .routes(routes!(list_deliveries))
         .routes(routes!(receive::receive))
 }
@@ -90,6 +96,13 @@ async fn create_webhook(
     Json(req): Json<CreateWebhookRequest>,
 ) -> Result<(StatusCode, Json<WebhookWithUrl>), ApiError> {
     let a = visible_agent(&c, &s, agent).await?;
+    let anchor = match req.anchor.as_deref() {
+        Some(v) => auto::parse_anchor(v)?,
+        None => "creator",
+    };
+    if anchor == "workspace" {
+        require_own(&c.workspace(&s, a.workspace_id).await?)?;
+    }
     let (row, url) = service::create(
         &s,
         &a,
@@ -97,6 +110,7 @@ async fn create_webhook(
             name: req.name,
             instructions: req.instructions,
             verification: req.verification,
+            anchor,
         },
         Some(c.user_id),
         None,
@@ -141,7 +155,23 @@ async fn update_webhook(
     Json(req): Json<UpdateWebhookRequest>,
 ) -> Result<Json<Webhook>, ApiError> {
     let (cur, a) = authorized(&c, &s, id).await?;
-    let row = service::patch(
+    // RFE-021: switching the anchor needs `can_own`; validate before anything is written.
+    let new_anchor = match req.anchor.as_deref() {
+        Some(v) => {
+            let v = auto::parse_anchor(v)?;
+            require_own(&c.workspace(&s, a.workspace_id).await?)?;
+            if v == cur.anchor {
+                None
+            } else {
+                let to = auto::anchor_target(v, cur.creator_user_id)?;
+                let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+                auto::ensure_target(&mut conn, to, a.workspace_id).await?;
+                Some(to)
+            }
+        }
+        None => None,
+    };
+    let mut row = service::patch(
         &s,
         &a,
         cur,
@@ -155,6 +185,18 @@ async fn update_webhook(
     )
     .await?;
     record(&c, &s, &a, &row, "webhook.update");
+    if let Some(to) = new_anchor {
+        let actor = AuditActor::from_caller(&c);
+        let acting = Acting {
+            actor: &actor,
+            org: a.org_id,
+            workspace: a.workspace_id,
+        };
+        let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+        auto::reassign_webhook(&mut tx, &acting, &row, to, false).await?;
+        tx.commit().await.map_err(DbError::from)?;
+        row = service::get(&s, id).await?;
+    }
     Ok(Json(row.into()))
 }
 
@@ -218,4 +260,40 @@ async fn list_deliveries(
         items: rows.into_iter().map(WebhookDelivery::from).collect(),
         next_cursor: None,
     }))
+}
+
+/// Reassign the webhook's creator (fire-time authority) to an active member who can use the
+/// workspace (`can_own`); `re_enable` re-enables an item disabled for `authorization`. Audited
+/// `automation.reassign`.
+#[utoipa::path(put, path = "/webhooks/{id}/creator", operation_id = "reassignWebhookCreator",
+    tag = "webhooks", params(("id" = Uuid, Path, description = "Webhook id")),
+    request_body = ReassignCreatorRequest,
+    responses((status = 200, body = Webhook), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn reassign_creator(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ReassignCreatorRequest>,
+) -> Result<Json<Webhook>, ApiError> {
+    let (row, a) = authorized(&c, &s, id).await?;
+    require_own(&c.workspace(&s, a.workspace_id).await?)?;
+    let actor = AuditActor::from_caller(&c);
+    let acting = Acting {
+        actor: &actor,
+        org: a.org_id,
+        workspace: a.workspace_id,
+    };
+    let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+    auto::reassign_webhook(
+        &mut tx,
+        &acting,
+        &row,
+        To::User(req.user_id),
+        req.re_enable.unwrap_or(false),
+    )
+    .await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(Json(service::get(&s, id).await?.into()))
 }

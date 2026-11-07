@@ -130,24 +130,33 @@ impl AuditEvent {
 
 /// Insert and return the error (for tests and callers that want to await).
 pub async fn insert(state: &AppState, ev: &AuditEvent) -> Result<Uuid, aurora_db::DbError> {
-    audit::insert(
-        &state.pool,
-        &NewAudit {
-            org_id: ev.org_id,
-            workspace_id: ev.workspace_id,
-            actor_kind: ev.actor.kind,
-            actor_id: ev.actor.id,
-            actor_label: &ev.actor.label,
-            action: &ev.action,
-            target_kind: ev.target_kind.as_deref(),
-            target_id: ev.target_id.as_deref(),
-            outcome: ev.outcome.as_str(),
-            source: ev.actor.source,
-            ip: ev.actor.ip,
-            metadata: &ev.metadata,
-        },
-    )
-    .await
+    audit::insert(&state.pool, &new_audit(ev)).await
+}
+
+/// Insert inside the caller's transaction: for security-critical actions the row commits or
+/// rolls back with the change (docs/04 §Audit).
+pub async fn insert_tx(
+    conn: &mut sqlx::PgConnection,
+    ev: &AuditEvent,
+) -> Result<Uuid, aurora_db::DbError> {
+    audit::insert(&mut *conn, &new_audit(ev)).await
+}
+
+fn new_audit(ev: &AuditEvent) -> NewAudit<'_> {
+    NewAudit {
+        org_id: ev.org_id,
+        workspace_id: ev.workspace_id,
+        actor_kind: ev.actor.kind,
+        actor_id: ev.actor.id,
+        actor_label: &ev.actor.label,
+        action: &ev.action,
+        target_kind: ev.target_kind.as_deref(),
+        target_id: ev.target_id.as_deref(),
+        outcome: ev.outcome.as_str(),
+        source: ev.actor.source,
+        ip: ev.actor.ip,
+        metadata: &ev.metadata,
+    }
 }
 
 /// Fire-and-forget audit write; failures are logged, never propagated.
