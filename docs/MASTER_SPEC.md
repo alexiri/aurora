@@ -112,7 +112,7 @@ See [19](19-implementation-plan.md) for milestones and acceptance criteria.
   instance, org and workspace levels that can only tighten.
 - Every new workspace gets a **default hosted agent named `Daneel`**
   (handle `daneel`); the name is configurable. See `10`.
-- **Design-review decisions (owner, `80`; `90` D-43…D-58).** The owner's verdicts
+- **Design-review decisions (owner, `80`; `90` D-43…D-67).** The owner's verdicts
   on the design review are written into the owning documents as phase-tagged rules
   ("(phase N, RFE-nnn)"). **Phase 1**: connector-asserted e-mail auto-linking is an
   opt-in per integration (RFE-001); the gateway proxy listener is **TLS-only**
@@ -127,5 +127,5 @@ See [19](19-implementation-plan.md) for milestones and acceptance criteria.
   attachment retention and quota (RFE-015); approval timeouts, stall exemption and
   notifications (RFE-011a); the `approver` role (RFE-012); management-API rate
   limiting (RFE-017); automation reassignment, offboarding view and workspace
-  anchors (RFE-021). Where a phase-tagged rule replaces a phase-0 rule, both stay
+  anchors (RFE-021); BYO agents governed by a posture, source CIDR list, a policy warning for all-agents rules and optional required context credentials (RFE-025). **Phase 3**: optional maximum age for BYO agent tokens, default none (RFE-013); the gateway degrades to cache-only service within the TTL instead of stopping when Postgres is down, reconnects before flushing, and reports `ready`/`degraded`/`down` (RFE-014); `Idempotency-Key` on message creation (RFE-018); neutral default brief and public sandbox base image, deployment persona and base override in this deployment's configuration (RFE-019); workspace-tier skills (RFE-020); plugin major upgrades set incompatible connections to `reauth_required` with an approval warning (RFE-022); the Default Rule's LLM-host carve-out is documented (RFE-023); deprovision operations are self-contained and committed with the delete (RFE-024). Where a phase-tagged rule replaces a phase-0 rule, both stay
   readable in the owning document.

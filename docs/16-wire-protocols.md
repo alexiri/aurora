@@ -29,7 +29,7 @@ implementation repo and checked in (CI fails on drift).
 | Versioning | Machine planes send `X-Aurora-Protocol: <plane>/<n>` (`runner/1`, `supervisor/1`, `connector/1`, `hookhost/1`). The API accepts N and N−1; unknown future versions → 426 with the supported range. |
 | Open vocabularies | error codes, reason codes, capability names, connector ids, event/report kinds: unknown values are logged and skipped, never fatal. |
 | Sender-side bounds | sizes, counts and string lengths enforced by producers (limits registry). |
-| Idempotency | report ids, event sequence numbers, `source_event_id`, op ids, claim leases. |
+| Idempotency | report ids, event sequence numbers, `source_event_id`, op ids, claim leases; (phase 3, RFE-018) the management API's `Idempotency-Key` on message creation (`05 §Idempotency keys`). |
 | Time | the API's database clock is truth; timestamps from runners, supervisors and connectors are informational only. |
 | Untrusted text | sanitized at the boundary where it enters platform voice. |
 | Secrets in logs | never; URLs only in redacted form. |
@@ -86,7 +86,7 @@ All carry `{ item_id, kind, sandbox_id, boot_id }`.
 client_env: [[k,v]] }`. `TurnInput`: `{ text, speaker_label, door, recall: {
 index, snippets: [] }, notices: [] }`. `HomeSyncPart`: `{ kind: "skills" |
 "memory" | "render_inputs" | "tools" | "manifest" | "final", entries: [...] }`
-(`12 §Sync protocol`).
+(`12 §Sync protocol`). (phase 3, RFE-020) `skills` parts carry the agent's **effective** set only; the three tiers and their precedence are resolved by the API, so the wire format is unchanged.
 
 ### Reports
 

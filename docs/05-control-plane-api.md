@@ -43,7 +43,7 @@ if any declared id lacks an implementation.
 |--------|-----------|--------|
 | Browser | Session cookie + Origin check | `/v1/**` (except planes below) |
 | CLI / scripts | `Authorization: Bearer auk_…|auo_…` | `/v1/**` except session-only |
-| BYO agent | `Authorization: Bearer aug_…` (agent token) | only `POST /v1/agent/context-credentials` and `GET /v1/agent/container-config` |
+| BYO agent | `Authorization: Bearer aug_…` (agent token; phase 3, RFE-013: 401 `agent_token_expired` once past a configured maximum age) | only `POST /v1/agent/context-credentials` and `GET /v1/agent/container-config` |
 | Runner | `Authorization: Bearer aur_…` + `X-Aurora-Replica: <id>` (after register) | `/v1/runner/**` |
 | Connector | `Authorization: Bearer aun_…` + `X-Aurora-Replica` | `/v1/connector/**` |
 | Public capability | token in path | `POST /v1/hooks/{token}`, `GET /v1/public/avatars/{key}`, `GET /v1/oauth/callback`, OIDC callbacks |
@@ -151,7 +151,8 @@ matrix:
     informational `ratelimit-limit` / `ratelimit-remaining` / `ratelimit-reset` of
     the blocking bucket; `x-should-retry: true`. A refused request consumes no
     tokens from the buckets that would have allowed it. Idempotent safe retries are
-    the client's responsibility (RFE-018 adds idempotency keys in phase 3).
+    the client's responsibility (phase 3, RFE-018: message creation accepts an
+    `Idempotency-Key`, below).
   - **Tuning**: `ratelimit.api.enabled` (default `true`), `ratelimit.api.multiplier`
     (0.1–100, scales every bucket), per-class overrides
     `ratelimit.api.classes.<name> = { per_minute | per_hour, burst }` and
@@ -165,12 +166,57 @@ matrix:
   ephemeral events carry no id; keepalive comment every `SSE_KEEPALIVE`;
   resume with `Last-Event-ID` or `?after_seq=`.
 
+### Idempotency keys (phase 3, RFE-018, D-62)
+
+Phase 0–2: a client that retried `POST /v1/conversations/{id}/messages` after a
+timeout created two turns (the second becoming a follow-up). From phase 3 the
+route accepts an optional **`Idempotency-Key`** request header; it reuses the
+mechanism channel doors already use (`turns.source_event_id` and its partial
+unique index on `(conversation_id, source_event_id)`), so no new table or
+index exists.
+
+- **Key format**: 1–128 characters from `[A-Za-z0-9._:~-]` (a UUID is the
+  recommendation); anything else → 422 `idempotency_key_invalid`. No header = the
+  phase 0 behaviour (no deduplication). A `Idempotency-Key` on other routes is
+  ignored (phase 3 covers message creation only; `send-now`, `abort` and the
+  channel/webhook doors are already idempotent in their own way).
+- **Scope**: the key is scoped to **(conversation, acting user)**. It is stored as
+  `source_event_id = "api:" ‖ <user_id> ‖ ":" ‖ <key>` (`api:` is a reserved prefix:
+  `13 §5.1` rejects connector event ids starting with it), where `<user_id>` is the
+  person the request acts as (the session user, or the owner of an API key — the
+  same person has one key space across the dashboard, CLI and keys). One user can
+  therefore neither replay, collide with nor probe another user's keys.
+- **Order of evaluation**: authentication, rate limiting (a replay costs one
+  message-bucket token like any request), authorization and conversation visibility
+  (`can_see_conversation`, direct-conversation writer rule) **first** — a replay
+  never bypasses any check; then the idempotency lookup; then the freeze check
+  (423 `frozen`) and the remaining validations for a *new* message only.
+- **First use**: the turn (or the `followup` row, which carries the key too) is
+  inserted with the key in the same transaction as today. **Replay** (key already
+  stored for this conversation and user): nothing is created; the response has the
+  **same status code and shape as the original** — `{ turn }` or `{ followup }`, the
+  resource as it is **now** (its status may have advanced; a promoted follow-up
+  shows `promoted` and its new `turn_id`) — plus the header `Idempotent-Replayed:
+  true`. A replay after the turn finished, failed or was aborted returns that state;
+  it never re-runs it.
+- **Mismatch**: a replay whose `text` or set of `attachment_ids` differs from the
+  stored turn's → 422 `idempotency_key_reused` (`details.turn_id`), nothing created.
+- **Concurrency**: simultaneous requests with one key race on the unique index; the
+  loser's transaction fails with the unique violation, re-reads the winner's row
+  and answers as a replay (exactly one turn exists).
+- **Lifetime**: as long as the turn row exists (no separate expiry): conversation
+  deletion or retention (`10 §Archive, delete, redaction, retention, export`)
+  frees the key. Clients use a fresh key per logical message.
+- Never logged in clear beyond a 12-character prefix; not returned in transcripts
+  or events (the `source_event_id` column is internal).
+
 ## Event bus (Postgres `LISTEN/NOTIFY`)
 
 Every process that needs signals holds one dedicated LISTEN connection.
 Notifications are **hints**: a consumer that (re)connects its listener MUST
 resynchronize from the database (SSE re-reads from last seq, gateways flush
-caches, waiters return early). Payloads are JSON ≤ 7 000 bytes.
+caches — phase 3, RFE-014: *after* re-subscribing, keeping the caches meanwhile,
+`06 §Operation during a Postgres outage` — waiters return early). Payloads are JSON ≤ 7 000 bytes.
 
 | Channel | Payload | Producer → consumers |
 |---------|---------|----------------------|
@@ -324,6 +370,8 @@ aurora_gateway_invalidate` after commit with the narrowest scope:
 | Freeze / unfreeze (phase 2, RFE-006) | `agent` / `workspace` / `org` |
 | App availability change | `org` |
 | Org governance change (and the stored-origin re-evaluation it triggers) | `org` |
+| (phase 2, RFE-025) Workspace BYO posture change | `workspace` |
+| (phase 2, RFE-025) BYO source list / require-context change of an agent | `agent` |
 | Snapshot activation | (`aurora_registry` instead) |
 
 ## Route catalogue
@@ -367,14 +415,14 @@ connector, **P** public capability. Permission checks per `04`.
 | POST `/v1/orgs/{org}/freeze` `{ reason }`; POST `/v1/orgs/{org}/unfreeze` | S/K | (phase 2, RFE-006) org `owner` |
 | GET/PUT `/v1/orgs/{org}/app-availability` | S/K | posture + allow-list |
 | GET/PUT `/v1/orgs/{org}/governance` | S/K | org governance document (`08 §11.2`) with `revision`; PUT validates against the instance ceiling (422 `governance_invalid` / `governance_below_instance_minimum`) |
-| GET `/v1/orgs/{org}/governance/effective` | S/K (any org member) | effective LLM and egress governance (instance ∩ org), each value marked `source: instance|org` (phase 1, RFE-003: includes `egress.open_lane`); non-compliant LLM secrets of the org |
+| GET `/v1/orgs/{org}/governance/effective` | S/K (any org member) | effective LLM and egress governance (instance ∩ org), each value marked `source: instance|org` (phase 1, RFE-003: includes `egress.open_lane`; phase 2, RFE-025: includes `byo.{posture, source_cidrs, require_context_credentials}`; phase 3, RFE-013: `agent_tokens.max_age_days`); non-compliant LLM secrets of the org |
 | GET `/v1/governance/instance` | S | the instance ceiling (config, without secrets) — read-only |
 
 ### Workspaces
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET/POST `/v1/orgs/{org}/workspaces` | S/K | |
-| GET/PATCH/DELETE `/v1/workspaces/{ws}` | S/K | name, timezone, memory_language |
+| GET/PATCH/DELETE `/v1/workspaces/{ws}` | S/K | name, timezone, memory_language; (phase 2, RFE-025) PATCH also `byo_posture` (`enabled`\|`owners_only`\|`disabled`\|null = inherit; `can_own`; tighten-only, 422 `governance_below_instance_minimum`; audited `workspace.byo_posture.update`; invalidation scope `workspace`); GET shows `byo_posture` and `effective_byo_posture` with its `level` |
 | GET `/v1/workspaces/{ws}/access`; PUT/DELETE `/v1/workspaces/{ws}/access/{user}` | S/K | bindings (phase 2, RFE-021: DELETE accepts `reassign_to`); (phase 2, RFE-012) `PUT { role: "owner"\|"approver"\|"member" }`; `can_own` |
 | GET/POST `/v1/workspaces/{ws}/api-keys` | S (POST: SO) | workspace keys |
 | GET `/v1/workspaces/{ws}/audit` | S/K | same filters |
@@ -425,7 +473,7 @@ connector, **P** public capability. Permission checks per `04`.
 | PUT `…/policy/draft` | S/K | whole-draft replace with `revision`; (phase 1, RFE-003) workspace scope also carries `open_lane_posture` (`enabled` \| `allowlist_only` \| `disabled`; a workspace can only tighten, so `enabled` simply adds no restriction beyond the org and instance) |
 | POST `…/policy/publish`, `…/policy/rollback` | S/K | `{ revision }` / `{ generation }` |
 | GET `…/policy/generations` | S/K | history |
-| GET `…/policy/warnings` | S/K | overlap/inert-rule warnings for the draft |
+| GET `…/policy/warnings` | S/K | overlap/inert-rule warnings for the draft; (phase 2, RFE-025) includes `rule_applies_to_all_agents` (`07 §Injection selection`) |
 | POST `/v1/workspaces/{ws}/policy/simulate` | S/K | `{ agent_id, method, url, body?, use_draft?, lane?, speaker_user_id? }` → decision trace (phase 2, RFE-005: `speaker_user_id` omitted = no speaker); (phase 1, RFE-003) `lane: "open"` evaluates CONNECT-time semantics (`07`) and the open-lane posture |
 
 ### Approvals
@@ -445,10 +493,12 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 ### Agents and sandboxes
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET/POST `/v1/workspaces/{ws}/agents` | S/K | create returns `aug_` once for BYO |
+| GET/POST `/v1/workspaces/{ws}/agents` | S/K | create returns `aug_` once for BYO; (phase 2, RFE-025) creating `kind = byo` is subject to the effective BYO posture: 403 `byo_not_permitted` (`owners_only`, caller lacks `can_own`) or 403 `byo_disabled`; the list/get shape carries `byo: { posture, posture_level, source_cidrs, require_context, effective_source_cidrs, effective_require_context }` for BYO agents |
 | GET/PATCH/DELETE `/v1/agents/{agent}` | S/K | name, brief, harness, model, effort, resource overrides (IA) |
-| POST `/v1/agents/{agent}/token` | S | BYO: regenerate, returns token once |
+| POST `/v1/agents/{agent}/token` | S | BYO: regenerate, returns token once with `expires_at` (phase 3, RFE-013: null unless an agent-token maximum age applies, `08 §7`); (phase 2, RFE-025) same posture check as creation (`byo_not_permitted` / `byo_disabled`); audited `agent.token_regenerate` |
+| PUT `/v1/agents/{agent}/byo` | S/K | (phase 2, RFE-025) BYO only (hosted → 422 `not_byo`): `{ source_cidrs: [cidr..] \| null, require_context: bool }`; `can_own`; 422 `byo_cidr_invalid` (bad CIDR, `/0`, empty array, >32 entries) / `byo_cidr_outside_default`; live credentials are re-evaluated by invalidation scope `agent`; audited `agent.byo_settings.update` |
 | GET `/v1/agents/{agent}/container-config` | S/K | BYO bootstrap (`08 §BYO bootstrap`) |
+| GET `/v1/workspaces/{ws}/agent-tokens`; GET `/v1/orgs/{org}/agent-tokens` | S/K | (phase 3, RFE-013) BYO agent tokens without material: `{ items: [{ agent, workspace, created_at, expires_at, last_used_at, stale, expiring, display_prefix }] }`, filters `?stale=true`, `?expiring_within_days=n`; workspace route `can_own`, org route org `owner`/`admin` |
 | GET `/v1/agent/container-config`; POST `/v1/agent/context-credentials` | A | BYO self-service (`08`) |
 | PUT/GET `/v1/agents/{agent}/avatar`; GET `/v1/public/avatars/{key}` | S/K; P | |
 | POST `/v1/agents/{agent}/restart` | S/K | restart sandbox |
@@ -469,7 +519,7 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | GET `/v1/conversations/{id}/export` | S/K | (phase 2, RFE-010) JSON `aurora.conversation.v1` (`attachments=zip` → zip); 422 `export_too_large` |
 | GET `/v1/conversations/{id}/events?after_seq=&limit=` | S/K | durable history |
 | GET `/v1/conversations/{id}/stream` | S/K | SSE |
-| POST `/v1/conversations/{id}/messages` | S/K | `{ text, attachment_ids? }` → `{ turn }` or `{ followup }` |
+| POST `/v1/conversations/{id}/messages` | S/K | `{ text, attachment_ids? }` → `{ turn }` or `{ followup }`; (phase 3, RFE-018) optional header `Idempotency-Key` — a retry with the same key returns the original result (`Idempotent-Replayed: true`) and creates nothing; 422 `idempotency_key_invalid` / `idempotency_key_reused` (`### Idempotency keys`) |
 | POST `/v1/turns/{id}/abort`, `/v1/turns/{id}/send-now` | S/K | |
 | POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment; (phase 2, RFE-015) 422 `attachment_quota_exceeded` when the org quota would be exceeded |
 | GET `/v1/attachments/{id}/content` | S/K | `Content-Disposition: attachment` always; (phase 2, RFE-015) 410 `attachment_purged` after retention/delete |
@@ -481,7 +531,9 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | GET/POST `/v1/agents/{agent}/memories`; GET/PUT/DELETE `/v1/agents/{agent}/memories/{key}` | S/K | |
 | GET `…/memories/{key}/revisions`; POST `…/memories/{key}/restore`; POST `…/memories/{key}/revisions/{rev}/redact` | S/K | |
 | GET `/v1/agents/{agent}/memories/search?q=` | S/K | |
-| GET/POST `/v1/agents/{agent}/skills`, `/v1/orgs/{org}/skills`; GET/PATCH/DELETE `/v1/skills/{id}`; PUT/DELETE `/v1/skills/{id}/files/{path}` | S/K | |
+| GET/POST `/v1/agents/{agent}/skills`, `/v1/orgs/{org}/skills`; GET/PATCH/DELETE `/v1/skills/{id}`; PUT/DELETE `/v1/skills/{id}/files/{path}` | S/K | the item routes work for every tier and authorize by the skill's tier (agent: `can_use`; org: org `owner`/`admin`; workspace, phase 3 RFE-020: `can_own`); items carry `tier: "agent"\|"workspace"\|"org"` |
+| GET/POST `/v1/workspaces/{ws}/skills` | S/K | (phase 3, RFE-020) list (`can_use`) / create (`can_own`) workspace-tier skills; same body as the other tiers; 409 `skill_name_taken` in the workspace tier, 422 for reserved/invalid names and size limits as elsewhere |
+| GET `/v1/agents/{agent}/skills/effective` | S/K | (phase 3, RFE-020) the effective set the agent receives: `[{ skill, tier, enabled, shadows: [{ id, tier }] }]` plus the skills that lose (`shadowed_by`); `can_use` |
 | GET/POST `/v1/agents/{agent}/schedules`; GET/PATCH/DELETE `/v1/schedules/{id}`; GET `…/runs`; POST `…/run-now` | S/K | (phase 2, RFE-021) items expose `creator`, `anchor` (`creator`\|`workspace`); POST/PATCH accept `anchor` (`can_own` only; tool-created items are always `creator`) |
 | PUT `/v1/schedules/{id}/creator`, PUT `/v1/webhooks/{id}/creator` | S/K | (phase 2, RFE-021) `{ user_id, re_enable? }`; `can_own`; 422 `new_creator_unauthorized`; audited `automation.reassign` |
 | POST `/v1/workspaces/{ws}/automations/reassign` | S/K | (phase 2, RFE-021) `{ from_user_id, to: <user_id> \| "workspace", kinds?: [schedule,webhook], ids? }` → `{ reassigned: n }`; `can_own`; one transaction, one audit row per item |
@@ -506,7 +558,7 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 |---|---|---|
 | GET `/v1/admin/overview` | IA | versions, gateways, hook hosts, runners, connectors, active snapshot |
 | GET/PATCH `/v1/admin/users` | IA | list, instance-admin flag, disable |
-| GET/POST `/v1/admin/plugins` (multipart upload); GET `/v1/admin/plugins/{id}`; POST `…/approve`, `…/reject`, `…/disable`, `…/enable`; DELETE `…?force=` | IA | |
+| GET/POST `/v1/admin/plugins` (multipart upload); GET `/v1/admin/plugins/{id}`; POST `…/approve`, `…/reject`, `…/disable`, `…/enable`; DELETE `…?force=` | IA | (phase 3, RFE-022) GET `{id}` of a pending major upgrade carries `impact` (`09 §10`: `connections_needing_reauth`, `by_app`); `approve` activates and flips the failing connections to `reauth_required` in one transaction and returns `{ connections_reauth: n }` |
 | GET `/v1/admin/host-claims`; PUT `/v1/admin/host-claims/{claim_key}` | IA | conflicts and winners |
 | GET/POST/DELETE `/v1/admin/trusted-keys` | IA | |
 | GET/POST/DELETE `/v1/admin/connectors`; POST `…/{id}/approve`, `…/{id}/token` | IA | provision token, approve manifest |

@@ -65,10 +65,10 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   Suspend/remove first opens the **offboarding view** — "Removing Alice disables
   these N schedules and webhooks" with the list, a "Reassign to…" picker (a member
   or the workspace) and a Skip option; the removal then carries `reassign_to`.
-- **Policy**: org rules editor (draft/publish).
+- **Policy**: org rules editor (draft/publish). (phase 3, RFE-023) The **Default Rule** control carries the note "Does not affect LLM endpoints — see Governance" with a link to the governance page, and a tooltip explaining that explicit block rules naming an LLM host still apply.
 - **Credentials**: org secrets, org LLM keys, org app connections, OAuth clients.
 - **Apps**: app availability posture and allow-list.
-- **Governance** (`08 §11`):
+- **Governance** (`08 §11`; phase 3, RFE-013: a **BYO agent tokens** setting "maximum age (days)", empty = never expire, shown locked with "enforced by instance" when the instance value is lower, plus a stale/expiring token list with Regenerate shortcuts; phase 2, RFE-025: a **BYO agents** panel — posture selector limited to values not below the instance floor, default source CIDR list, org default "require context credentials"; shown locked with "enforced by instance" when `byo.enabled = false`):
   - *Model access*: per instance endpoint — permitted or not, key scopes
     (organization / workspace), origin narrowing (e.g. Anthropic organization
     and workspace ids, LiteLLM teams), model allow-list; LLM posture
@@ -90,7 +90,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   automatically by verified email"** (default off; shown only when the
   connector offers `email_verified`), with the trust warning of `13 §5.9`;
   toggling it needs a confirm dialog.
-- **Skills**: org skills editor.
+- **Skills**: org skills editor (tier badge "Organization"; phase 3, RFE-020: states that workspace and agent skills with the same name take precedence).
 - **Retention** (phase 2, RFE-010/015): conversation and attachment windows,
   attachment quota with the storage breakdown (by workspace and direction), a
   usage bar with the 80 %/100 % notices, validation against the instance maximum.
@@ -118,6 +118,9 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
     chips), follow-ups with "Send now", Stop, live activity line, door chips
     (which surface each turn came from), error copy with deep-link fixes
     (`no_model_key` → LLM keys page).
+    (phase 3, RFE-018) The composer generates one UUID `Idempotency-Key` per composed
+    message and reuses it for every automatic retry, so a timeout-retry never
+    double-posts; editing the text or deliberately sending again uses a new key.
   - **Instructions** — name, brief, avatar, harness, model (from
     `/v1/agents/{a}/models`), effort, proactive messaging mode.
   - **Access** — grants: connections (full / custom with allow/ask/block per
@@ -127,7 +130,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
     capabilities; status; re-attach/detach), space bindings, reach requests.
   - **Memory** — list, editor with revisions, restore, redact, search; banner
     "Memories in this workspace are written in <Language>".
-  - **Skills** — editor with file tree, executable bit, size meter.
+  - **Skills** — editor with file tree, executable bit, size meter. (phase 3, RFE-020) Lists the agent's **effective** skills with a tier badge (Agent / Workspace / Organization) and, for shadowing, "overrides the Workspace skill of the same name" / "overridden by …"; workspace and org skills open read-only here with a link to where they are edited.
   - **Schedules**, **Webhooks** (URL shown once on create/rotate; phase 2,
     RFE-021: each item shows its owner — a person or "Workspace" — with
     **Reassign…** (picker of members who can use the workspace; re-enable option
@@ -141,14 +144,22 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
     explanation when a higher authority froze it).
   - **Computer** — sandbox state, "awake because…" reasons, processes,
     restart; BYO agents instead show **Connect** (token regenerate, container
-    config, `aurora run` snippet, CA download).
+    config, `aurora run` snippet, CA download). (phase 2, RFE-025) The Connect
+    tab shows the effective BYO posture (phase 3, RFE-013: the token's **expiry** and **last used** time, a "Stale" / "Expiring" badge, and a Regenerate call to action; agent lists carry the same badges for owners) and, when set, its source ('Disabled by
+    organization'); regenerate is hidden for non-owners under `owners_only`; a
+    **Source restriction** card edits the agent's CIDR list (owners; shows the
+    inherited default list and the caller's current address as a hint; refuses
+    entries outside it) and a **Require context credentials** switch (explains
+    that every credentialed request will be attributed to a labelled run and that
+    `aurora run` mints one). The agent create dialog offers BYO only as the
+    posture allows and says "owners only" otherwise.
   - **Activity** — request log filtered to the agent.
 - **Approvals** — pending gateway holds and action approvals (live via SSE),
   history; batch actions. (phase 2, RFE-012) The page, the sidebar counter and the
   SSE feed exist only for `can_approve` users; a plain member sees the waiting
   approval inline in their own chat as a read-only card ("waiting for an approver"). (phase 1, RFE-009) Items naming a direct conversation
   appear only for its user and owners.
-- **Credentials** — tabs: Apps (catalogue → connect window), Connections,
+- **Credentials** — (phase 3, RFE-022: a connection in `reauth_required` because of a plugin major upgrade shows the reason and a Reconnect button) tabs: Apps (catalogue → connect window), Connections,
   Secrets (generic; reference-mode secrets when a reference-capable store is
   configured), LLM keys (provider/endpoint picker from `/v1/llm/providers`),
   OAuth clients, agent-proposed secrets awaiting a value. The LLM key form
@@ -156,7 +167,8 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   required account ("Keys must belong to the corporate Anthropic
   organization"), shows the verified account after saving, and offers
   "Re-verify"; refused keys show the governance reason.
-- **Policy** — workspace rules editor.
+- **Policy** — workspace rules editor. (phase 3, RFE-023) Its Default Rule control carries the same note ("Does not affect LLM endpoints — see Governance"); simulate shows `default_rule_skipped_llm_host` when the carve-out applied.
+- **Skills** (phase 3, RFE-020) — workspace skills editor (owners; members read-only): same editor as the agent tier, a banner "Applies to every agent in this workspace", and a per-skill list of the agents it reaches and any agent-level skill that overrides it.
 - **Activity** — request log (decision, rule name, app/tool, conversation
   link), usage.
 - **Policy** also edits the workspace's uncredentialed default and allow-list
@@ -164,7 +176,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   workspace's **open-lane posture** (locked with "enforced by org/instance"
   when a higher level is stricter). The simulate panel gets a lane switch
   (request / tunnel).
-- **Settings** — name, timezone, memory language (owners), access bindings (phase 2,
+- **Settings** — name, timezone, memory language (owners), (phase 2, RFE-025) **BYO posture** (tighten-only, shows the inherited value and its level), access bindings (phase 2,
   RFE-012: roles Owner / Approver / Member with a one-line explanation of each;
   invitation dialogs offer Member or Approver per workspace),
   workspace API keys, danger zone. (phase 2, RFE-006) The danger zone offers
@@ -206,10 +218,12 @@ token rotation, manifest approval with capability/setup-field diff), **Runners**
   default),
   simulate panel (method + URL + body → decision trace; phase 2, RFE-005: a
   "speaker" picker, default you, plus "no speaker"), identity picker labelling
-  `user` identities **"when <name> is speaking"** with the warning of `07`, warnings panel,
+  `user` identities **"when <name> is speaking"** with the warning of `07`, warnings panel (phase 2, RFE-025: a rule with empty identities that selects credentials shows "Applies to all agents, including agents created later" inline, and publishing lists such rules in its confirmation step),
   generation history with rollback.
 - **Plugin approval**: the permissions review is mandatory reading — approve is
   disabled until the reviewer expands every section (hooks, egress, context,
-  claims).
+  claims). (phase 3, RFE-022) For a major upgrade the review adds an **Impact**
+  section and a banner **"N connections will need reconnecting"** (by app, counts
+  only), and a held upgrade is labelled "needs approval: would break connections".
 - **Agent chat resume**: on reconnect, fetch events after the last seq, then
   re-open the stream; deltas for a turn are discarded once its `text` arrives.

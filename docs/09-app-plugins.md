@@ -554,7 +554,55 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
 - **Trust revocation**: revoking a key disables every package it signed; their
   connections stop injecting and show why; nothing is deleted.
 - **App ids and tool ids are immutable**; credential fields may only be added
-  (optional) within a major version.
+  (optional) within a major version. A **major** version may change `credentials`
+  incompatibly; what that does to live connections is defined next.
+- **Major-version upgrade and live connections** (phase 3, RFE-022, D-65).
+  Phase 0–2 left this undefined (connections would simply fail at injection time
+  with `credential_unavailable`). A *major upgrade* is an activation of version
+  *N.x* superseding a previously active *M.y* of the same package with `N > M`
+  (semver major). Upgrades are **not refused** while connections exist (unlike app
+  removal). In the **same transaction as the activation**:
+  1. For every app of the package present in the new version, every live
+     `app_connections` row of that app (any org, any scope; statuses `active` and
+     `reauth_required`) is checked: the **required fields** of the new manifest
+     (`credentials` entries without `optional: true`) must all be among the
+     connection's **stored credential keys** (`app_connections.credential_keys`,
+     names only, recorded whenever credentials are sealed; never values — `03 §Planned
+     changes`). For a legacy row with unknown keys, the keys are derived from the
+     required fields of the manifest of its recorded `app_version` (if that package
+     version is still stored), otherwise the row is treated as **not satisfying**
+     (fail closed).
+  2. A connection that fails the check becomes `status = reauth_required`,
+     `reauth_required_at = now()` and `status_reason = "plugin_major_upgrade:
+     <package_id> <old_version> -> <new_version>; missing: <field names>"`
+     (≤ 300 chars, field *names* only). Its gateway caches are invalidated
+     (`connection` scope). A connection that satisfies the check is left `active`
+     and keeps its `app_version` until its next reconnect (diagnostics only).
+  3. Disabled and `orphaned` connections are not touched.
+  4. The count per app and in total goes into the audit row (`plugin.approve`
+     metadata `connections_reauth: n`, or the system row `plugin.activate` for an
+     automatic activation).
+  Effects: the gateway answers 403 `connection_reauth_required` with the
+  reconnect URL (`06`), exactly as for a refused refresh; the connections page and
+  the connection card show the reason ("`<app>` was upgraded to a version with
+  different credential fields — reconnect"); a **reconnect** (§11 *Connect flow*
+  step 6) clears the state and records the new `app_version`. Nothing is deleted,
+  grants and rules naming the connection keep working after the reconnect.
+  Credential *templates* therefore never run against a vocabulary they were not
+  connected with: a renamed field cannot surface as a confusing
+  `credential_unavailable` at injection time.
+- **Approval screen warning.** Every pending version that is a major upgrade shows
+  **"N connections will need reconnecting"** (count of connections that fail the
+  check right now, per app, no tenant names). `GET /v1/admin/plugins/{id}` returns
+  `impact: { major_upgrade: bool, from_version, connections_total, connections_needing_reauth, by_app: [{ app_id, connections, needing_reauth }] }`;
+  the dashboard shows it as a banner and as a mandatory section of the permissions
+  review (`14`). The count is advisory (connections can change before approval);
+  the activation transaction recomputes. **A major upgrade that would put at least
+  one connection into `reauth_required` is never activated automatically** — not
+  even a `builtin` package whose permissions did not widen: it stays
+  `pending_approval` (reason `breaks_connections`) until an instance admin approves,
+  so the warning is always seen. A major upgrade with `needing_reauth = 0`
+  follows the ordinary rules.
 - **Removing an app** (upgrade without it, or uninstall) with live connections
   is refused unless `force`; forced removal marks connections `orphaned`.
 - **New tools arrive blocked** in custom grants; removed tools make referencing

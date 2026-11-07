@@ -118,6 +118,21 @@ kind}` covering it. `app` and `network` targets never select credentials. The
 selection is a union and order-independent. **No selecting rule ⇒ nothing from
 the workspace/org pool is injected** — there is no "all credentials" default.
 
+(phase 2, RFE-025) **Broad rules arm future agents.** An allow rule with **empty
+identities** that names credentials selects them for *every* agent of its scope —
+including a BYO agent created minutes later by a member. That is intended for
+convenience rules but easy to forget, so the policy editor and
+`GET …/policy/warnings` flag it: warning `rule_applies_to_all_agents`
+(severity `warning`, `details.rule_id`, `details.targets`) — "applies to all
+agents, including agents created later" — for every enabled **hand-written** allow
+rule (org or workspace) with empty identities and at least one target of kind
+`connection`, `app_connections`, `secret` or `secrets` (derived rules always name
+their agent; `app` and `network` targets select nothing and do not warn). When the
+scope's effective BYO posture is `enabled` the warning's text adds "and by members
+creating BYO agents". The warning never blocks publishing; the editor shows it
+inline on the rule and in a confirmation step before publish listing the rules
+concerned.
+
 ## Evaluation
 
 ```
@@ -137,6 +152,40 @@ verdict(scope) =
 Under `uncredentialed_default = block`, an explicit allow rule that matches the
 request (e.g. a `network` target) still allows it, because rules are evaluated
 before defaults. Allow-list entries use the policy host/path patterns.
+
+### Why the Default Rule skips LLM hosts (phase 3, RFE-023, D-66)
+
+A Default Rule of `block` means "block every credentialed request that no rule
+allows" — **except requests to governed LLM hosts** (`08 §LLM hosts`). This
+carve-out is deliberate and was undocumented until phase 3:
+
+- **Why.** The agent's own model loop is credentialed traffic: every turn calls an
+  LLM host with an Aurora-injected key. A Default Rule that blocked it would brick
+  every agent the moment an administrator chose "default: block" (the reasonable
+  default-deny posture for *tool and app* credentials), and administrators would
+  have to remember to write an allow rule for each LLM endpoint. Control of LLM
+  traffic is a different question with its own, purpose-built controls: **LLM
+  governance** (`08 §11`) decides which endpoints and keys may be used at all
+  (instance → org, `sanctioned_only`, key origin verification, model allow-lists)
+  and runs *before* policy in the gateway pipeline (`06`).
+- **What it means.** An administrator who sets Default Rule = block and expects
+  *everything* not allow-listed to stop will still see LLM traffic flow, subject to
+  governance. To restrict LLM traffic use `08 §11` (posture `sanctioned_only`,
+  endpoint permissions, model allow-lists) — and, for a specific host, an explicit
+  rule.
+- **What still applies to LLM hosts.** (1) **Explicit rules win**, as always: rules
+  are evaluated before defaults, so a **block rule naming an LLM host** (a
+  `network` target, or any target that matches it) blocks it, and so do
+  require-approval and rate-limit rules; an explicit allow rule is simply
+  redundant. (2) The **uncredentialed default** (`credentialed_only` egress) still
+  governs requests to an LLM host on which Aurora injects nothing (the agent
+  brought its own key): they are blocked unless allow-listed. (3) The `allow`
+  Default Rule is unaffected (it allows anyway). (4) Everything in `08 §11`.
+- The carve-out is exactly the pseudocode condition `facts.injected and not
+  facts.is_llm_host`; it is evaluated per scope, so an org Default Rule of `block`
+  and a workspace one behave identically. Simulation and the effective view show
+  the reason `default_rule_skipped_llm_host` instead of "no verdict" when the
+  carve-out applied to a request.
 
 1. Evaluate the org scope and the workspace scope independently.
 2. Map each to a **scope verdict**: `block`; `rate_limited` (the matched rule's
@@ -270,7 +319,8 @@ facts per tool (one per tool's first method/path example).
 - **Warnings** (`GET …/policy/warnings`; phase 2, RFE-005: rules with `user`
   identities carry the informational warning `user_rule_needs_speaker` — "matches
   only turns spoken by <name>; never schedules, webhooks, BYO or boot traffic" —
-  and, for allow rules that grant credentials, `user_rule_no_agent_fallback`):
+  and, for allow rules that grant credentials, `user_rule_no_agent_fallback`;
+  phase 2, RFE-025: `rule_applies_to_all_agents`, see *Injection selection*):
   rules shadowed by an earlier
   unconditional rule with identical/broader identities and targets; rules
   naming removed tools or lost host claims (inert); allow rules in workspace

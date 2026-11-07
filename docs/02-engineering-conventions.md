@@ -174,6 +174,9 @@ overridden by the named configuration key (`15`).
 | Name | Value | Config key | Used in |
 |------|-------|-----------|---------|
 | `GATEWAY_RESOLVE_CACHE_TTL` | 60 s | `gateway.resolve_cache_ttl_secs` | 06 |
+| `GATEWAY_DB_PROBE_INTERVAL` | (phase 3, RFE-014) 5 s, probe timeout 2 s, 2 consecutive failures = unreachable | — | 06 |
+| `GATEWAY_LISTEN_GRACE` | (phase 3, RFE-014) 30 s of LISTEN loss (database reachable) before the gateway reports `degraded`; reconnect backoff 0.5 s → 10 s | — | 06 |
+| `REQUEST_LOG_OUTAGE_BUFFER` | (phase 3, RFE-014) 10 000 request-log rows buffered in memory during a database outage | — | 06 |
 | `APPROVAL_TIMEOUT` | 300 s (the default of rules without their own timeout) | `approvals.timeout_secs` | 06, 07 |
 | `APPROVAL_TIMEOUT_MIN` / `APPROVAL_TIMEOUT_MAX` | (phase 2, RFE-011a) 60 s / 3 600 s default (configurable up to 14 400 s, always < `TURN_CEILING − TURN_CEILING_WARNING`) | `approvals.max_timeout_secs` | 07 |
 | `APPROVAL_NOTIFY_DELAY` / `APPROVAL_WATCHER_TTL` | (phase 2, RFE-011a) 20 s / 45 s | — | 07 |
@@ -186,6 +189,11 @@ overridden by the named configuration key (`15`).
 | `FREEZE_REPLY_INTERVAL` | (phase 2, RFE-006) 10 min per (space/thread, person) | — | 04, 13 |
 | `OIDC_AUTH_RATE` | (phase 1, RFE-004) 20 / min / IP for each of OIDC `start` and `callback` | — | 04 |
 | `PROXY_TLS_LEAF_VALIDITY` | (phase 1, RFE-002) 30 days; renewed when < 10 days remain | — | 06 |
+| `BYO_CIDR_MAX` | (phase 2, RFE-025) 32 CIDRs per agent / org / instance list | — | 08 §11.9 |
+| `AGENT_TOKEN_MAX_AGE_MIN` / `_MAX` | (phase 3, RFE-013) 1 / 3 650 days (optional agent-token maximum age; default none) | `governance.agent_tokens.max_age_days` | 08 §7 |
+| `AGENT_TOKEN_RETROFIT_GRACE` | (phase 3, RFE-013) 7 days minimum remaining life for existing tokens when a maximum age is introduced or tightened | — | 08 §7 |
+| `AGENT_TOKEN_STALE_DAYS` / `AGENT_TOKEN_EXPIRING_DAYS` | (phase 3, RFE-013) 30 days unused / 14 days to expiry | — | 08 §7, 14 |
+| `BYO_REFUSAL_LOG_INTERVAL` | (phase 2, RFE-025) one log line and one request-log row per credential per minute for gateway BYO refusals | — | 06 |
 | `REQUEST_LOG_FLUSH` | 5 s or 500 rows | — | 06 |
 | `REQUEST_LOG_RETENTION` | 30 days | `retention.request_log_days` | 15 |
 | `BATCH_HEADER_MAX` | 128 chars | — | 06 |
@@ -244,6 +252,7 @@ overridden by the named configuration key (`15`).
 | `INBOX_LEASE` / `OP_LEASE` | 60 s / 60 s | — | 13 |
 | `OP_MAX_ATTEMPTS` | 10 (exponential backoff 2 s → 10 min) | — | 13 |
 | `CHANNEL_LEDGER_RETENTION` | 7 days | — | 13 |
+| `DEPROVISION_RETRY_WINDOW` | (phase 3, RFE-024) 24 h of retries for a self-contained `presence.deprovision` op (then `failed`, residual) | — | 13 |
 | `ACTION_TOKEN_TTL` | approval deadline, else 24 h | — | 13 |
 | `APP_TURN_CAP` | 5 consecutive bot-authored turns | — | 07 |
 | `PEER_TASK_BUDGET` / `PEER_TASK_TTL` | 20 messages / 24 h | — | 07 |

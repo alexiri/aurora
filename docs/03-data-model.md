@@ -664,7 +664,7 @@ Phase 0 blob backend (`postgres`).
 |---|---|---|
 | id | uuid pk | |
 | org_id | uuid FK→organizations (restrict) | |
-| agent_id | uuid null FK→agents (cascade) | null ⇒ org skill |
+| agent_id | uuid null FK→agents (cascade) | null ⇒ org skill (phase 3, RFE-020: or a workspace skill when `workspace_id` is set, `03 §Planned changes`) |
 | name | text not null | `[a-z0-9]+(-[a-z0-9]+)*` ≤64, immutable; `aurora-*` reserved |
 | description | text not null | single line ≤500 |
 | body | text not null | `SKILL.md` body |
@@ -1246,3 +1246,64 @@ Pending deletions of harness session files after a conversation delete or a `res
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | anchor | text not null CHECK in (`creator`,`workspace`) default `creator` | fire-time authority: the creator's access (`creator`) or "an active owner exists" (`workspace`); `creator_user_id` stays as provenance (`04 §Fire-time authority`) | 2 (RFE-021) |
+
+#### `agents` (BYO controls)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| byo_source_cidrs | text[] null | BYO only (CHECK `kind = 'byo'` when set); 1–32 CIDR strings (`cidr` syntax, no `/0`); null = inherit org/instance default list (`08 §11.9`). Validated by the API; never empty | 2 (RFE-025) |
+| byo_require_context | bool not null default false | BYO only: credentialed requests must use a context credential (`08 §11.9`) | 2 (RFE-025) |
+
+#### `workspaces` (BYO posture)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| byo_posture | text null CHECK in (`enabled`,`owners_only`,`disabled`) | null = inherit; can only tighten (`08 §11.9`) | 2 (RFE-025) |
+
+#### `organizations` (jsonb key in `governance`, BYO)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `governance.byo` | `{ "posture"?: "enabled"\|"owners_only"\|"disabled", "source_cidrs"?: [cidr], "require_context_credentials"?: bool }` | org BYO posture, default source list and require-context default (`08 §11.2`, `§11.9`). No column: `governance` is `jsonb`. | 2 (RFE-025) |
+
+#### `gateway_credentials` (token age and use)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| expires_at | (existing column) | kind=`agent`: null unless an effective maximum age is configured, then `created + max age` (`08 §7`); BYO `context` credentials are capped by it | 3 (RFE-013) |
+| last_used_at | timestamptz null | churn column: set by the gateway on successful authentication and by the API on agent-token routes, ≤1 write/min/credential; drives the stale-token views. Gateway role gains `UPDATE (last_used_at)` on `gateway_credentials` | 3 (RFE-013) |
+
+#### `organizations` (jsonb key in `governance`, agent token age)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `governance.agent_tokens.max_age_days` | int 1…3650 \| absent | org maximum age of BYO agent tokens; absent = none; never above the instance value (`08 §7`). No column: `governance` is `jsonb`. | 3 (RFE-013) |
+
+#### `turns` (idempotency)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| source_event_id | (existing column and partial unique index `(conversation_id, source_event_id)`) | no schema change. Phase 3 adds a **value convention**: turns and follow-ups created by `POST …/messages` with an `Idempotency-Key` store `api:<user_id>:<key>` (≤ 170 chars); connector event ids starting with `api:` are rejected (`13`). Promoted turns keep null (`10 §Turns`) | 3 (RFE-018) |
+
+#### `skills` (workspace tier)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| workspace_id | uuid null FK→workspaces (cascade) | non-null ⇒ **workspace-tier** skill (`10 §Skills`). CHECK: `workspace_id IS NULL OR agent_id IS NULL` (agent skills keep `workspace_id` null; their workspace is the agent's). Tier = agent (`agent_id` set) \| workspace (`workspace_id` set) \| org (both null) | 3 (RFE-020) |
+| unique | (workspace_id, name) WHERE workspace_id IS NOT NULL | new partial unique index; the existing org-tier index becomes `(org_id, name) WHERE agent_id IS NULL AND workspace_id IS NULL` (migration replaces it); the agent-tier index is unchanged | 3 (RFE-020) |
+| index | (workspace_id) WHERE workspace_id IS NOT NULL | effective-set computation and home-sync bumps | 3 (RFE-020) |
+
+Home-sync generation (`12 §Sync protocol`, I-32): a change to a workspace-tier skill
+or its files bumps `workspaces.home_sync_generation` (database trigger, as for the
+other projection inputs); no new counter is needed. `skill_files` is unchanged.
+
+#### `app_connections` (credential field names)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| credential_keys | text[] null | **names** (never values) of the fields present in the sealed credential JSON; maintained by the API/gateway/hook host wherever credentials are sealed (connect, reconnect, refresh, mint). Null = unknown (legacy rows; the phase-3 migration fills what it can by reading inline-store values once). Used by the plugin major-upgrade check (`09 §10`). Gateway role keeps its column-level `UPDATE` list plus `credential_keys` | 3 (RFE-022) |
+| status_reason | (existing column) | gains the open-vocabulary form `plugin_major_upgrade: <package> <old> -> <new>; missing: <names>` (≤300 chars) when set by an upgrade | 3 (RFE-022) |
+
+#### `plugin_packages` (activation hold)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| status_reason | (existing column, open vocabulary) | gains the value `breaks_connections`: for a major upgrade held in `pending_approval` because it would set connections to `reauth_required` (`09 §10`) | 3 (RFE-022) |
+
+#### `channel_ops` (self-contained deprovision)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| payload | (existing column) | for `presence.deprovision`: `{ presence_id, reason, platform_user_ref, handle, tenant_ref, tenant_label, config, credentials_ref }`; `credentials_ref` is a SecretRef sealed under the op id (`purpose channel_op_deprovision`), nulled and discarded at the terminal state (`13 §4.2`) | 3 (RFE-024) |
+| integration_id | (existing column) | `NULL` for deprovision ops (so the cascade of `channel_integrations` cannot delete them); `presence_id` has no FK; `connector_id` is set | 3 (RFE-024) |
+| index | (kind, status) WHERE kind = `presence.deprovision` AND status IN (`pending`,`claimed`) | the pruning job finds deprovision ops whose sealed copy must be discarded | 3 (RFE-024) |

@@ -52,6 +52,11 @@ cross-replica signal goes through Postgres `LISTEN/NOTIFY` (see `05`).
 reads configuration directly from Postgres, caches per (credential, host) for
 ≤60 s and is told to drop caches via `NOTIFY`, so the API is never on the
 request path. Gateway replicas are interchangeable (approvals live in Postgres).
+(phase 3, RFE-014) If Postgres becomes unreachable the gateway **degrades** rather
+than stops: it serves what its caches already hold, for at most the cache TTL,
+and refuses everything that needs new state (fail closed); after a lost LISTEN
+connection it reconnects first and flushes afterwards (`06 §Operation during a
+Postgres outage`).
 
 **Compute plane** — runners and sandboxes. A runner never touches the database;
 it speaks HTTP to the API (long-poll for work, post reports) and hosts the
@@ -66,7 +71,10 @@ database, no keys, no ambient network. It is called only on slow paths.
    BYO client) is untrusted. Its only egress is the gateway proxy port. Real
    credentials never enter a sandbox. The *network* enforces this — an
    internal-only sandbox network (podman) or NetworkPolicy (Kubernetes), with
-   DNS egress denied — not application code.
+   DNS egress denied — not application code. (phase 2, RFE-025) A BYO client is
+   outside that network: the creation, source address and attribution of BYO
+   credentials are governed by the BYO posture, source CIDR list and optional
+   context-credential requirement (`08 §11.9`), enforced at the gateway.
 2. **Sandbox ↔ control plane.** The sandbox never talks to the API. The
    supervisor talks only to the runner over a WebSocket admitted by a
    single-use bootstrap token, then by an HMAC session. The runner stamps

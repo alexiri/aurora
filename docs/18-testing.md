@@ -67,6 +67,124 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Cache invalidation: every write listed in `05 §Gateway cache invalidation`
   changes the next request's outcome without waiting for TTL.
 
+### BYO governance (phase 2, RFE-025, SEC-52)
+- Posture: matrix of instance `byo.enabled` × floor × org × workspace (strictest
+  wins; org/workspace cannot loosen; `byo.enabled = false` overrides everything);
+  creation and token regeneration per posture (`can_use`/`can_own`/nobody,
+  `byo_not_permitted` vs `byo_disabled`); hosted agents unaffected; default floor
+  `owners_only`.
+- Tightening to `disabled`: existing `aug_` and BYO `auc_` refused 403
+  `byo_disabled`, live tunnel closed ≤ 5 s, held approval `abandoned`, container-
+  config and context-credential routes 403; loosening restores service without
+  new tokens; nothing deleted.
+- Source restriction: effective list resolution (agent > org > instance), subset
+  validation (`byo_cidr_outside_default`), `/0`, empty and oversize lists
+  (`byo_cidr_invalid`); gateway admission with IPv4, IPv6, IPv4-mapped,
+  boundary addresses; spoofed `X-Forwarded-For`/`Forwarded` ignored; PROXY v2
+  header honoured only from `gateway.trusted_proxies`, trusted peer without
+  header and untrusted peer with header both closed; NAT/LB-address fail-closed;
+  refusal metric and rate-limited request-log row; check runs after authentication
+  (a bad token still gets 407 from any address).
+- Require context: `aug_` refused with `context_credential_required` only when a
+  credential would be injected; uncredentialed traffic and `auc_` pass; effective
+  value is the OR of instance, org and agent; `aurora run` mints a labelled
+  context credential and the label appears in the request log and approval card.
+- Warning: `rule_applies_to_all_agents` for hand-written empty-identity allow
+  rules naming `connection`/`app_connections`/`secret`/`secrets`, none for
+  derived rules, identity-scoped rules or `app`/`network` targets; publish not
+  blocked; editor confirmation lists the rules.
+- Audit: `agent.byo_settings.update`, `workspace.byo_posture.update` and
+  `agent.token_regenerate` rows are written in the same transaction (rollback test).
+
+### BYO token age (phase 3, RFE-013, SEC-53)
+- Effective maximum age: none by default; instance only, org only, both (smaller
+  wins), org above instance refused; bounds 1…3 650.
+- Mint and regenerate set `expires_at`; BYO context credentials capped by the token;
+  retrofit on introduce/tighten with the 7-day minimum, no extension on loosen or
+  removal; audit metadata records the count.
+- Gateway and API: expired token → 407 `proxy_auth_required` (`agent_token_expired`)
+  / 401 `agent_token_expired`; identity cache honours `expires_at` without waiting
+  for the TTL boundary (clock test); `last_used_at` written at most once a minute.
+- Stale/expiring views: thresholds, never-used tokens count from creation,
+  authorization of the workspace/org routes, no token material in responses; the
+  dashboard badges.
+
+### Gateway under a database outage (phase 3, RFE-014, SEC-54)
+- Fault injection (a TCP proxy in front of Postgres that can drop, stall or refuse,
+  plus `pg_terminate_backend`): state machine `ready` ⇄ `degraded` ⇄ `down`
+  (two failed probes, hot-path connection error, statement error is *not* an outage,
+  start with the database down → `down` until a snapshot loads).
+- (a) Cached identity + ResolvedHost keep serving until their TTL (clock-controlled)
+  and are then refused; unknown credential → 503 `gateway_degraded` (never 407);
+  uncached host, new approval hold, OAuth refresh, uncached plaintext → refused with
+  the documented codes; open tunnels and in-flight streams survive; default-deny and
+  `credentialed_only` still apply to cached state; an existing hold expires without
+  the database and its row is fixed on recovery; request-log buffer fills, drops the
+  oldest beyond the cap and flushes on recovery.
+- (b) LISTEN-only loss: caches kept, no flapping within `GATEWAY_LISTEN_GRACE`,
+  reconnect backoff, flush *after* re-subscribe, an invalidation sent while
+  disconnected is honoured after the flush, an invalidation arriving after
+  re-subscribe is not lost; miss coalescing after the flush.
+- (c) `/readyz` bodies and status codes for the three states and `?strict=true`;
+  metrics and the `gateway.state_change` log line; `/internal/v1/status` fields.
+
+### Message idempotency (phase 3, RFE-018, SEC-55)
+- Key validation (length, charset), absent key = phase 0 behaviour (two posts, two
+  turns), `Idempotency-Key` ignored on other routes.
+- Replay: same status and shape as the original for `{turn}` and `{followup}`;
+  state reflects the current row (running, done, failed, aborted, promoted);
+  `Idempotent-Replayed: true`; no second turn, no second `NOTIFY aurora_work`.
+- Concurrency: N parallel identical requests → exactly one row, N identical
+  responses; a key colliding with the active-turn index is a follow-up, not a replay.
+- Scope and order: per (conversation, user) — two users, same key; the same user
+  through session and API key shares the key space; replay after loss of access is
+  refused; replay while frozen returns the stored result while a new message is 423;
+  replay consumes one message-bucket token.
+- Mismatch (`text`, `attachment_ids`) → 422 `idempotency_key_reused`; key freed when
+  the conversation is deleted or retention-swept.
+- Reserved prefix: a connector `event_id` starting `api:` is `rejected`
+  (`reserved_event_id`); ordinary connector dedupe unchanged.
+
+### Deployment-neutral defaults (phase 3, RFE-019)
+- New workspace → default agent brief equals the configured `agents.default_brief`;
+  unset/empty → the neutral default of `10` (2–3 sentences, no persona, no claims
+  about the agent's nature); an over-long value fails startup naming the key;
+  existing agents' briefs are untouched by a config change or an upgrade.
+- Architecture guard (extends `scripts/guards`): the normative defaults carry no
+  deployment-specific content — the Containerfile's `SANDBOX_BASE_IMAGE` default is
+  a public registry image pinned by digest (no `*.cern.ch` or other private host),
+  `agents.default_brief`'s built-in default contains no persona names or
+  backstory — and the CERN values appear only in the documented deployment example.
+- Image build: building with and without a `SANDBOX_BASE_IMAGE` override yields the
+  same package list and `org.aurora.capabilities` label (smoke test).
+
+### Workspace-tier skills (phase 3, RFE-020, SEC-56)
+- Effective set: all combinations of one name at agent/workspace/org tiers with
+  enabled/disabled (highest *enabled* tier wins; a disabled higher tier does not
+  veto); names unique per tier but allowed across tiers; reserved names refused at
+  every tier; CHECK forbids agent+workspace on one row; index replacement migration
+  keeps existing org skills unique.
+- Authorization matrix for list/create/edit/delete/files per tier; org admin writes
+  a workspace skill (as `can_own`); plain member read-only; agent tools cannot write
+  workspace/org tiers and `skill_list` shows tier and `shadows`.
+- Projection: every agent of the workspace (and only it) receives the skill after a
+  generation bump; unchanged for agents of other workspaces; removed skill is pruned
+  by the manifest; shadowed skill is not projected; read-only modes unchanged.
+- Dashboard: tier badges, shadow indicators, read-only open from the agent tab,
+  workspace skills page (owner vs member).
+
+### Default Rule and LLM hosts (phase 3, RFE-023)
+- Policy corpus (`crates/aurora-policy/tests/corpus/`): Default Rule `block` +
+  injected non-LLM credential → `default_denied`; + injected LLM key on a governed
+  LLM host → no verdict (flows, subject to governance) with trace reason
+  `default_rule_skipped_llm_host`; + explicit block / require-approval / rate-limit
+  rule naming the LLM host → the rule wins; uncredentialed request to an LLM host
+  under `credentialed_only` → `egress_denied` unless allow-listed; same results for
+  org and workspace scope and for the combined verdict; simulate and effective view
+  report the reason.
+- Dashboard: the Default Rule note appears at org and workspace scope and links to
+  governance.
+
 ### Governance
 - Governance validation: org documents below the instance minimum, scope and
   list subset rules, defaults for new orgs.
@@ -95,6 +213,22 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Uncredentialed default: org `credentialed_only` with allow-list; workspace
   `block` with its own allow-list; a workspace allow rule cannot widen the org
   (SEC-38, SEC-39).
+
+### Plugin major upgrades (phase 3, RFE-022, SEC-57)
+- Activation matrix over (minor, major) × (required field kept / renamed / removed /
+  added optional / added required) × (connection `active`, `reauth_required`,
+  `disabled`, `orphaned`, legacy null keys): exactly the failing active connections
+  flip, with the reason text and `reauth_required_at`; others untouched.
+- Atomicity: failure after the first flip rolls back the activation and every flip;
+  `connection` invalidation reaches the gateway; the gateway returns
+  `connection_reauth_required` with the reconnect URL; reconnect clears it and
+  records the new `app_version`.
+- Approval: `impact` counts match the later activation (and are recomputed in it);
+  a builtin major upgrade that would break connections stays `pending_approval`
+  with `breaks_connections`, one with no impact activates automatically as before;
+  dashboard banner and mandatory Impact section; no tenant names in the response.
+- Fixtures: `fixture-bearer` v2 (renamed required field) and v1.1 (added optional
+  field); legacy row without `credential_keys` for both fallback paths.
 
 ### Plugins
 - Validator: one `fixture-invalid-*` package per rule with the expected reason.
@@ -164,6 +298,23 @@ done when its tests exist, pass in CI, and the security invariants it touches
   creator is removed and stop when no active owner exists or the agent is frozen,
   members and agents cannot anchor, audit rows (`automation.reassign`) are atomic.
 - Security probes inside a real sandbox (SEC-01, 02, 09, 26, 34).
+
+### Self-contained deprovision (phase 3, RFE-024, SEC-58)
+- Atomicity: delete of an agent/workspace/org with dedicated presences commits the
+  ops with the delete; an injected failure after the op inserts (or in the cascade)
+  rolls back both; detach of a single presence likewise.
+- Self-containment: with the integration, presence, agent and org rows deleted, a
+  *different* connector replica claims the op (integration_id NULL) and the fake
+  connector executes deprovision from payload + `credentials` alone; Mattermost
+  conformance: token revoke + bot disable with only the payload; unknown bot → 404 →
+  `dropped`.
+- Credential copy: sealed under the op context (open under another context fails
+  `SecretRefMismatch`), plaintext only in the claim response, `discard`ed and nulled
+  on done/failed/dropped and by pruning; ext-store managed versions deleted; never in
+  logs or audit metadata.
+- Retry/failure: `unavailable` retried for `DEPROVISION_RETRY_WINDOW` (clock test),
+  `credential_dead` → failed with `presence.deprovision_failed` audit and metric;
+  shared presence enqueues nothing; org deletion does not touch the shared bot.
 
 ### Channels
 - Core with the fake connector: every scenario of the connector conformance

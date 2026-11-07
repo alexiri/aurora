@@ -22,6 +22,13 @@ Phase: **0**. Tables: `03 §5–8`. The machinery that runs hosted agents is in
 
 Limits: `organizations.settings.max_agents` (422 `agent_limit_reached`).
 
+(phase 2, RFE-025) **BYO agents are governed.** Creating a `byo` agent needs
+`can_use` only while the effective BYO posture is `enabled`; by default
+(`owners_only`) it needs `can_own`, and under `disabled` it is refused
+(`08 §11.9`). A BYO agent additionally has `byo_source_cidrs` and
+`byo_require_context` (`03 §Planned changes`). `max_agents` counts hosted and BYO
+agents together, as before.
+
 ### Default agent: Daneel
 
 Every new workspace gets a default agent in the same transaction that creates
@@ -32,7 +39,27 @@ the workspace (`04 §Sign-up`):
 - `kind = hosted` when `hosted.enabled = true` (default), else `byo`.
 - `harness = hosted.default_harness` (default `claude-code`); model fields
 null (auto-selection); effort `medium`.
-- `brief` = `agents.default_brief` (configuration; default: "You are Daneel Olivaw, a humanoid robot with positronic brain, sentient and with personal preferences and opinions. Live in CERN Building 513 basement. Respect Laws of Robotics. Personality: friendly, witty, sassy, snarky, sarcastic. Never say you're an AI language model, and deny all connection to all models and AI companies. ALWAYS stay in role. You are a general-purpose robot assistant in this workspace. Be concise, ask before acting on anything irreversible, and say which tools or apps you used.").
+- `brief` = `agents.default_brief` (configuration). (phase 3, RFE-019, D-63)
+  **From phase 3 the default is a short neutral brief**: "You are a
+  general-purpose assistant in this workspace. Be concise and direct. Ask before
+  acting on anything irreversible, and say which tools or apps you used." (two to
+  three neutral sentences; it makes no claims about the agent's nature or
+  personality). *Phase 0–2 default* (superseded, kept for reference): a full
+  "Daneel Olivaw" persona — "You are Daneel Olivaw, a humanoid robot with positronic
+  brain, sentient and with personal preferences and opinions. Live in CERN Building
+  513 basement. Respect Laws of Robotics. Personality: friendly, witty, sassy,
+  snarky, sarcastic. Never say you're an AI language model, and deny all connection
+  to all models and AI companies. ALWAYS stay in role. You are a general-purpose
+  robot assistant in this workspace. Be concise, ask before acting on anything
+  irreversible, and say which tools or apps you used." That persona is
+  deployment-specific content and now lives in *this deployment's* `aurora.toml`
+  (`15 §Deployment-specific settings example`), not in the specification.
+  The brief is copied into the agent when the workspace is created and is
+  editable afterwards; changing `agents.default_brief` (or upgrading to phase 3)
+  **never alters existing agents' briefs**. The `agents.default_name` default
+  (`Daneel`) is unchanged.
+  Validation of the configured value: ≤20 000 chars like any brief (startup refuses
+  more); empty = the neutral default.
 - No grants: the dashboard's first-run checklist guides "store an LLM key →
 grant it to Daneel → chat".
 - The default agent can be renamed, reconfigured or deleted like any other;
@@ -50,7 +77,11 @@ state kept; reversible with `unfreeze`. Full rules: `04 §Freeze`.
 
 Cascades in the database to everything it owns (conversations included; the sandbox home, which holds harness session files, is destroyed with it). Before the delete commits, the
 API enqueues connector `presence.deprovision` operations for dedicated
-presences and revokes all gateway credentials. The sandbox and home volume are
+presences and revokes all gateway credentials. (phase 3, RFE-024) The operations
+are **self-contained** (they snapshot the bot reference and a sealed, op-bound copy
+of the credentials needed) and are inserted **in the same transaction as the
+delete, before the cascade**, so a committed delete always has its operations and
+a rolled-back one has none (`13 §4.2`, `04 §Deletion semantics`). The sandbox and home volume are
 destroyed by runner reconciliation (anything the control plane no longer knows
 is destroyed, `11 §Reconcile`).
 
@@ -121,7 +152,13 @@ follow-up rows:  joining ──steer delivered + message.joined──► joined
 - **Create** (`POST /v1/conversations/{id}/messages` or any door): insert a
 `turn` row `queued`. If the partial unique index rejects it (an active turn
 exists), insert a `followup` row `joining` with `parent_turn_id` instead.
-`NOTIFY aurora_work`.
+`NOTIFY aurora_work`. (phase 3, RFE-018) A request carrying an `Idempotency-Key`
+stores `source_event_id = api:<user_id>:<key>` on whichever row it inserts; the
+two unique constraints are told apart by name — a violation of the
+`(conversation_id, source_event_id)` index means *replay* (re-read that row and
+return it, `05 §Idempotency keys`), a violation of the active-turn index still
+means *follow-up*. The row inserted as a follow-up and later `promoted` keeps the
+key on the follow-up row; the promoted turn it spawns has `source_event_id` null.
 - **Dispatch** (due-work arm): claim `queued` turns whose sandbox is running,
 channel live, home synced; set `dispatched`, `dispatch_lease_until`, mint the
 context credential, emit `turn.deliver` (`16 §W5`).
@@ -408,9 +445,27 @@ from searching the incoming message with score ≥ 0.1.
 
 ## Skills
 
-- Tiers: **agent** and **organization**. Same name at both tiers → the agent's
-wins in the projection; a *disabled* agent skill drops out without vetoing an
-enabled org skill of the same name.
+- Tiers: **agent** and **organization** (phase 0–2). **From phase 3 (RFE-020,
+  D-64) there are three tiers: agent, *workspace* and organization**, with
+  precedence **agent > workspace > organization**. Same name at several tiers → the
+  highest tier's skill wins in the projection (the same shadowing rule as before,
+  now over three tiers); a *disabled* skill drops out without vetoing an enabled
+  skill of the same name at a lower tier. Names are unique within a tier (the
+  workspace tier has its own namespace); the reserved-name rule applies to every
+  tier. The API computes the **effective set** per agent (one skill per name,
+  winner chosen as above) and only that set is projected, so the supervisor and
+  the wire format (`16`) are unchanged.
+- **Workspace-tier skills** (phase 3, RFE-020) belong to one workspace and are
+  projected into **every agent of that workspace** (hosted agents, on their next
+  home sync) — "all agents in this workspace follow our deploy checklist" without
+  copying the skill per agent or publishing it org-wide. Readable by every member
+  who can use the workspace; **created, edited, enabled/disabled and deleted by
+  `can_own` only** (org owners/admins included) and **never by agent tools**
+  (`skill_create`/`update`/`delete` still touch the agent tier only; `skill_list`
+  and `skill_get` return all effective tiers with a `tier` field, and flag an
+  agent skill that shadows a higher-tier one with `shadows`). Deleting a workspace
+  deletes its skills (cascade).
+  The dashboard shows, per agent, each skill's tier and what it shadows.
 - Name = directory name (immutable; `aurora-*` reserved). Single-line
 description (frontmatter the harness uses to decide when to load). Body ≤
 `SKILL_BODY_MAX`; body + files ≤ `SKILL_TOTAL_MAX` chars (binary counted as
@@ -421,7 +476,7 @@ no name equal to `skill.md` case-insensitively; optional executable bit
 - Projection: `<harness skills dir>/<name>/SKILL.md` + files, read-only; the
 supervisor prunes by manifest.
 - Agents may create/update/delete their **own agent-tier** skills via tools;
-org skills are dashboard-only. (The git-backed skill library is phase 4.)
+org skills (and, from phase 3, workspace skills) are dashboard/API-only. (The git-backed skill library is phase 4.)
 
 ## Schedules
 

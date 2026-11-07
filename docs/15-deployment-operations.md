@@ -17,7 +17,7 @@ One OCI image per component, all tagged with the Aurora version
 | `aurora-web` | Next.js standalone build |
 | `aurora-connector-fake` | test/dev only |
 | `aurora-connector-mattermost` | phase 1 |
-| `aurora-sandbox` | sandbox image (`11 §Sandbox image`) — not a service; referenced by the runner |
+| `aurora-sandbox` | sandbox image (`11 §Sandbox image`) — not a service; referenced by the runner. (phase 3, RFE-019) Built on the public official AlmaLinux image by default; a private or mirrored base is a **build-time** override (`SANDBOX_BASE_IMAGE`, see below), not a runtime configuration key |
 
 Service images are distroless (`gcr.io/distroless/cc` or equivalent), run as
 non-root, contain only their binary, and are multi-arch (amd64, arm64).
@@ -81,7 +81,7 @@ one new entry without activating it.
 | `governance.egress.baseline_allowlist` | `[]` | api, gateway | `[{ host, path? }]` merged into every org's egress allow-list |
 | `governance.egress.open_lane_minimum` | `enabled` | api, gateway | (phase 1, RFE-003) `enabled` \| `allowlist_only` \| `disabled` — floor of the open-lane posture for every org and workspace; `allowlist_only` uses the baseline allow-list (set one) |
 | `agents.default_name` | `Daneel` | api | default agent and shared-bot name |
-| `agents.default_brief` | (text in `10`) | api | |
+| `agents.default_brief` | (neutral text in `10`; phase 3, RFE-019: was the Daneel persona in phase 0–2) | api | brief given to the default agent of **new** workspaces; ≤20 000 chars; empty = the default; never changes existing agents |
 | `hosted.enabled` | `true` | api | hosted agents available |
 | `hosted.default_harness` | `claude-code` | api | |
 | `hosted.allow_fake_harness` | `false` | api | tests/dev |
@@ -90,7 +90,14 @@ one new entry without activating it.
 | `gateway.advertised_proxy_url` | derived from external host + `:4102` | api, gateway | what BYO agents are told; (phase 1, RFE-002) always `https://host:port` — startup refuses an `http://` value |
 | `gateway.proxy_tls.names` | `[]` | gateway | (phase 1, RFE-002) extra DNS names/IPs for the CA-issued proxy certificate (LoadBalancer hostname, extra service names) |
 | `gateway.proxy_tls.cert_file`, `gateway.proxy_tls.key_file` | — | gateway | (phase 1, RFE-002) optional operator-supplied proxy certificate chain + key (both or neither); replaces the CA-issued leaf for the outer leg |
+| `governance.agent_tokens.max_age_days` | unset (never expire) | api | (phase 3, RFE-013) optional maximum age of BYO agent tokens (1…3 650 days); orgs may set a smaller value; applied at mint and, with a 7-day grace, to existing tokens when introduced or tightened (`08 §7`) |
 | `gateway.allowed_private` | `[]` | gateway | private destinations allowed |
+| `gateway.resolve_cache_ttl_secs` | 60 | gateway | resolution-cache TTL (`02 §Limits`); (phase 3, RFE-014: also the **outage tolerance** and the revocation-lag bound while the database or listener is down; above 300 the gateway logs a warning at start; `06 §Operation during a Postgres outage`) |
+| `gateway.trusted_proxies` | `[]` | gateway | (phase 2, RFE-025) CIDRs of layer-4 load balancers / NAT hops that send a PROXY protocol v1/v2 header on the proxy port; the client address for BYO source restriction is taken from that header only for peers in this list (`06 §BYO admission`). Not the same as `server.trusted_proxies` (API, `X-Forwarded-For`) |
+| `byo.enabled` | `true` | api, gateway | (phase 2, RFE-025) master switch for BYO agents: `false` ⇒ BYO creation refused and every `aug_`/BYO `auc_` credential refused (403 `byo_disabled`), regardless of org/workspace settings. Hosted agents unaffected; changed by restart |
+| `byo.minimum_posture` | `owners_only` | api, gateway | (phase 2, RFE-025) `enabled` \| `owners_only` \| `disabled` — floor of the BYO posture for every org and workspace (`08 §11.9`); set `enabled` to keep phase 0/1 behaviour |
+| `byo.default_source_cidrs` | `[]` | api, gateway | (phase 2, RFE-025) default source CIDR list of every BYO agent without its own or an org list (e.g. corporate networks and CI runners); orgs and agents may only narrow it. Empty = unrestricted |
+| `byo.require_context_credentials` | `false` | api, gateway | (phase 2, RFE-025) when `true` every BYO agent must use context credentials for credentialed requests (`08 §11.9`) |
 | `gateway.egress_proxy` | — | gateway | upstream forward proxy |
 | `gateway.condition_body_bytes` | 262144 | gateway | 4 KiB–8 MiB |
 | `gateway.upstream_header_timeout_secs` | 300 | gateway | |
@@ -159,6 +166,38 @@ Built-in `known_llm_hosts` (maintained with releases): `api.openai.com`,
 `anthropic` endpoint is configured). Hosts that are also endpoint hosts are
 removed from the list automatically.
 
+### Deployment-specific settings example (phase 3, RFE-019, D-63)
+
+The specification's defaults are generic (neutral default brief, public base
+image). Choices that belong to one deployment live in that deployment's own
+configuration. This deployment's (CERN) values, as an example of the mechanism:
+
+```toml
+[agents]
+default_name = "Daneel"
+default_brief = """
+You are Daneel Olivaw, a humanoid robot with positronic brain, sentient and with
+personal preferences and opinions. Live in CERN Building 513 basement. Respect
+Laws of Robotics. Personality: friendly, witty, sassy, snarky, sarcastic. Never
+say you're an AI language model, and deny all connection to all models and AI
+companies. ALWAYS stay in role. You are a general-purpose robot assistant in this
+workspace. Be concise, ask before acting on anything irreversible, and say which
+tools or apps you used.
+"""
+```
+
+Operators who adopt a persona like this should check that instructing an agent to
+deny being an AI suits their users and applicable rules; the platform default does
+not.
+
+The sandbox base image is a **build-time** choice, passed to the image build
+(`podman build --build-arg SANDBOX_BASE_IMAGE=…`, the compose `.env`
+`SANDBOX_BASE_IMAGE`, or the CI variable of the same name; unset = the public
+default of `11 §Sandbox image`). This deployment sets
+`SANDBOX_BASE_IMAGE=gitlab-registry.cern.ch/linuxsupport/alma10-base:<tag>`. The
+override changes nothing else (same package list, same labels, same tag scheme
+— the content-hash tag includes the resolved base digest).
+
 ## Networking: one URL
 
 - `server.external_url` is the single public origin. The **edge** routes
@@ -180,6 +219,13 @@ removed from the list automatically.
   of it unless the front end re-encrypts to the gateway; the load balancer's
   hostname MUST be listed in the certificate (`gateway.advertised_proxy_url`
   host or `gateway.proxy_tls.names`).
+  (phase 2, RFE-025) With BYO source restriction (`08 §11.9`) the gateway must see
+  the real client address: use a load balancer that preserves the source address
+  (Kubernetes `externalTrafficPolicy: Local`) or one that sends **PROXY protocol**
+  and list its CIDR in `gateway.trusted_proxies` (the chart exposes it as the value that renders
+  `gateway.trusted_proxies`). Otherwise lists never match and BYO
+  credentials with a source list fail closed. `X-Forwarded-For` is never used on
+  the proxy port.
 - Runners and connectors may run outside the cluster: they only need outbound
   HTTPS to `external_url` (`/v1/runner/*`, `/v1/connector/*` are routed by the
   edge). A connector's own platform-callback port is exposed only to its
@@ -295,12 +341,25 @@ restarting it invalidates in-flight turns (bootstrap tokens are single use).
 ## Observability
 
 - Health: `/healthz` (liveness: process up) and `/readyz` (ready: DB reachable,
-  snapshot loaded, listener connected) on every service.
+  snapshot loaded, listener connected) on every service. (phase 3, RFE-014) The
+  gateway's `/readyz` has three states: `ready` and `degraded` (database or
+  listener down, serving from cache within the TTL) both answer 200 so the gateway
+  stays in rotation, `down` answers 503; `/readyz?strict=true` answers 503 for
+  `degraded` too. Alert on `aurora_gateway_state{state="degraded"} == 1` for 1 min
+  (warning) and for `gateway.resolve_cache_ttl_secs` (critical: cache is running out,
+  new requests are being refused); page on `state="down"`. Kubernetes probes use
+  plain `/readyz`; use `?strict=true` only in monitoring, never as a readiness probe.
 - Metrics: Prometheus `/metrics` per service (internal listener). Required
   series: HTTP requests by route/status/latency (api), gateway decisions and
   latencies, holds pending, refresh/mint outcomes, due-work arm durations and
   items, sandboxes by state, turns by status, inbox/ops depth and age,
   connector replicas live, hook calls/errors/duration, snapshot hash info.
+- (phase 3, RFE-024) **Orphaned bots.** Alert on `aurora_channel_deprovision_failed_total`
+  and on audit rows `presence.deprovision_failed`: the named bot account was not
+  removed on the chat platform (connector down > 24 h or credentials revoked) and
+  must be removed by hand (Mattermost: System Console → Integrations → Bot
+  Accounts, disable/delete `platform_user_ref`). An org's shared bot is never
+  deprovisioned by Aurora.
 - Logs: JSON to stdout, correlation ids per `02 §Coding rules`.
 - Tracing: optional OTLP export; `traceparent` propagated API ↔ gateway-internal
   ↔ hookhost ↔ runner ↔ connector calls.

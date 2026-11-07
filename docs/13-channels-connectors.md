@@ -109,7 +109,8 @@ Shapes:
 // Binding
 { "integration_id", "space_ref", "agent_id", "listen": "mentions"|"all", "followups_need_mention": false }
 // Operation
-{ "op_id", "kind", "integration_id"?, "presence_id"?, "attempt": 1, "maybe_sent": false, "payload": {} }
+{ "op_id", "kind", "integration_id"?, "presence_id"?, "attempt": 1, "maybe_sent": false, "payload": {},
+  "credentials"?: {} }   // phase 3, RFE-024: decrypted at claim time, only for self-contained presence.deprovision
 ```
 
 ### 4.1 Inbound events (platform → neutral)
@@ -117,6 +118,9 @@ Shapes:
 `InboundEvent = { event_id, integration_id, kind, occurred_at, payload }`.
 `event_id` is the platform's own id (or a deterministic hash of platform ids
 when the platform has none) — the core dedupes on `(connector, event_id)`.
+(phase 3, RFE-018) `event_id` values beginning with `api:` are reserved for
+API idempotency keys (`05 §Idempotency keys`): such an event is `rejected` with
+code `reserved_event_id`.
 
 | Kind | Payload |
 |------|---------|
@@ -144,6 +148,56 @@ when the platform has none) — the core dedupes on `(connector, event_id)`.
 | `presence.provision` | `{ agent: { handle, name, avatar_url } }` → `{ platform_user_ref, handle, credentials }` |
 | `presence.deprovision` / `presence.rename` / `presence.set_icon` | `{ presence_id, … }` |
 | `credentials.validate` | `{ config, credentials }` → `{ tenant_ref, tenant_label, shared_bot?, capabilities? }` — `capabilities` may only **narrow** the manifest's for this integration (e.g. no `ephemeral` without an admin token); stored in `channel_integrations.config._capabilities` and used by the core for fallbacks |
+
+**Self-contained deprovision operations** (phase 3, RFE-024, D-67). Phase 0–2
+enqueued `presence.deprovision` "before the delete commits", but the delete then
+cascaded away the presence (and, for an org, the integration) rows the connector
+needs, and `channel_ops.integration_id` itself cascades — so the op could be
+unexecutable by construction. From phase 3 a deprovision op carries **everything
+needed to act**, and is committed **in the same transaction as the delete, before
+the cascade**:
+
+- **Ordering guarantee.** Agent, workspace and org deletion (and presence detach)
+  run as one database transaction in which the API (1) inserts one
+  `presence.deprovision` op per *dedicated* presence about to disappear, then (2)
+  performs the delete/cascade. Either both commit or neither does: there is no
+  deleted presence without its op, and no op for a presence that still exists.
+  (Sealing of credential copies happens just before the transaction, below.)
+- **Op shape.** `integration_id = NULL` (so the integration's deletion cannot
+  cascade the op away, and any live replica of the connector may claim it — the
+  existing rule for ops without an integration), `presence_id` set (no FK),
+  `connector_id` set, and a payload
+  `{ presence_id, reason: "detached"|"agent_deleted"|"workspace_deleted"|"org_deleted",
+     platform_user_ref, handle, tenant_ref, tenant_label, config: {…non-secret
+     integration setup fields…}, credentials_ref }`. `credentials_ref` is a **fresh
+     SecretRef** holding a copy of the integration credentials the connector needs
+     to administer the bot (for Mattermost the admin token, `20`), sealed under a
+     context bound to the op (`SealContext` purpose `channel_op_deprovision`, the op
+     id) so it cannot be opened for any other row. Bot-level credentials of the
+     presence are included only when the connector's manifest says deprovision needs
+     them. Nothing else about the integration, agent or org is copied.
+- **Delivery.** At claim time the core opens `credentials_ref` and returns the
+  decrypted credentials in the claimed `Operation` as `credentials` (the same
+  treatment as `GET /config`, over the same connector authentication); the stored
+  payload never holds plaintext.
+- **Lifetime of the copy.** When the op reaches a terminal state (`done`,
+  `failed`, `dropped`) — or on the periodic channel-ledger pruning, whichever is
+  first — the core `discard`s `credentials_ref` and replaces it with `null`. If the
+  transaction aborts (the delete fails) the API discards the refs it sealed
+  (best effort; an orphaned sealed copy is unreadable without its op context and is
+  removed by the pruning job when no op references it).
+- **Retries.** `unavailable` is retried with the usual backoff until
+  `DEPROVISION_RETRY_WINDOW` (24 h) rather than `OP_MAX_ATTEMPTS`;
+  `credential_dead` / `forbidden` → `failed`; `not_found` → `dropped` (the bot is
+  already gone). Shared presences have no bot of their own and enqueue nothing.
+- **Skipped / failed deprovision is a documented residual.** If the connector is
+  down or uninstalled for longer than the window, or the stored credentials were
+  revoked, the bot **stays on the platform**. The core records a best-effort audit
+  row `presence.deprovision_failed` (`metadata: { connector_id, tenant_label,
+  platform_user_ref, handle, error_code }`, org-scoped; ledgers survive org
+  deletion), counts `aurora_channel_deprovision_failed_total`, and `15` tells
+  operators how to remove such bots by hand. The integration's *shared bot* is
+  operator-installed and is **not** deprovisioned by org deletion (also documented).
 
 **Delivery**: operations are claimed with a lease and retried until a
 definitive result. Every `message.post` carries `op_marker` (= op id); connectors
@@ -280,7 +334,7 @@ idempotent). Steps:
    attachments or `failed` ones with a reason (phase 2, RFE-015: `quota_exceeded`
    when the org's attachment quota would be exceeded; the person is told in
    platform voice and the turn still runs).
-10. **Turn**: create the turn (door `thread`, `source_event_id = event_id`,
+10. **Turn**: create the turn (door `thread`, `source_event_id = event_id`; (phase 3, RFE-018) event ids starting with the reserved prefix `api:` were already rejected at ingest, `§POST /events`,
     speaker). A turn already created by a crashed earlier attempt is found by
     `source_event_id` and not duplicated.
 11. **Receipt**: `reaction.add` (neutral `eyes`) or `status.set` or placeholder.
@@ -361,7 +415,9 @@ link requests use the same pattern.
   `active`. Platforms without provisioning use `presence_setup` fields (manual
   token paste) validated by `credentials.validate`.
 - **Detach / agent delete** → `presence.deprovision` op (best effort), row
-  deleted.
+  deleted. (phase 3, RFE-024) The op is **self-contained** and enqueued in the same
+  transaction as the delete, before the cascade (`§4.2`, *Self-contained
+  deprovision operations*).
 - **Removal detection**: `presence.removed` events or `credential_dead`
   results → `disabled`; messaging tools explain; dashboard offers Re-attach or
   Detach.
