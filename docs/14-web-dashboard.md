@@ -68,7 +68,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 - **Policy**: org rules editor (draft/publish).
 - **Credentials**: org secrets, org LLM keys, org app connections, OAuth clients.
 - **Apps**: app availability posture and allow-list.
-- **Governance** (`08 §11`; phase 2, RFE-025: a **BYO agents** panel — posture selector limited to values not below the instance floor, default source CIDR list, org default "require context credentials"; shown locked with "enforced by instance" when `byo.enabled = false`):
+- **Governance** (`08 §11`; phase 3, RFE-013: a **BYO agent tokens** setting "maximum age (days)", empty = never expire, shown locked with "enforced by instance" when the instance value is lower, plus a stale/expiring token list with Regenerate shortcuts; phase 2, RFE-025: a **BYO agents** panel — posture selector limited to values not below the instance floor, default source CIDR list, org default "require context credentials"; shown locked with "enforced by instance" when `byo.enabled = false`):
   - *Model access*: per instance endpoint — permitted or not, key scopes
     (organization / workspace), origin narrowing (e.g. Anthropic organization
     and workspace ids, LiteLLM teams), model allow-list; LLM posture
@@ -142,7 +142,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   - **Computer** — sandbox state, "awake because…" reasons, processes,
     restart; BYO agents instead show **Connect** (token regenerate, container
     config, `aurora run` snippet, CA download). (phase 2, RFE-025) The Connect
-    tab shows the effective BYO posture and, when set, its source ('Disabled by
+    tab shows the effective BYO posture (phase 3, RFE-013: the token's **expiry** and **last used** time, a "Stale" / "Expiring" badge, and a Regenerate call to action; agent lists carry the same badges for owners) and, when set, its source ('Disabled by
     organization'); regenerate is hidden for non-owners under `owners_only`; a
     **Source restriction** card edits the agent's CIDR list (owners; shows the
     inherited default list and the caller's current address as a hint; refuses

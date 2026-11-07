@@ -43,7 +43,7 @@ if any declared id lacks an implementation.
 |--------|-----------|--------|
 | Browser | Session cookie + Origin check | `/v1/**` (except planes below) |
 | CLI / scripts | `Authorization: Bearer auk_…|auo_…` | `/v1/**` except session-only |
-| BYO agent | `Authorization: Bearer aug_…` (agent token) | only `POST /v1/agent/context-credentials` and `GET /v1/agent/container-config` |
+| BYO agent | `Authorization: Bearer aug_…` (agent token; phase 3, RFE-013: 401 `agent_token_expired` once past a configured maximum age) | only `POST /v1/agent/context-credentials` and `GET /v1/agent/container-config` |
 | Runner | `Authorization: Bearer aur_…` + `X-Aurora-Replica: <id>` (after register) | `/v1/runner/**` |
 | Connector | `Authorization: Bearer aun_…` + `X-Aurora-Replica` | `/v1/connector/**` |
 | Public capability | token in path | `POST /v1/hooks/{token}`, `GET /v1/public/avatars/{key}`, `GET /v1/oauth/callback`, OIDC callbacks |
@@ -369,7 +369,7 @@ connector, **P** public capability. Permission checks per `04`.
 | POST `/v1/orgs/{org}/freeze` `{ reason }`; POST `/v1/orgs/{org}/unfreeze` | S/K | (phase 2, RFE-006) org `owner` |
 | GET/PUT `/v1/orgs/{org}/app-availability` | S/K | posture + allow-list |
 | GET/PUT `/v1/orgs/{org}/governance` | S/K | org governance document (`08 §11.2`) with `revision`; PUT validates against the instance ceiling (422 `governance_invalid` / `governance_below_instance_minimum`) |
-| GET `/v1/orgs/{org}/governance/effective` | S/K (any org member) | effective LLM and egress governance (instance ∩ org), each value marked `source: instance|org` (phase 1, RFE-003: includes `egress.open_lane`; phase 2, RFE-025: includes `byo.{posture, source_cidrs, require_context_credentials}`); non-compliant LLM secrets of the org |
+| GET `/v1/orgs/{org}/governance/effective` | S/K (any org member) | effective LLM and egress governance (instance ∩ org), each value marked `source: instance|org` (phase 1, RFE-003: includes `egress.open_lane`; phase 2, RFE-025: includes `byo.{posture, source_cidrs, require_context_credentials}`; phase 3, RFE-013: `agent_tokens.max_age_days`); non-compliant LLM secrets of the org |
 | GET `/v1/governance/instance` | S | the instance ceiling (config, without secrets) — read-only |
 
 ### Workspaces
@@ -449,9 +449,10 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 |---|---|---|
 | GET/POST `/v1/workspaces/{ws}/agents` | S/K | create returns `aug_` once for BYO; (phase 2, RFE-025) creating `kind = byo` is subject to the effective BYO posture: 403 `byo_not_permitted` (`owners_only`, caller lacks `can_own`) or 403 `byo_disabled`; the list/get shape carries `byo: { posture, posture_level, source_cidrs, require_context, effective_source_cidrs, effective_require_context }` for BYO agents |
 | GET/PATCH/DELETE `/v1/agents/{agent}` | S/K | name, brief, harness, model, effort, resource overrides (IA) |
-| POST `/v1/agents/{agent}/token` | S | BYO: regenerate, returns token once; (phase 2, RFE-025) same posture check as creation (`byo_not_permitted` / `byo_disabled`); audited `agent.token_regenerate` |
+| POST `/v1/agents/{agent}/token` | S | BYO: regenerate, returns token once with `expires_at` (phase 3, RFE-013: null unless an agent-token maximum age applies, `08 §7`); (phase 2, RFE-025) same posture check as creation (`byo_not_permitted` / `byo_disabled`); audited `agent.token_regenerate` |
 | PUT `/v1/agents/{agent}/byo` | S/K | (phase 2, RFE-025) BYO only (hosted → 422 `not_byo`): `{ source_cidrs: [cidr..] \| null, require_context: bool }`; `can_own`; 422 `byo_cidr_invalid` (bad CIDR, `/0`, empty array, >32 entries) / `byo_cidr_outside_default`; live credentials are re-evaluated by invalidation scope `agent`; audited `agent.byo_settings.update` |
 | GET `/v1/agents/{agent}/container-config` | S/K | BYO bootstrap (`08 §BYO bootstrap`) |
+| GET `/v1/workspaces/{ws}/agent-tokens`; GET `/v1/orgs/{org}/agent-tokens` | S/K | (phase 3, RFE-013) BYO agent tokens without material: `{ items: [{ agent, workspace, created_at, expires_at, last_used_at, stale, expiring, display_prefix }] }`, filters `?stale=true`, `?expiring_within_days=n`; workspace route `can_own`, org route org `owner`/`admin` |
 | GET `/v1/agent/container-config`; POST `/v1/agent/context-credentials` | A | BYO self-service (`08`) |
 | PUT/GET `/v1/agents/{agent}/avatar`; GET `/v1/public/avatars/{key}` | S/K; P | |
 | POST `/v1/agents/{agent}/restart` | S/K | restart sandbox |

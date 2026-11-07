@@ -419,7 +419,7 @@ workspace secret it uses and records usage.
 
 | Kind | Prefix | Minted | Expires / revoked |
 |------|--------|--------|-------------------|
-| `agent` | `aug_` | BYO agent creation; `POST /v1/agents/{a}/token` (regenerate revokes the previous one and all of the agent's `context` credentials) | never expires; revoked on regenerate / agent delete. (phase 2, RFE-025) refused while the effective BYO posture is `disabled` and, when the agent has an effective source list, outside it (§11.9) |
+| `agent` | `aug_` | BYO agent creation; `POST /v1/agents/{a}/token` (regenerate revokes the previous one and all of the agent's `context` credentials) | phase 0–2: never expires; **from phase 3 (RFE-013)** expires at `created + effective maximum age` when one is configured (below), otherwise still never; revoked on regenerate / agent delete. (phase 2, RFE-025) refused while the effective BYO posture is `disabled` and, when the agent has an effective source list, outside it (§11.9) |
 | `boot` | `aub_` | each `sandbox.start` claim, bound to `boot_id` | revoked when the boot ends (stop report, failure, reconcile) |
 | `context` (hosted) | `auc_` | each `turn.deliver`, bound to agent, conversation, turn | `expires_at = now + TURN_CEILING + grace` at mint; set to `now + CONTEXT_CREDENTIAL_GRACE` when the turn ends |
 | `context` (BYO) | `auc_` | `POST /v1/agent/context-credentials` authenticated with the agent token: `{ "label": string ≤128, "conversation_id"?: uuid, "ttl_secs"?: 60..86400 (default 3600) }` | at `expires_at`; revoked with the agent token |
@@ -432,6 +432,47 @@ token is subject to the BYO posture (`§11.9`); a BYO `agent`/`context` credenti
 is admitted only from the effective source CIDR list of its agent; and an agent
 with `byo_require_context` may use its `aug_` token only to mint `auc_`
 credentials and for uncredentialed traffic.
+
+(phase 3, RFE-013, D-60) **Agent token maximum age.** Phase 0–2 `aug_` tokens
+never expired. From phase 3 an operator and each org may set an **optional
+maximum age** for BYO agent tokens; the default is **none** (tokens still never
+expire, so nothing changes unless someone opts in).
+
+- **Setting.** Instance: `governance.agent_tokens.max_age_days` (`15`; absent =
+  none). Org: `governance.agent_tokens.max_age_days` in the org governance
+  document (`§11.2`; absent = none). `AGENT_TOKEN_MAX_AGE_MIN`…`MAX` = 1…3 650 days
+  (422 `governance_invalid` outside). **Tighten-only**: the effective value is the
+  smaller of the values set; an org value above the instance value is refused (422
+  `governance_below_instance_minimum`).
+- **At mint** (BYO creation and `POST /v1/agents/{a}/token`; the regenerate flow
+  is unchanged otherwise): `gateway_credentials.expires_at = now + effective
+  maximum age`, null when none. BYO `context` credentials never outlive the token
+  that minted them: `expires_at = least(requested expiry, the agent token's
+  expires_at)`.
+- **When the setting is introduced or tightened** the API, in the same
+  transaction as the governance change (instance: at API start, as a system
+  action), sets for every live `agent` credential of the scope
+  `expires_at = least(expires_at, greatest(created_at + max_age, now +
+  AGENT_TOKEN_RETROFIT_GRACE))` (grace 7 days), so existing integrations get a week
+  to rotate rather than breaking at once, and invalidates the `org` scope.
+  Loosening or removing a limit **never extends** an existing expiry: regenerate
+  to obtain a fresh one. The change is part of the audited `governance.update`
+  (metadata `agent_tokens_retrofitted: n`).
+- **Expired token.** The gateway rejects it like a revoked one: 407
+  `proxy_auth_required` with `details.reason = "agent_token_expired"`; the API's
+  agent-token routes answer 401 `agent_token_expired`. The caller regenerates in
+  the dashboard (any actor allowed to regenerate under the BYO posture, §11.9).
+  The expiry is checked on every request (the cached identity carries `expires_at`).
+- **Visibility and staleness.** `gateway_credentials.last_used_at` (new churn
+  column: written by the gateway on authentication and by the API on agent-token
+  routes, at most once per minute per credential) and `expires_at` are shown
+  on the agent's Connect tab and in agent lists. A token is **stale** when it has
+  not been used for `AGENT_TOKEN_STALE_DAYS` (30) days (never used counts from
+  `created_at`) and **expiring** within `AGENT_TOKEN_EXPIRING_DAYS` (14) days;
+  `GET /v1/workspaces/{ws}/agent-tokens` (`can_own`) and `GET
+  /v1/orgs/{org}/agent-tokens` (org owner/admin) list them with `?stale=true`
+  and `?expiring_within_days=n` filters, so owners can regenerate or delete
+  unused identities. Listing never returns token material.
 
 (phase 2, RFE-005) A hosted `context` credential also carries the turn's
 **speaker** (`gateway_credentials.speaker_user_id`, copied from
@@ -551,8 +592,8 @@ above, enforced at several points.
 
 | Level | Who | Where stored | Can |
 |-------|-----|--------------|-----|
-| **Instance ceiling** | operator | configuration `[governance]`, `[byo]` (phase 2, RFE-025) and `[[llm.endpoints]]` (`15`) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org (including, from phase 1, the **open-lane** minimum, RFE-003); set the known-LLM-hosts list and an egress baseline allow-list; (phase 2, RFE-025) switch BYO agents off (`byo.enabled`) and set the BYO posture floor and default source CIDRs |
-| **Organization governance** | org owners/admins | `organizations.governance` (`03`) | permit a subset of endpoints; restrict key scopes per endpoint; narrow origin rules and model allow-lists; choose the LLM posture and the egress posture (never looser than the instance minimum); maintain the org egress allow-list; (phase 2, RFE-025) choose the org **BYO posture** and default BYO source CIDRs |
+| **Instance ceiling** | operator | configuration `[governance]`, `[byo]` (phase 2, RFE-025) and `[[llm.endpoints]]` (`15`) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org (including, from phase 1, the **open-lane** minimum, RFE-003); set the known-LLM-hosts list and an egress baseline allow-list; (phase 3, RFE-013) set a maximum age for BYO agent tokens; (phase 2, RFE-025) switch BYO agents off (`byo.enabled`) and set the BYO posture floor and default source CIDRs |
+| **Organization governance** | org owners/admins | `organizations.governance` (`03`) | permit a subset of endpoints; restrict key scopes per endpoint; narrow origin rules and model allow-lists; choose the LLM posture and the egress posture (never looser than the instance minimum); maintain the org egress allow-list; (phase 3, RFE-013) set a stricter maximum age for BYO agent tokens; (phase 2, RFE-025) choose the org **BYO posture** and default BYO source CIDRs |
 | **Workspace policy** | workspace owners | the workspace's policy generation (`07`) | block destinations with rules; set the workspace's own uncredentialed default to `block` with its own allow-list (it cannot loosen the org); (phase 1, RFE-003) set the workspace's **open-lane posture** (`enabled` \| `allowlist_only` \| `disabled`; it can only tighten); (phase 2, RFE-025) set the workspace's **BYO posture** (`enabled` \| `owners_only` \| `disabled`; it can only tighten) |
 | **Agent grants and rules** | workspace owners | grants, rules (`07`) | decide which permitted keys each agent may use |
 
@@ -588,6 +629,9 @@ for optimistic concurrency):
     "posture": "enabled | owners_only | disabled",
     "source_cidrs": ["203.0.113.0/24", "2001:db8::/32"],
     "require_context_credentials": false
+  },
+  "agent_tokens": {
+    "max_age_days": 90
   }
 }
 ```
@@ -612,6 +656,7 @@ Rules (422 `governance_invalid` / `governance_below_instance_minimum`):
   org's `egress.allowlist` (∪ the instance baseline) is the list tunnels are
   checked against (`06 §Open-lane admission and posture`).
 - Allow-list entries use the policy host/path patterns (`07`); ≤500 entries.
+- (phase 3, RFE-013) `agent_tokens.max_age_days` (absent = none) follows §7: 1…3 650, never above the instance value; changing it applies the retrofit rule of §7 to the org's live agent tokens.
 - (phase 2, RFE-025) `byo` (absent = all defaults) follows §11.9: `posture`
   (default absent = the instance floor) cannot be looser than the instance floor
   (order `enabled` < `owners_only` < `disabled`); `source_cidrs` is a list of ≤32

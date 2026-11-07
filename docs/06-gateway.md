@@ -103,7 +103,7 @@ unencrypted.
   **open lane**.
 - `<token>`: an `aug_`, `aub_` or `auc_` credential. Lookup by SHA-256 hash in
   `gateway_credentials` (cached `GATEWAY_RESOLVE_CACHE_TTL`, invalidated by
-  `aurora_gateway_invalidate` scope `credential`/`agent`). Rejected when revoked,
+  `aurora_gateway_invalidate` scope `credential`/`agent`). (phase 3, RFE-013: an `agent` credential with a maximum age carries `expires_at`; once past it the answer is 407 `proxy_auth_required` with `details.reason = "agent_token_expired"`; the gateway writes `last_used_at` at most once a minute per credential.) Rejected when revoked,
   expired, the agent's workspace/org is gone, or the org has no active owner
   (org suspended). Context credentials are accepted until
   `expires_at` (turn end + `CONTEXT_CREDENTIAL_GRACE`).

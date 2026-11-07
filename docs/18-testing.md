@@ -96,6 +96,19 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Audit: `agent.byo_settings.update`, `workspace.byo_posture.update` and
   `agent.token_regenerate` rows are written in the same transaction (rollback test).
 
+### BYO token age (phase 3, RFE-013, SEC-53)
+- Effective maximum age: none by default; instance only, org only, both (smaller
+  wins), org above instance refused; bounds 1…3 650.
+- Mint and regenerate set `expires_at`; BYO context credentials capped by the token;
+  retrofit on introduce/tighten with the 7-day minimum, no extension on loosen or
+  removal; audit metadata records the count.
+- Gateway and API: expired token → 407 `proxy_auth_required` (`agent_token_expired`)
+  / 401 `agent_token_expired`; identity cache honours `expires_at` without waiting
+  for the TTL boundary (clock test); `last_used_at` written at most once a minute.
+- Stale/expiring views: thresholds, never-used tokens count from creation,
+  authorization of the workspace/org routes, no token material in responses; the
+  dashboard badges.
+
 ### Governance
 - Governance validation: org documents below the instance minimum, scope and
   list subset rules, defaults for new orgs.

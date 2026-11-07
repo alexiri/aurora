@@ -1262,3 +1262,14 @@ Pending deletions of harness session files after a conversation delete or a `res
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | `governance.byo` | `{ "posture"?: "enabled"\|"owners_only"\|"disabled", "source_cidrs"?: [cidr], "require_context_credentials"?: bool }` | org BYO posture, default source list and require-context default (`08 §11.2`, `§11.9`). No column: `governance` is `jsonb`. | 2 (RFE-025) |
+
+#### `gateway_credentials` (token age and use)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| expires_at | (existing column) | kind=`agent`: null unless an effective maximum age is configured, then `created + max age` (`08 §7`); BYO `context` credentials are capped by it | 3 (RFE-013) |
+| last_used_at | timestamptz null | churn column: set by the gateway on successful authentication and by the API on agent-token routes, ≤1 write/min/credential; drives the stale-token views. Gateway role gains `UPDATE (last_used_at)` on `gateway_credentials` | 3 (RFE-013) |
+
+#### `organizations` (jsonb key in `governance`, agent token age)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `governance.agent_tokens.max_age_days` | int 1…3650 \| absent | org maximum age of BYO agent tokens; absent = none; never above the instance value (`08 §7`). No column: `governance` is `jsonb`. | 3 (RFE-013) |

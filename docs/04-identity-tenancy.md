@@ -321,6 +321,7 @@ conversation and hour; best-effort).
 | Edit a BYO agent's source CIDR list and "require context credentials" setting (phase 2, RFE-025) | `can_own` |
 | Workspace BYO posture (phase 2, RFE-025) | `can_own` (tighten-only) |
 | Org BYO posture, org default source CIDRs, org require-context default (phase 2, RFE-025) | org `owner`/`admin` (through governance, `governance.update`) |
+| List BYO agent tokens (expiry, last use, stale) of a workspace / of an org (phase 3, RFE-013) | `can_own` / org `owner`/`admin`; org maximum age of agent tokens: org `owner`/`admin` through governance (`governance.update`, which records the retrofit) |
 | Chat with agents, read transcripts, upload attachments | `can_use`; (phase 1, RFE-009) for `direct` conversations: the direct user (read + write) and `can_own` (read, abort/send-now only) — `can_see_conversation` |
 | Decide gateway approvals, action approvals and agent-link requests for agents of the workspace; read the approvals feed (pending, history, long-poll, SSE) | phase 0/1: `can_use`. **From phase 2 (RFE-012): `can_approve`** (a plain member sees an approval waiting inline in their own visible conversation, read-only, but not the feed and cannot decide); (phase 1, RFE-009) an approval that names a `direct` conversation is visible and decidable only by callers who `can_see_conversation` it (so: the direct user and `can_own`) |
 | Archive/unarchive a conversation (phase 2, RFE-010) | `can_see_conversation` and, for non-direct kinds, `can_use` |

@@ -187,6 +187,9 @@ overridden by the named configuration key (`15`).
 | `OIDC_AUTH_RATE` | (phase 1, RFE-004) 20 / min / IP for each of OIDC `start` and `callback` | — | 04 |
 | `PROXY_TLS_LEAF_VALIDITY` | (phase 1, RFE-002) 30 days; renewed when < 10 days remain | — | 06 |
 | `BYO_CIDR_MAX` | (phase 2, RFE-025) 32 CIDRs per agent / org / instance list | — | 08 §11.9 |
+| `AGENT_TOKEN_MAX_AGE_MIN` / `_MAX` | (phase 3, RFE-013) 1 / 3 650 days (optional agent-token maximum age; default none) | `governance.agent_tokens.max_age_days` | 08 §7 |
+| `AGENT_TOKEN_RETROFIT_GRACE` | (phase 3, RFE-013) 7 days minimum remaining life for existing tokens when a maximum age is introduced or tightened | — | 08 §7 |
+| `AGENT_TOKEN_STALE_DAYS` / `AGENT_TOKEN_EXPIRING_DAYS` | (phase 3, RFE-013) 30 days unused / 14 days to expiry | — | 08 §7, 14 |
 | `BYO_REFUSAL_LOG_INTERVAL` | (phase 2, RFE-025) one log line and one request-log row per credential per minute for gateway BYO refusals | — | 06 |
 | `REQUEST_LOG_FLUSH` | 5 s or 500 rows | — | 06 |
 | `REQUEST_LOG_RETENTION` | 30 days | `retention.request_log_days` | 15 |
