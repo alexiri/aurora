@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { useCanApprove } from "@/lib/api/approvals";
 import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspaces } from "@/lib/api/queries";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { cn } from "@/lib/utils";
@@ -154,16 +155,20 @@ function OrgNav({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
 export function WorkspaceNav({
   base,
   orgSlug,
+  wsId,
   pathname,
 }: {
   base: string;
   orgSlug: string;
+  wsId: string | undefined;
   pathname: string;
 }) {
   const resolved = useResolve(orgSlug);
   const org = useOrg(resolved.data?.org.id);
   const role = org.data?.my_role;
   const admin = role === "owner" || role === "admin";
+  // Phase 2, RFE-012: the approvals page exists only for `can_approve` users.
+  const canApprove = useCanApprove(wsId);
   const link = (href: string, label: string, active: boolean) => (
     <li key={href}>
       <Link
@@ -182,7 +187,7 @@ export function WorkspaceNav({
         {link(`${base}/agents`, "Agents", pathname.startsWith(`${base}/agents`))}
         {link(`${base}/credentials`, "Credentials", pathname.startsWith(`${base}/credentials`))}
         {link(`${base}/policy`, "Policy", pathname.startsWith(`${base}/policy`))}
-        {link(`${base}/approvals`, "Approvals", pathname.startsWith(`${base}/approvals`))}
+        {canApprove ? link(`${base}/approvals`, "Approvals", pathname.startsWith(`${base}/approvals`)) : null}
         {link(`${base}/activity`, "Activity", pathname.startsWith(`${base}/activity`))}
         {SECTIONS.map((s) => (
           <li key={s}>
@@ -205,6 +210,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const orgSlug = params.org;
   const wsSlug = params.ws;
   const base = orgSlug && wsSlug ? `/o/${orgSlug}/w/${wsSlug}` : null;
+  const wsId = useResolve(orgSlug, wsSlug).data?.workspace?.id;
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -222,7 +228,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
       <div className="flex flex-1">
         {base ? (
-          <WorkspaceNav base={base} orgSlug={orgSlug!} pathname={pathname} />
+          <WorkspaceNav base={base} orgSlug={orgSlug!} wsId={wsId} pathname={pathname} />
         ) : orgSlug ? (
           <OrgNav orgSlug={orgSlug} pathname={pathname} />
         ) : null}

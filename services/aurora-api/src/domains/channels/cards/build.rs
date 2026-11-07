@@ -78,6 +78,8 @@ pub fn approval(m: &Minter<'_>, row: &ApprovalRow) -> Result<Card, ApiError> {
         " · Expires {}",
         row.deadline.format("%Y-%m-%d %H:%M UTC")
     ));
+    // Phase 2, RFE-012: who may decide.
+    ctx.push_str(" · Needs an approver");
     blocks.push(Block::context(&ctx));
     let mut items = decide_buttons(
         m,
@@ -119,7 +121,7 @@ pub fn action_approval(
     agent_label: &str,
 ) -> Result<Card, ApiError> {
     let ctx = format!(
-        "Agent: {} · Action: {} · Expires {}",
+        "Agent: {} · Action: {} · Expires {} · Needs an approver",
         agent_label,
         row.action_key,
         row.expires_at.format("%Y-%m-%d %H:%M UTC")

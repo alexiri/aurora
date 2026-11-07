@@ -46,6 +46,8 @@ pub enum MemberStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WorkspaceRole {
     Member,
+    /// Phase 2, RFE-012 (D-55): chats like a member and may decide approvals.
+    Approver,
     Owner,
 }
 
@@ -53,6 +55,7 @@ impl WorkspaceRole {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "owner" => Some(Self::Owner),
+            "approver" => Some(Self::Approver),
             "member" => Some(Self::Member),
             _ => None,
         }
@@ -60,6 +63,7 @@ impl WorkspaceRole {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Owner => "owner",
+            Self::Approver => "approver",
             Self::Member => "member",
         }
     }
@@ -91,6 +95,11 @@ impl WorkspaceAuth {
     }
     pub fn can_own(&self) -> bool {
         self.effective_ws_role == WorkspaceRole::Owner
+    }
+    /// Phase 2, RFE-012 (D-55): workspace `owner` or `approver` (org owner/admin are implicit
+    /// owners). `can_own ⊂ can_approve ⊂ can_use`.
+    pub fn can_approve(&self) -> bool {
+        self.effective_ws_role >= WorkspaceRole::Approver
     }
 }
 
@@ -176,6 +185,17 @@ pub async fn can_own<'e, E: PgExecutor<'e>>(
     Ok(workspace_access(exec, user, ws)
         .await?
         .is_some_and(|a| a.can_own()))
+}
+
+/// `can_approve` (phase 2, RFE-012, D-55): workspace `owner` or `approver`, or org owner/admin.
+pub async fn can_approve<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    ws: Uuid,
+) -> Result<bool, DbError> {
+    Ok(workspace_access(exec, user, ws)
+        .await?
+        .is_some_and(|a| a.can_approve()))
 }
 
 /// Does `user` hold `can_own` on at least one workspace of `org`? Org owners/admins qualify
@@ -313,8 +333,37 @@ mod tests {
         );
         assert_eq!(effective_role(OrgRole::Member, None), None);
         assert_eq!(
+            effective_role(OrgRole::Member, Some(WorkspaceRole::Approver)),
+            Some(WorkspaceRole::Approver)
+        );
+        assert_eq!(
             effective_role(OrgRole::Member, Some(WorkspaceRole::Member)),
             Some(WorkspaceRole::Member)
         );
+    }
+
+    fn auth(r: WorkspaceRole) -> WorkspaceAuth {
+        WorkspaceAuth {
+            org_id: Uuid::nil(),
+            org_role: OrgRole::Member,
+            effective_ws_role: r,
+        }
+    }
+
+    #[test]
+    fn approver_hierarchy() {
+        let (m, a, o) = (
+            auth(WorkspaceRole::Member),
+            auth(WorkspaceRole::Approver),
+            auth(WorkspaceRole::Owner),
+        );
+        assert!(m.can_use() && a.can_use() && o.can_use());
+        assert!(!m.can_approve() && a.can_approve() && o.can_approve());
+        assert!(!m.can_own() && !a.can_own() && o.can_own());
+        assert_eq!(
+            WorkspaceRole::parse("approver"),
+            Some(WorkspaceRole::Approver)
+        );
+        assert!(WorkspaceRole::Member < WorkspaceRole::Approver);
     }
 }

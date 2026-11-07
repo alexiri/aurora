@@ -42,6 +42,8 @@ impl MemberStatus {
 #[serde(rename_all = "lowercase")]
 pub enum WorkspaceRole {
     Owner,
+    /// Phase 2, RFE-012: chats and decides approvals.
+    Approver,
     Member,
 }
 
@@ -49,6 +51,7 @@ impl WorkspaceRole {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Owner => "owner",
+            Self::Approver => "approver",
             Self::Member => "member",
         }
     }
@@ -112,10 +115,10 @@ pub fn parse_org_role(s: &str) -> OrgRole {
 }
 
 pub fn parse_ws_role(s: &str) -> WorkspaceRole {
-    if s == "owner" {
-        WorkspaceRole::Owner
-    } else {
-        WorkspaceRole::Member
+    match s {
+        "owner" => WorkspaceRole::Owner,
+        "approver" => WorkspaceRole::Approver,
+        _ => WorkspaceRole::Member,
     }
 }
 

@@ -110,7 +110,7 @@ export function useOrgMembers(orgId: string | undefined) {
 export function usePutAccess(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { user: string; role: "owner" | "member" }) =>
+    mutationFn: (v: { user: string; role: "owner" | "approver" | "member" }) =>
       unwrap(
         api.PUT("/v1/workspaces/{ws}/access/{user}", {
           params: { path: { ws: wsId, user: v.user } },

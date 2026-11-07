@@ -67,7 +67,8 @@ impl W {
         h.member(org, owner, "owner", "active").await;
         h.member(org, member, "member", "active").await;
         h.member(org, outsider, "member", "active").await;
-        h.bind_ws(ws, member, "member").await;
+        // RFE-012: the clicking `member` of these fixtures is an approver.
+        h.bind_ws(ws, member, "approver").await;
         let p = h.pool();
         sqlx::query("INSERT INTO connectors (id, token_hash, display_name, manifest, status) VALUES ('chat', $1, 'chat', $2, 'active')")
             .bind(vec![7u8; 32]).bind(caps(names)).execute(p).await.unwrap();
@@ -393,7 +394,7 @@ async fn unlinked_clicker_gets_a_link_prompt_and_nothing_happens() {
     // After linking, the same token works.
     let u = w.h.user("late@x.io", false).await;
     w.h.member(w.org, u, "member", "active").await;
-    w.h.bind_ws(w.ws, u, "member").await;
+    w.h.bind_ws(w.ws, u, "approver").await;
     sqlx::query("INSERT INTO user_links (id, integration_id, platform_user_ref, user_id, method) VALUES ($1,$2,'U_NONE',$3,'admin')")
         .bind(Uuid::now_v7()).bind(w.integ).bind(u).execute(w.pool()).await.unwrap();
     assert_eq!(
@@ -866,6 +867,55 @@ async fn suspended_member_click_is_refused_everywhere() {
     assert_eq!(w.status("approvals", id).await, "pending");
     assert_eq!(w.token_uses().await, 0);
     w.h.set_member_status(w.org, w.member, "active").await;
+    assert_eq!(
+        w.click(w.integ, &tok, "U_MEMBER", None).await["result"],
+        "done"
+    );
+    assert_eq!(w.status("approvals", id).await, "approved");
+}
+
+/// RFE-012 / SEC-28: a linked plain member who clicks an approval card is refused with the
+/// ephemeral, the token is not consumed and the card stays pending; once promoted the same
+/// click works.
+#[tokio::test]
+async fn member_click_on_approval_is_refused_and_card_stays_pending() {
+    let w = W::new(&FULL).await;
+    let (id, op) = w.approval_card().await;
+    let tok = W::token(&op, "Approve");
+    let ctx = op["content"]["card"]["blocks"].to_string();
+    assert!(ctx.contains("Needs an approver"), "{ctx}");
+    sqlx::query(
+        "UPDATE workspace_access SET role = 'member' WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(w.ws)
+    .bind(w.member)
+    .execute(w.pool())
+    .await
+    .unwrap();
+    let out = w
+        .click_in(w.integ, &tok, "U_MEMBER", None, Some("C1"))
+        .await;
+    assert_eq!(
+        (out["result"].as_str(), out["reason"].as_str()),
+        (Some("refused"), Some("forbidden")),
+        "{out}"
+    );
+    assert_eq!(w.status("approvals", id).await, "pending");
+    assert_eq!(w.token_uses().await, 0);
+    let told = w.ops("message.post").await;
+    assert!(
+        told.iter()
+            .any(|(_, p, _)| p.to_string().contains("Only approvers can decide this.")),
+        "{told:?}"
+    );
+    sqlx::query(
+        "UPDATE workspace_access SET role = 'approver' WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(w.ws)
+    .bind(w.member)
+    .execute(w.pool())
+    .await
+    .unwrap();
     assert_eq!(
         w.click(w.integ, &tok, "U_MEMBER", None).await["result"],
         "done"

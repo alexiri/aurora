@@ -42,7 +42,8 @@ pub async fn rig() -> Rig {
         let id = h.user(email, false).await;
         h.member(org, id, "member", "active").await;
         if let Some(ws) = ws {
-            h.bind_ws(ws, id, "member").await;
+            // RFE-012: p and q decide action approvals, which needs `can_approve`.
+            h.bind_ws(ws, id, "approver").await;
         }
         let (_, tok) = h.good_session(id).await;
         people.push(Person {

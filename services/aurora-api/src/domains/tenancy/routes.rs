@@ -313,19 +313,28 @@ async fn list_workspaces(
     let auth = c.org(&s, org).await?;
     let all = auth.role.is_admin();
     let rows = workspaces::list_visible(&s.pool, org, c.user_id, all, after(&p), p.fetch()).await?;
+    let ids: Vec<Uuid> = rows.iter().map(|w| w.id).collect();
+    let roles: std::collections::HashMap<Uuid, String> = if all {
+        Default::default()
+    } else {
+        workspaces::roles_of(&s.pool, c.user_id, &ids)
+            .await?
+            .into_iter()
+            .collect()
+    };
     Ok(Json(page_of(
         rows,
         &p,
         |r| (r.created_at, r.id),
         |w| {
-            Workspace::new(
-                w,
-                if all {
-                    WorkspaceRole::Owner
-                } else {
-                    WorkspaceRole::Member
-                },
-            )
+            let role = if all {
+                WorkspaceRole::Owner
+            } else {
+                roles
+                    .get(&w.id)
+                    .map_or(WorkspaceRole::Member, |r| parse_ws_role(r))
+            };
+            Workspace::new(w, role)
         },
     )))
 }

@@ -174,6 +174,8 @@ pub async fn decide(
     {
         return Err(not_found());
     }
+    // RFE-012 (D-55, SEC-28): only `can_approve` decides; a plain member gets 403.
+    crate::http::auth::require_approve(&auth)?;
     // Fail loud (07): an unregistered key is a deployment defect, not a client error.
     let Some(handler) = handlers::handler(&existing.action_key) else {
         tracing::error!(approval = %id, key = %existing.action_key,

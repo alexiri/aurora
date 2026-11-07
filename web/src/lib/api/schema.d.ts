@@ -3672,6 +3672,8 @@ export interface components {
             credentials: Record<string, never>;
         };
         CreateInvitationRequest: {
+            /** @description Phase 2, RFE-012: workspaces to bind as `approver` (never `owner`). */
+            approver_workspace_ids?: string[];
             email: string;
             role: components["schemas"]["InvitedRole"];
             workspace_ids?: string[];
@@ -4066,6 +4068,8 @@ export interface components {
         IntegrationStatus: "validating" | "active" | "needs_attention" | "disabled";
         /** @description An invitation. The token is never part of any response. */
         Invitation: {
+            /** @description Workspaces bound as `approver` on accept (phase 2, RFE-012); disjoint from `workspace_ids`. */
+            approver_workspace_ids: string[];
             /** Format: date-time */
             created_at: string;
             email: string;
@@ -4681,6 +4685,8 @@ export interface components {
         };
         Page_Invitation: {
             items: {
+                /** @description Workspaces bound as `approver` on accept (phase 2, RFE-012); disjoint from `workspace_ids`. */
+                approver_workspace_ids: string[];
                 /** Format: date-time */
                 created_at: string;
                 email: string;
@@ -6298,7 +6304,7 @@ export interface components {
             updated_at: string;
         };
         /** @enum {string} */
-        WorkspaceRole: "owner" | "member";
+        WorkspaceRole: "owner" | "approver" | "member";
     };
     responses: never;
     parameters: never;
@@ -6330,6 +6336,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActionApproval"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             404: {
@@ -9451,6 +9465,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Approval"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             404: {
@@ -15108,6 +15130,14 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -15372,6 +15402,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_Approval"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             404: {

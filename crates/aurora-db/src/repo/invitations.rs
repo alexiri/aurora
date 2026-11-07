@@ -15,6 +15,7 @@ pub struct InvitationRow {
     pub email: String,
     pub role: String,
     pub workspace_ids: Vec<Uuid>,
+    pub approver_workspace_ids: Vec<Uuid>,
     pub status: String,
     pub invited_by: Option<Uuid>,
     pub invited_by_name: Option<String>,
@@ -23,6 +24,7 @@ pub struct InvitationRow {
 }
 
 const SEL: &str = "i.id, i.org_id, i.email::text AS email, i.role, i.workspace_ids,
+    i.approver_workspace_ids,
     CASE WHEN i.status = 'pending' AND i.expires_at <= now() THEN 'expired' ELSE i.status END AS status,
     i.invited_by, u.display_name AS invited_by_name, i.expires_at, i.created_at";
 const FROM: &str = "invitations i LEFT JOIN users u ON u.id = i.invited_by";
@@ -140,6 +142,7 @@ pub struct NewInvitation<'a> {
     pub email: &'a str,
     pub role: &'a str,
     pub workspace_ids: &'a [Uuid],
+    pub approver_workspace_ids: &'a [Uuid],
     pub token_hash: &'a [u8; 32],
     pub invited_by: Uuid,
 }
@@ -151,10 +154,11 @@ pub async fn upsert_pending<'e, E: PgExecutor<'e>>(
     n: &NewInvitation<'_>,
 ) -> Result<Uuid, DbError> {
     Ok(sqlx::query_scalar(
-        "INSERT INTO invitations (id, org_id, email, role, workspace_ids, token_hash, status, invited_by)
-         VALUES ($1, $2, $3::citext, $4, $5, $6, 'pending', $7)
+        "INSERT INTO invitations (id, org_id, email, role, workspace_ids, approver_workspace_ids, token_hash, status, invited_by)
+         VALUES ($1, $2, $3::citext, $4, $5, $8, $6, 'pending', $7)
          ON CONFLICT (org_id, email) WHERE status = 'pending' DO UPDATE SET
            role = EXCLUDED.role, workspace_ids = EXCLUDED.workspace_ids,
+           approver_workspace_ids = EXCLUDED.approver_workspace_ids,
            token_hash = EXCLUDED.token_hash, invited_by = EXCLUDED.invited_by,
            expires_at = now() + interval '7 days', updated_at = now()
          RETURNING id",
@@ -166,6 +170,7 @@ pub async fn upsert_pending<'e, E: PgExecutor<'e>>(
     .bind(n.workspace_ids)
     .bind(&n.token_hash[..])
     .bind(n.invited_by)
+    .bind(n.approver_workspace_ids)
     .fetch_one(exec)
     .await?)
 }
@@ -218,6 +223,7 @@ pub struct AcceptRow {
     pub email: String,
     pub role: String,
     pub workspace_ids: Vec<Uuid>,
+    pub approver_workspace_ids: Vec<Uuid>,
     pub expired: bool,
 }
 
@@ -227,7 +233,8 @@ pub async fn lock_pending_by_token(
     token_hash: &[u8; 32],
 ) -> Result<Option<AcceptRow>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT id, org_id, email::text AS email, role, workspace_ids, expires_at <= now() AS expired
+        "SELECT id, org_id, email::text AS email, role, workspace_ids, approver_workspace_ids,
+                expires_at <= now() AS expired
          FROM invitations WHERE token_hash = $1 AND status = 'pending' FOR UPDATE",
     )
     .bind(&token_hash[..])

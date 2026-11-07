@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! BE-065: action-approval framework and agent links (policy, `message_agent` handler).
 
+use crate::common::cookie;
 use crate::peers_rig::{Person, Rig, rig};
 use aurora_api::domains::action_approvals::{handlers, service};
 use serde_json::{Value, json};
@@ -481,4 +482,54 @@ async fn policy_update_is_confined_to_own_side_and_checks_revision() {
         )
         .await;
     assert_eq!(s, 409);
+}
+
+#[tokio::test]
+async fn member_cannot_decide_action_approvals() {
+    // RFE-012 (D-55, SEC-28): a plain member sees neither the list nor can decide (403); an
+    // approver can; a role change applies on the very next request.
+    let c = cross().await;
+    let v = c.send("hello").await;
+    let id = Rig::id(&v["approval_id"]);
+    let h = &c.rig.h;
+    let m = h.user("plain@x.io", false).await;
+    h.member(c.rig.org, m, "member", "active").await;
+    h.bind_ws(c.rig.ws1, m, "member").await;
+    let (_, tok) = h.good_session(m).await;
+    let mp = Person {
+        id: m,
+        cookie: cookie(&tok),
+    };
+    let (s, v) = c
+        .rig
+        .get(
+            &mp,
+            &format!("/v1/workspaces/{}/action-approvals", c.rig.ws1),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("approver_required"))
+    );
+    let (s, v) = c.rig.decide(&mp, id, "approve").await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("approver_required"))
+    );
+    let status: String = sqlx::query_scalar("SELECT status FROM action_approvals WHERE id = $1")
+        .bind(id)
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    assert_eq!(status, "pending");
+    // Role change takes effect on the next request.
+    sqlx::query(
+        "UPDATE workspace_access SET role = 'approver' WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(c.rig.ws1)
+    .bind(m)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(c.rig.decide(&mp, id, "deny").await.0, 200);
 }

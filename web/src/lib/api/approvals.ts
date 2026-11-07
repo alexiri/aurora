@@ -4,6 +4,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClie
 import { useEffect, useState } from "react";
 
 import { api, ApiError } from "./client";
+import { useWorkspace } from "./queries";
 import { setRateNotice } from "./rate-limit";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
@@ -60,8 +61,14 @@ async function fetchPending(wsId: string): Promise<PendingData> {
   return { items: [...page.items].sort((a, b) => a.created_at.localeCompare(b.created_at)) };
 }
 
-export function usePendingApprovals(wsId: string) {
-  return useQuery({ queryKey: approvalKeys.pending(wsId), queryFn: () => fetchPending(wsId), enabled: !!wsId, retry });
+/** Phase 2, RFE-012 (D-55): `can_approve` = effective workspace role owner or approver. */
+export function useCanApprove(wsId: string | undefined): boolean {
+  const role = useWorkspace(wsId).data?.my_role;
+  return role === "owner" || role === "approver";
+}
+
+export function usePendingApprovals(wsId: string, enabled = true) {
+  return useQuery({ queryKey: approvalKeys.pending(wsId), queryFn: () => fetchPending(wsId), enabled: !!wsId && enabled, retry });
 }
 
 /** Subscribes to the approvals SSE stream, keeping the pending cache live (C-10: refetch on reconnect). */

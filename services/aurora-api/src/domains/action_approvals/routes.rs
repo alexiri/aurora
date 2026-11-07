@@ -1,7 +1,7 @@
 use super::dto::{ActionApproval, ActionDecisionBody, ListQuery};
 use super::service;
 use crate::app::AppState;
-use crate::http::auth::Caller;
+use crate::http::auth::{Caller, require_approve};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, Pagination};
@@ -21,6 +21,7 @@ pub fn router() -> OpenApiRouter<AppState> {
 #[utoipa::path(get, path = "/workspaces/{ws}/action-approvals", operation_id = "listActionApprovals", tag = "action-approvals",
     params(("ws" = Uuid, Path, description = "Workspace id"), ListQuery),
     responses((status = 200, body = Page<ActionApproval>), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_action_approvals(
@@ -29,7 +30,7 @@ async fn list_action_approvals(
     Path(ws): Path<Uuid>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<ActionApproval>>, ApiError> {
-    c.workspace(&s, ws).await?;
+    require_approve(&c.workspace(&s, ws).await?)?;
     service::validate_status(q.status.as_deref())?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = repo::list_workspace(
@@ -53,7 +54,7 @@ async fn list_action_approvals(
 #[utoipa::path(post, path = "/action-approvals/{id}/decision", operation_id = "decideActionApproval", tag = "action-approvals",
     params(("id" = Uuid, Path, description = "Action approval id")),
     request_body = ActionDecisionBody,
-    responses((status = 200, body = ActionApproval), (status = 404, body = ErrorEnvelope),
+    responses((status = 200, body = ActionApproval), (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
         (status = 409, description = "already_decided", body = ErrorEnvelope),
         (status = 500, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]

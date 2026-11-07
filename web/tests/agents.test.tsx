@@ -125,7 +125,7 @@ describe("workspace nav", () => {
       "GET /v1/resolve": () => json(200, { org: { id: "o1", slug: "acme", name: "Acme" } }),
       "GET /v1/orgs/o1": () => json(200, org(role)),
     });
-    wrap(<WorkspaceNav base="/o/acme/w/main" orgSlug="acme" pathname="/o/acme/w/main" />);
+    wrap(<WorkspaceNav base="/o/acme/w/main" orgSlug="acme" wsId={undefined} pathname="/o/acme/w/main" />);
   }
   it("links Members for admins", async () => {
     navWith("admin");

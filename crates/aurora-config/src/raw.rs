@@ -152,6 +152,8 @@ pub struct OidcJit {
     /// `member` or `admin`.
     pub role: String,
     pub workspace_slugs: Vec<String>,
+    /// Phase 2, RFE-012: `member` (default, also when empty) or `approver`.
+    pub workspace_role: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

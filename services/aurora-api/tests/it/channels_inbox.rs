@@ -130,7 +130,9 @@ async fn world_with(config: Value) -> W {
     for (u, r) in [(member, "member"), (owner, "member"), (outsider, "member")] {
         h.member(org, u, r, "active").await;
     }
-    h.bind_ws(ws, member, "member").await;
+    // RFE-012: the decider of this world is an approver; `approve <code>` by a plain member is
+    // tested by flipping the binding.
+    h.bind_ws(ws, member, "approver").await;
     h.bind_ws(ws, owner, "owner").await;
     let mut w = W {
         h,
@@ -1438,6 +1440,31 @@ async fn commands_approve_and_deny_apply_the_access_law() {
         run("a2", "approve", "ZZZZZZZZ".into(), "UM").await,
         "approval_not_found"
     );
+    // RFE-012: a plain member is refused with a clear reason and nothing changes.
+    sqlx::query("UPDATE workspace_access SET role = 'member' WHERE user_id = $1")
+        .bind(w.member)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        run("a2b", "approve", code(ids[0]), "UM").await,
+        "approver_required"
+    );
+    assert_eq!(
+        run("a2c", "deny", code(ids[0]), "UM").await,
+        "approver_required"
+    );
+    let pending: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM approvals WHERE status = 'pending'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(pending, 2);
+    sqlx::query("UPDATE workspace_access SET role = 'approver' WHERE user_id = $1")
+        .bind(w.member)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
     assert_eq!(
         run("a3", "approve", code(ids[0]).to_lowercase(), "UM").await,
         "approved"

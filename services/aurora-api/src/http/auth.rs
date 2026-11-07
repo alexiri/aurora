@@ -196,6 +196,23 @@ pub fn require_own(a: &WorkspaceAuth) -> Result<(), ApiError> {
     }
 }
 
+/// 403 `approver_required` unless the caller `can_approve` the workspace (phase 2, RFE-012, D-55).
+pub fn require_approve(a: &WorkspaceAuth) -> Result<(), ApiError> {
+    if a.can_approve() {
+        Ok(())
+    } else {
+        Err(approver_required())
+    }
+}
+
+pub fn approver_required() -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "approver_required",
+        "Workspace approver role required.",
+    )
+}
+
 // ---- cache -----------------------------------------------------------------
 
 /// <=30 s cache of authentication results keyed by token hash.

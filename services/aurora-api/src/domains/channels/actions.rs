@@ -2,7 +2,7 @@
 //!
 //! Order of checks for every click: token signature, expiry and integration; not already used;
 //! the clicker's user link (unlinked -> link prompt, nothing else); the access law for the
-//! subject's workspace **at click time** (`can_use` for approvals, action approvals, stop /
+//! subject's workspace **at click time** (`can_approve` (phase 2, RFE-012) for approvals, action approvals, agent-link decisions; `can_use` for stop /
 //! send-now, agent-link policies and DM defaults; `can_own` for reach and bindings); only then is
 //! the token consumed (single use) and the action performed through the same service functions
 //! the dashboard uses (same audit, same NOTIFY). Refused clicks do not burn the token. Transient
@@ -264,6 +264,17 @@ impl Click<'_> {
         {
             return refuse("forbidden", "You do not have access to do that.");
         }
+        // Phase 2, RFE-012 (D-55, SEC-28): deciding needs `can_approve`; refused clicks change
+        // nothing (the token is not consumed and the card stays pending).
+        self.require_approver(c, ws).await
+    }
+
+    /// `can_approve` of the clicker on `ws`, else an ephemeral "Only approvers can decide this".
+    async fn require_approver(&self, c: &Caller, ws: Uuid) -> Result<(), Stop> {
+        let auth = c.workspace(self.state, ws).await?;
+        if !auth.can_approve() {
+            return refuse("forbidden", "Only approvers can decide this.");
+        }
         Ok(())
     }
 
@@ -494,6 +505,7 @@ impl Click<'_> {
                 };
                 let agent = agents::get(&s.pool, agent_id).await?.ok_or_else(gone)?;
                 self.authorize(c, agent.workspace_id, false).await?;
+                self.require_approver(c, agent.workspace_id).await?;
                 if link.policy_of(agent_id) != Some("ask") {
                     return refuse("conflict", "This request was already answered.");
                 }

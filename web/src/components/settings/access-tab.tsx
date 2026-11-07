@@ -14,7 +14,14 @@ import {
 } from "@/lib/api/account";
 import { errorMessage } from "@/lib/api/errors";
 
-type Role = "owner" | "member";
+type Role = "owner" | "approver" | "member";
+
+/** One-line explanation of each role (phase 2, RFE-012). */
+export const ROLE_HELP: Record<Role, string> = {
+  owner: "Owner: manages the workspace, its access and settings, and can decide approvals.",
+  approver: "Approver: chats with agents and can decide approvals.",
+  member: "Member: chats with agents; cannot decide approvals.",
+};
 
 function AddBinding({
   wsId,
@@ -75,6 +82,7 @@ function AddBinding({
           onChange={(e) => setRole(e.target.value as Role)}
         >
           <option value="member">member</option>
+          <option value="approver">approver</option>
           <option value="owner">owner</option>
         </select>
       </div>
@@ -129,6 +137,7 @@ function Row({
             }
           >
             <option value="member">member</option>
+            <option value="approver">approver</option>
             <option value="owner">owner</option>
           </select>
         ) : (
@@ -174,6 +183,11 @@ export function AccessTab({
           Only workspace owners can change who has access.
         </p>
       ) : null}
+      <ul aria-label="Roles" className="space-y-0.5 text-sm text-neutral-600">
+        {(Object.keys(ROLE_HELP) as Role[]).map((r) => (
+          <li key={r}>{ROLE_HELP[r]}</li>
+        ))}
+      </ul>
       {err ? (
         <p role="alert" className="text-sm text-red-700">
           {errorMessage(err)}

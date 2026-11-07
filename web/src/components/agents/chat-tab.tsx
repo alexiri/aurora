@@ -8,7 +8,7 @@ import { Markdown } from "@/components/apps/markdown";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
-import { useDecide } from "@/lib/api/approvals";
+import { useCanApprove, useDecide } from "@/lib/api/approvals";
 import { ApiError } from "@/lib/api/client";
 import { attachmentUrl, canThumbnail, formatBytes, uploadAttachment, uploadErrorMessage, type Attachment } from "@/lib/api/attachments";
 import { chatApi, useConversations, useDirectConversation, type Conversation, type Followup, type TranscriptEvent } from "@/lib/api/conversations";
@@ -95,6 +95,7 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
   const id = s(ev.payload.approval_id);
   const st = approvalStatus(state, id);
   const decide = useDecide(wsId);
+  const canApprove = useCanApprove(wsId);
   const settled = st.status !== "pending";
   return (
     <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
@@ -104,6 +105,10 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
         <p role="status" className="mt-1 text-neutral-700">
           {st.status === "expired" ? "Expired" : st.status === "approve" ? "Approved" : "Denied"}
           {st.by ? ` by ${st.by}` : ""}
+        </p>
+      ) : !canApprove ? (
+        <p role="status" className="mt-1 text-neutral-700">
+          Waiting for an approver
         </p>
       ) : (
         <div className="mt-2 flex gap-2">
@@ -121,6 +126,15 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
         </p>
       ) : null}
     </div>
+  );
+}
+
+function ActionApprovalNote({ summary, wsId }: { summary: string; wsId: string }) {
+  const canApprove = useCanApprove(wsId);
+  return (
+    <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm">
+      Action approval: {summary} {canApprove ? "(decide in Approvals)" : "(waiting for an approver)"}
+    </p>
   );
 }
 
@@ -173,11 +187,7 @@ export function EventView({ ev, state, wsId, base, convId }: { ev: TranscriptEve
     case "approval.pending":
       return <ApprovalCard ev={ev} state={state} wsId={wsId} />;
     case "action_approval.pending":
-      return (
-        <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm">
-          Action approval: {s(p.summary)} (decide in Approvals)
-        </p>
-      );
+      return <ActionApprovalNote summary={s(p.summary)} wsId={wsId} />;
     case "attachment":
       return (
         <AttachmentLink
