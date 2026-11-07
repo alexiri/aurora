@@ -12,7 +12,7 @@ image:
   pullSecrets: []         # [{name: regcred}]
 
 # Image used by the secrets and gateway-ca hook jobs (and the plugins seed init container):
-# must provide sh, cp, kubectl, openssl, base64.
+# must provide sh, cp, kubectl, base64, head, od, tr (no openssl needed).
 hookImage: docker.io/alpine/k8s:1.31.2
 
 # ---- Secrets ---------------------------------------------------------------

@@ -151,7 +151,7 @@ spec:
           volumeMounts:
             - {name: config, mountPath: /etc/aurora, readOnly: true}
             - {name: tmp, mountPath: /tmp}
-            {{- if .ca }}
+            {{- if or .ca .caCert }}
             - {name: ca, mountPath: /var/lib/aurora/ca, readOnly: true}
             {{- end }}
             {{- if and .pluginsMount (ne $r.Values.plugins.source "none") }}
@@ -165,6 +165,13 @@ spec:
         {{- if .ca }}
         - name: ca
           secret: {secretName: {{ include "aurora.caSecretName" $r }}, defaultMode: 0440}
+        {{- else if .caCert }}
+        {{- /* api: only the public certificate (embedded in boot documents), never ca.key */}}
+        - name: ca
+          secret:
+            secretName: {{ include "aurora.caSecretName" $r }}
+            defaultMode: 0440
+            items: [{key: ca.pem, path: ca.pem}]
         {{- end }}
         {{- if and .pluginsMount (ne $r.Values.plugins.source "none") }}
         {{- if eq $r.Values.plugins.source "pvc" }}
