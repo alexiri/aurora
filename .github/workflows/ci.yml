@@ -9,10 +9,8 @@ on:
     tags: ["v*"]   # OPS-020: version tags run the full CI, then publish images
   pull_request:
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
+# No workflow-level concurrency group: every push to master gets its own full test run (owner: CI on
+# every merge). Only the publishing jobs serialize per ref, so two runs never race to push the same tag.
 permissions:
   contents: read
 
@@ -240,6 +238,7 @@ jobs:
   # (Containerfile `builder` stage, cargo-chef deps layer) and exports the layers to the gha cache scope
   # `services`; the per-image jobs import that scope, so every service image is a copy of one compile.
   images-builder:
+    concurrency: { group: "images-builder-${{ github.ref }}", cancel-in-progress: false }
     needs: [rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, e2e-hosted, web, guards]
     runs-on: ubuntu-24.04
     steps:
@@ -256,6 +255,7 @@ jobs:
           cache-to: type=gha,scope=services,mode=max
 
   images-services:
+    concurrency: { group: "images-services-${{ github.ref }}", cancel-in-progress: false }
     needs: [images-builder]
     runs-on: ubuntu-24.04
     permissions:
@@ -329,6 +329,7 @@ jobs:
           sbom: true
 
   images-web:
+    concurrency: { group: "images-web-${{ github.ref }}", cancel-in-progress: false }
     needs: [rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, e2e-hosted, web, guards]
     runs-on: ubuntu-24.04
     permissions:
@@ -358,6 +359,7 @@ jobs:
   # changes rarely: it is exported with mode=max and is the dominant cache entry. The public AlmaLinux base
   # is used in CI (the CERN default is a local build default).
   images-sandbox:
+    concurrency: { group: "images-sandbox-${{ github.ref }}", cancel-in-progress: false }
     needs: [rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, e2e-hosted, web, guards]
     runs-on: ubuntu-24.04
     permissions:
