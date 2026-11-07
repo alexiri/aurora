@@ -8,7 +8,7 @@ done when its tests exist, pass in CI, and the security invariants it touches
 
 | Layer | Scope | Tooling | Runs |
 |-------|-------|---------|------|
-| **Unit** | pure logic per crate (matchers, evaluator, sanitizers, templates, envelopes, cron, state machines) | `cargo nextest`, `proptest`, `insta` | every PR |
+| **Unit** | pure logic per crate (matchers, evaluator, sanitizers, templates, envelopes, cron, state machines) | `cargo test` (`cargo nextest` optional, `just test-nextest`), `proptest`, `insta` | every PR |
 | **Database** | repositories, claims, partial-unique races, migrations up from empty and from the previous release's schema | ephemeral Postgres from `aurora-testkit` (podman), one database per test | every PR |
 | **Service** | one service in-process with real Postgres and mocks for its neighbours (API with fake runner/connector clients; gateway with mock upstreams and a stub hook host) | `aurora-testkit`, `wiremock` | every PR |
 | **Contract** | OpenAPI document vs handlers; JSON Schemas of every wire type vs checked-in schemas; dashboard client regenerated without drift | schema diff | every PR |
@@ -425,6 +425,22 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - 2 000 requests/s per gateway core on cached paths.
 - Connect-time resolution (cache miss): p99 < 25 ms with 1 000 rules and 500
   connections in scope (excluding secret-store latency).
+
+## How the Rust tests are laid out and run (OPS-016)
+
+- **One integration-test binary per crate**: `crates/<c>/tests/it/main.rs` (or `services/<s>/tests/it/main.rs`)
+  declares `mod <file>;` for every file next to it, and shared helpers live in `tests/it/common/` (and
+  `tests/it/peers_rig/` for the API). A new test file is a new `mod` line in `main.rs`; do not add `tests/*.rs`
+  files, each one is a separate multi-hundred-MB link. Crates with a single test file keep it as is.
+- **Standalone test targets** (kept out of `it` on purpose): `services/aurora-api/tests/sec10_logs.rs` (installs a
+  scoped tracing subscriber, which must not race other tests' callsite registration), `services/aurora-supervisor/tests/conformance.rs`
+  (live-gated), and the e2e crates (`tests/e2e-gateway`, `tests/e2e-hosted`, `tests/conformance/connector`).
+- **Test ids**: a test in `tests/it/foo.rs` is `foo::name`. Run one with
+  `cargo test -p aurora-api --test it -- foo::name`, a file with `-- foo::`, the schema check with
+  `cargo test -p aurora-db --test it schema_matches_spec`. `docs/tests/*-coverage.md` refer to files as `api/it/foo.rs::name`.
+- **Whole workspace without the gated e2e crates**: `just test` (= `cargo test --workspace --exclude aurora-e2e-gateway --exclude aurora-e2e-hosted`).
+  `just test-nextest` runs the same set under cargo-nextest when installed (`.config/nextest.toml`; no retries; 10 min per-test kill).
+- **Build speed and disk**: see `docs/ops/build-performance.md` (linker, `dev-fast` profile, optional sccache, lane clean-up).
 
 ## CI pipeline
 

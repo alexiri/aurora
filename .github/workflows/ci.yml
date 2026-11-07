@@ -83,4 +83,4 @@ jobs:
         run: cargo install sqlx-cli --version "$SQLX_CLI_VERSION" --no-default-features --features postgres,rustls --locked
       - run: sqlx migrate run --source crates/aurora-db/migrations
       - name: migrated schema matches 03
-        run: cargo test -p aurora-db --test schema_matches_spec
+        run: cargo test -p aurora-db --test it schema_matches_spec

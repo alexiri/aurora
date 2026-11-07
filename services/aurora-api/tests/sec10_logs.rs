@@ -1,9 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! SEC-10 log-scrub test. Own test binary with a single test: it installs a scoped tracing
 //! subscriber, which must not race with other tests' callsite registration.
+
+#[path = "it/common/mod.rs"]
 mod common;
 
-use common::*;
+use crate::common::*;
 use http::Method;
 use serde_json::json;
 

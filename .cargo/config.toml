@@ -1,0 +1,6 @@
+# OPS-016: faster links. Linking dominates the build because every integration-test binary and
+# service links the full dependency graph. `scripts/dev/linker.sh` picks clang+lld when installed
+# and falls back to `cc`, so machines without lld still build. AURORA_LD=mold|system overrides.
+# Container image builds ignore this file (.dockerignore / .containerignore).
+[target.x86_64-unknown-linux-gnu]
+linker = "scripts/dev/linker.sh"

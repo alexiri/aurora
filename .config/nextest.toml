@@ -1,0 +1,17 @@
+# OPS-016: cargo-nextest settings (optional; `cargo test` keeps working, see docs/ops/build-performance.md).
+# Tests get isolated databases from aurora-testkit, so process-per-test is safe.
+[profile.default]
+# Each test process opens its own pool to the shared dev Postgres (max_connections 100, shared by
+# every lane): 16 parallel processes hit "too many clients" (OPS-016 measurement). Keep it modest.
+test-threads = 8
+retries = 0                       # a flaky test is a bug: report it, don't hide it
+fail-fast = false                 # run everything, list every failure
+status-level = "retry"
+final-status-level = "slow"
+slow-timeout = { period = "60s", terminate-after = 10 }   # warn at 60 s, kill at 10 min
+
+[profile.ci]
+test-threads = 8
+retries = 0
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 10 }

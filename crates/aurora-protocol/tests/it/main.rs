@@ -1,0 +1,5 @@
+//! Single integration-test binary for this crate (OPS-016): one link instead of one per file.
+mod connector;
+mod protocol;
+mod schemas;
+mod wire;
