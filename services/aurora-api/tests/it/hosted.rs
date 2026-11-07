@@ -355,6 +355,22 @@ async fn end_to_end_turn_with_steer_credential_and_replay() {
         ("context", Some(lv.conv), true)
     );
     assert_eq!(r.turn_status(&turn).await.0, "dispatched");
+    // RFE-005 (SEC-44): the context credential carries the speaker of a person-authored turn.
+    let (speaker_kind, turn_speaker, cred_speaker): (String, Option<Uuid>, Option<Uuid>) =
+        sqlx::query_as(
+            "SELECT t.speaker_kind, t.speaker_user_id, c.speaker_user_id FROM gateway_credentials c \
+             JOIN turns t ON t.id = c.turn_id WHERE c.token_hash = $1",
+        )
+        .bind(&aurora_core::token::hash(cred)[..])
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(speaker_kind, "person");
+    assert!(turn_speaker.is_some());
+    assert_eq!(
+        cred_speaker, turn_speaker,
+        "credential speaker = turn speaker"
+    );
 
     assert_eq!(
         r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))

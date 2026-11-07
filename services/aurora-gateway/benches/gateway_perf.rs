@@ -73,7 +73,7 @@ impl CredentialResolver for Static {
             conversation_id: None,
             turn_id: None,
             context_label: None,
-            principals: vec![w.agent],
+            speaker_user_id: None,
             capabilities: vec![],
             byo: None,
         }))
@@ -447,7 +447,7 @@ async fn mode_resolve() {
         conversation_id: None,
         turn_id: None,
         context_label: None,
-        principals: vec![gw.world.agent],
+        speaker_user_id: None,
         capabilities: vec![],
         byo: None,
     };

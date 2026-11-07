@@ -122,6 +122,7 @@ impl Ctx {
             bytes_up: 0,
             bytes_down: 0,
             context_label: i.context_label.clone(),
+            speaker_user_id: i.speaker_user_id,
         }
     }
 }
@@ -250,7 +251,7 @@ enum Fallback {
 fn facts_identity(i: &Ident) -> RequestIdentity {
     RequestIdentity {
         agent_id: i.agent_id,
-        principals: i.principals.clone(),
+        speaker_user_id: i.speaker_user_id,
     }
 }
 

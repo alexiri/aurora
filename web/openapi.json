@@ -2752,6 +2752,18 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "speaker",
+            "in": "query",
+            "description": "A user id (the person whose turns are evaluated) or `none` (speakerless traffic).\nDefault: the caller.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
@@ -2761,6 +2773,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Effective"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid speaker",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -19715,9 +19737,14 @@
           "name",
           "scope",
           "selected",
-          "selected_by"
+          "selected_by",
+          "depends_on_speaker"
         ],
         "properties": {
+          "depends_on_speaker": {
+            "type": "boolean",
+            "description": "(phase 2, RFE-005) An enabled allow rule with a `user` identity targets this credential,\nso whether it is selected changes with the speaker (compare `?speaker=none`)."
+          },
           "id": {
             "type": "string",
             "format": "uuid"
@@ -27582,6 +27609,14 @@
           "method": {
             "type": "string"
           },
+          "speaker_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "(phase 2, RFE-005) The person whose turn is simulated; omitted or null = no speaker, so\n`user` identities never match. Must hold `can_use` on the workspace (400 field error\notherwise). Ignored for `lane: \"open\"` (tunnels carry no speaker)."
+          },
           "url": {
             "type": "string"
           },
@@ -28861,7 +28896,9 @@
           "shadowed",
           "inert",
           "overridden_by_org",
-          "rule_applies_to_all_agents"
+          "rule_applies_to_all_agents",
+          "user_rule_needs_speaker",
+          "user_rule_no_agent_fallback"
         ]
       },
       "Webhook": {

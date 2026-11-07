@@ -41,7 +41,7 @@ fn identity(token_kind: CredentialKind, byo: Option<ByoAdmission>) -> RequestIde
         conversation_id: None,
         turn_id: None,
         context_label: None,
-        principals: vec![id],
+        speaker_user_id: None,
         capabilities: vec![],
         byo,
     }

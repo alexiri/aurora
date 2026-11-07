@@ -1,0 +1,9 @@
+description: RFE-005 - a user-only allow rule selects no credential for speakerless traffic or another speaker
+workspace:
+  ordered_rules:
+    - {logical_id: 00000000-0000-0000-0000-0000000000a1, name: alice-only, action: allow, identities: [{kind: user, id: 00000000-0000-0000-0000-000000000002}], targets: [{type: app_connections, app_id: gh, scope: any}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+select:
+  candidates:
+    - {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: gh, scope: workspace}
+  expect: []

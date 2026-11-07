@@ -100,6 +100,17 @@ pub struct EffectiveCredential {
     pub selected: bool,
     /// Logical ids of the allow rules that select it.
     pub selected_by: Vec<Uuid>,
+    /// (phase 2, RFE-005) An enabled allow rule with a `user` identity targets this credential,
+    /// so whether it is selected changes with the speaker (compare `?speaker=none`).
+    pub depends_on_speaker: bool,
+}
+
+/// Query of `GET /v1/agents/{agent}/effective` (phase 2, RFE-005).
+#[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
+pub struct EffectiveQuery {
+    /// A user id (the person whose turns are evaluated) or `none` (speakerless traffic).
+    /// Default: the caller.
+    pub speaker: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

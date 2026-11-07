@@ -218,6 +218,9 @@ async fn arm6_dispatch(
             &token::hash(tok.expose()),
             &token::display_prefix(tok.expose()),
             ttl,
+            // RFE-005: only a person-authored turn carries a speaker.
+            turn.speaker_user_id
+                .filter(|_| turn.speaker_kind == "person"),
         )
         .await?;
         for id in revoked {

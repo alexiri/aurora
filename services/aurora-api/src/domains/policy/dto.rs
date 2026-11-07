@@ -299,6 +299,12 @@ pub enum WarningCode {
     /// (phase 2, RFE-025) an allow rule with empty identities selects credentials for every
     /// agent, including agents created later.
     RuleAppliesToAllAgents,
+    /// (phase 2, RFE-005) informational: a rule with `user` identities matches only turns
+    /// spoken by that person.
+    UserRuleNeedsSpeaker,
+    /// (phase 2, RFE-005) an allow rule that grants credentials names only `user` identities, so
+    /// speakerless traffic gets no credential from it.
+    UserRuleNoAgentFallback,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -336,6 +342,11 @@ pub struct SimulateRequest {
     /// and `method`/`body` are ignored.
     #[serde(default)]
     pub lane: Option<SimLane>,
+    /// (phase 2, RFE-005) The person whose turn is simulated; omitted or null = no speaker, so
+    /// `user` identities never match. Must hold `can_use` on the workspace (400 field error
+    /// otherwise). Ignored for `lane: "open"` (tunnels carry no speaker).
+    #[serde(default)]
+    pub speaker_user_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]

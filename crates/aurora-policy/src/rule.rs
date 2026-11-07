@@ -18,7 +18,8 @@ impl Identity {
     pub fn matches(&self, who: &RequestIdentity) -> bool {
         match self {
             Self::Agent { id } => *id == who.agent_id,
-            Self::User { id } => who.principals.contains(id),
+            // Fail closed: no speaker never matches a `user` identity (RFE-005).
+            Self::User { id } => who.speaker_user_id == Some(*id),
         }
     }
 }

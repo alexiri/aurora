@@ -4141,6 +4141,11 @@ export interface components {
             source_cidrs: components["schemas"]["Sourced_Option_Vec_String"];
         };
         EffectiveCredential: {
+            /**
+             * @description (phase 2, RFE-005) An enabled allow rule with a `user` identity targets this credential,
+             *     so whether it is selected changes with the speaker (compare `?speaker=none`).
+             */
+            depends_on_speaker: boolean;
             /** Format: uuid */
             id: string;
             /** @description `secret` | `connection`. */
@@ -6367,6 +6372,13 @@ export interface components {
             body?: string | null;
             lane?: null | components["schemas"]["SimLane"];
             method: string;
+            /**
+             * Format: uuid
+             * @description (phase 2, RFE-005) The person whose turn is simulated; omitted or null = no speaker, so
+             *     `user` identities never match. Must hold `can_use` on the workspace (400 field error
+             *     otherwise). Ignored for `lane: "open"` (tunnels carry no speaker).
+             */
+            speaker_user_id?: string | null;
             url: string;
             use_draft?: boolean | null;
         };
@@ -6710,7 +6722,7 @@ export interface components {
             origin: components["schemas"]["StoredOrigin"];
         };
         /** @enum {string} */
-        WarningCode: "shadowed" | "inert" | "overridden_by_org" | "rule_applies_to_all_agents";
+        WarningCode: "shadowed" | "inert" | "overridden_by_org" | "rule_applies_to_all_agents" | "user_rule_needs_speaker" | "user_rule_no_agent_fallback";
         Webhook: {
             /** Format: uuid */
             agent_id: string;
@@ -8609,7 +8621,13 @@ export interface operations {
     };
     getAgentEffective: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description A user id (the person whose turns are evaluated) or `none` (speakerless traffic).
+                 *     Default: the caller.
+                 */
+                speaker?: string | null;
+            };
             header?: never;
             path: {
                 /** @description Agent id */
@@ -8626,6 +8644,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Effective"];
+                };
+            };
+            /** @description Invalid speaker */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */

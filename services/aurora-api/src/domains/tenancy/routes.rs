@@ -640,6 +640,8 @@ async fn delete_access(
     if !workspaces::unbind_user(&mut *tx, ws, user).await? {
         return Err(ApiError::not_found("Binding not found."));
     }
+    // RFE-005: a speaker who loses `can_use` stops binding to `user` rules immediately.
+    aurora_db::repo::notify_auth_revoked(&mut *tx, "user", user).await?;
     tx.commit().await.map_err(aurora_db::DbError::from)?;
     audit::record(
         &s,

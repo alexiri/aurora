@@ -129,7 +129,7 @@ async fn resolve(r: &DbCredentialResolver, t: &str) -> Option<RequestIdentity> {
 }
 
 #[tokio::test]
-async fn resolves_with_principals() {
+async fn resolves_without_a_speaker() {
     let db = TestDb::new().await;
     let w = world(db.pool()).await;
     cred(db.pool(), w.agent, "aug_good", "agent", "NULL").await;
@@ -139,13 +139,8 @@ async fn resolves_with_principals() {
         (id.org_id, id.workspace_id, id.agent_id),
         (w.org, w.ws, w.agent)
     );
-    let mut got = id.principals.clone();
-    got.sort();
-    let mut want = vec![w.owner, w.admin, w.bound, w.agent];
-    want.sort();
-    assert_eq!(got, want);
-    assert!(!id.principals.contains(&w.suspended));
-    assert!(!id.principals.contains(&w.unbound));
+    // RFE-005: the workspace roster is gone; a plain agent credential has no speaker.
+    assert_eq!(id.speaker_user_id, None);
     assert!(resolve(&r, "aug_nope").await.is_none());
     // Non-Aurora prefix: no DB call (closed pool would error otherwise).
     db.pool().close().await;
@@ -252,7 +247,6 @@ async fn notify_invalidates() {
         (g, json!({"scope":"workspace","id":w.ws})),
         (g, json!({"scope":"org","id":w.org})),
         (g, json!({"scope":"all"})),
-        (Channel::AuthRevoked, json!({"kind":"user","id":w.bound})),
     ];
     for (c, p) in cases {
         gone_after(&db, &r, "aug_good", c, p).await;
@@ -260,6 +254,90 @@ async fn notify_invalidates() {
         // final resolve re-cached a negative; a restore needs a fresh read.
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
+}
+
+/// A credential of `kind` on `agent` carrying `speaker` in `gateway_credentials.speaker_user_id`.
+async fn speaker_cred(pool: &PgPool, agent: Uuid, token: &str, kind: &str, speaker: Uuid) {
+    sqlx::query(
+        "INSERT INTO gateway_credentials \
+         (id, kind, token_hash, display_prefix, agent_id, speaker_user_id) \
+         VALUES ($1,$2,$3,'x',$4,$5)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(kind)
+    .bind(aurora_core::token::hash(token).to_vec())
+    .bind(agent)
+    .bind(speaker)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// RFE-005 (D-49, SEC-44): only a hosted context credential carries the speaker, and only while
+/// the speaker holds `can_use`; the cached identity follows `user` invalidations.
+#[tokio::test]
+async fn speaker_binding_follows_can_use() {
+    let db = TestDb::new().await;
+    let p = db.pool();
+    let w = world(p).await;
+    let hosted = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind) VALUES ($1,$2,$3,'h','H','hosted')")
+        .bind(hosted)
+        .bind(w.org)
+        .bind(w.ws)
+        .execute(p)
+        .await
+        .unwrap();
+    speaker_cred(p, hosted, "auc_bound", "context", w.bound).await;
+    speaker_cred(p, hosted, "auc_owner", "context", w.owner).await;
+    speaker_cred(p, hosted, "auc_admin", "context", w.admin).await;
+    speaker_cred(p, hosted, "auc_unbound", "context", w.unbound).await;
+    speaker_cred(p, hosted, "auc_suspended", "context", w.suspended).await;
+    // Never trusted: a BYO agent mints its own context credentials; other kinds carry none.
+    speaker_cred(p, w.agent, "auc_byo", "context", w.bound).await;
+    speaker_cred(p, hosted, "aug_agent", "agent", w.bound).await;
+    let (r, _hub) = live(p).await;
+    let speaker = |t: &'static str| {
+        let r = r.clone();
+        async move { resolve(&r, t).await.expect(t).speaker_user_id }
+    };
+    assert_eq!(speaker("auc_bound").await, Some(w.bound));
+    assert_eq!(speaker("auc_owner").await, Some(w.owner));
+    assert_eq!(speaker("auc_admin").await, Some(w.admin));
+    assert_eq!(speaker("auc_unbound").await, None, "no can_use");
+    assert_eq!(speaker("auc_suspended").await, None, "suspended member");
+    assert_eq!(speaker("auc_byo").await, None, "BYO context");
+    assert_eq!(speaker("aug_agent").await, None, "not a context credential");
+
+    // The speaker loses access mid-turn: the credential stays valid, the speaker is dropped
+    // as soon as the `user` invalidation reaches the gateway.
+    sqlx::query("DELETE FROM workspace_access WHERE workspace_id = $1 AND user_id = $2")
+        .bind(w.ws)
+        .bind(w.bound)
+        .execute(p)
+        .await
+        .unwrap();
+    notify(
+        p,
+        Channel::AuthRevoked,
+        &json!({"kind":"user","id":w.bound}),
+    )
+    .await
+    .unwrap();
+    let mut dropped = false;
+    for _ in 0..100 {
+        if speaker("auc_bound").await.is_none() {
+            dropped = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(dropped, "speaker kept after losing can_use");
+    assert_eq!(
+        speaker("auc_owner").await,
+        Some(w.owner),
+        "others unaffected"
+    );
 }
 
 #[tokio::test]

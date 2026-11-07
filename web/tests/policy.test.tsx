@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AccessTab } from "@/components/agents/access-tab";
 import { PolicyView } from "@/components/policy/policy-view";
-import { SimulationResult } from "@/components/policy/simulate-panel";
+import { SimulatePanel, SimulationResult } from "@/components/policy/simulate-panel";
 import { ApiError } from "@/lib/api/client";
 import {
   draftFromGeneration,
@@ -233,5 +233,41 @@ describe("AccessTab", () => {
     expect(screen.queryByLabelText(/^Grant /)).toBeNull();
     const urls = fn.mock.calls.map((c) => (c[0] as Request).url);
     expect(urls.some((u) => u.includes("/secrets") || u.includes("/grants"))).toBe(false);
+  });
+});
+
+describe("simulate speaker (RFE-005)", () => {
+  const agent = { id: "a1", name: "Bot", handle: "bot" } as never;
+  const users = [
+    { id: "u1", label: "Alice (a@x.io)" },
+    { id: "u2", label: "Bob (b@x.io)" },
+  ];
+  const sim = { verdict: "allow", reason: null, guidance_code: null, winning_credential: null, trace: { organization: { verdict: null, considered: [] }, workspace: { verdict: null, considered: [] } } };
+
+  async function run(speakerLabel?: string) {
+    let sent: Record<string, unknown> | null = null;
+    mockFetch({
+      "POST /v1/workspaces/w1/policy/simulate": async (req) => {
+        sent = (await req.json()) as Record<string, unknown>;
+        return json(200, sim);
+      },
+    });
+    wrap(<SimulatePanel wsId="w1" agents={[agent]} users={users} currentUserId="u1" />);
+    fireEvent.change(screen.getByLabelText("Agent"), { target: { value: "a1" } });
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://api.x.com/v1" } });
+    if (speakerLabel) fireEvent.change(screen.getByLabelText("Speaker"), { target: { value: speakerLabel } });
+    fireEvent.click(screen.getByRole("button", { name: "Simulate" }));
+    await waitFor(() => expect(sent).not.toBeNull());
+    return sent as unknown as Record<string, unknown>;
+  }
+
+  it("defaults the speaker to the signed-in user", async () => {
+    expect((await run())["speaker_user_id"]).toBe("u1");
+  });
+
+  it("sends null for 'No speaker' and another member's id when picked", async () => {
+    expect((await run("none"))["speaker_user_id"]).toBeNull();
+    cleanup();
+    expect((await run("u2"))["speaker_user_id"]).toBe("u2");
   });
 });

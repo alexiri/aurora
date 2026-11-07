@@ -175,6 +175,7 @@ pub async fn mint_turn_credential(
     token_hash: &[u8],
     display_prefix: &str,
     ttl_secs: f64,
+    speaker_user_id: Option<Uuid>,
 ) -> Result<Vec<Uuid>, DbError> {
     let revoked = sqlx::query_scalar(
         "UPDATE gateway_credentials SET revoked_at = now(), updated_at = now()
@@ -186,8 +187,8 @@ pub async fn mint_turn_credential(
     sqlx::query(
         "INSERT INTO gateway_credentials
             (id, kind, token_hash, display_prefix, agent_id, conversation_id, turn_id,
-             context_label, expires_at)
-         VALUES ($1,'context',$2,$3,$4,$5,$6,'turn', now() + make_interval(secs => $7))",
+             context_label, expires_at, speaker_user_id)
+         VALUES ($1,'context',$2,$3,$4,$5,$6,'turn', now() + make_interval(secs => $7), $8)",
     )
     .bind(Uuid::now_v7())
     .bind(token_hash)
@@ -196,6 +197,7 @@ pub async fn mint_turn_credential(
     .bind(conversation)
     .bind(turn)
     .bind(ttl_secs)
+    .bind(speaker_user_id)
     .execute(conn)
     .await?;
     Ok(revoked)
