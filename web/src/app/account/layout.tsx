@@ -1,14 +1,13 @@
 import type { ReactNode } from "react";
 
-import { AccountNav } from "@/components/account/account-nav";
 import { AppShell } from "@/components/app-shell";
+import { PageHeader } from "@/components/ui/page-header";
 
 export default function AccountLayout({ children }: { children: ReactNode }) {
   return (
     <AppShell>
       <div className="max-w-3xl">
-        <h1 className="mb-4 text-xl font-semibold">Account</h1>
-        <AccountNav />
+        <PageHeader title="Account" />
         {children}
       </div>
     </AppShell>

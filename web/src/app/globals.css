@@ -1,13 +1,164 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens (docs/14 §Visual design, D-68). This is the only file that
+ * defines colours. Components use the token utilities (bg-surface, text-ink,
+ * border-line, ...), never palette colours or hex literals.
+ * Light is :root; dark redefines the same names under data-theme="dark" (I-41).
+ */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-  --primary: #171717;
-  --primary-foreground: #fafafa;
+  color-scheme: light;
+  --ink: #0e1525;
+  --ink-2: #475569;
+  --muted: #5b6576;
+  --line: #e4e7ec;
+  --line-strong: #d5dae1;
+  --canvas: #f6f7f9;
+  --surface: #ffffff;
+  --subtle: #eef1f4;
+  --primary: #0e1525;
+  --on-primary: #ffffff;
+  --accent: #0f766e;
+  --on-accent: #ffffff;
+  --link: #0f766e;
+  --accent-soft: #e7f5f2;
+  --accent-ink: #0b5f58;
+  --pending-soft: #fdecc8;
+  --pending-ink: #7a3e06;
+  --pending-panel: #fff8ea;
+  --pending-line: #f1d9a3;
+  --danger-soft: #fde8e8;
+  --danger-ink: #9b1c1c;
+  --focus-halo: #c7ede6;
+  --bubble: #0e1525;
+  --bubble-ink: #ffffff;
+  --avatar-lavender: #d6d8ff;
+  --avatar-lavender-ink: #3b2a9e;
+  --avatar-blue: #e8f0fe;
+  --avatar-blue-ink: #1d4ed8;
+  --scrim: rgb(14 21 37 / 0.45);
+  --shadow-card: 0 1px 2px rgb(14 21 37 / 0.06);
+  --shadow-pop: 0 8px 24px rgb(14 21 37 / 0.14);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #e8ecf3;
+  --ink-2: #b4bdcc;
+  --muted: #8b95a7;
+  --line: #252e44;
+  --line-strong: #34405a;
+  --canvas: #0b1020;
+  --surface: #121829;
+  --subtle: #1c2438;
+  --primary: #e8ecf3;
+  --on-primary: #0b1020;
+  --accent: #2dd4bf;
+  --on-accent: #042f2b;
+  --link: #5eead4;
+  --accent-soft: #0f2e2b;
+  --accent-ink: #5eead4;
+  --pending-soft: #3a2a0e;
+  --pending-ink: #fbc66b;
+  --pending-panel: #221b0f;
+  --pending-line: #4a3712;
+  --danger-soft: #3b1518;
+  --danger-ink: #fca5a5;
+  --focus-halo: #134e48;
+  --bubble: #23304a;
+  --bubble-ink: #e8ecf3;
+  --avatar-lavender: #2a2350;
+  --avatar-lavender-ink: #c4b5fd;
+  --avatar-blue: #172a4f;
+  --avatar-blue-ink: #93c5fd;
+  --scrim: rgb(0 0 0 / 0.6);
+  /* Borders replace shadows in dark. */
+  --shadow-card: none;
+  --shadow-pop: 0 8px 24px rgb(0 0 0 / 0.5);
+}
+
+@theme inline {
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-subtle: var(--subtle);
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
+  --color-link: var(--link);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-pending-soft: var(--pending-soft);
+  --color-pending-ink: var(--pending-ink);
+  --color-pending-panel: var(--pending-panel);
+  --color-pending-line: var(--pending-line);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-ink: var(--danger-ink);
+  --color-focus-halo: var(--focus-halo);
+  --color-bubble: var(--bubble);
+  --color-bubble-ink: var(--bubble-ink);
+  --color-avatar-lavender: var(--avatar-lavender);
+  --color-avatar-lavender-ink: var(--avatar-lavender-ink);
+  --color-avatar-blue: var(--avatar-blue);
+  --color-avatar-blue-ink: var(--avatar-blue-ink);
+  --color-scrim: var(--scrim);
+  --shadow-card: var(--shadow-card);
+  --shadow-pop: var(--shadow-pop);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-grotesk), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jbmono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-control: 8px;
+  --radius-card: 14px;
+}
+
+html {
+  background: var(--canvas);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+
+/* Focus: 2px accent ring with a 3px halo outside it. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  box-shadow: 0 0 0 5px var(--focus-halo);
+}
+
+::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+a {
+  color: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

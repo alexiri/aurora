@@ -157,7 +157,7 @@ function PendingTab({ wsId }: { wsId: string }) {
                 <Button
                   key={d}
                   size="sm"
-                  variant={d === "approve" ? "default" : "outline"}
+                  variant={d === "approve" ? "approve" : "outline"}
                   disabled={batch.isPending}
                   onClick={() => {
                     setBatchError(null);
