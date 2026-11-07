@@ -57,11 +57,37 @@ helm upgrade aurora deploy/helm/aurora -n aurora -f my-values.yaml --set image.t
 
 Watch the rollout: `kubectl -n aurora rollout status deploy/aurora-api` (and for the others).
 
+## Rehearse the upgrade
+
+`scripts/e2e/upgrade.sh` (OPS-014) rehearses the order above on one host with podman: it builds a
+baseline ref (`UPGRADE_BASE`, default `8ba42973`; there is no release tag yet) and HEAD, starts the
+baseline stack, creates an agent with a running sandbox (fake harness), a conversation, a memory and a
+schedule, then upgrades in place (`aurora-api migrate`, then api, gateway, runner) without touching the
+sandbox container. It checks that:
+
+- the migrations apply over the baseline schema and are all recorded as successful;
+- the running sandbox keeps its container and boot, and the old supervisor still completes a turn
+  through the new runner and API;
+- conversation history, memories and schedules are readable after the upgrade;
+- after an agent restart the sandbox runs the new image.
+
+What it does not cover: it runs the services as host processes (as `scripts/e2e/hosted.sh` does), not
+as images; the baseline has no schedules API, so the schedule row is seeded with SQL; every protocol
+plane is at version 1 on both refs, so the N−1 window cannot be exercised end to end yet.
+Defects it finds are printed as `DEFECT` lines (`UPGRADE_STRICT=1` makes them fail the run).
+
 ## Running sandboxes
 
 A running sandbox keeps the image it started with until its next boot (docs/15). The dashboard
 shows **"restart to update"** when an agent's boot image differs from the runner's. Restarting
 an agent is how it picks up the new image. Plan that with your users.
+
+**Not yet implemented as documented:** the API computes `restart_to_update` from the boot's
+environment/stub-file hash only, so after an image-only upgrade (and for boots started before that hash
+was recorded) it stays `false` while the sandbox still runs the old image (found by
+`scripts/e2e/upgrade.sh`). Until the boot image is recorded, restart agents after an image upgrade
+without waiting for the flag; `GET /v1/agents/{agent}/sandbox` shows the runner's image, not the
+sandbox's.
 
 ## After the upgrade
 
