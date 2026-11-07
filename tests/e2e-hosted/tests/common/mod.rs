@@ -1010,3 +1010,118 @@ impl Fake {
         }
     }
 }
+
+// ------------------------------------------------------------------------------------------------
+// MM-002: helpers for connectors other than the fake one (append-only).
+// ------------------------------------------------------------------------------------------------
+
+impl Stack {
+    /// Like [`Stack::provision_connector`] for any connector `id` with its typed `manifest`
+    /// (as the binary will announce it), signed by a fresh trusted publisher key.
+    pub async fn provision_connector_with(
+        &self,
+        api: &Api,
+        email: &str,
+        id: &str,
+        publisher: &str,
+        manifest: &Value,
+    ) -> ConnectorKit {
+        use sha2::{Digest, Sha256};
+        sqlx::query("UPDATE users SET is_instance_admin = true WHERE email = $1")
+            .bind(email)
+            .execute(self.pool())
+            .await
+            .unwrap();
+        let admin = api.relogin(email).await;
+        let key = aurora_crypto::generate_signing_key().unwrap();
+        let key_id = aurora_registry::builder::PackageBuilder::key_id(&key);
+        let (s, v) = admin
+            .post(
+                "/v1/admin/trusted-keys",
+                json!({"publisher": publisher, "name": publisher, "public_key": key_id}),
+            )
+            .await;
+        assert_eq!(s, 201, "trusted key: {v}");
+        let (s, v) = admin
+            .post(
+                "/v1/admin/connectors",
+                json!({"id": id, "display_name": id}),
+            )
+            .await;
+        assert_eq!(s, 201, "create connector: {v}");
+        let token = v["token"].as_str().unwrap().to_owned();
+        let d: [u8; 32] =
+            Sha256::digest(aurora_registry::snapshot::canonical_bytes(manifest)).into();
+        let signature = aurora_registry::builder::PackageBuilder::sign_digest(&key, &key_id, &d);
+        let digest = d.iter().map(|b| format!("{b:02x}")).collect();
+        ConnectorKit {
+            token,
+            signature,
+            digest,
+            admin,
+        }
+    }
+
+    /// Approve connector `id` once a replica registered.
+    pub async fn approve_connector_named(&self, kit: &ConnectorKit, id: &str) {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let (s, v) = kit.admin.get("/v1/admin/connectors").await;
+            assert_eq!(s, 200, "{v}");
+            let c = v["items"]
+                .as_array()
+                .and_then(|a| a.iter().find(|c| c["id"] == id))
+                .cloned()
+                .unwrap_or(Value::Null);
+            if c["status"] == "active" {
+                return;
+            }
+            if c["status"] == "pending_approval" {
+                assert_eq!(
+                    c["manifest_digest"].as_str(),
+                    Some(kit.digest.as_str()),
+                    "the core computed another digest than the test: {c}"
+                );
+                let (s, v) = kit
+                    .admin
+                    .post(
+                        &format!("/v1/admin/connectors/{id}/approve"),
+                        json!({"manifest_digest": kit.digest}),
+                    )
+                    .await;
+                assert_eq!(s, 200, "approve: {v}");
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "connector never registered: {c}\n{}",
+                self.log_tails()
+            );
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
+
+    /// Spawn another service binary (logged next to the core's, killed on drop).
+    pub fn spawn_extra(&mut self, name: &str, exe: &str, envs: &[(String, String)]) {
+        let log = self.dir.join(format!("{name}.log"));
+        let f = std::fs::File::create(&log).unwrap();
+        let child = Command::new(bin(exe))
+            .arg("serve")
+            .envs(envs.iter().map(|(k, v)| (k, v)))
+            .stdout(Stdio::from(f.try_clone().unwrap()))
+            .stderr(Stdio::from(f))
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        self.children.push((name.to_owned(), child));
+        self.logs.push(log);
+    }
+
+    /// Stop a service started with [`Stack::spawn_extra`] (or any child) by name.
+    pub async fn kill_child(&mut self, name: &str) {
+        if let Some(i) = self.children.iter().position(|(n, _)| n == name) {
+            let (_, mut c) = self.children.remove(i);
+            let _ = c.kill().await;
+        }
+    }
+}

@@ -1,4 +1,4 @@
-//! The twelve connector conformance scenarios (docs/13 §7, TEST-015).
+//! The thirteen connector conformance scenarios (docs/13 §7, TEST-015).
 //!
 //! Each test starts its own fake core + connector under test (the in-process
 //! fake connector, or the binary in `CONFORMANCE_CONNECTOR_BIN`), plays the
@@ -1031,6 +1031,146 @@ async fn s12_capabilities_declared_are_honoured() -> R {
         c.0.driver.select(&post).is_none(),
         "select rendered without `menus`"
     );
+    c.0.finish().await?;
+    Ok(())
+}
+
+// ------------------------------- 13. a dedicated presence's life (MM-002)
+
+#[tokio::test]
+async fn s13_dedicated_presence_lifecycle() -> R {
+    let c = ctx(StartOptions::default()).await?;
+    if !c.0.driver.quirks().dedicated_presences {
+        return c.0.finish().await.map(|_| ());
+    }
+    let handle = format!("scout{}", &Uuid::now_v7().simple().to_string()[20..28]);
+
+    // Provision: a bot of its own for the agent.
+    let r = c
+        .op(
+            "presence.provision",
+            json!({"agent": {"handle": handle, "name": "Scout"}}),
+        )
+        .await?;
+    let data = ok_data(&r);
+    let res: PresenceProvisionResult = serde_json::from_value(data)?;
+    assert!(!res.platform_user_ref.is_empty());
+    assert!(res.handle.starts_with(&handle[..3]), "{}", res.handle);
+    assert!(res.credentials.is_object());
+    let profile = c.0.driver.bot_profile(&res.platform_user_ref).await?;
+    if let Some(p) = &profile {
+        assert_eq!(p.display_name, "Scout");
+        assert_eq!(p.username, res.handle);
+        assert!(p.active);
+        assert!(!p.has_icon);
+    }
+
+    // The core stores the result and serves the presence at the next config poll.
+    let pid = Uuid::now_v7();
+    c.0.core.add_presence(Presence {
+        id: pid,
+        integration_id: c.0.integration,
+        mode: PresenceMode::Dedicated,
+        agent: AgentRef {
+            id: Uuid::now_v7(),
+            handle: handle.clone(),
+            name: "Scout".into(),
+            avatar_url: None,
+        },
+        platform_user_ref: Some(res.platform_user_ref.clone()),
+        handle: Some(res.handle.clone()),
+        credentials: Some(res.credentials.clone()),
+        credentials_version: Some(1),
+        status: "active".into(),
+    });
+    let pop = |kind: &'static str, payload: Value| {
+        let c = &c;
+        async move {
+            let id =
+                c.0.core
+                    .enqueue_for_presence(kind, Some(c.0.integration), pid, payload);
+            c.0.core
+                .wait_result(id, T)
+                .await
+                .ok_or_else(|| anyhow::anyhow!("no result for {kind}"))
+        }
+    };
+
+    // Rename follows the agent.
+    let r = pop(
+        "presence.rename",
+        json!({"presence_id": pid, "name": "Scout Prime"}),
+    )
+    .await?;
+    ok_data(&r);
+    if let Some(p) = c.0.driver.bot_profile(&res.platform_user_ref).await? {
+        assert_eq!(p.display_name, "Scout Prime");
+    }
+
+    // Icon: set from the Aurora API's origin, refused from anywhere else, then reset.
+    let url = format!("{}/test-assets/avatar.png", c.0.core.url());
+    let r = pop(
+        "presence.set_icon",
+        json!({"presence_id": pid, "avatar_url": url}),
+    )
+    .await?;
+    ok_data(&r);
+    if let Some(p) = c.0.driver.bot_profile(&res.platform_user_ref).await? {
+        assert!(p.has_icon, "icon was not set");
+    }
+    let r = pop(
+        "presence.set_icon",
+        json!({"presence_id": pid, "avatar_url": "http://evil.invalid/a.png"}),
+    )
+    .await?;
+    if profile.is_some() {
+        // The fake connector has no origin policy; a real connector must refuse.
+        assert_eq!(err_code(&r), ErrorCode::Invalid);
+    }
+
+    // A person adds the bot to the channel (the dedicated bot's own socket sees it too).
+    let ack =
+        c.0.driver
+            .bot_added("C1", &res.platform_user_ref, "U1")
+            .await?;
+    assert_eq!(ack, Ack::Accepted);
+
+    // The bot speaks as itself.
+    let id = Uuid::now_v7();
+    c.0.core.enqueue_with_id(
+        id,
+        "message.post",
+        Some(c.0.integration),
+        json!({
+            "target": space_target("C1", None), "sender": {"presence_id": pid},
+            "content": serde_json::to_value(text("hello from scout"))?, "op_marker": id.to_string(),
+        }),
+    );
+    let r =
+        c.0.core
+            .wait_result(id, T)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no result for message.post"))?;
+    let posted = ok_data(&r);
+    let message_ref = posted["message_ref"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let post = c.find_post(&message_ref).await?;
+    if profile.is_some() {
+        assert_eq!(post.author_ref, res.platform_user_ref, "posted as the bot");
+    }
+
+    // Deprovision: the bot is gone for good.
+    let r = pop(
+        "presence.deprovision",
+        json!({"presence_id": pid, "reason": "detached"}),
+    )
+    .await?;
+    ok_data(&r);
+    if let Some(p) = c.0.driver.bot_profile(&res.platform_user_ref).await? {
+        assert!(!p.active, "bot still active after deprovision");
+    }
     c.0.finish().await?;
     Ok(())
 }

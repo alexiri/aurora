@@ -51,6 +51,14 @@ struct Cli {
     /// URL Mattermost reaches the callbacks at (`connector.public_url`).
     #[arg(long, global = true, env = "AURORA_CONNECTOR_PUBLIC_URL")]
     public_url: Option<String>,
+    /// Seconds between checks that a bot's token still works (a revoked token does not close its socket).
+    #[arg(
+        long,
+        global = true,
+        env = "AURORA_CONNECTOR_TOKEN_CHECK_SECS",
+        default_value_t = 30
+    )]
+    token_check_secs: u64,
     /// Key of the interactive-action signatures (`connector.callback_hmac_key`); at least 32 bytes.
     #[arg(
         long,
@@ -153,6 +161,8 @@ async fn serve(cli: Cli, cfg: &ConnectorConfig) -> std::io::Result<()> {
             .filter(|u| !u.is_empty()),
         hmac_key: key,
         catchup_window: Duration::from_secs(window),
+        token_check: Duration::from_secs(cli.token_check_secs.clamp(1, 3600)),
+        api_url: Some(core_url.trim_end_matches('/').to_owned()),
         capabilities: cli.capabilities.clone(),
         test_control: cli.test_control,
     };

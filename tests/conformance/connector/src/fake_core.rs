@@ -172,6 +172,7 @@ impl FakeCore {
                     .layer(DefaultBodyLimit::disable()),
             )
             .route("/v1/connector/retire", post(retire))
+            .route("/test-assets/avatar.png", get(avatar_png))
             .with_state(inner.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
@@ -246,6 +247,14 @@ impl FakeCore {
         id
     }
 
+    /// Adds a presence to what `GET /config` serves (a dedicated bot the core knows).
+    pub fn add_presence(&self, presence: Presence) {
+        let mut st = self.st();
+        st.presences.retain(|p| p.id != presence.id);
+        st.presences.push(presence);
+        st.version += 1;
+    }
+
     /// Registers `alias` for the platform id `real`, for platforms whose ids the
     /// suite cannot choose. Scenarios talk in aliases (`U1`, `C1`, `B1`): they are
     /// translated to real ids in operations the scenario enqueues, and back to
@@ -301,6 +310,22 @@ impl FakeCore {
     /// a `message.post` should carry).
     pub fn enqueue(&self, kind: &str, integration: Option<Uuid>, payload: Value) -> Uuid {
         self.enqueue_with_id(Uuid::now_v7(), kind, integration, payload)
+    }
+
+    /// As [`Self::enqueue`] for an operation about a presence (`presence_id` set).
+    pub fn enqueue_for_presence(
+        &self,
+        kind: &str,
+        integration: Option<Uuid>,
+        presence: Uuid,
+        payload: Value,
+    ) -> Uuid {
+        let id = Uuid::now_v7();
+        self.enqueue_with_id(id, kind, integration, payload);
+        if let Some(r) = self.st().ops.iter_mut().find(|r| r.op.op_id == id) {
+            r.op.presence_id = Some(presence);
+        }
+        id
     }
 
     /// As [`Self::enqueue`] with a caller-chosen op id.
@@ -602,6 +627,19 @@ async fn register(State(i): S, h: HeaderMap, body: Bytes) -> Response {
         },
     })
     .into_response()
+}
+
+/// A public 8x8 PNG standing in for an agent avatar served by the Aurora API.
+pub const AVATAR_PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x08, 0x08, 0x02, 0x00, 0x00, 0x00, 0x4b, 0x6d, 0x29,
+    0xdc, 0x00, 0x00, 0x00, 0x11, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x38, 0x61, 0x63, 0x83,
+    0x15, 0x31, 0x0c, 0x2d, 0x09, 0x00, 0x65, 0x99, 0x50, 0x01, 0x52, 0x0f, 0xaf, 0x53, 0x00, 0x00,
+    0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+async fn avatar_png() -> Response {
+    ([(header::CONTENT_TYPE, "image/png")], AVATAR_PNG).into_response()
 }
 
 async fn config(State(i): S, h: HeaderMap) -> Response {
@@ -1009,6 +1047,14 @@ impl CoreProbe {
     /// The alias for a platform id (the id itself when none).
     pub fn alias_of(&self, real: &str) -> String {
         alias_str(&lock(&self.inner.st).aliases, real)
+    }
+
+    /// See [`FakeCore::add_presence`].
+    pub fn add_presence(&self, presence: Presence) {
+        let mut st = lock(&self.inner.st);
+        st.presences.retain(|p| p.id != presence.id);
+        st.presences.push(presence);
+        st.version += 1;
     }
 
     pub fn set_alias(&self, alias: &str, real: &str) {

@@ -35,7 +35,8 @@ pub fn router(shared: Arc<Shared>) -> Router {
         tracing::warn!("test control mounted at /mm/test/*");
         r = r
             .route("/mm/test/redeliver", post(redeliver))
-            .route("/mm/test/lose-results", post(lose_results));
+            .route("/mm/test/lose-results", post(lose_results))
+            .route("/mm/test/bots", get(test_bots));
     }
     r.layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(shared)
@@ -211,6 +212,25 @@ async fn lose_results(
         .lose_results
         .store(q.n, std::sync::atomic::Ordering::SeqCst);
     Json(json!({"ok": true})).into_response()
+}
+
+/// Test profile: the dedicated bots the open integrations know (user ids), so a suite can
+/// wait until a presence it handed the core has been picked up.
+async fn test_bots(State(shared): State<Arc<Shared>>) -> Json<Value> {
+    let ids: Vec<String> = shared
+        .integrations
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .flat_map(|i| {
+            i.snapshot()
+                .presences
+                .into_values()
+                .map(|p| p.user_id)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    Json(json!({"bots": ids}))
 }
 
 #[cfg(test)]

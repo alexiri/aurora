@@ -7,6 +7,10 @@ button signing as defence in depth, broadcast defusing, channel-setup UX);
 none of the bridge's API-key custody, turn tailing or approval matching is
 needed because the core does that.
 
+**Supported Mattermost version: 11.7** (the production version; MM-003). The conformance
+suite and the live scenario run against `mattermost-preview` 11.7.x pinned by digest; 12.x
+is not a target (MM-001 findings were identical on 12.0.2).
+
 ## Manifest
 
 - `package.id = "mattermost"`, contract 1.
@@ -72,7 +76,7 @@ integration config.
   `bot_mentioned` when the text mentions `@<bot username>` or the channel is a
   DM with the bot; author email from `GET /api/v4/users/{id}` (cached 5 min per
   replica); `email_verified` only when the API states it for that user, which
-  Mattermost 12 does not for other users, so it is normally absent (S-15); files from `file_ids`
+  Mattermost 11.7 does not for other users, so it is normally absent (S-15); files from `file_ids`
   (metadata via `/api/v4/files/{id}/info`).
 
 ## Rendering
