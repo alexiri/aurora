@@ -732,6 +732,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/presence-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Integrations the agent can attach a presence to, metadata only (C-39, `can_use`). */
+        get: operations["listAgentPresenceOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/presences": {
         parameters: {
             query?: never;
@@ -3455,6 +3472,8 @@ export interface components {
         ConnectorAdmin: {
             /** Format: date-time */
             approved_at?: string | null;
+            /** @description The last approved manifest (icon stripped), the baseline for the approval diff (C-40). */
+            approved_manifest?: Record<string, never> | null;
             approved_manifest_digest?: string | null;
             /** Format: int32 */
             contract?: number | null;
@@ -5240,6 +5259,22 @@ export interface components {
         };
         /** @enum {string} */
         PresenceMode: "dedicated" | "shared";
+        /** @description One integration an agent may attach a presence to (C-39): metadata only. */
+        PresenceOption: {
+            /** @description The agent already has a presence on this integration. */
+            attached: boolean;
+            connector_id: string;
+            connector_name: string;
+            /** Format: uuid */
+            integration_id: string;
+            modes: components["schemas"]["PresenceMode"][];
+            /** @description `{ dedicated?: { fields: FormField[] } }`. */
+            presence_setup: Record<string, never>;
+            tenant_label: string;
+        };
+        PresenceOptionList: {
+            items: components["schemas"]["PresenceOption"][];
+        };
         /** @enum {string} */
         PresenceStatus: "pending_setup" | "active" | "disabled" | "needs_attention";
         PublishRequest: {
@@ -8417,6 +8452,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listAgentPresenceOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresenceOptionList"];
                 };
             };
             404: {

@@ -126,6 +126,40 @@ describe("ConnectorsAdminView", () => {
     replicas: [], integration_count: 2, approved_at: null, created_at: T,
   };
 
+  it("renders an old-vs-new manifest diff from approved_manifest", async () => {
+    mockFetch({
+      "GET /v1/admin/connectors": () =>
+        json(200, {
+          items: [
+            {
+              ...pending,
+              manifest: {
+                capabilities: { threads: true, files: true },
+                integration_setup: { fields: [{ name: "bot_token", type: "secret", store: "credentials" }] },
+                presence_setup: { dedicated: { fields: [{ name: "token", type: "secret", store: "credentials" }] } },
+                public_callbacks: ["/hook"],
+              },
+              approved_manifest: {
+                capabilities: { threads: true, edits: true },
+                integration_setup: { fields: [{ name: "bot_token", type: "string", store: "credentials" }] },
+                public_callbacks: [],
+              },
+            },
+          ],
+        }),
+    });
+    wrap(<ConnectorsAdminView />);
+    const diff = within(await screen.findByTestId("manifest-diff"));
+    expect(diff.getByText("files")).toBeInTheDocument();
+    expect(diff.getByText("edits")).toBeInTheDocument();
+    expect(diff.getByText("Integration: bot_token")).toBeInTheDocument();
+    expect(diff.getByText("Dedicated presence: token")).toBeInTheDocument();
+    expect(diff.getByText("/hook")).toBeInTheDocument();
+    expect(diff.getByText("files").closest("li")?.textContent).toContain("Added:");
+    expect(diff.getByText("edits").closest("li")?.textContent).toContain("Removed:");
+    expect(diff.getByText("Integration: bot_token").closest("li")?.textContent).toContain("Changed:");
+  });
+
   it("shows the widening diff and approves the exact digest; stale manifest refetches", async () => {
     let digest = "sha256:new";
     let first = true;
@@ -199,6 +233,14 @@ describe("AgentChannelsTab", () => {
       "GET /v1/connectors": () => json(200, { items: [{ ...slack, capabilities: caps }] }),
       "GET /v1/orgs/o1/channel-integrations": () => json(200, { items: [integ], next_cursor: null }),
       "GET /v1/agents/a1/presences": () => json(200, { items: [] }),
+      "GET /v1/agents/a1/presence-options": () =>
+        json(200, {
+          items: [
+            { integration_id: "i1", connector_id: "slack", connector_name: "Slack", tenant_label: "Acme Slack",
+              modes: [...(caps.presence_dedicated ? ["dedicated"] : []), ...(caps.presence_shared ? ["shared"] : [])],
+              presence_setup: {}, attached: false },
+          ],
+        }),
       "GET /v1/agents/a1/space-bindings": () =>
         json(200, { items: [{ id: "b1", integration_id: "i1", space_ref: "C1", space_label: "#general", agent_id: "a1", listen: "mentions", followups_need_mention: false, active: true, bound_by: null, created_at: T }] }),
       "GET /v1/agents/a1/reach": () => json(200, { items: [grant, { ...grant, id: "g2", subject_label: "#old", state: "blocked" }], next_cursor: null }),
@@ -218,6 +260,15 @@ describe("AgentChannelsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Attach" }));
     expect((await screen.findByRole("alert")).textContent).toContain("no shared bot");
     expect(calls.find((c) => c.key === "POST /v1/agents/a1/presences")?.body).toEqual({ integration_id: "i1", mode: "shared" });
+  });
+
+  it("attaches through presence-options without the owner-only integration list", async () => {
+    const calls = setup({ "GET /v1/orgs/o1/channel-integrations": () => err(403, "forbidden") });
+    wrap(<AgentChannelsTab agentId="a1" orgId="o1" canOwn={false} />);
+    fireEvent.change(await screen.findByLabelText("Integration"), { target: { value: "i1" } });
+    expect(screen.getByLabelText("Identity")).toBeInTheDocument();
+    expect(calls.some((c) => c.key === "GET /v1/orgs/o1/channel-integrations")).toBe(false);
+    expect(calls.some((c) => c.key === "GET /v1/agents/a1/presence-options")).toBe(true);
   });
 
   it("approves a reach request with its revision and refetches on stale_revision", async () => {

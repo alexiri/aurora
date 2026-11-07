@@ -61,6 +61,11 @@ pub fn baseline(stored: &Value) -> Option<ConnectorManifest> {
     serde_json::from_value(stored.get(APPROVED)?.clone()).ok()
 }
 
+/// The last approved manifest as stored (already icon-stripped), if any.
+pub fn approved_value(stored: &Value) -> Option<Value> {
+    stored.get(APPROVED).cloned()
+}
+
 fn without_icon(m: &Value) -> Value {
     let mut v = m.clone();
     if let Some(about) = v.get_mut("about").and_then(Value::as_object_mut) {

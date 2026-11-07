@@ -576,6 +576,12 @@ const ROWS: &[Row] = &[
     ),
     r("DELETE", "/v1/user-links/{id}", G::Admin, false),
     r("GET", "/v1/agents/{agent}/presences", G::WsUse, false),
+    r(
+        "GET",
+        "/v1/agents/{agent}/presence-options",
+        G::WsUse,
+        false,
+    ),
     r("POST", "/v1/agents/{agent}/presences", G::WsUse, false),
     r("DELETE", "/v1/presences/{id}", G::WsUse, false),
     r("POST", "/v1/presences/{id}/reattach", G::WsUse, false),

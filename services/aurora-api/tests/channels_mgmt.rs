@@ -1656,3 +1656,71 @@ async fn credential_dead_disables_presence_and_integration() {
     );
     assert_eq!((s, v["status"].as_str()), (200, Some("active")), "{v}");
 }
+
+// ------------------------------------------------------------- presence options (C-39)
+
+#[tokio::test]
+async fn presence_options_for_members_are_metadata_only() {
+    let w = W::new().await;
+    let agent = w.agent("a1").await;
+    let shared = w.integration(&w.fake, "T1").await;
+    // Narrowed: no dedicated bots, and no shared bot.
+    let (s, v, _) = w
+        .create_integration(
+            &w.manual,
+            &w.owner,
+            w.create_body(&w.manual),
+            |_| {
+                json!({"outcome": "ok", "data": {"tenant_ref": "T2", "tenant_label": "NoBot",
+                "capabilities": {"presence_dedicated": false}}})
+            },
+            1,
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let nobot: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let path = format!("/v1/agents/{agent}/presence-options");
+
+    // Non-members and members without access to the agent get 404.
+    assert_eq!(w.call(&w.outsider, Method::GET, &path, None).await.0, 404);
+    assert_eq!(w.call(&w.plain, Method::GET, &path, None).await.0, 404);
+
+    // A can_use member (not an org admin) sees the options without credentials or config.
+    let (s, v) = w.call(&w.wsmember, Method::GET, &path, None).await;
+    assert_eq!(s, 200, "{v}");
+    let raw = v.to_string();
+    assert!(!raw.contains(SECRET) && !raw.contains("credentials") && !raw.contains("region"));
+    let items = v["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "{v}");
+    let by = |id: Uuid| {
+        items
+            .iter()
+            .find(|i| i["integration_id"] == id.to_string())
+            .unwrap()
+    };
+    let a = by(shared);
+    assert_eq!(a["connector_id"], "fake");
+    assert_eq!(a["tenant_label"], "Tenant T1");
+    let mut modes: Vec<&str> = a["modes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m.as_str().unwrap())
+        .collect();
+    modes.sort_unstable();
+    assert_eq!(modes, ["dedicated", "shared"]);
+    assert_eq!(a["attached"], false);
+    let b = by(nobot);
+    assert_eq!(b["modes"], json!([]));
+    assert_eq!(b["presence_setup"], json!({}));
+
+    // Attaching flips `attached`.
+    assert_eq!(w.attach(&w.wsmember, agent, shared, "shared").await.0, 201);
+    let (_, v) = w.call(&w.wsmember, Method::GET, &path, None).await;
+    let items = v["items"].as_array().unwrap();
+    let a = items
+        .iter()
+        .find(|i| i["integration_id"] == shared.to_string())
+        .unwrap();
+    assert_eq!(a["attached"], true);
+}

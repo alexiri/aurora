@@ -13,58 +13,38 @@ import {
   useDecideReach,
   useDeleteSpaceBinding,
   useDetachPresence,
-  useIntegrations,
   usePatchSpaceBinding,
+  usePresenceOptions,
   usePresences,
   useReach,
   useReattachPresence,
   useSpaceBindings,
-  type ChannelIntegration,
   type Listen,
   type Presence,
   type PresenceMode,
 } from "@/lib/api/channels";
-import { dedicatedFields, hasCapability, useConnectors, type ConnectorInfo } from "@/lib/api/connectors";
+import { dedicatedFields, formFields, useConnectors, type ConnectorInfo } from "@/lib/api/connectors";
 
 import { MutationError, StatusChip } from "./shared";
 
-/** Modes offered for an integration, from connector capabilities and the shared bot. */
-export function offeredModes(connector: ConnectorInfo | undefined, integration: ChannelIntegration): PresenceMode[] {
-  if (!connector) return [];
-  const modes: PresenceMode[] = [];
-  if (hasCapability(connector, "presence_dedicated")) modes.push("dedicated");
-  if (hasCapability(connector, "presence_shared") && integration.shared_bot) modes.push("shared");
-  return modes;
-}
-
-function AttachForm({ agentId, orgId, presences }: { agentId: string; orgId: string; presences: Presence[] }) {
-  const integrations = useIntegrations(orgId);
-  const connectors = useConnectors();
+function AttachForm({ agentId }: { agentId: string }) {
+  const options = usePresenceOptions(agentId);
   const attach = useAttachPresence(agentId);
   const [integrationId, setIntegrationId] = useState("");
   const [mode, setMode] = useState<PresenceMode | "">("");
   const [values, setValues] = useState<FieldValues>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  if (integrations.isPending || connectors.isPending) return <Loading />;
-  if (integrations.isError || connectors.isError) {
-    return (
-      <p className="text-sm text-neutral-500">
-        Attaching an agent needs the list of integrations; ask an organization admin to attach it.
-      </p>
-    );
-  }
-  const byConnector = new Map(connectors.data.items.map((c) => [c.id, c]));
-  const usable = integrations.data.items.filter(
-    (i) => i.status === "active" && !presences.some((p) => p.integration_id === i.id),
-  );
+  if (options.isPending) return <Loading />;
+  if (options.isError) return <ErrorState error={options.error} onRetry={() => options.refetch()} />;
+  const usable = options.data.items.filter((o) => !o.attached);
   if (usable.length === 0) {
     return <p className="text-sm text-neutral-500">No active integration is left to attach to.</p>;
   }
-  const integration = usable.find((i) => i.id === integrationId);
-  const connector = integration ? byConnector.get(integration.connector_id) : undefined;
-  const modes = integration ? offeredModes(connector, integration) : [];
-  const fields = mode === "dedicated" && connector ? dedicatedFields(connector) : [];
+  const integration = usable.find((o) => o.integration_id === integrationId);
+  const modes = integration?.modes ?? [];
+  const dedicated = integration ? formFields((integration.presence_setup as { dedicated?: unknown }).dedicated) : [];
+  const fields = mode === "dedicated" ? dedicated : [];
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -75,7 +55,7 @@ function AttachForm({ agentId, orgId, presences }: { agentId: string; orgId: str
     const sent: Record<string, string> = {};
     for (const f of visibleFields(fields, values)) if (values[f.name]) sent[f.name] = values[f.name];
     attach.mutate(
-      { integration_id: integration.id, mode, ...(fields.length ? { fields: sent } : {}) },
+      { integration_id: integration.integration_id, mode, ...(fields.length ? { fields: sent } : {}) },
       {
         onSuccess: () => {
           setIntegrationId("");
@@ -105,8 +85,8 @@ function AttachForm({ agentId, orgId, presences }: { agentId: string; orgId: str
         >
           <option value="">Select…</option>
           {usable.map((i) => (
-            <option key={i.id} value={i.id}>
-              {byConnector.get(i.connector_id)?.display_name ?? i.connector_id} · {i.tenant_label}
+            <option key={i.integration_id} value={i.integration_id}>
+              {i.connector_name} · {i.tenant_label}
             </option>
           ))}
         </select>
@@ -125,14 +105,12 @@ function AttachForm({ agentId, orgId, presences }: { agentId: string; orgId: str
               value={mode}
               onChange={(e) => {
                 setMode(e.target.value as PresenceMode);
-                setValues(defaultValues(dedicatedFields(connector!)));
+                setValues(defaultValues(dedicated));
               }}
             >
               <option value="">Select…</option>
               {modes.includes("dedicated") ? <option value="dedicated">Dedicated bot for this agent</option> : null}
-              {modes.includes("shared") ? (
-                <option value="shared">Shared bot ({integration.shared_bot?.display_name})</option>
-              ) : null}
+              {modes.includes("shared") ? <option value="shared">Shared bot</option> : null}
             </select>
           </div>
         )
@@ -212,7 +190,7 @@ function PresenceRow({ agentId, p, connector }: { agentId: string; p: Presence; 
   );
 }
 
-function Presences({ agentId, orgId }: { agentId: string; orgId: string }) {
+function Presences({ agentId }: { agentId: string }) {
   const q = usePresences(agentId);
   const connectors = useConnectors();
   if (q.isPending) return <Loading />;
@@ -230,7 +208,7 @@ function Presences({ agentId, orgId }: { agentId: string; orgId: string }) {
           ))}
         </ul>
       )}
-      <AttachForm agentId={agentId} orgId={orgId} presences={q.data.items} />
+      <AttachForm agentId={agentId} />
     </section>
   );
 }
@@ -363,10 +341,10 @@ function Reach({ agentId, canOwn }: { agentId: string; canOwn: boolean }) {
   );
 }
 
-export function AgentChannelsTab({ agentId, orgId, canOwn }: { agentId: string; orgId: string; canOwn: boolean }) {
+export function AgentChannelsTab({ agentId, canOwn }: { agentId: string; orgId?: string; canOwn: boolean }) {
   return (
     <div className="space-y-6">
-      <Presences agentId={agentId} orgId={orgId} />
+      <Presences agentId={agentId} />
       {canOwn ? <Bindings agentId={agentId} /> : null}
       <Reach agentId={agentId} canOwn={canOwn} />
     </div>

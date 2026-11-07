@@ -146,6 +146,26 @@ pub struct Presence {
     pub created_at: DateTime<Utc>,
 }
 
+/// One integration an agent may attach a presence to (C-39): metadata only.
+#[derive(Serialize, ToSchema)]
+pub struct PresenceOption {
+    pub integration_id: Uuid,
+    pub connector_id: String,
+    pub connector_name: String,
+    pub tenant_label: String,
+    pub modes: Vec<PresenceMode>,
+    /// `{ dedicated?: { fields: FormField[] } }`.
+    #[schema(value_type = Object)]
+    pub presence_setup: serde_json::Value,
+    /// The agent already has a presence on this integration.
+    pub attached: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct PresenceOptionList {
+    pub items: Vec<PresenceOption>,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct PresenceList {
     pub items: Vec<Presence>,
