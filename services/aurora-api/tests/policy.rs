@@ -468,3 +468,33 @@ async fn warnings_shadowed_rule() {
     assert_eq!(v["items"][0]["code"], "shadowed");
     assert_eq!(v["items"][0]["rule_logical_id"], narrow);
 }
+
+/// SEC-32: publishing a policy is audited.
+#[tokio::test]
+async fn sec32_policy_publish_is_audited() {
+    let w = world().await;
+    let rule = json!([{"name": "r1", "action": "allow", "targets": net("a.example.com")}]);
+    let (s, v) = w.put(&w.wsu("/draft"), 0, "none", rule).await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.wsu("/publish"),
+            &w.owner,
+            Some(json!({"revision": 1})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let mut n = 0i64;
+    for _ in 0..100 {
+        n = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action='policy.publish'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+        if n > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(n, 1);
+}

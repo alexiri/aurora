@@ -539,3 +539,30 @@ fn bootstrap_connector_tokens_are_validated_and_resolved() {
         assert!(e.has_key("AURORA_BOOTSTRAP_CONNECTOR_TOKENS"), "{bad}: {e}");
     }
 }
+
+/// SEC-13: the hook host is configured with its internal secret only: no database
+/// URL, keyring, signing key or session keys are needed, and none are carried.
+#[test]
+fn sec13_hookhost_holds_no_keys_or_database_credentials() {
+    let only_internal = [("AURORA_INTERNAL_SECRET".to_string(), KEY.to_string())];
+    let raw = load(None, only_internal.into_iter()).unwrap();
+    let c = raw
+        .hookhost_config()
+        .expect("hookhost needs only the internal secret");
+    let dbg = format!("{c:?}");
+    for needle in [
+        "database",
+        "encryption",
+        "signing",
+        "runner_session",
+        "postgres://",
+    ] {
+        assert!(!dbg.to_lowercase().contains(needle), "{needle} in {dbg}");
+    }
+    // Even with every secret present in the environment, none leaks into its config.
+    let raw = load_with("", &[]).unwrap();
+    let dbg = format!("{:?}", raw.hookhost_config().unwrap());
+    for needle in ["pw@db", KEY, "aur_abc", "aun_abc"] {
+        assert!(!dbg.contains(needle), "{needle} in {dbg}");
+    }
+}

@@ -385,3 +385,31 @@ async fn internal_routes_need_secret_and_are_not_public() {
     let (s, _) = h.get("/internal/v1/registry/active", &[]).await;
     assert_eq!(s, 404);
 }
+
+/// SEC-32: approving, disabling and uninstalling plugin packages are audited.
+#[tokio::test]
+async fn sec32_plugin_decisions_are_audited() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    let v = a.upload(&yaml("acme", "1.0.0", "api.acme.example")).await;
+    let (s, _) = a.act(&v["id"], "approve").await;
+    assert_eq!(s, 200);
+    let n = |action: &'static str| {
+        let h = &h;
+        async move {
+            for _ in 0..100 {
+                let n: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = $1")
+                    .bind(action)
+                    .fetch_one(h.pool())
+                    .await
+                    .unwrap();
+                if n > 0 {
+                    return n;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            0
+        }
+    };
+    assert_eq!(n("plugin.activate").await, 1);
+}

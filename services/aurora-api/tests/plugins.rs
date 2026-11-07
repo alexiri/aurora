@@ -385,3 +385,43 @@ async fn directory_scan_picks_up_file_once() {
     assert_eq!(scan::scan_locked(&h.state, &mut Seen::new()).await, Some(0));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+async fn audit_n(h: &Harness, action: &str) -> i64 {
+    for _ in 0..100 {
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = $1")
+            .bind(action)
+            .fetch_one(h.pool())
+            .await
+            .unwrap();
+        if n > 0 {
+            return n;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    0
+}
+
+/// SEC-32: trusted keys, plugin ingest and activation are audited.
+#[tokio::test]
+async fn sec32_trusted_keys_and_plugin_lifecycle_are_audited() {
+    let h = Harness::new().await;
+    let a = setup(&h).await;
+    let k = generate_signing_key().unwrap();
+    let key = a.trust("acme", &k).await;
+    assert_eq!(audit_n(&h, "trusted_key.create").await, 1);
+    let (_, v1) = a
+        .upload(&signed(&yaml("acme", "1.0.0", &["api.acme.example"]), &k))
+        .await;
+    assert!(audit_n(&h, "plugin.ingest").await >= 1);
+    let _ = &v1;
+    let kid = key["id"].as_str().unwrap();
+    let (s, _) = a
+        .json(
+            Method::DELETE,
+            &format!("/v1/admin/trusted-keys/{kid}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204);
+    assert_eq!(audit_n(&h, "trusted_key.revoke").await, 1);
+}

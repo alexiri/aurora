@@ -638,3 +638,19 @@ async fn shutdown_answers_503_and_abandons() {
     );
     assert_eq!(status_of(&env.pool, id).await, "abandoned");
 }
+
+/// SEC-03: an approval that expires unanswered never opens the secret.
+#[tokio::test]
+async fn sec03_expired_hold_never_opens_the_secret() {
+    let db = TestDb::new().await;
+    let env = start(
+        approval_env,
+        no_llm(),
+        db.pool().clone(),
+        Duration::from_millis(600),
+    )
+    .await;
+    let r = get(&env, "/x", "").await;
+    assert_eq!(r.json()["error"]["code"], "manual_approval_expired");
+    assert_eq!(env.gets.load(Ordering::SeqCst), 0);
+}

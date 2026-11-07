@@ -817,3 +817,85 @@ async fn condition_body_limit_is_configurable() {
     let big = start_with(mk, no_llm(), Some(32_768)).await;
     assert_eq!(post_status(&big, &payload).await, 200, "limit 32 KiB");
 }
+
+/// SEC-03: a rate-limited request never opens the secret (only the admitted ones do).
+#[tokio::test]
+async fn sec03_rate_limited_request_never_opens_the_secret() {
+    let env = start(
+        |w, v| {
+            let s = secret(w, "s", json!({"kind":"bearer"}), v);
+            let mut rows = Rows::default();
+            rows.ws.rules.push(rule(
+                "slow",
+                "allow",
+                json!([{"type":"secret","id":s.id}]),
+                json!({"rate_limit":{"count":1,"per":"minute"}}),
+            ));
+            rows.secrets.push(s);
+            rows
+        },
+        no_llm(),
+    )
+    .await;
+    assert_eq!(get(&env, "/x", "").await.status, 200);
+    assert_eq!(env.gets.load(Ordering::SeqCst), 1);
+    let r = get(&env, "/x", "").await;
+    assert_eq!(r.status, 429, "{}", r.body);
+    assert_eq!(
+        env.gets.load(Ordering::SeqCst),
+        1,
+        "a rate-limited request must not open the credential"
+    );
+}
+
+/// SEC-04(a): a granted credential is injected only on the host/path its pattern serves.
+#[tokio::test]
+async fn sec04_injection_only_where_the_secret_pattern_serves() {
+    // Host pattern names a different host: never opened, never injected.
+    let env = start(
+        |w, v| {
+            let mut s = secret(w, "s", json!({"kind":"bearer"}), v);
+            s.host_pattern = "other.example.invalid".into();
+            let mut rows = Rows::default();
+            rows.ws.rules.push(allow_secret(&s));
+            rows.secrets.push(s);
+            rows
+        },
+        no_llm(),
+    )
+    .await;
+    let r = get(&env, "/x", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        !r.body.to_lowercase().contains("authorization:"),
+        "{}",
+        r.body
+    );
+    assert_eq!(env.gets.load(Ordering::SeqCst), 0);
+    // Path pattern: served path injects, other path does not.
+    let env = start(
+        |w, v| {
+            let mut s = secret(w, "s", json!({"kind":"bearer"}), v);
+            s.path_pattern = Some("/api/**".into());
+            let mut rows = Rows::default();
+            rows.ws.rules.push(allow_secret(&s));
+            rows.secrets.push(s);
+            rows
+        },
+        no_llm(),
+    )
+    .await;
+    let r = get(&env, "/other", "").await;
+    assert!(
+        !r.body.to_lowercase().contains("authorization:"),
+        "{}",
+        r.body
+    );
+    assert_eq!(env.gets.load(Ordering::SeqCst), 0);
+    let r = get(&env, "/api/x", "").await;
+    assert!(
+        r.body.contains("authorization: Bearer s3cr3t"),
+        "{}",
+        r.body
+    );
+}

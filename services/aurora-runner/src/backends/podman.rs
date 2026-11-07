@@ -553,4 +553,59 @@ mod tests {
         assert!(!valid_volume_name("a:b"));
         assert!(!valid_volume_name("../x"));
     }
+
+    /// SEC-26 / SEC-34: the rendered container spec is hardened (no live podman needed).
+    #[test]
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
+    fn rendered_spec_is_hardened() {
+        use aurora_protocol::common::SecretString;
+        use aurora_protocol::runner::{SandboxResources, SandboxSpec};
+        let s = PodmanSettings {
+            socket: Some("/dev/null".into()),
+            network: "aurora-sandbox".into(),
+            hosts: BTreeMap::from([("aurora-gateway".into(), "10.89.250.2".into())]),
+            installation: "t".into(),
+            allow_external_network: false,
+            max_sandboxes: 4,
+            capacity_wait: Duration::ZERO,
+        };
+        // Connecting is lazy: building the client needs no daemon.
+        let docker =
+            Docker::connect_with_unix("/dev/null", 5, bollard::API_DEFAULT_VERSION).unwrap();
+        let b = PodmanBackend { docker, s };
+        let req = StartRequest {
+            sandbox_id: Uuid::nil(),
+            boot_id: Uuid::nil(),
+            spec: SandboxSpec {
+                image: "img".into(),
+                env: vec![("AURORA_AGENT_HANDLE".into(), "probe".into())],
+                boot_secret: SecretString::new("BOOTSECRETVALUE"),
+                home_ref: "aurora-home-x".into(),
+                home_gib: 1,
+                resources: SandboxResources {
+                    cpu_millis: 500,
+                    memory_mib: 512,
+                    pids: 256,
+                },
+                labels: BTreeMap::new(),
+            },
+        };
+        let h = b.host_config(&req);
+        assert_eq!(h.cap_drop, Some(vec!["ALL".to_owned()]));
+        assert!(h.cap_add.is_none());
+        assert_eq!(h.security_opt, Some(vec!["no-new-privileges".to_owned()]));
+        assert_eq!(h.privileged, Some(false));
+        assert_eq!(h.readonly_rootfs, Some(true));
+        assert_eq!(h.memory, Some(512 * 1024 * 1024));
+        assert_eq!(h.memory_swap, h.memory);
+        assert_eq!(h.pids_limit, Some(256));
+        assert_eq!(h.nano_cpus, Some(500_000_000));
+        assert_eq!(h.network_mode.as_deref(), Some("aurora-sandbox"));
+        // No host mounts except the named home volume.
+        assert_eq!(h.binds, Some(vec!["aurora-home-x:/workspace".to_owned()]));
+        assert_ne!(h.pid_mode.as_deref(), Some("host"));
+        assert_ne!(h.ipc_mode.as_deref(), Some("host"));
+        assert_ne!(SANDBOX_UID_GID, "0:0");
+        assert!(!SANDBOX_UID_GID.starts_with("0:") && !SANDBOX_UID_GID.starts_with("root"));
+    }
 }

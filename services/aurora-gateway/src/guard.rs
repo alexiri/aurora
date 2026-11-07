@@ -300,4 +300,25 @@ mod tests {
         assert!(g.check_ip(ip("127.0.0.1"), "x", 4102).is_err());
         assert!(g.check_ip(ip("127.0.0.1"), "x", 4103).is_ok());
     }
+
+    /// SEC-06: the addresses returned for dialling are exactly the judged ones
+    /// (a name is judged by what it resolved to, never by the name alone).
+    #[tokio::test]
+    async fn resolved_addresses_are_judged_and_returned() {
+        let strict = g(&[]);
+        assert!(matches!(
+            strict.resolve("localhost", 80).await,
+            Err(DialError::Refused(_))
+        ));
+        assert!(matches!(
+            strict.resolve("127.0.0.1", 80).await,
+            Err(DialError::Refused(_))
+        ));
+        let lax = g(&["127.0.0.0/8", "::1"]);
+        let got = lax.resolve("localhost", 80).await.unwrap();
+        assert!(!got.is_empty() && got.iter().all(|a| a.ip().is_loopback() && a.port() == 80));
+        // Internal services are never allow-listable, even by name.
+        let own = g(&["127.0.0.0/8", "localhost"]);
+        assert!(own.resolve("localhost", 4102).await.is_err());
+    }
 }
