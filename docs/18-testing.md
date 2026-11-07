@@ -156,6 +156,13 @@ done when its tests exist, pass in CI, and the security invariants it touches
   change re-render.
 - Schedules: coalescing missed fires, gate quiet/wake/fail, authorization
   disable, failure disable.
+- (phase 2, RFE-021) Automation continuity: reassign (authority, target must be an
+  active member with `can_use`, `re_enable`), bulk reassign, `reassign_to` on
+  member removal/suspension and workspace-binding removal commits or rolls back with
+  the removal, offboarding views (org and workspace scope) match what actually gets
+  disabled by the removal, anchored schedules/webhooks keep firing after the
+  creator is removed and stop when no active owner exists or the agent is frozen,
+  members and agents cannot anchor, audit rows (`automation.reassign`) are atomic.
 - Security probes inside a real sandbox (SEC-01, 02, 09, 26, 34).
 
 ### Channels

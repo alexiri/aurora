@@ -61,7 +61,10 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 
 ### Organization (`/o/<org>/*`) — owners/admins unless noted
 - **Workspaces** (all members: those they can access; owners/admins: all).
-- **Members**: list, roles, suspend/remove, invitations.
+- **Members**: list, roles, suspend/remove, invitations. (phase 2, RFE-021)
+  Suspend/remove first opens the **offboarding view** — "Removing Alice disables
+  these N schedules and webhooks" with the list, a "Reassign to…" picker (a member
+  or the workspace) and a Skip option; the removal then carries `reassign_to`.
 - **Policy**: org rules editor (draft/publish).
 - **Credentials**: org secrets, org LLM keys, org app connections, OAuth clients.
 - **Apps**: app availability posture and allow-list.
@@ -125,7 +128,12 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   - **Memory** — list, editor with revisions, restore, redact, search; banner
     "Memories in this workspace are written in <Language>".
   - **Skills** — editor with file tree, executable bit, size meter.
-  - **Schedules**, **Webhooks** (URL shown once on create/rotate),
+  - **Schedules**, **Webhooks** (URL shown once on create/rotate; phase 2,
+    RFE-021: each item shows its owner — a person or "Workspace" — with
+    **Reassign…** (picker of members who can use the workspace; re-enable option
+    for items disabled for authorization) and, for owners, an **Anchor to
+    workspace** switch with a warning that the item will outlive any single
+    member),
     **Peers** (agent links and peer tasks).
   - **Freeze** (phase 2, RFE-006) — a "Freeze agent" button on the agent header
     (reason required, confirm dialog listing the effects); a frozen agent shows a

@@ -323,6 +323,7 @@ conversation and hour; best-effort).
 | Delete a conversation; redact transcript events; export a conversation (phase 2, RFE-010) | `direct`: its user or `can_own`; other kinds: `can_own` (redaction also: the event's turn author; export: not the turn author); always subject to `can_see_conversation` |
 | Org retention settings (phase 2, RFE-010/015) | org `owner`/`admin` (`retention.update`, security-critical) |
 | Read activity (request log) of the workspace | `can_use`; (phase 1, RFE-009) rows whose conversation is a `direct` conversation the caller cannot see are **omitted** (owners see all) |
+| Reassign a schedule/webhook creator, set its anchor, bulk reassign; read the offboarding view of a workspace binding (phase 2, RFE-021) | `can_own` (the offboarding view of an **org** member: org `owner`/`admin`) |
 | Freeze / unfreeze an **agent** (phase 2, RFE-006) | `can_own`; lifting a freeze imposed by a higher authority needs that authority (below) |
 | Freeze / unfreeze a **workspace** (phase 2, RFE-006) | `can_own` (org owners/admins included); same lifting rule |
 | Freeze / unfreeze an **organization** (phase 2, RFE-006) | org `owner`, or instance admin |
@@ -337,6 +338,46 @@ Schedules, webhooks, peer tasks and reach decisions store their **creator**.
 At every fire the access law is re-checked for that creator on the agent's
 workspace; if it fails the item is disabled with `disabled_reason =
 authorization` and the origin conversation receives a notice.
+
+**Keeping automations alive across offboarding (phase 2, RFE-021, D-58).** Phase 0
+was correct as a default but destructive in practice: when an employee left, every
+schedule and webhook they had set up silently died, with a conversation notice as
+the only warning and no way to re-anchor an item except recreating it. From
+phase 2, for **schedules and webhooks** (peer tasks are 24 h-bounded and reach
+decisions are not automations; both are unchanged):
+
+- **(a) Reassignment.** A `can_own` user of the agent's workspace may change an
+  item's `creator_user_id` to any **active org member who `can_use` the
+  workspace** (422 `new_creator_unauthorized` otherwise); the new creator is the
+  fire-time authority from then on. Reassigning an item disabled for
+  `authorization` can re-enable it in the same call (`re_enable: true`, clears
+  `disabled_reason`, recomputes `next_fire_at`). Audited `automation.reassign`
+  (security-critical, `04 §Audit`: kind, id, old and new creator). Bulk form for
+  offboarding: all items of one creator in a workspace in one transaction.
+- **(b) Offboarding view.** Before removing or suspending a person, an owner can
+  ask *what would break*: `GET /v1/orgs/{org}/members/{user}/offboarding` (org
+  `owner`/`admin`; every workspace of the org) and
+  `GET /v1/workspaces/{ws}/members/{user}/offboarding` (`can_own`; for removing the
+  person's workspace binding). It lists the enabled schedules and webhooks whose
+  fire-time authority is that user (`would_disable`), plus open peer tasks and a
+  count of API keys that would die. The removal routes accept `reassign_to`
+  (a user id or `"workspace"`) to reassign everything **atomically** in the same
+  transaction as the removal; the dashboard shows the list and offers the
+  reassignment before it confirms (*"Removing Alice disables these N schedules and
+  webhooks — reassign?"*).
+- **(c) Workspace-anchored automations.** A schedule or webhook has an `anchor`:
+  `creator` (default; the rule above) or **`workspace`**, whose authority is
+  **"an active owner exists"**: at every fire/delivery the check is that the
+  workspace has at least one active user with `can_own` (workspace `owner`, or org
+  owner/admin — an org always has an active owner while it is active, so an
+  anchored item survives any individual offboarding and dies only with the org's
+  or workspace's existence, a suspension of every owner, or a freeze). Only a
+  `can_own` user may create an anchored automation or switch an item's anchor; **an
+  agent can never create or anchor one through its tools** (a prompt-injected agent
+  must not be able to mint immortal automations) — tool-created items are always
+  `creator`-anchored to the turn's speaker. `creator_user_id` stays on anchored
+  items as provenance only. The dashboard labels them "Workspace" and the audit row
+  records the anchor change (`automation.reassign`, `to: workspace`).
 
 ## Freeze (phase 2, RFE-006, D-50)
 

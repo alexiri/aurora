@@ -442,6 +442,11 @@ next real occurrence after `now()` (missed windows coalesce into one late
 fire); if the run conversation has an active turn → `skipped_busy`; else
 create the turn (prompt behind a "Scheduled task: <name>" header) and a
 `schedule_runs` row; clear the lease.
+- (phase 2, RFE-021) **Authority and anchor**: an item's fire-time authority is its
+  creator (`anchor = creator`, default) or "an active owner exists" (`anchor =
+  workspace`), `04 §Fire-time authority`; reassignment, bulk reassignment and the
+  offboarding view are specified there. A schedule disabled for `authorization`
+  tells the origin conversation "reassign it in the dashboard or recreate it".
 - `SCHEDULE_FAILURE_DISABLE` consecutive failures → disabled (`failures`) with a
 notice in the origin conversation.
 - The run report: when the run turn finishes, a short `notice` with the outcome
@@ -455,7 +460,8 @@ content type; stored only inside the created turn's text as a fenced,
 clamped block labelled as untrusted external data.
 - Optional verification (`hmac_sha256` over the raw body with a stored
 secret, constant-time compare) → 401 on mismatch.
-- Disabled or creator lost access → 410 / 403 and a `webhook_deliveries` row.
+- Disabled or creator lost access (phase 2, RFE-021: for `anchor = workspace`, no
+  active owner) → 410 / 403 and a `webhook_deliveries` row.
   (phase 2, RFE-006) Effectively frozen agent → 410 `frozen` and a delivery row
   `paused` (reason `frozen`); the webhook stays enabled.
 - Accepted → turn in the webhook's run conversation with the stored

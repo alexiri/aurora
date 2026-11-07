@@ -1241,3 +1241,8 @@ Pending deletions of harness session files after a conversation delete or a `res
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | approval_email_enabled | bool not null default true | per-user opt-out of approval e-mails | 2 (RFE-011a) |
+
+#### `schedules`, `webhooks` (anchor)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| anchor | text not null CHECK in (`creator`,`workspace`) default `creator` | fire-time authority: the creator's access (`creator`) or "an active owner exists" (`workspace`); `creator_user_id` stays as provenance (`04 §Fire-time authority`) | 2 (RFE-021) |

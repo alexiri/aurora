@@ -82,6 +82,7 @@ runs), configured external secret stores.
 | SEC-48 | (phase 2, RFE-015) Attachment storage is bounded per organization: every path that stores attachment bytes (upload, connector file fetch, agent `send_file`) is refused when it would exceed the org quota, and bytes past the org's retention window are purged; one tenant cannot grow the database without limit. | 10, 05, 13 | API tests: 422 at quota for each path, quota counter vs sum reconciliation, retention purge and 410, orphan-blob sweep, instance ceilings |
 | SEC-49 | (phase 2, RFE-011a) Approval deadlines are bounded (`APPROVAL_TIMEOUT_MIN` … `approvals.max_timeout_secs`, always below the turn ceiling); a turn blocked on a pending approval is exempt from stall failure only while the approval is pending and never beyond `TURN_CEILING`; approval notifications (e-mail, browser) carry only sanitized titles and a dashboard link, never request bodies, summary fields or decision links, and reach only users who may decide and see the approval. | 06, 07, 10, 14 | gateway hold tests with per-rule timeouts and expiry; stall-exemption tests (pending approval, resolved, expired, abandoned, ceiling still fires); notification tests (deciders only, visibility intersection, no body/links, rate limit, idempotency across two replicas) |
 | SEC-50 | (phase 2, RFE-017) Every authenticated management-API request is rate limited per principal (general and per-class buckets, so expensive routes such as simulate, uploads, search and export are stricter) and per organization, and concurrent streams are capped; a refused request gets 429 with `retry-after` and costs nothing downstream. | 05, 04 | API tests: each class limit, per-principal isolation (two keys, same user's sessions share), org bucket, stream cap, `retry-after` accuracy, exempt routes, multiplier/overrides; load test shows a hammering key does not slow a second principal |
+| SEC-51 | (phase 2, RFE-021) Offboarding cannot silently kill or silently re-home automations: reassignment and anchor changes are `can_own` only, go to an authorized active member (or the workspace), and are audited atomically; workspace-anchored automations are authorized by "an active owner exists" and can be created only by owners, never by an agent's tools; fire-time authority is still enforced at every fire for every item. | 04, 05, 10 | API tests: reassign authorization and `new_creator_unauthorized`, re-enable, bulk and `reassign_to` atomicity with removal (rollback leaves both unchanged), offboarding view accuracy, anchored item survives creator removal and dies with no active owner, tool-created automation cannot be anchored, audit rows |
 
 ## Residual risks (accepted, documented to operators)
 
@@ -134,6 +135,11 @@ runs), configured external secret stores.
   conversation, model-provider logs, backups, and exports already downloaded.
   Redaction does not alter what the agent's live context remembers unless
   `reset_session` is used.
+- **Anchored automations outlive their authors** (phase 2, RFE-021): by design a
+  workspace-anchored schedule or webhook keeps running after every individual
+  member is gone. Only owners can create them, they are labelled, and the
+  offboarding and audit views list them; a freeze or the removal of the agent
+  stops them.
 - **Per-replica rate limits**: with N gateways a limit can be exceeded up to N×; the same holds for the management-API limiter (phase 2, RFE-017), and users behind one NAT share the unauthenticated per-IP limits.
 - **Connectors see their platform's traffic and credentials**: operators choose
   which connectors to run. A connector also names the speaker/clicker platform
