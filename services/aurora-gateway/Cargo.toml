@@ -67,3 +67,8 @@ aurora-secrets = { workspace = true, features = ["memory-store"] }
 aurora-testkit = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
+
+[[bench]]
+name = "gateway_perf"
+path = "benches/gateway_perf.rs"
+harness = false
