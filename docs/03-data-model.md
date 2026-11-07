@@ -1184,3 +1184,17 @@ Pending deletions of harness session files after a conversation delete or a `res
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | `settings.retention` | `{ "conversations_days"?: int\|null, "attachments_days"?: int\|null, "attachment_quota_mib"?: int\|null }` | per-org retention (RFE-010) and attachment limits (RFE-015); null/absent = keep forever / unlimited. No column: `settings` is `jsonb`. | 2 (RFE-010/015) |
+
+#### `attachments`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| purged_at | timestamptz null | bytes deleted (retention or explicit delete); the row stays for the transcript chip; content GET answers 410 | 2 (RFE-015) |
+| purge_reason | text null CHECK in (`retention`,`deleted`) | | 2 (RFE-015) |
+| `failure_reason` | (existing column) gains the value `quota_exceeded` | open vocabulary, no schema change | 2 (RFE-015) |
+
+#### `org_storage_usage` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| org_id | uuid pk FK→organizations (cascade) | | 2 (RFE-015) |
+| attachment_bytes | bigint not null default 0 | transactional counter of non-purged attachment bytes; reconciled daily from `attachments` | 2 (RFE-015) |
+| updated_at | timestamptz not null | churn column | 2 (RFE-015) |

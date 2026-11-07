@@ -194,6 +194,7 @@ claim-based and safe to run everywhere.
 | Action-approval expiry | every 60 s | idempotent |
 | Attachment pending sweep (`ATTACH_PENDING_TTL`) | hourly | idempotent |
 | Conversation retention sweep (phase 2, RFE-010): delete conversations past the org window through the delete path; blob-orphan sweep | daily | singleton |
+| Attachment sweep (phase 2, RFE-015): purge attachment bytes past the org window, remove orphan blobs, reconcile `org_storage_usage`, quota notices | daily | singleton |
 | Request-log partition maintenance and retention | daily | singleton |
 | Retention pruning (inbox/ops/cards > `CHANNEL_LEDGER_RETENTION`, used action tokens, expired email/CLI tokens, sessions, expired context credentials) | daily | singleton |
 | Runtime daily rollup | hourly | singleton |
@@ -326,6 +327,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/workspaces/{ws}/access`; PUT/DELETE `/v1/workspaces/{ws}/access/{user}` | S/K | bindings |
 | GET/POST `/v1/workspaces/{ws}/api-keys` | S (POST: SO) | workspace keys |
 | GET `/v1/workspaces/{ws}/audit` | S/K | same filters |
+| GET `/v1/orgs/{org}/storage` | S/K | (phase 2, RFE-015) org `owner`/`admin`: usage vs quota, breakdown by workspace and direction |
 | GET/PUT `/v1/orgs/{org}/retention` | S/K | (phase 2, RFE-010/015) org `owner`/`admin`; `{ conversations_days?, attachments_days?, attachment_quota_mib? }`, `null` = none; 422 `retention_invalid` / `retention_above_instance_maximum` |
 | GET `/v1/workspaces/{ws}/activity` | S/K | request log, filters: agent, conversation, decision, host, app |
 | GET `/v1/workspaces/{ws}/usage` | S/K | runtime + tokens |
@@ -414,8 +416,9 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/conversations/{id}/stream` | S/K | SSE |
 | POST `/v1/conversations/{id}/messages` | S/K | `{ text, attachment_ids? }` → `{ turn }` or `{ followup }` |
 | POST `/v1/turns/{id}/abort`, `/v1/turns/{id}/send-now` | S/K | |
-| POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment |
-| GET `/v1/attachments/{id}/content` | S/K | `Content-Disposition: attachment` always |
+| POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment; (phase 2, RFE-015) 422 `attachment_quota_exceeded` when the org quota would be exceeded |
+| GET `/v1/attachments/{id}/content` | S/K | `Content-Disposition: attachment` always; (phase 2, RFE-015) 410 `attachment_purged` after retention/delete |
+| DELETE `/v1/attachments/{id}` | S/K | (phase 2, RFE-015) purge the bytes now; uploader or `can_own` |
 
 ### Memory, skills, schedules, webhooks, links
 | Method & path | Auth | Purpose |
@@ -451,6 +454,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET/POST/DELETE `/v1/admin/trusted-keys` | IA | |
 | GET/POST/DELETE `/v1/admin/connectors`; POST `…/{id}/approve`, `…/{id}/token` | IA | provision token, approve manifest |
 | GET/POST/DELETE `/v1/admin/runners`; POST `…/{id}/token` | IA | |
+| GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`) |
 | GET `/v1/admin/registry/snapshot` | IA | active snapshot (JSON) |
 | POST `/v1/admin/orgs/{org}/freeze` `{ reason }`; POST `/v1/admin/orgs/{org}/unfreeze` | IA | (phase 2, RFE-006) operator kill-switch; `frozen_authority = instance_admin`; org data stays inaccessible |
 | GET/POST `/v1/admin/oauth-clients`; PATCH/DELETE `/v1/oauth-clients/{id}` | IA | instance-level OAuth clients (`08 §OAuth clients`) |

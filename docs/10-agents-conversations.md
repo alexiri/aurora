@@ -285,6 +285,42 @@ caps `ATTACH_OUT_*`; produces an `attachment` event and, for threads, a
 - Storage through the **BlobStore** trait (`put`, `get`, `delete`; backend key
 per row). Phase 0 backend: `postgres` (`blobs` table). An S3-compatible
 backend is a later registry entry.
+- **Retention, quota and storage visibility (phase 2, RFE-015, D-54).** Phase 0
+  bounded single files and one conversation's daily output but nothing in total:
+  attachment bytes lived in a Postgres `bytea` table forever.
+  - **Quota.** Each org has an attachment **storage quota** (`attachment_quota_mib`
+    in `organizations.settings.retention`, default `attachments.default_org_quota_mib`
+    = 10 GiB, at most `attachments.org_quota_mib_max`; `0` in the instance setting
+    means unlimited). Usage is the sum of `size_bytes` of the org's non-purged
+    attachments (any direction or status), kept in a transactional counter
+    (`org_storage_usage`) updated with every insert/purge and reconciled daily.
+    Every path that stores bytes checks `used + size ≤ quota` **before** accepting
+    them: dashboard/API upload → **422 `attachment_quota_exceeded`**
+    (`details: { used_mib, quota_mib }`); a connector `file.fetch` → the attachment
+    is `failed` with `failure_reason = quota_exceeded` and the person gets a
+    platform-voice notice; the agent's `send_file` (runner `POST /attachments`) →
+    tool error `attachment_quota_exceeded`. At 80 % and 100 % the org's owners get a
+    dashboard notice (and the e-mail notification channel of RFE-011a when enabled).
+  - **Retention.** `attachments_days` (optional, default none; same bounds and
+    instance ceiling `attachments.days_max` as conversations, `RETENTION_MIN_DAYS`..
+    `RETENTION_MAX_DAYS`) purges attachment **bytes** older than the window: the
+    blob is deleted, the row stays (`purged_at`, `purge_reason = retention`) so
+    transcripts still show the chip as "expired"; `GET /v1/attachments/{id}/content`
+    then answers **410 `attachment_purged`**. Copies already delivered into a
+    sandbox inbox are the agent's files and are not touched.
+  - **Delete one.** `DELETE /v1/attachments/{id}` purges the bytes now
+    (`purge_reason = deleted`): by the attachment's uploader or `can_own`, always
+    subject to `can_see_conversation` (`04`); audited best-effort (`attachment.delete`).
+  - **Visibility.** `GET /v1/orgs/{org}/storage` (org `owner`/`admin`) returns usage
+    vs quota, retention settings and a breakdown by workspace and direction;
+    `GET /v1/admin/storage` (instance admin) returns the instance totals: blob bytes,
+    attachment bytes and counts per org (top 50), and the on-disk size of the big
+    tables (`blobs`, `attachments`, `transcript_events`, `request_log`,
+    `audit_log`). Metrics: `aurora_blob_bytes`, `aurora_org_attachment_bytes{org}`
+    (top 20 orgs, others summed), `aurora_attachment_quota_rejections_total`.
+  - **Sweep.** The daily singleton **attachment sweep** (`05 §Background jobs`):
+    purges by retention, removes orphan blobs (no attachment row), recomputes the
+    usage counters (fixing drift), and raises the quota notices.
 - Filenames sanitized to `[A-Za-z0-9._-]`, ≤128; downloads always
 `Content-Disposition: attachment` with `X-Content-Type-Options: nosniff`.
 

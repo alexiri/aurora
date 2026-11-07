@@ -220,6 +220,8 @@ overridden by the named configuration key (`15`).
 | `ATTACH_OUT_DAILY_PER_CONVERSATION` | 200 MiB | — | 10 |
 | `ATTACH_CAPTION_MAX` | 500 chars | — | 10 |
 | `ATTACH_PENDING_TTL` | 24 h | — | 10 |
+| `ATTACH_ORG_QUOTA_DEFAULT` / `ATTACH_ORG_QUOTA_MAX` | (phase 2, RFE-015) 10 GiB / 50 GiB per org (`0` = unlimited) | `attachments.default_org_quota_mib` / `attachments.org_quota_mib_max` | 10 |
+| `ATTACH_QUOTA_NOTICE` | (phase 2, RFE-015) notices at 80 % and 100 % of the org quota | — | 10 |
 | `RETENTION_MIN_DAYS` / `RETENTION_MAX_DAYS` | (phase 2, RFE-010) 7 / 3 650 days (org conversation and attachment windows) | `retention.conversation_days_max` caps the upper bound | 10 |
 | `RETENTION_SWEEP_BATCH` | (phase 2, RFE-010) 200 conversations per transaction, ≤ 5 000 per org per run | — | 10 |
 | `EXPORT_MAX` | (phase 2, RFE-010) 256 MiB and 200 000 events per export | — | 10 |

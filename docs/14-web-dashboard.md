@@ -84,8 +84,10 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   toggling it needs a confirm dialog.
 - **Skills**: org skills editor.
 - **Retention** (phase 2, RFE-010/015): conversation and attachment windows,
-  attachment quota with the storage breakdown, validation against the instance
-  maximum.
+  attachment quota with the storage breakdown (by workspace and direction), a
+  usage bar with the 80 %/100 % notices, validation against the instance maximum.
+  Upload errors show "Your organization's attachment storage is full" with the
+  link to the usage page; expired attachments render as "expired by retention".
 - **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged), **Settings** (name, slug, members can create
   workspaces, limits), **Danger zone** (phase 2, RFE-006: **Freeze organization**
   for owners).
@@ -153,7 +155,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 
 ### Instance administration (`/admin/*`, instance admins only)
 Overview (versions, gateways, hook hosts, runners, connectors, active snapshot
-hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze action), Users, **Plugins** (installed packages, upload, pending approvals with a
+hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze action; RFE-015: a **Storage** page — blob/attachment bytes per org, big-table sizes), Users, **Plugins** (installed packages, upload, pending approvals with a
 permissions review screen showing publisher, version, signer, hooks, egress per
 hook, context variables, host claims, and the diff against the previously
 approved version; reject/disable/uninstall with orphan warnings), **Host

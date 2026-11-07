@@ -277,7 +277,9 @@ idempotent). Steps:
    include them in the turn text as a labelled, sanitized "earlier messages
    (untrusted)" block.
 9. **Files**: `file.fetch` each file (correlated), creating `bound`
-   attachments or `failed` ones with a reason.
+   attachments or `failed` ones with a reason (phase 2, RFE-015: `quota_exceeded`
+   when the org's attachment quota would be exceeded; the person is told in
+   platform voice and the turn still runs).
 10. **Turn**: create the turn (door `thread`, `source_event_id = event_id`,
     speaker). A turn already created by a crashed earlier attempt is found by
     `source_event_id` and not duplicated.

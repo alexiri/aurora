@@ -114,6 +114,8 @@ one new entry without activating it.
 | `events.delta_bus` | `notify` | api | (phase 1, RFE-016) `DeltaBus` implementation id; unknown id fails startup |
 | `events.delta_coalesce_ms` | 100 | api | (phase 1, RFE-016) delta coalescing window, 100–500 |
 | `retention.request_log_days` | 30 | api | |
+| `attachments.default_org_quota_mib`, `attachments.org_quota_mib_max` | 10240, 51200 | api | (phase 2, RFE-015) default and ceiling of an org's attachment storage quota (MiB; `0` = unlimited) |
+| `attachments.days_max` | — (no ceiling) | api | (phase 2, RFE-015) instance maximum for an org's attachment retention window |
 | `retention.conversation_days_max` | — (no ceiling) | api | (phase 2, RFE-010) instance maximum for an org's conversation retention window (tighten-only, 7..3650) |
 | `telemetry.otlp_endpoint` | — | all | optional tracing export |
 | `telemetry.log_level` | `info` | all | |
@@ -308,6 +310,16 @@ unrecoverable without the keyring.**
 Runner hosts: `max_sandboxes × sandbox memory + 1 GiB`. Held-awake sandboxes
 occupy a slot permanently: size for steady state, not peak. Postgres: modest;
 `request_log` dominates (≈300 bytes/request; partitioned and pruned).
+
+### Attachment storage (phase 2, RFE-015)
+
+Attachments live in Postgres (`blobs`, `bytea`) until the S3-compatible BlobStore
+exists, so they share the database's disk and backups. Budget for
+`Σ org quotas` (default 10 GiB each) in the worst case, expect real use to be far
+lower, and prefer short retention windows. `GET /v1/admin/storage` shows where the
+bytes are; the Postgres size alert should fire well before the disk is full
+(attachment growth is bounded per org by the quota, not globally — raise or
+lower `attachments.org_quota_mib_max` to bound the sum).
 
 ### Streaming fan-out ceiling (phase 1, RFE-016)
 

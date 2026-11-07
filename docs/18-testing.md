@@ -175,6 +175,17 @@ done when its tests exist, pass in CI, and the security invariants it touches
   markers, zip with attachments, `export_too_large`, authorization incl. an org
   admin exporting a user's direct conversation.
 
+### Attachment storage (phase 2, RFE-015)
+- Quota: upload, connector `file.fetch` (attachment `failed` `quota_exceeded` +
+  notice) and agent `send_file` (`attachment_quota_exceeded` tool error) refused at
+  the limit and accepted below it, concurrent uploads cannot overshoot by more than
+  one file, 80 %/100 % notices once each, instance ceiling on the org setting, `0`
+  unlimited.
+- Retention sweep: bytes purged and row kept (`purged_at`), content 410, delivered
+  sandbox copies untouched; orphan blobs removed; counter reconciled after injected
+  drift; breakdown endpoints (`/v1/orgs/{org}/storage`, `/v1/admin/storage`) agree
+  with the table sums and are authorization-checked.
+
 ### Identity
 - Permission matrix test generated from `04 §Permission matrix` (every route ×
   role), suspended members, workspace key confinement, CSRF, OIDC against a
