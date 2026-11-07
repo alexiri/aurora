@@ -45,7 +45,7 @@ Acceptance:
 - `podman compose up` starts all services healthy.
 
 ### M1 — Identity, tenancy, API skeleton, dashboard shell
-Scope: `04` completely (email/password, verification, reset, OIDC, sessions,
+Scope: `04` completely (email/password, verification, reset — removed again in phase 1, RFE-004 —, OIDC, sessions,
 CSRF, API keys, CLI device login, invitations, roles, access law, permission
 matrix, instance admins, bootstrap command, audit); org/workspace CRUD and
 sign-up transaction including default policy generations and the **default
