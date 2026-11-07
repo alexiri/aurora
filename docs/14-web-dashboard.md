@@ -68,7 +68,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 - **Policy**: org rules editor (draft/publish).
 - **Credentials**: org secrets, org LLM keys, org app connections, OAuth clients.
 - **Apps**: app availability posture and allow-list.
-- **Governance** (`08 §11`):
+- **Governance** (`08 §11`; phase 2, RFE-025: a **BYO agents** panel — posture selector limited to values not below the instance floor, default source CIDR list, org default "require context credentials"; shown locked with "enforced by instance" when `byo.enabled = false`):
   - *Model access*: per instance endpoint — permitted or not, key scopes
     (organization / workspace), origin narrowing (e.g. Anthropic organization
     and workspace ids, LiteLLM teams), model allow-list; LLM posture
@@ -141,7 +141,15 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
     explanation when a higher authority froze it).
   - **Computer** — sandbox state, "awake because…" reasons, processes,
     restart; BYO agents instead show **Connect** (token regenerate, container
-    config, `aurora run` snippet, CA download).
+    config, `aurora run` snippet, CA download). (phase 2, RFE-025) The Connect
+    tab shows the effective BYO posture and, when set, its source ('Disabled by
+    organization'); regenerate is hidden for non-owners under `owners_only`; a
+    **Source restriction** card edits the agent's CIDR list (owners; shows the
+    inherited default list and the caller's current address as a hint; refuses
+    entries outside it) and a **Require context credentials** switch (explains
+    that every credentialed request will be attributed to a labelled run and that
+    `aurora run` mints one). The agent create dialog offers BYO only as the
+    posture allows and says "owners only" otherwise.
   - **Activity** — request log filtered to the agent.
 - **Approvals** — pending gateway holds and action approvals (live via SSE),
   history; batch actions. (phase 2, RFE-012) The page, the sidebar counter and the
@@ -164,7 +172,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   workspace's **open-lane posture** (locked with "enforced by org/instance"
   when a higher level is stricter). The simulate panel gets a lane switch
   (request / tunnel).
-- **Settings** — name, timezone, memory language (owners), access bindings (phase 2,
+- **Settings** — name, timezone, memory language (owners), (phase 2, RFE-025) **BYO posture** (tighten-only, shows the inherited value and its level), access bindings (phase 2,
   RFE-012: roles Owner / Approver / Member with a one-line explanation of each;
   invitation dialogs offer Member or Approver per workspace),
   workspace API keys, danger zone. (phase 2, RFE-006) The danger zone offers
@@ -206,7 +214,7 @@ token rotation, manifest approval with capability/setup-field diff), **Runners**
   default),
   simulate panel (method + URL + body → decision trace; phase 2, RFE-005: a
   "speaker" picker, default you, plus "no speaker"), identity picker labelling
-  `user` identities **"when <name> is speaking"** with the warning of `07`, warnings panel,
+  `user` identities **"when <name> is speaking"** with the warning of `07`, warnings panel (phase 2, RFE-025: a rule with empty identities that selects credentials shows "Applies to all agents, including agents created later" inline, and publishing lists such rules in its confirmation step),
   generation history with rollback.
 - **Plugin approval**: the permissions review is mandatory reading — approve is
   disabled until the reviewer expands every section (hooks, egress, context,

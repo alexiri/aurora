@@ -118,6 +118,21 @@ kind}` covering it. `app` and `network` targets never select credentials. The
 selection is a union and order-independent. **No selecting rule ⇒ nothing from
 the workspace/org pool is injected** — there is no "all credentials" default.
 
+(phase 2, RFE-025) **Broad rules arm future agents.** An allow rule with **empty
+identities** that names credentials selects them for *every* agent of its scope —
+including a BYO agent created minutes later by a member. That is intended for
+convenience rules but easy to forget, so the policy editor and
+`GET …/policy/warnings` flag it: warning `rule_applies_to_all_agents`
+(severity `warning`, `details.rule_id`, `details.targets`) — "applies to all
+agents, including agents created later" — for every enabled **hand-written** allow
+rule (org or workspace) with empty identities and at least one target of kind
+`connection`, `app_connections`, `secret` or `secrets` (derived rules always name
+their agent; `app` and `network` targets select nothing and do not warn). When the
+scope's effective BYO posture is `enabled` the warning's text adds "and by members
+creating BYO agents". The warning never blocks publishing; the editor shows it
+inline on the rule and in a confirmation step before publish listing the rules
+concerned.
+
 ## Evaluation
 
 ```
@@ -270,7 +285,8 @@ facts per tool (one per tool's first method/path example).
 - **Warnings** (`GET …/policy/warnings`; phase 2, RFE-005: rules with `user`
   identities carry the informational warning `user_rule_needs_speaker` — "matches
   only turns spoken by <name>; never schedules, webhooks, BYO or boot traffic" —
-  and, for allow rules that grant credentials, `user_rule_no_agent_fallback`):
+  and, for allow rules that grant credentials, `user_rule_no_agent_fallback`;
+  phase 2, RFE-025: `rule_applies_to_all_agents`, see *Injection selection*):
   rules shadowed by an earlier
   unconditional rule with identical/broader identities and targets; rules
   naming removed tools or lost host claims (inert); allow rules in workspace

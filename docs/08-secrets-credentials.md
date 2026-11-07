@@ -419,13 +419,19 @@ workspace secret it uses and records usage.
 
 | Kind | Prefix | Minted | Expires / revoked |
 |------|--------|--------|-------------------|
-| `agent` | `aug_` | BYO agent creation; `POST /v1/agents/{a}/token` (regenerate revokes the previous one and all of the agent's `context` credentials) | never expires; revoked on regenerate / agent delete |
+| `agent` | `aug_` | BYO agent creation; `POST /v1/agents/{a}/token` (regenerate revokes the previous one and all of the agent's `context` credentials) | never expires; revoked on regenerate / agent delete. (phase 2, RFE-025) refused while the effective BYO posture is `disabled` and, when the agent has an effective source list, outside it (§11.9) |
 | `boot` | `aub_` | each `sandbox.start` claim, bound to `boot_id` | revoked when the boot ends (stop report, failure, reconcile) |
 | `context` (hosted) | `auc_` | each `turn.deliver`, bound to agent, conversation, turn | `expires_at = now + TURN_CEILING + grace` at mint; set to `now + CONTEXT_CREDENTIAL_GRACE` when the turn ends |
 | `context` (BYO) | `auc_` | `POST /v1/agent/context-credentials` authenticated with the agent token: `{ "label": string ≤128, "conversation_id"?: uuid, "ttl_secs"?: 60..86400 (default 3600) }` | at `expires_at`; revoked with the agent token |
 
 Context credentials are for **attribution**, not isolation: conversations of
 one agent share a sandbox. The security boundary is the agent.
+
+(phase 2, RFE-025) **Governed BYO.** Creating a BYO agent or regenerating its
+token is subject to the BYO posture (`§11.9`); a BYO `agent`/`context` credential
+is admitted only from the effective source CIDR list of its agent; and an agent
+with `byo_require_context` may use its `aug_` token only to mint `auc_`
+credentials and for uncredentialed traffic.
 
 (phase 2, RFE-005) A hosted `context` credential also carries the turn's
 **speaker** (`gateway_credentials.speaker_user_id`, copied from
@@ -532,6 +538,8 @@ separate trust anchor for the proxy leg (curl `--proxy-cacert`, git
 adds `proxy_tls: "operator_certificate"` so the CLI uses the system roots for the
 outer leg. Client caveats are in `06 §Proxy listener TLS`.
 
+(phase 2, RFE-025) For a BYO agent the response adds `byo: { posture, source_cidrs: [..] | null, require_context: bool }` (effective values), so the CLI can warn "this host's address is not in the agent's source list" before the first request, and `notes: [..]` when a context credential is required (`§11.9`). Both routes answer 403 `byo_disabled` while the effective posture is `disabled`.
+
 ## 11. LLM and egress governance
 
 Phase: **0**. This section owns governance. It lets operators and org admins
@@ -543,9 +551,9 @@ above, enforced at several points.
 
 | Level | Who | Where stored | Can |
 |-------|-----|--------------|-----|
-| **Instance ceiling** | operator | configuration `[governance]` and `[[llm.endpoints]]` (`15`) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org (including, from phase 1, the **open-lane** minimum, RFE-003); set the known-LLM-hosts list and an egress baseline allow-list |
-| **Organization governance** | org owners/admins | `organizations.governance` (`03`) | permit a subset of endpoints; restrict key scopes per endpoint; narrow origin rules and model allow-lists; choose the LLM posture and the egress posture (never looser than the instance minimum); maintain the org egress allow-list |
-| **Workspace policy** | workspace owners | the workspace's policy generation (`07`) | block destinations with rules; set the workspace's own uncredentialed default to `block` with its own allow-list (it cannot loosen the org); (phase 1, RFE-003) set the workspace's **open-lane posture** (`enabled` \| `allowlist_only` \| `disabled`; it can only tighten) |
+| **Instance ceiling** | operator | configuration `[governance]`, `[byo]` (phase 2, RFE-025) and `[[llm.endpoints]]` (`15`) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org (including, from phase 1, the **open-lane** minimum, RFE-003); set the known-LLM-hosts list and an egress baseline allow-list; (phase 2, RFE-025) switch BYO agents off (`byo.enabled`) and set the BYO posture floor and default source CIDRs |
+| **Organization governance** | org owners/admins | `organizations.governance` (`03`) | permit a subset of endpoints; restrict key scopes per endpoint; narrow origin rules and model allow-lists; choose the LLM posture and the egress posture (never looser than the instance minimum); maintain the org egress allow-list; (phase 2, RFE-025) choose the org **BYO posture** and default BYO source CIDRs |
+| **Workspace policy** | workspace owners | the workspace's policy generation (`07`) | block destinations with rules; set the workspace's own uncredentialed default to `block` with its own allow-list (it cannot loosen the org); (phase 1, RFE-003) set the workspace's **open-lane posture** (`enabled` \| `allowlist_only` \| `disabled`; it can only tighten); (phase 2, RFE-025) set the workspace's **BYO posture** (`enabled` \| `owners_only` \| `disabled`; it can only tighten) |
 | **Agent grants and rules** | workspace owners | grants, rules (`07`) | decide which permitted keys each agent may use |
 
 Effective settings are computed, never stored: `effective = instance ∩ org`
@@ -575,6 +583,11 @@ for optimistic concurrency):
     "posture": "open | credentialed_only",
     "allowlist": [ { "host": "pypi.org" }, { "host": "*.githubusercontent.com", "path": "/**" } ],
     "open_lane": "enabled | allowlist_only | disabled"
+  },
+  "byo": {
+    "posture": "enabled | owners_only | disabled",
+    "source_cidrs": ["203.0.113.0/24", "2001:db8::/32"],
+    "require_context_credentials": false
   }
 }
 ```
@@ -599,6 +612,14 @@ Rules (422 `governance_invalid` / `governance_below_instance_minimum`):
   org's `egress.allowlist` (∪ the instance baseline) is the list tunnels are
   checked against (`06 §Open-lane admission and posture`).
 - Allow-list entries use the policy host/path patterns (`07`); ≤500 entries.
+- (phase 2, RFE-025) `byo` (absent = all defaults) follows §11.9: `posture`
+  (default absent = the instance floor) cannot be looser than the instance floor
+  (order `enabled` < `owners_only` < `disabled`); `source_cidrs` is a list of ≤32
+  CIDRs (absent/empty = no org default; each entry must lie inside the instance
+  `byo.default_source_cidrs` when that list is non-empty, else 422
+  `byo_cidr_outside_default`); `require_context_credentials` (default `false`)
+  can only be switched on when the instance leaves it off. Invalid CIDRs, `/0`
+  prefixes or more than 32 entries → 422 `governance_invalid`.
 
 Changing governance re-evaluates every LLM secret of the org against the new
 effective rules **using the stored origin** (no provider calls): secrets that
@@ -703,6 +724,8 @@ otherwise hosted agents cannot install packages.
 | Gateway step *governance* (`06`) | endpoint/scope permitted and stored origin compliant for the selected LLM key; `sanctioned_only` (no agent-supplied LLM credentials, no unconfigured providers); model allow-list |
 | Gateway policy evaluation (`07`) | uncredentialed default per scope (`credentialed_only`) with allow-lists |
 | Gateway open-lane admission (`06`, phase 1) | `browser` capability on the credential; effective open-lane posture (`disabled` / `allowlist_only`) before policy; CONNECT-time rule semantics |
+| API: BYO agent create / token regenerate (phase 2, RFE-025) | effective BYO posture (`disabled` refuses; `owners_only` needs `can_own`) |
+| Gateway credential admission (phase 2, RFE-025) | BYO posture `disabled` refuses `aug_`/BYO `auc_`; the source CIDR check; context credential required for credentialed requests |
 | Gateway before injection | origin preflight for unseen key values |
 | Gateway after response | origin backstop |
 
@@ -714,3 +737,77 @@ Aurora's network control can reach providers directly; that is a matter for
 endpoint and network policy. A model reachable through some other API (a
 self-hosted proxy, a SaaS that embeds a model) is not recognizable by host;
 only `credentialed_only` egress closes that route.
+
+### 11.9 BYO posture and source restriction (phase 2, RFE-025, D-59)
+
+Phase 0/1: any member with `can_use` could create a BYO agent and receive an
+`aug_` token that works from anywhere that can reach the proxy port. From phase 2
+BYO is governed like the rest of this section. **Hosted agents are unaffected**
+(they are controlled by `hosted.enabled`).
+
+**(a) BYO posture.** Three values, ordered `enabled` < `owners_only` < `disabled`:
+
+| Posture | Create a BYO agent / regenerate its token | Existing BYO credentials |
+|---|---|---|
+| `enabled` | `can_use` (phase 0 behaviour) | work |
+| `owners_only` (default) | `can_own` of the workspace (org owners/admins included) | work |
+| `disabled` | nobody (403 `byo_disabled`) | refused by the gateway (403 `byo_disabled`), live tunnels closed |
+
+- **Layers**: instance master switch `byo.enabled` (boolean, default `true`;
+  `false` ⇒ effective posture `disabled` everywhere, whatever org or workspace
+  say) → instance floor `byo.minimum_posture` (default `owners_only`) → org
+  `governance.byo.posture` → workspace `workspaces.byo_posture` (`03 §Planned
+  changes`). **Effective = the strictest** of the layers (absent/null = inherit).
+  Orgs and workspaces can only tighten; a value below the floor is refused
+  (422 `governance_below_instance_minimum`).
+- Because the default floor is `owners_only`, a deployment that wants phase 0
+  behaviour sets `byo.minimum_posture = "enabled"`. Existing BYO agents and
+  tokens are untouched by the upgrade.
+- Refusals at creation/regeneration: 403 `byo_not_permitted` (posture
+  `owners_only`, caller lacks `can_own`; `details.posture`, `details.level`) and 403
+  `byo_disabled` (`details.level` = `instance`\|`org`\|`workspace`, `details.manage_url`).
+  `POST /v1/agent/context-credentials` and `GET /v1/agent/container-config` with
+  an agent token also answer 403 `byo_disabled` when disabled. Container-config
+  viewing for an existing agent (token placeholder) stays `can_use`.
+- Tightening to `disabled` **never deletes or revokes** anything: agents, tokens
+  and homes stay; the gateway simply refuses them, so loosening again restores
+  service instantly (invalidation scopes `agent`/`workspace`/`org`; the instance
+  switch is read from configuration at start, so changing `byo.enabled` is a
+  rolling restart). The dashboard marks affected agents "BYO disabled by
+  <level>".
+
+**(b) Source restriction.** `agents.byo_source_cidrs` (≤32 IPv4/IPv6 CIDRs; null =
+no agent list) restricts where the credentials of a BYO agent may be used from.
+The **effective list** is the agent's list if set, else the org default
+(`governance.byo.source_cidrs`), else the instance default
+(`byo.default_source_cidrs`), else *unrestricted*. Lists are tighten-only along
+that chain: when an outer list is non-empty, every entry of an inner list must
+lie inside it (422 `byo_cidr_outside_default`). `/0` prefixes (`0.0.0.0/0`,
+`::/0`) and an empty array are refused (422 `byo_cidr_invalid`); clearing the
+agent list means `null` (inherit). Editing an agent's list needs `can_own`
+(security-critical audit action `agent.byo_settings.update`). The check
+applies to `aug_` and BYO `auc_` credentials only, at every connect-time
+admission (`06 §BYO admission`), and refuses with 403 `source_not_permitted`.
+Plain `aub_`/hosted `auc_` are not subject to it.
+
+**(d) Context credentials required.** `agents.byo_require_context` (default
+`false`) makes the gateway refuse, for that agent, any request that would
+**inject a credential** (the request has at least one selected candidate,
+`07 §Injection selection`) when it is authenticated with the agent token
+(`aug_`) instead of a context credential (`auc_`) — 403 `context_credential_required`
+(`details.mint = "POST /v1/agent/context-credentials"`). Uncredentialed traffic
+is unaffected. The effective value is `instance byo.require_context_credentials
+∨ org governance.byo.require_context_credentials ∨ agent`; it can only be
+switched **on** by outer layers. Every injected request of such an agent therefore
+carries a labelled run (`context_label`, ≤128, sanitized, in the request log and
+approval cards). `aurora run -- <cmd>` mints one context credential per run
+(label `aurora run: <command line, truncated>`, `ttl_secs` default 3600, flag
+`--ttl 60..86400`) and uses it as the proxy credential; the container config's
+`proxy_url` for such an agent carries the placeholder `<CONTEXT_TOKEN>` and says
+so in `notes`.
+
+**(c)** The policy editor and `…/policy/warnings` flag allow rules with empty identities that select credentials (`07 §Injection selection`, `rule_applies_to_all_agents`).
+
+**Residual**: a token is a bearer secret and can still be shared; the CIDR list
+restricts network position, not identity, and users behind a shared NAT satisfy
+a list that contains their egress address (`17 §Residual risks`).

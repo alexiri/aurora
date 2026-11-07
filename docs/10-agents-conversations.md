@@ -22,6 +22,13 @@ Phase: **0**. Tables: `03 §5–8`. The machinery that runs hosted agents is in
 
 Limits: `organizations.settings.max_agents` (422 `agent_limit_reached`).
 
+(phase 2, RFE-025) **BYO agents are governed.** Creating a `byo` agent needs
+`can_use` only while the effective BYO posture is `enabled`; by default
+(`owners_only`) it needs `can_own`, and under `disabled` it is refused
+(`08 §11.9`). A BYO agent additionally has `byo_source_cidrs` and
+`byo_require_context` (`03 §Planned changes`). `max_agents` counts hosted and BYO
+agents together, as before.
+
 ### Default agent: Daneel
 
 Every new workspace gets a default agent in the same transaction that creates

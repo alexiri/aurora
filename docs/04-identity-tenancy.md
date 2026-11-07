@@ -317,6 +317,10 @@ conversation and hour; best-effort).
 | Workspace LLM keys | `can_own`, **and** org governance permits `workspace`-scoped keys for that endpoint, **and** the key's origin complies (`08 §11`) |
 | Space bindings for an agent of the workspace | `can_own` |
 | Create/edit/delete agents, brief, model, avatar; memory; skills; schedules; webhooks; restart sandbox | `can_use` |
+| Create a **BYO** agent; regenerate a BYO agent's token (phase 2, RFE-025) | phase 0/1: `can_use`. **From phase 2: by the effective BYO posture** (`08 §11.9`): `enabled` → `can_use`; `owners_only` (default) → `can_own`; `disabled` → nobody |
+| Edit a BYO agent's source CIDR list and "require context credentials" setting (phase 2, RFE-025) | `can_own` |
+| Workspace BYO posture (phase 2, RFE-025) | `can_own` (tighten-only) |
+| Org BYO posture, org default source CIDRs, org require-context default (phase 2, RFE-025) | org `owner`/`admin` (through governance, `governance.update`) |
 | Chat with agents, read transcripts, upload attachments | `can_use`; (phase 1, RFE-009) for `direct` conversations: the direct user (read + write) and `can_own` (read, abort/send-now only) — `can_see_conversation` |
 | Decide gateway approvals, action approvals and agent-link requests for agents of the workspace; read the approvals feed (pending, history, long-poll, SSE) | phase 0/1: `can_use`. **From phase 2 (RFE-012): `can_approve`** (a plain member sees an approval waiting inline in their own visible conversation, read-only, but not the feed and cannot decide); (phase 1, RFE-009) an approval that names a `direct` conversation is visible and decidable only by callers who `can_see_conversation` it (so: the direct user and `can_own`) |
 | Archive/unarchive a conversation (phase 2, RFE-010) | `can_see_conversation` and, for non-direct kinds, `can_use` |
@@ -498,7 +502,7 @@ role change. From phase 2 actions are classified:
 
 | Area | Actions |
 |------|---------|
-| Keys and credentials | `api_key.create`, `api_key.revoke` (personal, workspace, org), `agent.token_regenerate`, `cli_login.approve`, `secret.create`, `secret.update`, `secret.value_replace`, `secret.delete`, `secret.accept`, `connection.create`, `connection.update`, `connection.delete`, `oauth_client.create\|update\|delete`, `runner.provision\|token\|delete`, `connector.provision\|token\|approve\|delete` |
+| Keys and credentials | `api_key.create`, `api_key.revoke` (personal, workspace, org), `agent.token_regenerate`, `agent.byo_settings.update` (source CIDRs, require-context; RFE-025), `workspace.byo_posture.update` (RFE-025), `cli_login.approve`, `secret.create`, `secret.update`, `secret.value_replace`, `secret.delete`, `secret.accept`, `connection.create`, `connection.update`, `connection.delete`, `oauth_client.create\|update\|delete`, `runner.provision\|token\|delete`, `connector.provision\|token\|approve\|delete` |
 | Grants | `grant.put`, `grant.delete` (connection and secret grants) |
 | Policy | `policy.publish`, `policy.rollback` (org and workspace) |
 | Plugins and registry | `plugin.approve\|reject\|disable\|enable\|uninstall`, `trusted_key.add\|remove`, `host_claim.decide` |

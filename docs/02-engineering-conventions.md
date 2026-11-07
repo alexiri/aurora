@@ -186,6 +186,8 @@ overridden by the named configuration key (`15`).
 | `FREEZE_REPLY_INTERVAL` | (phase 2, RFE-006) 10 min per (space/thread, person) | — | 04, 13 |
 | `OIDC_AUTH_RATE` | (phase 1, RFE-004) 20 / min / IP for each of OIDC `start` and `callback` | — | 04 |
 | `PROXY_TLS_LEAF_VALIDITY` | (phase 1, RFE-002) 30 days; renewed when < 10 days remain | — | 06 |
+| `BYO_CIDR_MAX` | (phase 2, RFE-025) 32 CIDRs per agent / org / instance list | — | 08 §11.9 |
+| `BYO_REFUSAL_LOG_INTERVAL` | (phase 2, RFE-025) one log line and one request-log row per credential per minute for gateway BYO refusals | — | 06 |
 | `REQUEST_LOG_FLUSH` | 5 s or 500 rows | — | 06 |
 | `REQUEST_LOG_RETENTION` | 30 days | `retention.request_log_days` | 15 |
 | `BATCH_HEADER_MAX` | 128 chars | — | 06 |

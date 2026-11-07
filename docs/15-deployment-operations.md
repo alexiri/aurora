@@ -91,6 +91,11 @@ one new entry without activating it.
 | `gateway.proxy_tls.names` | `[]` | gateway | (phase 1, RFE-002) extra DNS names/IPs for the CA-issued proxy certificate (LoadBalancer hostname, extra service names) |
 | `gateway.proxy_tls.cert_file`, `gateway.proxy_tls.key_file` | — | gateway | (phase 1, RFE-002) optional operator-supplied proxy certificate chain + key (both or neither); replaces the CA-issued leaf for the outer leg |
 | `gateway.allowed_private` | `[]` | gateway | private destinations allowed |
+| `gateway.trusted_proxies` | `[]` | gateway | (phase 2, RFE-025) CIDRs of layer-4 load balancers / NAT hops that send a PROXY protocol v1/v2 header on the proxy port; the client address for BYO source restriction is taken from that header only for peers in this list (`06 §BYO admission`). Not the same as `server.trusted_proxies` (API, `X-Forwarded-For`) |
+| `byo.enabled` | `true` | api, gateway | (phase 2, RFE-025) master switch for BYO agents: `false` ⇒ BYO creation refused and every `aug_`/BYO `auc_` credential refused (403 `byo_disabled`), regardless of org/workspace settings. Hosted agents unaffected; changed by restart |
+| `byo.minimum_posture` | `owners_only` | api, gateway | (phase 2, RFE-025) `enabled` \| `owners_only` \| `disabled` — floor of the BYO posture for every org and workspace (`08 §11.9`); set `enabled` to keep phase 0/1 behaviour |
+| `byo.default_source_cidrs` | `[]` | api, gateway | (phase 2, RFE-025) default source CIDR list of every BYO agent without its own or an org list (e.g. corporate networks and CI runners); orgs and agents may only narrow it. Empty = unrestricted |
+| `byo.require_context_credentials` | `false` | api, gateway | (phase 2, RFE-025) when `true` every BYO agent must use context credentials for credentialed requests (`08 §11.9`) |
 | `gateway.egress_proxy` | — | gateway | upstream forward proxy |
 | `gateway.condition_body_bytes` | 262144 | gateway | 4 KiB–8 MiB |
 | `gateway.upstream_header_timeout_secs` | 300 | gateway | |
@@ -180,6 +185,13 @@ removed from the list automatically.
   of it unless the front end re-encrypts to the gateway; the load balancer's
   hostname MUST be listed in the certificate (`gateway.advertised_proxy_url`
   host or `gateway.proxy_tls.names`).
+  (phase 2, RFE-025) With BYO source restriction (`08 §11.9`) the gateway must see
+  the real client address: use a load balancer that preserves the source address
+  (Kubernetes `externalTrafficPolicy: Local`) or one that sends **PROXY protocol**
+  and list its CIDR in `gateway.trusted_proxies` (the chart exposes it as the value that renders
+  `gateway.trusted_proxies`). Otherwise lists never match and BYO
+  credentials with a source list fail closed. `X-Forwarded-For` is never used on
+  the proxy port.
 - Runners and connectors may run outside the cluster: they only need outbound
   HTTPS to `external_url` (`/v1/runner/*`, `/v1/connector/*` are routed by the
   edge). A connector's own platform-callback port is exposed only to its

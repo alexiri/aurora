@@ -1246,3 +1246,19 @@ Pending deletions of harness session files after a conversation delete or a `res
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | anchor | text not null CHECK in (`creator`,`workspace`) default `creator` | fire-time authority: the creator's access (`creator`) or "an active owner exists" (`workspace`); `creator_user_id` stays as provenance (`04 §Fire-time authority`) | 2 (RFE-021) |
+
+#### `agents` (BYO controls)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| byo_source_cidrs | text[] null | BYO only (CHECK `kind = 'byo'` when set); 1–32 CIDR strings (`cidr` syntax, no `/0`); null = inherit org/instance default list (`08 §11.9`). Validated by the API; never empty | 2 (RFE-025) |
+| byo_require_context | bool not null default false | BYO only: credentialed requests must use a context credential (`08 §11.9`) | 2 (RFE-025) |
+
+#### `workspaces` (BYO posture)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| byo_posture | text null CHECK in (`enabled`,`owners_only`,`disabled`) | null = inherit; can only tighten (`08 §11.9`) | 2 (RFE-025) |
+
+#### `organizations` (jsonb key in `governance`, BYO)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `governance.byo` | `{ "posture"?: "enabled"\|"owners_only"\|"disabled", "source_cidrs"?: [cidr], "require_context_credentials"?: bool }` | org BYO posture, default source list and require-context default (`08 §11.2`, `§11.9`). No column: `governance` is `jsonb`. | 2 (RFE-025) |

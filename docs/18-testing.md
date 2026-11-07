@@ -67,6 +67,35 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Cache invalidation: every write listed in `05 §Gateway cache invalidation`
   changes the next request's outcome without waiting for TTL.
 
+### BYO governance (phase 2, RFE-025, SEC-52)
+- Posture: matrix of instance `byo.enabled` × floor × org × workspace (strictest
+  wins; org/workspace cannot loosen; `byo.enabled = false` overrides everything);
+  creation and token regeneration per posture (`can_use`/`can_own`/nobody,
+  `byo_not_permitted` vs `byo_disabled`); hosted agents unaffected; default floor
+  `owners_only`.
+- Tightening to `disabled`: existing `aug_` and BYO `auc_` refused 403
+  `byo_disabled`, live tunnel closed ≤ 5 s, held approval `abandoned`, container-
+  config and context-credential routes 403; loosening restores service without
+  new tokens; nothing deleted.
+- Source restriction: effective list resolution (agent > org > instance), subset
+  validation (`byo_cidr_outside_default`), `/0`, empty and oversize lists
+  (`byo_cidr_invalid`); gateway admission with IPv4, IPv6, IPv4-mapped,
+  boundary addresses; spoofed `X-Forwarded-For`/`Forwarded` ignored; PROXY v2
+  header honoured only from `gateway.trusted_proxies`, trusted peer without
+  header and untrusted peer with header both closed; NAT/LB-address fail-closed;
+  refusal metric and rate-limited request-log row; check runs after authentication
+  (a bad token still gets 407 from any address).
+- Require context: `aug_` refused with `context_credential_required` only when a
+  credential would be injected; uncredentialed traffic and `auc_` pass; effective
+  value is the OR of instance, org and agent; `aurora run` mints a labelled
+  context credential and the label appears in the request log and approval card.
+- Warning: `rule_applies_to_all_agents` for hand-written empty-identity allow
+  rules naming `connection`/`app_connections`/`secret`/`secrets`, none for
+  derived rules, identity-scoped rules or `app`/`network` targets; publish not
+  blocked; editor confirmation lists the rules.
+- Audit: `agent.byo_settings.update`, `workspace.byo_posture.update` and
+  `agent.token_regenerate` rows are written in the same transaction (rollback test).
+
 ### Governance
 - Governance validation: org documents below the instance minimum, scope and
   list subset rules, defaults for new orgs.

@@ -131,6 +131,50 @@ unencrypted.
   turns with no person speaker (schedule, webhook, watch, peer, system, bot or
   agent speakers) — has **no speaker**.
 
+### BYO admission (phase 2, RFE-025)
+
+For `aug_` credentials and BYO `auc_` credentials (kinds `agent` and BYO
+`context`) the gateway applies three more checks, in this order, **after** the
+credential has authenticated (so an unauthenticated prober learns nothing) and
+the freeze check, and before the lane is chosen. They run for every `CONNECT` and
+absolute-form request (the identity cache carries the inputs; no DB on the hot path).
+
+1. **BYO posture** (`08 §11.9`). Effective posture `disabled` — instance
+   `byo.enabled = false`, instance floor, org or workspace — → **403
+   `byo_disabled`** (`details.level`), not 407. The posture is part of the cached
+   identity (invalidated by scopes `agent`, `workspace`, `org`); on such an
+   invalidation the gateway closes the live tunnels and WebSockets of the affected
+   BYO credentials and answers requests held for approval with 403 `byo_disabled`
+   (approvals `abandoned`), exactly as for `frozen`.
+2. **Source address.** If the agent has an **effective source list**
+   (`08 §11.9`), the client address must lie inside one of its CIDRs, else **403
+   `source_not_permitted`** (`details.source` = the address the gateway saw,
+   `details.manage_url`). The client address is **only** the transport peer of
+   the TLS connection, with one exception: when the peer lies inside
+   `gateway.trusted_proxies` (CIDRs, default empty; the gateway's own key — the
+   API's `server.trusted_proxies` does not apply), the connection **must begin
+   with a PROXY protocol v1/v2 header** and the address in it is used (a layer-4
+   load balancer or NodePort SNAT hides the real address otherwise; configure the
+   balancer to send PROXY or to preserve the source address). A connection from a
+   trusted proxy without that header, or a PROXY header from any other peer, is
+   closed before the TLS handshake. HTTP headers (`X-Forwarded-For`, `Forwarded`)
+   are **never** consulted: the client controls everything inside the tunnel.
+   IPv4-mapped IPv6 peers are normalised to IPv4 before matching. Behind a NAT
+   the list must contain the NAT's egress address; if the gateway only ever sees
+   a load balancer's address (no PROXY header, balancer not preserving source),
+   every request fails closed.
+   A refusal is counted (`aurora_gateway_byo_refused_total{reason}`,
+   `reason ∈ posture|source|context_required`), logged at most once per
+   credential per minute, and recorded as one `request_log` row per credential
+   per minute (`outcome = blocked`, `reason = source_not_permitted`) so owners can
+   see attempted use of a leaked token.
+3. **Context credential required.** Applies later, in the MITM pipeline, once
+   injection selection has run: if the agent's effective `byo_require_context`
+   is true, the credential is an `aug_` (not `auc_`), and at least one candidate
+   is selected (`07 §Injection selection`) → **403 `context_credential_required`**
+   before any approval is created or any value fetched (`details.mint`). Open-lane
+   tunnels are not affected (BYO credentials never get the lane anyway).
+
 ## Lanes
 
 | Lane | Selected by | Gateway sees | Injection | Approvals |
@@ -419,7 +463,7 @@ injected (the agent should see the real upstream error).
 
 | Cache | Key | TTL | Invalidated by |
 |-------|-----|-----|----------------|
-| Credential → identity | token hash | 60 s | `credential`, `agent`, `workspace`, `org`, `all`; `aurora_auth_revoked` |
+| Credential → identity | token hash | 60 s | `credential`, `agent`, `workspace`, `org`, `all`; `aurora_auth_revoked` (phase 2, RFE-025: the identity carries the effective BYO posture, source list and require-context flag; the instance switch comes from configuration) |
 | ResolvedHost | `org/ws/credential/host` | 60 s | `org`, `workspace`, `agent`, `connection`, `all` |
 | Plaintext values | `(SecretRef, version)` | 60 s | `connection`, `workspace`, `org`, `all` (zeroized on eviction) |
 | Effective governance (`08 §11`) | org | 60 s | `org`, `all` |

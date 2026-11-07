@@ -324,6 +324,8 @@ aurora_gateway_invalidate` after commit with the narrowest scope:
 | Freeze / unfreeze (phase 2, RFE-006) | `agent` / `workspace` / `org` |
 | App availability change | `org` |
 | Org governance change (and the stored-origin re-evaluation it triggers) | `org` |
+| (phase 2, RFE-025) Workspace BYO posture change | `workspace` |
+| (phase 2, RFE-025) BYO source list / require-context change of an agent | `agent` |
 | Snapshot activation | (`aurora_registry` instead) |
 
 ## Route catalogue
@@ -367,14 +369,14 @@ connector, **P** public capability. Permission checks per `04`.
 | POST `/v1/orgs/{org}/freeze` `{ reason }`; POST `/v1/orgs/{org}/unfreeze` | S/K | (phase 2, RFE-006) org `owner` |
 | GET/PUT `/v1/orgs/{org}/app-availability` | S/K | posture + allow-list |
 | GET/PUT `/v1/orgs/{org}/governance` | S/K | org governance document (`08 §11.2`) with `revision`; PUT validates against the instance ceiling (422 `governance_invalid` / `governance_below_instance_minimum`) |
-| GET `/v1/orgs/{org}/governance/effective` | S/K (any org member) | effective LLM and egress governance (instance ∩ org), each value marked `source: instance|org` (phase 1, RFE-003: includes `egress.open_lane`); non-compliant LLM secrets of the org |
+| GET `/v1/orgs/{org}/governance/effective` | S/K (any org member) | effective LLM and egress governance (instance ∩ org), each value marked `source: instance|org` (phase 1, RFE-003: includes `egress.open_lane`; phase 2, RFE-025: includes `byo.{posture, source_cidrs, require_context_credentials}`); non-compliant LLM secrets of the org |
 | GET `/v1/governance/instance` | S | the instance ceiling (config, without secrets) — read-only |
 
 ### Workspaces
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET/POST `/v1/orgs/{org}/workspaces` | S/K | |
-| GET/PATCH/DELETE `/v1/workspaces/{ws}` | S/K | name, timezone, memory_language |
+| GET/PATCH/DELETE `/v1/workspaces/{ws}` | S/K | name, timezone, memory_language; (phase 2, RFE-025) PATCH also `byo_posture` (`enabled`\|`owners_only`\|`disabled`\|null = inherit; `can_own`; tighten-only, 422 `governance_below_instance_minimum`; audited `workspace.byo_posture.update`; invalidation scope `workspace`); GET shows `byo_posture` and `effective_byo_posture` with its `level` |
 | GET `/v1/workspaces/{ws}/access`; PUT/DELETE `/v1/workspaces/{ws}/access/{user}` | S/K | bindings (phase 2, RFE-021: DELETE accepts `reassign_to`); (phase 2, RFE-012) `PUT { role: "owner"\|"approver"\|"member" }`; `can_own` |
 | GET/POST `/v1/workspaces/{ws}/api-keys` | S (POST: SO) | workspace keys |
 | GET `/v1/workspaces/{ws}/audit` | S/K | same filters |
@@ -425,7 +427,7 @@ connector, **P** public capability. Permission checks per `04`.
 | PUT `…/policy/draft` | S/K | whole-draft replace with `revision`; (phase 1, RFE-003) workspace scope also carries `open_lane_posture` (`enabled` \| `allowlist_only` \| `disabled`; a workspace can only tighten, so `enabled` simply adds no restriction beyond the org and instance) |
 | POST `…/policy/publish`, `…/policy/rollback` | S/K | `{ revision }` / `{ generation }` |
 | GET `…/policy/generations` | S/K | history |
-| GET `…/policy/warnings` | S/K | overlap/inert-rule warnings for the draft |
+| GET `…/policy/warnings` | S/K | overlap/inert-rule warnings for the draft; (phase 2, RFE-025) includes `rule_applies_to_all_agents` (`07 §Injection selection`) |
 | POST `/v1/workspaces/{ws}/policy/simulate` | S/K | `{ agent_id, method, url, body?, use_draft?, lane?, speaker_user_id? }` → decision trace (phase 2, RFE-005: `speaker_user_id` omitted = no speaker); (phase 1, RFE-003) `lane: "open"` evaluates CONNECT-time semantics (`07`) and the open-lane posture |
 
 ### Approvals
@@ -445,9 +447,10 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 ### Agents and sandboxes
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET/POST `/v1/workspaces/{ws}/agents` | S/K | create returns `aug_` once for BYO |
+| GET/POST `/v1/workspaces/{ws}/agents` | S/K | create returns `aug_` once for BYO; (phase 2, RFE-025) creating `kind = byo` is subject to the effective BYO posture: 403 `byo_not_permitted` (`owners_only`, caller lacks `can_own`) or 403 `byo_disabled`; the list/get shape carries `byo: { posture, posture_level, source_cidrs, require_context, effective_source_cidrs, effective_require_context }` for BYO agents |
 | GET/PATCH/DELETE `/v1/agents/{agent}` | S/K | name, brief, harness, model, effort, resource overrides (IA) |
-| POST `/v1/agents/{agent}/token` | S | BYO: regenerate, returns token once |
+| POST `/v1/agents/{agent}/token` | S | BYO: regenerate, returns token once; (phase 2, RFE-025) same posture check as creation (`byo_not_permitted` / `byo_disabled`); audited `agent.token_regenerate` |
+| PUT `/v1/agents/{agent}/byo` | S/K | (phase 2, RFE-025) BYO only (hosted → 422 `not_byo`): `{ source_cidrs: [cidr..] \| null, require_context: bool }`; `can_own`; 422 `byo_cidr_invalid` (bad CIDR, `/0`, empty array, >32 entries) / `byo_cidr_outside_default`; live credentials are re-evaluated by invalidation scope `agent`; audited `agent.byo_settings.update` |
 | GET `/v1/agents/{agent}/container-config` | S/K | BYO bootstrap (`08 §BYO bootstrap`) |
 | GET `/v1/agent/container-config`; POST `/v1/agent/context-credentials` | A | BYO self-service (`08`) |
 | PUT/GET `/v1/agents/{agent}/avatar`; GET `/v1/public/avatars/{key}` | S/K; P | |
