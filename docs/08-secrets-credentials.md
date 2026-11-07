@@ -518,7 +518,10 @@ access-token expiry. The **gateway** refreshes (it is on the request path).
    CAS failure → discard the new ref and re-read (someone else won).
 6. `invalid_grant` (or the manifest's `token.reauth_codes`) → `status =
    reauth_required`, `reauth_required_at = now()`; only a user reconnect clears
-   it. Transient errors (5xx, timeouts) → `credential_unavailable` for this
+   it. (phase 3, RFE-022: `reauth_required` is also set, with a `plugin_major_upgrade`
+   reason, when a plugin major upgrade activates and the connection's stored
+   credential keys no longer satisfy the new manifest's required fields,
+   `09 §10`.) Transient errors (5xx, timeouts) → `credential_unavailable` for this
    request, no state change.
 7. Release the lock.
 

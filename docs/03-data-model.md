@@ -1289,3 +1289,14 @@ Pending deletions of harness session files after a conversation delete or a `res
 Home-sync generation (`12 §Sync protocol`, I-32): a change to a workspace-tier skill
 or its files bumps `workspaces.home_sync_generation` (database trigger, as for the
 other projection inputs); no new counter is needed. `skill_files` is unchanged.
+
+#### `app_connections` (credential field names)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| credential_keys | text[] null | **names** (never values) of the fields present in the sealed credential JSON; maintained by the API/gateway/hook host wherever credentials are sealed (connect, reconnect, refresh, mint). Null = unknown (legacy rows; the phase-3 migration fills what it can by reading inline-store values once). Used by the plugin major-upgrade check (`09 §10`). Gateway role keeps its column-level `UPDATE` list plus `credential_keys` | 3 (RFE-022) |
+| status_reason | (existing column) | gains the open-vocabulary form `plugin_major_upgrade: <package> <old> -> <new>; missing: <names>` (≤300 chars) when set by an upgrade | 3 (RFE-022) |
+
+#### `plugin_packages` (activation hold)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| status_reason | (existing column, open vocabulary) | gains the value `breaks_connections`: for a major upgrade held in `pending_approval` because it would set connections to `reauth_required` (`09 §10`) | 3 (RFE-022) |

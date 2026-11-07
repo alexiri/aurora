@@ -202,6 +202,22 @@ done when its tests exist, pass in CI, and the security invariants it touches
   `block` with its own allow-list; a workspace allow rule cannot widen the org
   (SEC-38, SEC-39).
 
+### Plugin major upgrades (phase 3, RFE-022, SEC-57)
+- Activation matrix over (minor, major) × (required field kept / renamed / removed /
+  added optional / added required) × (connection `active`, `reauth_required`,
+  `disabled`, `orphaned`, legacy null keys): exactly the failing active connections
+  flip, with the reason text and `reauth_required_at`; others untouched.
+- Atomicity: failure after the first flip rolls back the activation and every flip;
+  `connection` invalidation reaches the gateway; the gateway returns
+  `connection_reauth_required` with the reconnect URL; reconnect clears it and
+  records the new `app_version`.
+- Approval: `impact` counts match the later activation (and are recomputed in it);
+  a builtin major upgrade that would break connections stays `pending_approval`
+  with `breaks_connections`, one with no impact activates automatically as before;
+  dashboard banner and mandatory Impact section; no tenant names in the response.
+- Fixtures: `fixture-bearer` v2 (renamed required field) and v1.1 (added optional
+  field); legacy row without `credential_keys` for both fallback paths.
+
 ### Plugins
 - Validator: one `fixture-invalid-*` package per rule with the expected reason.
 - Signature and trust: unsigned, wrong publisher, revoked key, dev override.

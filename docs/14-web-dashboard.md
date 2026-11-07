@@ -159,7 +159,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   SSE feed exist only for `can_approve` users; a plain member sees the waiting
   approval inline in their own chat as a read-only card ("waiting for an approver"). (phase 1, RFE-009) Items naming a direct conversation
   appear only for its user and owners.
-- **Credentials** — tabs: Apps (catalogue → connect window), Connections,
+- **Credentials** — (phase 3, RFE-022: a connection in `reauth_required` because of a plugin major upgrade shows the reason and a Reconnect button) tabs: Apps (catalogue → connect window), Connections,
   Secrets (generic; reference-mode secrets when a reference-capable store is
   configured), LLM keys (provider/endpoint picker from `/v1/llm/providers`),
   OAuth clients, agent-proposed secrets awaiting a value. The LLM key form
@@ -222,6 +222,8 @@ token rotation, manifest approval with capability/setup-field diff), **Runners**
   generation history with rollback.
 - **Plugin approval**: the permissions review is mandatory reading — approve is
   disabled until the reviewer expands every section (hooks, egress, context,
-  claims).
+  claims). (phase 3, RFE-022) For a major upgrade the review adds an **Impact**
+  section and a banner **"N connections will need reconnecting"** (by app, counts
+  only), and a held upgrade is labelled "needs approval: would break connections".
 - **Agent chat resume**: on reconnect, fetch events after the last seq, then
   re-open the stream; deltas for a turn are discarded once its `text` arrives.
