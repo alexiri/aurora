@@ -105,7 +105,13 @@ pub fn init_telemetry(service: &str, level: &str, otlp_endpoint: Option<&str>) -
     let _ = tracing_subscriber::registry()
         .with(filter)
         .with(otel)
-        .with(tracing_subscriber::fmt::layer().event_format(formatter))
+        .with(
+            tracing_subscriber::fmt::layer()
+                // Span fields must be JSON too: the JSON event formatter parses them back and
+                // panics (debug builds) on the default `key=value` text.
+                .fmt_fields(tracing_subscriber::fmt::format::JsonFields::new())
+                .event_format(formatter),
+        )
         .try_init();
     instance
 }
