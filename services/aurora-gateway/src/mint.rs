@@ -124,6 +124,7 @@ impl Minter for HttpMinter {
             .http
             .post(format!("{}/internal/v1/hooks/token.mint", self.base))
             .bearer_auth(&self.secret)
+            .headers(aurora_core::telemetry::headers())
             .json(&body)
             .send()
             .await

@@ -97,7 +97,8 @@ impl Runner {
     pub async fn run(self, mut shutdown: watch::Receiver<bool>) -> Result<(), RunnerError> {
         let s = &self.settings;
         let api = Arc::new(ApiClient::new(&s.api_url, &s.token, s.retry)?);
-        let caps = self.backend.capabilities();
+        let mut caps = self.backend.capabilities();
+        caps.image.clone_from(&self.settings.executor.image);
         let max = caps.max_sandboxes;
         let max_attachment_bytes = caps.max_attachment_bytes;
         let reg = RegisterRequest {

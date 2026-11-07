@@ -8,6 +8,6 @@ mod auth;
 pub(crate) mod boot;
 mod routes;
 pub mod service;
-mod work;
+pub(crate) mod work;
 
 pub use routes::router;

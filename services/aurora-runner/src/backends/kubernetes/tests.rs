@@ -530,3 +530,33 @@ fn core_namespace_resolution() {
 fn invalid_toleration_is_a_startup_error() {
     assert!(parse_toleration(&json!({"operator": 5})).is_err());
 }
+
+/// docs/16 `harnesses`: the kubernetes backend advertises claude-code as podman does, so
+/// claude-code agents can start there (the image decides whether the CLI is present).
+#[tokio::test]
+async fn capabilities_advertise_claude_code_and_fake() {
+    use crate::backend::Backend;
+    use aurora_protocol::runner::HarnessId;
+    let client =
+        kube::Client::try_from(kube::Config::new("http://127.0.0.1:1".parse().unwrap())).unwrap();
+    let b = KubernetesBackend::with_client(
+        client,
+        KubernetesSettings {
+            namespace: "s".into(),
+            core_namespace: "c".into(),
+            gateway_service: "g".into(),
+            runner_service: "r".into(),
+            pod: cfg(),
+            max_sandboxes: 2,
+            capacity_wait: Duration::from_secs(1),
+            start_timeout: Duration::from_secs(1),
+            poll: Duration::from_secs(1),
+        },
+    );
+    let caps = b.capabilities();
+    assert_eq!(caps.harnesses, vec![HarnessId::ClaudeCode, HarnessId::Fake]);
+    assert_eq!(
+        caps.image, None,
+        "the runner fills the image at registration"
+    );
+}

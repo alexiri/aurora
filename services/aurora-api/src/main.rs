@@ -75,7 +75,11 @@ async fn main() -> ExitCode {
     let cfg: ApiConfig = aurora_config::load(cli.config.as_deref(), std::env::vars())
         .and_then(|raw| raw.api_config())
         .unwrap_or_else(|e| exit_config(e));
-    let instance = service::init_tracing(SERVICE, &cfg.telemetry.log_level);
+    let instance = service::init_telemetry(
+        SERVICE,
+        &cfg.telemetry.log_level,
+        cfg.telemetry.otlp_endpoint.as_deref(),
+    );
     tracing::info!(instance_id = %instance, "starting");
     let result = match cli.command {
         Command::Serve => serve(cfg).await,
@@ -86,6 +90,7 @@ async fn main() -> ExitCode {
         } => revoke_admin(cfg, &email).await,
         Command::Openapi { .. } => Ok(()),
     };
+    service::telemetry_shutdown();
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -153,13 +158,17 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = aurora_api::domains::runners_admin::service::bootstrap_default(&state).await {
         tracing::warn!(error = %e, "bootstrap runner token not applied");
     }
+    if let Err(e) = aurora_api::domains::connectors::bootstrap_tokens(&state).await {
+        tracing::warn!(error = %e, "bootstrap connector tokens not applied");
+    }
     aurora_api::jobs::spawn(pool, cfg.retention.request_log_days);
     aurora_api::domains::connectors::inbox::spawn(state.clone());
     aurora_api::domains::plugins::scan::spawn(state.clone());
     aurora_api::domains::plugins::registry::spawn_initial(state.clone());
     let internal =
         aurora_api::domains::plugins::internal::router(state.clone()).fallback(service::not_found);
-    let public = aurora_api::app::router(state, ops);
+    let public = aurora_api::app::router(state, ops)
+        .layer(axum::middleware::from_fn(service::trace_context));
     let bind = cfg.server.bind.as_str();
     let servers = vec![
         (service::bind(bind, PUBLIC_PORT).await?, public),

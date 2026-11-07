@@ -53,24 +53,31 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 These are places where the spec, the chart or a comment says something the code does
 not do. Treat each as **(not yet implemented)** until the code changes. Gap numbers are
 stable (other tasks refer to them). Gaps 3, 4, 5, 6, 9, 10 and 13 were fixed or documented in
-OPS-013 and are listed as resolved below.
+OPS-013, and gaps 1, 2, 7 and 8 were fixed in FIX-003; all are listed as resolved below.
 
-- **1. Connector bootstrap tokens.** `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` is read and
-  validated, but nothing applies it. Compose sets it for the fake connector, which
-  therefore needs manual provisioning. See [plugins-and-connectors.md](plugins-and-connectors.md#connectors).
-- **2. Connector manifests and `plugins.allow_unsigned`.** The flag applies to plugin
-  packages only. docs/15 says it also auto-approves connectors; the connector
-  approval code does not read it.
-- **7. OpenTelemetry export.** `telemetry.otlp_endpoint` is validated, but no exporter
-  reads it.
-- **8. Parsed but unused keys.** `gateway.condition_body_bytes`,
-  `gateway.resolve_cache_ttl_secs` and `runner.held_awake_ceiling` are parsed and
-  validated, but no runtime code reads them.
 - **11. Compose runner backend.** `deploy/compose/aurora.toml` sets `runner.backend = "fake"`.
   Hosted agents run as fake sandboxes until the operator switches the backend.
 - **12. Sandbox env.** Per `docs/PROGRESS.md` (FUP-M7), the API's `SandboxSpec.env` is
   empty, so `AURORA_AGENT_HANDLE` and snapshot app env do not reach sandboxes on any
   backend. See [runners.md](runners.md#known-limitations).
+
+### Resolved in FIX-003
+
+- **1. Connector bootstrap tokens.** The API applies `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` at
+  startup: each `id:aun_…` entry upserts the connector with the hashed token (status
+  `awaiting_registration` when new; an existing connector keeps its registration state).
+  Ids must match `[a-z][a-z0-9-]{1,31}`. See [plugins-and-connectors.md](plugins-and-connectors.md#connectors).
+- **2. Connector manifests and `plugins.allow_unsigned`.** With the flag set, a registered
+  connector manifest is auto-approved (status `active`, also when it widens the approved
+  one) and a warning is logged. Signature checks still apply. Development only.
+- **7. OpenTelemetry export.** When `telemetry.otlp_endpoint` is set, every service exports
+  traces over OTLP/HTTP protobuf (rustls; a base URL gets `/v1/traces` appended) and propagates
+  W3C `traceparent` on its calls to the hook host. Without the key nothing is installed.
+- **8. Parsed but unused keys.** `gateway.condition_body_bytes` sets the body prefix buffered
+  for policy conditions (never below the 16 KiB approval peek), `gateway.resolve_cache_ttl_secs`
+  the host-resolution cache TTL, and `runner.held_awake_ceiling` overrides the derived
+  eviction ceiling `max(1, max_sandboxes − 1)`. The API evaluates eviction, so it reads
+  `runner.held_awake_ceiling` from the shared config; give the API the same config file as the runner.
 
 ### Resolved in OPS-013
 

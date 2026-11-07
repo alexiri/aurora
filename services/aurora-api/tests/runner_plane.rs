@@ -264,6 +264,11 @@ async fn start_item_has_valid_boot_document_and_tokens_match_db() {
     let item = first(&w, "sandbox.start");
     let sb = item["sandbox_id"].as_str().unwrap();
     let boot = item["boot_id"].as_str().unwrap();
+    // A runner that advertises no image gets the versioned default in the start item.
+    assert_eq!(
+        item["spec"]["image"],
+        format!("aurora-sandbox:{}", env!("CARGO_PKG_VERSION"))
+    );
     let doc = boot_doc(item);
     assert_eq!(doc["v"], 1);
     assert_eq!(doc["boot_id"], boot);

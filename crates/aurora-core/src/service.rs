@@ -21,7 +21,9 @@ use tracing::{Event, Subscriber};
 use tracing_subscriber::{
     EnvFilter,
     fmt::{FmtContext, FormatEvent, FormatFields, format::Writer},
+    layer::SubscriberExt,
     registry::LookupSpan,
+    util::SubscriberInitExt,
 };
 
 /// Process exit code for invalid configuration (`EX_CONFIG`).
@@ -69,6 +71,13 @@ where
 /// `level` is an `EnvFilter` directive (e.g. `info`); `RUST_LOG` overrides it.
 /// An invalid directive falls back to `info`.
 pub fn init_tracing(service: &str, level: &str) -> String {
+    init_telemetry(service, level, None)
+}
+
+/// [`init_tracing`] plus OTLP trace export when `otlp_endpoint` (`telemetry.otlp_endpoint`) is
+/// set (docs/15 §Observability). Without an endpoint no exporter, provider or propagator is
+/// installed. An exporter that cannot be built is reported on stderr and logging continues.
+pub fn init_telemetry(service: &str, level: &str, otlp_endpoint: Option<&str>) -> String {
     let instance = std::env::var("HOSTNAME")
         .ok()
         .filter(|h| !h.is_empty())
@@ -85,10 +94,18 @@ pub fn init_tracing(service: &str, level: &str) -> String {
         inner: tracing_subscriber::fmt::format().json().flatten_event(true),
         prefix,
     };
+    let otel = otlp_endpoint.and_then(|ep| match crate::telemetry::install(service, ep) {
+        Ok(tracer) => Some(tracing_opentelemetry::layer().with_tracer(tracer)),
+        Err(e) => {
+            eprintln!("telemetry.otlp_endpoint: exporter not started: {e}");
+            None
+        }
+    });
     // Ignore the error: a subscriber may already be installed (tests).
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .event_format(formatter)
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(otel)
+        .with(tracing_subscriber::fmt::layer().event_format(formatter))
         .try_init();
     instance
 }
@@ -139,6 +156,20 @@ pub fn ops_router(
             metrics,
             checks: Arc::new(checks),
         })
+}
+
+/// Flush pending OTLP spans before exit (no-op when export is not configured).
+pub fn telemetry_shutdown() {
+    crate::telemetry::shutdown();
+}
+
+/// Middleware: run each request inside a span that continues the caller's `traceparent`.
+/// Only the method is recorded (paths can carry identifiers). Inert without OTLP export.
+pub async fn trace_context(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    use tracing::Instrument;
+    let span = tracing::info_span!("http.request", method = %req.method());
+    crate::telemetry::adopt_remote_parent(&span, req.headers());
+    next.run(req).instrument(span).await
 }
 
 /// 404 error-envelope handler for use as a router fallback.

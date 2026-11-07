@@ -28,6 +28,7 @@ config:
     allow_fake_harness: true
     idle_stop_secs: 30     # park/wake scenario
   runner:
+    image: localhost/aurora-e2e/aurora-sandbox:e2e   # kind load image-archive name (kind.sh)
     max_sandboxes: 4
     capacity_wait_secs: 5
   telemetry:

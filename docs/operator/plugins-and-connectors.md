@@ -65,8 +65,8 @@ curl -sS -X DELETE https://aurora.example.org/v1/admin/trusted-keys/<id>
 
 Revocation disables every package the key signed. Their connections stop injecting and show why.
 
-`plugins.allow_unsigned` (default `false`) accepts unsigned packages. It is for development
-only. The chart and compose do not set it.
+`plugins.allow_unsigned` (default `false`) accepts unsigned packages and auto-approves connector
+manifests. It is for development only. The chart and compose do not set it.
 
 ### Host claims
 
@@ -148,10 +148,11 @@ signatures with their deployment tooling (for example cosign and an admission po
 
 ### Connector provisioning in compose and Helm
 
-- **Compose.** `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` is set to `fake:<token>`, but the API does
-  not apply it (**not yet implemented**). Provision the fake connector with the routes above.
+- **Compose.** `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` is set to `fake:<token>`. At startup the API
+  upserts the connector `fake` with that token (`awaiting_registration`); it still needs manifest
+  approval, as described above.
 - **Helm.** Create the token Secret first, then list the connector in `connectors`
   ([install-helm.md](install-helm.md#connectors-optional)).
 
-Do not set `plugins.allow_unsigned` to skip connector approval. The connector approval
-code does not read that flag (**not yet implemented** as documented in docs/15).
+`plugins.allow_unsigned` also auto-approves connector manifests on registration (with a warning
+log), including manifests that widen the approved one. Never set it outside development.

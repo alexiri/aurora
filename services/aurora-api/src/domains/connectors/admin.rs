@@ -95,6 +95,16 @@ pub async fn create(
     })
 }
 
+/// Applies `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` (docs/15): each `id:aun_…` entry is upserted
+/// with the hashed token, `awaiting_registration` when new. Manifest approval is unchanged.
+pub async fn bootstrap_tokens(s: &AppState) -> Result<(), DbError> {
+    for (id, tok) in &s.config.bootstrap_connector_tokens {
+        connectors::upsert_bootstrap(&s.pool, id, &token::hash(tok.expose()), id).await?;
+        tracing::info!(connector = %id, "bootstrap connector token applied");
+    }
+    Ok(())
+}
+
 pub async fn rotate(s: &AppState, id: &str) -> Result<ConnectorToken, ApiError> {
     let tok = token::generate(TokenPrefix::Connector);
     if !connectors::set_token(&s.pool, id, &token::hash(tok.expose())).await? {

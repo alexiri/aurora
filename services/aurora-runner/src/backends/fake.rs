@@ -159,6 +159,8 @@ impl Backend for FakeBackend {
             max_sandboxes: self.max_sandboxes,
             harnesses: vec![HarnessId::Fake],
             max_attachment_bytes: 25 * 1024 * 1024,
+            // Filled in by the runner from `runner.image` at registration.
+            image: None,
         }
     }
 

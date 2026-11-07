@@ -21,10 +21,10 @@ contains `aurora`, otherwise `<release>-aurora`
 - A runtime class for sandboxes, such as gVisor or Kata (recommended by docs/15).
 - Images pushed to a registry you control (`image.registry`), or available under bare
   names. Tag defaults to the chart's appVersion (`image.tag`).
-- The sandbox image must be pullable by the nodes as `aurora-sandbox:<version>`
-  (`docker.io/library/aurora-sandbox:<version>` unless you mirror it). The API puts that
-  fixed name in every boot document; `runner.image` is not consulted yet. Mirror or retag your
-  sandbox image to that name.
+- The sandbox image must be pullable by the nodes under the name in `config.runner.image`
+  (default `aurora-sandbox:<version>`, which containerd resolves to
+  `docker.io/library/aurora-sandbox:<version>`). The runner applies that setting to every
+  sandbox Pod and the API reports it as the sandbox's `image`; set it to your mirrored name.
 
 The chart is checked with `helm lint`, `helm template` and an install on a local kind
 cluster (see [Test on a local kind cluster](#test-on-a-local-kind-cluster)), which runs the
@@ -284,8 +284,8 @@ What it does:
    CNI does not enforce, create the cluster with `disableDefaultCNI: true` and install a
    pinned Calico manifest before the chart (not exercised by this script).
 3. Builds the service images, the web image and the sandbox image (`sandbox-min`, with the fake
-   harness), and loads them with `kind load image-archive`. The sandbox image is loaded as
-   `docker.io/library/aurora-sandbox:<version>` (see [Prerequisites](#prerequisites)).
+   harness), and loads them with `kind load image-archive`. The sandbox image is loaded under the
+   `config.runner.image` name set in the test values (see [Prerequisites](#prerequisites)).
 4. Installs the chart with `deploy/kind/values-e2e.yaml`: the bundled evaluation Postgres, no
    Ingress (kind has no ingress controller), one replica per component, open sign-up, the fake
    harness allowed and a 30 s idle timeout.

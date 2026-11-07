@@ -446,8 +446,11 @@ impl Backend for KubernetesBackend {
                 home_gib: Range { min: 1, max: 1000 },
             },
             max_sandboxes: self.s.max_sandboxes,
-            harnesses: vec![HarnessId::Fake],
+            // Both ids, as podman (docs/16 `harnesses`): the image decides whether the CLI exists.
+            harnesses: vec![HarnessId::ClaudeCode, HarnessId::Fake],
             max_attachment_bytes: 25 * 1024 * 1024,
+            // Filled in by the runner from `runner.image` at registration.
+            image: None,
         }
     }
 

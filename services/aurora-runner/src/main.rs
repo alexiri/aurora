@@ -42,7 +42,11 @@ async fn main() -> ExitCode {
     let cfg: RunnerConfig = aurora_config::load(cli.config.as_deref(), std::env::vars())
         .and_then(|raw| raw.runner_config())
         .unwrap_or_else(|e| exit_config(e));
-    let instance = service::init_tracing(SERVICE, &cfg.telemetry.log_level);
+    let instance = service::init_telemetry(
+        SERVICE,
+        &cfg.telemetry.log_level,
+        cfg.telemetry.otlp_endpoint.as_deref(),
+    );
     tracing::info!(instance_id = %instance, "starting");
     let Command::Serve = cli.command;
     match serve(&cfg).await {

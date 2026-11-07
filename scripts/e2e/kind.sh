@@ -143,20 +143,15 @@ if [ "$SKIP_BUILD" != "1" ]; then
   scripts/images/build-sandbox-min.sh "$REGISTRY/aurora-sandbox:$TAG" >/dev/null || exit 1
 fi
 mkdir -p "$WORK/archives"
-# aurora-api hard-codes the sandbox image as `aurora-sandbox:<version>` (boot.rs; `runner.image` is
-# not consulted), which containerd resolves to docker.io/library/aurora-sandbox:<version>. So the
-# sandbox image is loaded under exactly that name (and the local alias is removed again).
-VERSION=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)
-SBX_REF="docker.io/library/aurora-sandbox:${VERSION:-0.1.0}"
+# The sandbox image is `runner.image` (deploy/kind/values-e2e.yaml: $REGISTRY/aurora-sandbox:$TAG), the
+# single source of truth the runner applies and the API reports; it is loaded under that name.
 for i in "${IMAGES[@]}"; do
   ref="$REGISTRY/$i:$TAG"
   podman image exists "$ref" || { echo "missing image $ref" >&2; exit 1; }
-  if [ "$i" = aurora-sandbox ]; then podman tag "$ref" "$SBX_REF" || exit 1; ref="$SBX_REF"; fi
   log "loading $i into kind as $ref"
   podman save -o "$WORK/archives/$i.tar" "$ref" >/dev/null || exit 1
   kind load image-archive "$WORK/archives/$i.tar" --name "$CLUSTER" >/dev/null || exit 1
   rm -f "$WORK/archives/$i.tar"
-  [ "$i" = aurora-sandbox ] && podman untag "$SBX_REF" >/dev/null 2>&1
 done
 
 # ---- 4. Helm install (docs/operator/install-helm.md) ----------------------------------------------

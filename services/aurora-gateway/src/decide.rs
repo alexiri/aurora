@@ -51,6 +51,8 @@ pub struct PolicyHandler {
     governance: Option<Arc<Governance>>,
     tokens: Option<Arc<TokenManager>>,
     summarizer: Option<Arc<dyn crate::summarize_client::Summarizer>>,
+    /// Body prefix buffered for condition evaluation (`gateway.condition_body_bytes`).
+    condition_body_limit: usize,
 }
 
 pub struct PolicyHandlerParts {
@@ -306,7 +308,15 @@ impl PolicyHandler {
             governance: None,
             tokens: None,
             summarizer: None,
+            condition_body_limit: CONDITION_BODY_BUFFER,
         }
+    }
+
+    /// Set the condition body buffer (`gateway.condition_body_bytes`). Never below
+    /// [`APPROVAL_BODY_PEEK`].
+    pub fn with_condition_body_limit(mut self, bytes: usize) -> Self {
+        self.condition_body_limit = bytes.max(APPROVAL_BODY_PEEK);
+        self
     }
 
     /// Enable the `approval.summarize` hook for held requests.
@@ -586,7 +596,7 @@ impl RequestHandler for PolicyHandler {
                 .is_some_and(|m| apps::needs_body(m.app, &host, port, &path, method.as_str()));
         let (body_prefix, truncated, mut body) = if rv.needs_body() || may_hold || llm_body {
             let limit = if rv.needs_body() || llm_body {
-                CONDITION_BODY_BUFFER
+                self.condition_body_limit
             } else {
                 APPROVAL_BODY_PEEK
             };

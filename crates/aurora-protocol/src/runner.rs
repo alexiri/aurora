@@ -143,6 +143,10 @@ pub struct RunnerCapabilities {
     pub max_sandboxes: u32,
     pub harnesses: Vec<HarnessId>,
     pub max_attachment_bytes: u64,
+    /// The sandbox image this runner starts (`runner.image`); the single source of truth the
+    /// API reports in `SandboxView.image`. Absent from older runners.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

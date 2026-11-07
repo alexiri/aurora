@@ -64,6 +64,13 @@
         "home_durability": {
           "$ref": "#/$defs/HomeDurability"
         },
+        "image": {
+          "description": "The sandbox image this runner starts (`runner.image`); the single source of truth the\nAPI reports in `SandboxView.image`. Absent from older runners.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "max_attachment_bytes": {
           "format": "uint64",
           "minimum": 0,

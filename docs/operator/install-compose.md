@@ -141,7 +141,7 @@ file does not set it. Without it, sandboxes get no `/etc/hosts` entries for the 
 - `AURORA_BOOTSTRAP_RUNNER_TOKEN` is set to `AURORA_RUNNER_TOKEN`. On startup the API
   upserts the runner `default` with that token's hash (`bootstrap_default`).
 - `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` is set to `fake:<AURORA_CONNECTOR_TOKEN>`. The
-  API does not apply it (**not yet implemented**, see [plugins-and-connectors.md](plugins-and-connectors.md#connectors)).
+  API upserts the connector at startup (see [plugins-and-connectors.md](plugins-and-connectors.md#connectors)).
 
 ## Stop and logs
 

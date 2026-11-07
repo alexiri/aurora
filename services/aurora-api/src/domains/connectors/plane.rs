@@ -132,8 +132,17 @@ async fn do_register(
         return Err(ApiError::forbidden("This connector is disabled."));
     }
     let baseline = row.manifest.as_ref().and_then(manifest::baseline);
-    let widening = manifest::widening(baseline.as_ref(), m);
-    let accepted = widening.is_empty();
+    let mut widening = manifest::widening(baseline.as_ref(), m);
+    let accepted = widening.is_empty() || s.config.plugins.allow_unsigned;
+    if accepted && !widening.is_empty() {
+        // `plugins.allow_unsigned` (dev only, docs/15): auto-approve instead of holding.
+        tracing::warn!(
+            connector = %conn.id,
+            reasons = ?widening,
+            "plugins.allow_unsigned: connector manifest auto-approved without review"
+        );
+        widening.clear();
+    }
     let (status, wire, approved_digest, keep_baseline) = if accepted {
         // Unchanged or narrowed relative to the approved manifest: accept automatically.
         (
