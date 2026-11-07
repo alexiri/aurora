@@ -300,3 +300,25 @@ export function policyIssues(err: unknown): PolicyIssues {
   }
   return out;
 }
+
+const CREDENTIAL_TARGETS = new Set(["connection", "app_connections", "secret", "secrets"]);
+
+/**
+ * (phase 2, RFE-025) An enabled hand-written allow rule with empty identities that names
+ * credentials applies to every agent of its scope, including agents created later
+ * (`rule_applies_to_all_agents`, 07 §Injection selection). Mirrors the server warning so the
+ * editor reacts to unsaved edits.
+ */
+export function appliesToAllAgents(r: RuleInput): boolean {
+  return (
+    r.enabled !== false &&
+    r.action === "allow" &&
+    (r.identities ?? []).length === 0 &&
+    (r.targets ?? []).some((t) => CREDENTIAL_TARGETS.has(t.type))
+  );
+}
+
+/** The warning text of the editor; `byoEnabled` adds the clause about members creating BYO agents. */
+export function allAgentsText(byoEnabled: boolean): string {
+  return `Applies to all agents, including agents created later${byoEnabled ? " and by members creating BYO agents" : ""}`;
+}

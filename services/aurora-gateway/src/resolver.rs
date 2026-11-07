@@ -1,10 +1,13 @@
 //! DB-backed credential resolver with a 60 s identity cache
 //! (docs/06 §Credential authentication, §Caches and invalidation).
 
-use crate::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
+use crate::auth::{
+    ByoAdmission, CredentialKind, CredentialResolver, RequestIdentity, ResolveError,
+};
 use crate::invalidation::{Invalidatable, Invalidate, Scope};
 use aurora_db::PgPool;
 use aurora_db::repo::gateway as repo;
+use aurora_llm::governance::{ByoInputs, ByoInstance, OrgByo, effective_byo};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -222,6 +225,8 @@ impl Invalidatable for IdentityCache {
 pub struct DbCredentialResolver {
     pool: PgPool,
     cache: Arc<IdentityCache>,
+    /// (RFE-025) the instance level of BYO governance.
+    byo: ByoInstance,
 }
 
 impl DbCredentialResolver {
@@ -233,7 +238,15 @@ impl DbCredentialResolver {
         Self {
             pool,
             cache: Arc::new(IdentityCache::new(ttl, negative_ttl)),
+            byo: ByoInstance::default(),
         }
+    }
+
+    /// Sets the instance BYO configuration (`[byo]`, RFE-025).
+    #[must_use]
+    pub fn with_byo(mut self, byo: ByoInstance) -> Self {
+        self.byo = byo;
+        self
     }
 
     /// The cache, to register with the invalidation hub.
@@ -252,6 +265,14 @@ impl DbCredentialResolver {
         else {
             return Ok(None);
         };
+        self.identity(row).await
+    }
+
+    async fn identity(
+        &self,
+        row: repo::CredentialIdentityRow,
+    ) -> Result<Option<(RequestIdentity, Option<f64>)>, ResolveError> {
+        let unavailable = |e: aurora_db::DbError| ResolveError::Unavailable(e.to_string());
         let kind = match row.kind.as_str() {
             "agent" => CredentialKind::Agent,
             "boot" => CredentialKind::Boot,
@@ -266,6 +287,23 @@ impl DbCredentialResolver {
             .map_err(unavailable)?;
         principals.push(row.agent_id);
         let expires_in = row.expires_in_secs;
+        let byo = (row.agent_kind == "byo" && kind != CredentialKind::Boot).then(|| {
+            // Unparsable stored values fail closed inside the governance library.
+            let eff = effective_byo(
+                &self.byo,
+                &ByoInputs {
+                    org: OrgByo::from_stored(row.org_byo.as_ref()),
+                    workspace_posture: row.ws_byo_posture.as_deref(),
+                    agent_cidrs: row.agent_byo_source_cidrs.as_deref(),
+                    agent_require_context: row.agent_byo_require_context,
+                },
+            );
+            ByoAdmission {
+                effective: eff,
+                org_slug: row.org_slug.clone(),
+                ws_slug: row.ws_slug.clone(),
+            }
+        });
         Ok(Some((
             RequestIdentity {
                 credential_id: row.credential_id,
@@ -278,6 +316,7 @@ impl DbCredentialResolver {
                 context_label: row.context_label,
                 principals,
                 capabilities: row.capabilities,
+                byo,
             },
             expires_in,
         )))
@@ -313,5 +352,15 @@ impl CredentialResolver for DbCredentialResolver {
             gen_seen,
         );
         Ok(Some(identity))
+    }
+
+    async fn resolve_credential(&self, id: Uuid) -> Result<Option<RequestIdentity>, ResolveError> {
+        let Some(row) = repo::find_credential_identity_by_id(&self.pool, id)
+            .await
+            .map_err(|e| ResolveError::Unavailable(e.to_string()))?
+        else {
+            return Ok(None);
+        };
+        Ok(self.identity(row).await?.map(|(i, _)| i))
     }
 }

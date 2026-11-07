@@ -11,6 +11,8 @@ import {
   describeTarget,
   draftFromGeneration,
   isStale,
+  allAgentsText,
+  appliesToAllAgents,
   moveRule,
   newRule,
   policyIssues,
@@ -86,6 +88,8 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], org
   const wsSecrets = useSecrets(scope.kind === "workspace" ? { kind: "workspace", id: scope.id } : { kind: "organization", id: orgId });
   const orgSecrets = useSecrets({ kind: "organization", id: orgId });
   const eff = useEffectiveGovernance(orgId);
+  const byoEnabled = eff.data?.byo?.posture.value === "enabled";
+  const [confirmBroad, setConfirmBroad] = useState(false);
   const put = usePutDraft(scope);
   const publish = usePublish(scope);
 
@@ -161,6 +165,7 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], org
 
   const rules = state.rules;
   const workspace = scope.kind === "workspace";
+  const broad = rules.filter(appliesToAllAgents);
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -243,6 +248,11 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], org
                   ) : null}
                 </div>
                 {r.description ? <p className="text-neutral-600">{r.description}</p> : null}
+                {appliesToAllAgents(r) ? (
+                  <p data-testid="all-agents-note" className="mt-1 text-xs font-medium text-amber-900">
+                    ⚠ {allAgentsText(byoEnabled)}
+                  </p>
+                ) : null}
                 <p className="text-xs text-neutral-600">
                   {(r.targets ?? []).length
                     ? (r.targets ?? []).map((t) => (t.type === "secret" ? `secret ${secretName(t.id)}` : describeTarget(t))).join("; ")
@@ -341,9 +351,38 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], org
         ) : null}
       </section>
 
+      {confirmBroad ? (
+        <div role="alertdialog" aria-label="Confirm broad rules" className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+          <p className="font-medium">{allAgentsText(byoEnabled)}:</p>
+          <ul className="list-disc pl-5">
+            {broad.map((r, i) => (
+              <li key={r.logical_id ?? `b-${i}`}>{r.name}</li>
+            ))}
+          </ul>
+          <p>These rules select credentials for every agent of this scope. Apply anyway?</p>
+          <div className="flex gap-2">
+            <Button
+              disabled={busy}
+              onClick={() => {
+                setConfirmBroad(false);
+                void save(true);
+              }}
+            >
+              Apply anyway
+            </Button>
+            <Button variant="outline" onClick={() => setConfirmBroad(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       {canEdit ? (
         <div className="flex gap-2">
-          <Button disabled={busy || (!dirty && !serverDraftDiffers(doc))} onClick={() => void save(true)}>
+          <Button
+            disabled={busy || (!dirty && !serverDraftDiffers(doc))}
+            onClick={() => (broad.length > 0 ? setConfirmBroad(true) : void save(true))}
+          >
             Apply changes
           </Button>
           <Button variant="outline" disabled={busy || !dirty} onClick={() => void save(false)}>

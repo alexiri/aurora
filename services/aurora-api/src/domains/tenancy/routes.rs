@@ -410,10 +410,24 @@ async fn create_workspace(
 }
 
 async fn load_ws(s: &AppState, ws: Uuid, a: &WorkspaceAuth) -> Result<Workspace, ApiError> {
-    workspaces::get(&s.pool, ws)
+    let row = workspaces::get(&s.pool, ws)
         .await?
-        .map(|w| Workspace::new(w, ws_role(a)))
-        .ok_or_else(|| ApiError::not_found("Workspace not found."))
+        .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
+    with_effective_byo(s, row, ws_role(a)).await
+}
+
+/// The workspace DTO with its effective BYO posture (RFE-025).
+async fn with_effective_byo(
+    s: &AppState,
+    row: workspaces::WorkspaceRow,
+    role: WorkspaceRole,
+) -> Result<Workspace, ApiError> {
+    let view =
+        crate::domains::agents::byo::workspace_view(s, row.org_id, row.byo_posture.as_deref())
+            .await?;
+    let mut w = Workspace::new(row, role);
+    w.effective_byo_posture = Some(view);
+    Ok(w)
 }
 
 /// Get a workspace.
@@ -462,7 +476,7 @@ async fn patch_workspace(
         }
         None => None,
     };
-    let row =
+    let mut row =
         workspaces::update(&s.pool, ws, name.as_deref(), tz.as_deref(), lang.as_deref()).await?;
     audit::record(
         &s,
@@ -470,7 +484,10 @@ async fn patch_workspace(
             json!({"name": name.is_some(), "timezone": tz.is_some(), "memory_language": lang.is_some()}),
         ),
     );
-    Ok(Json(Workspace::new(row, ws_role(&a))))
+    if let Some(p) = &req.byo_posture {
+        row = service::set_byo_posture(&s, &c, &a, ws, row, p.as_deref()).await?;
+    }
+    Ok(Json(with_effective_byo(&s, row, ws_role(&a)).await?))
 }
 
 /// Delete a workspace (`can_own`, typed confirmation).

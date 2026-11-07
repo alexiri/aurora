@@ -3,6 +3,7 @@
 
 pub mod apps;
 pub mod auth;
+pub mod byo;
 pub mod ca;
 pub mod check_snapshot;
 pub mod decide;
@@ -19,6 +20,7 @@ pub mod mint;
 pub mod pipeline;
 pub mod plaintext;
 pub mod proxy;
+pub mod proxy_protocol;
 pub mod proxy_tls;
 pub mod refresh;
 pub mod reqlog;

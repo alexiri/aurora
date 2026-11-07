@@ -53,15 +53,31 @@ struct Static(Arc<World>);
 impl CredentialResolver for Static {
     async fn resolve(&self, token: &str) -> Result<Option<RequestIdentity>, ResolveError> {
         // `BOOT` is a boot credential minted with the `browser` capability (RFE-003).
-        if token != TOKEN && token != BOOT {
+        if ![TOKEN, BOOT, BYO_CTX_REQ, BYO_CONTEXT].contains(&token) {
             return Ok(None);
         }
         let boot = token == BOOT;
         let w = &self.0;
+        // (RFE-025) BYO credentials of an agent that requires context credentials.
+        let byo = [BYO_CTX_REQ, BYO_CONTEXT].contains(&token).then(|| {
+            aurora_gateway::auth::ByoAdmission {
+                effective: aurora_llm::governance::effective_byo(
+                    &aurora_llm::governance::ByoInstance::default(),
+                    &aurora_llm::governance::ByoInputs {
+                        agent_require_context: true,
+                        ..Default::default()
+                    },
+                ),
+                org_slug: "o".into(),
+                ws_slug: "w".into(),
+            }
+        });
         Ok(Some(RequestIdentity {
             credential_id: Uuid::nil(),
             kind: if boot {
                 CredentialKind::Boot
+            } else if token == BYO_CONTEXT {
+                CredentialKind::Context
             } else {
                 CredentialKind::Agent
             },
@@ -70,12 +86,17 @@ impl CredentialResolver for Static {
             org_id: w.org,
             conversation_id: None,
             turn_id: None,
-            context_label: None,
+            context_label: (token == BYO_CONTEXT).then(|| "aurora run: make test".to_owned()),
             principals: vec![w.agent],
             capabilities: if boot { vec!["browser".into()] } else { vec![] },
+            byo,
         }))
     }
 }
+
+/// `aug_` of a BYO agent with `byo_require_context`, and one of its `auc_` credentials.
+const BYO_CTX_REQ: &str = "aug_ctxreq";
+const BYO_CONTEXT: &str = "auc_ctxreq";
 
 #[derive(Default)]
 struct Rows {
@@ -345,12 +366,18 @@ impl Reply {
 
 /// Absolute-form GET through the proxy.
 async fn get(env: &Env, path_and_query: &str, extra: &str) -> Reply {
+    get_as(env, TOKEN, path_and_query, extra).await
+}
+
+async fn get_as(env: &Env, token: &str, path_and_query: &str, extra: &str) -> Reply {
     let mut s = crate::common::connect(env.proxy).await;
+    let auth = format!(
+        "Proxy-Authorization: Basic {}\r\n",
+        base64::engine::general_purpose::STANDARD.encode(format!("agent:{token}"))
+    );
     let req = format!(
-        "GET http://{}{path_and_query} HTTP/1.1\r\nHost: {}\r\n{}{extra}Connection: close\r\n\r\n",
-        env.up,
-        env.up,
-        auth()
+        "GET http://{}{path_and_query} HTTP/1.1\r\nHost: {}\r\n{auth}{extra}Connection: close\r\n\r\n",
+        env.up, env.up
     );
     s.write_all(req.as_bytes()).await.unwrap();
     let mut out = Vec::new();
@@ -908,4 +935,65 @@ async fn sec04_injection_only_where_the_secret_pattern_serves() {
         "{}",
         r.body
     );
+}
+
+// ---- (phase 2, RFE-025, SEC-52) require context credentials ----------------
+
+#[tokio::test]
+async fn byo_require_context_refuses_aug_only_when_a_credential_would_be_injected() {
+    let env = start(grant_env(json!({"kind":"bearer"})), no_llm()).await;
+    // Plain agent credential: injected as before.
+    assert_eq!(get(&env, "/x", "").await.status, 200);
+    let fetched = env.gets.load(Ordering::SeqCst);
+    // aug_ of an agent that requires context credentials: refused before any value is fetched.
+    let r = get_as(&env, BYO_CTX_REQ, "/x", "").await;
+    assert_eq!(r.status, 403, "{}", r.body);
+    assert_eq!(r.json()["error"]["code"], "context_credential_required");
+    assert_eq!(
+        r.json()["error"]["details"]["mint"],
+        "POST /v1/agent/context-credentials"
+    );
+    assert_eq!(env.gets.load(Ordering::SeqCst), fetched, "no value fetched");
+    // auc_ credentials pass and receive the credential.
+    let r = get_as(&env, BYO_CONTEXT, "/x", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        r.body.contains("authorization: Bearer s3cr3t"),
+        "{}",
+        r.body
+    );
+    env.log.flush().await;
+    let rows = env.captured.0.lock().unwrap().clone();
+    // The labelled run is on the request-log row of the injected request.
+    assert!(
+        rows.iter().any(|x| x.status == 200
+            && x.credential_kind == "context"
+            && x.context_label.as_deref() == Some("aurora run: make test")),
+        "context label in the request log: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|x| x.status == 403
+            && x.decision == "blocked"
+            && x.error_code.as_deref() == Some("context_credential_required")),
+        "refusal is in the request log"
+    );
+}
+
+#[tokio::test]
+async fn byo_require_context_leaves_uncredentialed_traffic_alone() {
+    // A secret exists but no allow rule selects it: nothing would be injected.
+    let env = start(
+        |w, v| {
+            let s = secret(w, "s", json!({"kind":"bearer"}), v);
+            Rows {
+                secrets: vec![s],
+                ..Rows::default()
+            }
+        },
+        no_llm(),
+    )
+    .await;
+    let r = get_as(&env, BYO_CTX_REQ, "/x", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(!r.body.contains("s3cr3t"));
 }

@@ -9,6 +9,54 @@ use aurora_client::types::ContainerConfig;
 use base64::Engine;
 
 pub const PLACEHOLDER: &str = "<AGENT_TOKEN>";
+/// (RFE-025) Placeholder of an agent that requires context credentials.
+pub const CONTEXT_PLACEHOLDER: &str = "<CONTEXT_TOKEN>";
+
+/// Default and bounds of `--ttl` (docs/08 §7).
+pub const DEFAULT_TTL_SECS: u32 = 3600;
+pub const TTL_RANGE: std::ops::RangeInclusive<i64> = 60..=86400;
+
+/// Label of the context credential minted for one run: `aurora run: <command line>`, control
+/// characters stripped, truncated to the API's 128 characters.
+pub fn run_label(command: &[String]) -> String {
+    let line: String = format!("aurora run: {}", command.join(" "))
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let line = line.trim();
+    if line.chars().count() <= 128 {
+        line.to_owned()
+    } else {
+        let mut s: String = line.chars().take(127).collect();
+        s.push('…');
+        s
+    }
+}
+
+/// `true` when the agent must use context credentials for credentialed requests.
+pub fn needs_context(cfg: &ContainerConfig) -> bool {
+    cfg.byo.as_ref().is_some_and(|b| b.require_context)
+        || cfg.proxy_url.contains(CONTEXT_PLACEHOLDER)
+}
+
+/// Warnings to print before the child starts (go to stderr).
+pub fn warnings(cfg: &ContainerConfig) -> Vec<String> {
+    let mut out = cfg.notes.clone();
+    if let Some(b) = &cfg.byo {
+        if b.posture == "disabled" {
+            out.push(
+                "BYO agents are disabled for this workspace; requests will be refused.".into(),
+            );
+        }
+        if let Some(l) = &b.source_cidrs {
+            out.push(format!(
+                "This agent's credentials only work from: {}. Requests from other addresses are refused (source_not_permitted).",
+                l.join(", ")
+            ));
+        }
+    }
+    out
+}
 
 fn write_private(path: &Path, content: &str) -> Result<()> {
     let mut f = std::fs::OpenOptions::new()
@@ -71,9 +119,9 @@ pub fn build_env(
         } else {
             v.to_string()
         };
-        if v.contains(PLACEHOLDER) {
+        if v.contains(PLACEHOLDER) || v.contains(CONTEXT_PLACEHOLDER) {
             match token {
-                Some(t) => Ok(v.replace(PLACEHOLDER, t)),
+                Some(t) => Ok(v.replace(PLACEHOLDER, t).replace(CONTEXT_PLACEHOLDER, t)),
                 None => bail!(
                     "this agent's token is not stored; run `aurora agents token <handle>` first"
                 ),
@@ -115,7 +163,9 @@ pub const PROXY_VARS: [&str; 4] = ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "
 
 /// The gateway proxy URL with the agent token substituted.
 pub fn resolved_proxy_url(cfg: &ContainerConfig, token: &str) -> String {
-    cfg.proxy_url.replace(PLACEHOLDER, token)
+    cfg.proxy_url
+        .replace(PLACEHOLDER, token)
+        .replace(CONTEXT_PLACEHOLDER, token)
 }
 
 /// `--forward`: point every proxy variable at the loopback forwarder (plain HTTP on 127.0.0.1,
@@ -198,6 +248,54 @@ mod tests {
         }
         assert!(env.values().all(|v| !v.contains("aug_tok")));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn context_placeholder_takes_the_context_credential() {
+        let dir = make_temp_dir().unwrap();
+        let mut c = cfg();
+        c.proxy_url = "https://x:<CONTEXT_TOKEN>@gw:4102".into();
+        c.env.insert("HTTPS_PROXY".into(), c.proxy_url.clone());
+        let env = build_env(&c, Some("auc_run"), &dir, "").unwrap();
+        assert_eq!(env["HTTPS_PROXY"], "https://x:auc_run@gw:4102");
+        assert_eq!(env["https_proxy"], "https://x:auc_run@gw:4102");
+        assert!(needs_context(&c));
+        assert_eq!(
+            resolved_proxy_url(&c, "auc_run"),
+            "https://x:auc_run@gw:4102"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn run_label_is_bounded_and_clean() {
+        let cmd = |s: &str| s.split(' ').map(str::to_owned).collect::<Vec<_>>();
+        assert_eq!(
+            run_label(&cmd("git push origin")),
+            "aurora run: git push origin"
+        );
+        let long = run_label(&["x".repeat(500)]);
+        assert_eq!(long.chars().count(), 128);
+        assert!(long.starts_with("aurora run: xxx"));
+        assert!(
+            !run_label(&["a\nb\u{7}c".to_owned()])
+                .chars()
+                .any(char::is_control)
+        );
+    }
+
+    #[test]
+    fn warnings_cover_notes_posture_and_source_list() {
+        let mut c = cfg();
+        c.notes = vec!["note".into()];
+        c.byo = Some(aurora_client::types::ContainerByo {
+            posture: "disabled".into(),
+            source_cidrs: Some(vec!["203.0.113.0/24".into()]),
+            require_context: false,
+        });
+        let w = warnings(&c);
+        assert!(w[0] == "note" && w[1].contains("disabled") && w[2].contains("203.0.113.0/24"));
+        assert!(warnings(&cfg()).is_empty());
     }
 
     #[test]

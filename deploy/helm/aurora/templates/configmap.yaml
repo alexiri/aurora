@@ -16,7 +16,10 @@
 {{- range .Values.gateway.proxy.tls.names }}{{ $ptNames = append $ptNames . }}{{ end -}}
 {{- $pt := dict "names" $ptNames -}}
 {{- if .Values.gateway.proxy.tls.existingSecret }}{{ $_ := set $pt "cert_file" "/var/lib/aurora/proxy-tls/tls.crt" }}{{ $_ := set $pt "key_file" "/var/lib/aurora/proxy-tls/tls.key" }}{{ end -}}
-{{- $_ := set $cfg "gateway" (merge (dict "ca_dir" "/var/lib/aurora/ca" "proxy_tls" $pt) (default (dict) $cfg.gateway)) -}}
+{{- $gw := dict "ca_dir" "/var/lib/aurora/ca" "proxy_tls" $pt -}}
+{{- /* (RFE-025) layer-4 load balancers that send a PROXY protocol header (gateway.trusted_proxies) */ -}}
+{{- with .Values.gateway.proxy.trustedProxies }}{{ $_ := set $gw "trusted_proxies" . }}{{ end -}}
+{{- $_ := set $cfg "gateway" (merge $gw (default (dict) $cfg.gateway)) -}}
 {{- if not (has .Values.plugins.source (list "none" "configMap" "pvc")) }}{{ fail "plugins.source must be none, configMap or pvc" }}{{ end -}}
 {{- if and (eq .Values.plugins.source "configMap") (not .Values.plugins.configMapName) }}{{ fail "plugins.configMapName is required when plugins.source is configMap" }}{{ end -}}
 {{- if and (eq .Values.plugins.source "pvc") (not .Values.plugins.pvcName) }}{{ fail "plugins.pvcName is required when plugins.source is pvc" }}{{ end -}}

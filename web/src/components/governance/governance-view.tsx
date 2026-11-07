@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
+import { ByoPanel } from "./byo-panel";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
 import { errorMessage } from "@/lib/api/errors";
@@ -28,10 +29,11 @@ import {
 import { useWorkspaces } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 
-type Tab = "models" | "egress" | "compliance";
+type Tab = "models" | "egress" | "byo" | "compliance";
 const TABS: { id: Tab; label: string }[] = [
   { id: "models", label: "Model access" },
   { id: "egress", label: "Egress" },
+  { id: "byo", label: "BYO agents" },
   { id: "compliance", label: "Compliance" },
 ];
 
@@ -57,7 +59,7 @@ function Errors({ messages }: { messages: string[] }) {
 export function GovernanceView({ orgId, orgSlug, canEdit }: { orgId: string; orgSlug: string; canEdit: boolean }) {
   const eff = useEffectiveGovernance(orgId);
   const doc = useGovernanceDoc(orgId, canEdit);
-  useInstanceGovernance(canEdit);
+  const instance = useInstanceGovernance(canEdit);
   if (eff.isPending || (canEdit && doc.isPending)) return <Loading />;
   if (eff.isError) return <ErrorState error={eff.error} onRetry={() => eff.refetch()} />;
   if (canEdit && doc.isError) return <ErrorState error={doc.error} onRetry={() => doc.refetch()} />;
@@ -68,7 +70,7 @@ export function GovernanceView({ orgId, orgSlug, canEdit }: { orgId: string; org
       orgSlug={orgSlug}
       eff={eff.data!}
       revision={doc.data?.revision ?? 0}
-      initial={canEdit ? formFromDocument(doc.data?.document, eff.data!) : formFromEffective(eff.data!)}
+      initial={canEdit ? formFromDocument(doc.data?.document, eff.data!, instance.data) : formFromEffective(eff.data!)}
       canEdit={canEdit}
       onReload={() => void Promise.all([doc.refetch(), eff.refetch()])}
     />
@@ -133,6 +135,7 @@ function Body({
         {tab === "egress" ? (
           <EgressTab form={form} patch={patch} issues={issues} readOnly={!canEdit} eff={eff} orgId={orgId} />
         ) : null}
+        {tab === "byo" ? <ByoPanel form={form} patch={patch} issues={issues} readOnly={!canEdit} eff={eff} /> : null}
         {tab === "compliance" ? <ComplianceTab eff={eff} orgId={orgId} orgSlug={orgSlug} /> : null}
       </div>
       {canEdit && tab !== "compliance" ? (

@@ -3,6 +3,7 @@
 use super::tunnel::stopped;
 use super::{DRAIN_TIMEOUT, Proxy};
 use crate::Body;
+use aurora_core::cidr::{any_contains, canonical_ip};
 use http::{Method, Request, Response};
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
@@ -10,16 +11,21 @@ use hyper::service::service_fn;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use std::convert::Infallible;
 use std::future::Future;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 
 impl Proxy {
-    async fn handle_plain(self: &Arc<Self>, req: Request<Incoming>) -> Response<Body> {
+    async fn handle_plain(
+        self: &Arc<Self>,
+        req: Request<Incoming>,
+        client: IpAddr,
+    ) -> Response<Body> {
         if req.method() == Method::CONNECT {
-            self.handle_connect(req).await
+            self.handle_connect(req, client).await
         } else {
-            self.handle_absolute(req).await
+            self.handle_absolute(req, client).await
         }
     }
 
@@ -31,13 +37,13 @@ impl Proxy {
             tokio::select! {
                 () = &mut shutdown => break,
                 r = listener.accept() => match r {
-                    Ok((stream, _)) => {
+                    Ok((stream, peer)) => {
                         let _ = stream.set_nodelay(true);
                         let this = self.clone();
                         let live = self.track();
                         tokio::spawn(async move {
                             let _live = live;
-                            this.serve_tls(stream).await;
+                            this.serve_tls(stream, peer).await;
                         });
                     }
                     Err(e) => {
@@ -66,7 +72,36 @@ impl Proxy {
     /// (phase 1, RFE-002) TLS-only: a connection whose first bytes are not a TLS record is closed
     /// at once, unanswered and unread (no credential is ever parsed from cleartext); everything
     /// else is handshaken before any HTTP parsing.
-    async fn serve_tls(self: &Arc<Self>, stream: tokio::net::TcpStream) {
+    async fn serve_tls(self: &Arc<Self>, mut stream: tokio::net::TcpStream, peer: SocketAddr) {
+        // (phase 2, RFE-025) The client address is the transport peer, or, for a peer inside
+        // `gateway.trusted_proxies`, the address of its PROXY protocol header (which is then
+        // mandatory). Never an HTTP header: the client controls everything inside the tunnel.
+        let mut client = canonical_ip(peer.ip());
+        if any_contains(&self.byo.trusted_proxies, peer.ip()) {
+            let header = tokio::time::timeout(
+                HANDSHAKE_TIMEOUT,
+                crate::proxy_protocol::read_header(&mut stream),
+            )
+            .await;
+            match header {
+                Ok(Ok(crate::proxy_protocol::Header::Proxied(addr))) => {
+                    client = canonical_ip(addr.ip());
+                }
+                Ok(Ok(crate::proxy_protocol::Header::Local)) => return,
+                _ => {
+                    metrics::counter!("aurora_gateway_proxy_protocol_refused_total", "reason" => "missing_header")
+                        .increment(1);
+                    return;
+                }
+            }
+        } else if let Ok(Ok(true)) =
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, looks_like_proxy_header(&stream)).await
+        {
+            // A PROXY header from any other peer: closed before the TLS handshake.
+            metrics::counter!("aurora_gateway_proxy_protocol_refused_total", "reason" => "untrusted_peer")
+                .increment(1);
+            return;
+        }
         match tokio::time::timeout(HANDSHAKE_TIMEOUT, looks_like_tls(&stream)).await {
             Ok(Ok(true)) => {}
             Ok(Ok(false)) => {
@@ -81,17 +116,17 @@ impl Proxy {
             tracing::debug!("proxy TLS handshake failed");
             return;
         };
-        self.serve_plain(tls).await;
+        self.serve_plain(tls, client).await;
     }
 
-    async fn serve_plain<IO>(self: &Arc<Self>, stream: IO)
+    async fn serve_plain<IO>(self: &Arc<Self>, stream: IO, client: IpAddr)
     where
         IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
         let this = self.clone();
         let svc = service_fn(move |req: Request<Incoming>| {
             let this = this.clone();
-            async move { Ok::<_, Infallible>(this.handle_plain(req).await) }
+            async move { Ok::<_, Infallible>(this.handle_plain(req, client).await) }
         });
         let conn = http1::Builder::new()
             .timer(TokioTimer::new())
@@ -126,6 +161,24 @@ async fn looks_like_tls(stream: &tokio::net::TcpStream) -> std::io::Result<bool>
             return Ok(false);
         }
         if n >= 3 {
+            return Ok(true);
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+/// Peeks until the first bytes are recognisably (or not) a PROXY protocol header.
+async fn looks_like_proxy_header(stream: &tokio::net::TcpStream) -> std::io::Result<bool> {
+    let mut buf = [0u8; 12];
+    loop {
+        let n = stream.peek(&mut buf).await?;
+        if n == 0 {
+            return Ok(false);
+        }
+        if !crate::proxy_protocol::looks_like_proxy(&buf[..n]) {
+            return Ok(false);
+        }
+        if n >= 6 && buf[..6] == *b"PROXY " || n >= 12 {
             return Ok(true);
         }
         tokio::time::sleep(Duration::from_millis(5)).await;

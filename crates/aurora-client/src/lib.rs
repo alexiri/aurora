@@ -181,6 +181,20 @@ impl Client {
             .await
     }
 
+    /// Mints a labelled BYO context credential (`auc_`) for attribution (client must be built
+    /// with the agent token; RFE-025).
+    pub async fn create_context_credential(
+        &self,
+        label: &str,
+        ttl_secs: u32,
+    ) -> Result<types::ContextCredential> {
+        self.send(
+            self.req(Method::POST, "/v1/agent/context-credentials")
+                .json(&json!({ "label": label, "ttl_secs": ttl_secs })),
+        )
+        .await
+    }
+
     /// Long-poll pending approvals decidable by the caller (`wait` ≤ 30).
     pub async fn pending_approvals(&self, wait_secs: u64) -> Result<Vec<Approval>> {
         let wait = wait_secs.min(30);

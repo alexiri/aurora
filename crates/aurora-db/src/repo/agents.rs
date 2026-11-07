@@ -24,12 +24,17 @@ pub struct AgentRow {
     pub brief: String,
     pub avatar_blob_key: Option<String>,
     pub avatar_public_key: Option<String>,
+    /// (RFE-025) BYO only: own source CIDR list (null = inherit).
+    pub byo_source_cidrs: Option<Vec<String>>,
+    /// (RFE-025) BYO only: credentialed requests must use a context credential.
+    pub byo_require_context: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 const COLS: &str = "id, org_id, workspace_id, handle, name, kind, is_default, harness, model_provider, \
-    model_endpoint_id, model_id, effort, proactive_messaging, brief, avatar_blob_key, avatar_public_key, created_at, updated_at";
+    model_endpoint_id, model_id, effort, proactive_messaging, brief, avatar_blob_key, avatar_public_key, \
+    byo_source_cidrs, byo_require_context, created_at, updated_at";
 
 pub struct NewDefaultAgent<'a> {
     pub id: Uuid,
@@ -248,6 +253,25 @@ pub async fn avatar_blob_by_public_key<'e, E: PgExecutor<'e>>(
         "SELECT avatar_blob_key FROM agents WHERE avatar_public_key = $1 AND avatar_blob_key IS NOT NULL",
     )
     .bind(key)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// (RFE-025) Replaces a BYO agent's source list and require-context flag; `false` when the agent
+/// does not exist or is not BYO.
+pub async fn set_byo_settings<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    source_cidrs: Option<&[String]>,
+    require_context: bool,
+) -> Result<Option<AgentRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "UPDATE agents SET byo_source_cidrs = $2, byo_require_context = $3, updated_at = now()
+         WHERE id = $1 AND kind = 'byo' RETURNING {COLS}"
+    ))
+    .bind(id)
+    .bind(source_cidrs)
+    .bind(require_context)
     .fetch_optional(exec)
     .await?)
 }

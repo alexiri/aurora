@@ -1,4 +1,5 @@
 //! Serde models: the organization governance document (08 §11.2) and stored key origin (§11.3).
+use super::byo::OrgByo;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
@@ -97,6 +98,9 @@ fn yes() -> bool {
 pub struct OrgGovernance {
     pub llm: OrgLlm,
     pub egress: OrgEgress,
+    /// (RFE-025) BYO posture, default source list and require-context default.
+    #[serde(skip_serializing_if = "OrgByo::is_default")]
+    pub byo: OrgByo,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

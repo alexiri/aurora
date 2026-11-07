@@ -33,6 +33,8 @@ pub struct LogRow {
     pub latency_ms: i32,
     pub bytes_up: i64,
     pub bytes_down: i64,
+    /// (RFE-025) label of the BYO context credential (a labelled `aurora run`).
+    pub context_label: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -60,7 +62,7 @@ pub async fn list_activity(
         "SELECT id, ts, agent_id, conversation_id, turn_id, credential_kind, lane, method, host, \
                 path, app_id, tool_id, connection_id, secret_id, decision, rule_logical_id, \
                 rule_name, upstream_status, status, error_code, injected, latency_ms, bytes_up, \
-                bytes_down \
+                bytes_down, context_label \
          FROM request_log WHERE workspace_id = $1 AND NOT {} \
            AND ($2::uuid IS NULL OR agent_id = $2) \
            AND ($3::uuid IS NULL OR conversation_id = $3) \

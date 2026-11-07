@@ -135,6 +135,31 @@ pub struct ContainerConfig {
     pub llm_env: BTreeMap<String, String>,
     #[serde(default)]
     pub stubs: Vec<Stub>,
+    /// (phase 2, RFE-025) Effective BYO controls of the agent.
+    #[serde(default)]
+    pub byo: Option<ContainerByo>,
+    /// (phase 2, RFE-025) Notes for the operator, e.g. that a context credential is required.
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+/// (phase 2, RFE-025) Effective BYO controls in a container config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerByo {
+    pub posture: String,
+    /// `null` = unrestricted.
+    #[serde(default)]
+    pub source_cidrs: Option<Vec<String>>,
+    #[serde(default)]
+    pub require_context: bool,
+}
+
+/// (phase 2, RFE-025) `POST /v1/agent/context-credentials` response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContextCredential {
+    pub credential: String,
+    pub expires_at: String,
+    pub proxy_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

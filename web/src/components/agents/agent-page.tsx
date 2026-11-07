@@ -100,7 +100,7 @@ export function AgentPage() {
         ) : null}
         {tab === "access" && workspace.isPending ? <Loading /> : null}
         {tab === "connect" && byo ? (
-          <ConnectTab agent={agent} />
+          <ConnectTab agent={agent} wsId={wsId} canOwn={workspace.data?.my_role === "owner"} />
         ) : null}
         {tab === "instructions" ? (
           <div className="pt-6">

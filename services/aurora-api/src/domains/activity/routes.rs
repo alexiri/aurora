@@ -44,6 +44,8 @@ pub struct RequestLogEntry {
     pub latency_ms: i32,
     pub bytes_up: i64,
     pub bytes_down: i64,
+    /// (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`), if any.
+    pub context_label: Option<String>,
 }
 
 impl From<LogRow> for RequestLogEntry {
@@ -73,6 +75,7 @@ impl From<LogRow> for RequestLogEntry {
             latency_ms: r.latency_ms,
             bytes_up: r.bytes_up,
             bytes_down: r.bytes_down,
+            context_label: r.context_label,
         }
     }
 }

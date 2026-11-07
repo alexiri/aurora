@@ -53,6 +53,14 @@ enum Cmd {
         /// clients that cannot use an HTTPS proxy (e.g. stock Java).
         #[arg(long)]
         forward: bool,
+        /// Lifetime of the context credential minted for this run, in seconds (60..86400).
+        /// A context credential is always used when the agent requires one (RFE-025).
+        #[arg(long, default_value_t = run::DEFAULT_TTL_SECS, value_parser = clap::value_parser!(u32).range(run::TTL_RANGE))]
+        ttl: u32,
+        /// Attribute this run with a labelled context credential even when the agent does not
+        /// require one.
+        #[arg(long)]
+        context: bool,
         #[arg(trailing_var_arg = true, required = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
@@ -221,13 +229,28 @@ async fn real_main() -> Result<i32> {
             agent,
             token_env,
             forward,
+            ttl,
+            context,
             command,
         } => {
             let (cfg, _) = load()?;
-            let tok = token::resolve_for_run(std::env::var(&token_env).ok(), &cfg, &agent)?;
-            let cc = Client::new(&cfg.url, Some(tok.clone()))?
-                .agent_container_config()
-                .await?;
+            let agent_tok = token::resolve_for_run(std::env::var(&token_env).ok(), &cfg, &agent)?;
+            let client = Client::new(&cfg.url, Some(agent_tok.clone()))?;
+            let cc = client.agent_container_config().await?;
+            for w in run::warnings(&cc) {
+                eprintln!("aurora: {w}");
+            }
+            // (phase 2, RFE-025) One labelled context credential per run, used as the proxy
+            // credential, when the agent requires one (or the caller asks for attribution).
+            let tok = if run::needs_context(&cc) || context {
+                client
+                    .create_context_credential(&run::run_label(&command), ttl)
+                    .await
+                    .context("could not mint a context credential for this run")?
+                    .credential
+            } else {
+                agent_tok
+            };
             let dir = run::make_temp_dir()?;
             let result = async {
                 let mut env = run::build_env(&cc, Some(&tok), &dir, &run::system_roots_pem())?;

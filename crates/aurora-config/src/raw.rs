@@ -47,6 +47,8 @@ pub struct RawConfig {
     pub secrets: SecretsSection,
     pub llm: LlmSection,
     pub governance: GovernanceSection,
+    /// (phase 2, RFE-025) BYO agent controls (docs/08 §11.9).
+    pub byo: ByoSection,
     pub agents: AgentsSection,
     pub hosted: HostedSection,
     pub api: ApiSection,
@@ -366,6 +368,32 @@ pub struct GatewaySection {
     pub hookhost_url: String,
     /// (phase 1, RFE-002) Proxy listener certificate settings (docs/06 §Proxy listener TLS).
     pub proxy_tls: ProxyTlsSection,
+    /// (phase 2, RFE-025) CIDRs of layer-4 load balancers that send a PROXY protocol header on
+    /// the proxy port (docs/06 §BYO admission). Not `server.trusted_proxies`.
+    pub trusted_proxies: Vec<String>,
+}
+
+/// `[byo]` (phase 2, RFE-025, D-59).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ByoSection {
+    /// Master switch: `false` = BYO disabled everywhere.
+    pub enabled: bool,
+    /// `enabled` | `owners_only` | `disabled`: floor of the BYO posture.
+    pub minimum_posture: String,
+    /// Default source CIDR list of every BYO agent without its own or an org list.
+    pub default_source_cidrs: Vec<String>,
+    pub require_context_credentials: bool,
+}
+impl Default for ByoSection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            minimum_posture: "owners_only".into(),
+            default_source_cidrs: vec![],
+            require_context_credentials: false,
+        }
+    }
 }
 
 /// `[gateway.proxy_tls]` (phase 1, RFE-002).
@@ -391,6 +419,7 @@ impl Default for GatewaySection {
             ca_dir: "/var/lib/aurora/ca".into(),
             hookhost_url: "http://aurora-hookhost:4104".into(),
             proxy_tls: ProxyTlsSection::default(),
+            trusted_proxies: vec![],
         }
     }
 }

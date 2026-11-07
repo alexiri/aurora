@@ -348,6 +348,7 @@ dependencies = [
 name = "aurora-config"
 version = "0.1.0"
 dependencies = [
+ "aurora-core",
  "aurora-crypto",
  "base64 0.22.1",
  "serde",
@@ -650,6 +651,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
  "utoipa",
  "wiremock",
 ]

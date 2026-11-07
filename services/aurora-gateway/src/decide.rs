@@ -121,6 +121,7 @@ impl Ctx {
             latency_ms: i32::try_from(self.started.elapsed().as_millis()).unwrap_or(i32::MAX),
             bytes_up: 0,
             bytes_down: 0,
+            context_label: i.context_label.clone(),
         }
     }
 }
@@ -556,6 +557,18 @@ impl RequestHandler for PolicyHandler {
         let (granted, ungranted): (Vec<_>, Vec<_>) = cands
             .into_iter()
             .partition(|c| selected.contains(&c.credential().key()));
+        // (RFE-025) BYO admission check 3: an agent that requires context credentials never has a
+        // credential injected for an `aug_`-authenticated request. Before any approval is created
+        // and before any value is fetched.
+        if !granted.is_empty() && crate::byo::needs_context_credential(&identity) {
+            metrics::counter!(
+                "aurora_gateway_byo_refused_total",
+                "reason" => crate::byo::Refusal::ContextRequired.label()
+            )
+            .increment(1);
+            let err = crate::byo::context_required("/v1/agent/context-credentials");
+            return Outcome::Respond(self.refuse(ctx, &err, "blocked"));
+        }
         let mut response_headers = HeaderMap::new();
         if granted.len() > 1
             && let Ok(v) = http::HeaderValue::from_str(&apps::choices(&granted).to_string())
@@ -1020,6 +1033,34 @@ impl RequestHandler for PolicyHandler {
             response_headers,
             retry: None,
         })
+    }
+
+    fn byo_refused(
+        &self,
+        identity: &Arc<Ident>,
+        method: &str,
+        host: &str,
+        reason: crate::byo::Refusal,
+        err: &ApiError,
+    ) {
+        let ctx = Ctx {
+            identity: identity.clone(),
+            lane: "mitm",
+            method: method.to_owned(),
+            host: host.to_owned(),
+            path: "/".into(),
+            started: Instant::now(),
+            secret_id: None,
+            decision: "blocked",
+            rule: None,
+            injected: 0,
+            app_id: None,
+            tool_id: None,
+            connection_id: None,
+        };
+        let _ = reason;
+        self.log
+            .record(ctx.row(err.status().as_u16(), None, Some(err.code())));
     }
 
     async fn open_lane_check(&self, identity: &Ident, host: &str, port: u16) -> OpenLaneDecision {

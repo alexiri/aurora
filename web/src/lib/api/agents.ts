@@ -29,6 +29,21 @@ export function usePatchAgent(wsId: string | undefined, agentId: string) {
   });
 }
 
+export type PutByoRequest = components["schemas"]["PutByoRequest"];
+
+/** (phase 2, RFE-025) The agent's own source list and require-context flag (`can_own`). */
+export function usePutAgentByo(wsId: string | undefined, agentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: PutByoRequest) =>
+      unwrap(api.PUT("/v1/agents/{agent}/byo", { params: { path: { agent: agentId } }, body })),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.agents(wsId ?? "") });
+      void qc.invalidateQueries({ queryKey: ["agents", agentId, "container-config"] });
+    },
+  });
+}
+
 export function useDeleteAgent(wsId: string | undefined, agentId: string) {
   const qc = useQueryClient();
   return useMutation({

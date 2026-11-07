@@ -67,6 +67,7 @@ impl CredentialResolver for Static {
             context_label: None,
             principals: vec![w.agent],
             capabilities: vec![],
+            byo: None,
         }))
     }
 }

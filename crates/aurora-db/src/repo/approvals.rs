@@ -32,6 +32,8 @@ pub struct ApprovalRow {
     pub summary: serde_json::Value,
     pub batch_id: Option<String>,
     pub batch_label: Option<String>,
+    /// (RFE-025) label of the BYO context credential that made the request.
+    pub context_label: Option<String>,
     pub batch_total: Option<i32>,
     pub status: String,
     pub decided_by_user_id: Option<Uuid>,
@@ -45,7 +47,7 @@ pub struct ApprovalRow {
 const SELECT: &str = "SELECT a.id, a.org_id, a.workspace_id, a.agent_id, ag.name AS agent_name, \
     ag.handle AS agent_handle, a.conversation_id, a.turn_id, a.method, a.host, a.path, a.app_id, \
     a.tool_id, a.connection_id, a.rule_logical_id, a.rule_name, a.summary, a.batch_id, \
-    a.batch_label, a.batch_total, a.status, a.decided_by_user_id, u.display_name AS decided_by_name, \
+    a.batch_label, a.batch_total, a.context_label, a.status, a.decided_by_user_id, u.display_name AS decided_by_name, \
     a.decided_via, a.decided_at, a.deadline, a.created_at \
     FROM approvals a LEFT JOIN agents ag ON ag.id = a.agent_id \
     LEFT JOIN users u ON u.id = a.decided_by_user_id";

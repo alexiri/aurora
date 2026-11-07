@@ -33,6 +33,8 @@
       "avatar_blob_key",
       "avatar_public_key",
       "brief",
+      "byo_require_context",
+      "byo_source_cidrs",
       "created_by",
       "effort",
       "handle",
@@ -103,6 +105,7 @@
       "batch_label",
       "batch_total",
       "connection_id",
+      "context_label",
       "conversation_id",
       "deadline",
       "decided_at",
@@ -525,6 +528,7 @@
       "bytes_down",
       "bytes_up",
       "connection_id",
+      "context_label",
       "conversation_id",
       "credential_kind",
       "decision",
@@ -820,6 +824,7 @@
       "workspace_id"
     ],
     "workspaces": [
+      "byo_posture",
       "home_sync_generation",
       "id",
       "memory_language",

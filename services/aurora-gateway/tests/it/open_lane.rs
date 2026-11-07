@@ -56,6 +56,7 @@ impl CredentialResolver for Creds {
             context_label: None,
             principals: vec![w.agent],
             capabilities: caps,
+            byo: None,
         }))
     }
 }
@@ -210,6 +211,7 @@ async fn start(o: Opts) -> Env {
             })
             .collect(),
         open_lane_minimum: o.instance,
+        byo: Default::default(),
     };
     let gov = Arc::new(Governance::new(
         instance_from_config(&gcfg, &llm),

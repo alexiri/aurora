@@ -75,10 +75,22 @@ pub struct NonCompliantSecret {
     pub reason: String,
 }
 
+/// (phase 2, RFE-025) Effective org-level BYO controls (instance ∩ org); the workspace layer is
+/// applied per workspace/agent.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct EffectiveByo {
+    /// `enabled` | `owners_only` | `disabled`.
+    pub posture: Sourced<String>,
+    /// Default source CIDR list of BYO agents without their own; `null` = unrestricted.
+    pub source_cidrs: Sourced<Option<Vec<String>>>,
+    pub require_context_credentials: Sourced<bool>,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct EffectiveGovernance {
     pub llm: EffectiveLlm,
     pub egress: EffectiveEgress,
+    pub byo: EffectiveByo,
     pub non_compliant_secrets: Vec<NonCompliantSecret>,
 }
 
@@ -108,8 +120,19 @@ pub struct InstanceEgress {
     pub baseline_allowlist: Vec<AllowlistEntry>,
 }
 
+/// (phase 2, RFE-025) The instance level of BYO governance (`[byo]`).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InstanceByo {
+    pub enabled: bool,
+    /// `enabled` | `owners_only` | `disabled`.
+    pub minimum_posture: String,
+    pub default_source_cidrs: Vec<String>,
+    pub require_context_credentials: bool,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct InstanceGovernance {
     pub llm: InstanceLlm,
     pub egress: InstanceEgress,
+    pub byo: InstanceByo,
 }

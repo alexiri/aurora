@@ -817,3 +817,72 @@ fn open_lane_minimum_is_validated_and_defaults_to_enabled() {
         .unwrap_err();
     assert!(e.has_key("governance.egress.open_lane_minimum"));
 }
+
+#[test]
+fn byo_section_defaults_and_validation() {
+    // Defaults: enabled, floor owners_only, no default list, context not required.
+    let api = load_with(BASE, &[]).unwrap().api_config().unwrap();
+    let b = &api.governance.byo;
+    assert!(b.enabled);
+    assert_eq!(b.minimum_posture, ByoPosture::OwnersOnly);
+    assert!(b.default_source_cidrs.is_empty());
+    assert!(!b.require_context_credentials);
+
+    let ok = format!(
+        "{BASE}[byo]\nenabled = false\nminimum_posture = \"enabled\"\n\
+         default_source_cidrs = [\"203.0.113.0/24\", \"2001:db8::/32\"]\n\
+         require_context_credentials = true\n"
+    );
+    let gw = load_with(&ok, &[]).unwrap().gateway_config().unwrap();
+    assert!(!gw.governance.byo.enabled);
+    assert_eq!(gw.governance.byo.minimum_posture, ByoPosture::Enabled);
+    assert_eq!(gw.governance.byo.default_source_cidrs.len(), 2);
+    assert!(gw.governance.byo.require_context_credentials);
+
+    for (bad, key) in [
+        ("minimum_posture = \"never\"", "byo.minimum_posture"),
+        (
+            "default_source_cidrs = [\"0.0.0.0/0\"]",
+            "byo.default_source_cidrs[0]",
+        ),
+        (
+            "default_source_cidrs = [\"::/0\"]",
+            "byo.default_source_cidrs[0]",
+        ),
+        (
+            "default_source_cidrs = [\"10.0.0.1/8\"]",
+            "byo.default_source_cidrs[0]",
+        ),
+        (
+            "default_source_cidrs = [\"nonsense\"]",
+            "byo.default_source_cidrs[0]",
+        ),
+    ] {
+        let e = load_with(&format!("{BASE}[byo]\n{bad}\n"), &[])
+            .unwrap()
+            .api_config()
+            .unwrap_err();
+        assert!(e.has_key(key), "{bad}: {e:?}");
+    }
+    let many: Vec<String> = (0..33).map(|i| format!("\"10.{i}.0.0/16\"")).collect();
+    let e = load_with(
+        &format!("{BASE}[byo]\ndefault_source_cidrs = [{}]\n", many.join(",")),
+        &[],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap_err();
+    assert!(e.has_key("byo.default_source_cidrs"));
+}
+
+#[test]
+fn gateway_trusted_proxies_are_validated_cidrs() {
+    let ok = format!("{BASE}[gateway]\ntrusted_proxies = [\"10.0.0.0/8\"]\n");
+    let gw = load_with(&ok, &[]).unwrap().gateway_config().unwrap();
+    assert_eq!(gw.gateway.trusted_proxies, ["10.0.0.0/8"]);
+    for bad in ["0.0.0.0/0", "10.0.0.1", "x"] {
+        let t = format!("{BASE}[gateway]\ntrusted_proxies = [\"{bad}\"]\n");
+        let e = load_with(&t, &[]).unwrap().gateway_config().unwrap_err();
+        assert!(e.has_key("gateway.trusted_proxies[0]"), "{bad}");
+    }
+}

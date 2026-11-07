@@ -161,7 +161,13 @@ pub async fn effective(state: &AppState, org: Uuid) -> Result<EffectiveGovernanc
             })
         })
         .collect();
+    let org_doc = aurora_db::repo::gateway::org_governance(&state.pool, org)
+        .await?
+        .ok_or_else(not_found)?;
+    let org_byo = g::OrgByo::from_stored(org_doc.get("byo"));
+    let byo = effective_byo_view(&state.gov_instance, &org_byo);
     Ok(EffectiveGovernance {
+        byo,
         llm: EffectiveLlm {
             posture: sourced(llm_posture(eff.llm_posture), eff.llm_posture_source),
             endpoints,
@@ -177,6 +183,35 @@ pub async fn effective(state: &AppState, org: Uuid) -> Result<EffectiveGovernanc
         },
         non_compliant_secrets,
     })
+}
+
+/// Org-level effective BYO controls with the level that decided each value (RFE-025).
+fn effective_byo_view(inst: &g::Instance, org: &g::OrgByo) -> EffectiveByo {
+    let e = g::effective_byo(
+        &inst.byo,
+        &g::ByoInputs {
+            org: org.clone(),
+            ..g::ByoInputs::default()
+        },
+    );
+    let lvl = |l: Option<g::ByoLevel>| match l {
+        Some(g::ByoLevel::Org) => "org".to_owned(),
+        _ => "instance".to_owned(),
+    };
+    EffectiveByo {
+        posture: Sourced {
+            value: e.posture.as_str().to_owned(),
+            source: lvl(Some(e.posture_level)),
+        },
+        source_cidrs: Sourced {
+            value: e.source_strings(),
+            source: lvl(e.source_level),
+        },
+        require_context_credentials: Sourced {
+            value: e.require_context,
+            source: lvl(e.require_context_level),
+        },
+    }
 }
 
 /// Result of a governance change, for the audit record.
@@ -195,6 +230,9 @@ pub async fn put(state: &AppState, org: Uuid, req: PutGovernance) -> Result<Appl
     let doc = g::validate(&req.document, &state.gov_instance).map_err(|errs| {
         let code = if errs.iter().any(|e| e.code == BELOW_MIN) {
             "governance_below_instance_minimum"
+        } else if errs.iter().any(|e| e.code == g::BYO_CIDR_OUTSIDE_DEFAULT) {
+            // (RFE-025) an org source list entry outside the instance default list.
+            "byo_cidr_outside_default"
         } else {
             "governance_invalid"
         };
@@ -284,6 +322,17 @@ pub fn instance(state: &AppState) -> InstanceGovernance {
             minimum_posture: egress_posture(i.egress_minimum_posture),
             open_lane_minimum: open_lane_posture(i.open_lane_minimum),
             baseline_allowlist: i.baseline_allowlist.iter().map(allow).collect(),
+        },
+        byo: InstanceByo {
+            enabled: i.byo.enabled,
+            minimum_posture: i.byo.minimum_posture.as_str().to_owned(),
+            default_source_cidrs: i
+                .byo
+                .default_source_cidrs
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            require_context_credentials: i.byo.require_context_credentials,
         },
     }
 }

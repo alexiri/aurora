@@ -1,5 +1,6 @@
 use super::dto::*;
 use crate::app::AppState;
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::auth::Caller;
 use aurora_core::token::{self, TokenPrefix};
 use aurora_core::{ApiError, FieldError};
@@ -93,13 +94,24 @@ pub async fn read_ca(state: &AppState) -> Result<String, ApiError> {
     })
 }
 
-/// Bootstrap document; `token` embeds the agent token, otherwise `<AGENT_TOKEN>`.
+/// Bootstrap document; `token` embeds the agent token, otherwise `<AGENT_TOKEN>`. For an agent
+/// that requires context credentials (RFE-025) the proxy URL carries `<CONTEXT_TOKEN>` instead:
+/// the agent token is only for minting `auc_` credentials (`aurora run` does that).
 pub async fn container_config(
     state: &AppState,
     token: Option<&str>,
+    byo: Option<&aurora_llm::governance::EffectiveByo>,
 ) -> Result<ContainerConfig, ApiError> {
     let ca_pem = read_ca(state).await?;
-    let proxy_url = proxy_url_with(state, token.unwrap_or("<AGENT_TOKEN>"));
+    let need_context = byo.is_some_and(|b| b.require_context);
+    let proxy_url = proxy_url_with(
+        state,
+        if need_context {
+            "<CONTEXT_TOKEN>"
+        } else {
+            token.unwrap_or("<AGENT_TOKEN>")
+        },
+    );
     let mut env = BTreeMap::new();
     for k in ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"] {
         env.insert(k.to_owned(), proxy_url.clone());
@@ -132,6 +144,18 @@ pub async fn container_config(
         llm_env: BTreeMap::new(),
         // Credential stubs arrive with M3 apps (08 §9).
         stubs: Vec::new(),
+        byo: byo.map(|b| ContainerByo {
+            posture: b.posture.as_str().to_owned(),
+            source_cidrs: b.source_strings(),
+            require_context: b.require_context,
+        }),
+        notes: if need_context {
+            vec![
+                "This agent must use a context credential for requests that need a credential: replace <CONTEXT_TOKEN> in proxy_url with one minted by POST /v1/agent/context-credentials, or run commands through `aurora run -- <command>`, which does that for you.".to_owned(),
+            ]
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -143,6 +167,7 @@ pub struct Created {
 pub async fn create(
     state: &AppState,
     c: &Caller,
+    auth: &aurora_db::authz::WorkspaceAuth,
     org_id: Uuid,
     ws: Uuid,
     req: CreateAgentRequest,
@@ -156,6 +181,15 @@ pub async fn create(
             "hosted_disabled",
             "Hosted agents are disabled on this instance.",
         ));
+    }
+    if req.kind == "byo" {
+        // (phase 2, RFE-025) creation is governed by the effective BYO posture.
+        let org = super::byo::org_byo(state, org_id).await?;
+        let wsrow = aurora_db::repo::workspaces::get(&state.pool, ws)
+            .await?
+            .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
+        let eff = super::byo::effective(state, &org, wsrow.byo_posture.as_deref(), None);
+        super::byo::require_creation(state, auth, ws, &eff).await?;
     }
     let brief = req.brief.as_deref().unwrap_or("");
     brief_ok(brief)?;
@@ -249,14 +283,81 @@ async fn mint_agent_token(tx: &mut sqlx::PgConnection, agent_id: Uuid) -> Result
     Ok(t.clone())
 }
 
-/// Revoke the previous agent + context credentials and mint a new token.
-pub async fn regenerate(state: &AppState, agent_id: Uuid) -> Result<String, ApiError> {
+/// Revoke the previous agent + context credentials and mint a new token. The audit row
+/// `agent.token_regenerate` is written in the same transaction (RFE-025): no audit, no new token.
+pub async fn regenerate(
+    state: &AppState,
+    caller: &Caller,
+    row: &AgentRow,
+) -> Result<String, ApiError> {
+    let agent_id = row.id;
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     credentials::revoke_for_agent(&mut *tx, agent_id, false).await?;
     let t = mint_agent_token(&mut tx, agent_id).await?;
+    let ev = AuditEvent::new(
+        AuditActor::from_caller(caller),
+        "agent.token_regenerate",
+        Outcome::Success,
+    )
+    .org(row.org_id)
+    .workspace(row.workspace_id)
+    .target("agent", agent_id);
+    audit::insert_tx(&mut tx, &ev).await.map_err(|e| {
+        tracing::error!(error = %e, "agent.token_regenerate audit write failed");
+        ApiError::unavailable("audit_unavailable", "The audit log is unavailable.")
+    })?;
     credentials::notify_gateway_invalidate(&mut *tx, "agent", agent_id).await?;
     tx.commit().await.map_err(DbError::from)?;
     Ok(t)
+}
+
+/// `PUT /v1/agents/{agent}/byo`: the agent's own source list and require-context flag, with the
+/// audit row in the same transaction.
+pub async fn put_byo(
+    state: &AppState,
+    caller: &Caller,
+    row: &AgentRow,
+    req: &super::byo::PutByoRequest,
+) -> Result<AgentRow, ApiError> {
+    if row.kind != "byo" {
+        return Err(ApiError::unprocessable(
+            "not_byo",
+            "Source lists and context-credential requirements apply to BYO agents only.",
+        ));
+    }
+    let org = super::byo::org_byo(state, row.org_id).await?;
+    let list = match &req.source_cidrs {
+        None => None,
+        Some(l) => {
+            let inherited = super::byo::inherited_list(state, &org);
+            Some(super::byo::validate_source_list(l, inherited.as_deref())?)
+        }
+    };
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let updated = agents::set_byo_settings(&mut *tx, row.id, list.as_deref(), req.require_context)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    let ev = AuditEvent::new(
+        AuditActor::from_caller(caller),
+        "agent.byo_settings.update",
+        Outcome::Success,
+    )
+    .org(row.org_id)
+    .workspace(row.workspace_id)
+    .target("agent", row.id)
+    .metadata(serde_json::json!({
+        "source_cidrs": list,
+        "previous_source_cidrs": row.byo_source_cidrs,
+        "require_context": req.require_context,
+        "previous_require_context": row.byo_require_context,
+    }));
+    audit::insert_tx(&mut tx, &ev).await.map_err(|e| {
+        tracing::error!(error = %e, "agent.byo_settings.update audit write failed");
+        ApiError::unavailable("audit_unavailable", "The audit log is unavailable.")
+    })?;
+    credentials::notify_gateway_invalidate(&mut *tx, "agent", row.id).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(updated)
 }
 
 pub async fn patch(

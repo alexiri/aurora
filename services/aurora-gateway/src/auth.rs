@@ -36,6 +36,18 @@ pub struct RequestIdentity {
     /// Credential capabilities (`gateway_credentials.capabilities`, 08 §7); only `boot`
     /// credentials can hold any. Phase 1: `browser` (open-lane use, RFE-003).
     pub capabilities: Vec<String>,
+    /// (phase 2, RFE-025) Effective BYO controls of the credential's agent; `Some` only for the
+    /// `agent` and BYO `context` credentials of a BYO agent. Computed with the identity and
+    /// cached with it (invalidated by the `agent`, `workspace` and `org` scopes).
+    pub byo: Option<ByoAdmission>,
+}
+
+/// The BYO inputs of admission (`06 §BYO admission`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ByoAdmission {
+    pub effective: aurora_llm::governance::EffectiveByo,
+    pub org_slug: String,
+    pub ws_slug: String,
 }
 
 /// Capability that admits the open lane (RFE-003).
@@ -58,6 +70,13 @@ pub enum ResolveError {
 pub trait CredentialResolver: Send + Sync + 'static {
     /// `Ok(None)` = unknown, revoked or expired credential.
     async fn resolve(&self, token: &str) -> Result<Option<RequestIdentity>, ResolveError>;
+
+    /// Fresh identity of a credential by id, bypassing caches (RFE-025: re-evaluating live BYO
+    /// tunnels after an invalidation). `Ok(None)` = revoked, expired or gone. The default is
+    /// `None`, i.e. a live tunnel is closed.
+    async fn resolve_credential(&self, _id: Uuid) -> Result<Option<RequestIdentity>, ResolveError> {
+        Ok(None)
+    }
 }
 
 /// Every credential is rejected (production wiring until GW-002).

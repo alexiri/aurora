@@ -461,6 +461,90 @@ async fn s8_context_credential_attribution() {
     f.st.finish().await;
 }
 
+/// (phase 2, RFE-025, SEC-52) BYO governance through the real stack: the source list is judged
+/// from the TLS peer (127.0.0.x here), a disabled posture is refused with 403 and restored by
+/// loosening, and the agent's token is never touched.
+#[tokio::test]
+async fn s17_byo_source_list_and_posture_through_the_stack() {
+    let f = fx(Opts::default()).await;
+    f.api.set_policy("allow", json!([])).await;
+    let url = f.url("/byo");
+    let c = via_proxy(&f.st.gw_a, &f.token, &f.st.ca_pem);
+    let status = |c: reqwest::Client, url: String| async move {
+        let r = c.get(url).send().await.unwrap();
+        (r.status().as_u16(), r.text().await.unwrap())
+    };
+    // Wait for the invalidation to apply: the gateway re-reads the identity.
+    let until = |want: u16| {
+        let (c, url) = (c.clone(), url.clone());
+        async move {
+            let t = Instant::now();
+            loop {
+                let (s, body) = status(c.clone(), url.clone()).await;
+                if s == want || t.elapsed() > Duration::from_secs(5) {
+                    return (s, body);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    };
+    assert_eq!(until(200).await.0, 200);
+    let byo = format!("/v1/agents/{}/byo", f.agent);
+    // A list that excludes the loopback peer: refused after authentication (a bad token is 407).
+    let (s, v) = f
+        .api
+        .put(
+            &byo,
+            json!({"source_cidrs": ["203.0.113.0/24"], "require_context": false}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, body) = until(403).await;
+    assert_eq!(
+        (s, err_code(&body).as_str()),
+        (403, "source_not_permitted"),
+        "{body}"
+    );
+    assert!(
+        body.contains("127.0.0."),
+        "details.source is the TLS peer: {body}"
+    );
+    let bad = via_proxy(&f.st.gw_a, "aug_not-a-token", &f.st.ca_pem);
+    let r = bad.get(f.url("/byo")).send().await;
+    assert!(
+        r.is_err() || r.unwrap().status() == 407,
+        "bad token: no 403 oracle"
+    );
+    // A list that includes it admits again.
+    let (s, _) = f
+        .api
+        .put(
+            &byo,
+            json!({"source_cidrs": ["127.0.0.0/8"], "require_context": false}),
+        )
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(until(200).await.0, 200);
+    // Workspace posture disabled: refused 403 `byo_disabled`; nothing deleted; loosen restores it.
+    let ws = format!("/v1/workspaces/{}", f.api.ws);
+    let patch = |p: Value| {
+        f.api
+            .call(reqwest::Method::PATCH, &ws, Some(json!({"byo_posture": p})))
+    };
+    let (s, v) = patch(json!("disabled")).await;
+    assert_eq!(s, 200, "{v}");
+    let (s, body) = until(403).await;
+    assert_eq!(
+        (s, err_code(&body).as_str()),
+        (403, "byo_disabled"),
+        "{body}"
+    );
+    let (s, v) = patch(Value::Null).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(until(200).await.0, 200, "same token works again");
+    f.st.finish().await;
+}
+
 #[tokio::test]
 async fn s10_sanctioned_only_refuses_agent_supplied_llm_key() {
     let lite = litellm_server().await;

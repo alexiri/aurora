@@ -22,6 +22,7 @@ impl Proxy {
     pub(super) async fn handle_connect(
         self: &Arc<Self>,
         mut req: Request<Incoming>,
+        client: std::net::IpAddr,
     ) -> Response<Body> {
         let Some(auth) = req.uri().authority() else {
             return guidance::response(&guidance::not_a_proxy_request());
@@ -32,12 +33,22 @@ impl Proxy {
             Ok(x) => x,
             Err(e) => return guidance::response(&e),
         };
+        // (RFE-025) BYO admission: after authentication, before the lane is chosen.
+        if let Err(e) = self.byo_gate(&identity, client, "CONNECT", &host) {
+            return guidance::response(&e);
+        }
+        let guard = self
+            .byo
+            .tunnels
+            .as_ref()
+            .and_then(|r| r.register(&identity, client));
         let t = Target {
             identity,
             lane,
             scheme: Scheme::Https,
             host,
             port,
+            kill: guard.as_ref().map(crate::byo::TunnelGuard::killed),
         };
         let on_upgrade = hyper::upgrade::on(&mut req);
         match lane {
@@ -90,11 +101,27 @@ impl Proxy {
                 let live = self.track();
                 tokio::spawn(async move {
                     let _live = live;
-                    let Ok(up) = on_upgrade.await else { return };
-                    let Ok(tls) = TlsAcceptor::from(cfg).accept(TokioIo::new(up)).await else {
-                        return;
+                    let mut kill = guard.as_ref().map(crate::byo::TunnelGuard::killed);
+                    let work = async {
+                        let Ok(up) = on_upgrade.await else { return };
+                        let Ok(tls) = TlsAcceptor::from(cfg).accept(TokioIo::new(up)).await else {
+                            return;
+                        };
+                        this.serve_tunneled(tls, t).await;
                     };
-                    this.serve_tunneled(tls, t).await;
+                    // (RFE-025) The BYO admission of this tunnel changed: drop the connection at
+                    // any stage (handshake or request loop); a request held for approval is
+                    // abandoned with it.
+                    match kill.as_mut() {
+                        Some(k) => {
+                            tokio::select! {
+                                () = crate::byo::killed(k) => {}
+                                () = work => {}
+                            }
+                        }
+                        None => work.await,
+                    }
+                    drop(guard);
                 });
             }
         }

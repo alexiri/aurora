@@ -434,6 +434,8 @@ const ROWS: &[Row] = &[
     r("PUT", "/v1/agents/{agent}/avatar", G::WsUse, false),
     r("DELETE", "/v1/agents/{agent}/avatar", G::WsUse, false),
     r("PATCH", "/v1/agents/{agent}", G::WsUse, false),
+    // (phase 2, RFE-025) the agent's own source list / require-context flag: `can_own`.
+    r("PUT", "/v1/agents/{agent}/byo", G::WsOwn, false),
     r("DELETE", "/v1/agents/{agent}", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/conversations", G::WsUse, false),
     r(
@@ -915,6 +917,9 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"name": "s", "description": "d", "body": "b"})
         }
         ("POST", "/v1/agents/{agent}/webhooks") => json!({"name": "w", "instructions": "i"}),
+        ("PUT", "/v1/agents/{agent}/byo") => {
+            json!({"source_cidrs": null, "require_context": false})
+        }
         ("POST", "/v1/approvals/{id}/decision") => json!({"decision": "deny"}),
         ("POST", "/v1/approvals/batches/{batch_id}/decision") => {
             json!({"decision": "deny", "agent_id": fx.agent})
@@ -1128,7 +1133,13 @@ async fn permission_matrix_routes_by_principal() {
     std::fs::create_dir_all(&ca_dir).unwrap();
     std::fs::write(ca_dir.join("ca.pem"), "-----BEGIN CERTIFICATE-----\nX\n").unwrap();
     let ca = ca_dir.to_string_lossy().into_owned();
-    let shared = Harness::with_config(move |c| c.gateway_ca_dir = ca).await;
+    // The matrix asserts the access law; the BYO posture that further restricts creating BYO
+    // agents (RFE-025, default `owners_only`) is covered in `byo.rs`, so the floor is `enabled`.
+    let shared = Harness::with_config(move |c| {
+        c.gateway_ca_dir = ca;
+        c.governance.byo.minimum_posture = aurora_config::ByoPosture::Enabled;
+    })
+    .await;
     // The API activates an (empty) registry snapshot at startup; the harness does not, and
     // `GET /v1/admin/registry/snapshot` is 404 without one.
     aurora_api::domains::plugins::registry::ensure_initial(&shared.state)

@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { useCreateAgent } from "@/lib/api/agents";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
-import { useInstance } from "@/lib/api/queries";
+import { useInstance, useWorkspace } from "@/lib/api/queries";
 
 import { AgentRevealDialog, type Revealed } from "./reveal";
 
@@ -17,6 +17,15 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
   const instance = useInstance();
   const hostedAllowed = instance.data?.features.hosted === true;
   const create = useCreateAgent(wsId);
+  // (RFE-025) BYO is offered only as the effective posture allows; unknown = let the server decide.
+  const ws = useWorkspace(wsId);
+  const posture = ws.data?.effective_byo_posture;
+  const byoBlocked: string | null =
+    posture?.value === "disabled"
+      ? `BYO agents are disabled by the ${posture.level} settings`
+      : posture?.value === "owners_only" && ws.data && ws.data.my_role !== "owner"
+        ? "BYO agents are for workspace owners only"
+        : null;
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
@@ -49,7 +58,7 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
       const res = await create.mutateAsync({
         name: n,
         handle: h || undefined,
-        kind,
+        kind: byoBlocked && hostedAllowed ? "hosted" : kind,
         brief: brief.trim() || undefined,
       });
       setOpen(false);
@@ -91,13 +100,20 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
               <select
                 id="agent-kind"
                 className={inputClass}
-                value={kind}
+                value={byoBlocked && hostedAllowed ? "hosted" : kind}
                 onChange={(e) => setKind(e.target.value as "byo" | "hosted")}
               >
-                <option value="byo">Bring your own (BYO)</option>
+                <option value="byo" disabled={byoBlocked !== null}>
+                  Bring your own (BYO){byoBlocked ? " (owners only)" : ""}
+                </option>
                 {hostedAllowed ? <option value="hosted">Hosted</option> : null}
               </select>
             </Field>
+            {byoBlocked ? (
+              <p role="status" className="text-sm text-muted">
+                {byoBlocked}.
+              </p>
+            ) : null}
             <Field id="agent-brief" label="Brief (optional)" error={fe.brief}>
               <textarea id="agent-brief" className={inputClass} rows={3} value={brief} onChange={(e) => setBrief(e.target.value)} />
             </Field>
@@ -106,7 +122,7 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
                 {errorMessage(create.error)}
               </p>
             ) : null}
-            <Button type="submit" disabled={create.isPending}>
+            <Button type="submit" disabled={create.isPending || (byoBlocked !== null && !hostedAllowed)}>
               {create.isPending ? "Creating…" : "Create agent"}
             </Button>
           </form>

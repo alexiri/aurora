@@ -19,7 +19,34 @@ pub struct CredentialIdentityRow {
     pub capabilities: Vec<String>,
     /// Seconds until `expires_at` (None = no expiry).
     pub expires_in_secs: Option<f64>,
+    /// `agents.kind` (`byo` | `hosted`); BYO admission applies to `byo` only (RFE-025).
+    pub agent_kind: String,
+    pub org_slug: String,
+    pub ws_slug: String,
+    /// `workspaces.byo_posture` (RFE-025).
+    pub ws_byo_posture: Option<String>,
+    /// `organizations.governance -> 'byo'` (RFE-025).
+    pub org_byo: Option<serde_json::Value>,
+    /// `agents.byo_source_cidrs` / `byo_require_context` (RFE-025).
+    pub agent_byo_source_cidrs: Option<Vec<String>>,
+    pub agent_byo_require_context: bool,
 }
+
+const IDENTITY_SELECT: &str = "SELECT c.id AS credential_id, c.kind, c.agent_id, a.workspace_id, w.org_id, \
+                c.conversation_id, c.turn_id, c.context_label, c.capabilities, \
+                EXTRACT(EPOCH FROM (c.expires_at - now()))::float8 AS expires_in_secs, \
+                a.kind AS agent_kind, o.slug AS org_slug, w.slug AS ws_slug, \
+                w.byo_posture AS ws_byo_posture, o.governance -> 'byo' AS org_byo, \
+                a.byo_source_cidrs AS agent_byo_source_cidrs, \
+                a.byo_require_context AS agent_byo_require_context \
+         FROM gateway_credentials c \
+         JOIN agents a ON a.id = c.agent_id \
+         JOIN workspaces w ON w.id = a.workspace_id \
+         JOIN organizations o ON o.id = w.org_id \
+         WHERE c.revoked_at IS NULL \
+           AND (c.expires_at IS NULL OR c.expires_at > now()) \
+           AND EXISTS (SELECT 1 FROM org_members m \
+                       WHERE m.org_id = o.id AND m.role = 'owner' AND m.status = 'active')";
 
 /// Live credential by SHA-256 hash: not revoked, not expired, agent/workspace/org
 /// present, and the org has at least one active owner.
@@ -27,23 +54,25 @@ pub async fn find_credential_identity<'e, E: PgExecutor<'e>>(
     exec: E,
     token_hash: &[u8],
 ) -> Result<Option<CredentialIdentityRow>, DbError> {
-    Ok(sqlx::query_as::<_, CredentialIdentityRow>(
-        "SELECT c.id AS credential_id, c.kind, c.agent_id, a.workspace_id, w.org_id, \
-                c.conversation_id, c.turn_id, c.context_label, c.capabilities, \
-                EXTRACT(EPOCH FROM (c.expires_at - now()))::float8 AS expires_in_secs \
-         FROM gateway_credentials c \
-         JOIN agents a ON a.id = c.agent_id \
-         JOIN workspaces w ON w.id = a.workspace_id \
-         JOIN organizations o ON o.id = w.org_id \
-         WHERE c.token_hash = $1 \
-           AND c.revoked_at IS NULL \
-           AND (c.expires_at IS NULL OR c.expires_at > now()) \
-           AND EXISTS (SELECT 1 FROM org_members m \
-                       WHERE m.org_id = o.id AND m.role = 'owner' AND m.status = 'active')",
-    )
+    Ok(sqlx::query_as::<_, CredentialIdentityRow>(&format!(
+        "{IDENTITY_SELECT} AND c.token_hash = $1"
+    ))
     .bind(token_hash)
     .fetch_optional(exec)
     .await?)
+}
+
+/// The same live-credential lookup by credential id (re-evaluation of live BYO tunnels).
+pub async fn find_credential_identity_by_id<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+) -> Result<Option<CredentialIdentityRow>, DbError> {
+    Ok(
+        sqlx::query_as::<_, CredentialIdentityRow>(&format!("{IDENTITY_SELECT} AND c.id = $1"))
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
 }
 
 /// Users with `can_use` on the workspace: active org members who are
@@ -279,6 +308,8 @@ pub struct RequestLogRow {
     pub latency_ms: i32,
     pub bytes_up: i64,
     pub bytes_down: i64,
+    /// (RFE-025) label of the BYO context credential that made the request.
+    pub context_label: Option<String>,
 }
 
 /// Multi-row insert of a batch (callers keep batches <= 1000 rows).
@@ -293,7 +324,7 @@ pub async fn insert_request_log(
         "INSERT INTO request_log (id, ts, org_id, workspace_id, agent_id, conversation_id, turn_id, \
          credential_kind, lane, method, host, path, app_id, tool_id, connection_id, secret_id, \
          decision, rule_logical_id, rule_name, upstream_status, status, error_code, injected, \
-         latency_ms, bytes_up, bytes_down) ",
+         latency_ms, bytes_up, bytes_down, context_label) ",
     );
     qb.push_values(rows, |mut b, r| {
         b.push_bind(r.id)
@@ -321,7 +352,8 @@ pub async fn insert_request_log(
             .push_bind(r.injected)
             .push_bind(r.latency_ms)
             .push_bind(r.bytes_up)
-            .push_bind(r.bytes_down);
+            .push_bind(r.bytes_down)
+            .push_bind(&r.context_label);
     });
     qb.build().execute(pool).await?;
     Ok(())
@@ -348,6 +380,8 @@ pub struct NewApproval {
     pub batch_id: Option<String>,
     pub batch_label: Option<String>,
     pub batch_total: Option<i32>,
+    /// (RFE-025) label of the BYO context credential that made the request.
+    pub context_label: Option<String>,
     pub timeout_secs: f64,
 }
 
@@ -358,8 +392,8 @@ pub async fn insert_approval<'e, E: PgExecutor<'e>>(
     sqlx::query(
         "INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, turn_id, \
          gateway_instance_id, method, host, path, connection_id, rule_logical_id, rule_name, \
-         summary, batch_id, batch_label, batch_total, status, deadline) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'pending', \
+         summary, batch_id, batch_label, batch_total, context_label, status, deadline) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$19,'pending', \
                  now() + make_interval(secs => $18))",
     )
     .bind(a.id)
@@ -380,6 +414,7 @@ pub async fn insert_approval<'e, E: PgExecutor<'e>>(
     .bind(&a.batch_label)
     .bind(a.batch_total)
     .bind(a.timeout_secs)
+    .bind(&a.context_label)
     .execute(exec)
     .await?;
     Ok(())

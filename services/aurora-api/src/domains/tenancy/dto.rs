@@ -153,6 +153,11 @@ pub struct Workspace {
     pub name: String,
     pub timezone: String,
     pub memory_language: String,
+    /// (phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit).
+    pub byo_posture: Option<String>,
+    /// (phase 2, RFE-025) The effective BYO posture and the layer that decided it; `null` in
+    /// list and create responses.
+    pub effective_byo_posture: Option<crate::domains::agents::byo::ByoPostureView>,
     /// Org owner/admin => `owner`.
     pub my_role: WorkspaceRole,
     pub created_at: DateTime<Utc>,
@@ -168,6 +173,8 @@ impl Workspace {
             name: w.name,
             timezone: w.timezone,
             memory_language: w.memory_language,
+            byo_posture: w.byo_posture,
+            effective_byo_posture: None,
             my_role,
             created_at: w.created_at,
             updated_at: w.updated_at,
@@ -283,6 +290,11 @@ pub struct PatchWorkspaceRequest {
     pub name: Option<String>,
     pub timezone: Option<String>,
     pub memory_language: Option<String>,
+    /// (phase 2, RFE-025) `enabled` | `owners_only` | `disabled`; absent = unchanged, `null` =
+    /// inherit. Tighten-only.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<String>)]
+    pub byo_posture: Option<Option<String>>,
 }
 
 #[derive(Deserialize, ToSchema)]

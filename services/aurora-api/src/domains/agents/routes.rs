@@ -1,3 +1,4 @@
+use super::byo::PutByoRequest;
 use super::dto::*;
 use super::service;
 use crate::app::AppState;
@@ -21,6 +22,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_agents, create_agent))
         .routes(routes!(get_agent, patch_agent, delete_agent))
         .routes(routes!(regenerate_token))
+        .routes(routes!(put_agent_byo))
         .routes(routes!(agent_container_config))
         .routes(routes!(self_container_config))
         .routes(routes!(create_context_credential))
@@ -47,12 +49,24 @@ async fn list_agents(
     Query(params): Query<PageParams>,
 ) -> Result<Json<Page<Agent>>, ApiError> {
     let p = params.resolve()?;
-    caller.workspace(&state, ws).await?;
+    let a = caller.workspace(&state, ws).await?;
     let rows = agents::list_for_workspace(&state.pool, ws, p.after.map(|c| (c.t, c.id)), p.fetch())
         .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
+    let refs: Vec<&agents::AgentRow> = page.items.iter().collect();
+    let views = super::byo::views(&state, a.org_id, ws, &refs).await?;
+    let items = page
+        .items
+        .into_iter()
+        .zip(views)
+        .map(|(r, v)| {
+            let mut a = Agent::from(r);
+            a.byo = v;
+            a
+        })
+        .collect();
     Ok(Json(Page {
-        items: page.items.into_iter().map(Agent::from).collect(),
+        items,
         next_cursor: page.next_cursor,
     }))
 }
@@ -79,7 +93,22 @@ async fn get_agent(
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
     caller.workspace(&state, row.workspace_id).await?;
-    Ok(Json(row.into()))
+    Ok(Json(with_byo(&state, row).await?))
+}
+
+/// The agent DTO with its `byo` view loaded (BYO agents).
+async fn with_byo(state: &AppState, row: agents::AgentRow) -> Result<Agent, ApiError> {
+    let byo = if row.kind == "byo" {
+        Some(super::byo::view(
+            &super::byo::effective_for_agent(state, &row).await?,
+            &row,
+        ))
+    } else {
+        None
+    };
+    let mut a = Agent::from(row);
+    a.byo = byo;
+    Ok(a)
 }
 
 /// Create an agent (`can_use`). BYO agents return their `aug_` token once.
@@ -94,6 +123,7 @@ async fn get_agent(
         (status = 201, description = "Created", body = CreatedAgent),
         (status = 400, description = "Invalid", body = ErrorEnvelope),
         (status = 404, description = "Not found", body = ErrorEnvelope),
+        (status = 403, description = "byo_not_permitted | byo_disabled", body = ErrorEnvelope),
         (status = 409, description = "handle_taken", body = ErrorEnvelope),
         (status = 422, description = "hosted_disabled | agent_limit_reached", body = ErrorEnvelope),
     ),
@@ -106,7 +136,7 @@ async fn create_agent(
     Json(req): Json<CreateAgentRequest>,
 ) -> Result<(StatusCode, Json<CreatedAgent>), ApiError> {
     let a = caller.workspace(&state, ws).await?;
-    let created = service::create(&state, &caller, a.org_id, ws, req).await?;
+    let created = service::create(&state, &caller, &a, a.org_id, ws, req).await?;
     audit::record(
         &state,
         AuditEvent::new(
@@ -119,14 +149,20 @@ async fn create_agent(
         .target("agent", created.agent.id)
         .metadata(json!({"handle": created.agent.handle, "kind": created.agent.kind})),
     );
-    let container_config = match &created.token {
-        Some(t) => Some(service::container_config(&state, Some(t)).await?),
-        None => None,
+    let (container_config, agent) = match &created.token {
+        Some(t) => {
+            let eff = super::byo::effective_for_agent(&state, &created.agent).await?;
+            (
+                Some(service::container_config(&state, Some(t), Some(&eff)).await?),
+                with_byo(&state, created.agent).await?,
+            )
+        }
+        None => (None, created.agent.into()),
     };
     Ok((
         StatusCode::CREATED,
         Json(CreatedAgent {
-            agent: created.agent.into(),
+            agent,
             token: created.token,
             container_config,
         }),
@@ -138,11 +174,19 @@ async fn visible_agent(
     state: &AppState,
     id: Uuid,
 ) -> Result<agents::AgentRow, ApiError> {
+    Ok(visible_agent_auth(caller, state, id).await?.0)
+}
+
+async fn visible_agent_auth(
+    caller: &Caller,
+    state: &AppState,
+    id: Uuid,
+) -> Result<(agents::AgentRow, aurora_db::authz::WorkspaceAuth), ApiError> {
     let row = agents::get(&state.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
-    caller.workspace(state, row.workspace_id).await?;
-    Ok(row)
+    let auth = caller.workspace(state, row.workspace_id).await?;
+    Ok((row, auth))
 }
 
 /// Update an agent (`can_use`); `handle` and `kind` are immutable.
@@ -180,7 +224,7 @@ async fn patch_agent(
         .workspace(before.workspace_id)
         .target("agent", id),
     );
-    Ok(Json(row.into()))
+    Ok(Json(with_byo(&state, row).await?))
 }
 
 /// Delete an agent and revoke all its gateway credentials (`can_use`).
@@ -227,7 +271,7 @@ async fn delete_agent(
     params(("agent" = Uuid, Path, description = "Agent id")),
     responses(
         (status = 200, description = "New token", body = AgentToken),
-        (status = 403, description = "hosted_agent_token_hidden", body = ErrorEnvelope),
+        (status = 403, description = "hosted_agent_token_hidden | byo_not_permitted | byo_disabled", body = ErrorEnvelope),
         (status = 404, description = "Not found", body = ErrorEnvelope),
     ),
     security(("session" = []))
@@ -237,21 +281,13 @@ async fn regenerate_token(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<AgentToken>, ApiError> {
-    let row = visible_agent(&caller, &state, id).await?;
+    let (row, auth) = visible_agent_auth(&caller, &state, id).await?;
     refuse_hosted(&row)?;
-    let token = service::regenerate(&state, id).await?;
-    audit::record(
-        &state,
-        AuditEvent::new(
-            AuditActor::from_caller(&caller),
-            "agent.token_regenerate",
-            Outcome::Success,
-        )
-        .org(row.org_id)
-        .workspace(row.workspace_id)
-        .target("agent", id),
-    );
-    let container_config = service::container_config(&state, Some(&token)).await?;
+    // (phase 2, RFE-025) same posture check as creation.
+    let eff = super::byo::effective_for_agent(&state, &row).await?;
+    super::byo::require_creation(&state, &auth, row.workspace_id, &eff).await?;
+    let token = service::regenerate(&state, &caller, &row).await?;
+    let container_config = service::container_config(&state, Some(&token), Some(&eff)).await?;
     Ok(Json(AgentToken {
         token,
         container_config,
@@ -291,7 +327,11 @@ async fn agent_container_config(
 ) -> Result<Json<ContainerConfig>, ApiError> {
     let row = visible_agent(&caller, &state, id).await?;
     refuse_hosted(&row)?;
-    Ok(Json(service::container_config(&state, None).await?))
+    // Viewing the placeholder document stays `can_use` even when BYO is disabled (08 §11.9).
+    let eff = super::byo::effective_for_agent(&state, &row).await?;
+    Ok(Json(
+        service::container_config(&state, None, Some(&eff)).await?,
+    ))
 }
 
 /// Container config for the calling agent, token embedded (agent token).
@@ -303,12 +343,13 @@ async fn agent_container_config(
     responses(
         (status = 200, description = "Container config", body = ContainerConfig),
         (status = 401, description = "Unauthenticated", body = ErrorEnvelope),
+        (status = 403, description = "byo_disabled", body = ErrorEnvelope),
         (status = 503, description = "gateway_ca_unavailable", body = ErrorEnvelope),
     ),
     security(("agent_token" = []))
 )]
 async fn self_container_config(
-    _agent: AgentCaller,
+    agent: AgentCaller,
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
 ) -> Result<Json<ContainerConfig>, ApiError> {
@@ -319,7 +360,14 @@ async fn self_container_config(
         .and_then(|v| v.split_once(' '))
         .map(|(_, t)| t.trim())
         .unwrap_or_default();
-    Ok(Json(service::container_config(&state, Some(tok)).await?))
+    // (phase 2, RFE-025) refused while the effective BYO posture is `disabled`.
+    let row = agents::get(&state.pool, agent.agent_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    let eff = super::byo::require_not_disabled(&state, &row).await?;
+    Ok(Json(
+        service::container_config(&state, Some(tok), Some(&eff)).await?,
+    ))
 }
 
 /// Mint a context credential (`auc_`) for attribution (agent token).
@@ -333,6 +381,7 @@ async fn self_container_config(
         (status = 201, description = "Created", body = ContextCredential),
         (status = 400, description = "Invalid", body = ErrorEnvelope),
         (status = 401, description = "Unauthenticated", body = ErrorEnvelope),
+        (status = 403, description = "byo_disabled", body = ErrorEnvelope),
         (status = 404, description = "Conversation not found", body = ErrorEnvelope),
     ),
     security(("agent_token" = []))
@@ -342,6 +391,11 @@ async fn create_context_credential(
     State(state): State<AppState>,
     Json(req): Json<ContextCredentialRequest>,
 ) -> Result<(StatusCode, Json<ContextCredential>), ApiError> {
+    // (phase 2, RFE-025) refused while the effective BYO posture is `disabled`.
+    let row = agents::get(&state.pool, agent.agent_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    super::byo::require_not_disabled(&state, &row).await?;
     let out = service::mint_context(&state, agent.agent_id, req).await?;
     audit::record(
         &state,
@@ -361,6 +415,34 @@ async fn create_context_credential(
         .target("agent", agent.agent_id),
     );
     Ok((StatusCode::CREATED, Json(out)))
+}
+
+/// Set a BYO agent's own source CIDR list and require-context flag (`can_own`; RFE-025).
+#[utoipa::path(
+    put,
+    path = "/agents/{agent}/byo",
+    operation_id = "putAgentByo",
+    tag = "agents",
+    params(("agent" = Uuid, Path, description = "Agent id")),
+    request_body = PutByoRequest,
+    responses(
+        (status = 200, description = "Agent", body = Agent),
+        (status = 403, description = "Forbidden", body = ErrorEnvelope),
+        (status = 404, description = "Not found", body = ErrorEnvelope),
+        (status = 422, description = "not_byo | byo_cidr_invalid | byo_cidr_outside_default", body = ErrorEnvelope),
+    ),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn put_agent_byo(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PutByoRequest>,
+) -> Result<Json<Agent>, ApiError> {
+    let (row, auth) = visible_agent_auth(&caller, &state, id).await?;
+    crate::http::auth::require_own(&auth)?;
+    let updated = service::put_byo(&state, &caller, &row, &req).await?;
+    Ok(Json(with_byo(&state, updated).await?))
 }
 
 /// The gateway CA certificate (PEM).
