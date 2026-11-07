@@ -170,7 +170,8 @@ matrix:
 Every process that needs signals holds one dedicated LISTEN connection.
 Notifications are **hints**: a consumer that (re)connects its listener MUST
 resynchronize from the database (SSE re-reads from last seq, gateways flush
-caches, waiters return early). Payloads are JSON ≤ 7 000 bytes.
+caches — phase 3, RFE-014: *after* re-subscribing, keeping the caches meanwhile,
+`06 §Operation during a Postgres outage` — waiters return early). Payloads are JSON ≤ 7 000 bytes.
 
 | Channel | Payload | Producer → consumers |
 |---------|---------|----------------------|

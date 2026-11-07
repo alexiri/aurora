@@ -92,6 +92,7 @@ one new entry without activating it.
 | `gateway.proxy_tls.cert_file`, `gateway.proxy_tls.key_file` | — | gateway | (phase 1, RFE-002) optional operator-supplied proxy certificate chain + key (both or neither); replaces the CA-issued leaf for the outer leg |
 | `governance.agent_tokens.max_age_days` | unset (never expire) | api | (phase 3, RFE-013) optional maximum age of BYO agent tokens (1…3 650 days); orgs may set a smaller value; applied at mint and, with a 7-day grace, to existing tokens when introduced or tightened (`08 §7`) |
 | `gateway.allowed_private` | `[]` | gateway | private destinations allowed |
+| `gateway.resolve_cache_ttl_secs` | 60 | gateway | resolution-cache TTL (`02 §Limits`); (phase 3, RFE-014: also the **outage tolerance** and the revocation-lag bound while the database or listener is down; above 300 the gateway logs a warning at start; `06 §Operation during a Postgres outage`) |
 | `gateway.trusted_proxies` | `[]` | gateway | (phase 2, RFE-025) CIDRs of layer-4 load balancers / NAT hops that send a PROXY protocol v1/v2 header on the proxy port; the client address for BYO source restriction is taken from that header only for peers in this list (`06 §BYO admission`). Not the same as `server.trusted_proxies` (API, `X-Forwarded-For`) |
 | `byo.enabled` | `true` | api, gateway | (phase 2, RFE-025) master switch for BYO agents: `false` ⇒ BYO creation refused and every `aug_`/BYO `auc_` credential refused (403 `byo_disabled`), regardless of org/workspace settings. Hosted agents unaffected; changed by restart |
 | `byo.minimum_posture` | `owners_only` | api, gateway | (phase 2, RFE-025) `enabled` \| `owners_only` \| `disabled` — floor of the BYO posture for every org and workspace (`08 §11.9`); set `enabled` to keep phase 0/1 behaviour |
@@ -308,7 +309,14 @@ restarting it invalidates in-flight turns (bootstrap tokens are single use).
 ## Observability
 
 - Health: `/healthz` (liveness: process up) and `/readyz` (ready: DB reachable,
-  snapshot loaded, listener connected) on every service.
+  snapshot loaded, listener connected) on every service. (phase 3, RFE-014) The
+  gateway's `/readyz` has three states: `ready` and `degraded` (database or
+  listener down, serving from cache within the TTL) both answer 200 so the gateway
+  stays in rotation, `down` answers 503; `/readyz?strict=true` answers 503 for
+  `degraded` too. Alert on `aurora_gateway_state{state="degraded"} == 1` for 1 min
+  (warning) and for `gateway.resolve_cache_ttl_secs` (critical: cache is running out,
+  new requests are being refused); page on `state="down"`. Kubernetes probes use
+  plain `/readyz`; use `?strict=true` only in monitoring, never as a readiness probe.
 - Metrics: Prometheus `/metrics` per service (internal listener). Required
   series: HTTP requests by route/status/latency (api), gateway decisions and
   latencies, holds pending, refresh/mint outcomes, due-work arm durations and

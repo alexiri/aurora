@@ -109,6 +109,25 @@ done when its tests exist, pass in CI, and the security invariants it touches
   authorization of the workspace/org routes, no token material in responses; the
   dashboard badges.
 
+### Gateway under a database outage (phase 3, RFE-014, SEC-54)
+- Fault injection (a TCP proxy in front of Postgres that can drop, stall or refuse,
+  plus `pg_terminate_backend`): state machine `ready` ⇄ `degraded` ⇄ `down`
+  (two failed probes, hot-path connection error, statement error is *not* an outage,
+  start with the database down → `down` until a snapshot loads).
+- (a) Cached identity + ResolvedHost keep serving until their TTL (clock-controlled)
+  and are then refused; unknown credential → 503 `gateway_degraded` (never 407);
+  uncached host, new approval hold, OAuth refresh, uncached plaintext → refused with
+  the documented codes; open tunnels and in-flight streams survive; default-deny and
+  `credentialed_only` still apply to cached state; an existing hold expires without
+  the database and its row is fixed on recovery; request-log buffer fills, drops the
+  oldest beyond the cap and flushes on recovery.
+- (b) LISTEN-only loss: caches kept, no flapping within `GATEWAY_LISTEN_GRACE`,
+  reconnect backoff, flush *after* re-subscribe, an invalidation sent while
+  disconnected is honoured after the flush, an invalidation arriving after
+  re-subscribe is not lost; miss coalescing after the flush.
+- (c) `/readyz` bodies and status codes for the three states and `?strict=true`;
+  metrics and the `gateway.state_change` log line; `/internal/v1/status` fields.
+
 ### Governance
 - Governance validation: org documents below the instance minimum, scope and
   list subset rules, defaults for new orgs.

@@ -11,7 +11,7 @@ container, horizontally scalable.
 | Port | Name | Reachable from | Serves |
 |------|------|----------------|--------|
 | 4102 | **proxy** | sandboxes, BYO agents | Phase 0: plain TCP. **From phase 1 (RFE-002): TLS only** (see *Proxy listener TLS* below): inside the TLS session, `CONNECT host:port`; absolute-form `http://` requests; (phase 2) database wire protocols (the database lane's transport is specified with that lane and MUST also be TLS-only). **Nothing else**: origin-form requests get 400 `not_a_proxy_request`. |
-| 4103 | **internal** | API replicas and monitoring only | `GET /healthz`, `GET /readyz` (snapshot loaded + DB reachable), `GET /metrics`, `GET /internal/v1/status` (instance id, snapshot hash, cache sizes, pending holds). Auth: `Authorization: Bearer <internal secret>` except health/metrics (phase 2, RFE-007: any key of the internal-secret ring, `X-Aurora-Key-Id` naming it; the status response lists the ring's key **ids**, `08 §4`). |
+| 4103 | **internal** | API replicas and monitoring only | `GET /healthz`, `GET /readyz` (phase 0–2: snapshot loaded + DB reachable; **from phase 3 (RFE-014)** three states — `ready` 200, `degraded` 200 (serving from cache), `down` 503; `?strict=true` makes `degraded` 503; see *Operation during a Postgres outage*), `GET /metrics`, `GET /internal/v1/status` (instance id, snapshot hash, cache sizes, pending holds). Auth: `Authorization: Bearer <internal secret>` except health/metrics (phase 2, RFE-007: any key of the internal-secret ring, `X-Aurora-Key-Id` naming it; the status response lists the ring's key **ids**, `08 §4`). |
 
 The proxy port is raw TCP and cannot sit behind an HTTP path router. External
 BYO agents reach it directly (LoadBalancer/NodePort). The advertised address is
@@ -433,6 +433,7 @@ dashboard URL to fix the problem when one exists.
 | `manual_approval_denied` / `manual_approval_expired` | 403 | holds | `approval_id` |
 | `gateway_restarting` | 503 | shutdown during hold | — |
 | `approval_store_unavailable` | 503 | cannot persist hold | — |
+| `gateway_degraded` | 503 | (phase 3, RFE-014) database unreachable and the identity, host or credential value is not in cache (fail closed for new state); not for an invalid token | `reason` (`database_unavailable` \| `credential_store_unavailable`), `retry-after: 5` |
 | `multiple_connections` / `multiple_providers` | 409 | step 9 | `choices`, `header: "x-aurora-connection-id"` |
 | `connection_not_found` | 404 | stale/ungranted id | — |
 | `connection_reauth_required` | 403 | refresh refused earlier | `connection_id`, `reconnect_url` |
@@ -471,8 +472,111 @@ injected (the agent should see the real upstream error).
 | Leaf certificates | host | until near expiry | never |
 | Registry snapshot | content hash | until replaced | `aurora_registry` (+ 30 s poll of the active hash) |
 
-On LISTEN connection loss the gateway flushes all caches except leaf
-certificates, then reconnects.
+Phase 0–2: on LISTEN connection loss the gateway flushes all caches except
+leaf certificates, then reconnects. **From phase 3 (RFE-014) the order is
+reversed — reconnect first, flush after** (see *Operation during a Postgres
+outage*): the flush no longer destroys the only state that could carry the data
+plane through a database blip.
+
+## Operation during a Postgres outage (phase 3, RFE-014, D-61)
+
+Phase 0–2 left this unspecified, and flushing every cache on LISTEN loss turned a
+database blip into a full data-plane outage. The decision (fail closed for *new*
+state, no cliff for *existing* state) is now explicit, with its availability
+consequence stated: **an outage of Postgres degrades the gateway to what its
+caches already know, for at most `GATEWAY_RESOLVE_CACHE_TTL`, and refuses
+everything else.**
+
+**States.** The gateway tracks one of three states, exposed by `/readyz`,
+`/internal/v1/status` and the `aurora_gateway_state` gauge:
+
+| State | Condition | Behaviour |
+|---|---|---|
+| `ready` | database reachable, LISTEN connection established, snapshot loaded | normal |
+| `degraded` | snapshot loaded, but the database is unreachable **or** the LISTEN connection is down | serve from cache, refuse new state (below) |
+| `down` | no snapshot loaded (e.g. started while the database was unreachable), or draining (SIGTERM) | refuses new `CONNECT`s: 503 `gateway_degraded` / `gateway_restarting` |
+
+*Unreachable* = a readiness probe (`SELECT 1`, every `GATEWAY_DB_PROBE_INTERVAL` = 5 s,
+timeout 2 s) failed twice in a row, **or** a hot-path query failed with a
+connection-class error (pool acquire timeout 2 s, connection reset, `57P01`/`08xxx`
+SQLSTATE) — whichever comes first. Recovery needs one successful probe **and** an
+established LISTEN subscription. A statement-level error (constraint, permission,
+query bug) is not an outage and does not change the state.
+
+**(a) Serving during an outage.** Nothing is extended: no cache entry is served
+past its TTL, and nothing is refreshed.
+- **Served** while their cache entry is within TTL: the credential → identity entry
+  and the ResolvedHost entry for `(credential, host)` (so existing agents keep
+  working for the rest of their TTL), the plaintext cache (60 s), the effective
+  governance and posture, the registry snapshot (kept in memory indefinitely),
+  all open tunnels, WebSockets and in-flight requests (they need no database),
+  and in-memory rate limits.
+- **Refused** (fail closed, 503 `gateway_degraded`, `retry-after: 5`,
+  `details.reason = "database_unavailable"`, `x-should-retry: true`):
+  a credential not in the identity cache (it is **not** answered 407 — the gateway
+  cannot tell an invalid token from an unreadable store, and a client must not
+  conclude that its token is bad); a host with no ResolvedHost entry; a request
+  that needs a **new approval hold** (cannot persist it) →
+  `approval_store_unavailable`; a credential that needs refresh or a plaintext
+  not in the plaintext cache (inline-store values and OAuth refresh need Postgres)
+  → 503 `gateway_degraded` (`details.reason = "credential_store_unavailable"`);
+  context credentials minted by the API after the outage began (not yet cached).
+- Uncredentialed traffic whose identity and host entries are cached is served by
+  policy as usual; traffic that would have required a lookup is refused, so
+  **default-deny is never weakened** by degradation.
+- **Existing holds** keep waiting in memory until their deadline; a decision
+  cannot arrive while the database is down, so a hold whose deadline passes is
+  answered `manual_approval_expired`, and its `approvals` row is updated on
+  recovery (idempotent `UPDATE … WHERE status = 'pending'`, retried until it
+  succeeds). The hold's fallback poll failing is **never** read as a denial or an
+  approval.
+- **Request log.** Rows are buffered in memory during the outage, up to
+  `REQUEST_LOG_OUTAGE_BUFFER` (10 000 rows); the oldest are dropped beyond that
+  (`aurora_gateway_request_log_dropped_total`) and the buffer is flushed on
+  recovery. (`last_used_at` writes are skipped.) Never blocks requests.
+- **Revocation lag.** NOTIFY cannot arrive while the database or the LISTEN
+  connection is down, so a revocation, freeze, posture change or policy publish
+  takes effect at the latest when the affected entries' TTL runs out. This is the
+  same bound as phase 0's listener-loss window and is the price of availability;
+  operators who prefer less exposure lower `gateway.resolve_cache_ttl_secs`
+  (shorter outage tolerance), those who prefer more raise it (longer revocation
+  lag). Raising it above 300 s makes the gateway log a warning at start.
+
+**(b) LISTEN loss: reconnect first, flush after.** On loss of the LISTEN
+connection the gateway (1) sets `listener_connected = false` (state `degraded`
+only if the database is also unreachable or the listener has been down more than
+`GATEWAY_LISTEN_GRACE` = 30 s; a brief reconnect does not flap readiness),
+(2) **keeps all caches** and keeps serving under the rules above, (3) reconnects
+with jittered exponential backoff (0.5 s → 10 s), (4) after the new connection
+has re-issued `LISTEN` on every channel — so any invalidation from then on is
+received — **flushes** every cache except leaf certificates (invalidations sent
+during the gap were missed; the flush covers them) and re-polls the active
+registry hash, then (5) returns to `ready`. Entries are repopulated on demand
+(each miss is a database lookup, so a flush right after recovery is bounded by
+the pool; misses are coalesced per key). If the reconnect itself keeps failing the
+state stays `degraded` and entries age out at their TTL: at no time is anything
+served beyond TTL.
+
+**(c) Observability.**
+- `/readyz` (internal listener, unauthenticated like the other health routes):
+  `ready` → 200 `{ "state": "ready" }`; **`degraded` → 200**
+  `{ "state": "degraded", "reason": "database_unavailable" | "listener_down",
+  "since": ts, "cache_entries": n, "cache_oldest_age_secs": n }` — still 200 so
+  orchestrators keep it in rotation (pulling every gateway out because the
+  database is down would turn "degraded" into "down"); `down` → 503
+  `{ "state": "down", "reason": "snapshot_not_loaded" | "draining" }`. Monitors
+  that must alert on degraded call `GET /readyz?strict=true`, which answers 503
+  for `degraded` as well.
+- `/internal/v1/status` adds `state`, `db_unreachable_since`, `listener_connected`,
+  `cache` sizes and `request_log_buffered`.
+- Metrics: `aurora_gateway_state{state}` (1 for the current state),
+  `aurora_gateway_db_unreachable_seconds` (0 when reachable),
+  `aurora_gateway_degraded_requests_total{outcome="served_from_cache"|"refused", reason}`,
+  `aurora_gateway_listener_reconnects_total`,
+  `aurora_gateway_cache_flush_total{reason="listener_reconnect"|"invalidate_all"}`,
+  `aurora_gateway_request_log_buffered`, `aurora_gateway_request_log_dropped_total`.
+  A transition logs one structured line (`gateway.state_change`, from, to,
+  reason). Alert guidance: `15 §Observability`.
 
 ## Registry snapshot loading
 
@@ -495,8 +599,9 @@ backend is a later-phase trait implementation (`CounterStore`).
 
 - Request log: in-memory batch flushed every `REQUEST_LOG_FLUSH` via `COPY`;
   on flush failure the batch is retried once, then dropped with a metric (never
-  blocks requests). Never records secret values, bodies or raw query strings.
-- Metrics (Prometheus): requests by lane/decision/status, upstream latency
+  blocks requests); (phase 3, RFE-014) during a database outage rows are
+  buffered up to `REQUEST_LOG_OUTAGE_BUFFER` instead and flushed on recovery. Never records secret values, bodies or raw query strings.
+- Metrics (Prometheus; phase 3, RFE-014 adds the state and degraded-mode series listed under *Operation during a Postgres outage*): requests by lane/decision/status, upstream latency
   histogram, holds pending, cache hit ratios, refresh/mint outcomes, snapshot
   hash info gauge.
 - `gateway_instances` heartbeat every 15 s (used to abandon orphaned holds).
