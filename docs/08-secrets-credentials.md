@@ -153,6 +153,58 @@ value on the connect path, never per request.
 `AURORA_SIGNING_KEY` (32 bytes, base64) is the root for derived keys:
 `HKDF-SHA256(root, info = "aurora:<purpose>:v1")`.
 
+**Keyring-style lists (phase 2, RFE-007, D-51).** Phase 0 held one static value
+for each of `AURORA_SIGNING_KEY` and `AURORA_INTERNAL_SECRET`, with no rotation.
+From phase 2 both accept the **same shape as the encryption keyring** (§3):
+
+- `AURORA_SIGNING_KEY` = comma-separated `<key_id>:<base64 32 bytes>` (at most
+  `KEYRING_MAX` = 4 entries); `AURORA_SIGNING_ACTIVE_KEY` = the id used for
+  everything new. Key ids match `[a-z0-9]{1,16}`.
+- `AURORA_INTERNAL_SECRET` = comma-separated `<key_id>:<base64 ≥32 bytes>`;
+  `AURORA_INTERNAL_ACTIVE_KEY` = the id senders use.
+- **Backward compatible**: a value with no `:` is a one-entry ring with id `v0`,
+  active (the active variable may then be omitted). A list without its `*_ACTIVE_KEY`
+  fails startup naming the variable. Every service validates its ring at startup.
+- **Verify with any, sign with active.** Receivers accept anything signed or
+  presented with *any* key in their ring; producers use only the active key.
+  Nothing else widens: a key id outside the ring is refused.
+- **Derived artifacts carry their key id** so verification is one lookup:
+  AEAD states (`oauth-state`, `oidc-state`, `link-state`) are prefixed with the id
+  (`<key_id>.` before the base64url envelope); **action tokens** become
+  `v2.<key_id>.<b64url(payload)>.<b64url(HMAC)>` (`13 §4.4`); artifacts without an
+  id (phase 0, `v1.` tokens, unprefixed states) are verified by trying each key
+  (≤4, constant-time). Avatar public keys are *stored* values, so rotation does
+  not affect them. TTLs (`OAUTH_STATE_TTL` 10 min, `ACTION_TOKEN_TTL` ≤ 24 h) bound
+  how long an old key must stay in the ring.
+- **Internal secret on the wire**: `Authorization: Bearer <base64 secret>` plus
+  `X-Aurora-Key-Id: <key_id>` (not secret); the receiver compares in constant time
+  against that key, or — header absent (legacy/rolling) — against every key in
+  its ring. `GET /internal/v1/status` on the gateway and hook host, and `aurora-api
+  keys status`, report the **ids** (and a short fingerprint, never values) of each
+  service's ring and active key so an operator can verify convergence.
+
+**Rotation procedure** (rolling, no downtime; identical for the signing key and the
+internal secret):
+
+1. `aurora-api keys generate --kind signing|internal` prints a fresh
+   `<key_id>:<base64>` entry. Append it to the ring **on every service that holds
+   the ring** (signing key: api; internal secret: api, gateway, hookhost) but do
+   **not** change the active id. Roll the services; they now *accept* the new key.
+2. Confirm convergence (`keys status` / the status endpoints show the new id on
+   every replica). Only then set `*_ACTIVE_KEY` to the new id and roll again:
+   producers now use the new key while the old one still verifies in-flight
+   artifacts.
+3. After the old key's longest artifact lifetime (≥ 25 h for the signing key, the
+   action-token TTL plus margin; ≥ 5 min for the internal secret), remove it from
+   the ring and roll. If the old key is **compromised**, do this immediately:
+   in-flight states fail (users retry), outstanding chat-card tokens fail (the card
+   shows "expired", a new card is posted by the next approval event), nothing else.
+4. Setup tooling and Helm hooks only ever **append** (never overwrite) ring entries.
+
+Out of scope for phase 2 (owner decision: option a only): `AURORA_RUNNER_SESSION_KEY`
+and the gateway CA stay single static values with no orchestrated rotation, and no
+KMS-wrapping of the inline keyring is specified (`17 §Residual risks`).
+
 | Purpose | Use |
 |---------|-----|
 | `oauth-state` | AEAD for app-connect OAuth state |
@@ -162,7 +214,8 @@ value on the connect path, never per request.
 | `link-state` | AEAD for account-link landing pages |
 
 `AURORA_RUNNER_SESSION_KEY` (shared by runner replicas and the API) is separate
-(`11`). `AURORA_INTERNAL_SECRET` authenticates API ↔ gateway-internal ↔ hook host.
+(`11`) and remains a single static value. `AURORA_INTERNAL_SECRET` authenticates
+API ↔ gateway-internal ↔ hook host (a ring from phase 2, above).
 
 ## 5. Secrets
 

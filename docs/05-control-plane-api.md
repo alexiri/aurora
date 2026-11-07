@@ -47,7 +47,7 @@ if any declared id lacks an implementation.
 | Runner | `Authorization: Bearer aur_…` + `X-Aurora-Replica: <id>` (after register) | `/v1/runner/**` |
 | Connector | `Authorization: Bearer aun_…` + `X-Aurora-Replica` | `/v1/connector/**` |
 | Public capability | token in path | `POST /v1/hooks/{token}`, `GET /v1/public/avatars/{key}`, `GET /v1/oauth/callback`, OIDC callbacks |
-| Internal services (hook host) | `Authorization: Bearer <internal secret>` | `/internal/v1/**` |
+| Internal services (hook host) | `Authorization: Bearer <internal secret>` (phase 2, RFE-007: any key of the ring + `X-Aurora-Key-Id`) | `/internal/v1/**` |
 | Metrics / health | none | `/healthz`, `/readyz`, `/metrics` |
 
 `/metrics` and `/internal/**` MUST NOT be routed by the edge proxy (the edge

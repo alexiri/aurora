@@ -11,7 +11,7 @@ container, horizontally scalable.
 | Port | Name | Reachable from | Serves |
 |------|------|----------------|--------|
 | 4102 | **proxy** | sandboxes, BYO agents | Phase 0: plain TCP. **From phase 1 (RFE-002): TLS only** (see *Proxy listener TLS* below): inside the TLS session, `CONNECT host:port`; absolute-form `http://` requests; (phase 2) database wire protocols (the database lane's transport is specified with that lane and MUST also be TLS-only). **Nothing else**: origin-form requests get 400 `not_a_proxy_request`. |
-| 4103 | **internal** | API replicas and monitoring only | `GET /healthz`, `GET /readyz` (snapshot loaded + DB reachable), `GET /metrics`, `GET /internal/v1/status` (instance id, snapshot hash, cache sizes, pending holds). Auth: `Authorization: Bearer <internal secret>` except health/metrics. |
+| 4103 | **internal** | API replicas and monitoring only | `GET /healthz`, `GET /readyz` (snapshot loaded + DB reachable), `GET /metrics`, `GET /internal/v1/status` (instance id, snapshot hash, cache sizes, pending holds). Auth: `Authorization: Bearer <internal secret>` except health/metrics (phase 2, RFE-007: any key of the internal-secret ring, `X-Aurora-Key-Id` naming it; the status response lists the ring's key **ids**, `08 §4`). |
 
 The proxy port is raw TCP and cannot sit behind an HTTP path router. External
 BYO agents reach it directly (LoadBalancer/NodePort). The advertised address is

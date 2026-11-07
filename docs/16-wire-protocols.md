@@ -11,12 +11,12 @@ implementation repo and checked in (CI fails on drift).
 | W1 | Proxy protocol | agent → gateway :4102 | `Proxy-Authorization` gateway credential; (phase 1, RFE-002) carried inside a TLS session — TLS-only listener | `06` |
 | W2 | Management API | browser/CLI/SDK → API `/v1` | session / API key | `05` |
 | W3 | Gateway signals | API → gateways (`NOTIFY`), gateways → DB | DB roles | `05`, `06` |
-| W4 | Gateway internal | API/monitoring → gateway :4103 | internal secret | `06` |
+| W4 | Gateway internal | API/monitoring → gateway :4103 | internal secret (ring from phase 2, `08 §4`) | `06` |
 | W5 | Runner plane | runner → API `/v1/runner` | `aur_` + replica | this doc |
 | W6 | Supervisor channel | supervisor → runner :4105 (WebSocket) | bootstrap token / HMAC session | this doc |
 | W7 | Platform tools | harness → MCP bridge → supervisor → runner → API | stamped identity | this doc, `12` |
 | W8 | Connector contract | connector → API `/v1/connector` | `aun_` + replica | `13` |
-| W9 | Hook host | API/gateway → hookhost :4104; hookhost → API :4111 | internal secret | `09` |
+| W9 | Hook host | API/gateway → hookhost :4104; hookhost → API :4111 | internal secret (ring from phase 2, `08 §4`) | `09` |
 | W10 | Platform callbacks | chat platform → connector | connector-defined | `20` |
 | W11 | Upstream | gateway → internet | guarded resolver | `06` |
 | W12 | CLI / BYO | CLI → API; BYO agent → gateway | API key / agent token | `05`, `08` |

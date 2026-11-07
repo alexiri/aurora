@@ -96,6 +96,12 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Every fixture package's own `tests/*.yaml` via `aurora plugin test`.
 
 ### Secrets
+- (phase 2, RFE-007) Signing-key / internal-secret rings (SEC-46): parse and
+  validation (legacy bare value = ring `v0`, missing active id, duplicate ids,
+  > `KEYRING_MAX`), `v2.` action tokens and id-prefixed states verified by id,
+  `v1.`/unprefixed by trial, unknown id refused, internal calls with and without
+  `X-Aurora-Key-Id` across the add → activate → remove sequence in a
+  mixed-version api/gateway/hookhost test, status endpoints expose ids only.
 - Inline envelope fixtures (cross-version), AAD row-swap attack, keyring
   rotation with `secrets rekey`, `secrets migrate` to the `memory` test store,
   reference-mode secrets via the `memory` store, store-unavailable fail-closed.

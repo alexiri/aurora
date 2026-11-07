@@ -27,7 +27,7 @@ aurora/
     aurora-connector-sdk/     # helper crate for connector authors: contract client, register/config/ops loops, conformance runner
     aurora-testkit/           # shared test utilities: ephemeral Postgres, mock upstreams, mock OAuth server, fixtures
   services/
-    aurora-api/               # bin: control plane (subcommands: serve, migrate, bootstrap-admin, secrets, plugins, openapi)
+    aurora-api/               # bin: control plane (subcommands: serve, migrate, bootstrap-admin, secrets, plugins, openapi; phase 2, RFE-007: keys {generate,status})
     aurora-gateway/           # bin: gateway (subcommands: serve, generate-ca, check-snapshot)
     aurora-hookhost/          # bin: hook host
     aurora-runner/            # bin: runner (backends: podman, kubernetes, fake)
@@ -179,6 +179,7 @@ overridden by the named configuration key (`15`).
 | `CONDITION_BODY_BUFFER` | 256 KiB (4 KiB–8 MiB) | `gateway.condition_body_bytes` | 07 |
 | `UPSTREAM_HEADER_TIMEOUT` | 300 s | `gateway.upstream_header_timeout_secs` | 06 |
 | `WEBSOCKET_IDLE_TIMEOUT` | 600 s | — | 06 |
+| `KEYRING_MAX` | (phase 2, RFE-007) 4 entries per signing-key / internal-secret ring | — | 08 §4 |
 | `FREEZE_REPLY_INTERVAL` | (phase 2, RFE-006) 10 min per (space/thread, person) | — | 04, 13 |
 | `OIDC_AUTH_RATE` | (phase 1, RFE-004) 20 / min / IP for each of OIDC `start` and `callback` | — | 04 |
 | `PROXY_TLS_LEAF_VALIDITY` | (phase 1, RFE-002) 30 days; renewed when < 10 days remain | — | 06 |

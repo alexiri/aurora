@@ -189,7 +189,7 @@ integration) are claimable by any live replica of the connector.
 
 ### 4.4 Action tokens
 
-`v1.<b64url(payload)>.<b64url(HMAC-SHA256(action-token key, payload))>`, payload
+Phase 0: `v1.<b64url(payload)>.<b64url(HMAC-SHA256(action-token key, payload))>`; (phase 2, RFE-007) `v2.<key_id>.<b64url(payload)>.<b64url(HMAC-SHA256(action-token key of key_id, payload))>` signed with the active signing key and verified with the ring entry named by `key_id` (`v1.` tokens: try each ring key; `08 §4`), payload
 JSON `{ jti, kind, integration_id, subject_id, data, exp }`. Kinds:
 `approval.decide {decision}`, `approval.batch_decide {batch_id, agent_id,
 decision}`, `action_approval.decide {decision}`, `reach.decide {decision}`,

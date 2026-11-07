@@ -77,6 +77,7 @@ runs), configured external secret stores.
 | SEC-43 | (phase 1, RFE-009) A `direct` conversation, and everything that names it (events, SSE, attachments, approval cards and feeds, activity rows, conversation references), is visible only to its user (while they have access) and to workspace owners; only its user can write to it. | 04, 05, 07, 10, 13, 14 | authz matrix test over every conversation-returning route × {direct user, other member, owner, org admin, key of each}; approval feed/SSE/long-poll/batch redaction tests; activity-row omission test; owner-view audit test |
 | SEC-44 | (phase 2, RFE-005) A policy `user` identity matches only the speaker of the turn that made the request (hosted context credential, speaker still holding `can_use`); traffic without a speaker never matches `user` identities, so person-scoped privileges are never granted to unattributed traffic. | 06, 07, 08 §7 | evaluator corpus: same agent, different speakers; boot/agent/BYO-context/schedule/webhook traffic; speaker loses access mid-turn; injection selection with user-only allow rules |
 | SEC-45 | (phase 2, RFE-006) An effectively frozen agent (agent, workspace or org flag) does nothing: the gateway refuses its credentials and closes its tunnels, no turn, schedule, webhook, watch or presence reply starts work, its sandbox is parked with state kept; freezing is audited atomically, reversible, and lifting needs at least the authority that froze. | 04, 05, 06, 10, 11, 13 | e2e-hosted: freeze with a running turn and a live tunnel (turn aborted, tunnel closed, sandbox parked, home intact), webhook 410, schedule skipped, presence reply; authority matrix for freeze/unfreeze; unfreeze restores service without credential redistribution |
+| SEC-46 | (phase 2, RFE-007) The signing key and the internal secret are keyrings: producers use only the active key, receivers accept only keys in their ring, rotation is a rolling configuration change with no downtime, and a retired key stops working when removed. | 08 §4, 13, 15 | aurora-crypto tests (ring parsing, legacy bare value, missing active id, ≤4 entries); mixed-version rolling test (new key added everywhere, then activated, then old removed) with live OAuth state, action tokens and internal calls; removed-key refusal |
 
 ## Residual risks (accepted, documented to operators)
 
@@ -118,6 +119,11 @@ runs), configured external secret stores.
   `user`-scoped rules narrow honest traffic; they are not a boundary against a
   compromised agent. Use agent-level grants, approvals and (for the most
   sensitive credentials) a dedicated agent.
+- **Not everything rotates** (phase 2, RFE-007): the runner session key and the
+  gateway CA (10-year key; its compromise allows MITM of all agent traffic) have
+  no orchestrated rotation — replacing the CA means redistributing trust to every
+  sandbox and BYO host. The inline keyring has no KMS option. Operators protect
+  these as the most sensitive files they hold (`15 §Backups`).
 - **Per-replica rate limits**: with N gateways a limit can be exceeded up to N×.
 - **Connectors see their platform's traffic and credentials**: operators choose
   which connectors to run. A connector also names the speaker/clicker platform

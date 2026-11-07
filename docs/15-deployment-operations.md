@@ -37,8 +37,8 @@ refuses to start on any error, naming the key.
 |----------|---------|--------|
 | `AURORA_DATABASE_URL` | api, gateway | Postgres URL (separate roles recommended: API owner role; gateway least-privilege role) |
 | `AURORA_ENCRYPTION_KEYS`, `AURORA_ENCRYPTION_ACTIVE_KEY` | api, gateway | `08 §3` |
-| `AURORA_SIGNING_KEY` | api | 32 bytes base64 |
-| `AURORA_INTERNAL_SECRET` | api, gateway, hookhost | ≥32 random bytes base64 |
+| `AURORA_SIGNING_KEY`, `AURORA_SIGNING_ACTIVE_KEY` | api | 32 bytes base64 (phase 0). From phase 2 (RFE-007): a ring `id:base64,id2:base64` + the active id (a bare base64 value remains valid as ring id `v0`); rotation procedure `08 §4` |
+| `AURORA_INTERNAL_SECRET`, `AURORA_INTERNAL_ACTIVE_KEY` | api, gateway, hookhost | ≥32 random bytes base64 (phase 0). From phase 2 (RFE-007): a ring `id:base64,…` + the active id; every service holding it must have all entries before the active id changes (`08 §4`) |
 | `AURORA_RUNNER_SESSION_KEY` | api, runner | 32 bytes base64 |
 | `AURORA_RUNNER_TOKEN` | runner | `aur_…` |
 | `AURORA_CONNECTOR_TOKEN` | each connector | `aun_…` |
@@ -47,6 +47,10 @@ refuses to start on any error, naming the key.
 | OIDC client secrets, SMTP password | api | referenced from config (`client_secret_env = "…"`) |
 
 Setup tooling generates every secret and **never overwrites** an existing one.
+(phase 2, RFE-007) For the two rings it only **appends** new entries on request
+(`aurora-api keys generate`); Helm's `secrets` hook supports `existingSecret` rings
+and a values flag `secrets.rotate.signing` / `secrets.rotate.internal` that appends
+one new entry without activating it.
 
 ### Configuration reference (keys and defaults)
 
@@ -294,7 +298,9 @@ restarting it invalidates in-flight turns (bootstrap tokens are single use).
 
 Stateful: Postgres (system of record), per-agent home volumes (PVC snapshots /
 volume backups are the operator's job), the gateway CA Secret, the encryption
-keyring and signing key. **Secrets are unrecoverable without the keyring.**
+keyring and signing key (phase 2: the signing-key and internal-secret **rings**,
+including retired entries still inside their rotation window). **Secrets are
+unrecoverable without the keyring.**
 
 ## Sizing
 
