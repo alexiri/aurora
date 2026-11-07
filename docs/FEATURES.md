@@ -59,5 +59,5 @@ Last reconciled with git history: 2026-11-08 (code freeze for AUDIT-001, 2a6a0f8
 | RFE-005/006/007/008/010/011a/012/015/017/021/025 | Design-review items scheduled for phase 2 (`80`) | P2 | per RFE | per RFE | phase 0 on `master` | todo (spec drafting: SPEC-RFE-P12) | |
 | RFE-013/014/018/019/020/022/023/024 | Design-review items scheduled for phase 3 (`80`) | P3 | per RFE | per RFE | phases 1–2 | todo | |
 | RFE-011b | Approval park-and-resume, Web Push (`80`) | P4 | — | — | phase 3 | todo | |
-| P1/20 | Mattermost connector (11.7.15; shared + dedicated; conformance 13/13; live 5/5 — MM-001..003) | P1 (later phase) | — | — | Phase 0 exit | out of scope now | |
+| P1/20 | Mattermost connector (target 11.7.15): shared + dedicated modes | P1 | MM-001, MM-002, MM-003 | FE-060 (existing channel UI) | phase 0 | done | `scripts/conformance.sh --mattermost` 13/13; `scripts/e2e/mattermost.sh` 5/5; S-15 |
 | P2..P4/21 | App catalogue, DB lane, Vault, SSH, previews, evals, … | later | — | — | Phase 0 exit | out of scope now | |
