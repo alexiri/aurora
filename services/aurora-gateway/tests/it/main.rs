@@ -2,6 +2,7 @@
 mod apps;
 mod ask_tool_hold;
 mod check_snapshot;
+mod common;
 mod credentials;
 mod governance;
 mod governance_db;
@@ -10,5 +11,6 @@ mod listener_binds;
 mod pipeline;
 mod policy_db;
 mod proxy;
+mod proxy_tls;
 mod refresh;
 mod refresh_proxy;

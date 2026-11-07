@@ -22,7 +22,9 @@ PG=aurora-e2eh-pg
 ANCHOR=aurora-e2eh-anchor
 TOKEN="aur_e2ehostedtoken"
 FP=$(printf '%s' "$TOKEN" | sha256sum | cut -c1-16)
-IMAGE="localhost/aurora-sandbox:0.1.0"
+# AURORA_E2EH_IMAGE overrides the (shared) default tag, e.g. to test a supervisor change without
+# replacing the image other runs use.
+IMAGE="${AURORA_E2EH_IMAGE:-localhost/aurora-sandbox:0.1.0}"
 
 cleanup() {
   podman ps -a -q --filter "label=aurora.installation=$FP" | xargs -r podman rm -f -t 1 >/dev/null 2>&1
@@ -38,7 +40,7 @@ if [ "$free_kb" -lt $((15 * 1024 * 1024)) ]; then echo "less than 15 GB free; st
 
 cargo build -p aurora-api -p aurora-gateway -p aurora-runner || { echo "cargo build failed" >&2; exit 1; }
 if [ "${SKIP_IMAGE_BUILD:-}" != "1" ]; then
-  scripts/images/build-sandbox-min.sh aurora-sandbox:0.1.0 || { echo "image build failed" >&2; exit 1; }
+  scripts/images/build-sandbox-min.sh "${IMAGE#localhost/}" || { echo "image build failed" >&2; exit 1; }
 fi
 podman image exists "$IMAGE" || { echo "missing $IMAGE" >&2; exit 1; }
 TARGETS=(--test hosted)

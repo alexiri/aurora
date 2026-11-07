@@ -622,3 +622,200 @@ async fn s4b_org_default_block_yields_blocked_by_default_policy() {
     assert_eq!(f.get(&f.st.gw_a, "/ok").await.0, 200);
     f.st.finish().await;
 }
+
+// ---- (phase 1, RFE-002, docs/18) client matrix through the TLS-only proxy listener ----
+
+/// Runs `cmd`; `Ok(true)` = it printed `ok` and exited 0, `Ok(false)` = client not installed.
+async fn matrix_run(mut cmd: tokio::process::Command) -> Result<bool, String> {
+    cmd.kill_on_drop(true);
+    let out = match tokio::time::timeout(Duration::from_secs(120), cmd.output()).await {
+        Err(_) => return Err("timed out".into()),
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Ok(Err(e)) => return Err(e.to_string()),
+        Ok(Ok(o)) => o,
+    };
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if out.status.success() && text.contains("ok") {
+        Ok(true)
+    } else {
+        Err(text)
+    }
+}
+
+const GO_CLIENT: &str = r#"package main
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+)
+
+func main() {
+	pool := x509.NewCertPool()
+	pem, _ := os.ReadFile(os.Args[1])
+	pool.AppendCertsFromPEM(pem)
+	p, _ := url.Parse(os.Args[2])
+	c := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(p), TLSClientConfig: &tls.Config{RootCAs: pool}}}
+	r, err := c.Get(os.Args[3])
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	b, _ := io.ReadAll(r.Body)
+	fmt.Println(r.StatusCode, string(b))
+}
+"#;
+
+const PY_CLIENT: &str = r#"
+import sys, requests
+ca, proxy, url = sys.argv[1:4]
+r = requests.get(url, proxies={"https": proxy}, verify=ca, timeout=30)
+print(r.status_code, r.text)
+sys.exit(0 if r.status_code == 200 else 1)
+"#;
+
+const NODE_CLIENT: &str = r#"
+const https = require('https'), fs = require('fs');
+const { HttpsProxyAgent } = require(process.argv[1]);
+const [ca, proxy, url] = process.argv.slice(2);
+const caPem = fs.readFileSync(ca);
+const agent = new HttpsProxyAgent(proxy, { ca: caPem });
+const u = new URL(url);
+https.get(url, { agent, ca: caPem, servername: u.hostname }, (res) => {
+  let b = ''; res.on('data', (d) => (b += d));
+  res.on('end', () => { console.log(res.statusCode, b); process.exit(res.statusCode === 200 ? 0 : 1); });
+}).on('error', (e) => { console.log(String(e)); process.exit(1); });
+"#;
+
+/// curl (`--proxy-cacert`), Python requests/urllib3 2, Node `https-proxy-agent`, Go: each
+/// completes `CONNECT` through the TLS listener and gets the MITM'd upstream answer. Chromium is
+/// not installed on CI hosts and is reported as not verified.
+#[tokio::test]
+async fn s12_client_matrix_connect_through_the_tls_listener() {
+    let (addr, up_ca, _seen) = https_upstream().await;
+    let st = Stack::start(Opts {
+        extra_ca_bundle: Some(up_ca),
+        ..Opts::default()
+    })
+    .await;
+    let api = st.signup("owner@e2e.test").await;
+    let (_agent, token) = api.byo_agent("e2e-agent").await;
+    api.set_policy("allow", json!([])).await;
+    let dir = std::env::temp_dir().join(format!("aurora-matrix-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let ca = dir.join("ca.pem");
+    std::fs::write(&ca, &st.ca_pem).unwrap();
+    let proxy = format!("https://agent:{token}@{}", st.gw_a);
+    let target = format!("https://{addr}/secure");
+    let mut results: Vec<(&str, Result<bool, String>)> = vec![];
+
+    let mut curl = tokio::process::Command::new("curl");
+    curl.args([
+        "-sS",
+        "--fail",
+        "--max-time",
+        "60",
+        "--proxy",
+        &proxy,
+        "--proxy-cacert",
+    ])
+    .arg(&ca)
+    .arg("--cacert")
+    .arg(&ca)
+    .arg(&target)
+    .arg("-w")
+    .arg("ok %{http_code}");
+    results.push(("curl --proxy-cacert", matrix_run(curl).await));
+
+    let mut py = tokio::process::Command::new("python3");
+    py.args(["-I", "-c", PY_CLIENT])
+        .arg(&ca)
+        .arg(&proxy)
+        .arg(&target);
+    results.push(("python requests/urllib3 2", matrix_run(py).await));
+
+    let go_dir = dir.join("go");
+    std::fs::create_dir_all(&go_dir).unwrap();
+    std::fs::write(go_dir.join("main.go"), GO_CLIENT).unwrap();
+    let mut go = tokio::process::Command::new("go");
+    go.current_dir(&go_dir)
+        .env("GO111MODULE", "off")
+        .env("GOFLAGS", "")
+        .args(["run", "main.go"])
+        .arg(&ca)
+        .arg(&proxy)
+        .arg(&target);
+    // Go prints "200 ok": the shared success check looks for "ok".
+    results.push(("go net/http", matrix_run(go).await));
+
+    // Node: https-proxy-agent from the web workspace install, when present.
+    let hpa = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../web/node_modules/.pnpm/https-proxy-agent@7.0.6_supports-color@10.2.2/node_modules/https-proxy-agent",
+    );
+    if hpa.exists() {
+        let mut node = tokio::process::Command::new("node");
+        node.args(["-e", NODE_CLIENT])
+            .arg(hpa.canonicalize().unwrap())
+            .arg(&ca)
+            .arg(&proxy)
+            .arg(&target);
+        results.push(("node https-proxy-agent", matrix_run(node).await));
+    }
+    let mut ok = 0;
+    for (name, r) in &results {
+        match r {
+            Ok(true) => {
+                ok += 1;
+                eprintln!("[matrix] {name}: ok");
+            }
+            Ok(false) => eprintln!("[matrix] {name}: NOT INSTALLED, not verified"),
+            Err(e) => panic!("[matrix] {name} failed: {e}\n{}", st.log_tails()),
+        }
+    }
+    eprintln!("[matrix] chromium: not available here, not verified");
+    assert!(
+        ok >= 2,
+        "at least curl and one more client must be verified"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    st.finish().await;
+}
+
+/// SEC-40 black box: the real gateway binary closes a plaintext connection on 4102 without a
+/// response and without resolving the credential it carries.
+#[tokio::test]
+async fn s13_plaintext_connection_to_the_proxy_port_is_refused() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let f = fx(Opts::default()).await;
+    let req = format!(
+        "GET http://{}/x HTTP/1.1\r\nHost: {}\r\nProxy-Authorization: Basic {}\r\n\r\n",
+        host_of(&f.up),
+        host_of(&f.up),
+        base64_basic(&format!("agent:{}", f.token)),
+    );
+    let mut s = tokio::net::TcpStream::connect(&f.st.gw_a).await.unwrap();
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut out = Vec::new();
+    let r = tokio::time::timeout(Duration::from_secs(10), s.read_to_end(&mut out)).await;
+    assert!(r.is_ok(), "plaintext connection must be closed");
+    assert!(out.is_empty(), "no response to plaintext: {out:?}");
+    // The upstream never saw a request, and the gateway still serves TLS clients.
+    assert!(f.up.received_requests().await.unwrap().is_empty());
+    f.api.set_policy("allow", json!([])).await;
+    let r = f.client(&f.st.gw_a).get(f.url("/ok")).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    f.st.finish().await;
+}
+
+fn base64_basic(s: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(s)
+}

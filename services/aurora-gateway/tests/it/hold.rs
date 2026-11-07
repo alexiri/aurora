@@ -6,7 +6,7 @@ use aurora_config::{LlmSection, SecretsSection};
 use aurora_core::Secret;
 use aurora_db::repo::gateway::{PolicyRuleRow, RequestLogRow, ScopePolicyRows, SecretMetaRow};
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
-use aurora_gateway::ca::{self, Ca};
+use aurora_gateway::ca;
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
 use aurora_gateway::guard::Guard;
 use aurora_gateway::hold::Holds;
@@ -36,7 +36,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use uuid::Uuid;
 
 const TOKEN: &str = "aug_good";
@@ -293,8 +293,10 @@ async fn start(
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();
     let guard = Arc::new(Guard::new(&["127.0.0.0/8".to_owned()], vec![proxy]).unwrap());
+    let (gw_ca, gw_tls) = crate::common::gateway_tls(&gw, proxy);
     let p = Proxy::new(ProxyParts {
-        ca: Arc::new(Ca::from_pem(&gw.cert_pem, &gw.key_pem).unwrap()),
+        ca: gw_ca,
+        tls: gw_tls,
         resolver: Arc::new(Static(w.clone())),
         handler,
         guard,
@@ -347,7 +349,7 @@ impl Reply {
 
 /// Absolute-form GET through the proxy.
 async fn get(env: &Env, path_and_query: &str, extra: &str) -> Reply {
-    let mut s = TcpStream::connect(env.proxy).await.unwrap();
+    let mut s = crate::common::connect(env.proxy).await;
     let req = format!(
         "GET http://{}{path_and_query} HTTP/1.1\r\nHost: {}\r\n{}{extra}Connection: close\r\n\r\n",
         env.up,
@@ -540,7 +542,7 @@ async fn client_disconnect_abandons() {
         Duration::from_secs(30),
     )
     .await;
-    let mut s = TcpStream::connect(env.proxy).await.unwrap();
+    let mut s = crate::common::connect(env.proxy).await;
     let req = format!(
         "GET http://{}/x HTTP/1.1\r\nHost: {}\r\n{}\r\n",
         env.up,

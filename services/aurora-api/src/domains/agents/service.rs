@@ -105,6 +105,13 @@ pub async fn container_config(
         env.insert(k.to_owned(), proxy_url.clone());
     }
     env.insert("NO_PROXY".into(), "localhost,127.0.0.1".into());
+    let operator_cert = state.config.gateway_proxy_operator_cert;
+    if !operator_cert {
+        // (phase 1, RFE-002) git trusts the HTTPS proxy leg separately from the origin leg.
+        env.insert("GIT_CONFIG_COUNT".into(), "1".into());
+        env.insert("GIT_CONFIG_KEY_0".into(), "http.proxySSLCAInfo".into());
+        env.insert("GIT_CONFIG_VALUE_0".into(), CA_PATH.to_owned());
+    }
     for k in [
         "SSL_CERT_FILE",
         "NODE_EXTRA_CA_CERTS",
@@ -119,6 +126,8 @@ pub async fn container_config(
         env,
         ca_pem,
         ca_path: CA_PATH.into(),
+        proxy_ca_path: CA_PATH.into(),
+        proxy_tls: operator_cert.then(|| "operator_certificate".to_owned()),
         // Placeholders only; filled once model selection exists.
         llm_env: BTreeMap::new(),
         // Credential stubs arrive with M3 apps (08 §9).

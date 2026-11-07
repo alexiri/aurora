@@ -27,7 +27,7 @@ use crate::harvest::Harvester;
 use crate::home::{HomeConfig, HomeProjector, PartOutcome};
 use crate::inbox::Inbox;
 use crate::process::{ProcessConfig, ProcessManager};
-use crate::proxy::{Credential, ProxyHandle, ProxyMode, spawn_proxy};
+use crate::proxy::{Credential, GatewayUpstream, ProxyHandle, ProxyMode, spawn_proxy};
 use crate::tools::{ToolHub, ToolsConfig};
 
 const ABORT_GRACE: Duration = Duration::from_secs(5);
@@ -36,8 +36,8 @@ const MAX_ERROR_MESSAGE: usize = 2_000;
 #[derive(Debug, Clone)]
 pub struct SupervisorConfig {
     pub working_dir: PathBuf,
-    /// Gateway proxy `host:port`.
-    pub gateway_proxy: String,
+    /// Gateway proxy (always dialled with TLS, `docs/12 §Loopback proxies`).
+    pub gateway_proxy: GatewayUpstream,
     pub boot_token: String,
     pub proxy_ip: IpAddr,
     pub progress_interval: Duration,
@@ -51,10 +51,10 @@ pub struct SupervisorConfig {
 }
 
 impl SupervisorConfig {
-    pub fn new(gateway_proxy: impl Into<String>, boot_token: impl Into<String>) -> Self {
+    pub fn new(gateway_proxy: GatewayUpstream, boot_token: impl Into<String>) -> Self {
         Self {
             working_dir: PathBuf::from("/workspace"),
-            gateway_proxy: gateway_proxy.into(),
+            gateway_proxy,
             boot_token: boot_token.into(),
             proxy_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
             progress_interval: Duration::from_secs(10),

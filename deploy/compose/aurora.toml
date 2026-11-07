@@ -22,9 +22,15 @@ sandbox_hosts = { "aurora-gateway" = "10.89.250.2", "aurora-runner" = "10.89.250
 [gateway]
 # What hosted sandboxes dial (runner.sandbox_hosts maps aurora-gateway to the gateway's sandbox-network
 # address). The default, derived from server.external_url, would be localhost:4102, which is not
-# reachable from a sandbox. Agents connecting from the host itself use http://localhost:4102 instead.
-advertised_proxy_url = "http://aurora-gateway:4102"
+# reachable from a sandbox. Agents connecting from the host itself use https://localhost:4102 instead.
+# (RFE-002) The proxy listener is TLS-only: the certificate is issued by the gateway CA for this host,
+# `aurora-gateway`, the fixed address 10.89.250.2 and the names below. Startup refuses an http:// value.
+advertised_proxy_url = "https://aurora-gateway:4102"
 allowed_private = ["10.89.249.4/32"]
+
+[gateway.proxy_tls]
+# Extra names in the CA-issued proxy certificate (host-side agents dial localhost).
+names = ["localhost"]
 
 [hosted]
 enabled = true

@@ -72,7 +72,8 @@ if [ "${1:-}" = "--inner" ]; then
   }
   secrets_env
 
-  # cfg <name> <image-line>
+  # cfg <name> <bind> <image-line> <proxy-scheme>: the phase-0 baseline gateway serves plaintext
+  # (http), HEAD is TLS-only (RFE-002: https; an old in-sandbox supervisor must be restarted).
   write_cfg() {
     local f="$W/$1.toml"
     cat >"$f" <<EOF
@@ -111,7 +112,7 @@ log_level = "info"
 internal_bind = "$OPS_IP"
 allowed_private = ["127.0.0.1/32"]
 ca_dir = "$W/ca"
-advertised_proxy_url = "http://aurora-gateway:4102"
+advertised_proxy_url = "$4://aurora-gateway:4102"
 
 [api]
 hookhost_url = "http://127.0.0.1:9"
@@ -164,11 +165,28 @@ EOF
   RELAY_PID=$!
   for _ in $(seq 25); do (echo >/dev/tcp/127.0.0.1/"$RELAY_PORT") 2>/dev/null && break; sleep 0.2; done
 
+  # Mock upstream on the netns loopback (gateway.allowed_private opens 127.0.0.1/32): records every
+  # request path, so "the request never reached the upstream" is observable (RFE-002 upgrade check).
+  UP_PORT=18099; HITS="$W/up.hits"; : >"$HITS"
+  python3 -I -c '
+import http.server, sys
+hits = sys.argv[1]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        open(hits, "a").write(self.path + "\n")
+        self.send_response(200); self.send_header("Content-Length", "2"); self.end_headers(); self.wfile.write(b"ok")
+    def log_message(self, *a): pass
+http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[2])), H).serve_forever()
+' "$HITS" "$UP_PORT" & UP_PID=$!
+  trap 'stop_svcs; [ -n "${RELAY_PID:-}" ] && kill "$RELAY_PID" 2>/dev/null; kill "$UP_PID" 2>/dev/null' EXIT
+  hit() { grep -qx "$1" "$HITS"; }
+  wait_hit() { for _ in $(seq 20); do hit "$1" && return 0; sleep 0.5; done; return 1; }
+
   echo "== phase 1: baseline stack @ $BASE_REF"
   BASE_BIN="$W/base/target/debug"; HEAD_BIN="$ROOT/target/debug"
   rm -rf "$W/ca" "$W/pids" "$W/cookies"; mkdir -p "$W/ca"
   "$BASE_BIN/aurora-gateway" generate-ca --out "$W/ca" >/dev/null || { echo "generate-ca failed"; exit 1; }
-  write_cfg base "$BRIDGE" ""            # baseline: image is fixed by the API (aurora-sandbox:0.1.0)
+  write_cfg base "$BRIDGE" "" http            # baseline: image is fixed by the API (aurora-sandbox:0.1.0)
   for n in api gateway runner; do cp "$W/base.toml" "$W/base-$n.toml"; done
   sed -i "s/^bind = .*/bind = \"$API_IP\"/" "$W/base-api.toml"
   sed -i "s/^bind = .*/bind = \"$BRIDGE\"/" "$W/base-gateway.toml" "$W/base-runner.toml"
@@ -190,6 +208,10 @@ EOF
   CONV=$(api POST "/v1/agents/$AGENT/conversations/direct" '{}' | body | jq -r .id)
   T1=$(say "$CONV" "[[say: before-upgrade]]")
   [ "$(wait_turn "$T1" 120)" = done ] && ok "baseline turn done (sandbox booted)" || { bad "baseline turn"; svc_logs; exit 1; }
+  # Positive control: the phase-0 supervisor reaches the upstream through the plaintext baseline gateway.
+  TH=$(say "$CONV" "[[http: GET http://127.0.0.1:$UP_PORT/before-upgrade]]")
+  wait_turn "$TH" 120 >/dev/null
+  wait_hit /before-upgrade && ok "baseline: sandbox request reaches the upstream through the gateway" || bad "baseline http through the gateway did not reach the upstream (policy/guard?)"
   r=$(api POST "/v1/agents/$AGENT/memories" '{"key":"upgrade-fact","title":"Upgrade","content":"survives the upgrade"}')
   case "$(echo "$r" | code)" in 200|201) ok "memory created (baseline API)";; *) bad "memory: $r";; esac
   # The baseline API has no schedules routes: seed the (existing) table directly.
@@ -206,7 +228,7 @@ EOF
   stop_svcs   # baseline api/gateway/runner stop; the sandbox container stays
   sleep 1
   [ "$(podman inspect -f '{{.State.Running}}' "$CID" 2>/dev/null)" = true ] && ok "sandbox container still running with services down" || bad "sandbox died when services stopped"
-  write_cfg head "$BRIDGE" "image = \"$HEAD_IMG\""
+  write_cfg head "$BRIDGE" "image = \"$HEAD_IMG\"" https
   for n in api gateway runner; do cp "$W/head.toml" "$W/head-$n.toml"; done
   sed -i "s/^bind = .*/bind = \"$API_IP\"/" "$W/head-api.toml"
   AURORA_CONFIG="$W/head-api.toml" "$HEAD_BIN/aurora-api" migrate >"$W/head-migrate.log" 2>&1 && ok "HEAD migrate over the baseline schema" || { bad "HEAD migrate"; cat "$W/head-migrate.log"; }
@@ -238,21 +260,28 @@ EOF
   [ "$(api GET "/v1/agents/$AGENT/memories/upgrade-fact" | body | jq -r .content)" = "survives the upgrade" ] && ok "memory readable via HEAD api" || bad "memory lost"
   sr=$(api GET "/v1/schedules/$SCHED")
   [ "$(echo "$sr" | code)" = 200 ] && [ "$(echo "$sr" | body | jq -r .cron)" = "0 3 * * *" ] && ok "schedule readable via HEAD api (cron intact)" || bad "schedule: $sr"
-  # restart_to_update (docs/15 §Upgrades: the dashboard shows it when the boot image differs).
+  # (phase 1, RFE-002) The running phase-0 supervisor forwards plaintext to a TLS-only 4102: it must
+  # fail closed (nothing reaches the upstream, no plaintext listener exists).
+  TF=$(say "$CONV" "[[http: GET http://127.0.0.1:$UP_PORT/after-upgrade]]")
+  RF=$(wait_turn "$TF" 120)
+  echo "  old-supervisor http turn after the upgrade: $RF"
+  sleep 1
+  hit /after-upgrade && bad "FAIL-OPEN: the old sandbox's request reached the upstream after the gateway became TLS-only" || ok "old sandbox fails closed: its request never reached the upstream"
+  check "gateway log shows no plaintext proxy request served after the upgrade" [ "$(grep -c 'after-upgrade' "$W/head-aurora-gateway.log" 2>/dev/null || true)" = 0 ]
+  # restart_to_update (docs/15 §Upgrades): the boot inputs changed (gateway.tls), so it is flagged.
   SB=$(sandbox_json)
   echo "  sandbox view: $(echo "$SB" | jq -c '{state,image,restart_to_update}')"
   check "sandbox view carries restart_to_update (boolean)" [ "$(echo "$SB" | jq -r '.restart_to_update|type')" = boolean ]
-  if [ "$(echo "$SB" | jq -r .restart_to_update)" = true ]; then
-    ok "restart_to_update is true: running boot is on the old image"
-  else
-    defect "restart_to_update is false although the running container is on the baseline image and the runner now advertises $HEAD_IMG: HEAD computes it only from the boot's env/files hash (boot_app_inputs_hash; boots recorded before FIX-002 never flag), not from the boot image vs runner.image as docs/15 §Upgrades requires. Fix needs a boot-image column (migration): out of OPS-014 scope."
-  fi
+  check "restart_to_update is true for the sandbox booted before TLS-only (boot inputs changed)" [ "$(echo "$SB" | jq -r .restart_to_update)" = true ]
   # Restart: the next boot is on the new image.
   rs=$(api POST "/v1/agents/$AGENT/restart" '{}')
   [ "$(echo "$rs" | code)" = 202 ] && ok "restart accepted" || bad "restart: $rs"
   T3=$(say "$CONV" "[[say: on-new-image]]")
   R=$(wait_turn "$T3" 180)
   [ "$R" = done ] && ok "turn after restart completes" || { bad "turn after restart: $R"; svc_logs; }
+  TN=$(say "$CONV" "[[http: GET http://127.0.0.1:$UP_PORT/on-new-boot]]")
+  wait_turn "$TN" 120 >/dev/null
+  wait_hit /on-new-boot && ok "after restart the sandbox reaches the upstream over TLS" || bad "after restart the request did not reach the upstream (TLS path broken)"
   BOOT2=$(sandbox_json | jq -r .boot_id)
   check "restart minted a new boot" [ "$BOOT2" != "$BOOT1" ]
   CID2=$(container)

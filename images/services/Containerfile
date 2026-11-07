@@ -1,17 +1,45 @@
 # syntax=docker/dockerfile:1
-# One Rust builder stage builds every service binary once; each target copies
-# its binary into a distroless, non-root image.
+# OPS-020. One Rust builder compiles every service binary once; each target copies its binary into a
+# distroless, non-root image. Dependencies are a separate cached layer (cargo-chef), so a source-only
+# change recompiles just the workspace crates. The linker is lld, as in CI and scripts/dev/linker.sh (OPS-016).
 #   podman build -f images/services/Containerfile --target api -t aurora-api .
-FROM docker.io/library/rust:1-bookworm AS builder
+#
+# Cache design: CI exports layers (cache-to type=gha), which does NOT include `--mount=type=cache`
+# contents. So `target/` stays inside the layers (that is what makes the chef "cook" layer reusable
+# across CI runs) and only the registry/git download caches use cache mounts.
+ARG RUST_IMAGE=docker.io/library/rust:1-bookworm
+
+FROM ${RUST_IMAGE} AS chef
+ARG CARGO_CHEF_VERSION=0.1.78
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends clang lld \
+    && rm -rf /var/lib/apt/lists/* \
+    && cargo install cargo-chef --locked --version ${CARGO_CHEF_VERSION}
 WORKDIR /build
-ENV SQLX_OFFLINE=true CARGO_TERM_COLOR=never
+ENV SQLX_OFFLINE=true CARGO_TERM_COLOR=never CARGO_INCREMENTAL=0 \
+    RUSTFLAGS="-C link-arg=-fuse-ld=lld"
+
+# The recipe lists the dependency graph only, so it (and the cook layer) changes only when
+# Cargo.toml/Cargo.lock change.
+FROM chef AS planner
 COPY . .
-# The repo pins a toolchain + wasm target via rust-toolchain.toml; the image's
-# own stable toolchain is used for service builds.
+RUN rm -f rust-toolchain.toml && cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /build/recipe.json recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    cargo chef cook --release --locked --recipe-path recipe.json \
+      -p aurora-api -p aurora-gateway -p aurora-hookhost \
+      -p aurora-runner -p aurora-connector-fake \
+      -p aurora-connector-mattermost
+COPY . .
+# The repo pins a toolchain + wasm target via rust-toolchain.toml; the image's own stable toolchain
+# is used for service builds.
 RUN rm -f rust-toolchain.toml
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     cargo build --release --locked \
       -p aurora-api -p aurora-gateway -p aurora-hookhost \
       -p aurora-runner -p aurora-connector-fake \

@@ -360,6 +360,19 @@ pub struct GatewaySection {
     pub resolve_cache_ttl_secs: u64,
     pub ca_dir: String,
     pub hookhost_url: String,
+    /// (phase 1, RFE-002) Proxy listener certificate settings (docs/06 §Proxy listener TLS).
+    pub proxy_tls: ProxyTlsSection,
+}
+
+/// `[gateway.proxy_tls]` (phase 1, RFE-002).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProxyTlsSection {
+    /// Extra DNS names / IPs for the CA-issued proxy certificate.
+    pub names: Vec<String>,
+    /// Operator-supplied certificate chain (PEM); replaces the CA-issued leaf. Both or neither.
+    pub cert_file: Option<String>,
+    pub key_file: Option<String>,
 }
 impl Default for GatewaySection {
     fn default() -> Self {
@@ -373,6 +386,7 @@ impl Default for GatewaySection {
             resolve_cache_ttl_secs: 60,
             ca_dir: "/var/lib/aurora/ca".into(),
             hookhost_url: "http://aurora-hookhost:4104".into(),
+            proxy_tls: ProxyTlsSection::default(),
         }
     }
 }

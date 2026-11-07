@@ -2,7 +2,7 @@
 # Setup:  ./setup.sh   Start: podman compose up -d   (from this directory or -f)
 # Healthchecks: distroless images have no curl/shell, so only postgres has a
 # healthcheck; other services use depends_on service_started. Verify health from
-# the host: curl localhost:4000/v1/instance (api via edge), localhost:4102 (gateway).
+# the host: curl localhost:4000/v1/instance (api via edge), https://localhost:4102 (gateway proxy, TLS-only).
 name: aurora
 
 x-env: &aurora-env

@@ -37,6 +37,7 @@ use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
+use rustls::pki_types::pem::PemObject;
 use serde_json::{Value, json};
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -210,6 +211,8 @@ async fn spawn_upstream() -> SocketAddr {
 
 struct Gw {
     proxy: SocketAddr,
+    /// Trust anchor for the TLS-only proxy listener (docs/06 §Proxy listener TLS).
+    ca_pem: String,
     resolver: Arc<Resolver>,
     world: World,
 }
@@ -256,8 +259,13 @@ async fn start_gateway(up: SocketAddr, n_conns: usize, n_rules: usize) -> Gw {
     let proxy = pl.local_addr().unwrap();
     let _ = up;
     let guard = Arc::new(Guard::new(&["127.0.0.0/8".to_owned()], vec![proxy]).unwrap());
+    let gw_ca = Arc::new(Ca::from_pem(&gw.cert_pem, &gw.key_pem).unwrap());
+    let gw_tls =
+        aurora_gateway::proxy_tls::ProxyTls::from_ca(gw_ca.clone(), vec!["127.0.0.1".into()])
+            .unwrap();
     let p = Proxy::new(ProxyParts {
-        ca: Arc::new(Ca::from_pem(&gw.cert_pem, &gw.key_pem).unwrap()),
+        ca: gw_ca,
+        tls: gw_tls,
         resolver: Arc::new(Static(w)),
         handler,
         guard,
@@ -269,6 +277,7 @@ async fn start_gateway(up: SocketAddr, n_conns: usize, n_rules: usize) -> Gw {
     tokio::spawn(p.run(pl, std::future::pending()));
     Gw {
         proxy,
+        ca_pem: gw.cert_pem,
         resolver,
         world: w,
     }
@@ -277,14 +286,45 @@ async fn start_gateway(up: SocketAddr, n_conns: usize, n_rules: usize) -> Gw {
 /// One keep-alive HTTP/1 client connection; reconnects (and counts it) if the peer closed it.
 struct Client {
     addr: SocketAddr,
+    /// Gateway CA PEM when the peer is the (TLS-only) proxy listener.
+    ca: Option<Arc<String>>,
     tx: hyper::client::conn::http1::SendRequest<Empty<Bytes>>,
     reconnects: u64,
 }
 
-async fn open(addr: SocketAddr) -> hyper::client::conn::http1::SendRequest<Empty<Bytes>> {
+async fn open(
+    addr: SocketAddr,
+    ca: Option<&str>,
+) -> hyper::client::conn::http1::SendRequest<Empty<Bytes>> {
     let s = TcpStream::connect(addr).await.unwrap();
     s.set_nodelay(true).unwrap();
-    let (tx, conn) = hyper::client::conn::http1::handshake(TokioIo::new(s))
+    let Some(ca) = ca else {
+        let (tx, conn) = hyper::client::conn::http1::handshake(TokioIo::new(s))
+            .await
+            .unwrap();
+        tokio::spawn(conn);
+        return tx;
+    };
+    let mut roots = rustls::RootCertStore::empty();
+    for c in rustls::pki_types::CertificateDer::pem_slice_iter(ca.as_bytes()) {
+        roots.add(c.unwrap()).unwrap();
+    }
+    let mut cfg = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
+    let tls = tokio_rustls::TlsConnector::from(Arc::new(cfg))
+        .connect(
+            rustls::pki_types::ServerName::IpAddress(addr.ip().into()),
+            s,
+        )
+        .await
+        .unwrap();
+    let (tx, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
         .await
         .unwrap();
     tokio::spawn(conn);
@@ -292,10 +332,11 @@ async fn open(addr: SocketAddr) -> hyper::client::conn::http1::SendRequest<Empty
 }
 
 impl Client {
-    async fn connect(addr: SocketAddr) -> Self {
+    async fn connect(addr: SocketAddr, ca: Option<Arc<String>>) -> Self {
         Self {
             addr,
-            tx: open(addr).await,
+            tx: open(addr, ca.as_deref().map(String::as_str)).await,
+            ca,
             reconnects: 0,
         }
     }
@@ -321,7 +362,7 @@ impl Client {
                         self.addr
                     );
                     self.reconnects += 1;
-                    self.tx = open(self.addr).await;
+                    self.tx = open(self.addr, self.ca.as_deref().map(String::as_str)).await;
                 }
                 Err(e) => panic!("request failed after reconnects: {e}"),
             }
@@ -355,8 +396,8 @@ async fn mode_latency() {
     let gw = start_gateway(up, 1, 1).await;
     let auth = auth_header();
     let uri = format!("http://{up}/v1/ping?x=1");
-    let mut direct = Client::connect(up).await;
-    let mut via = Client::connect(gw.proxy).await;
+    let mut direct = Client::connect(up, None).await;
+    let mut via = Client::connect(gw.proxy, Some(Arc::new(gw.ca_pem.clone()))).await;
     for _ in 0..500 {
         assert_eq!(direct.get(&uri, None).await, 200);
         assert_eq!(via.get(&uri, Some(&auth)).await, 200, "warmup via gateway");
@@ -434,19 +475,22 @@ async fn mode_resolve() {
     );
 }
 
-async fn mode_load(proxy: SocketAddr, up: SocketAddr) {
+async fn mode_load(proxy: SocketAddr, up: SocketAddr, ca: Arc<String>) {
     let conns = env_usize("PERF_LOAD_CONNS", 32);
     let secs = env_usize("PERF_LOAD_SECS", 10) as u64;
     let auth = Arc::new(auth_header());
     let uri = Arc::new(format!("http://{up}/v1/ping?x=1"));
     // Warm the resolve + plaintext caches.
-    Client::connect(proxy).await.get(&uri, Some(&auth)).await;
+    Client::connect(proxy, Some(ca.clone()))
+        .await
+        .get(&uri, Some(&auth))
+        .await;
     let end = Instant::now() + Duration::from_secs(secs);
     let mut tasks = Vec::new();
     for _ in 0..conns {
-        let (auth, uri) = (auth.clone(), uri.clone());
+        let (auth, uri, ca) = (auth.clone(), uri.clone(), ca.clone());
         tasks.push(tokio::spawn(async move {
-            let mut c = Client::connect(proxy).await;
+            let mut c = Client::connect(proxy, Some(ca)).await;
             let (mut lat, mut bad) = (Vec::new(), 0u64);
             while Instant::now() < end {
                 let t = Instant::now();
@@ -502,13 +546,21 @@ async fn main() {
         }
         Some("gateway") => {
             let gw = start_gateway(addr(1), 1, 1).await;
+            // The listener is TLS-only: hand the load generator its trust anchor.
+            let ca_path =
+                std::env::temp_dir().join(format!("gateway-perf-ca-{}.pem", std::process::id()));
+            std::fs::write(&ca_path, &gw.ca_pem).unwrap();
+            println!("CA {}", ca_path.display());
             println!("ADDR {}", gw.proxy);
             std::future::pending::<()>().await;
         }
-        Some("load") => mode_load(addr(1), addr(2)).await,
+        Some("load") => {
+            let ca = std::fs::read_to_string(&args[3]).expect("CA PEM file");
+            mode_load(addr(1), addr(2), Arc::new(ca)).await;
+        }
         _ => {
             eprintln!(
-                "usage: gateway_perf latency|resolve|upstream|gateway <up>|load <proxy> <up>"
+                "usage: gateway_perf latency|resolve|upstream|gateway <up>|load <proxy> <up> <ca.pem>"
             );
             std::process::exit(2);
         }

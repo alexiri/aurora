@@ -10,6 +10,7 @@ use crate::ca::Ca;
 use crate::guard::{DialError, Guard};
 use crate::hygiene::{self, PathError};
 use crate::pipeline::{Outcome, PipelineRequest, RequestHandler, Scheme};
+use crate::proxy_tls::ProxyTls;
 use crate::upstream::{EgressProxy, Upstream};
 use crate::{Body, BoxError, empty_body, guidance};
 use aurora_core::ApiError;
@@ -30,6 +31,8 @@ pub const DRAIN_TIMEOUT: Duration = Duration::from_secs(25);
 
 pub struct ProxyParts {
     pub ca: Arc<Ca>,
+    /// (phase 1, RFE-002) The listener's TLS configuration; there is no plaintext variant.
+    pub tls: Arc<ProxyTls>,
     pub resolver: Arc<dyn CredentialResolver>,
     pub handler: Arc<dyn RequestHandler>,
     pub guard: Arc<Guard>,
@@ -56,6 +59,7 @@ impl Drop for LiveGuard {
 
 pub struct Proxy {
     ca: Arc<Ca>,
+    tls: Arc<ProxyTls>,
     resolver: Arc<dyn CredentialResolver>,
     handler: Arc<dyn RequestHandler>,
     guard: Arc<Guard>,
@@ -90,6 +94,7 @@ impl Proxy {
         )?;
         Ok(Arc::new(Self {
             ca: p.ca,
+            tls: p.tls,
             resolver: p.resolver,
             handler: p.handler,
             guard: p.guard,

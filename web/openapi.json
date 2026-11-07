@@ -17371,6 +17371,7 @@
           "env",
           "ca_pem",
           "ca_path",
+          "proxy_ca_path",
           "llm_env",
           "stubs"
         ],
@@ -17398,6 +17399,17 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "proxy_ca_path": {
+            "type": "string",
+            "description": "(phase 1, RFE-002) File holding the trust anchor for the HTTPS proxy leg (curl\n`--proxy-cacert`, git `http.proxySSLCAInfo`); same file as `ca_path`."
+          },
+          "proxy_tls": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(phase 1, RFE-002) `\"operator_certificate\"` when the proxy listener presents an\noperator-supplied certificate (verify the outer leg with the system roots); `null` when\nthe gateway CA issued it."
           },
           "proxy_url": {
             "type": "string",

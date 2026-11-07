@@ -101,6 +101,13 @@ pub struct ContainerConfig {
     pub env: BTreeMap<String, String>,
     pub ca_pem: String,
     pub ca_path: String,
+    /// (phase 1, RFE-002) File holding the trust anchor for the HTTPS proxy leg (curl
+    /// `--proxy-cacert`, git `http.proxySSLCAInfo`); same file as `ca_path`.
+    pub proxy_ca_path: String,
+    /// (phase 1, RFE-002) `"operator_certificate"` when the proxy listener presents an
+    /// operator-supplied certificate (verify the outer leg with the system roots); `null` when
+    /// the gateway CA issued it.
+    pub proxy_tls: Option<String>,
     pub llm_env: BTreeMap<String, String>,
     pub stubs: Vec<StubFile>,
 }
