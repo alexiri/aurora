@@ -817,3 +817,85 @@ fn open_lane_minimum_is_validated_and_defaults_to_enabled() {
         .unwrap_err();
     assert!(e.has_key("governance.egress.open_lane_minimum"));
 }
+
+const DEV_SUP: &str = "dev_supervisor_binary = \"/home/dev/aurora/target/debug/aurora-supervisor\"";
+
+fn dev_runner(server: &str, runner_extra: &str, backend: &str) -> String {
+    format!(
+        "[server]\n{server}\n[runner]\nbackend = \"{backend}\"\napi_url = \"http://localhost:4101\"\n{runner_extra}\n"
+    )
+}
+
+#[test]
+fn dev_supervisor_binary_is_accepted_only_in_dev_mode() {
+    let dev_server = "bind = \"127.0.0.1\"\nexternal_url = \"http://localhost:4100\"";
+    let ok = load_with(&dev_runner(dev_server, DEV_SUP, "podman"), &[]).unwrap();
+    let r = ok.runner_config().unwrap();
+    assert_eq!(
+        r.runner.dev_supervisor_binary.as_deref(),
+        Some("/home/dev/aurora/target/debug/aurora-supervisor")
+    );
+    // Unset by default.
+    let off = load_with(&dev_runner(dev_server, "", "podman"), &[]).unwrap();
+    assert!(
+        off.runner_config()
+            .unwrap()
+            .runner
+            .dev_supervisor_binary
+            .is_none()
+    );
+
+    // Refused: public bind, public external URL, non-loopback runner API, wrong backend, bad path.
+    let refused = [
+        dev_runner(
+            "bind = \"0.0.0.0\"\nexternal_url = \"http://localhost:4100\"",
+            DEV_SUP,
+            "podman",
+        ),
+        dev_runner("bind = \"127.0.0.1\"", DEV_SUP, "podman"),
+        dev_runner(
+            "bind = \"127.0.0.1\"\nexternal_url = \"https://aurora.example.org\"",
+            DEV_SUP,
+            "podman",
+        ),
+        dev_runner(dev_server, DEV_SUP, "kubernetes"),
+        dev_runner(dev_server, DEV_SUP, "fake"),
+        dev_runner(
+            dev_server,
+            "dev_supervisor_binary = \"target/debug/aurora-supervisor\"",
+            "podman",
+        ),
+        dev_runner(
+            dev_server,
+            "dev_supervisor_binary = \"/a:/etc/passwd:rw\"",
+            "podman",
+        ),
+        dev_runner(
+            dev_server,
+            "dev_supervisor_binary = \"/a/../etc/shadow\"",
+            "podman",
+        ),
+    ];
+    for toml in refused {
+        let raw = load_with(&toml, &[]).unwrap();
+        assert!(
+            raw.runner_config()
+                .unwrap_err()
+                .has_key("runner.dev_supervisor_binary"),
+            "must be refused: {toml}"
+        );
+    }
+    // A non-loopback runner API is refused too.
+    let raw = load_with(
+        &format!(
+            "[server]\n{dev_server}\n[runner]\nbackend = \"podman\"\napi_url = \"http://aurora-api:4101\"\n{DEV_SUP}\n"
+        ),
+        &[],
+    )
+    .unwrap();
+    assert!(
+        raw.runner_config()
+            .unwrap_err()
+            .has_key("runner.dev_supervisor_binary")
+    );
+}

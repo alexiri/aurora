@@ -81,6 +81,7 @@ For development and single-host installs (docs/11 §Backend podman).
 | `runner.sandbox_network` | `aurora-sandbox` | Must be created `--internal --disable-dns`. The runner verifies the flag at startup and refuses to run otherwise. |
 | `runner.sandbox_hosts` | `{}` | Map of host names to IPs injected into sandboxes as `/etc/hosts` entries, for example `{ "aurora-gateway" = "10.89.250.2", "aurora-runner" = "10.89.250.3" }`. |
 | `runner.dev_allow_external_network` | `false` | Escape hatch for development. It logs a warning on every start. Never set it in a deployment. |
+| `runner.dev_supervisor_binary` | unset | Development only (OPS-018, `docs/ops/live-reload.md`): absolute path of a host-built `aurora-supervisor`, bind-mounted read-only over the image's copy in new podman sandboxes. Config validation refuses it unless the backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url` are loopback. It logs a warning on every start. Never set it in a deployment. |
 
 What the runner does with them (docs/11): sandboxes get `--read-only` root, a tmpfs `/tmp`
 and `/run/aurora`, `--user 1000:1000`, `--cap-drop=ALL`, `no-new-privileges`, the default

@@ -13,18 +13,15 @@ profile := env("AURORA_DEV_PROFILE", "dev-fast")
 migrate: dev-db
     . deploy/dev/env.sh && cargo run -q --profile {{profile}} -p aurora-api -- migrate
 
-# Dev loop on the host: Postgres, migrate, API + gateway + hookhost + web (runner not started; needs pnpm install in web/ once).
+# Live-reload dev loop on the host (OPS-018, docs/ops/live-reload.md): Postgres, migrate, then API + gateway + hookhost + runner (fake backend; AURORA__RUNNER__BACKEND=podman for real sandboxes) rebuilt and restarted on save, plus `next dev` (Fast Refresh) on :4100. Needs python3 and `pnpm install` in web/ once.
 dev: migrate
     #!/usr/bin/env bash
     set -euo pipefail
+    command -v python3 >/dev/null || { echo "python3 not found: install python 3.8+ (the live-reload loop uses only its standard library)." >&2; exit 1; }
+    [ -d web/node_modules ] || { echo "web/node_modules missing: run 'cd web && pnpm install --frozen-lockfile'." >&2; exit 1; }
     . deploy/dev/env.sh
     [ -f deploy/dev/ca/ca.pem ] || cargo run -q --profile {{profile}} -p aurora-gateway -- generate-ca --out deploy/dev/ca
-    trap 'kill 0' EXIT
-    cargo run -q --profile {{profile}} -p aurora-api -- serve &
-    cargo run -q --profile {{profile}} -p aurora-gateway -- serve &
-    cargo run -q --profile {{profile}} -p aurora-hookhost -- serve &
-    pnpm --dir web dev &
-    wait
+    AURORA_DEV_PROFILE={{profile}} exec python3 scripts/dev/live.py
 
 # --- containerized dev stack: kind + Helm (OPS-017; docs/operator/install-kind-dev.md) ---
 
@@ -35,6 +32,15 @@ kind-up *flags:
 # Rebuild only the changed service images (api gateway hookhost runner connector-fake web sandbox; default: the core five), load them and restart their Deployments.
 kind-dev *services:
     bash deploy/dev/kind-dev.sh dev {{services}}
+
+# Watch the source and run `kind-dev` for the affected services on every save (OPS-018; ~35 s per change). Web: use `just dev` for Fast Refresh.
+kind-live:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v python3 >/dev/null || { echo "python3 not found: install python 3.8+." >&2; exit 1; }
+    for t in kind kubectl helm podman; do command -v "$t" >/dev/null || { echo "kind-live needs '$t' (see docs/operator/install-kind-dev.md)." >&2; exit 1; }; done
+    kind get clusters 2>/dev/null | grep -qx "${AURORA_DEV_CLUSTER:-aurora-dev}" || { echo "cluster not found: run 'just kind-up' first." >&2; exit 1; }
+    exec python3 scripts/dev/live.py --kind
 
 # Pods of the dev cluster.
 kind-status:

@@ -276,10 +276,16 @@ persistent cargo target volume and copied into thin distroless images; `kind-dev
 and restarts only the services whose binary (web: sources) changed. Images are `localhost/aurora-dev/aurora-<svc>:dev`
 with `pullPolicy: Never`.
 
-Developer loop without containers: `just dev` runs Postgres in podman and the
-API, gateway, hook host and web as host processes; the runner (podman backend)
-is optional. The runner deliberately has no auto-restart file watcher:
-restarting it invalidates in-flight turns (bootstrap tokens are single use).
+Developer loop without containers (phase 1, OPS-018; `docs/ops/live-reload.md`, decision I-43): `just dev` starts
+Postgres in podman, applies migrations and runs a watch → incremental rebuild → restart loop
+(`scripts/dev/live.py`) for the API, gateway, hook host and runner (fake backend by default;
+`AURORA__RUNNER__BACKEND=podman` for real sandboxes), plus `next dev` on :4100 with Fast Refresh and `/v1/*`
+proxied to the API. A save rebuilds only the affected binaries; the old process keeps serving until the new one
+is built. Restarting the runner drops in-flight turns, which is acceptable in development only. `just kind-live`
+does the same for the kind cluster through `kind-dev` (about 35 s per change). Dev only, never production:
+`runner.dev_supervisor_binary` bind-mounts a host-built `aurora-supervisor` into new podman sandboxes, so a supervisor
+change needs a sandbox restart instead of an image rebuild. Config validation refuses it unless the runner
+backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url` are all loopback.
 
 ## Production: Helm (`deploy/helm/aurora/`)
 

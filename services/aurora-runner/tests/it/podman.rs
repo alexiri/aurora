@@ -45,6 +45,7 @@ fn settings() -> PodmanSettings {
         ]),
         installation: "podmantest0000000".into(),
         allow_external_network: false,
+        dev_supervisor_binary: None,
         max_sandboxes: 4,
         capacity_wait: Duration::ZERO,
     }
