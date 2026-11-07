@@ -410,6 +410,40 @@ done when its tests exist, pass in CI, and the security invariants it touches
   hook on (`aurora_audit_dropped_total` increments); a repository-signature test
   (critical mutations take the audit entry) guards against future bypass.
 
+### Dashboard visual design (phase 2, P2-UI)
+- Token guard (vitest): no component or page under `web/src` uses a Tailwind
+  palette colour utility (`neutral-*`, `slate-*`, `red-*`, `amber-*`,
+  `emerald-*`, …) or a hex colour literal in a class name. Only
+  `globals.css` defines colours (`14 §Visual design`). The one exception is
+  the brand colours inside the `AuroraMark` and `AuroraLogo` components.
+- Accessibility (Playwright + `@axe-core/playwright`): Overview, Approvals,
+  the agent Chat tab, an org page and sign-in, at 1280 px and 390 px widths,
+  **in both light and dark themes**, have zero `serious`/`critical`
+  violations, including `color-contrast`.
+- Theme (Playwright):
+  - with no stored preference, the page follows `prefers-color-scheme` (emulate
+    both), and switching the emulated scheme while on "Match system" re-themes
+    the page live;
+  - choosing Light or Dark in the theme switch persists across reloads in that
+    browser and overrides the system setting;
+  - on a reload with Dark stored, `<html>` already has `data-theme="dark"` in
+    the server-rendered HTML response, or is set before the first paint with
+    no light frame (check the attribute before hydration);
+  - the theme switch is a radio group operable by keyboard (arrow keys, Space),
+    and each option has an accessible name;
+  - no theme request reaches the API.
+- Brand: the favicon and app icons are served from the dashboard origin, and
+  `AuroraMark` and `AuroraLogo` give two instances on one page distinct gradient ids. No page loads a wordmark font.
+- Narrow shell (Playwright, 390 px): the menu button opens the nav dialog,
+  focus moves into it, Esc closes it and focus returns to the button. There is
+  no horizontal page scroll.
+- Fonts and CSP: the production CSP string is unchanged by the redesign. Font
+  files load from the dashboard's own origin and no request goes to a third
+  party.
+- The existing component and e2e suites keep their role- and label-based
+  assertions. Selectors change only where the copy or structure changed by
+  design, and no assertion is removed to make a test pass.
+
 ### Architecture guards (CI scripts)
 - No app/platform names in core paths (SEC-33).
 - Dependency graph: `aurora-gateway` and `aurora-api` do not depend on

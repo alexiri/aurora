@@ -39,6 +39,195 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
   from API data) and a list of discouraged phrases.
 - Accessibility: WCAG 2.1 AA target; keyboard reachable dialogs and menus.
 
+## Visual design (phase 2, P2-UI)
+
+Decision D-68. Reference mock-ups: `docs/design/ui-refresh/` (static HTML;
+where a mock-up and this section disagree, this section wins).
+
+**Tokens.** Colours are defined once, as CSS custom properties in
+`web/src/app/globals.css`, and exposed to Tailwind through `@theme`.
+Components use the token utilities only. Raw hex values and Tailwind palette
+colours (`neutral-*`, `red-*`, `amber-*`, …) are not allowed in components.
+
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `ink` | `#0E1525` | `#E8ECF3` | primary text |
+| `ink-2` | `#475569` | `#B4BDCC` | body/secondary text |
+| `muted` | `#5B6576` | `#8B95A7` | metadata, labels, placeholders |
+| `line` / `line-strong` | `#E4E7EC` / `#D5DAE1` | `#252E44` / `#34405A` | dividers / control borders |
+| `canvas` | `#F6F7F9` | `#0B1020` | app background; input wells in dark |
+| `surface` | `#FFFFFF` | `#121829` | cards, sidebar |
+| `subtle` | `#EEF1F4` | `#1C2438` | active nav item, neutral pills, segmented-tab track |
+| `primary` / `on-primary` | `#0E1525` / `#FFFFFF` | `#E8ECF3` / `#0B1020` | primary button, user chat bubble (dark: `#23304A` / `ink`) |
+| `accent` / `on-accent` | `#0F766E` / `#FFFFFF` | `#2DD4BF` / `#042F2B` | Approve, focus ring, active-nav icon, progress |
+| `link` | `#0F766E` | `#5EEAD4` | links |
+| `accent-soft` / `accent-ink` | `#E7F5F2` / `#0B5F58` | `#0F2E2B` / `#5EEAD4` | accent pills, "allow" chips, live indicator |
+| `pending-soft` / `pending-ink` | `#FDECC8` / `#7A3E06` (panel `#FFF8EA`) | `#3A2A0E` / `#FBC66B` (panel `#221B0F`, border `#4A3712`) | pending approvals, "held" chips, countdowns |
+| `danger-soft` / `danger-ink` | `#FDE8E8` / `#9B1C1C` | `#3B1518` / `#FCA5A5` | errors, "deny" chips, destructive actions |
+| `focus-halo` | `#C7EDE6` | `#134E48` | 3 px halo outside the focus ring |
+| avatar tints (bg / text) | lavender `#D6D8FF` / `#3B2A9E`; blue `#E8F0FE` / `#1D4ED8`; teal = `accent-soft` | `#2A2350` / `#C4B5FD`; `#172A4F` / `#93C5FD`; teal = `accent-soft` | initial avatars, chosen by a stable hash of the agent id |
+
+Every text/background pair above meets 4.5:1 in both themes. The lowest pairs
+are `accent` on `canvas` in light (5.1:1) and `muted` on `subtle` in dark
+(5.1:1). A pair not in this table needs its contrast checked before use. The
+brand colour `#0F766E` is authoritative. (An early brand board printed
+"#07F66E"; that was a typo, and that green fails contrast with white text at
+1.5:1.)
+
+**Themes.** Light and dark use the same token names. Dark redefines the custom
+properties under `:root[data-theme="dark"]`, and the root sets `color-scheme`
+to match. Dark surfaces are never pure black and get lighter as they are
+raised (`canvas` < `surface` < `subtle`). Borders replace shadows in dark.
+Images and agent avatars are not inverted.
+- The theme preference is **System** (default), **Light** or **Dark**. It is
+  stored per browser (I-41) and never sent to the API.
+- **System** follows `prefers-color-scheme` and switches live when the OS
+  setting changes.
+- The theme is applied before first paint (I-41), so a reload never flashes
+  the other theme.
+- The theme switch is a three-option radio group (icon buttons with the
+  accessible names "Match system", "Light", "Dark"). It sits in the sidebar
+  footer above the account menu, and also on Account › Profile.
+
+**Brand.** Logo files: `docs/design/ui-refresh/brand/` (README there).
+- **Masters:** the owner's final logos, `aurora-logo-final-light.svg` and
+  `aurora-logo-final-dark.svg` (Inkscape files).
+- **Generated variants:** every other file in that folder is generated from the
+  masters (lockups, marks, wordmark, favicon, app icons). Change a master, then
+  regenerate the variants; never edit a variant by hand.
+- The **mark** is a single teal ribbon twisted into an "A", with a four-point
+  star under the apex.
+  - The deep-teal left leg (`#117673` → `#066B5E`) passes **under** the mint
+    band (`#3ED0B7` → `#94EBD9`). The mint band runs over the apex and down
+    the right leg.
+  - The fold edge and the pointed inner apex make the twist. The feet curl
+    outward and end in flat cuts.
+  - The same ribbon is used in **both themes**. The star changes: `ink`
+    (`#0E1525`) on light, dark-theme `ink` (`#E8ECF3`) on dark.
+  - Mono ink and mono white versions, with a masked gap along the fold, are for
+    sizes below 24 px and single-colour uses.
+- The **wordmark** "AURORA" is lettered in Chromatic Void Sans, widely
+  tracked, and supplied **as outlines**. It is never typeset from a font: the
+  dashboard ships and loads no wordmark font. The source fonts are kept in
+  `brand/fonts/` only for re-outlining the masters. Its colour is `#0E1525` on light and
+  `#E8ECF3` on dark.
+- The **tagline** "BUILD · RUN · COLLABORATE" is outlined Space Grotesk Bold,
+  `#5B6576` on light and `#B4BDCC` on dark. It appears only on the stacked
+  lockup, the auth brand panel and outside the product, never in the app
+  chrome.
+- **In the dashboard:**
+  - The sidebar shows the **horizontal lockup** (mark + wordmark), about 38 px
+    high.
+  - The auth brand panel shows the dark horizontal lockup with the tagline.
+  - Both are rendered by an `AuroraLogo` component, an inline SVG built from
+    the generated files, that switches variant with the theme. `AuroraMark`
+    renders the mark alone.
+  - Gradient ids must be unique per instance (`useId`).
+- The **favicon** is `aurora-favicon.svg`. Its star switches between `#0E1525`
+  and `#E8ECF3` with the browser's colour scheme. The app icons, such as
+  `apple-icon` and the PWA icons, are the `app-icon-*` tiles. All of these are
+  served from the dashboard's own origin.
+
+**Type.** Headings (page titles, section titles): Space Grotesk 600. Body and
+UI: Inter (400/500/600, 14 px base). Identifiers (handles, hosts, methods,
+paths, rule names, key prefixes): JetBrains Mono. Fonts are self-hosted (I-40):
+no third-party font CDN, because the CSP allows only `'self'`. Scale: page
+title 30/600, section 18/600, card title 16/600, body 14, meta 12–13, caps
+label 11/600 with 0.06em tracking.
+
+**Shape and spacing.** Radius: 8 px controls, 12–14 px cards, pills
+fully rounded. 4-pt spacing scale; 24 px between page sections; 16–20 px card
+padding. Cards are `surface` with a 1 px `line` border and at most a 1 px
+shadow. No gradient fills, no left-border accent cards, no emoji.
+
+**Shell.**
+- A left **sidebar** replaces the top header and context nav. It holds the
+  horizontal Aurora logo (`AuroraLogo`); one **context switcher** showing org and workspace (a menu
+  lists organizations, then the current org's workspaces and "All
+  workspaces…"); the nav for the current context (workspace, organization,
+  account or instance admin) with a 16 px stroke icon per item; the **theme
+  switch**; and the **account menu** at the bottom (name, role, Account, Admin
+  for instance admins, Sign out).
+- The active item uses `subtle` background, 600 weight and an `accent` icon,
+  and sets `aria-current="page"`.
+- The Approvals item shows the pending count as a `pending` pill. It appears
+  only where RFE-012 allows the approvals page.
+- The nav lists only real destinations. There are no "coming soon"
+  placeholders.
+- Below 768 px the sidebar collapses into a top bar with a menu button that
+  opens the same nav in a dialog (focus trapped, Esc closes).
+- Frozen-entity banners (RFE-006) and the version banner render above the page
+  content, inside the shell.
+- **Page header** on every shell page: breadcrumb (org/workspace/section
+  links), title, one-line description where the page has one, primary actions
+  right-aligned (wrapping on narrow screens). Content max width is 1160 px, or
+  880 px for single-column pages such as Approvals.
+
+**Components** (`web/src/components/ui/`):
+- **Button**: `primary` (ink), `outline`, `approve` (accent), `ghost`,
+  `danger` (danger-ink outline), plus a disabled state. Heights are 36 px
+  (`sm`) and 40 px (default); primary auth/approval actions are at least 44 px
+  high.
+- **Badge**: kind pills (`HOSTED`, `BYO`, `DEFAULT`) and decision chips
+  (`ALLOW`, `HELD`, `DENY`). A badge always carries text, so meaning never
+  depends on colour alone.
+- **StatusDot** with label.
+- **Card**.
+- **Tabs**: segmented style for page-level views such as Approvals
+  Pending/Actions/History, and underline style for the agent page's tab strip
+  (scrolls horizontally on narrow screens).
+- **Field**: label, hint and error text linked by `aria-describedby`;
+  `aria-invalid` sets the error border.
+- **Avatar**: initial on a tinted tile when there is no image.
+- **EmptyState**, **ErrorState**, **Loading**.
+- **Focus**: `:focus-visible` shows a 2 px `accent` ring with a 3 px
+  `focus-halo`.
+- **ThemeSwitch** (see Themes).
+- **AuroraMark** (`variant`: auto, which follows the theme, plus light, dark,
+  mono-ink and mono-white).
+- **AuroraLogo** (`layout`: horizontal or stacked; follows the theme).
+
+**Screens.**
+- **Workspace Overview** (IA below):
+  - A pending-approvals callout appears only when the count is above 0 and the
+    user can approve. It shows the two most urgent items and a "Review all"
+    link.
+  - Agents show as a card grid (avatar, name, `@handle`, kind and default
+    badges, plus a "New agent" tile for users who may create agents).
+  - The first-run checklist is a numbered list with a progress bar.
+  - Recent activity shows the last few request-log entries (decision chip,
+    method + host + path, agent, relative time) from the existing activity
+    API, with a "Live" indicator when the stream is connected.
+  - Agent cards show runtime status only when the API exposes it. The `Agent`
+    schema has none today; the agent page header shows the sandbox state from
+    the existing sandbox endpoint for hosted agents.
+- **Approvals**: the decision card shows
+  - agent avatar and `@handle`
+  - an `Expires in` countdown (`pending-ink`, tabular numerals)
+  - title and text
+  - the request line, as a `METHOD` chip followed by the mono host and path
+  - summary fields as a two-column definition list
+  - the rule name
+  - Deny (outline) and Approve (approve) buttons
+  
+  A batch group header carries "Approve all N" / "Deny all". The "already
+  decided" conflict renders inline as a `pending` notice and disables both
+  buttons.
+- **Agent page**: header with large avatar, name, `@handle`, kind/default
+  badges and a sandbox-state pill; an underline tab strip. Chat shows user
+  turns as right-aligned `primary` bubbles (a muted slate in dark), agent text unboxed with a small avatar,
+  tool/gateway calls as compact mono rows, and inline approvals as a `pending`
+  panel. The composer is a bordered box with attach and send icon buttons
+  (both with `aria-label`).
+- **Auth pages** (`/auth/*`, `/join`, `/link/channel`, `/setup-error`): split
+  layout. A dark brand panel (`#0E1525` in both themes) sits on the left. It
+  carries the dark horizontal logo with the tagline beneath it, a one-line
+  statement of what Aurora does and three short points. Its decoration is a
+  large, faint copy of the mark, marked `aria-hidden`. The panel stacks above
+  the form below 768 px. The form
+  column is at most 380 px wide. The form's contents follow the sign-in rules
+  of each phase (from phase 1, RFE-004: provider buttons only).
+
 ## Information architecture
 
 ### Public / auth (outside the shell)

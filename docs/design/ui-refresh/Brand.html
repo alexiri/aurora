@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Aurora — Brand identity</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1000px; box-sizing: border-box; background: #F6F7F9; font-family: Inter, system-ui, sans-serif; color: #0E1525; font-size: 14px; display: flex; flex-direction: column">
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); height: 440px">
+    <section aria-label="Lockup on light" style="background: #FBFBFC; display: flex; align-items: center; justify-content: center">
+      <img src="brand/aurora-lockup.svg" alt="Aurora — Build · Run · Collaborate (light)" style="display: block; width: 600px; height: auto">
+    </section>
+    <section aria-label="Lockup on dark" style="background: #0B1020; display: flex; align-items: center; justify-content: center">
+      <img src="brand/aurora-lockup-dark.svg" alt="Aurora — Build · Run · Collaborate (dark)" style="display: block; width: 600px; height: auto">
+    </section>
+  </div>
+
+  <section aria-label="Horizontal lockups, app icons and mono marks" style="padding: 36px 56px 24px; display: flex; flex-direction: column; gap: 18px; border-top: 1px solid #E4E7EC">
+    <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 18px; font-weight: 600">Lockups, app icons and mono marks</h2>
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 28px">
+      <figure style="margin: 0; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 128px; padding: 0 24px; border-radius: 14px; background: #FFFFFF; border: 1px solid #E4E7EC; display: flex; align-items: center"><img src="brand/aurora-lockup-horizontal.svg" alt="Aurora horizontal lockup, light" style="display: block; height: 56px; width: auto"></div>
+        <figcaption style="font-size: 12px; color: #5B6576">Horizontal · light</figcaption>
+      </figure>
+      <figure style="margin: 0; display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 128px; padding: 0 24px; border-radius: 14px; background: #0B1020; display: flex; align-items: center"><img src="brand/aurora-lockup-horizontal-dark.svg" alt="Aurora horizontal lockup, dark" style="display: block; height: 56px; width: auto"></div>
+        <figcaption style="font-size: 12px; color: #5B6576">Horizontal · dark</figcaption>
+      </figure>
+      <figure style="margin: 0; display: flex; flex-direction: column; align-items: center; gap: 10px">
+        <img src="brand/app-icon-light.svg" alt="App icon, light" style="display: block; width: 128px; height: 128px">
+        <figcaption style="font-size: 12px; color: #5B6576">App icon · light</figcaption>
+      </figure>
+      <figure style="margin: 0; display: flex; flex-direction: column; align-items: center; gap: 10px">
+        <img src="brand/app-icon-dark.svg" alt="App icon, dark" style="display: block; width: 128px; height: 128px">
+        <figcaption style="font-size: 12px; color: #5B6576">App icon · dark</figcaption>
+      </figure>
+      <figure style="margin: 0; display: flex; flex-direction: column; align-items: center; gap: 10px">
+        <img src="brand/app-icon-mono-light.svg" alt="App icon, mono ink" style="display: block; width: 128px; height: 128px">
+        <figcaption style="font-size: 12px; color: #5B6576">Mono · ink</figcaption>
+      </figure>
+      <figure style="margin: 0; display: flex; flex-direction: column; align-items: center; gap: 10px">
+        <img src="brand/app-icon-mono-dark.svg" alt="App icon, mono white" style="display: block; width: 128px; height: 128px">
+        <figcaption style="font-size: 12px; color: #5B6576">Mono · white</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section aria-label="Usage" style="padding: 4px 56px 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 28px; font-size: 13px; color: #475569; line-height: 1.5">
+    <div><p style="margin: 0 0 4px; font-weight: 600; color: #0E1525">One mark, both themes</p>The twisted teal ribbon is the same in light and dark. The star, wordmark and tagline switch: ink, ink and muted on light; #E8ECF3, #E8ECF3 and #B4BDCC on dark.</div>
+    <div><p style="margin: 0 0 4px; font-weight: 600; color: #0E1525">The twist</p>One ribbon: the deep-teal leg passes under the mint band at the apex. Keep the fold edge, pointed inner apex and flared feet; never redraw it as two strokes.</div>
+    <div><p style="margin: 0 0 4px; font-weight: 600; color: #0E1525">Wordmark</p>"AURORA" is lettered and supplied as outlines; never retype it in a font. The tagline belongs only to the stacked lockup and the sign-in panel.</div>
+    <div><p style="margin: 0 0 4px; font-weight: 600; color: #0E1525">Small sizes</p>Below 24 px use the mono mark (a gap keeps the fold readable). The favicon swaps the star colour with the system theme.</div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

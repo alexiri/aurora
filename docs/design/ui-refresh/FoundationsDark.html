@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Aurora — Foundations (dark)</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0;color-scheme:dark}
+button,input{font:inherit}
+</style>
+</helmet>
+<div style="width: 1100px; height: 1240px; box-sizing: border-box; padding: 56px; background: #0B1020; font-family: Inter, system-ui, sans-serif; color: #E8ECF3; font-size: 14px; line-height: 1.45; display: flex; flex-direction: column; gap: 40px">
+
+  <header style="display: flex; flex-direction: column; gap: 6px">
+    <p style="margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #5EEAD4">Aurora UI</p>
+    <h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 36px; font-weight: 600; letter-spacing: -0.02em">Foundations · Dark</h1>
+    <p style="margin: 0; color: #B4BDCC; max-width: 680px">The same token names as the light theme, redefined. Surfaces get lighter as they rise, and borders do the work shadows do in light mode. Every text pair passes WCAG AA; the lowest is muted on raised surfaces at 5.1:1.</p>
+  </header>
+
+  <section style="display: flex; flex-direction: column; gap: 16px">
+    <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 20px; font-weight: 600">Surfaces and text</h2>
+    <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px">
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #0B1020; border: 1px solid #252E44; box-sizing: border-box"></div><p style="margin: 0; font-weight: 600">canvas</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">#0B1020</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #121829; border: 1px solid #252E44; box-sizing: border-box"></div><p style="margin: 0; font-weight: 600">surface</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">#121829</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #1C2438"></div><p style="margin: 0; font-weight: 600">subtle</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">#1C2438</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #252E44"></div><p style="margin: 0; font-weight: 600">line</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">#252E44 · strong #34405A</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #E8ECF3"></div><p style="margin: 0; font-weight: 600">ink</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">#E8ECF3 · 15.0:1</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #B4BDCC"></div><p style="margin: 0; font-weight: 600">ink-2 · muted</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">#B4BDCC · #8B95A7</p></div>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 16px">
+    <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 20px; font-weight: 600">Accent and states</h2>
+    <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px">
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #2DD4BF"></div><p style="margin: 0; font-weight: 600">accent</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">#2DD4BF · on #042F2B</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #0F2E2B; display: grid; place-items: center; color: #5EEAD4; font-weight: 600">Aa</div><p style="margin: 0; font-weight: 600">accent-soft / ink</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">#0F2E2B / #5EEAD4</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #3A2A0E; display: grid; place-items: center; color: #FBC66B; font-weight: 600">Aa</div><p style="margin: 0; font-weight: 600">pending</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">#3A2A0E / #FBC66B</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #3B1518; display: grid; place-items: center; color: #FCA5A5; font-weight: 600">Aa</div><p style="margin: 0; font-weight: 600">danger</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">#3B1518 / #FCA5A5</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #2A2350; display: grid; place-items: center; color: #C4B5FD; font-weight: 600">Aa</div><p style="margin: 0; font-weight: 600">violet tint</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">#2A2350 / #C4B5FD</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #172A4F; display: grid; place-items: center; color: #93C5FD; font-weight: 600">Aa</div><p style="margin: 0; font-weight: 600">blue tint</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">#172A4F / #93C5FD</p></div>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 20px">
+    <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 20px; font-weight: 600">Components</h2>
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+      <button type="button" style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 0; background: #E8ECF3; color: #0B1020; font-weight: 600">Primary</button>
+      <button type="button" style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #34405A; background: #121829; color: #E8ECF3; font-weight: 500">Outline</button>
+      <button type="button" style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 0; background: #2DD4BF; color: #042F2B; font-weight: 600">Approve</button>
+      <button type="button" style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 0; background: transparent; color: #C3CBD8; font-weight: 500">Ghost</button>
+      <button type="button" style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #7F2A2E; background: transparent; color: #FCA5A5; font-weight: 500">Delete agent</button>
+      <button type="button" disabled style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 0; background: #2A3348; color: #B4BDCC; font-weight: 500">Disabled</button>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+      <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.04em; padding: 3px 8px; border-radius: 999px; background: #1C2438; color: #C3CBD8">HOSTED</span>
+      <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.04em; padding: 3px 8px; border-radius: 999px; background: #0F2E2B; color: #5EEAD4">DEFAULT</span>
+      <span style="font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 6px; background: #0F2E2B; color: #5EEAD4">ALLOW</span>
+      <span style="font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 6px; background: #3A2A0E; color: #FBC66B">HELD</span>
+      <span style="font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 6px; background: #3B1518; color: #FCA5A5">DENY</span>
+      <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #5EEAD4"><span style="width: 7px; height: 7px; border-radius: 999px; background: #2DD4BF; box-shadow: 0 0 0 3px #134E48"></span>Live</span>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: start">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <label for="d-name" style="font-weight: 500">Agent name</label>
+        <input id="d-name" value="Daneel" style="min-height: 40px; box-sizing: border-box; padding: 0 12px; border-radius: 8px; border: 1px solid #34405A; background: #0B1020; color: #E8ECF3">
+        <span style="font-size: 12px; color: #8B95A7">Inputs sink to canvas to read as wells.</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <label for="d-focus" style="font-weight: 500">Focused</label>
+        <input id="d-focus" value="daneel" style="min-height: 40px; box-sizing: border-box; padding: 0 12px; border-radius: 8px; border: 2px solid #2DD4BF; box-shadow: 0 0 0 3px #134E48; background: #0B1020; color: #E8ECF3; font-family: 'JetBrains Mono', monospace; font-size: 13px">
+        <span style="font-size: 12px; color: #8B95A7">Ring: accent + #134E48 halo.</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <label for="d-err" style="font-weight: 500">Handle</label>
+        <input id="d-err" value="dan eel" aria-invalid="true" aria-describedby="d-err-msg" style="min-height: 40px; box-sizing: border-box; padding: 0 12px; border-radius: 8px; border: 1px solid #F87171; background: #0B1020; color: #E8ECF3; font-family: 'JetBrains Mono', monospace; font-size: 13px">
+        <span id="d-err-msg" style="font-size: 12px; color: #FCA5A5">Use lowercase letters, numbers and dashes.</span>
+      </div>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start">
+    <div style="flex: 1 1 380px; display: flex; flex-direction: column; gap: 12px">
+      <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 20px; font-weight: 600">Theme switch</h2>
+      <p style="margin: 0; color: #B4BDCC">Lives in the account menu and in Account › Profile. It follows the system by default and is remembered per browser.</p>
+      <div role="radiogroup" aria-label="Theme" style="display: flex; gap: 4px; padding: 4px; background: #1C2438; border-radius: 10px; width: fit-content">
+        <button type="button" role="radio" aria-checked="false" style="display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: #B4BDCC; font-weight: 500">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"></rect><path d="M8 20h8"></path><path d="M12 16v4"></path></svg>System
+        </button>
+        <button type="button" role="radio" aria-checked="false" style="display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: #B4BDCC; font-weight: 500">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m5 5 1.5 1.5"></path><path d="m17.5 17.5 1.5 1.5"></path><path d="m5 19 1.5-1.5"></path><path d="m17.5 6.5 1.5-1.5"></path></svg>Light
+        </button>
+        <button type="button" role="radio" aria-checked="true" style="display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border: 0; border-radius: 7px; background: #2A3348; color: #E8ECF3; font-weight: 600">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg>Dark
+        </button>
+      </div>
+    </div>
+    <div style="flex: 1 1 380px; display: flex; flex-direction: column; gap: 10px">
+      <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 20px; font-weight: 600">Rules</h2>
+      <ul style="margin: 0; padding-left: 18px; color: #B4BDCC; display: flex; flex-direction: column; gap: 6px">
+        <li>Never pure black; never pure white text on large areas.</li>
+        <li>No shadows: elevation is surface lightness plus a 1px line.</li>
+        <li>Primary inverts to light ink; Approve is bright teal with dark text.</li>
+        <li>The logo keeps its glow strokes; its tile becomes subtle.</li>
+        <li>Agent avatars and images keep their content; only tints change.</li>
+      </ul>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1100,"height":1240}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>
