@@ -116,6 +116,7 @@ const ORG_LINKS = [
   { path: "policy", label: "Policy" },
   { path: "skills", label: "Skills" },
   { path: "members", label: "Members" },
+  { path: "channels", label: "Channels" },
   { path: "api-keys", label: "API keys" },
   { path: "audit", label: "Audit log" },
   { path: "settings", label: "Settings" },

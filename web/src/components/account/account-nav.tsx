@@ -9,6 +9,7 @@ const TABS = [
   { href: "/account", label: "Profile" },
   { href: "/account/security", label: "Security" },
   { href: "/account/api-keys", label: "API keys" },
+  { href: "/account/channels", label: "Channels" },
   { href: "/account/delete", label: "Delete account" },
 ];
 
