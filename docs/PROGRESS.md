@@ -208,10 +208,10 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | OPS-020 | CI builds images and pushes to ghcr.io after green tests (shared builder stage, cache) | 1 | merged; verifying first publish | OPS-019, OPS-016 |
 | OPS-022 | Multi-arch images (amd64 + arm64) on native arm64 runners | 5 | deferred (owner 2026-11-07: no arm deployment planned; images are amd64 only until then) | OPS-020 |
 | OPS-021 | Dependabot (cargo, npm, actions, docker; grouped) | 4 | todo | OPS-019/020 |
-| OPS-017 | kind replaces compose | 1 | todo | OPS-016 |
+| OPS-017 | kind replaces compose | 1 | in-progress | OPS-016 |
 | OPS-018 | Live reload | 1 | todo | OPS-016, OPS-017 |
 | FIX-008 | Podman backend tolerates `stopped`/unknown container states (CI e2e-hosted on podman 4.9) | 1 | done; CI e2e-hosted 9/9 on ubuntu-24.04 (run 42382511618) | — |
-| P2-005..P2-025 | Phase-2 RFE tasks (briefs in docs/tasks/P2-*.md) | 2 | P2-007, P2-017 done; P2-012, P2-021 in-progress; rest briefed | P2-025 after P1-004 |
+| P2-005..P2-025 | Phase-2 RFE tasks (briefs in docs/tasks/P2-*.md) | 2 | P2-007, P2-012, P2-017 done; P2-021 in-progress; rest briefed | P2-025 after P1-003 (both edit gateway admission) |
 | P2-CAT / P2-DBL | Built-in app catalogue; gateway database lane (`21`) | 2 | to be briefed | — |
 | P2-UI | Dashboard visual design + brand (`14 §Visual design`, D-68, I-40, I-41): stage 1 light/dark tokens, theme switch, brand mark/icons, fonts, primitives, shell; stage 2 screens; stage 3 token sweep + guards | 2 | briefed (2026-11-07) | stage 1 before other phase-2 dashboard work; auth screens coordinate with P1-005 |
 
