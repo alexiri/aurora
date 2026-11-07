@@ -103,9 +103,16 @@ podman compose -f deploy/compose/compose.yaml run --rm api bootstrap-admin --ema
 
 `bootstrap-admin` creates or promotes a verified instance administrator and prints a
 one-time password-set link built from `server.external_url`
-(`services/aurora-api/src/main.rs`, `BootstrapAdmin`). The `setup.sh` message says this
-command is "available once BE-016 lands". The subcommand exists in the code. Confirm it
-works on your first install.
+(`services/aurora-api/src/main.rs`, `BootstrapAdmin`). Verified on a fresh install (AUDIT-001):
+open the printed link's token with `POST /v1/auth/password/reset`, then sign in. The shipped
+config has `auth.org_creation = "instance_admins"` and `signup_mode = "invite_only"`, so the
+administrator creates the first organization (`POST /v1/orgs`), which also creates the default
+workspace and the hosted agent Daneel. Cookie-authenticated `curl` calls need an `Origin:
+http://localhost:4000` header (SEC-22).
+
+The `fake` runner backend never boots a sandbox, so a chat turn stays queued. The `podman`
+backend does not work from the compose `runner` container on a rootless host (the runner cannot
+connect to the mounted socket). See [runners.md](runners.md#podman-backend).
 
 ## Configuration in `deploy/compose/aurora.toml`
 
@@ -128,7 +135,15 @@ overrides (SEC-09):
 - `AURORA__RUNNER__OPS_BIND: 10.89.249.3` (runner ops listener 4106)
 
 Static addresses: gateway `10.89.250.2` and runner `10.89.250.3` on the sandbox
-network; `10.89.249.0/24` for the core network.
+network; `10.89.249.0/24` for the core network (gateway `10.89.249.2`, runner `10.89.249.3`).
+The core network's `ip_range` is `10.89.249.128/25`, so dynamically addressed containers
+(Postgres first) cannot take the static addresses. Without it `up -d` fails with
+`IPAM error: requested ip address 10.89.249.2 is already allocated`.
+
+If an earlier install left resources behind (the `aurora-sandbox` network, the fixed-name
+`aurora-ca` volume, `aurora-*:dev` images, a project named `aurora`), use a separate project
+name (`COMPOSE_PROJECT_NAME=aurora-audit`) and `AURORA_VERSION` in `.env`, so you do not reuse
+old data or overwrite old images.
 
 Switching to real sandboxes also requires `runner.sandbox_hosts`
 (`{ "aurora-gateway" = "10.89.250.2", "aurora-runner" = "10.89.250.3" }`). The shipped
