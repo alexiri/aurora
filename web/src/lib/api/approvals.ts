@@ -4,6 +4,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClie
 import { useEffect, useState } from "react";
 
 import { api, ApiError } from "./client";
+import { setRateNotice } from "./rate-limit";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -77,7 +78,11 @@ export function useApprovalsStream(wsId: string): { live: boolean } {
       if (opened) void qc.invalidateQueries({ queryKey: approvalKeys.all(wsId) });
       opened = true;
     };
-    es.onerror = () => setLive(false);
+    es.onerror = () => {
+      setLive(false);
+      // A refused connection (e.g. 429 too_many_streams) is CLOSED, not retried by the browser.
+      if (es.readyState === EventSource.CLOSED) setRateNotice({ kind: "streams" });
+    };
     es.addEventListener("approval", (e) => {
       const evt = parseApprovalEvent((e as MessageEvent<string>).data);
       if (!evt || evt.approval.workspace_id !== wsId) return;

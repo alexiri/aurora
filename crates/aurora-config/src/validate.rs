@@ -132,6 +132,7 @@ pub struct ApiConfig {
     pub hookhost_url: String,
     pub plugins: PluginsSection,
     pub retention: RetentionSection,
+    pub ratelimit: RatelimitSection,
     pub tls: TlsSection,
     pub telemetry: TelemetrySection,
 }
@@ -286,6 +287,7 @@ impl RawConfig {
             "retention.request_log_days",
             Some(self.retention.request_log_days),
         );
+        check_ratelimit(&mut c, &self.ratelimit.api);
         check_common(&mut c, &self.tls, &self.telemetry);
         let advertised_proxy_url = advertised_proxy_url(&self.gateway, external_url.as_deref());
         c.finish()?;
@@ -316,6 +318,7 @@ impl RawConfig {
             hookhost_url: self.api.hookhost_url.clone(),
             plugins: self.plugins.clone(),
             retention: self.retention.clone(),
+            ratelimit: self.ratelimit.clone(),
             tls: self.tls.clone(),
             telemetry: self.telemetry.clone(),
         })
@@ -809,6 +812,45 @@ fn check_keyring(c: &mut Ctx, s: &EnvSecrets) -> Option<Keyring> {
         ok = false;
     }
     ok.then_some(Keyring { keys, active })
+}
+
+/// Class names accepted under `ratelimit.api.classes` (docs/05 §Conventions).
+pub const API_RATE_CLASSES: [&str; 7] = [
+    "general", "write", "message", "upload", "simulate", "search", "export",
+];
+
+fn check_ratelimit(c: &mut Ctx, r: &ApiRateSection) {
+    if !(0.1..=100.0).contains(&r.multiplier) {
+        c.err("ratelimit.api.multiplier", "must be between 0.1 and 100");
+    }
+    if r.org_per_minute == 0 {
+        c.err("ratelimit.api.org_per_minute", "must be at least 1");
+    }
+    for (name, o) in &r.classes {
+        let key = format!("ratelimit.api.classes.{name}");
+        if !API_RATE_CLASSES.contains(&name.as_str()) {
+            c.err(
+                &key,
+                format!(
+                    "unknown class (expected one of {})",
+                    API_RATE_CLASSES.join(", ")
+                ),
+            );
+            continue;
+        }
+        if o.per_minute.is_some() && o.per_hour.is_some() {
+            c.err(&key, "set either per_minute or per_hour, not both");
+        }
+        for (field, v) in [
+            ("per_minute", o.per_minute),
+            ("per_hour", o.per_hour),
+            ("burst", o.burst),
+        ] {
+            if v == Some(0) {
+                c.err(format!("{key}.{field}"), "must be at least 1");
+            }
+        }
+    }
 }
 
 fn check_pos<T: Into<u64> + Copy>(c: &mut Ctx, key: &str, v: Option<T>) {

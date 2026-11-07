@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { chatApi, type TranscriptEvent } from "@/lib/api/conversations";
+import { setRateNotice } from "@/lib/api/rate-limit";
 
 import { applyEvent, emptyTranscript, loadHistory, parseStreamEvent, STREAM_EVENT_TYPES, type TranscriptState } from "./transcript";
 
@@ -34,7 +35,11 @@ export function useTranscript(conversationId: string | undefined): TranscriptHoo
         const es = new EventSource(`/v1/conversations/${conversationId}/stream?after_seq=${hist.lastSeq}`);
         esRef.current = es;
         es.onopen = () => setLive(true);
-        es.onerror = () => setLive(false);
+        es.onerror = () => {
+          setLive(false);
+          // A refused connection (e.g. 429 too_many_streams) is CLOSED, not retried by the browser.
+          if (es.readyState === EventSource.CLOSED) setRateNotice({ kind: "streams" });
+        };
         const onMsg = (e: Event) => {
           const ev: TranscriptEvent | null = parseStreamEvent((e as MessageEvent<string>).data);
           if (ev) setState((s) => applyEvent(s, ev));

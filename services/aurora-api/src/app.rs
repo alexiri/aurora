@@ -48,6 +48,8 @@ pub struct AppState {
     pub pool: PgPool,
     pub config: Arc<ApiConfig>,
     pub rate_limiter: Arc<RateLimiter>,
+    /// Management-API limiter (phase 2, RFE-017).
+    pub api_limiter: Arc<web::apilimit::Limiter>,
     pub session_cache: Arc<AuthCache>,
     pub net: Arc<NetPolicy>,
     pub mailer: Arc<dyn Mailer>,
@@ -134,10 +136,14 @@ impl AppState {
                 derived.clone(),
                 &config.external_url,
             ));
+        let api_limiter = Arc::new(web::apilimit::Limiter::new(
+            web::apilimit::Limits::from_config(&config.ratelimit.api),
+        ));
         Ok(Self {
             pool,
             config: Arc::new(config),
             rate_limiter: Arc::new(RateLimiter::new()),
+            api_limiter,
             session_cache: Arc::new(AuthCache::default()),
             net,
             mailer,
@@ -270,9 +276,13 @@ pub fn api_router() -> (Router<AppState>, utoipa::openapi::OpenApi) {
     (router, doc)
 }
 
-/// Cross-cutting middleware: client IP (outer) then CSRF.
+/// Cross-cutting middleware: client IP (outer), CSRF, then the API rate limiter (RFE-017).
 pub fn with_middleware(router: Router<AppState>, state: &AppState) -> Router<AppState> {
     router
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            web::apilimit::middleware,
+        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             web::csrf::middleware,

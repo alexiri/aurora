@@ -57,6 +57,7 @@ pub struct RawConfig {
     pub runner: RunnerSection,
     pub tls: TlsSection,
     pub retention: RetentionSection,
+    pub ratelimit: RatelimitSection,
     pub telemetry: TelemetrySection,
     #[serde(skip)]
     pub env_secrets: EnvSecrets,
@@ -504,6 +505,45 @@ impl Default for RetentionSection {
             request_log_days: 30,
         }
     }
+}
+
+/// `[ratelimit]` (phase 2, RFE-017).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RatelimitSection {
+    pub api: ApiRateSection,
+}
+
+/// `[ratelimit.api]`: management-API token buckets (docs/05 §Conventions).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ApiRateSection {
+    pub enabled: bool,
+    /// Scales every bucket (0.1-100).
+    pub multiplier: f64,
+    /// Per-organization bucket refill per minute (burst = one fifth of it).
+    pub org_per_minute: u32,
+    /// Per-class overrides keyed by class name.
+    pub classes: BTreeMap<String, RateClassOverride>,
+}
+impl Default for ApiRateSection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            multiplier: 1.0,
+            org_per_minute: 3000,
+            classes: BTreeMap::new(),
+        }
+    }
+}
+
+/// `{ per_minute | per_hour, burst }`; omitted fields keep the class default.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RateClassOverride {
+    pub per_minute: Option<u32>,
+    pub per_hour: Option<u32>,
+    pub burst: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

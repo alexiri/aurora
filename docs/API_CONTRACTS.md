@@ -595,6 +595,13 @@ Rule: `08 §4`, `13 §4.4`, `06 §Ports`, SEC-46. No public route changes; the O
 - C-51 **Action token wire format** (channel buttons, `13 §4.4`): new tokens are `v2.<key_id>.<b64url(payload)>.<b64url(HMAC)>` signed with the active signing key; `v1.<payload>.<HMAC>` tokens still verify by trying each ring key. Payload JSON is unchanged. A `v2` token naming an id outside the verifier's ring is refused like a bad signature. Sealed OAuth/OIDC state values are prefixed `<key_id>.` (cookie and `state` parameter); unprefixed values are tried against each key.
 - CLI (not HTTP): `aurora-api keys generate --kind signing|internal [--id <key_id>]` prints one `<key_id>:<base64>` entry; `aurora-api keys status` prints each ring's ids, fingerprints and active id from the process environment.
 
+### Phase 2 — RFE-017 (management API rate limiting, D-57)
+
+Rule: `05 §Conventions` "Rate limiting", SEC-50. No route is added or removed; the wire changes are the refusal shapes and headers below.
+
+- C-52 **`429 rate_limited`** on any authenticated `/v1/**` route (exempt: `/healthz`, `/readyz`, `/metrics`, `/internal/*`, `/v1/runner/*`, `/v1/connector/*`, `POST /v1/hooks/{token}`): body `{ "error": { "code": "rate_limited", "message", "details": { "scope": "general"|"class"|"org", "class": "general"|"write"|"message"|"upload"|"simulate"|"search"|"export"|"org"|"unauth", "limit": number, "per": "minute"|"hour", "retry_after_secs": number } } }`; headers `retry-after` (whole seconds, >= 1), `ratelimit-limit`, `ratelimit-remaining` (always `0` on a refusal), `ratelimit-reset` (= `retry-after`), `x-should-retry: true`. `class` is `unauth` and `scope` is `general` for the per-IP limits of unauthenticated traffic (120/min public GETs; 30/min for requests carrying a rejected bearer). The principal is `key:<api_key_id>`, `user:<user_id>` (all of the user's sessions) or `agent:<agent_id>`; a refused request consumes no token from any bucket.
+- C-53 **`429 too_many_streams`**: `GET /v1/conversations/{id}/stream`, `GET /v1/approvals/stream` and any GET with `?wait=<n>` (n > 0, long-poll) beyond 20 concurrent per principal answer `{ "error": { "code": "too_many_streams", "message", "details": { "scope": "streams", "limit": 20 } } }` with no `retry-after`; a slot is released when the response body ends or the client disconnects. Streams that are refused by authorization (non-2xx) release at once.
+
 ### W9 hook-host JSON encoding (C-18, C-19)
 
 - C-18 Internal snapshot route returns the exact canonical bytes so consumers verify `sha256(body) == x-snapshot-hash` without re-serialization.

@@ -675,3 +675,55 @@ fn ring_limits_and_unknown_active_id_fail_startup() {
     .unwrap();
     assert!(raw.api_config().unwrap_err().has_key("AURORA_SIGNING_KEY"));
 }
+
+#[test]
+fn api_ratelimit_defaults_overrides_and_validation() {
+    // RFE-017: defaults (enabled, x1.0, org 3000/min), TOML class overrides, env multiplier.
+    let api = load_with(BASE, &[]).unwrap().api_config().unwrap();
+    let r = &api.ratelimit.api;
+    assert!(r.enabled && r.classes.is_empty());
+    assert_eq!((r.multiplier, r.org_per_minute), (1.0, 3000));
+    let raw = load_with(
+        &format!(
+            "{BASE}[ratelimit.api]\norg_per_minute = 100\n[ratelimit.api.classes.export]\nper_hour = 3\nburst = 1\n"
+        ),
+        &[("AURORA__RATELIMIT__API__MULTIPLIER", "2.5")],
+    )
+    .unwrap();
+    let r = raw.api_config().unwrap().ratelimit.api;
+    assert_eq!((r.multiplier, r.org_per_minute), (2.5, 100));
+    assert_eq!(r.classes["export"].per_hour, Some(3));
+    // out-of-range multiplier, unknown class, both periods, zero values: all reported by key
+    for (toml, key) in [
+        (
+            "[ratelimit.api]\nmultiplier = 0.05\n",
+            "ratelimit.api.multiplier",
+        ),
+        (
+            "[ratelimit.api]\nmultiplier = 101\n",
+            "ratelimit.api.multiplier",
+        ),
+        (
+            "[ratelimit.api]\norg_per_minute = 0\n",
+            "ratelimit.api.org_per_minute",
+        ),
+        (
+            "[ratelimit.api.classes.bogus]\nburst = 1\n",
+            "ratelimit.api.classes.bogus",
+        ),
+        (
+            "[ratelimit.api.classes.write]\nper_minute = 1\nper_hour = 1\n",
+            "ratelimit.api.classes.write",
+        ),
+        (
+            "[ratelimit.api.classes.write]\nburst = 0\n",
+            "ratelimit.api.classes.write.burst",
+        ),
+        ("[ratelimit.api]\nnope = 1\n", "ratelimit.api.nope"),
+    ] {
+        let e = load_with(&format!("{BASE}{toml}"), &[])
+            .and_then(|r| r.api_config().map(|_| ()))
+            .unwrap_err();
+        assert!(e.has_key(key), "{key}: {e}");
+    }
+}

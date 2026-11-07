@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
 import "./globals.css";
+import { RateLimitNotice } from "@/components/rate-limit-notice";
 import { VersionBanner } from "@/components/version-banner";
 import { Providers } from "./providers";
 
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <Providers>
           <VersionBanner />
           {children}
+          <RateLimitNotice />
         </Providers>
       </body>
     </html>

@@ -95,6 +95,10 @@ ca_dir = "{ca}"
 advertised_proxy_url = "http://{GW_A_IP}:4102"
 hookhost_url = "{hh_url}"
 
+# RFE-017: suites poll and hammer one principal far above real use; keep the limiter on, scaled up.
+[ratelimit.api]
+multiplier = 10.0
+
 [api]
 hookhost_url = "http://127.0.0.1:9"
 

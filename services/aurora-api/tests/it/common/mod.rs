@@ -55,6 +55,9 @@ pub fn config(mutate: impl FnOnce(&mut aurora_config::ApiConfig)) -> aurora_conf
         .unwrap()
         .api_config()
         .unwrap();
+    // Suites exercise routes far faster than any real client: scale the RFE-017 buckets up so
+    // they never interfere. `api_ratelimit.rs` resets the multiplier to prove the mechanism.
+    cfg.ratelimit.api.multiplier = 100.0;
     mutate(&mut cfg);
     cfg
 }
