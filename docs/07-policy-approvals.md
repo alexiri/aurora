@@ -287,8 +287,9 @@ require-approval rule). The hold mechanics are in `06 §Approval holds`.
 First decision wins (`UPDATE approvals SET status=… WHERE id=$1 AND
 status='pending'`); a losing decider gets 409 `already_decided`.
 
-**Who may decide**: any user with `can_use` on the approval's workspace,
-through the dashboard, the API (session or key of such a user), or a channel
+**Who may decide**: any user with `can_use` on the approval's workspace
+(phase 0/1; **from phase 2 (RFE-012): `can_approve`**, i.e. workspace `owner` or
+`approver`, or org owner/admin — a plain `member` cannot decide), through the dashboard, the API (session or key of such a user), or a channel
 card (clicker resolved through the user link; `13 §Clicker authorization`).
 The chat platform never authorizes. (phase 1, RFE-009) The decider set is further
 intersected with **conversation visibility**: an approval whose `conversation_id`
@@ -326,6 +327,7 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
    text; recipient labels sanitized) and returns to the agent
    `{ "status": "pending_approval", "approval_id" }`.
 2. Cards/dashboard as for gateway holds.
+(phase 2, RFE-012) Action approvals follow the same rule: decided by `can_approve`.
 3. Decision `approve` → `approved` (durable, so a crash before execution is
    visible) → handler executes → `executed` or `failed` with error. `deny` →
    `rejected`. Expiry → `expired`.
@@ -339,7 +341,7 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
 - **Agent link**: one row per unordered agent pair, policy per side (`ask`,
   `allow`, `blocked`). A message from A to B flows only if neither side is
   `blocked` and every `ask` side has approved (the approval is an action
-  approval decided by someone with `can_use` on that side's workspace; approving
+  approval decided by someone with `can_use` on that side's workspace — phase 2, RFE-012: `can_approve`; approving
   sets that side to `allow`). The first `message_agent` creates the link with
   both sides `ask` (or `allow` for agents in the same workspace — same
   operators).

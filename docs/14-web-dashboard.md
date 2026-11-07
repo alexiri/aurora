@@ -131,7 +131,9 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
     config, `aurora run` snippet, CA download).
   - **Activity** — request log filtered to the agent.
 - **Approvals** — pending gateway holds and action approvals (live via SSE),
-  history; batch actions. (phase 1, RFE-009) Items naming a direct conversation
+  history; batch actions. (phase 2, RFE-012) The page, the sidebar counter and the
+  SSE feed exist only for `can_approve` users; a plain member sees the waiting
+  approval inline in their own chat as a read-only card ("waiting for an approver"). (phase 1, RFE-009) Items naming a direct conversation
   appear only for its user and owners.
 - **Credentials** — tabs: Apps (catalogue → connect window), Connections,
   Secrets (generic; reference-mode secrets when a reference-capable store is
@@ -149,7 +151,9 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   workspace's **open-lane posture** (locked with "enforced by org/instance"
   when a higher level is stricter). The simulate panel gets a lane switch
   (request / tunnel).
-- **Settings** — name, timezone, memory language (owners), access bindings,
+- **Settings** — name, timezone, memory language (owners), access bindings (phase 2,
+  RFE-012: roles Owner / Approver / Member with a one-line explanation of each;
+  invitation dialogs offer Member or Approver per workspace),
   workspace API keys, danger zone. (phase 2, RFE-006) The danger zone offers
   **Freeze workspace**; frozen workspaces and orgs show a banner on every page.
 

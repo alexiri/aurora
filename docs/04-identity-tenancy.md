@@ -126,7 +126,7 @@ Configured per provider (`auth.oidc_providers[]`, see `15`): `id`,
 `true`; **removed in phase 1** — an ID token without `email_verified = true` is
 always refused with `email_unverified`, and a configuration that still sets
 `false` fails startup naming the key), `allowed_email_domains` (optional), `jit`
-(optional: `{ org_slug, role: member|admin, workspace_slugs: [] }`).
+(optional: `{ org_slug, role: member|admin, workspace_slugs: [] }`; phase 2, RFE-012: optional `workspace_role: member|approver`, default `member`).
 (phase 1, RFE-004) At least one provider MUST be configured, or startup fails
 (`no_oidc_provider`) unless the development IdP is enabled
 (*Development and end-to-end sign-in* below). Provider-specific MFA/step-up is
@@ -252,7 +252,7 @@ per-principal API limiter of phase 2 (RFE-017) sits above these.
 |-------|--------|-------|
 | Org role | `owner` > `admin` > `member` | Always enforced. |
 | Membership status | `active`, `suspended` | Suspended = non-member for **every** check including API keys, channel clicks, schedules. |
-| Workspace access | `owner`, `member` (phase 2, RFE-012: `owner`, `approver`, `member`) | Org owners and admins are implicit workspace owners of every workspace in their org. |
+| Workspace access | `owner`, `member` — phase 0/1. **From phase 2 (RFE-012): `owner` > `approver` > `member`** | Org owners and admins are implicit workspace owners of every workspace in their org. `approver` is one deliberate notch between chatting and owning: it adds the authority to decide approvals. |
 | Freeze state (phase 2, RFE-006) | not frozen / `frozen` — per **agent**, **workspace** and **organization** | A reversible, audited emergency switch, see *Freeze* below. |
 
 ### The access law
@@ -261,6 +261,18 @@ per-principal API limiter of phase 2 (RFE-017) sits above these.
 has an `active` membership in its org **and** (the user's org role is `owner` or
 `admin` **or** a `workspace_access` row exists). `can_own(user, workspace)` is
 the same with workspace role `owner` (or org owner/admin).
+
+**`can_approve`** (phase 2, RFE-012, D-55): `can_approve(user, workspace)` is the
+same with workspace role `owner` **or** `approver` (or org owner/admin). The
+hierarchy is `can_own ⊂ can_approve ⊂ can_use`. A plain `member` chats with the
+agents, reads what `can_see_conversation` allows and operates agents (memory,
+skills, schedules, …) but **cannot decide gateway approvals, action approvals or
+agent-link requests** — approval authority is the crown jewel of the product and
+no longer comes with the cheapest role. `can_approve` is implemented once in
+`aurora-db::authz` with the others and used by every decision surface: HTTP
+routes, channel clicks and `approve <code>` commands, batch decisions, long-polls
+and SSE feeds. There is no separation-of-duties rule: an approver may decide a
+request their own turn caused.
 
 The access law is implemented once (`aurora-db::authz`) and used by every
 surface: HTTP routes, channel speakers and clickers, approvals, schedule and
@@ -299,13 +311,13 @@ conversation and hour; best-effort).
 | Read effective governance | any active org member |
 | Org audit log | org `owner`/`admin` |
 | Create workspace | org `owner`/`admin`, or any member if `organizations.settings.members_can_create_workspaces` (default `true`) |
-| Workspace settings (name, timezone, memory language), access bindings, delete workspace | `can_own` |
+| Workspace settings (name, timezone, memory language), access bindings (phase 2, RFE-012: including granting `approver`), delete workspace | `can_own` |
 | Workspace secrets, connections, grants, workspace policy (incl. the workspace uncredentialed default), workspace API keys | `can_own` |
 | Workspace LLM keys | `can_own`, **and** org governance permits `workspace`-scoped keys for that endpoint, **and** the key's origin complies (`08 §11`) |
 | Space bindings for an agent of the workspace | `can_own` |
 | Create/edit/delete agents, brief, model, avatar; memory; skills; schedules; webhooks; restart sandbox | `can_use` |
 | Chat with agents, read transcripts, upload attachments | `can_use`; (phase 1, RFE-009) for `direct` conversations: the direct user (read + write) and `can_own` (read, abort/send-now only) — `can_see_conversation` |
-| Decide gateway approvals and action approvals for agents of the workspace | `can_use`; (phase 1, RFE-009) an approval that names a `direct` conversation is visible and decidable only by callers who `can_see_conversation` it (so: the direct user and `can_own`) |
+| Decide gateway approvals, action approvals and agent-link requests for agents of the workspace; read the approvals feed (pending, history, long-poll, SSE) | phase 0/1: `can_use`. **From phase 2 (RFE-012): `can_approve`** (a plain member sees an approval waiting inline in their own visible conversation, read-only, but not the feed and cannot decide); (phase 1, RFE-009) an approval that names a `direct` conversation is visible and decidable only by callers who `can_see_conversation` it (so: the direct user and `can_own`) |
 | Archive/unarchive a conversation (phase 2, RFE-010) | `can_see_conversation` and, for non-direct kinds, `can_use` |
 | Delete a conversation; redact transcript events; export a conversation (phase 2, RFE-010) | `direct`: its user or `can_own`; other kinds: `can_own` (redaction also: the event's turn author; export: not the turn author); always subject to `can_see_conversation` |
 | Org retention settings (phase 2, RFE-010/015) | org `owner`/`admin` (`retention.update`, security-critical) |
@@ -391,7 +403,8 @@ original record, returns 200).
 ## Invitations
 
 - Created by org owners/admins: email, role (`admin`|`member`), optional
-  workspace bindings. Email contains `<external>/join?token=aui_…`.
+  workspace bindings (role `member`; phase 2, RFE-012: each binding may instead be
+  `approver`, never `owner`). Email contains `<external>/join?token=aui_…`.
 - Accepting requires a signed-in user whose **verified** email equals the
   invitation email (case-insensitive). The membership and bindings are created;
   the invitation becomes `accepted`.

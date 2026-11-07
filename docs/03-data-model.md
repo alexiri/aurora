@@ -1198,3 +1198,13 @@ Pending deletions of harness session files after a conversation delete or a `res
 | org_id | uuid pk FK→organizations (cascade) | | 2 (RFE-015) |
 | attachment_bytes | bigint not null default 0 | transactional counter of non-purged attachment bytes; reconciled daily from `attachments` | 2 (RFE-015) |
 | updated_at | timestamptz not null | churn column | 2 (RFE-015) |
+
+#### `workspace_access`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| role | CHECK gains `approver` → in (`owner`,`approver`,`member`) | `approver` = chats and decides approvals (`04 §The access law`); the migration does **not** change existing rows (members stay members) | 2 (RFE-012) |
+
+#### `invitations`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| approver_workspace_ids | uuid[] not null default `{}` | workspaces bound as `approver` on accept (disjoint from `workspace_ids`, which stay `member`) | 2 (RFE-012) |

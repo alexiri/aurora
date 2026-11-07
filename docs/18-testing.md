@@ -190,6 +190,13 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Permission matrix test generated from `04 §Permission matrix` (every route ×
   role), suspended members, workspace key confinement, CSRF, OIDC against a
   mock IdP (discovery, PKCE, nonce, email-verified rule, JIT).
+- (phase 2, RFE-012) Approver role (SEC-28): `can_approve` hierarchy
+  (`can_own ⊂ can_approve ⊂ can_use`), every approvals route × {member, approver,
+  owner, org admin} (`approver_required`), channel click / `approve <code>` by a
+  member refused with the ephemeral and the card still pending, action approvals
+  and agent-link decisions, invitation and JIT bindings with `approver`, role
+  change takes effect on the next request and invalidates cached decisions,
+  migration leaves existing members as `member`.
 - (phase 1, RFE-009) Direct-conversation visibility (SEC-43): each
   conversation-returning/naming route × {the direct user, another member, a
   workspace owner, an org admin, workspace/org keys of each} — 404 vs 200,

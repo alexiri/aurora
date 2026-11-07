@@ -301,7 +301,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC`; (phase 1, RFE-004) the only sign-in; `start` accepts `reauth=1` |
 | POST `/v1/auth/cli`, `/v1/auth/cli/token` | none | device flow |
 | POST `/v1/auth/cli/approve` | SO | `{ user_code, workspace_id }` |
-| GET/PATCH/DELETE `/v1/me` | S (DELETE: SO) | profile, memberships, default org |
+| GET/PATCH/DELETE `/v1/me` | S (DELETE: SO) | profile, memberships (phase 2, RFE-012: with the effective role per workspace) , default org |
 
 ### Organizations, members, keys
 | Method & path | Auth | Purpose |
@@ -309,7 +309,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET/POST `/v1/orgs` | S | list mine / create |
 | GET/PATCH/DELETE `/v1/orgs/{org}` | S/K | |
 | GET `/v1/orgs/{org}/members`; PATCH/DELETE `/v1/orgs/{org}/members/{user}` | S/K | role, suspend |
-| GET/POST `/v1/orgs/{org}/invitations`; DELETE `/v1/invitations/{id}` | S/K | |
+| GET/POST `/v1/orgs/{org}/invitations`; DELETE `/v1/invitations/{id}` | S/K | (phase 2, RFE-012) body may carry `approver_workspace_ids` besides `workspace_ids` |
 | GET `/v1/invitations/preview?token=`; POST `/v1/invitations/accept` | none / SO | |
 | GET/POST `/v1/orgs/{org}/api-keys`; DELETE `/v1/api-keys/{id}` | S (POST: SO) | org keys |
 | GET `/v1/orgs/{org}/audit` | S/K | (phase 2, RFE-008) filters `actor`, `action`, `target`, `critical=true` |
@@ -324,7 +324,7 @@ connector, **P** public capability. Permission checks per `04`.
 |---|---|---|
 | GET/POST `/v1/orgs/{org}/workspaces` | S/K | |
 | GET/PATCH/DELETE `/v1/workspaces/{ws}` | S/K | name, timezone, memory_language |
-| GET `/v1/workspaces/{ws}/access`; PUT/DELETE `/v1/workspaces/{ws}/access/{user}` | S/K | bindings |
+| GET `/v1/workspaces/{ws}/access`; PUT/DELETE `/v1/workspaces/{ws}/access/{user}` | S/K | bindings; (phase 2, RFE-012) `PUT { role: "owner"\|"approver"\|"member" }`; `can_own` |
 | GET/POST `/v1/workspaces/{ws}/api-keys` | S (POST: SO) | workspace keys |
 | GET `/v1/workspaces/{ws}/audit` | S/K | same filters |
 | GET `/v1/orgs/{org}/storage` | S/K | (phase 2, RFE-015) org `owner`/`admin`: usage vs quota, breakdown by workspace and direction |
@@ -378,6 +378,10 @@ connector, **P** public capability. Permission checks per `04`.
 | POST `/v1/workspaces/{ws}/policy/simulate` | S/K | `{ agent_id, method, url, body?, use_draft?, lane?, speaker_user_id? }` → decision trace (phase 2, RFE-005: `speaker_user_id` omitted = no speaker); (phase 1, RFE-003) `lane: "open"` evaluates CONNECT-time semantics (`07`) and the open-lane posture |
 
 ### Approvals
+(phase 2, RFE-012) Every route in this section requires **`can_approve`** on the
+approval's workspace (`04`), otherwise 403 `approver_required` (404 where the
+workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
+
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET `/v1/workspaces/{ws}/approvals?status=` | S/K | |

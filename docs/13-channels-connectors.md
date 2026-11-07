@@ -331,7 +331,9 @@ prefix) onto these names: `help`, `agents` (agents this person can reach here),
 For every `action.invoked`: verify token signature, expiry, single use and
 integration; resolve the clicker through the user link (unlinked → link prompt,
 no action); apply the access law for the subject's workspace (`can_use` for
-approvals, action approvals, reach decisions, stop/send-now; `can_own` for
+approvals, action approvals, reach decisions, stop/send-now — phase 2, RFE-012:
+`can_approve` for approvals, action approvals and agent-link decisions, `can_use`
+for stop/send-now; `can_own` for
 bindings and reach; phase 1, RFE-009: for subjects that name a `direct`
 conversation, additionally `can_see_conversation`, so only that person or an
 owner can act); then act. **The platform never authorizes.** The card is
@@ -343,7 +345,10 @@ On `aurora_approval created` for an approval naming a conversation with thread
 links: post a card into the most recently used thread link (`dedupe_key =
 approval:<id>`, `channel_cards` row): header "Approval needed", summary title
 and fields, context (agent, rule, expiry), buttons Approve/Deny (and
-Approve all / Deny all for batches with total > 1). On decision/expiry the card
+Approve all / Deny all for batches with total > 1); (phase 2, RFE-012) the context
+line says "needs an approver", and a click or `approve <code>` by a linked user
+who is not `can_approve` is refused with an ephemeral "Only approvers can decide
+this" and changes nothing (the card stays pending). On decision/expiry the card
 is settled with who decided and how. Action approvals, reach requests and agent
 link requests use the same pattern.
 
