@@ -128,6 +128,23 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - (c) `/readyz` bodies and status codes for the three states and `?strict=true`;
   metrics and the `gateway.state_change` log line; `/internal/v1/status` fields.
 
+### Message idempotency (phase 3, RFE-018, SEC-55)
+- Key validation (length, charset), absent key = phase 0 behaviour (two posts, two
+  turns), `Idempotency-Key` ignored on other routes.
+- Replay: same status and shape as the original for `{turn}` and `{followup}`;
+  state reflects the current row (running, done, failed, aborted, promoted);
+  `Idempotent-Replayed: true`; no second turn, no second `NOTIFY aurora_work`.
+- Concurrency: N parallel identical requests → exactly one row, N identical
+  responses; a key colliding with the active-turn index is a follow-up, not a replay.
+- Scope and order: per (conversation, user) — two users, same key; the same user
+  through session and API key shares the key space; replay after loss of access is
+  refused; replay while frozen returns the stored result while a new message is 423;
+  replay consumes one message-bucket token.
+- Mismatch (`text`, `attachment_ids`) → 422 `idempotency_key_reused`; key freed when
+  the conversation is deleted or retention-swept.
+- Reserved prefix: a connector `event_id` starting `api:` is `rejected`
+  (`reserved_event_id`); ordinary connector dedupe unchanged.
+
 ### Governance
 - Governance validation: org documents below the instance minimum, scope and
   list subset rules, defaults for new orgs.

@@ -151,7 +151,8 @@ matrix:
     informational `ratelimit-limit` / `ratelimit-remaining` / `ratelimit-reset` of
     the blocking bucket; `x-should-retry: true`. A refused request consumes no
     tokens from the buckets that would have allowed it. Idempotent safe retries are
-    the client's responsibility (RFE-018 adds idempotency keys in phase 3).
+    the client's responsibility (phase 3, RFE-018: message creation accepts an
+    `Idempotency-Key`, below).
   - **Tuning**: `ratelimit.api.enabled` (default `true`), `ratelimit.api.multiplier`
     (0.1–100, scales every bucket), per-class overrides
     `ratelimit.api.classes.<name> = { per_minute | per_hour, burst }` and
@@ -164,6 +165,50 @@ matrix:
 - SSE: `Content-Type: text/event-stream`; durable events carry `id: <seq>`;
   ephemeral events carry no id; keepalive comment every `SSE_KEEPALIVE`;
   resume with `Last-Event-ID` or `?after_seq=`.
+
+### Idempotency keys (phase 3, RFE-018, D-62)
+
+Phase 0–2: a client that retried `POST /v1/conversations/{id}/messages` after a
+timeout created two turns (the second becoming a follow-up). From phase 3 the
+route accepts an optional **`Idempotency-Key`** request header; it reuses the
+mechanism channel doors already use (`turns.source_event_id` and its partial
+unique index on `(conversation_id, source_event_id)`), so no new table or
+index exists.
+
+- **Key format**: 1–128 characters from `[A-Za-z0-9._:~-]` (a UUID is the
+  recommendation); anything else → 422 `idempotency_key_invalid`. No header = the
+  phase 0 behaviour (no deduplication). A `Idempotency-Key` on other routes is
+  ignored (phase 3 covers message creation only; `send-now`, `abort` and the
+  channel/webhook doors are already idempotent in their own way).
+- **Scope**: the key is scoped to **(conversation, acting user)**. It is stored as
+  `source_event_id = "api:" ‖ <user_id> ‖ ":" ‖ <key>` (`api:` is a reserved prefix:
+  `13 §5.1` rejects connector event ids starting with it), where `<user_id>` is the
+  person the request acts as (the session user, or the owner of an API key — the
+  same person has one key space across the dashboard, CLI and keys). One user can
+  therefore neither replay, collide with nor probe another user's keys.
+- **Order of evaluation**: authentication, rate limiting (a replay costs one
+  message-bucket token like any request), authorization and conversation visibility
+  (`can_see_conversation`, direct-conversation writer rule) **first** — a replay
+  never bypasses any check; then the idempotency lookup; then the freeze check
+  (423 `frozen`) and the remaining validations for a *new* message only.
+- **First use**: the turn (or the `followup` row, which carries the key too) is
+  inserted with the key in the same transaction as today. **Replay** (key already
+  stored for this conversation and user): nothing is created; the response has the
+  **same status code and shape as the original** — `{ turn }` or `{ followup }`, the
+  resource as it is **now** (its status may have advanced; a promoted follow-up
+  shows `promoted` and its new `turn_id`) — plus the header `Idempotent-Replayed:
+  true`. A replay after the turn finished, failed or was aborted returns that state;
+  it never re-runs it.
+- **Mismatch**: a replay whose `text` or set of `attachment_ids` differs from the
+  stored turn's → 422 `idempotency_key_reused` (`details.turn_id`), nothing created.
+- **Concurrency**: simultaneous requests with one key race on the unique index; the
+  loser's transaction fails with the unique violation, re-reads the winner's row
+  and answers as a replay (exactly one turn exists).
+- **Lifetime**: as long as the turn row exists (no separate expiry): conversation
+  deletion or retention (`10 §Archive, delete, redaction, retention, export`)
+  frees the key. Clients use a fresh key per logical message.
+- Never logged in clear beyond a 12-character prefix; not returned in transcripts
+  or events (the `source_event_id` column is internal).
 
 ## Event bus (Postgres `LISTEN/NOTIFY`)
 
@@ -474,7 +519,7 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | GET `/v1/conversations/{id}/export` | S/K | (phase 2, RFE-010) JSON `aurora.conversation.v1` (`attachments=zip` → zip); 422 `export_too_large` |
 | GET `/v1/conversations/{id}/events?after_seq=&limit=` | S/K | durable history |
 | GET `/v1/conversations/{id}/stream` | S/K | SSE |
-| POST `/v1/conversations/{id}/messages` | S/K | `{ text, attachment_ids? }` → `{ turn }` or `{ followup }` |
+| POST `/v1/conversations/{id}/messages` | S/K | `{ text, attachment_ids? }` → `{ turn }` or `{ followup }`; (phase 3, RFE-018) optional header `Idempotency-Key` — a retry with the same key returns the original result (`Idempotent-Replayed: true`) and creates nothing; 422 `idempotency_key_invalid` / `idempotency_key_reused` (`### Idempotency keys`) |
 | POST `/v1/turns/{id}/abort`, `/v1/turns/{id}/send-now` | S/K | |
 | POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment; (phase 2, RFE-015) 422 `attachment_quota_exceeded` when the org quota would be exceeded |
 | GET `/v1/attachments/{id}/content` | S/K | `Content-Disposition: attachment` always; (phase 2, RFE-015) 410 `attachment_purged` after retention/delete |

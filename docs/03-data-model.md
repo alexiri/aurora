@@ -1273,3 +1273,8 @@ Pending deletions of harness session files after a conversation delete or a `res
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | `governance.agent_tokens.max_age_days` | int 1…3650 \| absent | org maximum age of BYO agent tokens; absent = none; never above the instance value (`08 §7`). No column: `governance` is `jsonb`. | 3 (RFE-013) |
+
+#### `turns` (idempotency)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| source_event_id | (existing column and partial unique index `(conversation_id, source_event_id)`) | no schema change. Phase 3 adds a **value convention**: turns and follow-ups created by `POST …/messages` with an `Idempotency-Key` store `api:<user_id>:<key>` (≤ 170 chars); connector event ids starting with `api:` are rejected (`13`). Promoted turns keep null (`10 §Turns`) | 3 (RFE-018) |

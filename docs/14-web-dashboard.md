@@ -118,6 +118,9 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
     chips), follow-ups with "Send now", Stop, live activity line, door chips
     (which surface each turn came from), error copy with deep-link fixes
     (`no_model_key` → LLM keys page).
+    (phase 3, RFE-018) The composer generates one UUID `Idempotency-Key` per composed
+    message and reuses it for every automatic retry, so a timeout-retry never
+    double-posts; editing the text or deliberately sending again uses a new key.
   - **Instructions** — name, brief, avatar, harness, model (from
     `/v1/agents/{a}/models`), effort, proactive messaging mode.
   - **Access** — grants: connections (full / custom with allow/ask/block per

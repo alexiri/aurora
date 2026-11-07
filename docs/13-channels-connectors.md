@@ -117,6 +117,9 @@ Shapes:
 `InboundEvent = { event_id, integration_id, kind, occurred_at, payload }`.
 `event_id` is the platform's own id (or a deterministic hash of platform ids
 when the platform has none) — the core dedupes on `(connector, event_id)`.
+(phase 3, RFE-018) `event_id` values beginning with `api:` are reserved for
+API idempotency keys (`05 §Idempotency keys`): such an event is `rejected` with
+code `reserved_event_id`.
 
 | Kind | Payload |
 |------|---------|
@@ -280,7 +283,7 @@ idempotent). Steps:
    attachments or `failed` ones with a reason (phase 2, RFE-015: `quota_exceeded`
    when the org's attachment quota would be exceeded; the person is told in
    platform voice and the turn still runs).
-10. **Turn**: create the turn (door `thread`, `source_event_id = event_id`,
+10. **Turn**: create the turn (door `thread`, `source_event_id = event_id`; (phase 3, RFE-018) event ids starting with the reserved prefix `api:` were already rejected at ingest, `§POST /events`,
     speaker). A turn already created by a crashed earlier attempt is found by
     `source_event_id` and not duplicated.
 11. **Receipt**: `reaction.add` (neutral `eyes`) or `status.set` or placeholder.

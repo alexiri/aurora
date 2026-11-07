@@ -128,7 +128,13 @@ follow-up rows:  joining ──steer delivered + message.joined──► joined
 - **Create** (`POST /v1/conversations/{id}/messages` or any door): insert a
 `turn` row `queued`. If the partial unique index rejects it (an active turn
 exists), insert a `followup` row `joining` with `parent_turn_id` instead.
-`NOTIFY aurora_work`.
+`NOTIFY aurora_work`. (phase 3, RFE-018) A request carrying an `Idempotency-Key`
+stores `source_event_id = api:<user_id>:<key>` on whichever row it inserts; the
+two unique constraints are told apart by name — a violation of the
+`(conversation_id, source_event_id)` index means *replay* (re-read that row and
+return it, `05 §Idempotency keys`), a violation of the active-turn index still
+means *follow-up*. The row inserted as a follow-up and later `promoted` keeps the
+key on the follow-up row; the promoted turn it spawns has `source_event_id` null.
 - **Dispatch** (due-work arm): claim `queued` turns whose sandbox is running,
 channel live, home synced; set `dispatched`, `dispatch_lease_until`, mint the
 context credential, emit `turn.deliver` (`16 §W5`).
