@@ -129,7 +129,7 @@ behaviour; they record environment and tooling choices.
 ## Design-review decisions (owner, 2026-11-08; `80`)
 
 Owner verdicts on `docs/80-design-review.md`, one row per item scheduled into
-phases 1 and 2. The owning docs carry the normative text, tagged
+phases 1, 2 and 3 (D-59 is RFE-025, phase 2; D-60…D-67 are the phase-3 items). The owning docs carry the normative text, tagged
 "(phase N, RFE-nnn)".
 
 | Id | Decision | Alternatives rejected | Rationale |
