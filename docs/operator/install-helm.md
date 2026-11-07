@@ -21,9 +21,14 @@ contains `aurora`, otherwise `<release>-aurora`
 - A runtime class for sandboxes, such as gVisor or Kata (recommended by docs/15).
 - Images pushed to a registry you control (`image.registry`), or available under bare
   names. Tag defaults to the chart's appVersion (`image.tag`).
+- The sandbox image must be pullable by the nodes as `aurora-sandbox:<version>`
+  (`docker.io/library/aurora-sandbox:<version>` unless you mirror it). The API puts that
+  fixed name in every boot document; `runner.image` is not consulted yet. Mirror or retag your
+  sandbox image to that name.
 
-The chart has been checked with `helm lint` and `helm template` only. The `kind`
-end-to-end test has not been run (`docs/PROGRESS.md`, OPS-010 and FUP-M7).
+The chart is checked with `helm lint`, `helm template` and an install on a local kind
+cluster (see [Test on a local kind cluster](#test-on-a-local-kind-cluster)), which runs the
+hosted scenarios and the sandbox isolation probes against the `kubernetes` runner backend.
 
 ## Namespaces
 
@@ -38,7 +43,8 @@ end-to-end test has not been run (`docs/PROGRESS.md`, OPS-010 and FUP-M7).
 The chart uses one Secret for all generated keys. Choose one of two options.
 
 **Option A: let the chart generate them.** Leave `secrets.existingSecret` empty.
-The `<fullname>-secrets` pre-install job (`secrets`, weight -10) creates
+The `<fullname>-secrets` pre-install job (`secrets`, weight -10; it needs `sh`, `kubectl`,
+`base64`, `head`, `od` and `tr` in the hook image, not `openssl`) creates
 `secrets.generatedName` (default `<fullname>-secrets`) and writes only the missing keys.
 It never overwrites a value. The generated keys are:
 `AURORA_ENCRYPTION_KEYS`, `AURORA_ENCRYPTION_ACTIVE_KEY`, `AURORA_SIGNING_KEY`,
@@ -97,7 +103,9 @@ The `<fullname>-gateway-ca` pre-install job (`gateway-ca`, weight -9) runs
 `aurora-gateway generate-ca --out /ca` and stores `ca.pem` and `ca.key` as the Secret
 `<fullname>-gateway-ca`. If the Secret exists, it does nothing ("CA secret exists; not
 overwriting"). To use your own CA, create a Secret with keys `ca.pem` and `ca.key` and
-set `gateway.ca.existingSecret`.
+set `gateway.ca.existingSecret`. The gateway mounts the whole Secret at `gateway.ca_dir`.
+The API mounts only `ca.pem` there, because it embeds the certificate in the boot documents
+it hands to sandboxes. It never receives `ca.key`.
 
 ## Configuration
 
@@ -182,6 +190,8 @@ With `networkPolicy.enabled: true` (default) the chart renders:
 - release namespace: `<fullname>-default-deny`, `-allow-dns`, and per-component policies
   `-api`, `-web`, `-gateway`, `-hookhost`, `-runner`, `-postgres` (when the bundled database is on),
   `-connector-<id>`;
+- the `migrate` hook pod (`-migrate`): egress to the database only, so `helm upgrade` can
+  run migrations while the other policies are in place;
 - sandboxes namespace: `default-deny` and `allow-gateway-runner`.
 
 Set the selectors for your cluster:
@@ -192,7 +202,10 @@ Set the selectors for your cluster:
 - `networkPolicy.kubeApiCidrs`, for runner egress to the Kubernetes API (empty allows any on 443 and 6443);
 - `networkPolicy.externalEgress` (`cidr` and `except`), for OIDC, SMTP, LLM endpoints and secret stores.
 
-Sandboxes can reach only gateway 4102 and runner 4105 (`docs/11 §kubernetes`).
+Sandboxes can reach only gateway 4102 and runner 4105 (`docs/11 §kubernetes`). The kind test
+checks this from inside a sandbox Pod: no DNS, no route to the API, Postgres, hookhost, gateway
+4103, runner 4106 or the Kubernetes API, no service account token, a non-root user and a
+read-only root filesystem.
 
 ## Connectors (optional)
 
@@ -221,7 +234,7 @@ The token Secret must exist before the install. Provisioning and approval are in
 ```bash
 helm lint deploy/helm/aurora
 helm template aurora deploy/helm/aurora -n aurora -f my-values.yaml > rendered.yaml   # review before applying
-helm install aurora deploy/helm/aurora -n aurora --create-namespace -f my-values.yaml
+helm install aurora deploy/helm/aurora -n aurora --create-namespace -f my-values.yaml --wait --timeout 8m
 ```
 
 `helm lint` and `helm template` are the checks to run before any values change.
@@ -248,6 +261,43 @@ runner:
     runtimeClass: gvisor
 ```
 
+## Test on a local kind cluster
+
+`scripts/e2e/kind.sh` follows the steps above on a throwaway cluster. It needs `kind`, `kubectl`,
+`helm`, `podman` and about 20 GB of free disk. The cluster is named `aurora-e2e`, and the kind
+provider is rootless podman (`KIND_EXPERIMENTAL_PROVIDER=podman`).
+
+```bash
+bash scripts/e2e/kind.sh              # create, build, load, install, test, delete the cluster
+bash scripts/e2e/kind.sh --keep       # leave the cluster for inspection
+bash scripts/e2e/kind.sh --fresh      # delete an existing aurora-e2e cluster first
+bash scripts/e2e/kind.sh --skip-build # reuse the localhost/aurora-e2e/* images
+```
+
+What it does:
+
+1. Creates the cluster from `deploy/kind/kind-config.yaml` (one node, the default kindnet CNI).
+2. Proves NetworkPolicy enforcement before anything else: a probe pod reaches a server pod,
+   then a default-deny policy is applied and the same request must fail. The script stops if it does not.
+   kindnet (`kindest/kindnetd` v20260820 in kind v0.33) enforces ingress and egress policies, including
+   port-specific allows, so no extra CNI is needed. If you use an older kind node image whose
+   CNI does not enforce, create the cluster with `disableDefaultCNI: true` and install a
+   pinned Calico manifest before the chart (not exercised by this script).
+3. Builds the service images, the web image and the sandbox image (`sandbox-min`, with the fake
+   harness), and loads them with `kind load image-archive`. The sandbox image is loaded as
+   `docker.io/library/aurora-sandbox:<version>` (see [Prerequisites](#prerequisites)).
+4. Installs the chart with `deploy/kind/values-e2e.yaml`: the bundled evaluation Postgres, no
+   Ingress (kind has no ingress controller), one replica per component, open sign-up, the fake
+   harness allowed and a 30 s idle timeout.
+5. Reaches the API with `kubectl port-forward` and runs `tests/e2e-hosted/tests/k8s.rs`:
+   a chat turn answered inside a sandbox Pod, park and wake (the home PVC and a marker file
+   survive), restart, and the SEC-02 and SEC-09 probes from inside a sandbox Pod, each blocked
+   connection next to a positive control on the two allowed ports.
+
+Logs of all pods, events and `describe` output are written to `target/kind-logs/` when a run fails.
+Re-running is safe: an existing release and both namespaces are removed first (the evaluation
+database lives on a PVC in the release namespace, so it is reset too).
+
 ## Post-install checks
 
 ```bash
@@ -267,4 +317,7 @@ Then register a runner ([runners.md](runners.md#add-a-runner)).
   `kubectl -n aurora rollout restart deploy/aurora-api`.
 - The bundled `postgres.enabled` database is evaluation-only and leaves its resources behind
   on uninstall (see [Database](#database)).
-- The chart has not been tested on a cluster; `helm lint` and `helm template` are the checks run.
+- `helm upgrade` was not tested (separate task). The first upgrade from a release that predates the
+  `-migrate` NetworkPolicy runs its migrate hook before that policy exists, so it can hang
+  (seen on kind). Apply the new NetworkPolicies first (`helm template ... -s templates/networkpolicy.yaml | kubectl apply -f -`), then upgrade.
+- The kind test runs a single node with `runtimeClass` unset, so gVisor and Kata are not covered.

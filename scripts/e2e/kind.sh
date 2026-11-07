@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# OPS-011: Kubernetes e2e on a local kind cluster (rootless podman provider).
+#
+#   scripts/e2e/kind.sh [--keep] [--fresh] [--skip-build] [-- <cargo test filter/args>]
+#
+#   --keep        leave the cluster (and the Helm release) in place when done
+#   --fresh       delete the cluster aurora-e2e first (default: reuse it, reinstall the release)
+#   --skip-build  reuse the localhost/aurora-e2e/* images already in podman storage
+#
+# Steps: kind cluster (deploy/kind/kind-config.yaml) -> NetworkPolicy enforcement check with a
+# probe pod -> build + `kind load image-archive` the service and sandbox images -> `helm install`
+# with deploy/kind/values-e2e.yaml (docs/operator/install-helm.md) -> readiness -> port-forward the
+# API -> tests/e2e-hosted/tests/k8s.rs (chat turn in a sandbox Pod, park/wake, restart, SEC-02 and
+# SEC-09 probes from inside the sandbox Pod). Logs are collected under target/kind-logs/ on failure.
+#
+# Everything created is named aurora-e2e*: cluster `aurora-e2e`, images `localhost/aurora-e2e/*`,
+# namespaces `aurora` and `aurora-sandboxes`, probe namespace `aurora-e2e-npcheck`.
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+CLUSTER=aurora-e2e
+export KIND_EXPERIMENTAL_PROVIDER=podman
+CTX="kind-$CLUSTER"
+NS=aurora
+SBX_NS=aurora-sandboxes
+RELEASE=aurora
+FULL=aurora            # chart fullname: the release name contains "aurora"
+REGISTRY=localhost/aurora-e2e
+TAG=e2e
+LOCAL_PORT="${AURORA_KIND_PORT:-14101}"
+LOGDIR="$ROOT/target/kind-logs"
+WORK="$ROOT/target/kind"
+KEEP=0; FRESH=0; SKIP_BUILD="${SKIP_IMAGE_BUILD:-0}"
+CARGO_ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --keep) KEEP=1 ;;
+    --fresh) FRESH=1 ;;
+    --skip-build) SKIP_BUILD=1 ;;
+    --) shift; CARGO_ARGS=("$@"); break ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+k() { kubectl --context "$CTX" "$@"; }
+log() { echo "==> $*" >&2; }
+PF_PID=""
+STATUS=1
+
+collect_logs() {
+  rm -rf "$LOGDIR"; mkdir -p "$LOGDIR"
+  for ns in "$NS" "$SBX_NS"; do
+    k -n "$ns" get all,pvc,networkpolicy,events -o wide >"$LOGDIR/$ns-get.txt" 2>&1
+    k -n "$ns" describe pods >"$LOGDIR/$ns-describe.txt" 2>&1
+    for p in $(k -n "$ns" get pods -o name 2>/dev/null); do
+      k -n "$ns" logs "$p" --all-containers --tail=500 >"$LOGDIR/$ns-${p#pod/}.log" 2>&1
+    done
+  done
+  k get events -A --sort-by=.lastTimestamp >"$LOGDIR/events.txt" 2>&1
+  log "logs collected in $LOGDIR"
+}
+
+cleanup() {
+  [ -n "$PF_PID" ] && kill "$PF_PID" >/dev/null 2>&1
+  if [ "$STATUS" -ne 0 ] && kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then collect_logs; fi
+  if [ "$KEEP" -eq 0 ]; then
+    log "tearing down cluster $CLUSTER (use --keep to skip)"
+    kind delete cluster --name "$CLUSTER" >&2 2>&1
+  else
+    log "--keep: cluster $CLUSTER left running (kubectl --context $CTX)"
+  fi
+  rm -rf "$WORK/archives"
+}
+trap cleanup EXIT
+
+for t in kind kubectl helm podman cargo; do command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 1; }; done
+free_kb=$(df --output=avail -k . | tail -1)
+if [ "$free_kb" -lt $((20 * 1024 * 1024)) ]; then echo "less than 20 GB free; stopping" >&2; exit 1; fi
+mkdir -p "$WORK"
+
+# ---- 1. cluster -------------------------------------------------------------------------
+if [ "$FRESH" -eq 1 ] && kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
+  log "deleting existing cluster $CLUSTER (--fresh)"
+  kind delete cluster --name "$CLUSTER" || exit 1
+fi
+if ! kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
+  log "creating kind cluster $CLUSTER"
+  kind create cluster --name "$CLUSTER" --config deploy/kind/kind-config.yaml --wait 180s || exit 1
+fi
+k wait --for=condition=Ready node --all --timeout=180s || exit 1
+k -n kube-system rollout status ds/kindnet --timeout=120s >/dev/null || exit 1
+
+# ---- 2. NetworkPolicy enforcement proof (negative control) ---------------------------------
+# kindnet's network-policy support must really drop traffic: a client reaches a server before a
+# default-deny policy and not after. Without this the SEC-02 probes below would prove nothing.
+log "NetworkPolicy enforcement check"
+NPNS=aurora-e2e-npcheck
+k delete ns "$NPNS" --ignore-not-found --wait=true >/dev/null 2>&1
+k create ns "$NPNS" >/dev/null || exit 1
+k apply -n "$NPNS" -f - >/dev/null <<'EOF' || exit 1
+apiVersion: v1
+kind: Pod
+metadata: {name: srv, labels: {app: srv}}
+spec:
+  containers: [{name: s, image: registry.k8s.io/e2e-test-images/agnhost:2.53, args: [netexec, --http-port=8080]}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: cli, labels: {app: cli}}
+spec:
+  containers: [{name: c, image: registry.k8s.io/e2e-test-images/agnhost:2.53, args: [pause]}]
+EOF
+k -n "$NPNS" wait --for=condition=Ready pod --all --timeout=180s >/dev/null || exit 1
+SRV_IP=$(k -n "$NPNS" get pod srv -o jsonpath='{.status.podIP}')
+probe() { k -n "$NPNS" exec cli -- curl -s -m 3 -o /dev/null "http://$SRV_IP:8080/hostname"; }
+probe || { echo "control probe failed before any policy" >&2; exit 1; }
+k apply -n "$NPNS" -f - >/dev/null <<'EOF'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: deny}
+spec: {podSelector: {}, policyTypes: [Ingress, Egress]}
+EOF
+sleep 5
+if probe; then
+  echo "NetworkPolicy is NOT enforced by this cluster's CNI (kindnet). Use Calico: see docs/operator/install-helm.md (Local kind cluster)." >&2
+  exit 1
+fi
+log "NetworkPolicy enforced: connection allowed before the default-deny policy, blocked after"
+k delete ns "$NPNS" --wait=false >/dev/null 2>&1
+
+# ---- 3. images ----------------------------------------------------------------------------
+IMAGES=(aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-web aurora-sandbox)
+if [ "$SKIP_BUILD" != "1" ]; then
+  for t in api gateway hookhost runner; do
+    log "building aurora-$t"
+    podman build -q -f images/services/Containerfile --target "$t" -t "$REGISTRY/aurora-$t:$TAG" . >/dev/null || exit 1
+  done
+  log "building aurora-web"
+  podman build -q -f images/services/web.Containerfile -t "$REGISTRY/aurora-web:$TAG" . >/dev/null || exit 1
+  log "building aurora-sandbox (sandbox-min target, fake harness)"
+  scripts/images/build-sandbox-min.sh "$REGISTRY/aurora-sandbox:$TAG" >/dev/null || exit 1
+fi
+mkdir -p "$WORK/archives"
+# aurora-api hard-codes the sandbox image as `aurora-sandbox:<version>` (boot.rs; `runner.image` is
+# not consulted), which containerd resolves to docker.io/library/aurora-sandbox:<version>. So the
+# sandbox image is loaded under exactly that name (and the local alias is removed again).
+VERSION=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)
+SBX_REF="docker.io/library/aurora-sandbox:${VERSION:-0.1.0}"
+for i in "${IMAGES[@]}"; do
+  ref="$REGISTRY/$i:$TAG"
+  podman image exists "$ref" || { echo "missing image $ref" >&2; exit 1; }
+  if [ "$i" = aurora-sandbox ]; then podman tag "$ref" "$SBX_REF" || exit 1; ref="$SBX_REF"; fi
+  log "loading $i into kind as $ref"
+  podman save -o "$WORK/archives/$i.tar" "$ref" >/dev/null || exit 1
+  kind load image-archive "$WORK/archives/$i.tar" --name "$CLUSTER" >/dev/null || exit 1
+  rm -f "$WORK/archives/$i.tar"
+  [ "$i" = aurora-sandbox ] && podman untag "$SBX_REF" >/dev/null 2>&1
+done
+
+# ---- 4. Helm install (docs/operator/install-helm.md) ----------------------------------------------
+log "helm lint / template"
+helm lint deploy/helm/aurora -f deploy/kind/values-e2e.yaml >/dev/null || exit 1
+helm template "$RELEASE" deploy/helm/aurora -n "$NS" -f deploy/kind/values-e2e.yaml >"$WORK/rendered.yaml" || exit 1
+if helm --kube-context "$CTX" status "$RELEASE" -n "$NS" >/dev/null 2>&1; then
+  log "removing previous release"
+  helm --kube-context "$CTX" uninstall "$RELEASE" -n "$NS" --wait >/dev/null || exit 1
+fi
+# The evaluation Postgres and the generated Secrets are not removed by `helm uninstall` (docs: Database).
+k delete ns "$NS" "$SBX_NS" --ignore-not-found --wait=true >/dev/null || exit 1
+log "helm install"
+helm --kube-context "$CTX" install "$RELEASE" deploy/helm/aurora -n "$NS" --create-namespace \
+  -f deploy/kind/values-e2e.yaml --wait --timeout 8m || exit 1
+k -n "$NS" get pods -o wide >&2
+
+# ---- 5. reach the API, run the scenarios ---------------------------------------------------------
+log "port-forward svc/$FULL-api -> 127.0.0.1:$LOCAL_PORT"
+k -n "$NS" port-forward "svc/$FULL-api" "$LOCAL_PORT:4101" >"$WORK/port-forward.log" 2>&1 &
+PF_PID=$!
+for _ in $(seq 60); do
+  curl -fsS "http://127.0.0.1:$LOCAL_PORT/readyz" >/dev/null 2>&1 && break
+  kill -0 "$PF_PID" 2>/dev/null || { cat "$WORK/port-forward.log" >&2; exit 1; }
+  sleep 1
+done
+curl -fsS "http://127.0.0.1:$LOCAL_PORT/readyz" >/dev/null || { echo "api not ready via port-forward" >&2; exit 1; }
+
+log "running tests/e2e-hosted/tests/k8s.rs"
+AURORA_TEST_KIND=1 \
+AURORA_KIND_API="http://127.0.0.1:$LOCAL_PORT" \
+AURORA_KIND_ORIGIN="http://localhost:4100" \
+AURORA_KIND_CONTEXT="$CTX" AURORA_KIND_NS="$NS" AURORA_KIND_SBX_NS="$SBX_NS" AURORA_KIND_FULL="$FULL" \
+  timeout 1500 cargo test -p aurora-e2e-hosted --test k8s -- --test-threads=1 --nocapture "${CARGO_ARGS[@]}"
+STATUS=$?
+if [ "$STATUS" -eq 0 ]; then log "kind e2e PASSED"; else log "kind e2e FAILED (rc=$STATUS)"; fi
+exit "$STATUS"

@@ -6,7 +6,7 @@
 {{- if .Values.api.bootstrap.runnerToken }}
 {{- $apiEnv = printf "%s\n- name: AURORA_BOOTSTRAP_RUNNER_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_RUNNER_TOKEN}}" $apiEnv (include "aurora.secretName" .) }}
 {{- end }}
-{{ include "aurora.workload" (dict "root" . "name" "api" "spec" .Values.api "image" (include "aurora.image" (dict "root" . "name" "aurora-api")) "args" (list "serve") "env" $apiEnv "pluginsMount" true "ports" (list (dict "name" "http" "port" 4101) (dict "name" "internal" "port" 4111))) }}
+{{ include "aurora.workload" (dict "root" . "name" "api" "spec" .Values.api "caCert" true "image" (include "aurora.image" (dict "root" . "name" "aurora-api")) "args" (list "serve") "env" $apiEnv "pluginsMount" true "ports" (list (dict "name" "http" "port" 4101) (dict "name" "internal" "port" 4111))) }}
 ---
 {{ include "aurora.workload" (dict "root" . "name" "hookhost" "spec" .Values.hookhost "image" (include "aurora.image" (dict "root" . "name" "aurora-hookhost")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_INTERNAL_SECRET"))) "ports" (list (dict "name" "http" "port" 4104))) }}
 ---

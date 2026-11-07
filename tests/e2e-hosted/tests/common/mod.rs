@@ -373,6 +373,102 @@ pub struct Api {
 }
 
 impl Api {
+    /// Sign up over HTTP against a deployed API at `base` (kind e2e, OPS-011): no local database
+    /// handle. `origin` must equal the deployment's `server.external_url`. Daneel is switched to
+    /// the fake harness through the agents API.
+    pub async fn connect(base: &str, origin: &str, email: &str) -> Api {
+        let http = reqwest::Client::new();
+        let r = http
+            .post(format!("{base}/v1/auth/signup"))
+            .header("origin", origin)
+            .json(&json!({"email": email, "password": "correct horse battery staple 42", "display_name": "E2E"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 201, "signup: {}", r.text().await.unwrap());
+        let cookie = r
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .map(|s| s.split(';').next().unwrap().to_owned())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let mut api = Api {
+            http,
+            base: base.to_owned(),
+            cookie,
+            org: String::new(),
+            ws: String::new(),
+            daneel: String::new(),
+        };
+        let (s, me) = api.get("/v1/me").await;
+        assert_eq!(s, 200, "{me}");
+        api.org = me["memberships"][0]["org"]["id"].as_str().unwrap().into();
+        api.ws = me["memberships"][0]["workspaces"][0]["id"]
+            .as_str()
+            .unwrap()
+            .into();
+        let (s, list) = api.get(&format!("/v1/workspaces/{}/agents", api.ws)).await;
+        assert_eq!(s, 200, "{list}");
+        api.daneel = list["items"]
+            .as_array()
+            .and_then(|a| a.iter().find(|x| x["handle"] == "daneel"))
+            .and_then(|x| x["id"].as_str())
+            .unwrap_or_else(|| panic!("Daneel not found: {list}"))
+            .to_owned();
+        let (s, v) = api
+            .call(
+                Method::PATCH,
+                &format!("/v1/agents/{}", api.daneel),
+                Some(json!({"harness": "fake"})),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        api
+    }
+
+    /// Wait until `turn` has a `turn.finished` event; returns its status.
+    pub async fn wait_finished(&self, conv: &str, turn: &str, secs: u64) -> String {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        loop {
+            for e in self.events(conv).await {
+                let t = e.to_string();
+                if t.contains("turn.finished") && t.contains(turn) {
+                    for st in ["done", "failed", "aborted"] {
+                        if t.contains(&format!("\"status\":\"{st}\"")) {
+                            return st.to_owned()
+                                + &e["payload"]["error_code"]
+                                    .as_str()
+                                    .map(|c| format!(":{c}"))
+                                    .unwrap_or_default();
+                        }
+                    }
+                }
+            }
+            assert!(Instant::now() < deadline, "turn {turn} did not finish");
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    /// Poll the sandbox endpoint until `state` (no database handle needed).
+    pub async fn wait_sandbox_state(&self, state: &str, secs: u64) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        loop {
+            let v = self.sandbox().await;
+            if v["state"] == state {
+                return v;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "sandbox never reached {state}: {v}"
+            );
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+}
+
+impl Api {
     pub async fn call(&self, m: Method, path: &str, body: Option<Value>) -> (u16, Value) {
         let mut r = self
             .http
