@@ -893,6 +893,10 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"integration_id": Uuid::now_v7(), "agent_id": fx.agent})
         }
         ("POST", "/v1/reach-grants/{id}/decision") => json!({"decision": "block", "revision": 0}),
+        ("POST", "/v1/action-approvals/{id}/decision") => json!({"decision": "deny"}),
+        ("PUT", "/v1/agent-links/{id}/policy") => {
+            json!({"agent_id": fx.agent, "policy": "ask", "revision": 0})
+        }
         _ => json!({}),
     }
 }
