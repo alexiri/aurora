@@ -141,7 +141,13 @@ documented steps.
 ## Phase 1 — Mattermost connector
 
 Scope: `20`. Order: `shared` mode (single bot, bindings, DM defaults), then
-`dedicated` mode (bots API provisioning). Acceptance: connector conformance
+`dedicated` mode (bots API provisioning).
+Design-review items (`80`): RFE-001 (verified-email auto-link opt-in per
+integration, default off), RFE-002 (TLS-only gateway proxy listener, internal
+and external), RFE-003 (open-lane posture, CONNECT-time rule semantics,
+supervisor 3129 listener only with the browser capability), RFE-004 (OIDC-only
+sign-in), RFE-009 (direct conversations visible to their user and workspace
+owners only), RFE-016 (`DeltaBus` seam). Acceptance: connector conformance
 suite against a Mattermost container in CI; live scenario: DM, channel
 mention + thread follow-up, approval click, unlinked user link flow, bot
 removal handling.
@@ -155,14 +161,33 @@ removal handling.
   Calendar, Drive with MIME summaries via hook), Microsoft 365 package,
   AWS keys and AWS role (SigV4 + mint), Sentry, Notion, Linear, PostgreSQL.
 - Gateway database lane (`21 §Database lane`).
+- Design-review items (`80`): RFE-005 (policy `user` identities bind to the
+  turn's speaker), RFE-006 (freeze agent/workspace/org), RFE-007 (keyring-style
+  lists for the signing key and internal secret), RFE-008 (atomic audit for the
+  security-critical set), RFE-010 (conversation delete/archive, transcript
+  redaction, retention, export), RFE-011a (stall exemption, per-rule approval
+  timeouts, email to owners when no surface is live, SSE browser
+  notification), RFE-012 (`approver` workspace role), RFE-015 (attachment
+  retention and quota), RFE-017 (management API rate limiting), RFE-021
+  (automation creator reassignment, offboarding view, workspace-anchored
+  automations).
+- Phases 1 and 2 may run in parallel once phase 0 is merged to `master`.
 
 ## Phase 3 — External secret stores
 
 HashiCorp Vault store (`21 §HashiCorp Vault`), managed and reference modes,
 migration tooling exercised against a Vault dev server in CI.
+Design-review items (`80`): RFE-013 (optional agent-token maximum age),
+RFE-014 (gateway behaviour during Postgres outages), RFE-018 (idempotency keys
+for message creation), RFE-019 (neutral default brief, public base image),
+RFE-020 (workspace-tier skills), RFE-022 (plugin major upgrades →
+`reauth_required`), RFE-023 (document the LLM-host default-rule carve-out),
+RFE-024 (self-contained deprovision ops).
 
 ## Phase 4+ — Later
 
 SSH front door, port previews, evals, git-backed skill library, groups and
 SCIM, shared rate-limit counters, S3 blob store, additional LLM providers,
 additional connectors (Slack decision pending). See `21`.
+Design-review item RFE-011b (approval park-and-resume, Web Push).
+Phases 3 and 4 start once phases 1 and 2 are done.

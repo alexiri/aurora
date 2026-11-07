@@ -153,6 +153,38 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | BE-067 | Agent avatars: upload, re-encode to 256² PNG, rotating public URL, presence.set_icon (SEC-30) | both | done (4f7101df) | BE-064 | Sonnet (worktree) | avatars 7; web 149; I-31, C-41; SEC-30 proven |
 | OPS-014 | Gateway performance budgets (18) + upgrade test | Ops | done (51f6732c) | OPS-011 | Sonnet (worktree) | `bash scripts/perf/gateway.sh` PASS: (a) p50 0.033/p99 0.175 ms, (b) 11 563 rps/core, (c) p99 4.36 ms; `bash scripts/e2e/upgrade.sh` 31/31 (image-only restart flag → FIX-007) |
 
+## Design-review items (`docs/80-design-review.md`, owner decisions 2026-11-08)
+
+Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision says otherwise. Spec updates are phase-tagged "(phase N, RFE-nnn)" in the owning docs and are drafted ahead of the phase (tasks SPEC-RFE-P12, SPEC-RFE-P3); implementation tasks are briefed when the phase starts (after `phase0` → `master`).
+
+| RFE | Decision (short) | Phase | Spec update | Implementation |
+|---|---|---|---|---|
+| RFE-001 | Verified-email auto-link opt-in per integration (default off); else sign-in-link flow | 1 | SPEC-RFE-P12 | todo |
+| RFE-002 | TLS-only gateway proxy listener, internal and external | 1 | SPEC-RFE-P12 | todo |
+| RFE-003 | Open-lane posture (enabled/allowlist_only/disabled), CONNECT-time rule semantics, 3129 only with browser capability | 1 | SPEC-RFE-P12 | todo |
+| RFE-004 | OIDC-only sign-in (IdP enforces MFA) | 1 | SPEC-RFE-P12 | todo |
+| RFE-009 | Direct conversations visible to their user + workspace owners | 1 | SPEC-RFE-P12 | todo |
+| RFE-016 | `DeltaBus` seam (NOTIFY impl) + sizing note | 1 | SPEC-RFE-P12 | todo |
+| RFE-005 | Policy `user` identities bind to the turn's speaker | 2 | SPEC-RFE-P12 | todo |
+| RFE-006 | Freeze agent/workspace/org (reversible, audited) | 2 | SPEC-RFE-P12 | todo |
+| RFE-007 | Keyring-style lists for signing key and internal secret | 2 | SPEC-RFE-P12 | todo |
+| RFE-008 | Security-critical audit rows written in the same transaction | 2 | SPEC-RFE-P12 | todo |
+| RFE-010 | Conversation delete/archive, transcript redaction, retention, export | 2 | SPEC-RFE-P12 | todo |
+| RFE-011a | Stall exemption, per-rule approval timeouts, email-to-owners when no surface is live, SSE browser notification | 2 | SPEC-RFE-P12 | todo |
+| RFE-012 | Third workspace role `approver` | 2 | SPEC-RFE-P12 | todo |
+| RFE-015 | Attachment retention + per-tenant quota + storage breakdown + sweep | 2 | SPEC-RFE-P12 | todo |
+| RFE-017 | Management API per-principal rate limiting | 2 | SPEC-RFE-P12 | todo |
+| RFE-021 | Creator reassignment, offboarding view, workspace-anchored automations | 2 | SPEC-RFE-P12 | todo |
+| RFE-013 | Optional per-instance/org agent-token max age (default none) | 3 | SPEC-RFE-P3 | todo |
+| RFE-014 | Gateway under Postgres outage: serve within TTL, reconnect-then-flush, degraded readyz | 3 | SPEC-RFE-P3 | todo |
+| RFE-018 | Idempotency keys for message creation | 3 | SPEC-RFE-P3 | todo |
+| RFE-019 | Neutral default brief (Daneel persona → instance config); public base image | 3 | SPEC-RFE-P3 | todo |
+| RFE-020 | Workspace-tier skills | 3 | SPEC-RFE-P3 | todo |
+| RFE-022 | Plugin major upgrade → `reauth_required` + approval warning | 3 | SPEC-RFE-P3 | todo |
+| RFE-023 | Document the LLM-host default-rule carve-out (+ UI note) | 3 | SPEC-RFE-P3 | todo |
+| RFE-024 | Self-contained deprovision ops, ordering guarantee | 3 | SPEC-RFE-P3 | todo |
+| RFE-011b | Approval park-and-resume, Web Push | 4 | later | todo |
+
 ## Open spec issues (found by PROTO-001; S-06..S-11 resolved)
 
 - (resolved S-06) `file.part` ≤ 144 KiB decoded.

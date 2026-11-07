@@ -6,6 +6,8 @@ shortcomings and improvement opportunities **in the specification itself**
 records as deliberate choices, or that `17 §Residual risks` explicitly accepts,
 are not re-litigated here.
 
+**Scheduling** (owner, 2026-11-08): High → phase 1, Medium → phase 2, Low → phase 3, unless the item's Decision says otherwise (RFE-014 → phase 3, RFE-016 → phase 1, RFE-011b → phase 4). Phase 0 is unaffected. Implementation tracking: `docs/PROGRESS.md` §Design-review items; spec changes are phase-tagged "(phase N, RFE-nnn)" in the owning docs.
+
 Each item has: the problem, why it is suboptimal, a high-level fix (to be
 specced properly if accepted), and a **Decision** field for the owner's
 verdict. Severity is my judgement of impact if left as-is:
@@ -13,32 +15,32 @@ verdict. Severity is my judgement of impact if left as-is:
 **Medium** = meaningful gap, workaroundable · **Low** = polish / clarity.
 
 
-| Id                  | Title                                                                                            | Area         | Severity |
-| ------------------- | ------------------------------------------------------------------------------------------------ | ------------ | -------- |
-| [RFE-001](#rfe-001) | Connector-asserted "verified email" can mint user links                                          | Security     | High     |
-| [RFE-002](#rfe-002) | Gateway proxy port has no TLS option — BYO tokens travel in cleartext                            | Security     | High     |
-| [RFE-003](#rfe-003) | Open lane is reachable by any sandbox process and under-specified for path-scoped rules          | Security     | High     |
-| [RFE-004](#rfe-004) | No MFA for password accounts (including instance admins)                                         | Security     | High     |
-| [RFE-005](#rfe-005) | Policy `user` identities match "anyone with access", not the actual speaker                      | Policy       | Medium   |
-| [RFE-006](#rfe-006) | No emergency quarantine / disable switch for an agent, workspace or org                          | Security/Ops | Medium   |
-| [RFE-007](#rfe-007) | No rotation story for signing key, internal secret, runner session key, gateway CA               | Security/Ops | Medium   |
-| [RFE-008](#rfe-008) | Audit log is best-effort even for security-critical actions                                      | Security     | Medium   |
-| [RFE-009](#rfe-009) | Direct (1:1) conversations are readable by every workspace member                                | Privacy      | High     |
-| [RFE-010](#rfe-010) | No deletion, retention or redaction story for transcripts and attachments                        | Privacy      | Medium   |
-| [RFE-011](#rfe-011) | Approvals can expire unseen: fixed 300 s deadline, no notification/escalation path               | Product      | Medium   |
-| [RFE-012](#rfe-012) | Role granularity: `can_use` bundles chat, approvals and activity reads                           | Policy       | Medium   |
-| [RFE-013](#rfe-013) | BYO agent tokens never expire and have no rotation policy                                        | Security     | Low      |
-| [RFE-014](#rfe-014) | Gateway behaviour during a Postgres outage is unspecified (and the cache flush makes it a cliff) | Ops          | Medium   |
-| [RFE-015](#rfe-015) | Attachments in Postgres with no retention or per-tenant quota                                    | Ops          | Medium   |
-| [RFE-016](#rfe-016) | LISTEN/NOTIFY as the delta fan-out has a scalability ceiling with no seam                        | Ops          | Low      |
-| [RFE-017](#rfe-017) | No general rate limiting on the management API                                                   | Ops          | Medium   |
-| [RFE-018](#rfe-018) | No idempotency keys for turn-creating API calls                                                  | API          | Low      |
-| [RFE-019](#rfe-019) | Deployment-specific content baked into the generic spec (Daneel brief, CERN base image)          | Polish       | Low      |
-| [RFE-020](#rfe-020) | Skills have agent and org tiers but no workspace tier                                            | Product      | Low      |
-| [RFE-021](#rfe-021) | Creator-bound fire-time authority: offboarding a user silently kills automations                 | Product      | Medium   |
-| [RFE-022](#rfe-022) | Plugin major-version upgrades with existing connections are undefined                            | Plugins      | Low      |
-| [RFE-023](#rfe-023) | Default Rule silently exempts LLM hosts — rationale undocumented                                 | Spec clarity | Low      |
-| [RFE-024](#rfe-024) | Deprovision-before-delete ordering is racy and under-specified                                   | Spec clarity | Low      |
+| Id                  | Title                                                                                            | Area         | Severity | Phase |
+| ------------------- | ------------------------------------------------------------------------------------------------ | ------------ | -------- | ----- |
+| [RFE-001](#rfe-001) | Connector-asserted "verified email" can mint user links                                          | Security     | High | 1 |
+| [RFE-002](#rfe-002) | Gateway proxy port has no TLS option — BYO tokens travel in cleartext                            | Security     | High | 1 |
+| [RFE-003](#rfe-003) | Open lane is reachable by any sandbox process and under-specified for path-scoped rules          | Security     | High | 1 |
+| [RFE-004](#rfe-004) | No MFA for password accounts (including instance admins)                                         | Security     | High | 1 |
+| [RFE-005](#rfe-005) | Policy `user` identities match "anyone with access", not the actual speaker                      | Policy       | Medium | 2 |
+| [RFE-006](#rfe-006) | No emergency quarantine / disable switch for an agent, workspace or org                          | Security/Ops | Medium | 2 |
+| [RFE-007](#rfe-007) | No rotation story for signing key, internal secret, runner session key, gateway CA               | Security/Ops | Medium | 2 |
+| [RFE-008](#rfe-008) | Audit log is best-effort even for security-critical actions                                      | Security     | Medium | 2 |
+| [RFE-009](#rfe-009) | Direct (1:1) conversations are readable by every workspace member                                | Privacy      | High | 1 |
+| [RFE-010](#rfe-010) | No deletion, retention or redaction story for transcripts and attachments                        | Privacy      | Medium | 2 |
+| [RFE-011](#rfe-011) | Approvals can expire unseen: fixed 300 s deadline, no notification/escalation path               | Product      | Medium | 2 (011a) · 4 (011b) |
+| [RFE-012](#rfe-012) | Role granularity: `can_use` bundles chat, approvals and activity reads                           | Policy       | Medium | 2 |
+| [RFE-013](#rfe-013) | BYO agent tokens never expire and have no rotation policy                                        | Security     | Low | 3 |
+| [RFE-014](#rfe-014) | Gateway behaviour during a Postgres outage is unspecified (and the cache flush makes it a cliff) | Ops          | Medium | 3 |
+| [RFE-015](#rfe-015) | Attachments in Postgres with no retention or per-tenant quota                                    | Ops          | Medium | 2 |
+| [RFE-016](#rfe-016) | LISTEN/NOTIFY as the delta fan-out has a scalability ceiling with no seam                        | Ops          | Low | 1 |
+| [RFE-017](#rfe-017) | No general rate limiting on the management API                                                   | Ops          | Medium | 2 |
+| [RFE-018](#rfe-018) | No idempotency keys for turn-creating API calls                                                  | API          | Low | 3 |
+| [RFE-019](#rfe-019) | Deployment-specific content baked into the generic spec (Daneel brief, CERN base image)          | Polish       | Low | 3 |
+| [RFE-020](#rfe-020) | Skills have agent and org tiers but no workspace tier                                            | Product      | Low | 3 |
+| [RFE-021](#rfe-021) | Creator-bound fire-time authority: offboarding a user silently kills automations                 | Product      | Medium | 2 |
+| [RFE-022](#rfe-022) | Plugin major-version upgrades with existing connections are undefined                            | Plugins      | Low | 3 |
+| [RFE-023](#rfe-023) | Default Rule silently exempts LLM hosts — rationale undocumented                                 | Spec clarity | Low | 3 |
+| [RFE-024](#rfe-024) | Deprovision-before-delete ordering is racy and under-specified                                   | Spec clarity | Low | 3 |
 
 
 ---
