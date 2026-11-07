@@ -136,6 +136,8 @@ impl Mm {
 
     async fn human(&self, name: &str, email: &str) -> Human {
         let username = format!("{name}{}", self.sfx);
+        // Mattermost emails are unique server-wide and the server is shared by the tests.
+        let email = email.replacen('@', &format!("+{}@", self.sfx), 1);
         let u = self
             .admin_ok(
                 reqwest::Method::POST,
