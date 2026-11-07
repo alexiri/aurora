@@ -174,7 +174,10 @@ overridden by the named configuration key (`15`).
 | Name | Value | Config key | Used in |
 |------|-------|-----------|---------|
 | `GATEWAY_RESOLVE_CACHE_TTL` | 60 s | `gateway.resolve_cache_ttl_secs` | 06 |
-| `APPROVAL_TIMEOUT` | 300 s | `approvals.timeout_secs` | 06, 07 |
+| `APPROVAL_TIMEOUT` | 300 s (the default of rules without their own timeout) | `approvals.timeout_secs` | 06, 07 |
+| `APPROVAL_TIMEOUT_MIN` / `APPROVAL_TIMEOUT_MAX` | (phase 2, RFE-011a) 60 s / 3 600 s default (configurable up to 14 400 s, always < `TURN_CEILING − TURN_CEILING_WARNING`) | `approvals.max_timeout_secs` | 07 |
+| `APPROVAL_NOTIFY_DELAY` / `APPROVAL_WATCHER_TTL` | (phase 2, RFE-011a) 20 s / 45 s | — | 07 |
+| `APPROVAL_EMAIL_PER_USER_HOUR` | (phase 2, RFE-011a) 20 e-mails per user per hour (rest digested) | — | 07 |
 | `APPROVAL_BODY_PEEK` | 16 KiB | — | 06 |
 | `CONDITION_BODY_BUFFER` | 256 KiB (4 KiB–8 MiB) | `gateway.condition_body_bytes` | 07 |
 | `UPSTREAM_HEADER_TIMEOUT` | 300 s | `gateway.upstream_header_timeout_secs` | 06 |

@@ -340,15 +340,18 @@ both directions.
    for the tool → `approval.summarize` hook (only if declared; bounded call to
    the hook host with the body prefix ≤ `APPROVAL_BODY_PEEK`, no egress) →
    generic redacting summarizer. Raw bodies are never stored.
-2. `INSERT INTO approvals (…, status='pending', deadline=now()+APPROVAL_TIMEOUT,
-   gateway_instance_id)`; `NOTIFY aurora_approval created`. Failure to insert →
+2. `INSERT INTO approvals (…, status='pending', deadline=now()+<effective timeout>,
+   gateway_instance_id)`; `NOTIFY aurora_approval created`. (phase 2, RFE-011a) The
+   effective timeout comes from the matching rules (`07 §Approval deadlines`,
+   default `APPROVAL_TIMEOUT`) and is part of the cached rule data, so the hold
+   needs no extra lookup. Failure to insert →
    503 `approval_store_unavailable` (fail closed).
 3. Wait on the instance's LISTEN connection for `decided` of that id, with a
    2 s poll fallback reading the row. Keep the client connection open; do not
    read further body bytes.
 4. `approved` → continue at step 9. `denied` → 403 `manual_approval_denied`
    (`details.approval_id`). Deadline reached → the gateway sets
-   `status='expired'` (`WHERE status='pending'`) and answers 403
+   `status='expired'` (`WHERE status='pending'`; phase 2: and `resolved_at`) and answers 403
    `manual_approval_expired`. Client disconnect → `status='abandoned'`.
 5. On SIGTERM, every held request is answered 503 `gateway_restarting`
    (`retry-after: 1`) and its approval marked `abandoned`.

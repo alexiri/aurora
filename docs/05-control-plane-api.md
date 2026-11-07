@@ -190,6 +190,8 @@ claim-based and safe to run everywhere.
 |-----|---------|------|
 | Inbox processor (`13`) | `aurora_inbox` + every 5 s | claims |
 | Approval card fan-out (`13`) | `aurora_approval created` + every 10 s catch-up | claims (`channel_ops.dedupe_key`) |
+| Approval e-mail notification (phase 2, RFE-011a, `07 §Approvals`): pending approvals older than `APPROVAL_NOTIFY_DELAY` without a live surface → e-mail to deciders | every 10 s | claims (`approval_notifications`) |
+| Approval watcher heartbeat (phase 2, RFE-011a): each replica upserts `approval_watchers` for its open approvals SSE/long-poll connections; stale rows pruned | every 15 s | idempotent |
 | Approval expiry: `pending` past `deadline + 30 s` → `expired`; pending rows of gateway instances unseen for 60 s → `abandoned` | every 10 s | idempotent updates |
 | Action-approval expiry | every 60 s | idempotent |
 | Attachment pending sweep (`ATTACH_PENDING_TTL`) | hourly | idempotent |
@@ -233,7 +235,8 @@ Arms, evaluated in this order per poll (detail of each in `10`/`11`):
    credential).
 7. **Steer**: `joining` follow-ups of running turns → `turn.message`.
 8. **Stale-turn recovery**: never-started dispatches (`STALE_DISPATCH`), stalls
-   (`TURN_STALL`), ceiling warnings and ceiling failures (`TURN_CEILING`).
+   (`TURN_STALL`; phase 2, RFE-011a: not for turns with a `pending` approval,
+   `07 §Approval deadlines`), ceiling warnings and ceiling failures (`TURN_CEILING`).
 9. **Schedules**: claim due schedules (`fire_lease_until`), create turns (`10`).
 10. **Watches**: convert watches of lost/parked processes; expire watches.
 11. **Housekeeping slices**: close runtime intervals for stopped boots; mark
@@ -301,7 +304,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC`; (phase 1, RFE-004) the only sign-in; `start` accepts `reauth=1` |
 | POST `/v1/auth/cli`, `/v1/auth/cli/token` | none | device flow |
 | POST `/v1/auth/cli/approve` | SO | `{ user_code, workspace_id }` |
-| GET/PATCH/DELETE `/v1/me` | S (DELETE: SO) | profile, memberships (phase 2, RFE-012: with the effective role per workspace) , default org |
+| GET/PATCH/DELETE `/v1/me` | S (DELETE: SO) | profile, memberships (phase 2, RFE-012: with the effective role per workspace), default org; (phase 2, RFE-011a) `PATCH { approval_email: bool }` |
 
 ### Organizations, members, keys
 | Method & path | Auth | Purpose |
@@ -362,7 +365,7 @@ connector, **P** public capability. Permission checks per `04`.
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET `/v1/agents/{agent}/grants` | S/K | |
-| PUT/DELETE `/v1/agents/{agent}/grants/connections/{conn}` | S/K | `{ mode, allow_tools, ask_tools }` |
+| PUT/DELETE `/v1/agents/{agent}/grants/connections/{conn}` | S/K | `{ mode, allow_tools, ask_tools }`; (phase 2, RFE-011a) optional `ask_timeout_secs` |
 | PUT/DELETE `/v1/agents/{agent}/grants/secrets/{secret}` | S/K | |
 | GET `/v1/connections/{id}/grants` | S/K | agents granted |
 | GET `/v1/agents/{agent}/effective` | S/K | effective credentials and per-tool decisions with `org_ceiling`; (phase 2, RFE-005) optional `?speaker=<user_id>\|none` |
@@ -386,7 +389,7 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 |---|---|---|
 | GET `/v1/workspaces/{ws}/approvals?status=` | S/K | |
 | GET `/v1/approvals/pending?wait=` | S/K | long-poll across what the caller may decide |
-| GET `/v1/approvals/stream` | S | SSE of created/decided |
+| GET `/v1/approvals/stream` | S | SSE of created/decided; (phase 2, RFE-011a) `created` carries `{ id, workspace, agent, title, kind: "gateway"\|"action", expires_at }` so the dashboard can raise a browser notification; counts as a live surface (`approval_watchers`) |
 | POST `/v1/approvals/{id}/decision` | S/K | `{ "decision": "approve"|"deny" }`; first decision wins (409 `already_decided`) |
 | POST `/v1/approvals/batches/{batch_id}/decision` | S/K | all pending of the batch the caller may decide |
 | GET `/v1/workspaces/{ws}/action-approvals`; POST `/v1/action-approvals/{id}/decision` | S/K | |

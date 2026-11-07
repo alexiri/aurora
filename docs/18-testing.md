@@ -37,6 +37,20 @@ done when its tests exist, pass in CI, and the security invariants it touches
   carve-out, rate-limit accounting, condition polarity, GraphQL fail-closed,
   git operations, injection selection.
 - Pipeline tests for every guidance code in `06`.
+- (phase 2, RFE-011a) Deadlines and stall exemption: effective timeout = minimum
+  of set timeouts across scopes, default when unset, authoring bounds
+  (`approval_timeout_out_of_range`), startup refusal when the instance maximum
+  reaches the turn ceiling; a turn with a pending 20-minute approval is **not**
+  `turn_stalled` and is after the approval resolves plus `TURN_STALL`; ceiling still
+  fails it; action approvals are not exempt.
+- (phase 2, RFE-011a) Notifications: e-mail only after `APPROVAL_NOTIFY_DELAY` with no
+  successful card op and no fresh watcher; scheduled/webhook turn in a workspace
+  with no channel presence emails its explicit approvers/owners (org admins when
+  none), visibility-intersected for direct conversations, one mail per batch,
+  digest above the hourly cap, idempotent across two replicas, content has no body
+  or decision link, user opt-out and instance switch, log-only without SMTP;
+  dashboard browser notification only while hidden/unfocused and only for
+  decidable approvals (Playwright with a stubbed Notification API).
 - Hold tests: approve, deny, expiry, client disconnect, SIGTERM
   (`gateway_restarting`), two gateway replicas with a decision written by the
   API.

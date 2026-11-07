@@ -55,7 +55,7 @@ Stored in `policy_rules` (hand) or `derived_rules.rule` (derived).
 | `identities` | `[{ "kind": "agent", "id": uuid } | { "kind": "user", "id": uuid }]`. Empty = anyone. An `agent` identity matches when the id equals the request's agent. A `user` identity: **phase 0** matched when the user is in the request identity's `principals` (users with `can_use` on the agent's workspace — "workspace roster" semantics, so a rule naming Alice matched every request by the agent whoever was speaking). **From phase 2 (RFE-005)** a `user` identity matches **only when the request's `speaker_user_id` equals that user**, i.e. the turn that caused the request was authored by that person (`06 §Credential authentication`). With **no speaker** (boot-token, BYO agent-token and BYO context traffic, schedule/webhook/watch/peer/system/bot-authored turns, or a speaker who lost `can_use`) a `user` identity **never matches**. Several identities are OR-ed. |
 | `targets` | Empty = anywhere. Kinds below. A rule matches if **any** target matches. |
 | `action` | `allow` \| `block` |
-| `require_approval` | allow only |
+| `require_approval` | allow only. (phase 2, RFE-011a) With the optional `approval_timeout_secs` (60 … `approvals.max_timeout_secs`; absent = no preference, see *Approval deadlines*) |
 | `rate_limit` | allow only: `{ "count": 1..100000, "per": "minute"|"hour"|"day" }` |
 | `conditions` | AND-ed: `[{ "on": "body", "op": "contains"|"not_contains"|"equals", "value": string ≤1024, "json_pointer"?: string }]` |
 | `enabled` | disabled rules are skipped |
@@ -210,7 +210,9 @@ grant write, and the gateway is invalidated (`agent` scope).
 |-------|---------------------------------------|
 | Secret `S` | 1. `allow` target `secret{S}` |
 | Connection `C`, mode `full` | 1. `allow` target `connection{C}` (all tools, including future ones) |
-| Connection `C`, mode `custom` | 1. `allow` target `connection{C, tools: allow_tools}` (if non-empty) · 2. `allow + require_approval` target `connection{C, tools: ask_tools}` (if non-empty) · 3. `block` target `connection{C}` (everything else, including requests with no matching tool) |
+| Connection `C`, mode `custom` | 1. `allow` target `connection{C, tools: allow_tools}` (if non-empty) · 2. `allow + require_approval` target `connection{C, tools: ask_tools}` (if non-empty; phase 2, RFE-011a: carrying the grant's optional `ask_timeout_secs` as `approval_timeout_secs`) · 3. `block` target `connection{C}` (everything else, including requests with no matching tool) |
+
+(phase 2, RFE-011a) A grant may carry `ask_timeout_secs` (custom connection grants with `ask_tools`; validated like a rule's timeout, 422 `approval_timeout_out_of_range`).
 
 Validation laws (422): a custom grant needs ≥1 tool in `allow_tools ∪
 ask_tools` (message: "detach instead"); a tool may not be in both lists; every
@@ -257,7 +259,10 @@ facts per tool (one per tool's first method/path example).
   becomes `superseded`), creates a fresh draft as a copy, invalidates gateways.
 - **Rollback**: publishes a copy of an older generation's rules as a new
   generation (history is append-only).
-- **Validation at authoring** (422): host patterns with >1 `*`, invalid path
+- **Validation at authoring** (422): (phase 2, RFE-011a) `approval_timeout_secs`
+  outside `[APPROVAL_TIMEOUT_MIN, approvals.max_timeout_secs]` →
+  `approval_timeout_out_of_range`, and a timeout on a rule without
+  `require_approval`; host patterns with >1 `*`, invalid path
   patterns, unknown identities (agent/user not in scope), connection/secret
   targets outside scope, unknown app or tool ids (warn only — may be a removed
   tool), modifiers on block rules, rate limits out of range, condition values
@@ -283,6 +288,39 @@ facts per tool (one per tool's first method/path example).
 **Trigger**: final verdict `needs_approval` (an *ask* tool or an explicit
 require-approval rule). The hold mechanics are in `06 §Approval holds`.
 
+### Approval deadlines (phase 2, RFE-011a, D-56)
+
+Phase 0 gave every approval the same fixed `APPROVAL_TIMEOUT` (300 s). A "deploy to
+prod" ask deserves longer than a routine one, so from phase 2:
+
+- A rule or custom-grant ask may set `approval_timeout_secs`. The **effective
+  timeout** of a hold is the **minimum** of the timeouts *set* on the matching
+  requiring rules of both scopes (a rule without one expresses no preference); if
+  none is set it is `approvals.timeout_secs` (default 300 s). It is always within
+  `[APPROVAL_TIMEOUT_MIN` (60 s)`, approvals.max_timeout_secs]`; the **instance
+  maximum** defaults to 3 600 s, may be raised to at most 14 400 s, and startup
+  refuses a maximum ≥ `TURN_CEILING − TURN_CEILING_WARNING` (a hold must not be able
+  to outlive the turn ceiling).
+- `approvals.deadline = now() + effective timeout` at hold creation (`06`); the card
+  and dashboard show the exact expiry; `GET …/policy/simulate` and the effective view
+  show the timeout a request would get; the transcript `approval.pending` event
+  carries `expires_at`. Expiry still **denies** (`expired`, 403 `manual_approval_expired`).
+- Clients may time out before a long deadline (an agent tool's own HTTP timeout is
+  the client's business). Parking a request and resuming it later is **not** part of
+  phase 2 (RFE-011b, phase 4).
+
+**Stall exemption (phase 2, RFE-011a).** Stale-turn recovery fails a turn after
+`TURN_STALL` (10 min) without progress. A turn that is *blocked on a pending
+approval* makes no progress by design, so with timeouts beyond 10 min the platform
+would have killed turns it was itself holding. The rule: **while any approval row of
+the turn is `pending`** (gateway hold with `turn_id`, `deadline` not passed) the
+turn is **exempt from stall detection**; the clock restarts when the approval is
+resolved (`approvals.resolved_at`, set on approve, deny, expire and abandon). Stalled
+means: no pending approval of the turn **and** `now − GREATEST(last_progress_at,
+latest approval resolved_at) ≥ TURN_STALL`. The exemption never extends `TURN_CEILING`
+(wall-clock cap, still `failed time_limit`) and does not apply to action approvals
+(the agent is not blocked on them: it received `pending_approval` and continued).
+
 **Lifecycle**: `pending` → `approved` | `denied` | `expired` | `abandoned`. (phase 2, RFE-006) Freezing the agent, its workspace or its org marks its `pending` approvals `abandoned` and pending action approvals `rejected` (reason `frozen`); unfreezing does not revive them.
 First decision wins (`UPDATE approvals SET status=… WHERE id=$1 AND
 status='pending'`); a losing decider gets 409 `already_decided`.
@@ -300,12 +338,36 @@ nor receive their cards/notifications (SSE, long-poll, batch).
 
 **Delivery**:
 - Dashboard: `GET /v1/approvals/stream` (SSE) and the agent chat view (the
-  `approval.pending` transcript event).
+  `approval.pending` transcript event). (phase 2, RFE-011a) With the user's opt-in
+  the dashboard also raises a **browser notification** (below).
 - API/SDK: `GET /v1/approvals/pending?wait=` long-poll.
 - Channels: when the approval names a conversation that has a thread link, the
   channel core posts a card into that thread (`13 §Approval cards`). Approvals
   without a conversation (BYO without context credential, boot-token traffic)
   are delivered to the dashboard and API only.
+
+- **E-mail when no surface is live (phase 2, RFE-011a).** A schedule- or webhook-
+  triggered turn in a workspace with no channel presence used to die silently.
+  Now, for every approval (gateway hold or action approval) still `pending`
+  `APPROVAL_NOTIFY_DELAY` (20 s) after creation, the API checks for a **live
+  delivery surface**: (a) a channel card whose `message.post` op finished
+  successfully, or (b) a **watcher** — a user who can decide it and holds an open
+  `approvals/stream` or `approvals/pending` long-poll seen within
+  `APPROVAL_WATCHER_TTL` (45 s; replicas record `approval_watchers`). If neither
+  exists it sends **one e-mail per decider** (the decider set of this section:
+  `can_approve` users with an explicit workspace `owner`/`approver` binding,
+  intersected with conversation visibility, `04`; if the workspace has no explicit
+  binding the org owners/admins) through the SMTP mailer (`04 §Email`). The e-mail
+  is platform voice, sanitized, and carries only: agent and workspace names, the
+  approval's title (no summary fields, no body), the rule name, the expiry and a
+  link to the dashboard approvals page (`<external>/o/<org>/w/<ws>/approvals?focus=<id>`)
+  — **never** an approve/deny link (deciding needs a signed-in session). Approvals
+  sharing a `batch_id` produce one e-mail; each user receives at most
+  `APPROVAL_EMAIL_PER_USER_HOUR` (20) per hour, the rest folded into a "N more
+  waiting" digest; `approval_notifications` makes it idempotent across replicas. A
+  user can turn it off (`PATCH /v1/me { approval_email: false }`); with SMTP unset the
+  mail is logged (log-only mode) and the instance overview warns "approval e-mails
+  disabled". `approvals.email_notifications = false` disables it instance-wide.
 
 **Transcript**: when an approval names a conversation, the API appends
 durable events `approval.pending` (at creation) and `approval.decided`

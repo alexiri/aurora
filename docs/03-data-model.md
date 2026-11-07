@@ -1208,3 +1208,36 @@ Pending deletions of harness session files after a conversation delete or a `res
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | approver_workspace_ids | uuid[] not null default `{}` | workspaces bound as `approver` on accept (disjoint from `workspace_ids`, which stay `member`) | 2 (RFE-012) |
+
+#### `policy_rules`, `grants`, `derived_rules` (approval timeout)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| policy_rules.approval_timeout_secs | int null | only with `require_approval`; 60 … `approvals.max_timeout_secs`; null = no preference (`07 §Approval deadlines`) | 2 (RFE-011a) |
+| grants.ask_timeout_secs | int null | custom connection grants with `ask_tools`; compiled into the derived ask rule | 2 (RFE-011a) |
+| derived_rules.rule | jsonb gains `approval_timeout_secs` | same field as in `policy_rules` | 2 (RFE-011a) |
+
+#### `approvals`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| resolved_at | timestamptz null | set on every terminal transition (approve, deny, expire, abandon); the stall clock restarts here (`07 §Approval deadlines`). Gateway role may write it with `status` | 2 (RFE-011a) |
+
+#### `approval_watchers` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| replica_id | uuid | API replica holding the connection; pk part | 2 (RFE-011a) |
+| user_id | uuid FK→users (cascade) | pk part | 2 (RFE-011a) |
+| workspace_id | uuid FK→workspaces (cascade) | pk part; the workspace whose approvals the connection watches | 2 (RFE-011a) |
+| last_seen_at | timestamptz not null | churn column; live when within `APPROVAL_WATCHER_TTL` | 2 (RFE-011a) |
+
+#### `approval_notifications` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| approval_id | uuid | gateway or action approval id; pk part (no FK: approval history survives) | 2 (RFE-011a) |
+| user_id | uuid FK→users (cascade) | pk part | 2 (RFE-011a) |
+| kind | text CHECK in (`gateway`,`action`) | | 2 (RFE-011a) |
+| sent_at | timestamptz not null | insert-on-conflict claim makes the e-mail idempotent across replicas; pruned with the daily retention pruning | 2 (RFE-011a) |
+
+#### `users`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| approval_email_enabled | bool not null default true | per-user opt-out of approval e-mails | 2 (RFE-011a) |

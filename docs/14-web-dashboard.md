@@ -175,9 +175,22 @@ token rotation, manifest approval with capability/setup-field diff), **Runners**
   access levels, the connect note and setup guide; OAuth methods redirect; the
   callback page posts a message to the opener (`{type: "aurora:connected",
   connection_id}`) and closes.
+- **Approval notifications (phase 2, RFE-011a)**: `approvals/stream` drives (1) the
+  sidebar/tab-title counter "(N) Aurora" and (2) an optional **browser
+  notification** — Account → "Notify me in this browser when an approval needs me"
+  asks permission from a user gesture (Notifications API; the choice is stored in
+  that browser only). A notification appears only for an approval the user can
+  decide and only while the tab is hidden or unfocused; it shows agent, workspace
+  and the sanitized title, `tag = approval id` (no duplicates), and clicking it
+  focuses the tab at the Approvals page. This is **not** Web Push: it needs an open
+  tab (Web Push is RFE-011b, phase 4). Account also has the "E-mail me approvals
+  nobody is watching" switch (`approval_email`).
 - **Policy editor**: draft/publish ("Apply changes"), drag reorder with
   stale-revision detection, identity and target pickers (apps/tools from the
   catalogue, connections, secrets, network patterns), conditions, modifiers,
+  (phase 2, RFE-011a) a "Approval timeout" field on require-approval rules and on
+  *ask* tools of custom grants (bounded by the instance maximum, shown with the
+  default),
   simulate panel (method + URL + body → decision trace; phase 2, RFE-005: a
   "speaker" picker, default you, plus "no speaker"), identity picker labelling
   `user` identities **"when <name> is speaking"** with the warning of `07`, warnings panel,
