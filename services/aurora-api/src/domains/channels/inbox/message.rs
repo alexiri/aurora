@@ -157,6 +157,7 @@ pub(super) async fn handle(state: &AppState, row: &InboxRow) -> Result<Value, In
                 &m.space.reference,
                 reply_thread,
                 &m.author.reference,
+                m.author.email.as_deref(),
                 format!("link:{}", row.event_id),
             )
             .await?;
@@ -449,6 +450,7 @@ async fn route(
                     &m.space.reference,
                     reply_thread,
                     &m.author.reference,
+                    m.author.email.as_deref(),
                     format!("link:{}", event_id),
                 )
                 .await?;

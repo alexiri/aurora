@@ -486,8 +486,10 @@ dependencies = [
 name = "aurora-db"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "aurora-core",
  "chrono",
+ "futures",
  "serde_json",
  "sqlx",
  "thiserror 2.0.21",

@@ -14,7 +14,7 @@
 mod events;
 mod message;
 pub mod send;
-mod speaker;
+pub(crate) mod speaker;
 
 use crate::app::AppState;
 use crate::domains::connectors::inbox::{InboxError, InboxHandler};

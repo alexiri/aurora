@@ -559,7 +559,8 @@ async fn unlinked_speaker_gets_link_prompt_and_no_turn() {
 
 #[tokio::test]
 async fn verified_email_auto_links_only_when_verified_everywhere() {
-    let w = world().await;
+    // RFE-001: only with the org-admin opt-in.
+    let w = world_with(json!({"verified_email_autolink": true})).await;
     let a = w.agent("rex").await;
     w.presence(w.integ, a, "dedicated", Some("BD1")).await;
     let mut p = dm("U5", "hi", "BD1");
@@ -589,6 +590,36 @@ async fn verified_email_auto_links_only_when_verified_everywhere() {
             .await
             .unwrap();
     assert_eq!(m, "verified_email");
+}
+
+#[tokio::test]
+async fn verified_email_never_links_when_the_integration_did_not_opt_in() {
+    for config in [json!({}), json!({"verified_email_autolink": false})] {
+        let w = world_with(config).await;
+        let a = w.agent("rex").await;
+        w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+        sqlx::query("UPDATE users SET email_verified_at=now() WHERE id=$1")
+            .bind(w.member)
+            .execute(w.h.pool())
+            .await
+            .unwrap();
+        // Everything verified, matching org member: still the sign-in link, no turn.
+        let mut p = dm("U5", "hi", "BD1");
+        p["author"]["email"] = json!("member@x.io");
+        p["author"]["email_verified"] = json!(true);
+        w.post(w.integ, "e1", p).await;
+        assert_eq!(w.outcome("e1").await["result"], "link_prompt");
+        assert_eq!(w.count("SELECT count(*) FROM user_links").await, 0);
+        assert_eq!(w.count("SELECT count(*) FROM turns").await, 0);
+        // The platform email only pre-fills the sign-in.
+        let hint: Option<String> = sqlx::query_scalar(
+            "SELECT platform_email_hint::text FROM link_requests WHERE platform_user_ref='U5'",
+        )
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+        assert_eq!(hint.as_deref(), Some("member@x.io"));
+    }
 }
 
 #[tokio::test]

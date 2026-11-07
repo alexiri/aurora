@@ -34,6 +34,12 @@ struct W {
 /// Stack + registered/approved fake connector replicas + a shared-bot integration with Daneel
 /// attached; the platform knows the bot `B1` and the person `U1` (verified email = the owner's).
 async fn world(replicas: usize) -> W {
+    world_with(replicas, true).await
+}
+
+/// `autolink` is the integration's `config.verified_email_autolink` (RFE-001; the product
+/// default is off, most scenarios switch it on so that `U1` is linked by its verified email).
+async fn world_with(replicas: usize, autolink: bool) -> W {
     Stack::wipe();
     let mut st = Stack::start(Opts::default()).await;
     let api = st.signup(OWNER).await;
@@ -46,7 +52,7 @@ async fn world(replicas: usize) -> W {
     let (s, v) = api
         .post(
             &format!("/v1/orgs/{}/channel-integrations", api.org),
-            json!({"connector_id": "fake", "config": {},
+            json!({"connector_id": "fake", "config": {"verified_email_autolink": autolink},
                    "credentials": {"token": "e2e-token", "shared_bot": true}}),
         )
         .await;
@@ -336,7 +342,8 @@ async fn s3_verified_email_autolink_vs_signin_link() {
     if !enabled() {
         return;
     }
-    let w = world(1).await;
+    // The product default: auto-linking is off.
+    let w = world_with(1, false).await;
     let f = w.owner().await;
     let links = "SELECT count(*) FROM user_links WHERE integration_id = $1::uuid";
 
@@ -367,6 +374,48 @@ async fn s3_verified_email_autolink_vs_signin_link() {
         "unverified platform email never links"
     );
     assert!(w.turns().await.is_empty());
+
+    // (c0) RFE-001 default: both sides verified, but the integration did not opt in. The person
+    // gets the sign-in link (the platform email only pre-fills it); nothing is linked.
+    f.dm("U1", "[[say: not linked by email]]").await;
+    let _ = wait_link_message(f, "dm-U1").await;
+    assert_eq!(w.count(links).await, 0, "no auto-link without the opt-in");
+    assert!(w.turns().await.is_empty(), "no turn without a link");
+    let hint: Option<String> = sqlx::query_scalar(
+        "SELECT platform_email_hint::text FROM link_requests
+          WHERE integration_id = $1::uuid AND platform_user_ref = 'U1'
+          ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&w.integ)
+    .fetch_one(w.st.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        hint.as_deref(),
+        Some(OWNER),
+        "the email only pre-fills the sign-in"
+    );
+
+    // (c1) An org admin opts in (audited); only then is U1 auto-linked.
+    let (s, v) = w
+        .api
+        .patch(
+            &format!("/v1/channel-integrations/{}", w.integ),
+            json!({"config": {"verified_email_autolink": true}}),
+        )
+        .await;
+    assert_eq!(s, 200, "enable autolink: {v}");
+    assert_eq!(v["config"]["verified_email_autolink"], true, "{v}");
+    // The audit write is fire-and-forget and the config reaches the serving replica
+    // asynchronously: give both a moment.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'channel_integration.autolink_enable'",
+    )
+    .fetch_one(w.st.pool())
+    .await
+    .unwrap();
+    assert_eq!(audited, 1, "enabling is audited");
 
     // (c) Both sides verified: U1 is auto-linked on the next message and answered.
     f.dm("U1", "[[say: linked by email]]").await;

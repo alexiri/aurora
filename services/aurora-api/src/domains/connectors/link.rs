@@ -43,6 +43,7 @@ async fn link_start(
         &req.platform_user_ref,
         &token::hash(tok.expose()),
         LINK_TTL_SECS,
+        None,
     )
     .await?;
     Ok(Json(LinkStartResponse {
