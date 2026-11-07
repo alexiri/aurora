@@ -47,10 +47,11 @@ UP=$(sed -n 's/^ADDR //p' "$UP_LOG")
 taskset -c "$GW_CPU" "$BIN" gateway "$UP" >"$GW_LOG" 2>&1 & GW_PID=$!
 for _ in $(seq 50); do grep -q '^ADDR' "$GW_LOG" && break; sleep 0.1; done
 GW=$(sed -n 's/^ADDR //p' "$GW_LOG")
+GW_CA=$(sed -n 's/^CA //p' "$GW_LOG")   # the proxy listener is TLS-only (RFE-002)
 [ -n "$UP" ] && [ -n "$GW" ] || { echo "gateway/upstream did not start" >&2; exit 1; }
 echo "gateway pid $GW_PID pinned to cpu $GW_CPU (affinity: $(taskset -cp $GW_PID | sed 's/.*: //')), upstream cpu $UP_CPU, load generator cpus $LG_CPU"
 for i in $(seq "$RUNS"); do
-  out=$(taskset -c "$LG_CPU" "$BIN" load "$GW" "$UP" 2>&1); echo "[b run $i] $(echo "$out" | grep -v "RESULT\|^client:" | head -1) reconnects=$(echo "$out" | field reconnects)"
+  out=$(taskset -c "$LG_CPU" "$BIN" load "$GW" "$UP" "$GW_CA" 2>&1); echo "[b run $i] $(echo "$out" | grep -v "RESULT\|^client:" | head -1) reconnects=$(echo "$out" | field reconnects)"
   echo "$out" | grep -q '^RESULT' || { echo "$out" >&2; exit 1; }
   [ "$(echo "$out" | field b_non200)" = 0 ] || { echo "load run saw non-200 responses" >&2; exit 1; }
   run_b+=("$(echo "$out" | field b_rps)")

@@ -46,7 +46,7 @@ fn toml_only_and_api_validates() {
     let api = raw.api_config().unwrap();
     assert_eq!(api.external_url, "https://aurora.example.org");
     assert_eq!(api.max_connections, 20);
-    assert_eq!(api.advertised_proxy_url, "http://aurora.example.org:4102");
+    assert_eq!(api.advertised_proxy_url, "https://aurora.example.org:4102");
     assert_eq!(api.keyring.active, "main");
 }
 
@@ -365,6 +365,8 @@ const HELM_RENDERED_TOML: &str = r#"
 [gateway]
   ca_dir = "/var/lib/aurora/ca"
   internal_bind = "0.0.0.0"
+  [gateway.proxy_tls]
+    names = ["aurora-gateway", "t-aurora-gateway-proxy", "t-aurora-gateway-proxy.default.svc"]
 
 [hosted]
   enabled = true
@@ -726,4 +728,68 @@ fn api_ratelimit_defaults_overrides_and_validation() {
             .unwrap_err();
         assert!(e.has_key(key), "{key}: {e}");
     }
+}
+
+// (phase 1, RFE-002) The proxy listener is TLS-only: no http:// advertised URL, cert/key in pairs.
+#[test]
+fn advertised_proxy_url_must_be_https() {
+    let raw = load_with(
+        &format!("{BASE}[gateway]\nadvertised_proxy_url = \"http://aurora-gateway:4102\"\n"),
+        &[],
+    )
+    .unwrap();
+    for e in [
+        raw.api_config().unwrap_err().to_string(),
+        raw.gateway_config().unwrap_err().to_string(),
+    ] {
+        assert!(e.contains("gateway.advertised_proxy_url"), "{e}");
+        assert!(e.contains("https://"), "{e}");
+    }
+    let raw = load_with(
+        &format!("{BASE}[gateway]\nadvertised_proxy_url = \"https://aurora-gateway:4102\"\n"),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        raw.gateway_config().unwrap().advertised_proxy_url,
+        "https://aurora-gateway:4102"
+    );
+}
+
+#[test]
+fn proxy_tls_cert_and_key_come_together() {
+    let only_cert = load_with(
+        &format!("{BASE}[gateway.proxy_tls]\ncert_file = \"/c.pem\"\n"),
+        &[],
+    )
+    .unwrap();
+    let e = only_cert.gateway_config().unwrap_err().to_string();
+    assert!(e.contains("gateway.proxy_tls.key_file"), "{e}");
+    let only_key = load_with(
+        &format!("{BASE}[gateway.proxy_tls]\nkey_file = \"/k.pem\"\n"),
+        &[],
+    )
+    .unwrap();
+    let e = only_key.gateway_config().unwrap_err().to_string();
+    assert!(e.contains("gateway.proxy_tls.cert_file"), "{e}");
+    let ok = load_with(
+        &format!(
+            "{BASE}[gateway.proxy_tls]\ncert_file = \"/c.pem\"\nkey_file = \"/k.pem\"\nnames = [\"gw.example.org\", \"10.0.0.5\"]\n"
+        ),
+        &[],
+    )
+    .unwrap();
+    let g = ok.gateway_config().unwrap().gateway;
+    assert_eq!(g.proxy_tls.names, ["gw.example.org", "10.0.0.5"]);
+    let bad = load_with(
+        &format!("{BASE}[gateway.proxy_tls]\nnames = [\"bad name!\"]\n"),
+        &[],
+    )
+    .unwrap();
+    assert!(
+        bad.gateway_config()
+            .unwrap_err()
+            .to_string()
+            .contains("gateway.proxy_tls.names")
+    );
 }

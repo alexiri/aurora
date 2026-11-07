@@ -623,11 +623,12 @@ async fn s8_security_probes() {
         .await;
     assert_eq!(s, 202);
     st.wait_sandbox(&api, "stopped", 90).await;
-    let proxy = reqwest::Proxy::all(format!("http://{BRIDGE}:4102"))
+    let proxy = reqwest::Proxy::all(format!("https://{BRIDGE}:4102"))
         .unwrap()
         .basic_auth("agent", &boot_token);
     let cl = reqwest::Client::builder()
         .proxy(proxy)
+        .add_root_certificate(reqwest::Certificate::from_pem(st.ca_pem.as_bytes()).unwrap())
         .timeout(Duration::from_secs(20))
         .build()
         .unwrap();

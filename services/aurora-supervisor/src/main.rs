@@ -12,7 +12,7 @@ use aurora_supervisor::channel::{self, ChannelConfig};
 use aurora_supervisor::fake::FakeHarness;
 use aurora_supervisor::harness::HarnessAdapter;
 use aurora_supervisor::logging;
-use aurora_supervisor::proxy::{Credential, ProxyMode, spawn_proxy};
+use aurora_supervisor::proxy::{Credential, GatewayUpstream, ProxyMode, spawn_proxy};
 use aurora_supervisor::supervisor::{Supervisor, SupervisorConfig};
 use clap::{Parser, Subcommand};
 
@@ -86,7 +86,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let lo = IpAddr::V4(Ipv4Addr::LOCALHOST);
     let boot_token = doc.gateway.boot_token.expose().to_owned();
-    let upstream = doc.gateway.proxy.clone();
+    let upstream = GatewayUpstream::new(
+        doc.gateway.proxy.clone(),
+        &doc.ca_pem,
+        &doc.gateway.verify_name(),
+    )?;
     let _machine = spawn_proxy(
         SocketAddr::new(lo, MACHINE_PROXY_PORT),
         upstream.clone(),

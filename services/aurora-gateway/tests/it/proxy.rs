@@ -6,6 +6,7 @@ use aurora_gateway::ca::{self, Ca};
 use aurora_gateway::guard::Guard;
 use aurora_gateway::pipeline::PassThrough;
 use aurora_gateway::proxy::{Proxy, ProxyParts};
+use aurora_gateway::proxy_tls::ProxyTls;
 use base64::Engine;
 use bytes::Bytes;
 use http::{Request, Response};
@@ -22,6 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio_rustls::client::TlsStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use uuid::Uuid;
 
@@ -112,6 +114,7 @@ struct Env {
     http: SocketAddr,
     gw_ca_pem: String,
     up_ca_pem: String,
+    tls: Arc<ProxyTls>,
 }
 
 async fn start(allow: &[&str], header_timeout: Duration) -> Env {
@@ -159,8 +162,18 @@ async fn start_with(
     let proxy = l.local_addr().unwrap();
     let allow: Vec<String> = allow.iter().map(|s| (*s).to_owned()).collect();
     let guard = Arc::new(Guard::new(&allow, vec![proxy]).unwrap());
+    // 1 h leaves, renewed below 2 h: `tls.refresh()` always swaps (renewal tests).
+    let tls = ProxyTls::from_ca_with(
+        gw_ca.clone(),
+        vec!["127.0.0.1".into(), "localhost".into()],
+        Duration::from_secs(3600),
+        Duration::from_secs(7200),
+    )
+    .unwrap();
+    crate::common::trust_anchor(proxy, &gw.cert_pem);
     let p = Proxy::new(ProxyParts {
         ca: gw_ca,
+        tls: tls.clone(),
         resolver,
         handler: Arc::new(PassThrough),
         guard,
@@ -176,6 +189,7 @@ async fn start_with(
         http,
         gw_ca_pem: gw.cert_pem,
         up_ca_pem: up_ca.cert_pem,
+        tls,
     }
 }
 
@@ -186,7 +200,7 @@ fn basic(user_token: &str) -> String {
     )
 }
 
-async fn read_head(s: &mut TcpStream) -> String {
+async fn read_head(s: &mut TlsStream<TcpStream>) -> String {
     let mut buf = Vec::new();
     let mut b = [0u8; 1];
     while !buf.ends_with(b"\r\n\r\n") {
@@ -198,7 +212,7 @@ async fn read_head(s: &mut TcpStream) -> String {
 
 /// One raw request on the proxy port, read to EOF.
 async fn raw(proxy: SocketAddr, req: &str) -> String {
-    let mut s = TcpStream::connect(proxy).await.unwrap();
+    let mut s = crate::common::connect(proxy).await;
     s.write_all(req.as_bytes()).await.unwrap();
     let mut out = Vec::new();
     let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut out)).await;
@@ -221,8 +235,12 @@ fn tls_client(trust_pem: &str, alpn: &[&[u8]]) -> TlsConnector {
     TlsConnector::from(Arc::new(cfg))
 }
 
-async fn connect_raw(proxy: SocketAddr, auth: Option<&str>, target: &str) -> (String, TcpStream) {
-    let mut s = TcpStream::connect(proxy).await.unwrap();
+async fn connect_raw(
+    proxy: SocketAddr,
+    auth: Option<&str>,
+    target: &str,
+) -> (String, TlsStream<TcpStream>) {
+    let mut s = crate::common::connect(proxy).await;
     let a = auth
         .map(|a| format!("Proxy-Authorization: {}\r\n", basic(a)))
         .unwrap_or_default();
@@ -642,4 +660,154 @@ async fn seed(pool: &sqlx::PgPool) -> Seed {
         token,
         credential_id: cid,
     }
+}
+
+// ---- (phase 1, RFE-002, SEC-40) the proxy listener is TLS-only ----
+
+struct CountingResolver(Arc<std::sync::atomic::AtomicUsize>);
+
+#[async_trait::async_trait]
+impl CredentialResolver for CountingResolver {
+    async fn resolve(&self, token: &str) -> Result<Option<RequestIdentity>, ResolveError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        StaticResolver.resolve(token).await
+    }
+}
+
+/// A plaintext connection is closed at once: no response bytes, no credential read.
+#[tokio::test]
+async fn plaintext_connection_is_closed_without_reading_a_credential() {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let env = start_with(
+        Arc::new(CountingResolver(calls.clone())),
+        &["127.0.0.0/8"],
+        Duration::from_secs(5),
+    )
+    .await;
+    for req in [
+        format!(
+            "CONNECT {}:443 HTTP/1.1\r\nHost: x:443\r\nProxy-Authorization: {}\r\n\r\n",
+            env.https.ip(),
+            basic("agent:aug_good")
+        ),
+        format!(
+            "GET http://{}/ HTTP/1.1\r\nHost: x\r\nProxy-Authorization: {}\r\n\r\n",
+            env.http,
+            basic("agent:aug_good")
+        ),
+        "GET / HTTP/1.1\r\nHost: x\r\n\r\n".to_owned(),
+        "X\u{3}\u{1}".to_owned(),
+    ] {
+        let mut s = TcpStream::connect(env.proxy).await.unwrap();
+        s.write_all(req.as_bytes()).await.unwrap();
+        let mut out = Vec::new();
+        let r = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut out)).await;
+        assert!(r.is_ok(), "the gateway must close a plaintext connection");
+        assert!(out.is_empty(), "no response to plaintext: {out:?}");
+    }
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no credential may be resolved from cleartext"
+    );
+}
+
+#[tokio::test]
+async fn tls_client_with_wrong_name_or_untrusted_ca_is_refused() {
+    let env = start(&["127.0.0.0/8"], Duration::from_secs(5)).await;
+    // Wrong name: the certificate does not cover it.
+    let r = crate::common::connect_with(env.proxy, &env.gw_ca_pem, "not-the-gateway.example").await;
+    assert!(r.is_err(), "wrong server name must fail verification");
+    // Untrusted CA.
+    let other = ca::generate("other").unwrap();
+    let r = crate::common::connect_with(env.proxy, &other.cert_pem, "127.0.0.1").await;
+    assert!(r.is_err(), "an untrusted CA must fail verification");
+    // The right name still works, and `localhost` (a configured SAN) too.
+    assert!(
+        crate::common::connect_with(env.proxy, &env.gw_ca_pem, "127.0.0.1")
+            .await
+            .is_ok()
+    );
+    assert!(
+        crate::common::connect_with(env.proxy, &env.gw_ca_pem, "localhost")
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn alpn_is_http11_only_and_tls13_is_preferred() {
+    let env = start(&["127.0.0.0/8"], Duration::from_secs(5)).await;
+    let tcp = TcpStream::connect(env.proxy).await.unwrap();
+    let c = tls_client(&env.gw_ca_pem, &[b"h2", b"http/1.1"]);
+    let tls = c
+        .connect(ServerName::try_from("127.0.0.1").unwrap(), tcp)
+        .await
+        .unwrap();
+    let (_, conn) = tls.get_ref();
+    assert_eq!(conn.alpn_protocol(), Some(&b"http/1.1"[..]));
+    assert_eq!(
+        conn.protocol_version(),
+        Some(rustls::ProtocolVersion::TLSv1_3)
+    );
+    // h2-only clients cannot use this listener.
+    let tcp = TcpStream::connect(env.proxy).await.unwrap();
+    let c = tls_client(&env.gw_ca_pem, &[b"h2"]);
+    assert!(
+        c.connect(ServerName::try_from("127.0.0.1").unwrap(), tcp)
+            .await
+            .is_err()
+    );
+}
+
+/// The CA-issued leaf is replaced in memory; tunnels already established keep working and new
+/// connections verify against the same CA with the new certificate.
+#[tokio::test]
+async fn hot_renewal_does_not_drop_established_tunnels() {
+    let env = start(&["127.0.0.0/8"], Duration::from_secs(5)).await;
+    let before = {
+        let s = crate::common::connect(env.proxy).await;
+        s.get_ref().1.peer_certificates().unwrap()[0]
+            .as_ref()
+            .to_vec()
+    };
+    // An established CONNECT tunnel (inner TLS over the outer session), kept alive across the swap.
+    let mut live = mitm(&env, env.https, false).await;
+    let get = |env: &Env| {
+        Request::get("/ok")
+            .header("host", env.https.to_string())
+            .body(Full::new(Bytes::new()))
+            .unwrap()
+    };
+    assert_eq!(live.send(get(&env)).await.status(), 200);
+    let generation = env.tls.generation();
+    assert!(
+        env.tls.refresh().unwrap(),
+        "leaf below the renew threshold is replaced"
+    );
+    assert_eq!(env.tls.generation(), generation + 1);
+    // The established session is unaffected.
+    assert_eq!(live.send(get(&env)).await.status(), 200);
+    // New connections get the new certificate and still verify.
+    let s = crate::common::connect(env.proxy).await;
+    let after = s.get_ref().1.peer_certificates().unwrap()[0]
+        .as_ref()
+        .to_vec();
+    assert_ne!(before, after);
+}
+
+/// The inner MITM leg is unchanged: CONNECT through the TLS listener, then inner TLS.
+#[tokio::test]
+async fn connect_tunnel_carries_inner_tls_over_the_outer_session() {
+    let env = start(&["127.0.0.0/8"], Duration::from_secs(5)).await;
+    let mut sender = mitm(&env, env.https, false).await;
+    let resp = sender
+        .send(
+            Request::get("/ok")
+                .header("host", env.https.to_string())
+                .body(Full::new(Bytes::new()))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
 }

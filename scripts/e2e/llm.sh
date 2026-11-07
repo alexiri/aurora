@@ -35,7 +35,9 @@ HOSTED=0
 SBX_NET=aurora-llm-sbx; DB_NET=aurora-llm-db; PG=aurora-llm-pg; ANCHOR=aurora-llm-anchor
 TOKEN="aur_llmhostedtoken"
 FP=$(printf '%s' "$TOKEN" | sha256sum | cut -c1-16)
-IMAGE="localhost/aurora-llm-sandbox:0.1.0"
+# Both tags are overridable so a supervisor change can be tested without replacing the shared images.
+BASE_IMAGE="${AURORA_E2EL_BASE_IMAGE:-localhost/aurora-sandbox:0.1.0}"
+IMAGE="${AURORA_E2EL_IMAGE:-localhost/aurora-llm-sandbox:0.1.0}"
 
 cleanup() {
   podman ps -a -q --filter "label=aurora.installation=$FP" | xargs -r podman rm -f -t 1 >/dev/null 2>&1
@@ -91,8 +93,8 @@ free_kb=$(df --output=avail -k . | tail -1)
 if [ "$free_kb" -lt $((15 * 1024 * 1024)) ]; then echo "less than 15 GB free; stopping" >&2; exit 1; fi
 cargo build -p aurora-api -p aurora-gateway -p aurora-runner || { echo "cargo build failed" >&2; exit 1; }
 if [ "${SKIP_IMAGE_BUILD:-}" != "1" ]; then
-  podman image exists localhost/aurora-sandbox:0.1.0 || scripts/images/build-sandbox-min.sh aurora-sandbox:0.1.0 || { echo "base image build failed" >&2; exit 1; }
-  podman build -f scripts/e2e/llm.Containerfile -t "$IMAGE" . || { echo "llm sandbox image build failed" >&2; exit 1; }
+  podman image exists "$BASE_IMAGE" || scripts/images/build-sandbox-min.sh "${BASE_IMAGE#localhost/}" || { echo "base image build failed" >&2; exit 1; }
+  podman build -f scripts/e2e/llm.Containerfile --build-arg "BASE=$BASE_IMAGE" -t "$IMAGE" . || { echo "llm sandbox image build failed" >&2; exit 1; }
 fi
 podman image exists "$IMAGE" || { echo "missing $IMAGE" >&2; exit 1; }
 cargo test -p aurora-e2e-hosted --test llm --no-run || exit 1

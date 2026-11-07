@@ -129,6 +129,9 @@ pub struct ApiConfig {
     pub advertised_proxy_url: String,
     /// `gateway.ca_dir`: directory holding the gateway's `ca.pem`.
     pub gateway_ca_dir: String,
+    /// (phase 1, RFE-002) `true` when `gateway.proxy_tls.cert_file` is set: the proxy listener
+    /// presents an operator certificate, so BYO clients verify the outer leg with system roots.
+    pub gateway_proxy_operator_cert: bool,
     pub hookhost_url: String,
     pub plugins: PluginsSection,
     pub retention: RetentionSection,
@@ -273,7 +276,7 @@ impl RawConfig {
             "database.max_connections",
             self.database.max_connections,
         );
-        check_url(
+        check_proxy_url(
             &mut c,
             "gateway.advertised_proxy_url",
             self.gateway.advertised_proxy_url.as_deref(),
@@ -315,6 +318,7 @@ impl RawConfig {
             hosted: self.hosted.clone(),
             advertised_proxy_url,
             gateway_ca_dir: self.gateway.ca_dir.clone(),
+            gateway_proxy_operator_cert: self.gateway.proxy_tls.cert_file.is_some(),
             hookhost_url: self.api.hookhost_url.clone(),
             plugins: self.plugins.clone(),
             retention: self.retention.clone(),
@@ -369,11 +373,12 @@ impl RawConfig {
             "gateway.resolve_cache_ttl_secs",
             Some(g.resolve_cache_ttl_secs),
         );
-        check_url(
+        check_proxy_url(
             &mut c,
             "gateway.advertised_proxy_url",
             g.advertised_proxy_url.as_deref(),
         );
+        check_proxy_tls(&mut c, &g.proxy_tls);
         check_url(&mut c, "gateway.hookhost_url", Some(&g.hookhost_url));
         if let Some(p) = &g.egress_proxy {
             check_url(&mut c, "gateway.egress_proxy", Some(p));
@@ -867,6 +872,54 @@ fn check_url(c: &mut Ctx, key: &str, v: Option<&str>) {
     }
 }
 
+/// (phase 1, RFE-002) The proxy listener is TLS-only, so the advertised URL must be `https://`.
+fn check_proxy_url(c: &mut Ctx, key: &str, v: Option<&str>) {
+    let Some(v) = v else { return };
+    match parse_url(v, &["http", "https"]) {
+        Err(m) => c.err(key, m),
+        Ok(_) if !v.trim_start().to_ascii_lowercase().starts_with("https://") => c.err(
+            key,
+            "must be an https:// URL: the gateway proxy listener is TLS-only (docs/06 §Proxy listener TLS)",
+        ),
+        Ok(_) => {}
+    }
+}
+
+/// `gateway.proxy_tls.*`: certificate and key come as a pair; names must be DNS names or IPs.
+fn check_proxy_tls(c: &mut Ctx, t: &crate::raw::ProxyTlsSection) {
+    match (&t.cert_file, &t.key_file) {
+        (Some(a), Some(b)) => {
+            if a.is_empty() {
+                c.err("gateway.proxy_tls.cert_file", "must not be empty");
+            }
+            if b.is_empty() {
+                c.err("gateway.proxy_tls.key_file", "must not be empty");
+            }
+        }
+        (Some(_), None) => c.err(
+            "gateway.proxy_tls.key_file",
+            "required when gateway.proxy_tls.cert_file is set (both or neither)",
+        ),
+        (None, Some(_)) => c.err(
+            "gateway.proxy_tls.cert_file",
+            "required when gateway.proxy_tls.key_file is set (both or neither)",
+        ),
+        (None, None) => {}
+    }
+    for n in &t.names {
+        let ok = !n.is_empty()
+            && n.len() <= 253
+            && n.chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_' | ':' | '*'));
+        if !ok {
+            c.err(
+                "gateway.proxy_tls.names",
+                format!("`{n}` is not a DNS name or IP address"),
+            );
+        }
+    }
+}
+
 /// Resolve an optional secondary bind address, validating it when present.
 fn resolve_bind(c: &mut Ctx, key: &str, v: Option<&str>, fallback: &str) -> String {
     match v {
@@ -944,8 +997,8 @@ fn advertised_proxy_url(g: &GatewaySection, external: Option<&str>) -> String {
         return u.clone();
     }
     match external.and_then(host_of) {
-        Some(h) if h.contains(':') => format!("http://[{h}]:{GATEWAY_PROXY_PORT}"),
-        Some(h) => format!("http://{h}:{GATEWAY_PROXY_PORT}"),
+        Some(h) if h.contains(':') => format!("https://[{h}]:{GATEWAY_PROXY_PORT}"),
+        Some(h) => format!("https://{h}:{GATEWAY_PROXY_PORT}"),
         None => String::new(),
     }
 }

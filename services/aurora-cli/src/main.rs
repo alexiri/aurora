@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 mod approvals;
+mod forward;
 mod plugin;
 mod run;
 mod token;
@@ -48,6 +49,10 @@ enum Cmd {
         /// Environment variable holding the agent token.
         #[arg(long, default_value = token::TOKEN_ENV)]
         token_env: String,
+        /// Run a loopback forwarder (plain HTTP on 127.0.0.1) that speaks TLS to the gateway, for
+        /// clients that cannot use an HTTPS proxy (e.g. stock Java).
+        #[arg(long)]
+        forward: bool,
         #[arg(trailing_var_arg = true, required = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
@@ -215,6 +220,7 @@ async fn real_main() -> Result<i32> {
         Cmd::Run {
             agent,
             token_env,
+            forward,
             command,
         } => {
             let (cfg, _) = load()?;
@@ -223,16 +229,29 @@ async fn real_main() -> Result<i32> {
                 .agent_container_config()
                 .await?;
             let dir = run::make_temp_dir()?;
-            let result = (|| -> Result<i32> {
-                let env = run::build_env(&cc, Some(&tok), &dir, &run::system_roots_pem())?;
+            let result = async {
+                let mut env = run::build_env(&cc, Some(&tok), &dir, &run::system_roots_pem())?;
+                // Held for the child's lifetime; dropping it stops the forwarder.
+                let _forwarder = if forward {
+                    let url = forward::ProxyUrl::parse(&run::resolved_proxy_url(&cc, &tok))?;
+                    let operator = cc.proxy_tls.as_deref() == Some("operator_certificate");
+                    let up = forward::Upstream::new(&url, &cc.ca_pem, operator)?;
+                    let f = forward::spawn(up).await?;
+                    run::apply_forwarder(&mut env, &f.url());
+                    Some(f)
+                } else {
+                    None
+                };
                 let (prog, args) = command.split_first().context("no command")?;
-                let status = std::process::Command::new(prog)
+                let status = tokio::process::Command::new(prog)
                     .args(args)
                     .envs(&env)
                     .status()
+                    .await
                     .with_context(|| format!("failed to run `{prog}`"))?;
-                Ok(run::exit_code(status))
-            })();
+                Ok::<i32, anyhow::Error>(run::exit_code(status))
+            }
+            .await;
             let _ = std::fs::remove_dir_all(&dir);
             result
         }

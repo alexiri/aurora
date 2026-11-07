@@ -97,7 +97,7 @@ Optional profiles, set in `.env` under `COMPOSE_PROFILES` or with `--profile`:
 
 ```bash
 curl -i localhost:4000/v1/instance
-curl -i localhost:4102
+curl -ik https://localhost:4102   # TLS-only listener: answers 400 not_a_proxy_request inside TLS
 ```
 
 The edge is the only HTTP entry point. `/healthz`, `/readyz` and `/metrics` are on
@@ -158,9 +158,9 @@ cookie-authenticated calls:
 
 The model name chooses the mock scenario; the mock only replays scenario files and is not a model.
 
-Settings that make this work (all in `deploy/compose`): `aurora.toml` has `runner.sandbox_hosts`, `gateway.advertised_proxy_url = "http://aurora-gateway:4102"`
+Settings that make this work (all in `deploy/compose`): `aurora.toml` has `runner.sandbox_hosts`, `gateway.advertised_proxy_url = "https://aurora-gateway:4102"`
 (what sandboxes dial; the default derived from `external_url` is `localhost`, unreachable from a sandbox, so a BYO agent on the host uses
-`http://localhost:4102`) and `gateway.allowed_private = ["10.89.249.4/32"]` (the gateway refuses private destinations; only the static core address of the mock
+`https://localhost:4102`; `gateway.proxy_tls.names = ["localhost"]` adds that name to the proxy certificate, which the gateway CA issues for the advertised host, `aurora-gateway` and `10.89.250.2`) and `gateway.allowed_private = ["10.89.249.4/32"]` (the gateway refuses private destinations; only the static core address of the mock
 LiteLLM is opened, inert without the `llm-mock` profile). The `api` service mounts the public `ca.pem`.
 
 Cleanup: `podman compose down` leaves the sandbox containers and their `home-*` volumes (the runner owns them); remove them with
@@ -177,7 +177,8 @@ The shipped file sets:
 | `server.trusted_proxies` | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | Trusted `X-Forwarded-For` source (the edge). |
 | `runner.backend` | `"fake"` | The `hosted` profile overrides it to `podman` on the runner service (environment). |
 | `runner.sandbox_hosts` | gateway and runner sandbox addresses | `/etc/hosts` entries for sandboxes; used by the podman backend. |
-| `gateway.advertised_proxy_url` | `http://aurora-gateway:4102` | The proxy address sandboxes dial. |
+| `gateway.advertised_proxy_url` | `https://aurora-gateway:4102` | The proxy address sandboxes dial (always `https://`; startup refuses `http://`). |
+| `gateway.proxy_tls.names` | `["localhost"]` | Extra DNS names/IPs in the CA-issued proxy certificate. Optional operator certificate: `gateway.proxy_tls.cert_file` + `key_file` (both or neither). |
 | `gateway.allowed_private` | `10.89.249.4/32` | The mock LiteLLM only. |
 | `runner.api_url` | `http://aurora-api:4101` | |
 | `hosted.enabled` | `true` | |

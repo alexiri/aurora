@@ -239,7 +239,8 @@ interface Secret { id: Uuid; org_id: Uuid; workspace_id: Uuid | null; scope: "or
   last_used_at: Timestamp | null; created_at: Timestamp; updated_at: Timestamp }
 
 interface ContainerConfig { proxy_url: string /* contains <AGENT_TOKEN> unless revealed */; env: Record<string, string>;
-  ca_pem: string; ca_path: string; llm_env: Record<string, string>; stubs: { path: string; content: string; mode: string }[] }
+  ca_pem: string; ca_path: string; proxy_ca_path: string /* C-44 */; proxy_tls: "operator_certificate" | null /* C-44 */;
+  llm_env: Record<string, string>; stubs: { path: string; content: string; mode: string }[] }
 
 type Identity = { kind: "agent"; id: Uuid } | { kind: "user"; id: Uuid };
 type Target =
@@ -601,6 +602,11 @@ Rule: `05 §Conventions` "Rate limiting", SEC-50. No route is added or removed; 
 
 - C-52 **`429 rate_limited`** on any authenticated `/v1/**` route (exempt: `/healthz`, `/readyz`, `/metrics`, `/internal/*`, `/v1/runner/*`, `/v1/connector/*`, `POST /v1/hooks/{token}`): body `{ "error": { "code": "rate_limited", "message", "details": { "scope": "general"|"class"|"org", "class": "general"|"write"|"message"|"upload"|"simulate"|"search"|"export"|"org"|"unauth", "limit": number, "per": "minute"|"hour", "retry_after_secs": number } } }`; headers `retry-after` (whole seconds, >= 1), `ratelimit-limit`, `ratelimit-remaining` (always `0` on a refusal), `ratelimit-reset` (= `retry-after`), `x-should-retry: true`. `class` is `unauth` and `scope` is `general` for the per-IP limits of unauthenticated traffic (120/min public GETs; 30/min for requests carrying a rejected bearer). The principal is `key:<api_key_id>`, `user:<user_id>` (all of the user's sessions) or `agent:<agent_id>`; a refused request consumes no token from any bucket.
 - C-53 **`429 too_many_streams`**: `GET /v1/conversations/{id}/stream`, `GET /v1/approvals/stream` and any GET with `?wait=<n>` (n > 0, long-poll) beyond 20 concurrent per principal answer `{ "error": { "code": "too_many_streams", "message", "details": { "scope": "streams", "limit": 20 } } }` with no `retry-after`; a slot is released when the response body ends or the client disconnects. Streams that are refused by authorization (non-2xx) release at once.
+
+### Phase 1 — RFE-002 (TLS-only gateway proxy listener, D-44)
+
+- C-54 `ContainerConfig` (`GET /v1/agents/{agent}/container-config`, `GET /v1/agent/container-config`, the `container_config` of `POST /v1/workspaces/{ws}/agents` and `POST /v1/agents/{agent}/token`; 08 §10) gains `proxy_ca_path: string` (the file that holds the trust anchor for the HTTPS proxy leg: curl `--proxy-cacert`, git `http.proxySSLCAInfo`; same value as `ca_path`) and `proxy_tls: "operator_certificate" | null` (`"operator_certificate"` when `gateway.proxy_tls.cert_file` is configured, so the outer leg is verified with the system roots; `null` when the gateway CA issued the listener certificate). `proxy_url` and the `HTTPS_PROXY`/`HTTP_PROXY`/`https_proxy`/`http_proxy` env values are always `https://x:<token>@host:4102` (an `http://` `gateway.advertised_proxy_url` is refused at startup); with a CA-issued certificate `env` also carries `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=http.proxySSLCAInfo`, `GIT_CONFIG_VALUE_0=<proxy_ca_path>`. Clients must ignore unknown fields.
+- C-55 `ContextCredential.proxy_url` (`POST /v1/agent/context-credentials`; 08 §10) is `https://…` for the same reason; no other field changes. The hosted sandbox boot document (11 §The boot document, not an API route) carries `gateway: { proxy, tls: true, server_name, boot_token }`; the supervisor refuses any other `tls` value.
 
 ### W9 hook-host JSON encoding (C-18, C-19)
 

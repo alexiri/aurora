@@ -7,6 +7,10 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
+use rustls::RootCertStore;
+use rustls::pki_types::{CertificateDer, ServerName, pem::PemObject};
+use tokio_rustls::TlsConnector;
+
 use base64::Engine as _;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -55,6 +59,73 @@ impl Credential {
     }
 }
 
+/// (phase 1, RFE-002) The gateway proxy address and how to reach it: always TLS, verified against
+/// the boot document's CA and the gateway's server name; never a plaintext fallback.
+#[derive(Clone)]
+pub struct GatewayUpstream {
+    /// `host:port` dialled.
+    pub addr: String,
+    connector: TlsConnector,
+    name: ServerName<'static>,
+}
+
+impl std::fmt::Debug for GatewayUpstream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GatewayUpstream")
+            .field("addr", &self.addr)
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+impl GatewayUpstream {
+    /// Trusts exactly `ca_pem` (the gateway CA, or the operator CA) and verifies `server_name`.
+    pub fn new(addr: impl Into<String>, ca_pem: &str, server_name: &str) -> Result<Self, String> {
+        let mut roots = RootCertStore::empty();
+        let mut n = 0;
+        for c in CertificateDer::pem_slice_iter(ca_pem.as_bytes()) {
+            let c = c.map_err(|e| format!("gateway CA PEM: {e}"))?;
+            roots.add(c).map_err(|e| format!("gateway CA: {e}"))?;
+            n += 1;
+        }
+        if n == 0 {
+            return Err("gateway CA PEM holds no certificate".into());
+        }
+        let mut cfg = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .map_err(|e| e.to_string())?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
+        let name = ServerName::try_from(server_name.to_owned())
+            .map_err(|e| format!("gateway server name {server_name:?}: {e}"))?;
+        Ok(Self {
+            addr: addr.into(),
+            connector: TlsConnector::from(Arc::new(cfg)),
+            name,
+        })
+    }
+
+    /// Dial + handshake. No credential is written until verification succeeded.
+    async fn connect(&self) -> Result<tokio_rustls::client::TlsStream<TcpStream>, UpstreamError> {
+        let tcp = TcpStream::connect(&self.addr)
+            .await
+            .map_err(UpstreamError::Connect)?;
+        let _ = tcp.set_nodelay(true);
+        self.connector
+            .connect(self.name.clone(), tcp)
+            .await
+            .map_err(UpstreamError::Tls)
+    }
+}
+
+enum UpstreamError {
+    Connect(std::io::Error),
+    Tls(std::io::Error),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProxyMode {
     /// CONNECT and absolute-form.
@@ -81,16 +152,16 @@ impl Drop for ProxyHandle {
     }
 }
 
-/// Bind `bind` and forward to `upstream` (`host:port`).
+/// Bind `bind` and forward to the gateway over TLS.
 pub async fn spawn_proxy(
     bind: SocketAddr,
-    upstream: String,
+    upstream: GatewayUpstream,
     cred: Arc<Credential>,
     mode: ProxyMode,
 ) -> std::io::Result<ProxyHandle> {
     let listener = TcpListener::bind(bind).await?;
     let addr = listener.local_addr()?;
-    let upstream: Arc<str> = upstream.into();
+    let upstream = Arc::new(upstream);
     let task = tokio::spawn(async move {
         loop {
             let Ok((stream, _)) = listener.accept().await else {
@@ -108,7 +179,7 @@ pub async fn spawn_proxy(
 }
 
 /// Read until the blank line; returns (head, bytes after head).
-async fn read_head(s: &mut TcpStream) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
+async fn read_head<R: AsyncReadExt + Unpin>(s: &mut R) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
     let mut buf = Vec::with_capacity(1024);
     let mut chunk = [0u8; 4096];
     loop {
@@ -127,14 +198,18 @@ async fn read_head(s: &mut TcpStream) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
     }
 }
 
-async fn respond(s: &mut TcpStream, status: &str, extra: &str) -> std::io::Result<()> {
+async fn respond<W: AsyncWriteExt + Unpin>(
+    s: &mut W,
+    status: &str,
+    extra: &str,
+) -> std::io::Result<()> {
     let msg = format!("HTTP/1.1 {status}\r\n{extra}Content-Length: 0\r\nConnection: close\r\n\r\n");
     s.write_all(msg.as_bytes()).await
 }
 
 async fn handle(
     mut client: TcpStream,
-    upstream: &str,
+    upstream: &GatewayUpstream,
     cred: &Credential,
     mode: ProxyMode,
 ) -> std::io::Result<()> {
@@ -155,9 +230,9 @@ async fn handle(
         if target.is_empty() || !target.contains(':') {
             return respond(&mut client, "400 Bad Request", "").await;
         }
-        let mut up = match TcpStream::connect(upstream).await {
+        let mut up = match upstream.connect().await {
             Ok(s) => s,
-            Err(_) => return respond(&mut client, "502 Bad Gateway", "").await,
+            Err(e) => return upstream_failed(&mut client, e).await,
         };
         let req = format!(
             "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nProxy-Authorization: {auth}\r\n\r\n"
@@ -181,9 +256,9 @@ async fn handle(
     if !target.starts_with("http://") {
         return respond(&mut client, "400 Bad Request", "").await;
     }
-    let mut up = match TcpStream::connect(upstream).await {
+    let mut up = match upstream.connect().await {
         Ok(s) => s,
-        Err(_) => return respond(&mut client, "502 Bad Gateway", "").await,
+        Err(e) => return upstream_failed(&mut client, e).await,
     };
     let mut out = String::with_capacity(head.len() + auth.len() + 64);
     out.push_str(request_line);
@@ -206,4 +281,24 @@ async fn handle(
     up.write_all(&rest).await?;
     tokio::io::copy_bidirectional(&mut client, &mut up).await?;
     Ok(())
+}
+
+/// 502 with no credential sent. A TLS failure (untrusted CA, wrong name, plaintext peer) is
+/// `gateway_tls_failed` (docs/12 §Loopback proxies).
+async fn upstream_failed(client: &mut TcpStream, e: UpstreamError) -> std::io::Result<()> {
+    match e {
+        UpstreamError::Connect(e) => {
+            tracing::debug!(error = %e, "gateway unreachable");
+            respond(client, "502 Bad Gateway", "").await
+        }
+        UpstreamError::Tls(e) => {
+            tracing::warn!(error = %e, "gateway TLS verification failed; refusing to proceed");
+            let body = r#"{"error":{"code":"gateway_tls_failed","message":"The sandbox could not verify the Aurora gateway's TLS certificate; no credential was sent."}}"#;
+            let msg = format!(
+                "HTTP/1.1 502 Bad Gateway\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            client.write_all(msg.as_bytes()).await
+        }
+    }
 }

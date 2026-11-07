@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use aurora_config::SecretsSection;
 use aurora_db::repo::gateway::{AppConnectionRow, PolicyRuleRow, ScopePolicyRows, SecretMetaRow};
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
-use aurora_gateway::ca::{self, Ca};
+use aurora_gateway::ca;
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
 use aurora_gateway::guard::Guard;
 use aurora_gateway::plaintext::PlaintextCache;
@@ -36,7 +36,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use uuid::Uuid;
 
 const TOKEN: &str = "aug_good";
@@ -402,8 +402,10 @@ async fn start(status: &str, expires_in_secs: i64) -> Rig {
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();
     let guard = Arc::new(Guard::new(&["127.0.0.0/8".to_owned()], vec![proxy]).unwrap());
+    let (gw_ca, gw_tls) = crate::common::gateway_tls(&gw, proxy);
     let px = Proxy::new(ProxyParts {
-        ca: Arc::new(Ca::from_pem(&gw.cert_pem, &gw.key_pem).unwrap()),
+        ca: gw_ca,
+        tls: gw_tls,
         resolver: Arc::new(Static(w)),
         handler,
         guard,
@@ -435,7 +437,7 @@ impl Reply {
 }
 
 async fn send(env: &Env, method: &str, path: &str, extra: &str, body: &str) -> Reply {
-    let mut s = TcpStream::connect(env.proxy).await.unwrap();
+    let mut s = crate::common::connect(env.proxy).await;
     let auth = base64::engine::general_purpose::STANDARD.encode(format!("agent:{TOKEN}"));
     let req = format!(
         "{method} http://{up}{path} HTTP/1.1\r\nHost: {up}\r\nProxy-Authorization: Basic {auth}\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
