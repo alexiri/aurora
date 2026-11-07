@@ -257,7 +257,8 @@ async fn do_config(
             i.credentials_version, i.shared_bot, i.status])).collect::<Vec<_>>(),
         "p": presences.iter().map(|p| serde_json::json!([
             p.id, p.integration_id, p.mode, p.platform_user_ref, p.handle, p.credentials_ref,
-            p.credentials_version, p.status, p.agent_id, p.agent_handle, p.agent_name]))
+            p.credentials_version, p.status, p.agent_id, p.agent_handle, p.agent_name,
+            p.agent_avatar_public_key]))
             .collect::<Vec<_>>(),
         "b": bindings.iter().map(|b| serde_json::json!([
             b.id, b.integration_id, b.space_ref, b.agent_id, b.listen, b.followups_need_mention]))
@@ -327,7 +328,10 @@ async fn do_config(
                 id: p.agent_id,
                 handle: p.agent_handle.clone(),
                 name: p.agent_name.clone(),
-                avatar_url: None,
+                avatar_url: p
+                    .agent_avatar_public_key
+                    .as_deref()
+                    .map(|k| crate::domains::agents::avatar::public_url(&s.config.external_url, k)),
             },
             platform_user_ref: p.platform_user_ref.clone(),
             handle: p.handle.clone(),

@@ -454,6 +454,28 @@ export interface paths {
         patch: operations["updateAgent"];
         trace?: never;
     };
+    "/v1/agents/{agent}/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The agent's avatar PNG (`can_use`); 404 when none is set. */
+        get: operations["getAgentAvatar"];
+        /**
+         * Set the agent's avatar: the raw PNG/JPEG/WebP bytes as the request body (≤ 512 KiB). It is
+         *     re-encoded to a 256×256 PNG; the public key rotates (`can_use`).
+         */
+        put: operations["putAgentAvatar"];
+        post?: never;
+        /** Remove the agent's avatar (`can_use`). */
+        delete: operations["deleteAgentAvatar"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/container-config": {
         parameters: {
             query?: never;
@@ -2265,6 +2287,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/public/avatars/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Public avatar by its current key (a capability: no authentication). Rotated keys give 404. */
+        get: operations["getPublicAvatar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/reach-grants/{id}/decision": {
         parameters: {
             query?: never;
@@ -3044,6 +3083,8 @@ export interface components {
             last_login_at?: string | null;
         };
         Agent: {
+            /** @description Root-relative public path of the avatar (`/v1/public/avatars/{key}`), or null. */
+            avatar_url?: string | null;
             brief: string;
             /** Format: date-time */
             created_at: string;
@@ -4310,6 +4351,8 @@ export interface components {
         };
         Page_Agent: {
             items: {
+                /** @description Root-relative public path of the avatar (`/v1/public/avatars/{key}`), or null. */
+                avatar_url?: string | null;
                 brief: string;
                 /** Format: date-time */
                 created_at: string;
@@ -7562,6 +7605,118 @@ export interface operations {
                 };
             };
             /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAgentAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description PNG */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": number[];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putAgentAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": number[];
+            };
+        };
+        responses: {
+            /** @description Agent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agent"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description avatar_invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteAgentAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13193,6 +13348,37 @@ export interface operations {
                 };
             };
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getPublicAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Current avatar public key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description PNG */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": number[];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

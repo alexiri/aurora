@@ -970,6 +970,76 @@ async fn agent_rename_enqueues_presence_rename() {
     assert_eq!(r[0].4, json!({"presence_id": pid, "name": "Renamed"}));
 }
 
+#[tokio::test]
+async fn avatar_change_enqueues_presence_set_icon_and_feeds_url() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let agent = w.agent("a1").await;
+    let (_, v) = w.attach(&w.owner, agent, integ, "dedicated").await;
+    let pid = v["id"].as_str().unwrap().to_owned();
+    // A dedicated presence is only synced once active.
+    w.serve(&w.fake, 1, |_| {
+        json!({"outcome": "ok", "data": {
+        "platform_user_ref": "BOT-1", "handle": "h", "credentials": {"t": "x"}}})
+    })
+    .await;
+    let png = {
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgb8(image::RgbImage::new(32, 32))
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        out
+    };
+    let req = |m: Method| {
+        http::Request::builder()
+            .method(m)
+            .uri(format!("/v1/agents/{agent}/avatar"))
+            .header("cookie", &w.owner)
+            .header("origin", ORIGIN)
+    };
+    use tower::ServiceExt;
+    let res =
+        w.h.app
+            .clone()
+            .oneshot(req(Method::PUT).body(axum::body::Body::from(png)).unwrap())
+            .await
+            .unwrap();
+    assert_eq!(res.status(), 200);
+    let r = w.ops_of("presence.set_icon").await;
+    assert_eq!(r.len(), 1, "{r:?}");
+    let url = r[0].4["avatar_url"].as_str().unwrap().to_owned();
+    assert!(
+        url.starts_with("http") && url.contains("/v1/public/avatars/"),
+        "{url}"
+    );
+    assert_eq!(r[0].4["presence_id"], pid);
+
+    // The connector config feed carries the same public URL.
+    let (s, _, feed) = plane(
+        &w.h,
+        &w.fake.tok,
+        Some(w.fake.replica),
+        Method::GET,
+        "/config",
+        None,
+    )
+    .await;
+    assert_eq!(s, 200, "{feed}");
+    assert_eq!(feed["presences"][0]["agent"]["avatar_url"], url);
+
+    // Removal queues a second op carrying null.
+    let res =
+        w.h.app
+            .clone()
+            .oneshot(req(Method::DELETE).body(axum::body::Body::empty()).unwrap())
+            .await
+            .unwrap();
+    assert_eq!(res.status(), 204);
+    let r = w.ops_of("presence.set_icon").await;
+    assert_eq!(r.len(), 2);
+    assert_eq!(r[1].4["avatar_url"], Value::Null);
+}
+
 // ------------------------------------------------------------------- deletion
 
 #[tokio::test]

@@ -24,6 +24,8 @@ pub struct Agent {
     /// `ask` | `allow` | `off`.
     pub proactive_messaging: String,
     pub brief: String,
+    /// Root-relative public path of the avatar (`/v1/public/avatars/{key}`), or null.
+    pub avatar_url: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -45,6 +47,10 @@ impl From<AgentRow> for Agent {
             effort: a.effort,
             proactive_messaging: a.proactive_messaging,
             brief: a.brief,
+            avatar_url: a
+                .avatar_public_key
+                .as_deref()
+                .map(super::avatar::public_path),
             created_at: a.created_at,
             updated_at: a.updated_at,
         }

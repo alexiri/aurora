@@ -138,6 +138,36 @@ pub async fn on_agent_renamed(s: &AppState, agent: Uuid, name: &str) -> Result<(
     Ok(())
 }
 
+/// The agent's avatar changed or was removed: dedicated bots follow (`presence.set_icon`).
+pub async fn on_avatar_changed(
+    s: &AppState,
+    agent: Uuid,
+    avatar_url: Option<&str>,
+) -> Result<(), ApiError> {
+    let targets = repo::active_dedicated_for_agent(&s.pool, agent).await?;
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+    for t in targets {
+        ops::enqueue(
+            &mut tx,
+            NewOp {
+                kind: "presence.set_icon".to_owned(),
+                connector_id: Some(t.connector_id),
+                integration_id: Some(t.integration_id),
+                presence_id: Some(t.presence_id),
+                payload: json!({"presence_id": t.presence_id, "avatar_url": avatar_url}),
+                dedupe_key: None,
+            },
+        )
+        .await?;
+    }
+    memory::bump_agent_sync(&mut tx, agent).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(())
+}
+
 // ------------------------------------------------------------------------ reads
 
 pub async fn list(s: &AppState, c: &Caller, agent: Uuid) -> Result<Vec<Presence>, ApiError> {

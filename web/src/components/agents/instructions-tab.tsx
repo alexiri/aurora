@@ -9,6 +9,8 @@ import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { useModels } from "@/lib/api/conversations";
 import type { Agent } from "@/lib/api/queries";
 
+import { AvatarField } from "./avatar-field";
+
 export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string }) {
   const patch = usePatchAgent(wsId, agent.id);
   const [name, setName] = useState(agent.name);
@@ -44,7 +46,9 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
   }
 
   return (
-    <form onSubmit={(e) => void submit(e)} noValidate className="max-w-xl space-y-4">
+    <div className="max-w-xl space-y-4">
+      <AvatarField agent={agent} wsId={wsId} />
+      <form onSubmit={(e) => void submit(e)} noValidate className="space-y-4">
       <Field id="a-name" label="Name" error={clientErr || fe.name}>
         <input id="a-name" className={inputClass} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
       </Field>
@@ -108,7 +112,8 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
           </span>
         ) : null}
       </div>
-    </form>
+      </form>
+    </div>
   );
 }
 

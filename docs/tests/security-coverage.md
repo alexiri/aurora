@@ -46,7 +46,7 @@ their gate; they were run by their owning task (TEST-013, OPS-011), not by `carg
 | SEC-27 | OAuth refresh/mint serialized per connection across gateways with CAS | `gw/refresh.rs::{two_gateways_one_provider_call,mint_under_the_same_lock}`, `gw/refresh_proxy.rs::stale_code_refreshes_and_resends_bodyless_once` | service | proven |
 | SEC-28 | Approval decisions only by `can_use`; first wins; expiry denies | `api/approvals.rs::{decide_first_wins_authz_and_notify,batch_decides_only_agents_rows_caller_may_decide}`, `api/action_approvals.rs::{deny_rejects_and_second_decision_conflicts,expiry_marks_expired_notifies_and_blocks_late_decisions}`, `gw/hold.rs::deadline_expires` | service | proven |
 | SEC-29 | Workspace API keys confined to their workspace; die with owner's membership | `api/keys.rs::confinement_revoke_and_suspension`, `api/foundation.rs::api_key_auth`, `api/foundation.rs::key_confinement`, `api/permission_matrix.rs` (key rows) | service | proven |
-| SEC-30 | Files served as attachment + nosniff + sanitized names; avatars re-encoded | `api/attachments.rs::{upload_bind_deliver_and_download,download_headers_never_echo_the_stored_type}` (octet-stream, `attachment`, nosniff, sanitized `evil__b_.html`), `api/connectors.rs` (nosniff on connector file route). **Avatar re-encoding: not implemented, see Open gaps** | service | proven for files; **gap** for avatars |
+| SEC-30 | Files served as attachment + nosniff + sanitized names; avatars re-encoded | `api/attachments.rs::{upload_bind_deliver_and_download,download_headers_never_echo_the_stored_type}` (octet-stream, `attachment`, nosniff, sanitized `evil__b_.html`), `api/connectors.rs` (nosniff on connector file route). **Avatars (BE-067)**: `api/avatars.rs::{polyglot_and_metadata_laden_uploads_are_served_clean,png_jpeg_webp_are_reencoded_to_256_png,oversize_is_413_and_dimension_bomb_is_refused,type_is_sniffed_and_bad_inputs_are_refused,public_key_rotates_and_old_key_is_404}` (fresh 256×256 PNG; EXIF/tEXt/trailing bytes absent; nosniff on the public route) | service | proven |
 | SEC-31 | Webhook payloads and chat history labelled untrusted in turn text | `api/webhooks.rs::turn_text_labels_payload_untrusted_and_logs_delivery`, `api/channels_inbox.rs::mid_thread_mention_adds_untrusted_context_block`, `api/channels_messaging.rs::read_conversation_needs_history_and_labels_untrusted`, `api/peer_tasks.rs::opens_a_peer_conversation_with_a_fenced_agent_authored_turn` | service | proven |
 | SEC-32 | Security-relevant actions audited | **New** `api/keys.rs::sec32_key_create_and_revoke_are_audited_without_the_token`, **New** `api/tenancy.rs::sec32_role_changes_and_removal_are_audited`, **New** `api/policy.rs::sec32_policy_publish_is_audited`, **New** `api/approvals.rs::sec32_approval_decision_is_audited`, **New** `api/plugins.rs::sec32_trusted_keys_and_plugin_lifecycle_are_audited`, **New** `api/plugins_lifecycle.rs::sec32_plugin_decisions_are_audited`; existing `api/secrets.rs::generic_crud_never_returns_values_and_audits` (secrets/grants), `api/invitations.rs`, `api/audit.rs` | service | added |
 | SEC-33 | Core contains no app or chat-platform names | `scripts/guards/no-integration-names.sh` (run by `scripts/guards/run-all.sh`) | guard | proven |
@@ -59,11 +59,5 @@ their gate; they were run by their owning task (TEST-013, OPS-011), not by `carg
 
 ## Open gaps
 
-- **SEC-30 (avatars re-encoded)** → task BE-067: the avatar upload/serve feature (`PUT/GET /v1/agents/{agent}/avatar`,
-  `GET /v1/public/avatars/{key}`; `docs/10` §agent fields, `docs/05`) is not implemented in the API:
-  no route, no image decoding/re-encoding. The columns (`avatar_blob_key`, `avatar_public_key`) exist.
-  Not a local fix: it needs an image crate, blob handling, three routes, OpenAPI regeneration and
-  permission-matrix rows. Proposed: a BE task that decodes PNG/JPEG/WebP (bounded by `AVATAR_MAX`),
-  re-encodes to 256×256 PNG, stores the blob, rotates `avatar_public_key`, with a test that an upload
-  carrying a polyglot/EXIF payload is served as a clean PNG.
+- (resolved) SEC-30 avatars: proven by BE-067 (`api/avatars.rs`).
 - (resolved) SEC-18..20: proven with TEST-016 (`scripts/e2e/channels.sh` 6/6) plus the service tests.

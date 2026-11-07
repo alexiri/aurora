@@ -22,12 +22,14 @@ pub struct AgentRow {
     pub effort: Option<String>,
     pub proactive_messaging: String,
     pub brief: String,
+    pub avatar_blob_key: Option<String>,
+    pub avatar_public_key: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 const COLS: &str = "id, org_id, workspace_id, handle, name, kind, is_default, harness, model_provider, \
-    model_endpoint_id, model_id, effort, proactive_messaging, brief, created_at, updated_at";
+    model_endpoint_id, model_id, effort, proactive_messaging, brief, avatar_blob_key, avatar_public_key, created_at, updated_at";
 
 pub struct NewDefaultAgent<'a> {
     pub id: Uuid,
@@ -214,4 +216,38 @@ pub async fn delete<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, Db
         .await?
         .rows_affected()
         > 0)
+}
+
+/// Replace (or clear, with `None`) the avatar and return the previous blob key. The old row is
+/// locked so two concurrent uploads each see (and delete) a distinct previous blob.
+pub async fn set_avatar<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    blob_key: Option<&str>,
+    public_key: Option<&str>,
+) -> Result<Option<Option<String>>, DbError> {
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "WITH old AS (SELECT id, avatar_blob_key FROM agents WHERE id = $1 FOR UPDATE)
+         UPDATE agents a SET avatar_blob_key = $2, avatar_public_key = $3, updated_at = now()
+           FROM old WHERE a.id = old.id RETURNING old.avatar_blob_key",
+    )
+    .bind(id)
+    .bind(blob_key)
+    .bind(public_key)
+    .fetch_optional(exec)
+    .await?;
+    Ok(row.map(|r| r.0))
+}
+
+/// Blob key of the avatar whose *current* public key is `key`.
+pub async fn avatar_blob_by_public_key<'e, E: PgExecutor<'e>>(
+    exec: E,
+    key: &str,
+) -> Result<Option<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT avatar_blob_key FROM agents WHERE avatar_public_key = $1 AND avatar_blob_key IS NOT NULL",
+    )
+    .bind(key)
+    .fetch_optional(exec)
+    .await?)
 }

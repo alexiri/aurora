@@ -327,6 +327,7 @@ pub struct FeedPresence {
     pub agent_id: Uuid,
     pub agent_handle: String,
     pub agent_name: String,
+    pub agent_avatar_public_key: Option<String>,
 }
 
 impl std::fmt::Debug for FeedPresence {
@@ -348,7 +349,8 @@ pub async fn active_presences<'e, E: PgExecutor<'e>>(
     Ok(sqlx::query_as(
         "SELECT p.id, p.integration_id, ci.org_id, p.mode, p.platform_user_ref, p.handle,
                 p.credentials_ref, p.credentials_version, p.status,
-                a.id AS agent_id, a.handle AS agent_handle, a.name AS agent_name
+                a.id AS agent_id, a.handle AS agent_handle, a.name AS agent_name,
+                a.avatar_public_key AS agent_avatar_public_key
            FROM channel_presences p
            JOIN channel_integrations ci ON ci.id=p.integration_id
            JOIN agents a ON a.id=p.agent_id
