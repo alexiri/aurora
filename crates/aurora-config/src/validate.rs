@@ -5,6 +5,7 @@ use crate::error::{ConfigError, ConfigErrors, Result};
 use crate::raw::*;
 use crate::redacted::Redacted;
 use crate::urlcheck::{host_of, is_bind_addr, is_cidr, parse_url};
+use aurora_crypto::{RingKind, SecretRing};
 use base64::Engine;
 use base64::alphabet::STANDARD as B64_ALPHABET;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
@@ -108,8 +109,9 @@ pub struct ApiConfig {
     pub max_connections: u32,
     pub gateway_role: Option<String>,
     pub keyring: Keyring,
-    pub signing_key: Redacted<[u8; 32]>,
-    pub internal_secret: Redacted<Vec<u8>>,
+    /// Signing-key ring (RFE-007): producers use the active entry, receivers accept any.
+    pub signing_ring: SecretRing,
+    pub internal_ring: SecretRing,
     pub runner_session_key: Redacted<[u8; 32]>,
     pub bootstrap_runner_token: Option<Redacted<String>>,
     /// `(connector id, token)` pairs.
@@ -141,7 +143,7 @@ pub struct GatewayConfig {
     pub database_url: Redacted<String>,
     pub max_connections: u32,
     pub keyring: Keyring,
-    pub internal_secret: Redacted<Vec<u8>>,
+    pub internal_ring: SecretRing,
     pub secrets: SecretsSection,
     pub llm: LlmSection,
     pub governance: Governance,
@@ -157,7 +159,7 @@ pub struct GatewayConfig {
 #[derive(Debug, Clone)]
 pub struct HookhostConfig {
     pub server: ServerSection,
-    pub internal_secret: Redacted<Vec<u8>>,
+    pub internal_ring: SecretRing,
     pub hookhost: HookhostSection,
     pub tls: TlsSection,
     pub telemetry: TelemetrySection,
@@ -207,14 +209,52 @@ impl RawConfig {
         })
     }
 
+    /// Validate only the signing-key and internal-secret rings (`aurora-api keys status`).
+    pub fn rings(&self) -> Result<(SecretRing, SecretRing)> {
+        let mut c = Ctx::default();
+        let s = &self.env_secrets;
+        let signing = ring(
+            &mut c,
+            "AURORA_SIGNING_KEY",
+            "AURORA_SIGNING_ACTIVE_KEY",
+            &s.signing_key,
+            &s.signing_active_key,
+            RingKind::Signing,
+        );
+        let internal = ring(
+            &mut c,
+            "AURORA_INTERNAL_SECRET",
+            "AURORA_INTERNAL_ACTIVE_KEY",
+            &s.internal_secret,
+            &s.internal_active_key,
+            RingKind::Internal,
+        );
+        c.finish()?;
+        Ok((signing.unwrap_or_default(), internal.unwrap_or_default()))
+    }
+
     pub fn api_config(&self) -> Result<ApiConfig> {
         let mut c = Ctx::default();
         let s = &self.env_secrets;
         let external_url = check_server(&mut c, &self.server, true);
         let database_url = check_database_url(&mut c, &s.database_url);
         let keyring = check_keyring(&mut c, s);
-        let signing_key = key32(&mut c, "AURORA_SIGNING_KEY", &s.signing_key);
-        let internal_secret = internal_secret(&mut c, &s.internal_secret);
+        let signing_ring = ring(
+            &mut c,
+            "AURORA_SIGNING_KEY",
+            "AURORA_SIGNING_ACTIVE_KEY",
+            &s.signing_key,
+            &s.signing_active_key,
+            RingKind::Signing,
+        );
+        let internal_ring = ring(
+            &mut c,
+            "AURORA_INTERNAL_SECRET",
+            "AURORA_INTERNAL_ACTIVE_KEY",
+            &s.internal_secret,
+            &s.internal_active_key,
+            RingKind::Internal,
+        );
         let runner_session_key = key32(&mut c, "AURORA_RUNNER_SESSION_KEY", &s.runner_session_key);
         if let Some(t) = &s.bootstrap_runner_token {
             token_prefix(&mut c, "AURORA_BOOTSTRAP_RUNNER_TOKEN", t, "aur_");
@@ -256,8 +296,8 @@ impl RawConfig {
             max_connections: self.database.max_connections.unwrap_or(20),
             gateway_role: self.database.gateway_role.clone(),
             keyring: keyring.unwrap_or_else(empty_keyring),
-            signing_key: signing_key.unwrap_or_default(),
-            internal_secret: internal_secret.unwrap_or_default(),
+            signing_ring: signing_ring.unwrap_or_default(),
+            internal_ring: internal_ring.unwrap_or_default(),
             runner_session_key: runner_session_key.unwrap_or_default(),
             bootstrap_runner_token: s.bootstrap_runner_token.clone(),
             bootstrap_connector_tokens,
@@ -287,7 +327,14 @@ impl RawConfig {
         let external_url = check_server(&mut c, &self.server, true);
         let database_url = check_database_url(&mut c, &s.database_url);
         let keyring = check_keyring(&mut c, s);
-        let internal_secret = internal_secret(&mut c, &s.internal_secret);
+        let internal_ring = ring(
+            &mut c,
+            "AURORA_INTERNAL_SECRET",
+            "AURORA_INTERNAL_ACTIVE_KEY",
+            &s.internal_secret,
+            &s.internal_active_key,
+            RingKind::Internal,
+        );
         check_pos(
             &mut c,
             "database.max_connections",
@@ -345,7 +392,7 @@ impl RawConfig {
             database_url: database_url.unwrap_or_default(),
             max_connections: self.database.max_connections.unwrap_or(10),
             keyring: keyring.unwrap_or_else(empty_keyring),
-            internal_secret: internal_secret.unwrap_or_default(),
+            internal_ring: internal_ring.unwrap_or_default(),
             secrets: self.secrets.clone(),
             llm: self.llm.clone(),
             governance: governance.unwrap_or_else(|| resolve_governance_lossy(self)),
@@ -361,7 +408,14 @@ impl RawConfig {
     pub fn hookhost_config(&self) -> Result<HookhostConfig> {
         let mut c = Ctx::default();
         check_server(&mut c, &self.server, false);
-        let internal = internal_secret(&mut c, &self.env_secrets.internal_secret);
+        let internal = ring(
+            &mut c,
+            "AURORA_INTERNAL_SECRET",
+            "AURORA_INTERNAL_ACTIVE_KEY",
+            &self.env_secrets.internal_secret,
+            &self.env_secrets.internal_active_key,
+            RingKind::Internal,
+        );
         check_url(
             &mut c,
             "hookhost.api_internal_url",
@@ -371,7 +425,7 @@ impl RawConfig {
         c.finish()?;
         Ok(HookhostConfig {
             server: self.server.clone(),
-            internal_secret: internal.unwrap_or_default(),
+            internal_ring: internal.unwrap_or_default(),
             hookhost: self.hookhost.clone(),
             tls: self.tls.clone(),
             telemetry: self.telemetry.clone(),
@@ -585,23 +639,34 @@ fn key32(c: &mut Ctx, name: &str, v: &Option<Redacted<String>>) -> Option<Redact
     }
 }
 
-fn internal_secret(c: &mut Ctx, v: &Option<Redacted<String>>) -> Option<Redacted<Vec<u8>>> {
-    const NAME: &str = "AURORA_INTERNAL_SECRET";
+/// Parse a signing-key / internal-secret ring (`08 §4`, RFE-007). A bare value is ring `v0`;
+/// errors name the variable and never include values.
+fn ring(
+    c: &mut Ctx,
+    name: &str,
+    active_name: &str,
+    v: &Option<Redacted<String>>,
+    active: &Option<Redacted<String>>,
+    kind: RingKind,
+) -> Option<SecretRing> {
     let Some(v) = v else {
-        c.err(NAME, "required");
+        c.err(name, "required");
         return None;
     };
-    match b64().decode(v.expose().trim()) {
-        Ok(b) if b.len() >= 32 => Some(Redacted::new(b)),
-        Ok(b) => {
-            c.err(
-                NAME,
-                format!("must decode to at least 32 bytes (got {})", b.len()),
-            );
-            None
-        }
-        Err(_) => {
-            c.err(NAME, "not valid base64");
+    match SecretRing::parse(
+        v.expose(),
+        active.as_ref().map(|a| a.expose().as_str()),
+        kind,
+    ) {
+        Ok(r) => Some(r),
+        Err(e) => {
+            let msg = e.to_string();
+            let key = if msg.contains("active key id") {
+                active_name
+            } else {
+                name
+            };
+            c.err(key, msg.trim_start_matches("invalid keyring: "));
             None
         }
     }

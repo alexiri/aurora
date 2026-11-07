@@ -26,6 +26,10 @@ pub const LLM_ORIGIN_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 /// entries per org / workspace.
 pub const EGRESS_ALLOWLIST_MAX: u32 = 500;
 pub const REFRESH_LOCK_WAIT: Duration = Duration::from_secs(10);
+/// Entries per signing-key / internal-secret ring (`08 §4`, RFE-007).
+pub const KEYRING_MAX: usize = 4;
+/// Header naming the internal-secret ring entry a caller presents (`08 §4`, RFE-007). Not secret.
+pub const KEY_ID_HEADER: &str = "x-aurora-key-id";
 pub const OAUTH_STATE_TTL: Duration = Duration::from_secs(600);
 pub const IDLE_STOP: Duration = Duration::from_secs(1800);
 pub const BACKGROUND_CAP: Duration = Duration::from_secs(43200);

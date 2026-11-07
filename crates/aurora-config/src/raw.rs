@@ -21,8 +21,12 @@ pub struct EnvSecrets {
     pub database_url: Option<Redacted<String>>,
     pub encryption_keys: Option<Redacted<String>>,
     pub encryption_active_key: Option<Redacted<String>>,
+    /// Ring list or bare value (RFE-007, `08 §4`).
     pub signing_key: Option<Redacted<String>>,
+    pub signing_active_key: Option<Redacted<String>>,
+    /// Ring list or bare value (RFE-007, `08 §4`).
     pub internal_secret: Option<Redacted<String>>,
+    pub internal_active_key: Option<Redacted<String>>,
     pub runner_session_key: Option<Redacted<String>>,
     pub runner_token: Option<Redacted<String>>,
     pub connector_token: Option<Redacted<String>>,

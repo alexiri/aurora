@@ -375,3 +375,92 @@ async fn http_minter_follows_w9() {
     assert_eq!(b["package_digest"], "dg");
     assert_eq!(b["input"]["metadata"][0]["key"], "a");
 }
+
+// ---- RFE-007: internal-secret ring on the gateway ----
+
+#[tokio::test]
+async fn minter_presents_active_key_id_and_status_checks_the_ring() {
+    use aurora_crypto::{RingKind, SecretRing};
+    let seen = Arc::new(std::sync::Mutex::new(
+        Vec::<(Option<String>, Option<String>)>::new(),
+    ));
+    let s = seen.clone();
+    let app = axum::Router::new().route(
+        "/internal/v1/hooks/token.mint",
+        axum::routing::post(move |h: axum::http::HeaderMap| {
+            let s = s.clone();
+            async move {
+                let get = |n: &str| h.get(n).and_then(|v| v.to_str().ok()).map(str::to_owned);
+                s.lock().unwrap().push((get("authorization"), get("x-aurora-key-id")));
+                axum::Json(json!({"ok": {"credentials": [{"key": "access_token", "value": "t"}], "expires_at": 4102444800i64}}))
+            }
+        }),
+    );
+    let base = serve(app).await;
+    let b = |n: u8| base64::engine::general_purpose::STANDARD.encode([n; 32]);
+    let ring = Arc::new(
+        SecretRing::parse(
+            &format!("a1:{},b2:{}", b(1), b(2)),
+            Some("b2"),
+            RingKind::Internal,
+        )
+        .unwrap(),
+    );
+    let m = HttpMinter::new(&base, &ring.active_bearer()).with_key_id(ring.active_id());
+    m.mint(MintInput {
+        package_id: "pkg".into(),
+        package_digest: "dg".into(),
+        app_id: "demo".into(),
+        credentials: serde_json::Map::new(),
+        metadata: json!({}),
+        tenant_host: None,
+        client: serde_json::Map::new(),
+        client_secret: serde_json::Map::new(),
+        context: Default::default(),
+    })
+    .await
+    .unwrap();
+    let got = seen.lock().unwrap().clone();
+    assert_eq!(
+        got,
+        vec![(Some(format!("Bearer {}", b(2))), Some("b2".to_owned()))]
+    );
+
+    // Status endpoint: any ring key, ids/fingerprints only, retired/unknown refused.
+    use tower::ServiceExt;
+    let st = aurora_gateway::status::router(ring.clone());
+    let call = |n: Option<u8>, id: Option<&str>| {
+        let mut r = axum::http::Request::builder().uri("/internal/v1/status");
+        if let Some(n) = n {
+            r = r.header("authorization", format!("Bearer {}", b(n)));
+        }
+        if let Some(id) = id {
+            r = r.header("x-aurora-key-id", id);
+        }
+        r.body(axum::body::Body::empty()).unwrap()
+    };
+    for (n, id, want) in [
+        (None, None, 401),
+        (Some(1), Some("a1"), 200),
+        (Some(2), Some("b2"), 200),
+        (Some(1), None, 200),
+        (Some(1), Some("b2"), 401),
+        (Some(3), None, 401),
+        (Some(2), Some("zz"), 401),
+    ] {
+        let res = st.clone().oneshot(call(n, id)).await.unwrap();
+        assert_eq!(res.status().as_u16(), want, "{n:?} {id:?}");
+        if want == 200 {
+            let body = http_body_util::BodyExt::collect(res.into_body())
+                .await
+                .unwrap()
+                .to_bytes();
+            let text = String::from_utf8(body.to_vec()).unwrap();
+            assert!(text.contains("\"gateway\"") && text.contains("\"b2\""));
+            assert!(
+                !text.contains(&b(1)) && !text.contains(&b(2)),
+                "leaked key material"
+            );
+        }
+    }
+}

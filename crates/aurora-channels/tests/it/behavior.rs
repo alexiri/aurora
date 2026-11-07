@@ -90,7 +90,7 @@ fn token_round_trip_and_stable_id() -> R {
     let integ = Uuid::now_v7();
     let c = claims(integ, 100);
     let tok = ActionToken::sign(&k, &c)?;
-    assert!(tok.starts_with("v1."));
+    assert!(tok.starts_with("v2.v0."));
     let v = ActionToken::verify(&k, &tok, integ, 50)?;
     assert_eq!(v, c);
     assert_eq!(ActionToken::verify(&k, &tok, integ, 50)?.jti, c.jti);
@@ -117,15 +117,15 @@ fn token_rejections() -> R {
     // tampered payload (swap in another valid payload, keep old tag)
     let other = ActionToken::sign(&k, &claims(integ, 9999))?;
     let (p2, t1) = (
-        other.split('.').nth(1).unwrap_or(""),
-        tok.split('.').nth(2).unwrap_or(""),
+        other.split('.').nth(2).unwrap_or(""),
+        tok.split('.').nth(3).unwrap_or(""),
     );
     assert_eq!(
-        ActionToken::verify(&k, &format!("v1.{p2}.{t1}"), integ, 1),
+        ActionToken::verify(&k, &format!("v2.v0.{p2}.{t1}"), integ, 1),
         Err(TokenError::BadSignature)
     );
     // wrong purpose key
-    let payload = tok.split('.').nth(1).unwrap_or("");
+    let payload = tok.split('.').nth(2).unwrap_or("");
     use base64::Engine;
     let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload)?;
     let tag = k.sign(Purpose::LinkState, &raw);
@@ -137,7 +137,7 @@ fn token_rejections() -> R {
         ActionToken::verify(&k, &forged, integ, 1),
         Err(TokenError::BadSignature)
     );
-    for bad in ["", "v1", "v2.a.b", "v1.a.b.c", "v1.!!.!!"] {
+    for bad in ["", "v1", "v2.a.b", "v1.a.b.c", "v1.!!.!!", "v2.v0.!!.!!"] {
         assert_eq!(
             ActionToken::verify(&k, bad, integ, 1),
             Err(TokenError::Malformed)
@@ -251,5 +251,88 @@ fn unknown_capability_is_carried() -> R {
     let s: CapabilitySet = serde_json::from_str(r#"["threads","future_thing"]"#)?;
     assert!(s.has(&Capability::Threads));
     assert_eq!(serde_json::to_string(&s)?, r#"["threads","future_thing"]"#);
+    Ok(())
+}
+
+// ---- RFE-007: token key ring (SEC-46) ----
+
+fn ring_keys(ids: &[(&str, u8)], active: &str) -> Result<DerivedKeys, Box<dyn std::error::Error>> {
+    use aurora_crypto::{RingKind, SecretRing};
+    use base64::Engine;
+    let list = ids
+        .iter()
+        .map(|(i, b)| {
+            format!(
+                "{i}:{}",
+                base64::engine::general_purpose::STANDARD.encode([*b; 32])
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    Ok(DerivedKeys::from_ring(&SecretRing::parse(
+        &list,
+        Some(active),
+        RingKind::Signing,
+    )?)?)
+}
+
+#[test]
+fn v2_token_names_active_key_and_verifies_by_id() -> R {
+    let integ = Uuid::now_v7();
+    let k = ring_keys(&[("a1", 1), ("b2", 2)], "b2")?;
+    let tok = ActionToken::sign(&k, &claims(integ, 100))?;
+    assert!(tok.starts_with("v2.b2."), "{tok}");
+    assert!(ActionToken::verify(&k, &tok, integ, 1).is_ok());
+    // A receiver whose ring lacks the id refuses (no trial fallback for v2).
+    let without = ring_keys(&[("a1", 1)], "a1")?;
+    assert_eq!(
+        ActionToken::verify(&without, &tok, integ, 1),
+        Err(TokenError::BadSignature)
+    );
+    // Rewriting the id to another ring entry does not verify.
+    let swapped = tok.replacen("v2.b2.", "v2.a1.", 1);
+    assert_eq!(
+        ActionToken::verify(&k, &swapped, integ, 1),
+        Err(TokenError::BadSignature)
+    );
+    Ok(())
+}
+
+#[test]
+fn rotation_keeps_old_tokens_and_removal_revokes_them() -> R {
+    let integ = Uuid::now_v7();
+    // phase 0 token (v1, single static key) minted before rotation.
+    let legacy_keys = keys(1)?;
+    let (p, t) = {
+        let v2 = ActionToken::sign(&legacy_keys, &claims(integ, 100))?;
+        let mut it = v2.split('.').skip(2);
+        (
+            it.next().unwrap_or("").to_owned(),
+            it.next().unwrap_or("").to_owned(),
+        )
+    };
+    let v1 = format!("v1.{p}.{t}");
+    // step 1: new key appended, old still active.
+    let appended = ring_keys(&[("v0", 1), ("n2", 2)], "v0")?;
+    // step 2: new key active.
+    let activated = ring_keys(&[("v0", 1), ("n2", 2)], "n2")?;
+    // step 3: old key removed.
+    let removed = ring_keys(&[("n2", 2)], "n2")?;
+    let old_v2 = ActionToken::sign(&appended, &claims(integ, 100))?;
+    let new_v2 = ActionToken::sign(&activated, &claims(integ, 100))?;
+    assert!(old_v2.starts_with("v2.v0."));
+    assert!(new_v2.starts_with("v2.n2."));
+    for tok in [&v1, &old_v2, &new_v2] {
+        assert!(
+            ActionToken::verify(&activated, tok, integ, 1).is_ok(),
+            "{tok}"
+        );
+    }
+    // An api still on step 1 accepts the new key only if it holds it: it does (appended).
+    assert!(ActionToken::verify(&appended, &new_v2, integ, 1).is_ok());
+    // Removed key: old tokens fail, new ones keep working.
+    assert!(ActionToken::verify(&removed, &v1, integ, 1).is_err());
+    assert!(ActionToken::verify(&removed, &old_v2, integ, 1).is_err());
+    assert!(ActionToken::verify(&removed, &new_v2, integ, 1).is_ok());
     Ok(())
 }

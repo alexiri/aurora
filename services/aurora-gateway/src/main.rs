@@ -173,13 +173,16 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     hub.register(policy_resolver.cache());
     // `gateway.hookhost_url` (docs/15); bearer = the configured internal secret (W9).
     let hookhost_url = cfg.gateway.hookhost_url.clone();
-    let hook_bearer =
-        base64::engine::general_purpose::STANDARD.encode(cfg.internal_secret.expose());
+    let ring = Arc::new(cfg.internal_ring.clone());
+    let hook_bearer = ring.active_bearer();
+    let hook_key_id = ring.active_id().to_owned();
     let minter: Arc<dyn aurora_gateway::mint::Minter> = Arc::new(
-        aurora_gateway::mint::HttpMinter::new(&hookhost_url, &hook_bearer),
+        aurora_gateway::mint::HttpMinter::new(&hookhost_url, &hook_bearer)
+            .with_key_id(&hook_key_id),
     );
     let summarizer: Arc<dyn aurora_gateway::summarize_client::Summarizer> = Arc::new(
-        aurora_gateway::summarize_client::HttpSummarizer::new(&hookhost_url, &hook_bearer),
+        aurora_gateway::summarize_client::HttpSummarizer::new(&hookhost_url, &hook_bearer)
+            .with_key_id(&hook_key_id),
     );
     let tokens = Arc::new(aurora_gateway::refresh::TokenManager::new(
         pool.clone(),
@@ -261,6 +264,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             ("registry", snapshot_check),
         ],
     )
+    .merge(aurora_gateway::status::router(ring))
     .layer(axum::middleware::from_fn(service::trace_context));
     let ca = Arc::new(Ca::load(Path::new(&cfg.gateway.ca_dir))?);
     let bind = cfg.server.bind.as_str();

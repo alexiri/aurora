@@ -7,7 +7,6 @@ use aurora_hookhost::fetch::FetchPolicy;
 use aurora_hookhost::runtime::Runtime;
 use aurora_hookhost::server;
 use aurora_hookhost::snapshot::Catalog;
-use base64::Engine as _;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -57,8 +56,13 @@ async fn main() -> ExitCode {
 async fn serve(cfg: &HookhostConfig) -> std::io::Result<()> {
     let metrics = service::install_metrics(SERVICE);
     let runtime = Runtime::new(FetchPolicy::default()).map_err(std::io::Error::other)?;
-    let bearer = base64::engine::general_purpose::STANDARD.encode(cfg.internal_secret.expose());
-    let catalog = Catalog::new(&cfg.hookhost.api_internal_url, bearer.clone(), runtime);
+    let ring = std::sync::Arc::new(cfg.internal_ring.clone());
+    let catalog = Catalog::with_key_id(
+        &cfg.hookhost.api_internal_url,
+        ring.active_bearer(),
+        Some(ring.active_id().to_owned()),
+        runtime,
+    );
     let poller = catalog.spawn_poller();
     let c = catalog.clone();
     let ready = service::ready_check(move || {
@@ -71,12 +75,8 @@ async fn serve(cfg: &HookhostConfig) -> std::io::Result<()> {
             }
         }
     });
-    let app = service::ops_router(metrics, vec![("snapshot", ready)]).merge(server::router(
-        server::AppState {
-            catalog,
-            bearer: bearer.into(),
-        },
-    ));
+    let app = service::ops_router(metrics, vec![("snapshot", ready)])
+        .merge(server::router(server::AppState { catalog, ring }));
     let app = app.layer(axum::middleware::from_fn(service::trace_context));
     let listener = service::bind(cfg.server.bind.as_str(), OPS_PORT).await?;
     let res = service::serve_all(vec![(listener, app)]).await;

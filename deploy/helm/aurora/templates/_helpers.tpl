@@ -65,6 +65,11 @@ securityContext:
 - name: {{ $k }}
   valueFrom: {secretKeyRef: {name: {{ include "aurora.secretName" $.root }}, key: {{ $k }}}}
 {{- end }}
+{{- /* RFE-007: ring active ids; absent for a bare (phase 0) value, so the reference is optional. */ -}}
+{{- range $k := .optionalKeys }}
+- name: {{ $k }}
+  valueFrom: {secretKeyRef: {name: {{ include "aurora.secretName" $.root }}, key: {{ $k }}, optional: true}}
+{{- end }}
 {{- end -}}
 
 {{/* One workload (Deployment + Service + PDB). Args: root, name, port(s), spec, image, keys, db, args */}}

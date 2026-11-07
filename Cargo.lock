@@ -344,6 +344,7 @@ dependencies = [
 name = "aurora-config"
 version = "0.1.0"
 dependencies = [
+ "aurora-crypto",
  "base64 0.22.1",
  "serde",
  "thiserror 2.0.21",
@@ -607,6 +608,7 @@ dependencies = [
  "async-trait",
  "aurora-config",
  "aurora-core",
+ "aurora-crypto",
  "aurora-hook-wit",
  "aurora-policy",
  "aurora-registry",
