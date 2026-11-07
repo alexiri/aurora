@@ -27,6 +27,7 @@ async fn view(s: &AppState, r: ConnectorRow, count: i64) -> Result<ConnectorAdmi
         (Some(m), ConnectorStatus::PendingApproval) => manifest::stored_widening(m),
         _ => Vec::new(),
     };
+    let approved = r.manifest.as_ref().and_then(manifest::approved_value);
     Ok(ConnectorAdmin {
         id: r.id,
         display_name: r.display_name,
@@ -36,6 +37,7 @@ async fn view(s: &AppState, r: ConnectorRow, count: i64) -> Result<ConnectorAdmi
         manifest: r.manifest.as_ref().map(manifest::public),
         manifest_digest: r.manifest_digest,
         approved_manifest_digest: r.approved_manifest_digest,
+        approved_manifest: approved,
         widening,
         replicas,
         integration_count: count,

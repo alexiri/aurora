@@ -149,6 +149,78 @@ pub async fn list(s: &AppState, c: &Caller, agent: Uuid) -> Result<Vec<Presence>
         .collect())
 }
 
+/// Modes an integration offers, shared by C-34 attach validation and C-39 options.
+fn offered_modes(
+    manifest: Option<&Value>,
+    integ: &integ_repo::IntegrationRow,
+    connector_active: bool,
+) -> Vec<PresenceMode> {
+    let mut out = Vec::new();
+    if !connector_active {
+        return out;
+    }
+    if capability_enabled(manifest, &integ.config, "presence_dedicated") {
+        out.push(PresenceMode::Dedicated);
+    }
+    if capability_enabled(manifest, &integ.config, "presence_shared") && integ.shared_bot.is_some()
+    {
+        out.push(PresenceMode::Shared);
+    }
+    out
+}
+
+/// Integrations an agent can attach to (C-39, `can_use`): metadata only, never config or
+/// credentials, so members need no access to the owner/admin integration list (I-27).
+pub async fn options(
+    s: &AppState,
+    c: &Caller,
+    agent_id: Uuid,
+) -> Result<Vec<PresenceOption>, ApiError> {
+    let agent = load_agent(s, c, agent_id).await?;
+    let attached: std::collections::BTreeSet<Uuid> = repo::list_for_agent(&s.pool, agent_id)
+        .await?
+        .iter()
+        .map(|p| p.integration_id)
+        .collect();
+    let mut out = Vec::new();
+    let mut after = None;
+    loop {
+        let rows = integ_repo::page_for_org(&s.pool, agent.org_id, after, 200).await?;
+        let n = rows.len();
+        after = rows.last().map(|r| (r.created_at, r.id));
+        for integ in rows.iter().filter(|i| i.status == "active") {
+            let connector = connectors::get(&s.pool, &integ.connector_id).await?;
+            let active = connector.as_ref().is_some_and(|r| r.status == "active");
+            let manifest = connector.as_ref().and_then(|r| r.manifest.as_ref());
+            let modes = offered_modes(manifest, integ, active);
+            let fields = manifest
+                .and_then(|m| m.pointer("/presence_setup/dedicated/fields"))
+                .cloned();
+            let presence_setup = match fields {
+                Some(f) if modes.contains(&PresenceMode::Dedicated) => {
+                    json!({"dedicated": {"fields": f}})
+                }
+                _ => json!({}),
+            };
+            out.push(PresenceOption {
+                integration_id: integ.id,
+                connector_id: integ.connector_id.clone(),
+                connector_name: connector
+                    .as_ref()
+                    .map_or_else(|| integ.connector_id.clone(), |r| r.display_name.clone()),
+                tenant_label: integ.tenant_label.clone(),
+                modes,
+                presence_setup,
+                attached: attached.contains(&integ.id),
+            });
+        }
+        if n < 200 {
+            break;
+        }
+    }
+    Ok(out)
+}
+
 async fn load_presence(
     s: &AppState,
     c: &Caller,

@@ -56,6 +56,9 @@ pub struct ConnectorAdmin {
     pub manifest: Option<serde_json::Value>,
     pub manifest_digest: Option<String>,
     pub approved_manifest_digest: Option<String>,
+    /// The last approved manifest (icon stripped), the baseline for the approval diff (C-40).
+    #[schema(value_type = Option<Object>)]
+    pub approved_manifest: Option<serde_json::Value>,
     /// Human-readable reasons approval is required (empty unless `pending_approval`).
     pub widening: Vec<String>,
     /// Live (not retired, recently seen) replicas.

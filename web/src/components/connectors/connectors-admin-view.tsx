@@ -21,6 +21,80 @@ import {
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (typeof v === "object" && v !== null ? (v as Obj) : {});
 
+const enabledCaps = (m: Obj) =>
+  new Map(Object.entries(obj(m.capabilities)).filter(([, v]) => v === true || (typeof v === "object" && v !== null)));
+
+function keyedFields(m: Obj): Map<string, unknown> {
+  const out = new Map<string, unknown>();
+  for (const f of formFields(m.integration_setup)) out.set(`Integration: ${f.name}`, f);
+  for (const f of formFields(obj(obj(m.presence_setup).dedicated))) out.set(`Dedicated presence: ${f.name}`, f);
+  return out;
+}
+
+export type Change = { added: string[]; removed: string[]; changed: string[] };
+
+function diffMaps(a: Map<string, unknown>, b: Map<string, unknown>): Change {
+  const out: Change = { added: [], removed: [], changed: [] };
+  for (const [k, v] of b) {
+    if (!a.has(k)) out.added.push(k);
+    else if (JSON.stringify(a.get(k)) !== JSON.stringify(v)) out.changed.push(k);
+  }
+  for (const k of a.keys()) if (!b.has(k)) out.removed.push(k);
+  return out;
+}
+
+/** Old-vs-new manifest differences a reviewer must see (docs/14 manifest approval). */
+export function diffManifest(approved: unknown, next: unknown) {
+  const a = obj(approved);
+  const b = obj(next);
+  const cb = (m: Obj) => new Map((Array.isArray(m.public_callbacks) ? m.public_callbacks : []).map((c) => [String(c), c]));
+  return {
+    capabilities: diffMaps(enabledCaps(a), enabledCaps(b)),
+    fields: diffMaps(keyedFields(a), keyedFields(b)),
+    callbacks: diffMaps(cb(a), cb(b)),
+  };
+}
+
+function ChangeList({ label, change }: { label: string; change: Change }) {
+  const rows: [string, string, string[]][] = [
+    ["Added", "text-red-800", change.added],
+    ["Removed", "text-green-800", change.removed],
+    ["Changed", "text-amber-800", change.changed],
+  ];
+  const any = rows.some(([, , l]) => l.length);
+  return (
+    <div>
+      <h5 className="font-medium">{label}</h5>
+      {any ? (
+        <ul className="list-disc pl-5">
+          {rows.flatMap(([word, cls, list]) =>
+            list.map((k) => (
+              <li key={`${word}-${k}`} className={cls}>
+                {word}: <code>{k}</code>
+              </li>
+            )),
+          )}
+        </ul>
+      ) : (
+        <p className="text-neutral-500">No changes.</p>
+      )}
+    </div>
+  );
+}
+
+/** Differences between the last approved manifest and the pending one. */
+export function ManifestDiff({ approved, manifest }: { approved: unknown; manifest: unknown }) {
+  const d = diffManifest(approved, manifest);
+  return (
+    <div className="space-y-2 text-sm" data-testid="manifest-diff">
+      <h4 className="font-medium">Changes since the approved manifest</h4>
+      <ChangeList label="Capabilities" change={d.capabilities} />
+      <ChangeList label="Setup fields" change={d.fields} />
+      <ChangeList label="Public callbacks" change={d.callbacks} />
+    </div>
+  );
+}
+
 /** Capabilities and setup fields announced by the pending manifest, for the reviewer. */
 export function ManifestSummary({ manifest }: { manifest: unknown }) {
   const m = obj(manifest);
@@ -102,6 +176,7 @@ function ConnectorCard({
           ) : (
             <p>First registration.</p>
           )}
+          {c.approved_manifest ? <ManifestDiff approved={c.approved_manifest} manifest={c.manifest} /> : null}
           <ManifestSummary manifest={c.manifest} />
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />

@@ -9,6 +9,7 @@ import { unwrap } from "./unwrap";
 type S = components["schemas"];
 export type ChannelIntegration = S["ChannelIntegration"];
 export type Presence = S["Presence"];
+export type PresenceOption = S["PresenceOption"];
 export type PresenceMode = S["PresenceMode"];
 export type SpaceBinding = S["SpaceBinding"];
 export type UserLink = S["UserLink"];
@@ -24,6 +25,7 @@ export const channelKeys = {
   integrations: (org: string) => ["orgs", org, "channel-integrations"] as const,
   userLinks: (integration: string) => ["channel-integrations", integration, "user-links"] as const,
   presences: (agent: string) => ["agents", agent, "presences"] as const,
+  presenceOptions: (agent: string) => ["agents", agent, "presence-options"] as const,
   bindings: (agent: string) => ["agents", agent, "space-bindings"] as const,
   reach: (agent: string) => ["agents", agent, "reach"] as const,
   myLinks: ["me", "channel-links"] as const,
@@ -101,12 +103,20 @@ export function usePresences(agent: string) {
   });
 }
 
+export function usePresenceOptions(agent: string) {
+  return useQuery({
+    queryKey: channelKeys.presenceOptions(agent),
+    queryFn: () => unwrap(api.GET("/v1/agents/{agent}/presence-options", { params: { path: { agent } } })),
+    retry,
+  });
+}
+
 export function useAttachPresence(agent: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: S["AttachPresenceRequest"]) =>
       unwrap(api.POST("/v1/agents/{agent}/presences", { params: { path: { agent } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: channelKeys.presences(agent) }),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: channelKeys.presences(agent) }), qc.invalidateQueries({ queryKey: channelKeys.presenceOptions(agent) })]),
   });
 }
 
@@ -120,7 +130,7 @@ export function useReattachPresence(agent: string) {
           body: fields ? { fields } : {},
         }),
       ),
-    onSettled: () => qc.invalidateQueries({ queryKey: channelKeys.presences(agent) }),
+    onSettled: () => Promise.all([qc.invalidateQueries({ queryKey: channelKeys.presences(agent) }), qc.invalidateQueries({ queryKey: channelKeys.presenceOptions(agent) })]),
   });
 }
 
@@ -128,7 +138,7 @@ export function useDetachPresence(agent: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => unwrap(api.DELETE("/v1/presences/{id}", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: channelKeys.presences(agent) }),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: channelKeys.presences(agent) }), qc.invalidateQueries({ queryKey: channelKeys.presenceOptions(agent) })]),
   });
 }
 

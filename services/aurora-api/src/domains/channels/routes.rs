@@ -23,6 +23,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_user_links, create_user_link))
         .routes(routes!(delete_user_link))
         .routes(routes!(list_presences, attach_presence))
+        .routes(routes!(presence_options))
         .routes(routes!(detach_presence))
         .routes(routes!(reattach_presence))
         .routes(routes!(list_bindings))
@@ -193,6 +194,21 @@ async fn list_presences(
 ) -> Result<Json<PresenceList>, ApiError> {
     Ok(Json(PresenceList {
         items: presences::list(&s, &c, agent).await?,
+    }))
+}
+
+/// Integrations the agent can attach a presence to, metadata only (C-39, `can_use`).
+#[utoipa::path(get, path = "/agents/{agent}/presence-options", operation_id = "listAgentPresenceOptions", tag = "channels",
+    params(("agent" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = PresenceOptionList), (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn presence_options(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+) -> Result<Json<PresenceOptionList>, ApiError> {
+    Ok(Json(PresenceOptionList {
+        items: presences::options(&s, &c, agent).await?,
     }))
 }
 

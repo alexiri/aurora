@@ -3643,6 +3643,57 @@
         ]
       }
     },
+    "/v1/agents/{agent}/presence-options": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Integrations the agent can attach a presence to, metadata only (C-39, `can_use`).",
+        "operationId": "listAgentPresenceOptions",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresenceOptionList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/presences": {
       "get": {
         "tags": [
@@ -16840,6 +16891,13 @@
             ],
             "format": "date-time"
           },
+          "approved_manifest": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The last approved manifest (icon stripped), the baseline for the approval diff (C-40)."
+          },
           "approved_manifest_digest": {
             "type": [
               "string",
@@ -23476,6 +23534,62 @@
           "dedicated",
           "shared"
         ]
+      },
+      "PresenceOption": {
+        "type": "object",
+        "description": "One integration an agent may attach a presence to (C-39): metadata only.",
+        "required": [
+          "integration_id",
+          "connector_id",
+          "connector_name",
+          "tenant_label",
+          "modes",
+          "presence_setup",
+          "attached"
+        ],
+        "properties": {
+          "attached": {
+            "type": "boolean",
+            "description": "The agent already has a presence on this integration."
+          },
+          "connector_id": {
+            "type": "string"
+          },
+          "connector_name": {
+            "type": "string"
+          },
+          "integration_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "modes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PresenceMode"
+            }
+          },
+          "presence_setup": {
+            "type": "object",
+            "description": "`{ dedicated?: { fields: FormField[] } }`."
+          },
+          "tenant_label": {
+            "type": "string"
+          }
+        }
+      },
+      "PresenceOptionList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PresenceOption"
+            }
+          }
+        }
       },
       "PresenceStatus": {
         "type": "string",
