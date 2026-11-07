@@ -7,15 +7,64 @@
 # Cache design: CI exports layers (cache-to type=gha), which does NOT include `--mount=type=cache`
 # contents. So `target/` stays inside the layers (that is what makes the chef "cook" layer reusable
 # across CI runs) and only the registry/git download caches use cache mounts.
+#
+# OPS-023, sccache: any source change invalidates `COPY . .`, so the layer cache alone recompiles every
+# workspace crate. The cook and build steps therefore run through `with-sccache` (RUSTC_WRAPPER=sccache):
+#   - local: `--mount=type=cache,target=/root/.cache/sccache` keeps compiled crates between builds;
+#   - CI: the GitHub Actions cache backend. The runtime URL/token come in as BuildKit SECRETS
+#     (`id=actions_results_url`, `id=actions_runtime_token`), mounted as files under /run/secrets for the
+#     one RUN step: never build args, never in a layer or the provenance;
+#   - neither available (fork PR, plain `podman build`): the secrets are simply absent and sccache uses the
+#     (possibly empty) local directory; if sccache cannot start at all the build runs without it.
+# Cache keys are stable because the build path is always /build and the env (RUSTFLAGS, CARGO_INCREMENTAL=0)
+# is fixed in this file. sccache caches only lib/rlib crates; binaries and proc-macros always compile.
 ARG RUST_IMAGE=docker.io/library/rust:1-bookworm
 
 FROM ${RUST_IMAGE} AS chef
 ARG CARGO_CHEF_VERSION=0.1.78
+ARG SCCACHE_VERSION=0.10.0
+ARG SCCACHE_SHA256_X86_64=1fbb35e135660d04a2d5e42b59c7874d39b3deb17de56330b25b713ec59f849b
+ARG SCCACHE_SHA256_AARCH64=d6a1ce4acd02b937cd61bc675a8be029a60f7bc167594c33d75732bbc0a07400
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends clang lld \
     && rm -rf /var/lib/apt/lists/* \
     && cargo install cargo-chef --locked --version ${CARGO_CHEF_VERSION}
+# sccache: pinned release binary, checksum verified (no `cargo install`: that compiles for minutes).
+RUN set -eu; arch=$(uname -m); \
+    case "$arch" in x86_64) sum=${SCCACHE_SHA256_X86_64} ;; aarch64) sum=${SCCACHE_SHA256_AARCH64} ;; \
+      *) echo "no sccache checksum for $arch" >&2; exit 1 ;; esac; \
+    n=sccache-v${SCCACHE_VERSION}-$arch-unknown-linux-musl; \
+    curl -fsSL -o /tmp/sccache.tgz https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/$n.tar.gz; \
+    echo "$sum  /tmp/sccache.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/sccache.tgz -C /tmp; install -m 0755 /tmp/$n/sccache /usr/local/bin/sccache; \
+    rm -rf /tmp/sccache.tgz /tmp/$n; sccache --version
+# `with-sccache <cmd...>`: run a command with sccache as rustc wrapper and print the hit statistics.
+COPY --chmod=0755 <<'WRAP' /usr/local/bin/with-sccache
+#!/bin/sh
+set -u
+if [ -r /run/secrets/actions_results_url ] && [ -r /run/secrets/actions_runtime_token ]; then
+  ACTIONS_RESULTS_URL=$(cat /run/secrets/actions_results_url)
+  ACTIONS_RUNTIME_TOKEN=$(cat /run/secrets/actions_runtime_token)
+  export ACTIONS_RESULTS_URL ACTIONS_RUNTIME_TOKEN SCCACHE_GHA_ENABLED=true
+  echo "with-sccache: backend = GitHub Actions cache"
+else
+  echo "with-sccache: backend = local directory ${SCCACHE_DIR:-/root/.cache/sccache}"
+fi
+if sccache --start-server >/dev/null 2>&1; then
+  export RUSTC_WRAPPER=sccache
+else
+  # a failing GHA backend (revoked token, outage): retry on the local directory
+  echo "with-sccache: backend did not start; retrying on the local directory" >&2
+  unset ACTIONS_RESULTS_URL ACTIONS_RUNTIME_TOKEN SCCACHE_GHA_ENABLED
+  if sccache --start-server >/dev/null 2>&1; then export RUSTC_WRAPPER=sccache
+  else echo "with-sccache: sccache unavailable; building without it" >&2; fi
+fi
+"$@"; rc=$?
+sccache --show-stats || true
+sccache --stop-server >/dev/null 2>&1 || true
+exit $rc
+WRAP
 WORKDIR /build
 ENV SQLX_OFFLINE=true CARGO_TERM_COLOR=never CARGO_INCREMENTAL=0 \
     RUSTFLAGS="-C link-arg=-fuse-ld=lld"
@@ -30,7 +79,10 @@ FROM chef AS builder
 COPY --from=planner /build/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    cargo chef cook --release --locked --recipe-path recipe.json \
+    --mount=type=cache,target=/root/.cache/sccache \
+    --mount=type=secret,id=actions_results_url \
+    --mount=type=secret,id=actions_runtime_token \
+    with-sccache cargo chef cook --release --locked --recipe-path recipe.json \
       -p aurora-api -p aurora-gateway -p aurora-hookhost \
       -p aurora-runner -p aurora-connector-fake \
       -p aurora-connector-mattermost
@@ -40,7 +92,10 @@ COPY . .
 RUN rm -f rust-toolchain.toml
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    cargo build --release --locked \
+    --mount=type=cache,target=/root/.cache/sccache \
+    --mount=type=secret,id=actions_results_url \
+    --mount=type=secret,id=actions_runtime_token \
+    with-sccache cargo build --release --locked \
       -p aurora-api -p aurora-gateway -p aurora-hookhost \
       -p aurora-runner -p aurora-connector-fake \
       -p aurora-connector-mattermost \

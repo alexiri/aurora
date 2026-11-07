@@ -211,3 +211,61 @@ Local measurements (podman, shared 16-core host, cold layer cache for the first 
 | `sandbox` (after `sandbox-min`) | 425 s | base tool set (dnf, Chromium, Node), claude-code npm install |
 
 CI timings (`ghcr.io` publish, cold and warm gha cache) are recorded here after the first push to `master`.
+
+## Image builds: sccache and the kind dev path (OPS-023, I-44)
+
+### What changed
+
+1. **sccache in the release builder.** `images/services/Containerfile` installs sccache 0.10.0 (pinned, SHA-256
+   verified per architecture) in the `chef` stage; the cargo-chef `cook` and the release `build` run through
+   `with-sccache`, which sets `RUSTC_WRAPPER=sccache` and prints `sccache --show-stats` at the end of the step.
+   - Local / plain `podman build`: `--mount=type=cache,target=/root/.cache/sccache`.
+   - CI: GitHub Actions cache backend (`SCCACHE_GHA_ENABLED`). `crazy-max/ghaction-github-runtime` exposes
+     `ACTIONS_RESULTS_URL` / `ACTIONS_RUNTIME_TOKEN`, which `docker/build-push-action` passes as BuildKit
+     **secrets** (`actions_results_url`, `actions_runtime_token`, `images-builder` and `images-services`). They are
+     mounted as files for those two RUN steps only. Not build args, so not in a layer, the `type=gha` layer cache or the
+     provenance. Checked: `podman history --no-trunc` and `podman inspect` of a build with secrets contain neither
+     value, only the secret *ids* in the RUN text. The build also succeeds with no secrets (checked) and falls back to
+     the local directory, then to no sccache, if the backend does not start.
+   - Keys: the build path is always `/build`, no `.cargo/config.toml` (no worktree linker path, no
+     `CARGO_TARGET_DIR`), `RUSTFLAGS`/`CARGO_INCREMENTAL` fixed in the file. The second build below hit 19 of 20
+     crates, so nothing per-build leaks into the keys.
+2. **kind e2e on the dev path.** `scripts/e2e/kind.sh` sources `deploy/dev/kind-dev.sh` (in a subshell) and uses its
+   `build_rust` / `thin_image`: debug build in the builder container with a persistent target volume
+   (`<lane>-kind-dev-target`), thin distroless images tagged `localhost/aurora-e2e/aurora-<svc>:e2e`.
+   `--release-images` (or `AURORA_E2E_RELEASE_IMAGES=1`) builds the release `Containerfile` as before. CI does not run
+   `kind.sh` and keeps the release build.
+
+### Local measurements (this host, shared with other lanes; indicative, ±50 %)
+
+| Step | Time | sccache |
+|---|---|---|
+| Release builder, cold sccache (= no sccache), `cargo build --release` step | 12 m 13 s (whole `podman build` 24 m 8 s incl. cook) | 0 hits / 20 misses (cook: 0 / 616 Rust) |
+| Same, after a one-line change in `aurora-api` (cook layer reused; whole `podman build` 9 m 4 s) | **8 m 32 s** | **19 hits / 1 miss** (95 %); 6 binaries not cacheable (`crate-type`) |
+| `kind.sh` image preparation, release path, one-line `aurora-api` change (before) | ≈ 9–12 min (the builder step above plus ~1 min of copies) | |
+| `kind.sh` image preparation, dev path, same change (after, warm target volume) | **60 s** (cargo 57 s) | n/a |
+| `kind.sh --fresh` end to end on the dev images (cold target volume) | 18 m 0 s, k8s e2e 4 passed, 0 failed | |
+
+**Finding: sccache removes the rlib compiles, not the link step.** With 19 of 20 crates cached the release build
+still took 8.5 min, because the six service binaries (never cacheable: `crate-type`) are each linked with
+`lto = "thin"` over the whole dependency graph. Any source change in a crate that every binary depends on, such as
+`aurora-db`, therefore costs the LTO of six binaries plus the rebuild of its dependents. The profile is part of the release
+contract and was not changed. If the CI numbers confirm that linking dominates, the next options are
+`lto = false` for the connector/fake binaries or building the six binaries in parallel jobs; neither is done here.
+
+### CI measurement (to be filled in by the coordinator after the first pushes)
+
+| Push | `images-builder` before | after | sccache hits |
+|---|---|---|---|
+| baseline (run 42400978710, `COPY . .` invalidated) | 15.5 min, 782 s compiling | | |
+| first push with this change (cold GHA cache) | | | |
+| `aurora-api`-only change | | | |
+| `aurora-db` change | | | |
+
+What to check on the first CI run: jobs `images-builder` and `images-services (*)`; in the step
+"build the shared Rust builder stage (no push)" the log lines `with-sccache: backend = GitHub Actions cache` (twice:
+cook and build) and the `sccache --show-stats` blocks (`Cache hits`, `Cache misses`, `Cache write errors`,
+`Cache location  ... GitHub Actions`). Cold run: all misses, writes without errors. Second push: hits on every
+workspace library crate. Also confirm the "expose the Actions cache runtime" step succeeds, the log shows no secret
+values (GitHub masks the secrets), all six service images publish, and that a fork PR run (read-only or no token) still builds; if sccache cannot use the backend the log shows
+`backend did not start; retrying on the local directory`.
