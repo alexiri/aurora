@@ -82,6 +82,15 @@ A running sandbox keeps the image it started with until its next boot (docs/15).
 shows **"restart to update"** when an agent's boot image differs from the runner's. Restarting
 an agent is how it picks up the new image. Plan that with your users.
 
+**(phase 1, RFE-002) Upgrading to phase 1 requires restarting running sandboxes; the dashboard
+flags them.** The gateway proxy port (4102) becomes TLS-only and has no plaintext fallback, so the
+supervisor inside a sandbox booted before the upgrade (which forwards plaintext) can no longer
+reach the gateway: its outbound requests fail closed (nothing is sent in the clear). The API
+flags every such agent `restart_to_update` (the boot inputs changed: `gateway.tls`). Restart them
+(`POST /v1/agents/{agent}/restart` or the dashboard); the next boot works over TLS. Do this
+right after the gateway roll, not at your leisure: until then those agents cannot make
+outbound calls.
+
 **Not yet implemented as documented:** the API computes `restart_to_update` from the boot's
 environment/stub-file hash only, so after an image-only upgrade (and for boots started before that hash
 was recorded) it stays `false` while the sandbox still runs the old image (found by

@@ -150,7 +150,14 @@ pub fn app_boot(handle: &str, apps: &[&AppEntry]) -> AppBoot {
         })
         .collect();
     let env: Pairs = env.into_iter().collect();
-    let digest = Sha256::digest(json!({"env": env, "files": files}).to_string().as_bytes());
+    // (phase 1, RFE-002) The gateway transport is a boot input: a sandbox booted before the proxy
+    // listener became TLS-only (its supervisor forwards plaintext) differs here, so the API flags
+    // it `restart_to_update`. Bump the marker when the boot-time gateway contract changes again.
+    let digest = Sha256::digest(
+        json!({"env": env, "files": files, "gateway": {"tls": true}})
+            .to_string()
+            .as_bytes(),
+    );
     AppBoot {
         env,
         files,
