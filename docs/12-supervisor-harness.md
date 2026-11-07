@@ -54,6 +54,16 @@ Context credentials therefore attribute every request made by a harness during
 a turn — including LLM calls and tool subprocesses inheriting the harness
 environment — to that conversation and turn.
 
+## Session purge (phase 2, RFE-010)
+
+On `session.purge { conversation_id, session_ref }` the supervisor aborts and
+releases any live session for that conversation, calls `HarnessAdapter::
+purge_session`, and reports `session.purged { conversation_id, session_ref, ok }`.
+Pending purges are also delivered in the **home sync** (`purges` entries of the
+`render_inputs` part) and executed before the supervisor accepts `turn.deliver`,
+so a parked sandbox cannot resume a deleted conversation. A failed purge is
+retried with the next sync and surfaced on the agent's Computer tab.
+
 ## Harness interface
 
 ```rust
@@ -74,6 +84,8 @@ pub trait HarnessAdapter: Send + Sync {
     fn id(&self) -> &'static str;                 // display/registry only, never a branch key elsewhere
     fn capabilities(&self) -> HarnessCapabilities; // declared, never probed
     async fn start_session(&self, opts: SessionOptions) -> Result<Box<dyn HarnessSession>, HarnessError>;
+    /// (phase 2, RFE-010) Delete the files of one stored session (no session may be live for it); idempotent.
+    async fn purge_session(&self, working_dir: &Path, session_ref: &str) -> Result<(), HarnessError>;
 }
 
 pub struct SessionOptions {

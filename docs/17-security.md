@@ -78,6 +78,7 @@ runs), configured external secret stores.
 | SEC-44 | (phase 2, RFE-005) A policy `user` identity matches only the speaker of the turn that made the request (hosted context credential, speaker still holding `can_use`); traffic without a speaker never matches `user` identities, so person-scoped privileges are never granted to unattributed traffic. | 06, 07, 08 §7 | evaluator corpus: same agent, different speakers; boot/agent/BYO-context/schedule/webhook traffic; speaker loses access mid-turn; injection selection with user-only allow rules |
 | SEC-45 | (phase 2, RFE-006) An effectively frozen agent (agent, workspace or org flag) does nothing: the gateway refuses its credentials and closes its tunnels, no turn, schedule, webhook, watch or presence reply starts work, its sandbox is parked with state kept; freezing is audited atomically, reversible, and lifting needs at least the authority that froze. | 04, 05, 06, 10, 11, 13 | e2e-hosted: freeze with a running turn and a live tunnel (turn aborted, tunnel closed, sandbox parked, home intact), webhook 410, schedule skipped, presence reply; authority matrix for freeze/unfreeze; unfreeze restores service without credential redistribution |
 | SEC-46 | (phase 2, RFE-007) The signing key and the internal secret are keyrings: producers use only the active key, receivers accept only keys in their ring, rotation is a rolling configuration change with no downtime, and a retired key stops working when removed. | 08 §4, 13, 15 | aurora-crypto tests (ring parsing, legacy bare value, missing active id, ≤4 entries); mixed-version rolling test (new key added everywhere, then activated, then old removed) with live OAuth state, action tokens and internal calls; removed-key refusal |
+| SEC-47 | (phase 2, RFE-010) Chat data has a lifecycle the tenant controls: conversations can be deleted (including the harness session files in the agent's home), transcript events redacted in place, retention applied per org, and export is limited to those who can see the conversation; deletion, redaction and retention changes are audited atomically and never record content. | 04, 05, 10, 12, 16 | API tests (authorization matrix per kind, active-turn refusal, cascade completeness, blob removal); e2e-hosted: delete then restart sandbox — session files gone, purge executed before the next turn; redaction scrubs `turns.text` and buffers; retention sweep deletes through the same path with a system audit row |
 
 ## Residual risks (accepted, documented to operators)
 
@@ -124,6 +125,12 @@ runs), configured external secret stores.
   no orchestrated rotation — replacing the CA means redistributing trust to every
   sandbox and BYO host. The inline keyring has no KMS option. Operators protect
   these as the most sensitive files they hold (`15 §Backups`).
+- **Erasure is not omniscient** (phase 2, RFE-010): deleting or redacting
+  conversation data does not reach copies the platform made — messages already
+  posted to a chat platform, agent memories or skills derived from the
+  conversation, model-provider logs, backups, and exports already downloaded.
+  Redaction does not alter what the agent's live context remembers unless
+  `reset_session` is used.
 - **Per-replica rate limits**: with N gateways a limit can be exceeded up to N×.
 - **Connectors see their platform's traffic and credentials**: operators choose
   which connectors to run. A connector also names the speaker/clicker platform

@@ -80,6 +80,7 @@ All carry `{ item_id, kind, sandbox_id, boot_id }`.
 | `turn.abort` | `{ turn_id }` |
 | `turn.notice` | `{ turn_id, text }` (platform notice steered into the live run, e.g. ceiling warning) |
 | `session.release` | `{ conversation_id }` (surface changed; release idle session) |
+| `session.purge` | (phase 2, RFE-010) `{ conversation_id, session_ref }` — delete the stored harness session files (`12 §Session purge`) |
 
 `ModelChoice`: `{ provider, endpoint_id, base_url, dialect, model, effort,
 client_env: [[k,v]] }`. `TurnInput`: `{ text, speaker_label, door, recall: {
@@ -110,6 +111,7 @@ are dropped.
 | `watch.fired` | `{ watch_id, detail }` | watch turn |
 | `gate.result` | `{ turn_id, outcome: "quiet"|"wake"|"failed", output? }` | schedule run outcome |
 | `ports.state` | `{ ports: [int] }` | `listening_ports` |
+| `session.purged` | (phase 2, RFE-010) `{ conversation_id, session_ref, ok }` | completes the `session_purges` row (`ok = false` keeps it pending) |
 
 `turns.last_event_n` is maintained by the API for event idempotency.
 
@@ -131,7 +133,7 @@ are dropped.
 - Ping/pong every 20 s; 60 s silence = dead connection.
 
 Runner → supervisor kinds: `turn.deliver`, `turn.message`, `turn.send_now`,
-`turn.abort`, `turn.notice`, `session.release`, `home.sync`, `tool.result`,
+`turn.abort`, `turn.notice`, `session.release`, `session.purge` (phase 2, RFE-010), `home.sync`, `tool.result`,
 `memory.write.result`, `file.result`, `shutdown`.
 
 Supervisor → runner kinds: `ready`, `home.synced`, `turn.started`, `turn.event`

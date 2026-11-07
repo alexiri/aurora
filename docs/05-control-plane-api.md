@@ -112,6 +112,8 @@ matrix:
 - Optimistic concurrency: resources with a `revision` accept
   `If-Match: <revision>` or a `revision` body field; stale → 409 `stale_revision`.
 - Long-poll endpoints accept `?wait=<secs>` capped at `LONG_POLL_MAX`.
+- (phase 2, RFE-010) The conversation SSE adds the ephemeral `event.redacted
+  { seq }` (no `id:`), telling clients to re-read that event.
 - SSE: `Content-Type: text/event-stream`; durable events carry `id: <seq>`;
   ephemeral events carry no id; keepalive comment every `SSE_KEEPALIVE`;
   resume with `Last-Event-ID` or `?after_seq=`.
@@ -191,6 +193,7 @@ claim-based and safe to run everywhere.
 | Approval expiry: `pending` past `deadline + 30 s` → `expired`; pending rows of gateway instances unseen for 60 s → `abandoned` | every 10 s | idempotent updates |
 | Action-approval expiry | every 60 s | idempotent |
 | Attachment pending sweep (`ATTACH_PENDING_TTL`) | hourly | idempotent |
+| Conversation retention sweep (phase 2, RFE-010): delete conversations past the org window through the delete path; blob-orphan sweep | daily | singleton |
 | Request-log partition maintenance and retention | daily | singleton |
 | Retention pruning (inbox/ops/cards > `CHANNEL_LEDGER_RETENTION`, used action tokens, expired email/CLI tokens, sessions, expired context credentials) | daily | singleton |
 | Runtime daily rollup | hourly | singleton |
@@ -323,6 +326,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/workspaces/{ws}/access`; PUT/DELETE `/v1/workspaces/{ws}/access/{user}` | S/K | bindings |
 | GET/POST `/v1/workspaces/{ws}/api-keys` | S (POST: SO) | workspace keys |
 | GET `/v1/workspaces/{ws}/audit` | S/K | same filters |
+| GET/PUT `/v1/orgs/{org}/retention` | S/K | (phase 2, RFE-010/015) org `owner`/`admin`; `{ conversations_days?, attachments_days?, attachment_quota_mib? }`, `null` = none; 422 `retention_invalid` / `retention_above_instance_maximum` |
 | GET `/v1/workspaces/{ws}/activity` | S/K | request log, filters: agent, conversation, decision, host, app |
 | GET `/v1/workspaces/{ws}/usage` | S/K | runtime + tokens |
 | POST `/v1/workspaces/{ws}/freeze` `{ reason }`; POST `/v1/workspaces/{ws}/unfreeze` | S/K | (phase 2, RFE-006) `can_own`; as for agents |
@@ -399,10 +403,13 @@ connector, **P** public capability. Permission checks per `04`.
 ### Conversations and turns
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/agents/{agent}/conversations` | S/K | filters: kind |
+| GET `/v1/agents/{agent}/conversations` | S/K | filters: kind; (phase 2, RFE-010) `archived=true\|false` (default false) |
 | POST `/v1/agents/{agent}/conversations/direct` | S | get-or-create caller's direct conversation |
 | POST `/v1/agents/{agent}/conversations` | K | `kind = api`, `external_ref` (get-or-create) |
 | GET `/v1/conversations/{id}` | S/K | |
+| POST `/v1/conversations/{id}/archive`, `/unarchive`; DELETE `/v1/conversations/{id}` | S/K | (phase 2, RFE-010) `10 §Archive, delete, redaction, retention, export`; delete 409 `conversation_active` |
+| POST `/v1/conversations/{id}/events/{seq}/redact`; POST `/v1/turns/{id}/redact` | S/K | (phase 2, RFE-010) `{ reason?, reset_session? }`; irreversible, audited |
+| GET `/v1/conversations/{id}/export` | S/K | (phase 2, RFE-010) JSON `aurora.conversation.v1` (`attachments=zip` → zip); 422 `export_too_large` |
 | GET `/v1/conversations/{id}/events?after_seq=&limit=` | S/K | durable history |
 | GET `/v1/conversations/{id}/stream` | S/K | SSE |
 | POST `/v1/conversations/{id}/messages` | S/K | `{ text, attachment_ids? }` → `{ turn }` or `{ followup }` |

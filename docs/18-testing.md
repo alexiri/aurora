@@ -157,6 +157,24 @@ done when its tests exist, pass in CI, and the security invariants it touches
   platform resolution and `proactive_messaging` modes, op error code handling,
   ownership failover between two fake connector replicas.
 
+### Conversation data lifecycle (phase 2, RFE-010)
+- Delete: authorization matrix (direct user, owner, member, key of each) per
+  conversation kind; `conversation_active` refusal; full cascade (turns, events,
+  buffers, attachments, blobs, thread links, credentials) in one transaction with
+  the critical audit row; approvals keep rows with the reference nulled;
+  schedule/webhook run conversation recreated on next fire; session purge
+  delivered live, via home sync after a stopped sandbox boots, and before any turn.
+- Redaction: payload replaced per event type keeping ids; `turns.text` and answer
+  buffers scrubbed; idempotent and irreversible; SSE `event.redacted`; authority
+  (turn author, direct user, `can_own`, nobody else); `reset_session` bumps the
+  epoch and queues a purge; audit row has no content.
+- Retention: window validation (bounds, instance ceiling), daily sweep deletes only
+  idle conversations without pending approvals through the delete path, batching,
+  system audit row per batch, disabled by default.
+- Export: JSON schema `aurora.conversation.v1` (contract test), redacted events as
+  markers, zip with attachments, `export_too_large`, authorization incl. an org
+  admin exporting a user's direct conversation.
+
 ### Identity
 - Permission matrix test generated from `04 §Permission matrix` (every route ×
   role), suspended members, workspace key confinement, CSRF, OIDC against a

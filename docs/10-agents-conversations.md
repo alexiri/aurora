@@ -48,7 +48,7 @@ state kept; reversible with `unfreeze`. Full rules: `04 §Freeze`.
 
 ### Deleting an agent
 
-Cascades in the database to everything it owns. Before the delete commits, the
+Cascades in the database to everything it owns (conversations included; the sandbox home, which holds harness session files, is destroyed with it). Before the delete commits, the
 API enqueues connector `presence.deprovision` operations for dedicated
 presences and revokes all gateway credentials. The sandbox and home volume are
 destroyed by runner reconciliation (anything the control plane no longer knows
@@ -191,6 +191,85 @@ No vendor concept may appear in this vocabulary; adapters translate.
 after its last tool call*; narration between tools streams ephemerally. A tool
 call is a structural break; thinking is not. Within a tool-free stretch the
 harness's message framing decides message boundaries.
+
+### Archive, delete, redaction, retention, export (phase 2, RFE-010, D-53)
+
+Phase 0 kept conversations, transcript events and attachments forever: no delete,
+no redaction of a secret pasted into chat, no retention, no export. From phase 2:
+
+**Archive.** `POST /v1/conversations/{id}/archive` / `…/unarchive` set
+`conversations.archived_at`. Archiving is a tidy-up, not a lock: archived
+conversations are hidden from default lists and sidebars (`?archived=true` lists
+them) and a person-authored message into one unarchives it. Allowed for anyone who
+can see the conversation (`can_see_conversation`, `04`) and, for non-direct kinds,
+has `can_use`.
+
+**Delete.** `DELETE /v1/conversations/{id}` hard-deletes the conversation with its
+turns, transcript events, answer buffers, attachments (rows and blob bytes),
+thread links, context credentials, mention anchors and pending approvals'
+conversation references (approvals/action approvals keep their row with the
+reference nulled). Authorization: a `direct` conversation by **its user** or
+`can_own`; every other kind by `can_own`. Refused with 409 `conversation_active`
+while a turn is `queued`/`dispatched`/`running` (abort first). One transaction
+with its security-critical audit row `conversation.delete` (ids, kind and counts,
+never content, `04 §Audit`); blob bytes are removed after commit by the BlobStore
+(failures leave orphans that the daily orphan sweep removes). Because the **harness
+session** inside the agent's home holds the conversation's content too, the API
+records a `session_purges` row (`03 §Planned changes`) and sends the supervisor
+`session.purge { conversation_id, session_ref }` (`16 §W5/W6`); the harness adapter
+deletes the session files (`HarnessAdapter::purge_session`, `12`). A stopped sandbox
+purges at its next boot, before any turn (the pending list is part of the home
+sync); the row is deleted on the supervisor's `session.purged` report. Schedule/
+webhook run conversations: `run_conversation_id` becomes null and the next fire
+creates a fresh one; `origin_conversation_id` references become null (reports then
+have no destination). Messages already posted into a chat platform are **not**
+deleted (they live on the platform, `17 §Residual risks`).
+
+**Transcript redaction** (mirrors memory-revision redaction). `POST
+/v1/conversations/{id}/events/{seq}/redact { reason?, reset_session? }` replaces
+that event's payload **in place**: the row keeps `conversation_id`, `seq`, `turn_id`
+and `type` and structural ids (`turn_id`, `call_id`, `message_id`, `approval_id`,
+`attachment_id`), and every content field (`text`, `summary`, `message`, `filename`,
+`caption`, fields) is replaced by the marker `{ "redacted": true,
+"redacted_at": …, "redacted_by": <label>, "reason"?: … }`; `transcript_events.
+redacted_at/redacted_by_user_id` are set. A redacted `turn.queued` also scrubs
+`turns.text` and any `turn_answer_buffers` of that turn; a redacted `attachment`
+event leaves the file (delete it with the attachment route, `RFE-015`). `POST
+/v1/turns/{id}/redact` redacts every event of a turn. Authorization: the person
+who authored the event's turn (`turns.speaker_user_id`), the direct user of a
+direct conversation, or `can_own` — always limited to conversations the caller
+can see. Redaction is audited (`transcript_event.redact`, security-critical:
+seq/type/reason, never content), idempotent, irreversible, and emits an SSE
+`event.redacted { seq }` so open views refresh. It cannot reach the agent's own
+context: `reset_session: true` (default `false`) additionally bumps
+`harness_session_epoch` and queues a session purge, so the next turn starts a
+fresh session without the secret (the agent forgets the conversation).
+
+**Retention** (optional, per organization; default **none**). `PUT
+/v1/orgs/{org}/retention { conversations_days?: int|null }` (org `owner`/`admin`;
+`retention.update` is security-critical) stores `organizations.settings.retention`.
+Values are `RETENTION_MIN_DAYS`..`RETENTION_MAX_DAYS` (7..3650) and may not exceed
+an instance ceiling `retention.conversation_days_max` when set (422
+`retention_above_instance_maximum`; the instance can only tighten). The daily
+singleton **conversation retention sweep** (`05 §Background jobs`) deletes, per org,
+conversations whose `last_activity_at` is older than the window, that have no
+active turn and no pending approval, in batches of `RETENTION_SWEEP_BATCH` through
+the **same delete path** (actor `system`, one `conversation.delete` audit row per
+batch listing ids, `metadata.reason = "retention"`). The attachment parts of the
+retention object (`attachments_days`, quota) are specified with RFE-015 below.
+Direct conversations are retained/deleted by the same rule. The dashboard states the
+window on affected chat views and in org settings.
+
+**Export.** `GET /v1/conversations/{id}/export[?after_seq=&attachments=none|zip]`
+returns `application/json` (`Content-Disposition: attachment`) in format
+`aurora.conversation.v1`: `{ conversation, turns[], events[] (durable events in seq
+order; redacted ones as their marker), attachments[] (id, filename, size, sha256,
+content_type, direction, purged) }`; `attachments=zip` returns a `.zip` with the
+JSON plus the (non-purged) files. Authorization: `can_own` or the direct user of
+that direct conversation (`can_see_conversation` always applies — an org admin can
+therefore export a user's direct conversation for a subject-access request, audited
+best-effort as `conversation.export`). Bounded by `EXPORT_MAX` (256 MiB / 200 000
+events; over → 422 `export_too_large`, page with `after_seq`).
 
 ### Attachments
 

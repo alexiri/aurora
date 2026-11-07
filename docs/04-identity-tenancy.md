@@ -306,6 +306,9 @@ conversation and hour; best-effort).
 | Create/edit/delete agents, brief, model, avatar; memory; skills; schedules; webhooks; restart sandbox | `can_use` |
 | Chat with agents, read transcripts, upload attachments | `can_use`; (phase 1, RFE-009) for `direct` conversations: the direct user (read + write) and `can_own` (read, abort/send-now only) — `can_see_conversation` |
 | Decide gateway approvals and action approvals for agents of the workspace | `can_use`; (phase 1, RFE-009) an approval that names a `direct` conversation is visible and decidable only by callers who `can_see_conversation` it (so: the direct user and `can_own`) |
+| Archive/unarchive a conversation (phase 2, RFE-010) | `can_see_conversation` and, for non-direct kinds, `can_use` |
+| Delete a conversation; redact transcript events; export a conversation (phase 2, RFE-010) | `direct`: its user or `can_own`; other kinds: `can_own` (redaction also: the event's turn author; export: not the turn author); always subject to `can_see_conversation` |
+| Org retention settings (phase 2, RFE-010/015) | org `owner`/`admin` (`retention.update`, security-critical) |
 | Read activity (request log) of the workspace | `can_use`; (phase 1, RFE-009) rows whose conversation is a `direct` conversation the caller cannot see are **omitted** (owners see all) |
 | Freeze / unfreeze an **agent** (phase 2, RFE-006) | `can_own`; lifting a freeze imposed by a higher authority needs that authority (below) |
 | Freeze / unfreeze a **workspace** (phase 2, RFE-006) | `can_own` (org owners/admins included); same lifting rule |
@@ -399,6 +402,8 @@ original record, returns 200).
 
 ## Deletion semantics
 
+- **Conversation deletion** (phase 2, RFE-010) is a separate, explicit operation
+  (`10`); deleting a workspace or agent still cascades as below.
 - **Account deletion** (session-only, requires password or recent OIDC sign-in
   within 10 min; phase 1: recent OIDC re-authentication only, RFE-004): refused while the user is the last owner of any org
   (409 `last_owner`). Removes memberships, bindings, sessions, keys, identities;

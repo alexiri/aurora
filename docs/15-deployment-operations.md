@@ -114,6 +114,7 @@ one new entry without activating it.
 | `events.delta_bus` | `notify` | api | (phase 1, RFE-016) `DeltaBus` implementation id; unknown id fails startup |
 | `events.delta_coalesce_ms` | 100 | api | (phase 1, RFE-016) delta coalescing window, 100–500 |
 | `retention.request_log_days` | 30 | api | |
+| `retention.conversation_days_max` | — (no ceiling) | api | (phase 2, RFE-010) instance maximum for an org's conversation retention window (tighten-only, 7..3650) |
 | `telemetry.otlp_endpoint` | — | all | optional tracing export |
 | `telemetry.log_level` | `info` | all | |
 

@@ -83,6 +83,9 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   connector offers `email_verified`), with the trust warning of `13 §5.9`;
   toggling it needs a confirm dialog.
 - **Skills**: org skills editor.
+- **Retention** (phase 2, RFE-010/015): conversation and attachment windows,
+  attachment quota with the storage breakdown, validation against the instance
+  maximum.
 - **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged), **Settings** (name, slug, members can create
   workspaces, limits), **Danger zone** (phase 2, RFE-006: **Freeze organization**
   for owners).
@@ -91,7 +94,12 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 - **Overview**: first-run checklist (store an LLM key → grant it to Daneel →
   say hello), agents, pending approvals, recent activity.
 - **Agents** list → **agent page** tabs:
-  - **Chat** — direct conversation (phase 1, RFE-009: banner "Only you and
+  - **Chat** — (phase 2, RFE-010) per-conversation menu: Archive, Delete (typed
+    confirmation; explains that platform copies and agent memory remain), Export
+    (JSON / zip), and per-message **Redact** (reason, "also reset the agent's
+    session" checkbox, irreversible warning); archived conversations behind an
+    "Archived" filter; a banner shows the org retention window when set.
+    Direct conversation (phase 1, RFE-009: banner "Only you and
     workspace owners can see this conversation"; owners also get a "Direct
     conversations of other members" sidebar group, read-only with an audit
     notice, no composer); other conversations (schedules, webhooks,
