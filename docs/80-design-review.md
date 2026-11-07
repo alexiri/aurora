@@ -15,33 +15,33 @@ verdict. Severity is my judgement of impact if left as-is:
 **Medium** = meaningful gap, workaroundable · **Low** = polish / clarity.
 
 
-| Id                  | Title                                                                                            | Area         | Severity | Phase |
-| ------------------- | ------------------------------------------------------------------------------------------------ | ------------ | -------- | ----- |
-| [RFE-001](#rfe-001) | Connector-asserted "verified email" can mint user links                                          | Security     | High | 1 |
-| [RFE-002](#rfe-002) | Gateway proxy port has no TLS option — BYO tokens travel in cleartext                            | Security     | High | 1 |
-| [RFE-003](#rfe-003) | Open lane is reachable by any sandbox process and under-specified for path-scoped rules          | Security     | High | 1 |
-| [RFE-004](#rfe-004) | No MFA for password accounts (including instance admins)                                         | Security     | High | 1 |
-| [RFE-005](#rfe-005) | Policy `user` identities match "anyone with access", not the actual speaker                      | Policy       | Medium | 2 |
-| [RFE-006](#rfe-006) | No emergency quarantine / disable switch for an agent, workspace or org                          | Security/Ops | Medium | 2 |
-| [RFE-007](#rfe-007) | No rotation story for signing key, internal secret, runner session key, gateway CA               | Security/Ops | Medium | 2 |
-| [RFE-008](#rfe-008) | Audit log is best-effort even for security-critical actions                                      | Security     | Medium | 2 |
-| [RFE-009](#rfe-009) | Direct (1:1) conversations are readable by every workspace member                                | Privacy      | High | 1 |
-| [RFE-010](#rfe-010) | No deletion, retention or redaction story for transcripts and attachments                        | Privacy      | Medium | 2 |
-| [RFE-011](#rfe-011) | Approvals can expire unseen: fixed 300 s deadline, no notification/escalation path               | Product      | Medium | 2 (011a) · 4 (011b) |
-| [RFE-012](#rfe-012) | Role granularity: `can_use` bundles chat, approvals and activity reads                           | Policy       | Medium | 2 |
-| [RFE-013](#rfe-013) | BYO agent tokens never expire and have no rotation policy                                        | Security     | Low | 3 |
-| [RFE-014](#rfe-014) | Gateway behaviour during a Postgres outage is unspecified (and the cache flush makes it a cliff) | Ops          | Medium | 3 |
-| [RFE-015](#rfe-015) | Attachments in Postgres with no retention or per-tenant quota                                    | Ops          | Medium | 2 |
-| [RFE-016](#rfe-016) | LISTEN/NOTIFY as the delta fan-out has a scalability ceiling with no seam                        | Ops          | Low | 1 |
-| [RFE-017](#rfe-017) | No general rate limiting on the management API                                                   | Ops          | Medium | 2 |
-| [RFE-018](#rfe-018) | No idempotency keys for turn-creating API calls                                                  | API          | Low | 3 |
-| [RFE-019](#rfe-019) | Deployment-specific content baked into the generic spec (Daneel brief, CERN base image)          | Polish       | Low | 3 |
-| [RFE-020](#rfe-020) | Skills have agent and org tiers but no workspace tier                                            | Product      | Low | 3 |
-| [RFE-021](#rfe-021) | Creator-bound fire-time authority: offboarding a user silently kills automations                 | Product      | Medium | 2 |
-| [RFE-022](#rfe-022) | Plugin major-version upgrades with existing connections are undefined                            | Plugins      | Low | 3 |
-| [RFE-023](#rfe-023) | Default Rule silently exempts LLM hosts — rationale undocumented                                 | Spec clarity | Low | 3 |
-| [RFE-024](#rfe-024) | Deprovision-before-delete ordering is racy and under-specified                                   | Spec clarity | Low | 3 |
-| [RFE-025](#rfe-025) | BYO agents: any member can create one, no instance/org/workspace controls, no source restriction | Security     | Medium | 2 |
+| Id                  | Title                                                                                            | Area         | Severity | Phase               |
+| ------------------- | ------------------------------------------------------------------------------------------------ | ------------ | -------- | ------------------- |
+| [RFE-001](#rfe-001) | Connector-asserted "verified email" can mint user links                                          | Security     | High     | 1                   |
+| [RFE-002](#rfe-002) | Gateway proxy port has no TLS option — BYO tokens travel in cleartext                            | Security     | High     | 1                   |
+| [RFE-003](#rfe-003) | Open lane is reachable by any sandbox process and under-specified for path-scoped rules          | Security     | High     | 1                   |
+| [RFE-004](#rfe-004) | No MFA for password accounts (including instance admins)                                         | Security     | High     | 1                   |
+| [RFE-005](#rfe-005) | Policy `user` identities match "anyone with access", not the actual speaker                      | Policy       | Medium   | 2                   |
+| [RFE-006](#rfe-006) | No emergency quarantine / disable switch for an agent, workspace or org                          | Security/Ops | Medium   | 2                   |
+| [RFE-007](#rfe-007) | No rotation story for signing key, internal secret, runner session key, gateway CA               | Security/Ops | Medium   | 2                   |
+| [RFE-008](#rfe-008) | Audit log is best-effort even for security-critical actions                                      | Security     | Medium   | 2                   |
+| [RFE-009](#rfe-009) | Direct (1:1) conversations are readable by every workspace member                                | Privacy      | High     | 1                   |
+| [RFE-010](#rfe-010) | No deletion, retention or redaction story for transcripts and attachments                        | Privacy      | Medium   | 2                   |
+| [RFE-011](#rfe-011) | Approvals can expire unseen: fixed 300 s deadline, no notification/escalation path               | Product      | Medium   | 2 (011a) · 4 (011b) |
+| [RFE-012](#rfe-012) | Role granularity: `can_use` bundles chat, approvals and activity reads                           | Policy       | Medium   | 2                   |
+| [RFE-013](#rfe-013) | BYO agent tokens never expire and have no rotation policy                                        | Security     | Low      | 3                   |
+| [RFE-014](#rfe-014) | Gateway behaviour during a Postgres outage is unspecified (and the cache flush makes it a cliff) | Ops          | Medium   | 3                   |
+| [RFE-015](#rfe-015) | Attachments in Postgres with no retention or per-tenant quota                                    | Ops          | Medium   | 2                   |
+| [RFE-016](#rfe-016) | LISTEN/NOTIFY as the delta fan-out has a scalability ceiling with no seam                        | Ops          | Low      | 1                   |
+| [RFE-017](#rfe-017) | No general rate limiting on the management API                                                   | Ops          | Medium   | 2                   |
+| [RFE-018](#rfe-018) | No idempotency keys for turn-creating API calls                                                  | API          | Low      | 3                   |
+| [RFE-019](#rfe-019) | Deployment-specific content baked into the generic spec (Daneel brief, CERN base image)          | Polish       | Low      | 3                   |
+| [RFE-020](#rfe-020) | Skills have agent and org tiers but no workspace tier                                            | Product      | Low      | 3                   |
+| [RFE-021](#rfe-021) | Creator-bound fire-time authority: offboarding a user silently kills automations                 | Product      | Medium   | 2                   |
+| [RFE-022](#rfe-022) | Plugin major-version upgrades with existing connections are undefined                            | Plugins      | Low      | 3                   |
+| [RFE-023](#rfe-023) | Default Rule silently exempts LLM hosts — rationale undocumented                                 | Spec clarity | Low      | 3                   |
+| [RFE-024](#rfe-024) | Deprovision-before-delete ordering is racy and under-specified                                   | Spec clarity | Low      | 3                   |
+| [RFE-025](#rfe-025) | BYO agents: any member can create one, no instance/org/workspace controls, no source restriction | Security     | Medium   | 2                   |
 
 
 ---
@@ -290,31 +290,30 @@ tokens (expiry visible in the dashboard, regenerate flow already exists), plus
 reach the gateway proxy port. The spec gives no control over BYO as such:
 
 1. **Who.** Creating an agent needs only `can_use`, so any workspace member
-   can create a BYO agent and receive its token. There is no instance, org or
-   workspace setting to disable BYO or restrict it to owners (`hosted.enabled`
-   controls only hosted agents; `max_agents` is just a count shared with them).
+ can create a BYO agent and receive its token. There is no instance, org or
+ workspace setting to disable BYO or restrict it to owners (`hosted.enabled`
+ controls only hosted agents; `max_agents` is just a count shared with them).
 2. **Broad rules arm new agents automatically.** The intended safeguard is
-   that a member can create an agent but cannot arm it (grants need
-   `can_own`). But injection selection takes *any* enabled allow rule whose
-   identities match and whose target names the credential, so a hand-authored
-   rule with empty identities (e.g. allow `secrets{scope: organization,
-   kind: llm}`) selects that credential for every agent, including a BYO agent
-   created minutes ago. Owners writing such convenience rules are unlikely to
-   realise this.
+ that a member can create an agent but cannot arm it (grants need
+ `can_own`). But injection selection takes *any* enabled allow rule whose
+ identities match and whose target names the credential, so a hand-authored
+ rule with empty identities (e.g. allow `secrets{scope: organization,  kind: llm}`) selects that credential for every agent, including a BYO agent
+ created minutes ago. Owners writing such convenience rules are unlikely to
+ realise this.
 3. **Uncredentialed egress from the organisation's network.** Even with no
-   credentials, a BYO token under the default `open` egress posture turns the
-   gateway into a general forward proxy: traffic exits from the organisation's
-   network position and IP space, and every destination in
-   `gateway.allowed_private` (internal hosts the operator opened for agents)
-   becomes reachable from any laptop that holds the token. (The open lane is
-   covered by RFE-003; the MITM lane has the same property for plain
-   uncredentialed requests.)
+ credentials, a BYO token under the default `open` egress posture turns the
+ gateway into a general forward proxy: traffic exits from the organisation's
+ network position and IP space, and every destination in
+ `gateway.allowed_private` (internal hosts the operator opened for agents)
+ becomes reachable from any laptop that holds the token. (The open lane is
+ covered by RFE-003; the MITM lane has the same property for plain
+ uncredentialed requests.)
 4. **Where.** There is no source restriction on token use (no CIDR
-   allow-list), so a leaked token is usable from anywhere until someone
-   regenerates it (expiry: RFE-013).
+ allow-list), so a leaked token is usable from anywhere until someone
+ regenerates it (expiry: RFE-013).
 5. **Who is actually behind it.** Request-log rows and approvals name the
-   agent; the human operating the process is implied only by
-   `agents.created_by`, and the token can be shared freely.
+ agent; the human operating the process is implied only by
+ `agents.created_by`, and the token can be shared freely.
 
 **Why it's suboptimal.** Deployments that want "agents run only on our
 infrastructure" (hosted only) or "only owners may run agents outside the
@@ -342,7 +341,7 @@ labelled run.
 Related decisions already taken: TLS-only proxy listener (RFE-002), optional
 token maximum age (RFE-013), per-agent open-lane capability (RFE-003).
 
-**Decision:** _(pending)_
+**Decision:** Implement a (including \``byo.enabled`)`, b, c and d.
 
 ---
 
