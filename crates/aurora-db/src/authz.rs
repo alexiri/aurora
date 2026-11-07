@@ -216,6 +216,87 @@ pub async fn workspace_org<'e, E: PgExecutor<'e>>(
     )
 }
 
+// ---- conversation visibility (phase 1, RFE-009, D-47) ---------------------------------------
+
+/// `can_see_conversation` (docs/04 §The access law), given the caller's resolved workspace
+/// access (which already encodes `can_use`, so a direct user who lost access never gets here).
+/// Non-direct kinds: `can_use`. Direct: the direct user, or `can_own`.
+pub fn can_see_conversation(
+    auth: &WorkspaceAuth,
+    user: Uuid,
+    kind: &str,
+    direct_user_id: Option<Uuid>,
+) -> bool {
+    kind != "direct" || direct_user_id == Some(user) || auth.can_own()
+}
+
+/// Only the direct user writes into a direct conversation (owners read, abort and send-now).
+pub fn can_write_conversation(user: Uuid, kind: &str, direct_user_id: Option<Uuid>) -> bool {
+    kind != "direct" || direct_user_id == Some(user)
+}
+
+/// SQL boolean expression: true when `conv_expr` names a `direct` conversation that `user_param`
+/// (a `$n` placeholder) cannot see, *within the workspace `ws_expr`* (clarification C of D-47: an
+/// approval in a workspace other than its conversation's is not subject to that conversation's
+/// visibility; its conversation reference is redacted instead). A null or unknown conversation is never hidden. Used by every
+/// query that lists rows naming a conversation (approvals, activity, ...); keep in step with
+/// [`can_see_conversation`].
+pub fn hidden_direct_conversation_sql(conv_expr: &str, user_param: &str, ws_expr: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM conversations hc WHERE hc.id = {conv_expr} \
+           AND hc.kind = 'direct' AND hc.workspace_id = {ws_expr} \
+           AND hc.direct_user_id IS DISTINCT FROM {user_param} \
+           AND NOT EXISTS (SELECT 1 FROM workspaces hw \
+                JOIN org_members hm ON hm.org_id = hw.org_id AND hm.user_id = {user_param} \
+                     AND hm.status = 'active' \
+                LEFT JOIN workspace_access hwa ON hwa.workspace_id = hw.id \
+                     AND hwa.user_id = {user_param} \
+                WHERE hw.id = hc.workspace_id \
+                  AND (hm.role IN ('owner', 'admin') OR hwa.role = 'owner')))"
+    )
+}
+
+/// Can `user` see the conversation `conv` (by id)? Unknown conversation: `false`. Applies
+/// `can_use` on its workspace too.
+pub async fn can_see_conversation_id<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    conv: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT EXISTS (SELECT 1 FROM conversations c \
+           JOIN workspaces w ON w.id = c.workspace_id \
+           JOIN org_members m ON m.org_id = w.org_id AND m.user_id = $1 AND m.status = 'active' \
+           LEFT JOIN workspace_access wa ON wa.workspace_id = w.id AND wa.user_id = $1 \
+           WHERE c.id = $2 AND (m.role IN ('owner','admin') OR wa.user_id IS NOT NULL) \
+             AND NOT {})",
+        hidden_direct_conversation_sql("c.id", "$1", "w.id")
+    ))
+    .bind(user)
+    .bind(conv)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// Which of `ids` name a direct conversation `user` cannot see (to redact references).
+pub async fn hidden_conversations<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<Uuid>, DbError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT t.id FROM unnest($2::uuid[]) AS t(id) WHERE {}",
+        hidden_direct_conversation_sql("t.id", "$1", "hc.workspace_id")
+    ))
+    .bind(user)
+    .bind(ids)
+    .fetch_all(exec)
+    .await?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

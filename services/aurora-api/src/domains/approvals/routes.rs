@@ -43,6 +43,7 @@ async fn list_approvals(
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = repo::list_workspace(
         &s.pool,
+        c.user_id,
         ws,
         q.status.as_deref(),
         p.after.map(|a| (a.t, a.id)),

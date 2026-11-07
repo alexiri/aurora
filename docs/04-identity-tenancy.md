@@ -301,6 +301,13 @@ archive, delete or redact it, but cannot post as that person (403
 conversation writes an audit row `conversation.owner_view` (once per actor,
 conversation and hour; best-effort).
 
+(phase 1, RFE-009, D-47 clarification C) Conversation visibility is evaluated within
+the conversation's own workspace. A row in another workspace that merely references the
+conversation (the target side of a cross-workspace action approval, `07 §Action
+approvals`) is governed by its own workspace's law and carries the reference redacted
+(`null` + `conversation_hidden: true`); its decider never receives the conversation id or
+the frozen payload.
+
 ### Permission matrix
 
 | Action | Required |

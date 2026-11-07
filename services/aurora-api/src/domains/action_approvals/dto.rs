@@ -19,8 +19,12 @@ pub struct ActionApproval {
     pub id: Uuid,
     pub workspace_id: Uuid,
     pub agent_id: Uuid,
+    /// Null when the approval belongs to another workspace than its conversation (the decider
+    /// never learns that conversation's id), see `conversation_hidden`.
     pub conversation_id: Option<Uuid>,
     pub turn_id: Option<Uuid>,
+    /// True when `conversation_id`/`turn_id` were redacted (phase 1, RFE-009, D-47 clarification C).
+    pub conversation_hidden: bool,
     pub action_key: String,
     /// Platform-composed one-liner; never raw model text.
     pub summary: String,
@@ -36,12 +40,22 @@ pub struct ActionApproval {
 
 impl From<ActionApprovalRow> for ActionApproval {
     fn from(r: ActionApprovalRow) -> Self {
+        // Clarification C of D-47: a decider in another workspace than the conversation sees only
+        // the platform-composed summary, never the conversation or turn id.
+        let foreign =
+            r.conversation_id.is_some() && r.conversation_workspace_id != Some(r.workspace_id);
+        let (conversation_id, turn_id) = if foreign {
+            (None, None)
+        } else {
+            (r.conversation_id, r.turn_id)
+        };
         Self {
             id: r.id,
             workspace_id: r.workspace_id,
             agent_id: r.agent_id,
-            conversation_id: r.conversation_id,
-            turn_id: r.turn_id,
+            conversation_id,
+            turn_id,
+            conversation_hidden: foreign,
             action_key: r.action_key,
             summary: r.summary,
             status: r.status,

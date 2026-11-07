@@ -162,6 +162,18 @@ pub async fn decide(
     if !auth.can_use() {
         return Err(not_found());
     }
+    // RFE-009: an approval naming a direct conversation the caller cannot see does not exist.
+    // (Clarification C of D-47: only within the conversation's own workspace.)
+    if !aurora_db::repo::approvals::conversation_visible(
+        &s.pool,
+        c.user_id,
+        existing.workspace_id,
+        existing.conversation_id,
+    )
+    .await?
+    {
+        return Err(not_found());
+    }
     // Fail loud (07): an unregistered key is a deployment defect, not a client error.
     let Some(handler) = handlers::handler(&existing.action_key) else {
         tracing::error!(approval = %id, key = %existing.action_key,

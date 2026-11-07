@@ -51,11 +51,41 @@ const SELECT: &str = "SELECT a.id, a.org_id, a.workspace_id, a.agent_id, ag.name
     LEFT JOIN users u ON u.id = a.decided_by_user_id";
 
 /// `$1` = user: the access law for `can_use` on the approval's workspace.
-const MAY_DECIDE: &str = "EXISTS (SELECT 1 FROM workspaces w \
+const MAY_DECIDE_BASE: &str = "EXISTS (SELECT 1 FROM workspaces w \
     JOIN org_members m ON m.org_id = w.org_id AND m.user_id = $1 AND m.status = 'active' \
     LEFT JOIN workspace_access wa ON wa.workspace_id = w.id AND wa.user_id = $1 \
     WHERE w.id = a.workspace_id AND w.org_id = a.org_id \
       AND (m.role IN ('owner', 'admin') OR wa.user_id IS NOT NULL))";
+
+/// `MAY_DECIDE` plus conversation visibility (phase 1, RFE-009): an approval naming a direct
+/// conversation the user cannot see is neither visible nor decidable.
+fn may_decide() -> String {
+    format!(
+        "({MAY_DECIDE_BASE} AND NOT {})",
+        crate::authz::hidden_direct_conversation_sql("a.conversation_id", "$1", "a.workspace_id")
+    )
+}
+
+/// Can `user` see this approval's conversation (approvals without one: always)?
+pub async fn conversation_visible(
+    pool: &PgPool,
+    user: Uuid,
+    workspace_id: Uuid,
+    conversation_id: Option<Uuid>,
+) -> Result<bool, DbError> {
+    match conversation_id {
+        None => Ok(true),
+        Some(c) => Ok(sqlx::query_scalar(&format!(
+            "SELECT NOT {}",
+            crate::authz::hidden_direct_conversation_sql("$2::uuid", "$1", "$3::uuid")
+        ))
+        .bind(user)
+        .bind(c)
+        .bind(workspace_id)
+        .fetch_one(pool)
+        .await?),
+    }
+}
 
 pub async fn get(pool: &PgPool, id: Uuid) -> Result<Option<ApprovalRow>, DbError> {
     Ok(sqlx::query_as(&format!("{SELECT} WHERE a.id = $1"))
@@ -67,6 +97,7 @@ pub async fn get(pool: &PgPool, id: Uuid) -> Result<Option<ApprovalRow>, DbError
 /// Workspace history, newest first, optional status filter.
 pub async fn list_workspace(
     pool: &PgPool,
+    viewer: Uuid,
     ws: Uuid,
     status: Option<&str>,
     after: After,
@@ -74,15 +105,18 @@ pub async fn list_workspace(
 ) -> Result<Vec<ApprovalRow>, DbError> {
     let (t, id) = split(after);
     Ok(sqlx::query_as(&format!(
-        "{SELECT} WHERE a.workspace_id = $1 AND ($2::text IS NULL OR a.status = $2) \
+        "{SELECT} WHERE a.workspace_id = $6 AND ($2::text IS NULL OR a.status = $2) \
          AND ($3::timestamptz IS NULL OR (a.created_at, a.id) < ($3, $4)) \
-         ORDER BY a.created_at DESC, a.id DESC LIMIT $5"
+         AND NOT {} \
+         ORDER BY a.created_at DESC, a.id DESC LIMIT $5",
+        crate::authz::hidden_direct_conversation_sql("a.conversation_id", "$1", "a.workspace_id")
     ))
-    .bind(ws)
+    .bind(viewer)
     .bind(status)
     .bind(t)
     .bind(id)
     .bind(fetch)
+    .bind(ws)
     .fetch_all(pool)
     .await?)
 }
@@ -97,9 +131,10 @@ pub async fn list_pending_for(
     limit: i64,
 ) -> Result<Vec<ApprovalRow>, DbError> {
     Ok(sqlx::query_as(&format!(
-        "{SELECT} WHERE a.status = 'pending' AND {MAY_DECIDE} \
+        "{SELECT} WHERE a.status = 'pending' AND {} \
          AND ($2::uuid IS NULL OR a.org_id = $2) AND ($3::uuid IS NULL OR a.workspace_id = $3) \
-         ORDER BY a.created_at ASC, a.id ASC LIMIT $4"
+         ORDER BY a.created_at ASC, a.id ASC LIMIT $4",
+        may_decide()
     ))
     .bind(user)
     .bind(org)
@@ -164,8 +199,9 @@ pub async fn batch_visible(
 ) -> Result<bool, DbError> {
     Ok(sqlx::query_scalar(&format!(
         "SELECT EXISTS (SELECT 1 FROM approvals a WHERE a.batch_id = $5 AND a.agent_id = $4 \
-         AND {MAY_DECIDE} AND ($2::uuid IS NULL OR a.org_id = $2) \
-         AND ($3::uuid IS NULL OR a.workspace_id = $3))"
+         AND {} AND ($2::uuid IS NULL OR a.org_id = $2) \
+         AND ($3::uuid IS NULL OR a.workspace_id = $3))",
+        may_decide()
     ))
     .bind(user)
     .bind(org)
@@ -193,9 +229,10 @@ pub async fn decide_batch(
     let rows: Vec<(Uuid, Uuid, Uuid)> = sqlx::query_as(&format!(
         "UPDATE approvals a SET status = $6, decided_by_user_id = $1, decided_via = $7, \
          decided_at = now(), updated_at = now() \
-         WHERE a.status = 'pending' AND a.batch_id = $5 AND a.agent_id = $4 AND {MAY_DECIDE} \
+         WHERE a.status = 'pending' AND a.batch_id = $5 AND a.agent_id = $4 AND {} \
          AND ($2::uuid IS NULL OR a.org_id = $2) AND ($3::uuid IS NULL OR a.workspace_id = $3) \
-         RETURNING a.id, a.workspace_id, a.org_id"
+         RETURNING a.id, a.workspace_id, a.org_id",
+        may_decide()
     ))
     .bind(user)
     .bind(org)

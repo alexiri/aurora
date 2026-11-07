@@ -230,6 +230,11 @@ export function ChatTab({ agentId, wsId, base }: { agentId: string; wsId: string
   if (direct.isError) return <ErrorState error={direct.error} onRetry={() => void direct.refetch()} />;
   const convId = picked ?? direct.data.id;
   const convs = list.data?.items ?? [];
+  // RFE-009: other members' direct conversations (owners only; the API returns them with
+  // `direct_user`) are listed apart, read-only, and marked as visible to workspace owners.
+  const others = convs.filter((c) => c.id !== direct.data.id && c.kind !== "direct");
+  const memberDirects = convs.filter((c) => c.id !== direct.data.id && c.kind === "direct" && c.direct_user);
+  const pickedDirect = memberDirects.find((c) => c.id === picked) ?? null;
   return (
     <div className="grid gap-4 md:grid-cols-[14rem_1fr]">
       <nav aria-label="Conversations" className="space-y-1 text-sm">
@@ -241,27 +246,68 @@ export function ChatTab({ agentId, wsId, base }: { agentId: string; wsId: string
         >
           Direct chat
         </button>
-        {convs
-          .filter((c) => c.id !== direct.data.id)
-          .map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => setPicked(c.id)}
-              aria-current={picked === c.id}
-              className={`block w-full rounded px-2 py-1 text-left ${picked === c.id ? "bg-neutral-100 font-medium" : ""}`}
-            >
-              <span className="mr-1 rounded-full border border-neutral-300 px-1.5 text-xs">{c.kind}</span>
-              {c.title ?? c.external_ref}
-            </button>
-          ))}
+        {others.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => setPicked(c.id)}
+            aria-current={picked === c.id}
+            className={`block w-full rounded px-2 py-1 text-left ${picked === c.id ? "bg-neutral-100 font-medium" : ""}`}
+          >
+            <span className="mr-1 rounded-full border border-neutral-300 px-1.5 text-xs">{c.kind}</span>
+            {c.title ?? c.external_ref}
+          </button>
+        ))}
+        {memberDirects.length > 0 ? (
+          <div role="group" aria-label="Direct conversations of other members" className="space-y-1 pt-2">
+            <p className="px-2 text-xs font-medium text-neutral-600">Direct conversations of other members</p>
+            {memberDirects.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setPicked(c.id)}
+                aria-current={picked === c.id}
+                className={`block w-full rounded px-2 py-1 text-left ${picked === c.id ? "bg-neutral-100 font-medium" : ""}`}
+              >
+                {c.direct_user?.display_name}
+                <span className="block text-xs text-neutral-600">visible to workspace owners</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
       </nav>
-      <ChatPane key={convId} agentId={agentId} wsId={wsId} base={base} convId={convId} direct={convId === direct.data.id ? direct.data : null} />
+      <ChatPane
+        key={convId}
+        agentId={agentId}
+        wsId={wsId}
+        base={base}
+        convId={convId}
+        direct={convId === direct.data.id ? direct.data : null}
+        ownerView={pickedDirect?.direct_user?.display_name ?? null}
+        ownDirect={convId === direct.data.id}
+      />
     </div>
   );
 }
 
-export function ChatPane({ agentId, wsId, base, convId, direct }: { agentId: string; wsId: string; base: string; convId: string; direct: Conversation | null }) {
+export function ChatPane({
+  agentId,
+  wsId,
+  base,
+  convId,
+  direct,
+  ownerView = null,
+  ownDirect = false,
+}: {
+  agentId: string;
+  wsId: string;
+  base: string;
+  convId: string;
+  direct: Conversation | null;
+  /** Display name of the person whose direct conversation an owner is reading (read-only). */
+  ownerView?: string | null;
+  ownDirect?: boolean;
+}) {
   const qc = useQueryClient();
   const { state, loading, error, live } = useTranscript(convId);
   const [text, setText] = useState("");
@@ -320,6 +366,17 @@ export function ChatPane({ agentId, wsId, base, convId, direct }: { agentId: str
 
   return (
       <section aria-label="Chat" className="space-y-3">
+        {ownDirect || direct ? (
+          <p role="note" className="rounded bg-neutral-100 p-2 text-xs text-neutral-700">
+            Only you and workspace owners can see this conversation.
+          </p>
+        ) : null}
+        {ownerView !== null ? (
+          <p role="note" className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+            This is {ownerView || "another member"}&apos;s direct conversation. You can read it because you own this workspace; your
+            access is recorded in the audit log. You can stop its turns but cannot write in it.
+          </p>
+        ) : null}
         {loading ? <Loading /> : null}
         {error ? <ErrorState error={error} /> : null}
         {!loading && !error && state.events.length === 0 ? (
@@ -366,6 +423,13 @@ export function ChatPane({ agentId, wsId, base, convId, direct }: { agentId: str
             {uploadErr}
           </p>
         ) : null}
+        {ownerView !== null ? (
+          active ? (
+            <Button type="button" variant="outline" onClick={() => void act(() => chatApi.abort(active))}>
+              Stop
+            </Button>
+          ) : null
+        ) : (
         <form onSubmit={(e) => void submit(e)} className="flex gap-2">
           <label htmlFor="chat-input" className="sr-only">
             Message
@@ -402,6 +466,7 @@ export function ChatPane({ agentId, wsId, base, convId, direct }: { agentId: str
             ) : null}
           </div>
         </form>
+        )}
       </section>
   );
 }

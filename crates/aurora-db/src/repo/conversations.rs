@@ -87,6 +87,7 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     agent_id: Uuid,
     kind: Option<&str>,
     viewer: Uuid,
+    viewer_owns: bool,
     after: After,
     fetch: i64,
 ) -> Result<Vec<ConversationRow>, DbError> {
@@ -94,7 +95,7 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     Ok(sqlx::query_as(&format!(
         "SELECT {COLS} FROM conversations
          WHERE agent_id = $1 AND ($2::text IS NULL OR kind = $2)
-           AND (kind <> 'direct' OR direct_user_id = $3)
+           AND (kind <> 'direct' OR direct_user_id = $3 OR $7)
            AND ($4::timestamptz IS NULL OR (last_activity_at, id) < ($4, $5))
          ORDER BY last_activity_at DESC, id DESC LIMIT $6"
     ))
@@ -104,6 +105,7 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     .bind(t)
     .bind(id)
     .bind(fetch)
+    .bind(viewer_owns)
     .fetch_all(exec)
     .await?)
 }

@@ -19,7 +19,10 @@ pub struct PeerTask {
     /// `outgoing` when the listed agent requested the task, `incoming` when it received it.
     pub direction: String,
     pub requester: Option<PeerTaskRequester>,
-    pub origin_conversation_id: Uuid,
+    /// Null when the caller cannot see that (direct) conversation; see `conversation_hidden`.
+    pub origin_conversation_id: Option<Uuid>,
+    /// True when `origin_conversation_id` was redacted (phase 1, RFE-009).
+    pub conversation_hidden: bool,
     pub task_conversation_id: Uuid,
     /// `queued` | `open` | `completed` | `cancelled` | `expired`
     pub status: String,
@@ -49,7 +52,8 @@ impl PeerTask {
             link_id: r.link_id,
             from_agent_id: r.from_agent_id,
             to_agent_id: r.to_agent_id,
-            origin_conversation_id: r.origin_conversation_id,
+            origin_conversation_id: Some(r.origin_conversation_id),
+            conversation_hidden: false,
             task_conversation_id: r.task_conversation_id,
             status: r.status,
             messages_used: r.messages_used,

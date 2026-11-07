@@ -51,6 +51,13 @@ pub struct MessageAccepted {
     pub followup: Option<Followup>,
 }
 
+/// The person a `direct` conversation belongs to (phase 1, RFE-009).
+#[derive(Serialize, ToSchema)]
+pub struct DirectUser {
+    pub id: Uuid,
+    pub display_name: String,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct Conversation {
     pub id: Uuid,
@@ -60,6 +67,9 @@ pub struct Conversation {
     pub external_ref: String,
     pub title: Option<String>,
     pub direct_user_id: Option<Uuid>,
+    /// Set on `direct` conversations returned by the agent's conversation list to a workspace
+    /// owner who is not that person (RFE-009: "visible to workspace owners"); otherwise null.
+    pub direct_user: Option<DirectUser>,
     pub origin_conversation_id: Option<Uuid>,
     pub last_seq: i64,
     /// Consecutive bot/agent turns since the last person-authored turn or `continue` (C-27).
@@ -187,6 +197,7 @@ impl Conversation {
             external_ref: c.external_ref,
             title: c.title,
             direct_user_id: c.direct_user_id,
+            direct_user: None,
             origin_conversation_id: c.origin_conversation_id,
             last_seq: c.last_seq,
             app_turn_streak: i64::from(c.app_turn_streak),

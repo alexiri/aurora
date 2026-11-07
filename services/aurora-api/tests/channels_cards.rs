@@ -873,3 +873,37 @@ async fn suspended_member_click_is_refused_everywhere() {
     );
     assert_eq!(w.status("approvals", id).await, "approved");
 }
+
+/// RFE-009 / SEC-43: a card for an approval naming a direct conversation can be acted on only by
+/// that person or a workspace owner; a plain member who can otherwise use the workspace is
+/// refused before the token is consumed.
+#[tokio::test]
+async fn dm_approval_card_click_by_non_participant_is_refused() {
+    let w = W::new(&FULL).await;
+    let (id, op) = w.approval_card().await;
+    // The conversation turns out to be a direct conversation of a third person.
+    let other = w.h.user("dm@x.io", false).await;
+    w.h.member(w.org, other, "member", "active").await;
+    w.h.bind_ws(w.ws, other, "member").await;
+    sqlx::query("UPDATE conversations SET kind = 'direct', direct_user_id = $2, external_ref = 'user:x' WHERE id = $1")
+        .bind(w.conv)
+        .bind(other)
+        .execute(w.pool())
+        .await
+        .unwrap();
+    let tok = W::token(&op, "Approve");
+    let out = w
+        .click_in(w.integ, &tok, "U_MEMBER", None, Some("C1"))
+        .await;
+    assert_eq!(
+        (out["result"].as_str(), out["reason"].as_str()),
+        (Some("refused"), Some("forbidden")),
+        "{out}"
+    );
+    assert_eq!(w.status("approvals", id).await, "pending");
+    assert_eq!(w.token_uses().await, 0);
+    // The owner (org owner = can_own) may act.
+    let out = w.click_in(w.integ, &tok, "U_OWNER", None, Some("C1")).await;
+    assert_eq!(out["result"].as_str(), Some("done"), "{out}");
+    assert_eq!(w.status("approvals", id).await, "approved");
+}
