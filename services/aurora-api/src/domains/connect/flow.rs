@@ -28,6 +28,12 @@ pub struct Flow {
     pub continuation: Option<String>,
     /// Scopes requested at authorize time.
     pub scopes: Vec<String>,
+    /// Validated tenant host from the connect form (S-14), for templated OAuth URLs.
+    #[serde(default)]
+    pub tenant_host: Option<String>,
+    /// Non-secret form values stored as connection metadata.
+    #[serde(default)]
+    pub metadata: serde_json::Map<String, serde_json::Value>,
     pub exp: i64,
 }
 

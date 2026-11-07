@@ -4,12 +4,11 @@ use crate::app::AppState;
 use aurora_core::ApiError;
 use aurora_db::{
     DbError,
-    repo::{agents, runners::RunnerRow, sandboxes},
+    repo::{agents, runners::RunnerRow, sandboxes, tool_identity},
 };
 use aurora_protocol::common::Validate;
 use aurora_protocol::tools::{ToolCall, ToolResult};
 use http::StatusCode;
-use uuid::Uuid;
 
 pub async fn tool_call(
     s: &AppState,
@@ -49,26 +48,15 @@ async fn identity(
     if sb.boot_id != Some(req.boot_id) || !matches!(sb.state.as_str(), "starting" | "running") {
         return Err(ApiError::conflict("fenced", "Sandbox boot is not current."));
     }
-    let conv_agent: Option<Uuid> =
-        sqlx::query_scalar("SELECT agent_id FROM conversations WHERE id = $1")
-            .bind(req.call.conversation_id)
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(DbError::from)?;
+    let conv_agent =
+        tool_identity::conversation_agent(&mut *conn, req.call.conversation_id).await?;
     if conv_agent != Some(sb.agent_id) {
         return Err(ApiError::not_found("Unknown conversation."));
     }
     if let Some(turn) = req.call.turn_id {
-        let active: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM turns WHERE id = $1 AND conversation_id = $2 \
-             AND agent_id = $3 AND status IN ('dispatched', 'running'))",
-        )
-        .bind(turn)
-        .bind(req.call.conversation_id)
-        .bind(sb.agent_id)
-        .fetch_one(&mut *conn)
-        .await
-        .map_err(DbError::from)?;
+        let active =
+            tool_identity::turn_is_active(&mut *conn, turn, req.call.conversation_id, sb.agent_id)
+                .await?;
         if !active {
             return Err(ApiError::new(
                 StatusCode::FORBIDDEN,

@@ -1,3 +1,4 @@
+use aurora_llm::governance::OrgGovernance;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -6,14 +7,14 @@ use uuid::Uuid;
 #[derive(Debug, Serialize, ToSchema)]
 pub struct GovernanceDocument {
     /// The `08 §11.2` organization governance document (normalized).
-    #[schema(value_type = Object)]
+    #[schema(value_type = OrgGovernance)]
     pub document: Value,
     pub revision: i64,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PutGovernance {
-    #[schema(value_type = Object)]
+    #[schema(value_type = OrgGovernance)]
     pub document: Value,
     pub revision: i64,
 }

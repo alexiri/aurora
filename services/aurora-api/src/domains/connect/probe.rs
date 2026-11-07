@@ -35,6 +35,7 @@ pub struct Vars<'a> {
 
 fn dns_ok(s: &str) -> bool {
     !s.is_empty()
+        && s.parse::<std::net::IpAddr>().is_err()
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
         && !s.starts_with('.')

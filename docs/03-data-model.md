@@ -222,6 +222,7 @@ Audit writes are best-effort and never fail the action (logged on failure).
 | credentials_version | bigint not null default 1 | CAS authority for refresh/mint writes |
 | credentials_expires_at | timestamptz null | access-token expiry (refresh trigger) |
 | scopes | text[] not null default `{}` | granted scopes |
+| requested_scopes | text[] not null default `{}` | scopes requested at authorize time; `missing_scopes = requested_scopes − scopes` (I-33) |
 | metadata | jsonb not null default `{}` | non-secret, plugin-declared keys only |
 | tenant_host | text null | for tenant-bound hosts |
 | oauth_client_id | uuid null FK→app_oauth_clients (restrict) | which client minted it |

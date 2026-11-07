@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ConnectionsTab } from "@/components/apps/connections-tab";
 import { AvailabilityEditor } from "@/components/apps/availability-view";
 import { DynamicForm } from "@/components/apps/dynamic-form";
 import { Markdown, safeHref } from "@/components/apps/markdown";
@@ -15,6 +16,8 @@ import {
   validateFields,
   type FormField,
 } from "@/lib/api/apps";
+
+vi.mock("next/navigation", () => ({ useParams: () => ({ org: "o1", ws: "w1" }) }));
 
 const json = (status: number, body: unknown) =>
   new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -136,5 +139,27 @@ describe("oauth client secrets", () => {
     expect(screen.getByLabelText("Client ID")).toHaveValue("abc");
     expect(screen.getByText("Create an app first.")).toBeInTheDocument();
     expect(screen.getByText("https://x.test/v1/oauth/callback")).toBeInTheDocument();
+  });
+});
+
+describe("connection missing scopes", () => {
+  const conn = (over: Record<string, unknown>) => ({
+    id: "k1", org_id: "o", workspace_id: "w1", scope: "workspace", app_id: "gmail", package_id: "p", app_version: "1",
+    label: "me@acme.io", status: "active", status_reason: null, scopes: ["read"], missing_scopes: [], metadata: {},
+    tenant_host: null, oauth_client_id: null, credentials_expires_at: null, connected_by: null, last_used_at: null,
+    created_at: "", updated_at: "", injecting: [], ...over,
+  });
+  async function show(c: unknown) {
+    vi.stubGlobal("fetch", vi.fn(async () => json(200, { items: [c], next_cursor: null })));
+    wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
+    await screen.findByText("me@acme.io");
+  }
+  it("warns when requested scopes were not granted", async () => {
+    await show(conn({ missing_scopes: ["write", "admin"] }));
+    expect(screen.getByRole("status")).toHaveTextContent("not granted: write, admin");
+  });
+  it("shows no warning for a full grant", async () => {
+    await show(conn({}));
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });

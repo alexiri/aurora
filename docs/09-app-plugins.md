@@ -94,6 +94,7 @@ oauth_clients:
   - id: google
     authorize_url: https://accounts.google.com/o/oauth2/v2/auth
     token_url: https://oauth2.googleapis.com/token
+    # authorize_url may be templated the same way (S-14)
     # or tenant-derived: token_url: { template: "https://{connection.tenant_host}/oauth/token", zone: "*.zendesk.com" }
     pkce: true                    # S256
     client_auth: body             # body | basic
@@ -154,8 +155,15 @@ metadata:                       # stored in clear, non-secret
     refresh_token: /refresh_token
     expires_in: /expires_in     # special: converted to credentials_expires_at
     scope: /scope               # special: becomes connection.scopes
+  fields:                       # optional (S-14); only store: metadata | tenant_host
+    - { name: subdomain, label: Host, type: text, store: tenant_host, required: true, placeholder: "acme.zendesk.com" }
   probe: { … }                  # optional, names the account
 ```
+`fields` on `oauth2` exist so a **first** connect with a templated `authorize_url`/`token_url`
+can take `connection.tenant_host` from the form. The host is validated (`tenant` zone, DNS
+name only: no IP literal, userinfo, port or path) **before** the authorize redirect or any
+outbound request and is carried in the encrypted state. `store: credentials` (and `json_file`)
+is rejected (`oauth_field_store`): credentials come from the token response only.
 
 **`fields`** (API keys, credential imports)
 ```yaml
@@ -562,7 +570,7 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
    challenge); `hook` with authorize: call `connect.authorize`. The **state** is
    AEAD-encrypted (purpose `oauth-state`, TTL `OAUTH_STATE_TTL`) and carries
    `{nonce, app_id, method_id, scope, workspace_id, org_id, user_id, client_id,
-   access_level, pkce_verifier, reconnect_connection_id, continuation}`; it is
+   access_level, pkce_verifier, reconnect_connection_id, continuation, scopes (requested), tenant_host, metadata}`; it is
    also set as a `__Host-aurora_oauth` cookie bound to the browser.
 3. `GET /v1/oauth/callback`: state must decrypt, be unexpired, match the cookie
    and the session user. Fragment-mode providers land on a bridge page that

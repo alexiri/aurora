@@ -74,6 +74,11 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
         {c.connected_by ? `Connected by ${c.connected_by.display_name} · ` : ""}
         {c.last_used_at ? `Last used ${new Date(c.last_used_at).toLocaleString()}` : "Never used"}
       </p>
+      {c.missing_scopes.length ? (
+        <p role="status" className="text-xs text-amber-700">
+          Some requested scopes were not granted: {c.missing_scopes.join(", ")}. Reconnect and approve them to restore full access.
+        </p>
+      ) : null}
       {ok.length ? <p className="text-xs">Injecting credentials for: {ok.map((i) => i.host).join(", ")}</p> : null}
       {lost.length ? (
         <p className="text-xs text-amber-700">

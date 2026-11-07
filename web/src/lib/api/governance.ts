@@ -15,17 +15,9 @@ export type AllowlistEntry = S["AllowlistEntry"];
 export type KeyScope = "organization" | "workspace";
 export const KEY_SCOPES: KeyScope[] = ["organization", "workspace"];
 
-/** The `08 §11.2` document (the generated schema leaves it untyped). */
-export interface GovEndpointDoc {
-  allowed: boolean;
-  key_scopes: string[];
-  allowed_models: string[];
-  origin: { allowed_organization_ids: string[]; allowed_workspace_ids: string[]; allowed_team_ids: string[] };
-}
-export interface GovDocument {
-  llm: { posture: "open" | "sanctioned_only"; endpoints: Record<string, GovEndpointDoc> };
-  egress: { posture: "open" | "credentialed_only"; allowlist: AllowlistEntry[] };
-}
+/** The `08 §11.2` organization governance document (generated schema, D-32). */
+export type GovDocument = S["OrgGovernance"];
+export type GovEndpointDoc = S["OrgEndpoint"];
 
 export const govKeys = {
   doc: (org: string) => ["governance", org, "doc"] as const,
@@ -70,7 +62,7 @@ export function usePutGovernance(orgId: string) {
       unwrap(
         api.PUT("/v1/orgs/{org}/governance", {
           params: { path: { org: orgId } },
-          body: { document: body.document as unknown as Record<string, never>, revision: body.revision },
+          body: { document: body.document, revision: body.revision },
         }),
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["governance", orgId] }),

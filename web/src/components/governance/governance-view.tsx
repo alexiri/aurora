@@ -68,7 +68,7 @@ export function GovernanceView({ orgId, orgSlug, canEdit }: { orgId: string; org
       orgSlug={orgSlug}
       eff={eff.data!}
       revision={doc.data?.revision ?? 0}
-      initial={canEdit ? formFromDocument(doc.data?.document as never, eff.data!) : formFromEffective(eff.data!)}
+      initial={canEdit ? formFromDocument(doc.data?.document, eff.data!) : formFromEffective(eff.data!)}
       canEdit={canEdit}
       onReload={() => void Promise.all([doc.refetch(), eff.refetch()])}
     />

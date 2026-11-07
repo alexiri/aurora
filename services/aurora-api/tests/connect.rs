@@ -30,6 +30,12 @@ oauth_clients:
     fields:
       - { name: client_id, label: Client ID }
       - { name: client_secret, label: Secret, secret: true }
+  - id: tenantco
+    authorize_url: { template: "https://{connection.tenant_host}/authorize", zone: "*.tenant.example.test" }
+    token_url: { template: "https://{connection.tenant_host}/token", zone: "*.tenant.example.test" }
+    fields:
+      - { name: client_id, label: Client ID }
+      - { name: client_secret, label: Secret, secret: true }
 apps:
   - about: { id: acme_app, name: Acme, description: D, category: dev, web_hosts: [app.acme.example] }
     credentials:
@@ -61,6 +67,24 @@ apps:
       - match: { host: "api.acme.example" }
         inject:
           - bearer: "{credentials.api_token}"
+  - about: { id: tenant_app, name: Tenant, description: D, category: dev, web_hosts: [www.tenant.example.test] }
+    credentials:
+      - { name: access_token, secret: true, optional: true }
+      - { name: refresh_token, secret: true, optional: true }
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: tenantco
+        scopes:
+          - { scope: read, name: Read, access: read }
+        default_scopes: [read]
+        fields:
+          - { name: subdomain, label: Host, type: text, store: tenant_host, required: true }
+    hosts:
+      - match: { host: "*.tenant.example.test" }
+        tenant: { field: connection.tenant_host, zone: "*.tenant.example.test" }
+        inject:
+          - bearer: "{credentials.access_token}"
 "#;
 
 struct W {
@@ -506,4 +530,153 @@ async fn hook_authorize_and_exchange_via_stub_host() {
     assert_eq!(label, "Hooked");
     // hook host down => connect_hook_failed
     drop(stub);
+}
+
+#[tokio::test]
+async fn missing_scopes_surface_on_page_connection_and_dto() {
+    let w = world(None).await;
+    w.oauth_client().await;
+    // The provider grants fewer scopes than requested (read + write).
+    w.oauth.set_extra(json!({"scope": "read"}));
+    let (url, ck) = w.start_oauth().await;
+    let loc = w.oauth.approve(&url).await;
+    let (pg, _) = w.page(&w.owner, Some(&ck), &local(&loc)).await;
+    assert!(pg.contains("missing_scopes:[\"write\"]"), "{pg}");
+    assert!(pg.contains("were not granted: write"), "{pg}");
+    assert!(!pg.contains("window.close();</script>") || pg.contains("length===0"));
+    let (id, requested): (Uuid, Vec<String>) =
+        sqlx::query_as("SELECT id, requested_scopes FROM app_connections")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(requested, vec!["read".to_owned(), "write".to_owned()]);
+    let (s, _, v) = w
+        .call(
+            &w.owner,
+            Method::GET,
+            &format!("/v1/connections/{id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["scopes"], json!(["read"]));
+    assert_eq!(v["missing_scopes"], json!(["write"]));
+}
+
+#[tokio::test]
+async fn full_grant_has_no_missing_scopes() {
+    let w = world(None).await;
+    w.oauth_client().await;
+    w.oauth.set_extra(json!({"scope": "read write"}));
+    let (url, ck) = w.start_oauth().await;
+    let loc = w.oauth.approve(&url).await;
+    let (pg, _) = w.page(&w.owner, Some(&ck), &local(&loc)).await;
+    assert!(pg.contains("missing_scopes:[]"), "{pg}");
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM app_connections")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let (_, _, v) = w
+        .call(
+            &w.owner,
+            Method::GET,
+            &format!("/v1/connections/{id}"),
+            None,
+        )
+        .await;
+    assert_eq!(v["missing_scopes"], json!([]));
+}
+
+impl W {
+    async fn tenant_client(&self) {
+        let (s, _, v) = self
+            .call(&self.owner, Method::POST, &format!("/v1/workspaces/{}/oauth-clients", self.ws),
+                Some(json!({"package_id": "acme", "client_key": "tenantco", "fields": {"client_id": "cid", "client_secret": "csec"}})))
+            .await;
+        assert_eq!(s, 201, "{v}");
+    }
+
+    async fn tenant_connect(&self, host: &str) -> (u16, Value) {
+        let mut b = self.connect_body("oauth");
+        b["fields"] = json!({"subdomain": host});
+        let (s, _, v) = self
+            .call(
+                &self.owner,
+                Method::POST,
+                "/v1/apps/tenant_app/connect",
+                Some(b),
+            )
+            .await;
+        (s, v)
+    }
+}
+
+#[tokio::test]
+async fn first_connect_takes_tenant_host_from_fields() {
+    let w = world(None).await;
+    w.tenant_client().await;
+    let (s, v) = w.tenant_connect("Acme.Tenant.Example.Test").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["kind"], "redirect");
+    let url = v["url"].as_str().unwrap();
+    assert!(
+        url.starts_with("https://acme.tenant.example.test/authorize?"),
+        "{url}"
+    );
+    assert!(w.oauth.token_requests().is_empty());
+}
+
+#[tokio::test]
+async fn tenant_host_outside_zone_ip_or_tricks_is_refused_before_any_request() {
+    let w = world(None).await;
+    w.tenant_client().await;
+    for bad in [
+        "evil.example.com",
+        "tenant.example.test",
+        "10.0.0.1",
+        "127.0.0.1",
+        "acme.tenant.example.test@evil.example.com",
+        "evil.example.com@acme.tenant.example.test",
+        "acme.tenant.example.test:8443",
+        "acme.tenant.example.test/path",
+        "",
+    ] {
+        let (s, v) = w.tenant_connect(bad).await;
+        assert_eq!(s, 400, "{bad}: {v}");
+        assert_eq!(v["error"]["code"], "invalid_request", "{bad}");
+    }
+    assert!(w.oauth.token_requests().is_empty());
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM app_connections")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test]
+async fn tenant_oauth_callback_stores_host_and_exchanges_against_it() {
+    let w = world(None).await;
+    w.tenant_client().await;
+    let mut b = w.connect_body("oauth");
+    b["fields"] = json!({"subdomain": "acme.tenant.example.test"});
+    let (s, sc, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/tenant_app/connect",
+            Some(b),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // The provider is the in-process mock; the test override maps the tenant host to it.
+    let url = v["url"].as_str().unwrap().to_owned();
+    let ck = sc[0].1.split(';').next().unwrap().to_owned();
+    let loc = w.oauth.approve(&url).await;
+    let (pg, _) = w.page(&w.owner, Some(&ck), &local(&loc)).await;
+    assert!(pg.contains("aurora:connected"), "{pg}");
+    let host: Option<String> = sqlx::query_scalar("SELECT tenant_host FROM app_connections")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(host.as_deref(), Some("acme.tenant.example.test"));
 }

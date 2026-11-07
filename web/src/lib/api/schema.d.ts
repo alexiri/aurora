@@ -3477,6 +3477,8 @@ export interface components {
             metadata: {
                 [key: string]: string;
             };
+            /** @description Scopes requested at authorize time that the provider did not grant (C-42). */
+            missing_scopes: string[];
             /** Format: uuid */
             oauth_client_id?: string | null;
             /** Format: uuid */
@@ -3856,6 +3858,11 @@ export interface components {
             org_ceiling?: string | null;
             tool_id: string;
         };
+        /**
+         * @description Egress posture, ordered by strictness (`open` < `credentialed_only`).
+         * @enum {string}
+         */
+        EgressPosture: "open" | "credentialed_only";
         ErrorBody: {
             /** @description snake_case machine code. */
             code: string;
@@ -3907,7 +3914,7 @@ export interface components {
         GenerationStatus: "draft" | "published" | "superseded";
         GovernanceDocument: {
             /** @description The `08 §11.2` organization governance document (normalized). */
-            document: Record<string, never>;
+            document: components["schemas"]["OrgGovernance"];
             /** Format: int64 */
             revision: number;
         };
@@ -4102,6 +4109,11 @@ export interface components {
             permitted?: boolean | null;
             provider: string;
         };
+        /**
+         * @description LLM posture, ordered by strictness (`open` < `sanctioned_only`).
+         * @enum {string}
+         */
+        LlmPosture: "open" | "sanctioned_only";
         LlmProviderInfo: {
             auth_modes: string[];
             dialects: string[];
@@ -4266,6 +4278,75 @@ export interface components {
             name: string;
             settings: components["schemas"]["OrgSettings"];
             slug: string;
+        };
+        /** @description An egress allow-list entry in policy host/path pattern syntax. */
+        OrgAllowEntry: {
+            host: string;
+            path?: string | null;
+        };
+        OrgEgress: {
+            /** @default [] */
+            allowlist: components["schemas"]["OrgAllowEntry"][];
+            /** @default open */
+            posture: components["schemas"]["EgressPosture"];
+        };
+        OrgEndpoint: {
+            /** @default true */
+            allowed: boolean;
+            /**
+             * @description Empty = the instance list for the endpoint (empty there = any).
+             * @default []
+             */
+            allowed_models: string[];
+            /**
+             * @description Empty = the instance scopes.
+             * @default []
+             */
+            key_scopes: string[];
+            /**
+             * @default {
+             *       "allowed_organization_ids": [],
+             *       "allowed_team_ids": [],
+             *       "allowed_workspace_ids": []
+             *     }
+             */
+            origin: components["schemas"]["OrgOrigin"];
+        };
+        /** @description Normalized organization governance document (`organizations.governance`). */
+        OrgGovernance: {
+            /**
+             * @default {
+             *       "allowlist": [],
+             *       "posture": "open"
+             *     }
+             */
+            egress: components["schemas"]["OrgEgress"];
+            /**
+             * @default {
+             *       "endpoints": {},
+             *       "posture": "open"
+             *     }
+             */
+            llm: components["schemas"]["OrgLlm"];
+        };
+        OrgLlm: {
+            /**
+             * @description Endpoints absent here are not permitted.
+             * @default {}
+             */
+            endpoints: {
+                [key: string]: components["schemas"]["OrgEndpoint"];
+            };
+            /** @default open */
+            posture: components["schemas"]["LlmPosture"];
+        };
+        OrgOrigin: {
+            /** @default [] */
+            allowed_organization_ids: string[];
+            /** @default [] */
+            allowed_team_ids: string[];
+            /** @default [] */
+            allowed_workspace_ids: string[];
         };
         /** @enum {string} */
         OrgRole: "owner" | "admin" | "member";
@@ -4515,6 +4596,8 @@ export interface components {
                 metadata: {
                     [key: string]: string;
                 };
+                /** @description Scopes requested at authorize time that the provider did not grant (C-42). */
+                missing_scopes: string[];
                 /** Format: uuid */
                 oauth_client_id?: string | null;
                 /** Format: uuid */
@@ -5333,7 +5416,7 @@ export interface components {
             mode: components["schemas"]["GrantMode"];
         };
         PutGovernance: {
-            document: Record<string, never>;
+            document: components["schemas"]["OrgGovernance"];
             /** Format: int64 */
             revision: number;
         };

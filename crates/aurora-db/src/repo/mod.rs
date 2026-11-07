@@ -48,6 +48,7 @@ pub mod sessions;
 pub mod skills;
 pub mod space_bindings;
 pub mod thread_links;
+pub mod tool_identity;
 pub mod transcript;
 pub mod turns;
 pub mod user_links;
