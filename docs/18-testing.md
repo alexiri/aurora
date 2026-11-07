@@ -435,3 +435,10 @@ done when its tests exist, pass in CI, and the security invariants it touches
 4. e2e-gateway, e2e-hosted (podman), dashboard Playwright on compose.
 5. Architecture guards.
 6. Nightly: Kubernetes e2e on kind, live suites, performance.
+
+**Implementation (OPS-019, `.github/workflows/ci.yml`).** `rust-build` compiles once and publishes a
+`cargo nextest archive` (all workspace tests except the e2e crates, plus the fixture packages);
+`rust-test` runs it in 4 shards (`--partition count:i/4`, profile `ci` in `.config/nextest.toml`);
+doctests run in `rust-build` (nextest skips them). `rust-lint`, `rust-deny`, `web` and `guards` are
+separate jobs. Actions are SHA-pinned and on Node 24; runners are pinned to `ubuntu-24.04`.
+`e2e-gateway` (`scripts/e2e/gateway.sh`) and `e2e-hosted` (`AURORA_TEST_PODMAN=1 scripts/e2e/hosted.sh`, rootless podman, sandbox image cached with `actions/cache`) are separate jobs after `rust-build`, parallel to the shards; both compile in-job via their scripts. If `e2e-hosted` cannot run on GitHub runners (user-namespace limits), it becomes a local and nightly gate. See `docs/ops/build-performance.md`.
