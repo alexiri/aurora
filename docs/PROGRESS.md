@@ -178,6 +178,7 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | RFE-015 | Attachment retention + per-tenant quota + storage breakdown + sweep | 2 | SPEC-RFE-P12 | spec done |
 | RFE-017 | Management API per-principal rate limiting | 2 | SPEC-RFE-P12 | spec done |
 | RFE-021 | Creator reassignment, offboarding view, workspace-anchored automations | 2 | SPEC-RFE-P12 | spec done |
+| RFE-025 | BYO posture (enabled/owners_only/disabled, `byo.enabled`), source CIDR allow-lists, empty-identity rule warning, optional required context credentials | 2 | SPEC-RFE-P3 (added) | todo |
 | RFE-013 | Optional per-instance/org agent-token max age (default none) | 3 | SPEC-RFE-P3 | todo |
 | RFE-014 | Gateway under Postgres outage: serve within TTL, reconnect-then-flush, degraded readyz | 3 | SPEC-RFE-P3 | todo |
 | RFE-018 | Idempotency keys for message creation | 3 | SPEC-RFE-P3 | todo |

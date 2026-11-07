@@ -170,7 +170,9 @@ removal handling.
   notification), RFE-012 (`approver` workspace role), RFE-015 (attachment
   retention and quota), RFE-017 (management API rate limiting), RFE-021
   (automation creator reassignment, offboarding view, workspace-anchored
-  automations).
+  automations), RFE-025 (BYO posture incl. `byo.enabled`, source CIDR
+  allow-lists, empty-identity rule warning, optional required context
+  credentials).
 - Phases 1 and 2 may run in parallel once phase 0 is merged to `master`.
 
 ## Phase 3 — External secret stores

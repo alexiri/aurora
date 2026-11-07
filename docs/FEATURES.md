@@ -56,7 +56,7 @@ Last reconciled with git history: 2026-11-08 (code freeze for AUDIT-001, 2a6a0f8
 | M7/15§docs | Operator docs (install, LLM endpoints, runners, plugins, backups) | P0 | OPS-012 (+ OPS-013, FIX-003 for the gaps it found) | — | — | done | `docs/operator/` |
 | SEC-01..39 | Security invariants, each with a proving test (`17`) | P0 | per milestone + TEST-018 | — | — | 39/39 proven (`docs/tests/security-coverage.md`; SEC-30 via BE-067) | `docs/tests/security-coverage.md` (39 rows, each citing a passing test); AUDIT-001 confirms execution |
 | RFE-001/002/003/004/009/016 | Design-review items scheduled for phase 1 (`80`) | P1 | per RFE | per RFE | phase 0 on `master` | todo (spec drafting: SPEC-RFE-P12) | |
-| RFE-005/006/007/008/010/011a/012/015/017/021 | Design-review items scheduled for phase 2 (`80`) | P2 | per RFE | per RFE | phase 0 on `master` | todo (spec drafting: SPEC-RFE-P12) | |
+| RFE-005/006/007/008/010/011a/012/015/017/021/025 | Design-review items scheduled for phase 2 (`80`) | P2 | per RFE | per RFE | phase 0 on `master` | todo (spec drafting: SPEC-RFE-P12) | |
 | RFE-013/014/018/019/020/022/023/024 | Design-review items scheduled for phase 3 (`80`) | P3 | per RFE | per RFE | phases 1–2 | todo | |
 | RFE-011b | Approval park-and-resume, Web Push (`80`) | P4 | — | — | phase 3 | todo | |
 | P1/20 | Mattermost connector | P1 (later phase) | — | — | Phase 0 exit | out of scope now | |
