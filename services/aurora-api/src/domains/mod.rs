@@ -11,6 +11,7 @@ pub mod apps;
 pub mod attachments;
 pub mod audit;
 pub mod auth;
+pub mod automations;
 pub mod availability;
 pub mod channels;
 pub mod cli_login;

@@ -3,6 +3,7 @@
 
 use super::dto::{MemberStatus, OrgRole, PatchMemberRequest, PatchOrgRequest};
 use crate::app::AppState;
+use crate::domains::automations::service::{To, reassign_org_member};
 use aurora_config::ApiConfig;
 use aurora_core::token::{self, TokenPrefix};
 use aurora_core::{ApiError, FieldError, ids};
@@ -329,7 +330,22 @@ pub async fn patch_member(
     actor_role: OrgRole,
     target: Uuid,
     req: &PatchMemberRequest,
+    actor: &crate::audit::AuditActor,
 ) -> Result<MemberRow, ApiError> {
+    // RFE-021: validate `reassign_to` before touching anything.
+    let reassign = match req.reassign_to.as_deref() {
+        None => None,
+        Some(_) if req.status != Some(MemberStatus::Suspended) => {
+            return Err(ApiError::invalid_request(
+                "Invalid request.",
+                vec![aurora_core::FieldError::new(
+                    "/reassign_to",
+                    "only valid together with status suspended",
+                )],
+            ));
+        }
+        Some(v) => Some(To::parse("/reassign_to", v)?),
+    };
     let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
     let owners = members::lock_active_owners(&mut tx, org_id).await?;
     let cur = members::get(&mut *tx, org_id, target)
@@ -342,6 +358,9 @@ pub async fn patch_member(
         || req.status == Some(MemberStatus::Suspended);
     if cur.role == "owner" && cur.status == "active" && loses_owner && owners.len() <= 1 {
         return Err(last_owner());
+    }
+    if let Some(to) = reassign {
+        reassign_org_member(&mut tx, actor, org_id, target, to).await?;
     }
     members::update(
         &mut *tx,
@@ -366,6 +385,8 @@ pub async fn remove_member(
     org_id: Uuid,
     actor_role: OrgRole,
     target: Uuid,
+    reassign: Option<To>,
+    actor: &crate::audit::AuditActor,
 ) -> Result<(), ApiError> {
     let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
     let owners = members::lock_active_owners(&mut tx, org_id).await?;
@@ -377,6 +398,9 @@ pub async fn remove_member(
     }
     if cur.role == "owner" && cur.status == "active" && owners.len() <= 1 {
         return Err(last_owner());
+    }
+    if let Some(to) = reassign {
+        reassign_org_member(&mut tx, actor, org_id, target, to).await?;
     }
     members::remove(&mut tx, org_id, target).await?;
     notify_auth_revoked(&mut *tx, "user", target).await?;

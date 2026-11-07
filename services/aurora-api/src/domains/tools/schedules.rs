@@ -142,6 +142,8 @@ impl PlatformTool for CreateT {
                 timezone: a.timezone,
                 gate_command: a.gate_command,
                 gate_description: a.gate_description,
+                // RFE-021: an agent can never mint a workspace-anchored automation.
+                anchor: "creator",
             },
             Some(creator),
             Some(ctx.conversation_id),

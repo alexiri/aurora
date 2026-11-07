@@ -149,12 +149,14 @@ async fn fire_due(
         return Ok(());
     };
     // Fire-time authority (04): the creator must still hold `can_use` on the workspace.
-    let authorized = match row.creator_user_id {
-        Some(u) => authz::workspace_access(&mut *conn, u, agent.workspace_id)
-            .await?
-            .is_some_and(|a| a.can_use()),
-        None => false,
-    };
+    // RFE-021: `anchor = workspace` is authorized by "an active owner exists" instead.
+    let authorized = authz::automation_authorized(
+        &mut *conn,
+        &row.anchor,
+        row.creator_user_id,
+        agent.workspace_id,
+    )
+    .await?;
     if !authorized {
         repo::insert_run(conn, row.id, None, "skipped_unauthorized").await?;
         repo::disable(conn, row.id, "authorization", Some("failed")).await?;
@@ -163,8 +165,13 @@ async fn fire_due(
             row,
             "schedule_disabled",
             &format!(
-                "Schedule \"{}\" was disabled: its creator no longer has access to this agent.",
-                row.name
+                "Schedule \"{}\" was disabled: {}. Reassign it in the dashboard or recreate it.",
+                row.name,
+                if row.anchor == "workspace" {
+                    "the workspace has no active owner"
+                } else {
+                    "its creator no longer has access to this agent"
+                }
             ),
             None,
         )

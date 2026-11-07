@@ -173,12 +173,10 @@ async fn decide(
         .await;
     }
     // Fire-time authority (04): the creator must still hold `can_use` on the workspace.
-    let authorized = match w.creator_user_id {
-        Some(u) => authz::workspace_access(&mut *conn, u, agent.workspace_id)
-            .await?
-            .is_some_and(|a| a.can_use()),
-        None => false,
-    };
+    // RFE-021: `anchor = workspace` is authorized by "an active owner exists" instead.
+    let authorized =
+        authz::automation_authorized(&mut *conn, &w.anchor, w.creator_user_id, agent.workspace_id)
+            .await?;
     if !authorized {
         repo::disable(conn, id, "authorization").await?;
         service::notify_origin(
@@ -186,8 +184,13 @@ async fn decide(
             &w,
             "webhook_disabled",
             &format!(
-                "Webhook \"{}\" was disabled: its creator no longer has access to this agent.",
-                w.name
+                "Webhook \"{}\" was disabled: {}.",
+                w.name,
+                if w.anchor == "workspace" {
+                    "the workspace has no active owner"
+                } else {
+                    "its creator no longer has access to this agent"
+                }
             ),
         )
         .await?;

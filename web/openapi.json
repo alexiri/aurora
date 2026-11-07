@@ -9758,6 +9758,18 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "reassign_to",
+            "in": "query",
+            "description": "A user id or `\"workspace\"`: reassign the person's schedules and webhooks atomically\nwith the removal.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
@@ -9874,6 +9886,77 @@
             }
           },
           "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/members/{user}/offboarding": {
+      "get": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "What suspending or removing an org member would disable, across every workspace of the org\n(org owner/admin).",
+        "operationId": "orgMemberOffboarding",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offboarding"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -11500,6 +11583,87 @@
         ]
       }
     },
+    "/v1/schedules/{id}/creator": {
+      "put": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Reassign the schedule's creator (fire-time authority) to an active member who can use the\nworkspace (`can_own`); `re_enable` re-enables an item disabled for `authorization`. Audited\n`automation.reassign`.",
+        "operationId": "reassignScheduleCreator",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Schedule id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReassignCreatorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Schedule"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/schedules/{id}/run-now": {
       "post": {
         "tags": [
@@ -13079,6 +13243,87 @@
         ]
       }
     },
+    "/v1/webhooks/{id}/creator": {
+      "put": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Reassign the webhook's creator (fire-time authority) to an active member who can use the\nworkspace (`can_own`); `re_enable` re-enables an item disabled for `authorization`. Audited\n`automation.reassign`.",
+        "operationId": "reassignWebhookCreator",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Webhook id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReassignCreatorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Webhook"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/webhooks/{id}/deliveries": {
       "get": {
         "tags": [
@@ -13592,6 +13837,18 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "reassign_to",
+            "in": "query",
+            "description": "A user id or `\"workspace\"`: reassign the person's schedules and webhooks atomically\nwith the removal.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -14360,6 +14617,97 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/automations/reassign": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Reassign every schedule/webhook of one creator in the workspace (or just `ids`) to another\nmember or to the workspace, in one transaction with one audit row per item (`can_own`).",
+        "operationId": "bulkReassignAutomations",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkReassignRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkReassignResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/connections": {
       "get": {
         "tags": [
@@ -14437,6 +14785,77 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/members/{user}/offboarding": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "What removing a person's binding on this workspace would disable (`can_own`). Org\nowners/admins have implicit access that a binding removal cannot take away, so their list\nis empty.",
+        "operationId": "workspaceMemberOffboarding",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offboarding"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -16600,6 +17019,58 @@
           }
         }
       },
+      "BulkReassignRequest": {
+        "type": "object",
+        "description": "`POST /workspaces/{ws}/automations/reassign`.",
+        "required": [
+          "from_user_id",
+          "to"
+        ],
+        "properties": {
+          "from_user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Only these items; default every creator-anchored item of `from_user_id` in the workspace."
+          },
+          "kinds": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "`schedule` and/or `webhook`; default both."
+          },
+          "to": {
+            "type": "string",
+            "description": "A user id, or `\"workspace\"` to anchor the items to the workspace."
+          }
+        },
+        "additionalProperties": false
+      },
+      "BulkReassignResponse": {
+        "type": "object",
+        "required": [
+          "reassigned"
+        ],
+        "properties": {
+          "reassigned": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ChangePasswordRequest": {
         "type": "object",
         "required": [
@@ -17839,6 +18310,13 @@
           "cron"
         ],
         "properties": {
+          "anchor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`creator` (default) or `workspace`; `workspace` needs `can_own` (RFE-021)."
+          },
           "cron": {
             "type": "string",
             "description": "5-field cron expression (minimum interval 5 minutes)."
@@ -18008,6 +18486,13 @@
           "instructions"
         ],
         "properties": {
+          "anchor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`creator` (default) or `workspace`; `workspace` needs `can_own` (RFE-021)."
+          },
           "instructions": {
             "type": "string"
           },
@@ -19923,6 +20408,22 @@
           }
         }
       },
+      "NamedRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "NonCompliantSecret": {
         "type": "object",
         "required": [
@@ -20036,6 +20537,86 @@
           },
           "secret": {
             "type": "boolean"
+          }
+        }
+      },
+      "Offboarding": {
+        "type": "object",
+        "required": [
+          "schedules",
+          "webhooks",
+          "peer_tasks",
+          "api_keys"
+        ],
+        "properties": {
+          "api_keys": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Personal API keys that would stop working."
+          },
+          "peer_tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OffboardingItem"
+            },
+            "description": "Queued or open peer tasks the person requested (`name` is \"from → to\")."
+          },
+          "schedules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OffboardingItem"
+            }
+          },
+          "webhooks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OffboardingItem"
+            }
+          }
+        }
+      },
+      "OffboardingItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "agent",
+          "workspace",
+          "enabled",
+          "anchor",
+          "would_disable"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/NamedRef"
+          },
+          "anchor": {
+            "type": "string",
+            "description": "`creator` | `workspace`."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_fire_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/NamedRef"
+          },
+          "would_disable": {
+            "type": "boolean",
+            "description": "Always true here: the list holds exactly what the removal would disable."
           }
         }
       },
@@ -22359,6 +22940,7 @@
                 "timezone",
                 "enabled",
                 "consecutive_failures",
+                "anchor",
                 "conversation_hidden",
                 "created_at",
                 "updated_at"
@@ -22367,6 +22949,10 @@
                 "agent_id": {
                   "type": "string",
                   "format": "uuid"
+                },
+                "anchor": {
+                  "type": "string",
+                  "description": "`creator` | `workspace` (RFE-021): whose access authorizes each fire."
                 },
                 "consecutive_failures": {
                   "type": "integer",
@@ -22386,7 +22972,8 @@
                       "type": "null"
                     },
                     {
-                      "$ref": "#/components/schemas/ScheduleCreator"
+                      "$ref": "#/components/schemas/ScheduleCreator",
+                      "description": "Provenance when `anchor = workspace`; the fire-time authority when `anchor = creator`."
                     }
                   ]
                 },
@@ -22893,6 +23480,7 @@
                 "verification",
                 "enabled",
                 "url_prefix",
+                "anchor",
                 "created_at",
                 "updated_at"
               ],
@@ -22900,6 +23488,10 @@
                 "agent_id": {
                   "type": "string",
                   "format": "uuid"
+                },
+                "anchor": {
+                  "type": "string",
+                  "description": "`creator` | `workspace` (RFE-021): whose access authorizes each delivery."
                 },
                 "created_at": {
                   "type": "string",
@@ -22911,7 +23503,8 @@
                       "type": "null"
                     },
                     {
-                      "$ref": "#/components/schemas/WebhookCreator"
+                      "$ref": "#/components/schemas/WebhookCreator",
+                      "description": "Provenance when `anchor = workspace`; the fire-time authority when `anchor = creator`."
                     }
                   ]
                 },
@@ -23245,6 +23838,13 @@
       "PatchMemberRequest": {
         "type": "object",
         "properties": {
+          "reassign_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only with `status: suspended` (RFE-021): a user id or `\"workspace\"`; every\ncreator-anchored schedule and webhook of the person is reassigned in the same\ntransaction as the suspension."
+          },
           "role": {
             "oneOf": [
               {
@@ -24408,6 +25008,28 @@
           "expired"
         ]
       },
+      "ReassignCreatorRequest": {
+        "type": "object",
+        "description": "`PUT /schedules/{id}/creator` and `PUT /webhooks/{id}/creator`.",
+        "required": [
+          "user_id"
+        ],
+        "properties": {
+          "re_enable": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Re-enable an item that was disabled for `authorization` (default false)."
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "An active org member who can use the workspace."
+          }
+        },
+        "additionalProperties": false
+      },
       "ReattachRequest": {
         "type": "object",
         "properties": {
@@ -25031,6 +25653,7 @@
           "timezone",
           "enabled",
           "consecutive_failures",
+          "anchor",
           "conversation_hidden",
           "created_at",
           "updated_at"
@@ -25039,6 +25662,10 @@
           "agent_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "anchor": {
+            "type": "string",
+            "description": "`creator` | `workspace` (RFE-021): whose access authorizes each fire."
           },
           "consecutive_failures": {
             "type": "integer",
@@ -25058,7 +25685,8 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ScheduleCreator"
+                "$ref": "#/components/schemas/ScheduleCreator",
+                "description": "Provenance when `anchor = workspace`; the fire-time authority when `anchor = creator`."
               }
             ]
           },
@@ -26612,6 +27240,13 @@
       "UpdateScheduleRequest": {
         "type": "object",
         "properties": {
+          "anchor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`creator` | `workspace`; changing it needs `can_own` and is audited (RFE-021)."
+          },
           "cron": {
             "type": [
               "string",
@@ -26684,6 +27319,13 @@
       "UpdateWebhookRequest": {
         "type": "object",
         "properties": {
+          "anchor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`creator` | `workspace`; changing it needs `can_own` and is audited (RFE-021)."
+          },
           "enabled": {
             "type": [
               "boolean",
@@ -26981,6 +27623,7 @@
           "verification",
           "enabled",
           "url_prefix",
+          "anchor",
           "created_at",
           "updated_at"
         ],
@@ -26988,6 +27631,10 @@
           "agent_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "anchor": {
+            "type": "string",
+            "description": "`creator` | `workspace` (RFE-021): whose access authorizes each delivery."
           },
           "created_at": {
             "type": "string",
@@ -26999,7 +27646,8 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/WebhookCreator"
+                "$ref": "#/components/schemas/WebhookCreator",
+                "description": "Provenance when `anchor = workspace`; the fire-time authority when `anchor = creator`."
               }
             ]
           },

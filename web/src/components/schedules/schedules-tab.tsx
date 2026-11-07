@@ -6,6 +6,7 @@ import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import {
   cronFieldCount,
@@ -48,11 +49,14 @@ export function ScheduleForm({
   agentId,
   initial,
   defaultTimezone,
+  canOwn,
   onDone,
 }: {
   agentId: string;
   initial?: Schedule;
   defaultTimezone?: string;
+  /** Workspace owners may anchor a new schedule to the workspace. */
+  canOwn?: boolean;
   onDone: () => void;
 }) {
   const create = useCreateSchedule(agentId);
@@ -64,6 +68,7 @@ export function ScheduleForm({
   const [gateCommand, setGateCommand] = useState(initial?.gate_command ?? "");
   const [gateDescription, setGateDescription] = useState(initial?.gate_description ?? "");
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
+  const [anchored, setAnchored] = useState(false);
   const [localErr, setLocalErr] = useState<string | null>(null);
   const mut = initial ? update : create;
   const fe = fieldErrors(mut.error);
@@ -83,7 +88,10 @@ export function ScheduleForm({
         { onSuccess: onDone },
       );
     } else {
-      create.mutate({ name, prompt, cron: cron.trim(), timezone, ...gate }, { onSuccess: onDone });
+      create.mutate(
+        { name, prompt, cron: cron.trim(), timezone, ...gate, ...(anchored ? { anchor: "workspace" } : {}) },
+        { onSuccess: onDone },
+      );
     }
   }
 
@@ -109,6 +117,12 @@ export function ScheduleForm({
       <Field id="sch-gate-desc" label="Gate description (optional)" error={fe.gate_description}>
         <input id="sch-gate-desc" className={inputClass} value={gateDescription} onChange={(e) => setGateDescription(e.target.value)} />
       </Field>
+      {!initial && canOwn ? (
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={anchored} onChange={(e) => setAnchored(e.target.checked)} />
+          Anchor to workspace (outlives any single member)
+        </label>
+      ) : null}
       {initial ? (
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
@@ -132,10 +146,11 @@ export function ScheduleForm({
   );
 }
 
-function ScheduleRow({ agentId, s, defaultTimezone }: { agentId: string; s: Schedule; defaultTimezone?: string }) {
+function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn }: { agentId: string; s: Schedule; defaultTimezone?: string; wsId?: string; canOwn?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [showRuns, setShowRuns] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [reassigning, setReassigning] = useState(false);
   const run = useRunScheduleNow(agentId);
   const del = useDeleteSchedule(agentId);
   const upd = useUpdateSchedule(agentId);
@@ -151,8 +166,16 @@ function ScheduleRow({ agentId, s, defaultTimezone }: { agentId: string; s: Sche
       </div>
       <p className="whitespace-pre-wrap text-sm">{s.prompt}</p>
       <p className="text-xs text-neutral-600">
-        Next: {s.next_fire_at ? fmtDate(s.next_fire_at) : "—"} · Last: {s.last_fired_at ? fmtDate(s.last_fired_at) : "never"}
+        Next: {s.next_fire_at ? fmtDate(s.next_fire_at) : "—"} · Last: {s.last_fired_at ? fmtDate(s.last_fired_at) : "never"} ·{" "}
+        <OwnerLabel anchor={s.anchor} creator={s.created_by} />
       </p>
+      {s.disabled_reason === "authorization" ? (
+        <p className="text-sm text-amber-800">Disabled because its owner lost access. Reassign it to a current member to bring it back.</p>
+      ) : null}
+      {canOwn ? <AnchorSwitch name={s.name} anchor={s.anchor} busy={upd.isPending} onChange={(anchor) => upd.mutate({ id: s.id, body: { anchor } })} /> : null}
+      {reassigning && wsId ? (
+        <ReassignPanel agentId={agentId} wsId={wsId} kind="schedule" id={s.id} name={s.name} creatorId={s.created_by?.id} disabledReason={s.disabled_reason} onClose={() => setReassigning(false)} />
+      ) : null}
       {err ? (
         <p role="alert" className="text-sm text-red-700">
           {errorMessage(err)}
@@ -165,6 +188,11 @@ function ScheduleRow({ agentId, s, defaultTimezone }: { agentId: string; s: Sche
         <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
           Edit
         </Button>
+        {canOwn && wsId ? (
+          <Button size="sm" variant="outline" aria-expanded={reassigning} onClick={() => setReassigning((v) => !v)}>
+            Reassign…
+          </Button>
+        ) : null}
         <Button size="sm" variant="outline" disabled={upd.isPending} onClick={() => upd.mutate({ id: s.id, body: { enabled: !s.enabled } })}>
           {s.enabled ? "Disable" : "Enable"}
         </Button>
@@ -186,7 +214,7 @@ function ScheduleRow({ agentId, s, defaultTimezone }: { agentId: string; s: Sche
   );
 }
 
-export function SchedulesTab({ agentId, defaultTimezone }: { agentId: string; defaultTimezone?: string }) {
+export function SchedulesTab({ agentId, defaultTimezone, wsId, canOwn }: { agentId: string; defaultTimezone?: string; wsId?: string; canOwn?: boolean }) {
   const q = useSchedules(agentId);
   const [creating, setCreating] = useState(false);
   if (q.isPending) return <Loading />;
@@ -201,11 +229,11 @@ export function SchedulesTab({ agentId, defaultTimezone }: { agentId: string; de
           </Button>
         ) : null}
       </div>
-      {creating ? <ScheduleForm agentId={agentId} defaultTimezone={defaultTimezone} onDone={() => setCreating(false)} /> : null}
+      {creating ? <ScheduleForm agentId={agentId} defaultTimezone={defaultTimezone} canOwn={canOwn} onDone={() => setCreating(false)} /> : null}
       {q.data.items.length === 0 && !creating ? <EmptyState title="No schedules">Schedules wake the agent with a prompt on a cron.</EmptyState> : null}
       <ul className="space-y-2">
         {q.data.items.map((s) => (
-          <ScheduleRow key={s.id} agentId={agentId} s={s} defaultTimezone={defaultTimezone} />
+          <ScheduleRow key={s.id} agentId={agentId} s={s} defaultTimezone={defaultTimezone} wsId={wsId} canOwn={canOwn} />
         ))}
       </ul>
     </section>

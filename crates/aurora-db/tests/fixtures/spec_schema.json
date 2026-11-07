@@ -614,6 +614,7 @@
     ],
     "schedules": [
       "agent_id",
+      "anchor",
       "consecutive_failures",
       "creator_user_id",
       "cron",
@@ -797,6 +798,7 @@
     ],
     "webhooks": [
       "agent_id",
+      "anchor",
       "consecutive_failures",
       "creator_user_id",
       "disabled_reason",

@@ -2,7 +2,11 @@ use super::dto::*;
 use super::{fire, service};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
-use crate::http::auth::Caller;
+use crate::domains::automations::{
+    dto::ReassignCreatorRequest,
+    service::{self as auto, Acting, To},
+};
+use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::Page;
@@ -23,6 +27,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_schedule, update_schedule, delete_schedule))
         .routes(routes!(list_runs))
         .routes(routes!(run_now))
+        .routes(routes!(reassign_creator))
 }
 
 /// Schedules need `can_use` on the agent's workspace.
@@ -112,7 +117,15 @@ async fn create_schedule(
     Json(req): Json<CreateScheduleRequest>,
 ) -> Result<(StatusCode, Json<Schedule>), ApiError> {
     let a = visible_agent(&c, &s, agent).await?;
+    let anchor = match req.anchor.as_deref() {
+        Some(v) => auto::parse_anchor(v)?,
+        None => "creator",
+    };
+    if anchor == "workspace" {
+        require_own(&c.workspace(&s, a.workspace_id).await?)?;
+    }
     let create = service::Create {
+        anchor,
         name: req.name,
         prompt: req.prompt,
         cron: req.cron,
@@ -158,6 +171,22 @@ async fn update_schedule(
     Json(req): Json<UpdateScheduleRequest>,
 ) -> Result<Json<Schedule>, ApiError> {
     let (cur, a) = authorized(&c, &s, id).await?;
+    // RFE-021: switching the anchor needs `can_own`; validate before anything is written.
+    let new_anchor = match req.anchor.as_deref() {
+        Some(v) => {
+            let v = auto::parse_anchor(v)?;
+            require_own(&c.workspace(&s, a.workspace_id).await?)?;
+            if v == cur.anchor {
+                None
+            } else {
+                let to = auto::anchor_target(v, cur.creator_user_id)?;
+                let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+                auto::ensure_target(&mut conn, to, a.workspace_id).await?;
+                Some(to)
+            }
+        }
+        None => None,
+    };
     let p = service::Patch {
         name: req.name,
         prompt: req.prompt,
@@ -167,8 +196,20 @@ async fn update_schedule(
         gate_description: req.gate_description,
         enabled: req.enabled,
     };
-    let row = service::patch(&s.pool, cur, p).await?;
+    let mut row = service::patch(&s.pool, cur, p).await?;
     record(&c, &s, &a, &row, "schedule.update");
+    if let Some(to) = new_anchor {
+        let actor = AuditActor::from_caller(&c);
+        let acting = Acting {
+            actor: &actor,
+            org: a.org_id,
+            workspace: a.workspace_id,
+        };
+        let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+        auto::reassign_schedule(&mut tx, &acting, &row, to, false).await?;
+        tx.commit().await.map_err(DbError::from)?;
+        row = service::get(&s.pool, id).await?;
+    }
     let mut out = vec![Schedule::from(row)];
     redact_all(&c, &s, &mut out).await?;
     Ok(Json(out.remove(0)))
@@ -235,4 +276,42 @@ async fn run_now(
     tx.commit().await.map_err(DbError::from)?;
     record(&c, &s, &a, &row, "schedule.run_now");
     Ok((StatusCode::CREATED, Json(run.into())))
+}
+
+/// Reassign the schedule's creator (fire-time authority) to an active member who can use the
+/// workspace (`can_own`); `re_enable` re-enables an item disabled for `authorization`. Audited
+/// `automation.reassign`.
+#[utoipa::path(put, path = "/schedules/{id}/creator", operation_id = "reassignScheduleCreator",
+    tag = "schedules", params(("id" = Uuid, Path, description = "Schedule id")),
+    request_body = ReassignCreatorRequest,
+    responses((status = 200, body = Schedule), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn reassign_creator(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ReassignCreatorRequest>,
+) -> Result<Json<Schedule>, ApiError> {
+    let (row, a) = authorized(&c, &s, id).await?;
+    require_own(&c.workspace(&s, a.workspace_id).await?)?;
+    let actor = AuditActor::from_caller(&c);
+    let acting = Acting {
+        actor: &actor,
+        org: a.org_id,
+        workspace: a.workspace_id,
+    };
+    let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+    auto::reassign_schedule(
+        &mut tx,
+        &acting,
+        &row,
+        To::User(req.user_id),
+        req.re_enable.unwrap_or(false),
+    )
+    .await?;
+    tx.commit().await.map_err(DbError::from)?;
+    let mut out = vec![Schedule::from(service::get(&s.pool, id).await?)];
+    redact_all(&c, &s, &mut out).await?;
+    Ok(Json(out.remove(0)))
 }

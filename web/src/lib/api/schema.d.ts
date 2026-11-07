@@ -2076,6 +2076,26 @@ export interface paths {
         patch: operations["patchMember"];
         trace?: never;
     };
+    "/v1/orgs/{org}/members/{user}/offboarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What suspending or removing an org member would disable, across every workspace of the org
+         *     (org owner/admin).
+         */
+        get: operations["orgMemberOffboarding"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/oauth-clients": {
         parameters: {
             query?: never;
@@ -2355,6 +2375,27 @@ export interface paths {
         head?: never;
         /** Update a schedule; `enabled: true` re-enables and clears the failure count. */
         patch: operations["updateSchedule"];
+        trace?: never;
+    };
+    "/v1/schedules/{id}/creator": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Reassign the schedule's creator (fire-time authority) to an active member who can use the
+         *     workspace (`can_own`); `re_enable` re-enables an item disabled for `authorization`. Audited
+         *     `automation.reassign`.
+         */
+        put: operations["reassignScheduleCreator"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/schedules/{id}/run-now": {
@@ -2643,6 +2684,27 @@ export interface paths {
         patch: operations["updateWebhook"];
         trace?: never;
     };
+    "/v1/webhooks/{id}/creator": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Reassign the webhook's creator (fire-time authority) to an active member who can use the
+         *     workspace (`can_own`); `re_enable` re-enables an item disabled for `authorization`. Audited
+         *     `automation.reassign`.
+         */
+        put: operations["reassignWebhookCreator"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/webhooks/{id}/deliveries": {
         parameters: {
             query?: never;
@@ -2835,6 +2897,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/automations/reassign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reassign every schedule/webhook of one creator in the workspace (or just `ids`) to another
+         *     member or to the workspace, in one transaction with one audit row per item (`can_own`).
+         */
+        post: operations["bulkReassignAutomations"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/connections": {
         parameters: {
             query?: never;
@@ -2844,6 +2926,27 @@ export interface paths {
         };
         /** List workspace-scoped connections (`can_own`; I-27). */
         get: operations["listWorkspaceConnections"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/members/{user}/offboarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What removing a person's binding on this workspace would disable (`can_own`). Org
+         *     owners/admins have implicit access that a binding removal cannot take away, so their list
+         *     is empty.
+         */
+        get: operations["workspaceMemberOffboarding"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3362,6 +3465,21 @@ export interface components {
             agent_id: string;
             decision: components["schemas"]["Decision"];
         };
+        /** @description `POST /workspaces/{ws}/automations/reassign`. */
+        BulkReassignRequest: {
+            /** Format: uuid */
+            from_user_id: string;
+            /** @description Only these items; default every creator-anchored item of `from_user_id` in the workspace. */
+            ids?: string[] | null;
+            /** @description `schedule` and/or `webhook`; default both. */
+            kinds?: string[] | null;
+            /** @description A user id, or `"workspace"` to anchor the items to the workspace. */
+            to: string;
+        };
+        BulkReassignResponse: {
+            /** Format: int64 */
+            reassigned: number;
+        };
         ChangePasswordRequest: {
             current_password: string;
             new_password: string;
@@ -3716,6 +3834,8 @@ export interface components {
             name: string;
         };
         CreateScheduleRequest: {
+            /** @description `creator` (default) or `workspace`; `workspace` needs `can_own` (RFE-021). */
+            anchor?: string | null;
             /** @description 5-field cron expression (minimum interval 5 minutes). */
             cron: string;
             gate_command?: string | null;
@@ -3757,6 +3877,8 @@ export interface components {
             user_id: string;
         };
         CreateWebhookRequest: {
+            /** @description `creator` (default) or `workspace`; `workspace` needs `can_own` (RFE-021). */
+            anchor?: string | null;
             instructions: string;
             name: string;
             verification?: null | components["schemas"]["VerificationInput"];
@@ -4253,6 +4375,11 @@ export interface components {
         Models: {
             items: components["schemas"]["ModelItem"][];
         };
+        NamedRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
         NonCompliantSecret: {
             /** Format: uuid */
             id: string;
@@ -4289,6 +4416,31 @@ export interface components {
             label: string;
             name: string;
             secret: boolean;
+        };
+        Offboarding: {
+            /**
+             * Format: int64
+             * @description Personal API keys that would stop working.
+             */
+            api_keys: number;
+            /** @description Queued or open peer tasks the person requested (`name` is "from → to"). */
+            peer_tasks: components["schemas"]["OffboardingItem"][];
+            schedules: components["schemas"]["OffboardingItem"][];
+            webhooks: components["schemas"]["OffboardingItem"][];
+        };
+        OffboardingItem: {
+            agent: components["schemas"]["NamedRef"];
+            /** @description `creator` | `workspace`. */
+            anchor: string;
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: date-time */
+            next_fire_at?: string | null;
+            workspace: components["schemas"]["NamedRef"];
+            /** @description Always true here: the list holds exactly what the removal would disable. */
+            would_disable: boolean;
         };
         OidcProviderInfo: {
             display_name: string;
@@ -4954,6 +5106,8 @@ export interface components {
             items: {
                 /** Format: uuid */
                 agent_id: string;
+                /** @description `creator` | `workspace` (RFE-021): whose access authorizes each fire. */
+                anchor: string;
                 /** Format: int32 */
                 consecutive_failures: number;
                 /** @description True when `origin_conversation_id` was redacted (phase 1, RFE-009). */
@@ -5106,6 +5260,8 @@ export interface components {
             items: {
                 /** Format: uuid */
                 agent_id: string;
+                /** @description `creator` | `workspace` (RFE-021): whose access authorizes each delivery. */
+                anchor: string;
                 /** Format: date-time */
                 created_at: string;
                 created_by?: null | components["schemas"]["WebhookCreator"];
@@ -5207,6 +5363,12 @@ export interface components {
             display_name?: string | null;
         };
         PatchMemberRequest: {
+            /**
+             * @description Only with `status: suspended` (RFE-021): a user id or `"workspace"`; every
+             *     creator-anchored schedule and webhook of the person is reassigned in the same
+             *     transaction as the suspension.
+             */
+            reassign_to?: string | null;
             role?: null | components["schemas"]["OrgRole"];
             status?: null | components["schemas"]["MemberStatus"];
         };
@@ -5515,6 +5677,16 @@ export interface components {
         };
         /** @enum {string} */
         ReachState: "pending" | "approved" | "blocked" | "left" | "expired";
+        /** @description `PUT /schedules/{id}/creator` and `PUT /webhooks/{id}/creator`. */
+        ReassignCreatorRequest: {
+            /** @description Re-enable an item that was disabled for `authorization` (default false). */
+            re_enable?: boolean | null;
+            /**
+             * Format: uuid
+             * @description An active org member who can use the workspace.
+             */
+            user_id: string;
+        };
         ReattachRequest: {
             /** @description Values for the connector's `presence_setup.dedicated.fields` (manual setup). */
             fields?: {
@@ -5694,6 +5866,8 @@ export interface components {
         Schedule: {
             /** Format: uuid */
             agent_id: string;
+            /** @description `creator` | `workspace` (RFE-021): whose access authorizes each fire. */
+            anchor: string;
             /** Format: int32 */
             consecutive_failures: number;
             /** @description True when `origin_conversation_id` was redacted (phase 1, RFE-009). */
@@ -6127,6 +6301,8 @@ export interface components {
         /** @enum {string} */
         UncredentialedDefault: "none" | "block";
         UpdateScheduleRequest: {
+            /** @description `creator` | `workspace`; changing it needs `can_own` and is audited (RFE-021). */
+            anchor?: string | null;
             cron?: string | null;
             enabled?: boolean | null;
             /** @description `null` removes the gate. */
@@ -6142,6 +6318,8 @@ export interface components {
             enabled?: boolean | null;
         };
         UpdateWebhookRequest: {
+            /** @description `creator` | `workspace`; changing it needs `can_own` and is audited (RFE-021). */
+            anchor?: string | null;
             /** @description `true` re-enables (clears the failure count; the caller becomes the authority anchor). */
             enabled?: boolean | null;
             instructions?: string | null;
@@ -6235,6 +6413,8 @@ export interface components {
         Webhook: {
             /** Format: uuid */
             agent_id: string;
+            /** @description `creator` | `workspace` (RFE-021): whose access authorizes each delivery. */
+            anchor: string;
             /** Format: date-time */
             created_at: string;
             created_by?: null | components["schemas"]["WebhookCreator"];
@@ -12621,7 +12801,13 @@ export interface operations {
     };
     removeMember: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description A user id or `"workspace"`: reassign the person's schedules and webhooks atomically
+                 *     with the removal.
+                 */
+                reassign_to?: string | null;
+            };
             header?: never;
             path: {
                 /** @description Organization id */
@@ -12709,6 +12895,46 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    orgMemberOffboarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+                /** @description User id */
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Offboarding"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13716,6 +13942,56 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    reassignScheduleCreator: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Schedule id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReassignCreatorRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedule"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14762,6 +15038,56 @@ export interface operations {
             };
         };
     };
+    reassignWebhookCreator: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Webhook id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReassignCreatorRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Webhook"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listWebhookDeliveries: {
         parameters: {
             query?: {
@@ -15051,7 +15377,13 @@ export interface operations {
     };
     deleteAccess: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description A user id or `"workspace"`: reassign the person's schedules and webhooks atomically
+                 *     with the removal.
+                 */
+                reassign_to?: string | null;
+            };
             header?: never;
             path: {
                 /** @description Workspace id */
@@ -15466,6 +15798,64 @@ export interface operations {
             };
         };
     };
+    bulkReassignAutomations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkReassignRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkReassignResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listWorkspaceConnections: {
         parameters: {
             query?: {
@@ -15503,6 +15893,46 @@ export interface operations {
                 };
             };
             /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    workspaceMemberOffboarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+                /** @description User id */
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Offboarding"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;

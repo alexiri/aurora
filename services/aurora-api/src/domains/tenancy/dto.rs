@@ -250,6 +250,18 @@ pub struct ConfirmRequest {
 pub struct PatchMemberRequest {
     pub role: Option<OrgRole>,
     pub status: Option<MemberStatus>,
+    /// Only with `status: suspended` (RFE-021): a user id or `"workspace"`; every
+    /// creator-anchored schedule and webhook of the person is reassigned in the same
+    /// transaction as the suspension.
+    pub reassign_to: Option<String>,
+}
+
+/// Query of the removal routes (RFE-021).
+#[derive(Deserialize, utoipa::IntoParams)]
+pub struct ReassignQuery {
+    /// A user id or `"workspace"`: reassign the person's schedules and webhooks atomically
+    /// with the removal.
+    pub reassign_to: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]

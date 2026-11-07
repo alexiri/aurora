@@ -317,6 +317,47 @@ pub async fn hidden_conversations<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// RFE-021: does the workspace have at least one **active** user with `can_own` (workspace
+/// `owner` binding, or org `owner`/`admin`)? The fire-time authority of a workspace-anchored
+/// schedule or webhook (docs/04 §Fire-time authority). `false` when the workspace is missing.
+pub async fn workspace_has_active_owner<'e, E: PgExecutor<'e>>(
+    exec: E,
+    ws: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM workspaces w
+             JOIN org_members m ON m.org_id = w.org_id AND m.status = 'active'
+             WHERE w.id = $1
+               AND (m.role IN ('owner','admin')
+                    OR EXISTS (SELECT 1 FROM workspace_access a
+                               WHERE a.workspace_id = w.id AND a.user_id = m.user_id
+                                 AND a.role = 'owner')))",
+    )
+    .bind(ws)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// RFE-021: fire-time authority of a schedule/webhook. `anchor = workspace`: an active owner
+/// exists; otherwise (`creator`) the creator must still hold access to the workspace.
+pub async fn automation_authorized(
+    conn: &mut sqlx::PgConnection,
+    anchor: &str,
+    creator: Option<Uuid>,
+    ws: Uuid,
+) -> Result<bool, DbError> {
+    if anchor == "workspace" {
+        return workspace_has_active_owner(&mut *conn, ws).await;
+    }
+    Ok(match creator {
+        Some(u) => workspace_access(&mut *conn, u, ws)
+            .await?
+            .is_some_and(|a| a.can_use()),
+        None => false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

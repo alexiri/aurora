@@ -689,6 +689,18 @@ async fn schedule_tools_via_tool_calls() {
     )
     .await;
     assert_eq!(v["ok"], false);
+    // RFE-021: a tool cannot anchor an automation to the workspace (unknown argument).
+    let v = call(
+        "schedule_create",
+        json!({"name": "t2", "prompt": "p", "cron": "30 8 * * 1-5", "anchor": "workspace"}),
+    )
+    .await;
+    assert_eq!(v["ok"], false, "{v}");
+    let anchors: Vec<String> = sqlx::query_scalar("SELECT anchor FROM schedules")
+        .fetch_all(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(anchors, ["creator"]);
     let (origin, creator): (Option<Uuid>, Option<Uuid>) = sqlx::query_as(
         "SELECT origin_conversation_id, creator_user_id FROM schedules WHERE id = $1::uuid",
     )

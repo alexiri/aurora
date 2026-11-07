@@ -7,6 +7,7 @@ import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import {
   useCreateWebhook,
@@ -44,11 +45,14 @@ function Deliveries({ agentId, id }: { agentId: string; id: string }) {
 export function WebhookForm({
   agentId,
   initial,
+  canOwn,
   onDone,
   onSecret,
 }: {
   agentId: string;
   initial?: Webhook;
+  /** Workspace owners may anchor a new webhook to the workspace. */
+  canOwn?: boolean;
   onDone: () => void;
   onSecret: (url: string, name: string) => void;
 }) {
@@ -59,6 +63,7 @@ export function WebhookForm({
   const [kind, setKind] = useState<string>(initial?.verification.kind ?? "none");
   const [header, setHeader] = useState(initial?.verification.header ?? "");
   const [secret, setSecret] = useState("");
+  const [anchored, setAnchored] = useState(false);
   const mut = initial ? update : create;
   const fe = fieldErrors(mut.error);
 
@@ -71,7 +76,7 @@ export function WebhookForm({
       update.mutate({ id: initial.id, body: { name, instructions, verification } }, { onSuccess: onDone });
     } else {
       create.mutate(
-        { name, instructions, verification },
+        { name, instructions, verification, ...(anchored ? { anchor: "workspace" } : {}) },
         {
           onSuccess: (res) => {
             onSecret(res.url, res.webhook.name);
@@ -110,6 +115,12 @@ export function WebhookForm({
           </Field>
         </div>
       ) : null}
+      {!initial && canOwn ? (
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={anchored} onChange={(e) => setAnchored(e.target.checked)} />
+          Anchor to workspace (outlives any single member)
+        </label>
+      ) : null}
       {mut.error && Object.keys(fe).length === 0 ? (
         <p role="alert" className="text-sm text-red-700">
           {errorMessage(mut.error)}
@@ -127,9 +138,10 @@ export function WebhookForm({
   );
 }
 
-function WebhookRow({ agentId, w, onSecret }: { agentId: string; w: Webhook; onSecret: (url: string, name: string) => void }) {
+function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w: Webhook; onSecret: (url: string, name: string) => void; wsId?: string; canOwn?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [showDeliveries, setShowDeliveries] = useState(false);
+  const [reassigning, setReassigning] = useState(false);
   const [confirm, setConfirm] = useState<"delete" | "rotate" | null>(null);
   const rotate = useRotateWebhook(agentId);
   const del = useDeleteWebhook(agentId);
@@ -145,7 +157,16 @@ function WebhookRow({ agentId, w, onSecret }: { agentId: string; w: Webhook; onS
         <span className="ml-auto text-xs text-neutral-600">{w.enabled ? "Enabled" : `Disabled${w.disabled_reason ? ` (${w.disabled_reason})` : ""}`}</span>
       </div>
       <p className="whitespace-pre-wrap text-sm">{w.instructions}</p>
-      <p className="text-xs text-neutral-600">Last delivery: {w.last_delivery_at ? fmtDate(w.last_delivery_at) : "never"}</p>
+      <p className="text-xs text-neutral-600">
+        Last delivery: {w.last_delivery_at ? fmtDate(w.last_delivery_at) : "never"} · <OwnerLabel anchor={w.anchor} creator={w.created_by} />
+      </p>
+      {w.disabled_reason === "authorization" ? (
+        <p className="text-sm text-amber-800">Disabled because its owner lost access. Reassign it to a current member to bring it back.</p>
+      ) : null}
+      {canOwn ? <AnchorSwitch name={w.name} anchor={w.anchor} busy={upd.isPending} onChange={(anchor) => upd.mutate({ id: w.id, body: { anchor } })} /> : null}
+      {reassigning && wsId ? (
+        <ReassignPanel agentId={agentId} wsId={wsId} kind="webhook" id={w.id} name={w.name} creatorId={w.created_by?.id} disabledReason={w.disabled_reason} onClose={() => setReassigning(false)} />
+      ) : null}
       {err ? (
         <p role="alert" className="text-sm text-red-700">
           {errorMessage(err)}
@@ -155,6 +176,11 @@ function WebhookRow({ agentId, w, onSecret }: { agentId: string; w: Webhook; onS
         <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
           Edit
         </Button>
+        {canOwn && wsId ? (
+          <Button size="sm" variant="outline" aria-expanded={reassigning} onClick={() => setReassigning((v) => !v)}>
+            Reassign…
+          </Button>
+        ) : null}
         <Button size="sm" variant="outline" disabled={upd.isPending} onClick={() => upd.mutate({ id: w.id, body: { enabled: !w.enabled } })}>
           {w.enabled ? "Disable" : "Enable"}
         </Button>
@@ -197,7 +223,7 @@ function WebhookRow({ agentId, w, onSecret }: { agentId: string; w: Webhook; onS
   );
 }
 
-export function WebhooksTab({ agentId }: { agentId: string }) {
+export function WebhooksTab({ agentId, wsId, canOwn }: { agentId: string; wsId?: string; canOwn?: boolean }) {
   const q = useWebhooks(agentId);
   const [creating, setCreating] = useState(false);
   // The URL lives only in this component state while the dialog is open.
@@ -214,11 +240,11 @@ export function WebhooksTab({ agentId }: { agentId: string }) {
           </Button>
         ) : null}
       </div>
-      {creating ? <WebhookForm agentId={agentId} onDone={() => setCreating(false)} onSecret={(url, name) => setShown({ url, name })} /> : null}
+      {creating ? <WebhookForm agentId={agentId} canOwn={canOwn} onDone={() => setCreating(false)} onSecret={(url, name) => setShown({ url, name })} /> : null}
       {q.data.items.length === 0 && !creating ? <EmptyState title="No webhooks">A webhook gives an external system a URL that wakes the agent.</EmptyState> : null}
       <ul className="space-y-2">
         {q.data.items.map((w) => (
-          <WebhookRow key={w.id} agentId={agentId} w={w} onSecret={(url, name) => setShown({ url, name })} />
+          <WebhookRow key={w.id} agentId={agentId} w={w} wsId={wsId} canOwn={canOwn} onSecret={(url, name) => setShown({ url, name })} />
         ))}
       </ul>
       <OneTimeKeyDialog

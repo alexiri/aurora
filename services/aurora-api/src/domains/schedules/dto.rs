@@ -28,7 +28,10 @@ pub struct Schedule {
     pub consecutive_failures: i32,
     pub next_fire_at: Option<DateTime<Utc>>,
     pub last_fired_at: Option<DateTime<Utc>>,
+    /// Provenance when `anchor = workspace`; the fire-time authority when `anchor = creator`.
     pub created_by: Option<ScheduleCreator>,
+    /// `creator` | `workspace` (RFE-021): whose access authorizes each fire.
+    pub anchor: String,
     /// Null when the caller cannot see that (direct) conversation; see `conversation_hidden`.
     pub origin_conversation_id: Option<Uuid>,
     /// True when `origin_conversation_id` was redacted (phase 1, RFE-009).
@@ -57,6 +60,7 @@ impl From<ScheduleRow> for Schedule {
                 id,
                 display_name: r.creator_name.unwrap_or_default(),
             }),
+            anchor: r.anchor,
             origin_conversation_id: r.origin_conversation_id,
             conversation_hidden: false,
             created_at: r.created_at,
@@ -103,6 +107,8 @@ pub struct CreateScheduleRequest {
     pub timezone: Option<String>,
     pub gate_command: Option<String>,
     pub gate_description: Option<String>,
+    /// `creator` (default) or `workspace`; `workspace` needs `can_own` (RFE-021).
+    pub anchor: Option<String>,
 }
 
 fn double_option<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
@@ -128,4 +134,6 @@ pub struct UpdateScheduleRequest {
     #[schema(value_type = Option<String>)]
     pub gate_description: Option<Option<String>>,
     pub enabled: Option<bool>,
+    /// `creator` | `workspace`; changing it needs `can_own` and is audited (RFE-021).
+    pub anchor: Option<String>,
 }

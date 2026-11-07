@@ -20,6 +20,8 @@ pub struct ScheduleRow {
     pub consecutive_failures: i32,
     pub creator_user_id: Option<Uuid>,
     pub creator_name: Option<String>,
+    /// `creator` | `workspace` (RFE-021): the fire-time authority.
+    pub anchor: String,
     pub origin_conversation_id: Option<Uuid>,
     pub run_conversation_id: Option<Uuid>,
     pub next_fire_at: Option<DateTime<Utc>>,
@@ -30,7 +32,7 @@ pub struct ScheduleRow {
 
 const COLS: &str = "s.id, s.agent_id, s.name, s.prompt, s.cron, s.timezone, s.gate_command, \
     s.gate_description, s.enabled, s.disabled_reason, s.consecutive_failures, s.creator_user_id, \
-    u.display_name AS creator_name, s.origin_conversation_id, s.run_conversation_id, \
+    u.display_name AS creator_name, s.anchor, s.origin_conversation_id, s.run_conversation_id, \
     s.next_fire_at, s.last_fire_at, s.created_at, s.updated_at";
 const FROM: &str = "FROM schedules s LEFT JOIN users u ON u.id = s.creator_user_id";
 
@@ -55,6 +57,7 @@ pub struct NewSchedule<'a> {
     pub gate_command: Option<&'a str>,
     pub gate_description: Option<&'a str>,
     pub creator_user_id: Option<Uuid>,
+    pub anchor: &'a str,
     pub origin_conversation_id: Option<Uuid>,
     pub next_fire_at: Option<DateTime<Utc>>,
 }
@@ -93,8 +96,8 @@ pub async fn insert(conn: &mut PgConnection, n: &NewSchedule<'_>) -> Result<Sche
     let id = Uuid::now_v7();
     sqlx::query(
         "INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, gate_command,
-            gate_description, creator_user_id, origin_conversation_id, next_fire_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+            gate_description, creator_user_id, anchor, origin_conversation_id, next_fire_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
     )
     .bind(id)
     .bind(n.agent_id)
@@ -105,6 +108,7 @@ pub async fn insert(conn: &mut PgConnection, n: &NewSchedule<'_>) -> Result<Sche
     .bind(n.gate_command)
     .bind(n.gate_description)
     .bind(n.creator_user_id)
+    .bind(n.anchor)
     .bind(n.origin_conversation_id)
     .bind(n.next_fire_at)
     .execute(&mut *conn)
@@ -135,6 +139,61 @@ pub async fn update(conn: &mut PgConnection, r: &ScheduleRow) -> Result<Schedule
     .execute(&mut *conn)
     .await?;
     get(&mut *conn, r.id).await?.ok_or(DbError::NotFound)
+}
+
+/// RFE-021: change the fire-time authority (creator and/or anchor). With `re_enable_next` the
+/// schedule is re-enabled in the same statement (clears `disabled_reason`, failures and lease,
+/// sets `next_fire_at`).
+pub async fn set_authority(
+    conn: &mut PgConnection,
+    id: Uuid,
+    creator: Option<Uuid>,
+    anchor: &str,
+    re_enable_next: Option<DateTime<Utc>>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE schedules SET creator_user_id = $2, anchor = $3, updated_at = now(),
+            enabled = enabled OR $4, disabled_reason = CASE WHEN $4 THEN NULL ELSE disabled_reason END,
+            consecutive_failures = CASE WHEN $4 THEN 0 ELSE consecutive_failures END,
+            next_fire_at = CASE WHEN $4 THEN $5 ELSE next_fire_at END,
+            fire_lease_until = CASE WHEN $4 THEN NULL ELSE fire_lease_until END
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(creator)
+    .bind(anchor)
+    .bind(re_enable_next.is_some())
+    .bind(re_enable_next)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// RFE-021: schedules of a workspace whose creator is `user` (any state), locked for update;
+/// optionally narrowed to `ids`. Ordered for deterministic audit rows.
+pub async fn lock_by_creator(
+    conn: &mut PgConnection,
+    workspace: Uuid,
+    user: Uuid,
+    ids: Option<&[Uuid]>,
+) -> Result<Vec<ScheduleRow>, DbError> {
+    let locked: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT s.id FROM schedules s JOIN agents a ON a.id = s.agent_id
+         WHERE a.workspace_id = $1 AND s.creator_user_id = $2
+           AND ($3::uuid[] IS NULL OR s.id = ANY($3))
+         ORDER BY s.id FOR UPDATE OF s",
+    )
+    .bind(workspace)
+    .bind(user)
+    .bind(ids)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} {FROM} WHERE s.id = ANY($1) ORDER BY s.id"
+    ))
+    .bind(&locked)
+    .fetch_all(conn)
+    .await?)
 }
 
 pub async fn delete(conn: &mut PgConnection, id: Uuid) -> Result<bool, DbError> {
