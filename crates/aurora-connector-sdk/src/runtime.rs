@@ -256,6 +256,20 @@ async fn ops_loop(
                 r.ops
             }
             Err(e) => {
+                // A connector that registered while its manifest awaits approval is not
+                // active yet: keep polling until an admin approves it.
+                let pending = matches!(
+                    &e,
+                    ClientError::Status { code, .. } if code == "connector_not_active"
+                );
+                if pending {
+                    tracing::info!("connector not approved yet; waiting");
+                    drop(first);
+                    if sleep_or_shutdown(Duration::from_secs(1), &mut shutdown).await {
+                        return;
+                    }
+                    continue;
+                }
                 if e.is_auth() {
                     tracing::error!(error = %e, "ops claim unauthorized; stopping ops loop");
                     return;

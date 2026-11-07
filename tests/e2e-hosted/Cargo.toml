@@ -26,3 +26,9 @@ anyhow = { workspace = true }
 futures = { workspace = true }
 tokio-tungstenite = { workspace = true }
 chrono = { workspace = true }
+aurora-registry = { workspace = true }
+aurora-crypto = { workspace = true }
+aurora-protocol = { workspace = true }
+aurora-connector-sdk = { workspace = true }
+aurora-connector-fake = { path = "../../connectors/fake" }
+sha2 = { workspace = true }
