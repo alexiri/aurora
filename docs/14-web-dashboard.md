@@ -28,6 +28,11 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
   rendered with the markdown renderer in safe mode (no raw HTML, links show
   their target, `rel="noopener noreferrer nofollow"`); never
   `dangerouslySetInnerHTML`.
+- (phase 2, RFE-017) The generated client treats 429 as retryable: it waits for
+  `retry-after` (cap 30 s, jittered) for idempotent reads and shows a non-blocking
+  "You're going fast — retrying in Ns" toast; non-idempotent writes are **not**
+  auto-retried (the user re-submits); streams that get `too_many_streams` show
+  "too many open tabs/streams" instead of reconnecting in a loop.
 - A "new version available" banner appears when `/v1/instance.version` differs
   from the build's version.
 - Copy lint: a test forbids platform/app names in core UI copy (they must come
@@ -37,21 +42,29 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
 ## Information architecture
 
 ### Public / auth (outside the shell)
-`/auth/login` (email+password, OIDC buttons from `/v1/instance`),
-`/auth/signup` (only if `signup_mode = open`), `/auth/forgot`, `/auth/reset`,
-`/auth/verify`, `/auth/cli` (approve a CLI login: shows the user code, workspace
+`/auth/login` (phase 0: email+password and OIDC buttons from `/v1/instance`;
+**from phase 1 (RFE-004): OIDC provider buttons only**, plus the "signup closed" /
+"email not verified" / "account disabled" error states; no password form),
+`/auth/signup` (phase 0, only if `signup_mode = open`), `/auth/forgot`,
+`/auth/reset`, `/auth/verify` (all three phase 0 only; removed in phase 1),
+`/auth/cli` (approve a CLI login: shows the user code, workspace
 picker), `/join` (invitation preview + accept), `/link/channel` (confirm a chat
-platform account link), `/oauth/bridge` (fragment-callback bridge for app
+platform account link; from phase 1 it shows the platform account and email hint
+and requires an explicit confirm, RFE-001), `/oauth/bridge` (fragment-callback bridge for app
 connects), `/setup-error` (missing required configuration reported by
 `/v1/instance`).
 
 ### Account (`/account/*`)
-Profile, password, sessions (sign out others), API keys (personal workspace
-keys), chat platform links, DM defaults, delete account.
+Profile, password *(phase 0 only)*, sessions (sign out others), API keys
+(personal workspace keys), chat platform links, DM defaults, delete account
+(phase 1: asks for a fresh OIDC sign-in first, `04 §OIDC`).
 
 ### Organization (`/o/<org>/*`) — owners/admins unless noted
 - **Workspaces** (all members: those they can access; owners/admins: all).
-- **Members**: list, roles, suspend/remove, invitations.
+- **Members**: list, roles, suspend/remove, invitations. (phase 2, RFE-021)
+  Suspend/remove first opens the **offboarding view** — "Removing Alice disables
+  these N schedules and webhooks" with the list, a "Reassign to…" picker (a member
+  or the workspace) and a Skip option; the removal then carries `reassign_to`.
 - **Policy**: org rules editor (draft/publish).
 - **Credentials**: org secrets, org LLM keys, org app connections, OAuth clients.
 - **Apps**: app availability posture and allow-list.
@@ -64,21 +77,42 @@ keys), chat platform links, DM defaults, delete account.
   - *Egress*: posture (`open` / `credentialed_only`), org allow-list editor with
     a "recently blocked hosts" helper fed from the request log
     (`egress_denied` decisions), instance baseline shown read-only.
+    (phase 1, RFE-003) **Browser tunnels (open lane)**: `enabled` /
+    `allowlist_only` / `disabled`, with the sentence "Tunnels cannot be
+    inspected or given credentials; `allowlist_only` limits them to the allow-list".
   - *Compliance*: LLM secrets of the org that no longer comply (mismatch,
     unverifiable, not permitted) with links to fix them.
   - Readable (not editable) by every org member, so users understand why a key
     or host is refused.
 - **Channels**: integrations per connector (setup form from the connector
-  manifest, status, shared bot identity), user links.
+  manifest, status, shared bot identity), user links (with their `method`).
+  (phase 1, RFE-001) Each integration has the switch **"Link members
+  automatically by verified email"** (default off; shown only when the
+  connector offers `email_verified`), with the trust warning of `13 §5.9`;
+  toggling it needs a confirm dialog.
 - **Skills**: org skills editor.
-- **API keys**, **Audit log**, **Settings** (name, slug, members can create
-  workspaces, limits), **Danger zone**.
+- **Retention** (phase 2, RFE-010/015): conversation and attachment windows,
+  attachment quota with the storage breakdown (by workspace and direction), a
+  usage bar with the 80 %/100 % notices, validation against the instance maximum.
+  Upload errors show "Your organization's attachment storage is full" with the
+  link to the usage page; expired attachments render as "expired by retention".
+- **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged), **Settings** (name, slug, members can create
+  workspaces, limits), **Danger zone** (phase 2, RFE-006: **Freeze organization**
+  for owners).
 
 ### Workspace (`/o/<org>/w/<ws>/*`)
 - **Overview**: first-run checklist (store an LLM key → grant it to Daneel →
   say hello), agents, pending approvals, recent activity.
 - **Agents** list → **agent page** tabs:
-  - **Chat** — direct conversation; other conversations (schedules, webhooks,
+  - **Chat** — (phase 2, RFE-010) per-conversation menu: Archive, Delete (typed
+    confirmation; explains that platform copies and agent memory remain), Export
+    (JSON / zip), and per-message **Redact** (reason, "also reset the agent's
+    session" checkbox, irreversible warning); archived conversations behind an
+    "Archived" filter; a banner shows the org retention window when set.
+    Direct conversation (phase 1, RFE-009: banner "Only you and
+    workspace owners can see this conversation"; owners also get a "Direct
+    conversations of other members" sidebar group, read-only with an audit
+    notice, no composer); other conversations (schedules, webhooks,
     groups) in a sidebar; SSE transcript with delta rendering, tool cards,
     inline approvals (approve/deny), attachments (upload, thumbnails, failed
     chips), follow-ups with "Send now", Stop, live activity line, door chips
@@ -94,14 +128,26 @@ keys), chat platform links, DM defaults, delete account.
   - **Memory** — list, editor with revisions, restore, redact, search; banner
     "Memories in this workspace are written in <Language>".
   - **Skills** — editor with file tree, executable bit, size meter.
-  - **Schedules**, **Webhooks** (URL shown once on create/rotate),
+  - **Schedules**, **Webhooks** (URL shown once on create/rotate; phase 2,
+    RFE-021: each item shows its owner — a person or "Workspace" — with
+    **Reassign…** (picker of members who can use the workspace; re-enable option
+    for items disabled for authorization) and, for owners, an **Anchor to
+    workspace** switch with a warning that the item will outlive any single
+    member),
     **Peers** (agent links and peer tasks).
+  - **Freeze** (phase 2, RFE-006) — a "Freeze agent" button on the agent header
+    (reason required, confirm dialog listing the effects); a frozen agent shows a
+    banner "Frozen by <name> on <date>: <reason>" with Unfreeze (disabled with the
+    explanation when a higher authority froze it).
   - **Computer** — sandbox state, "awake because…" reasons, processes,
     restart; BYO agents instead show **Connect** (token regenerate, container
     config, `aurora run` snippet, CA download).
   - **Activity** — request log filtered to the agent.
 - **Approvals** — pending gateway holds and action approvals (live via SSE),
-  history; batch actions.
+  history; batch actions. (phase 2, RFE-012) The page, the sidebar counter and the
+  SSE feed exist only for `can_approve` users; a plain member sees the waiting
+  approval inline in their own chat as a read-only card ("waiting for an approver"). (phase 1, RFE-009) Items naming a direct conversation
+  appear only for its user and owners.
 - **Credentials** — tabs: Apps (catalogue → connect window), Connections,
   Secrets (generic; reference-mode secrets when a reference-capable store is
   configured), LLM keys (provider/endpoint picker from `/v1/llm/providers`),
@@ -114,13 +160,19 @@ keys), chat platform links, DM defaults, delete account.
 - **Activity** — request log (decision, rule name, app/tool, conversation
   link), usage.
 - **Policy** also edits the workspace's uncredentialed default and allow-list
-  (can only tighten the org's egress posture).
-- **Settings** — name, timezone, memory language (owners), access bindings,
-  workspace API keys, danger zone.
+  (can only tighten the org's egress posture) and, from phase 1 (RFE-003), the
+  workspace's **open-lane posture** (locked with "enforced by org/instance"
+  when a higher level is stricter). The simulate panel gets a lane switch
+  (request / tunnel).
+- **Settings** — name, timezone, memory language (owners), access bindings (phase 2,
+  RFE-012: roles Owner / Approver / Member with a one-line explanation of each;
+  invitation dialogs offer Member or Approver per workspace),
+  workspace API keys, danger zone. (phase 2, RFE-006) The danger zone offers
+  **Freeze workspace**; frozen workspaces and orgs show a banner on every page.
 
 ### Instance administration (`/admin/*`, instance admins only)
 Overview (versions, gateways, hook hosts, runners, connectors, active snapshot
-hash), Users, **Plugins** (installed packages, upload, pending approvals with a
+hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze action; RFE-015: a **Storage** page — blob/attachment bytes per org, big-table sizes), Users, **Plugins** (installed packages, upload, pending approvals with a
 permissions review screen showing publisher, version, signer, hooks, egress per
 hook, context variables, host claims, and the diff against the previously
 approved version; reject/disable/uninstall with orphan warnings), **Host
@@ -136,10 +188,25 @@ token rotation, manifest approval with capability/setup-field diff), **Runners**
   access levels, the connect note and setup guide; OAuth methods redirect; the
   callback page posts a message to the opener (`{type: "aurora:connected",
   connection_id}`) and closes.
+- **Approval notifications (phase 2, RFE-011a)**: `approvals/stream` drives (1) the
+  sidebar/tab-title counter "(N) Aurora" and (2) an optional **browser
+  notification** — Account → "Notify me in this browser when an approval needs me"
+  asks permission from a user gesture (Notifications API; the choice is stored in
+  that browser only). A notification appears only for an approval the user can
+  decide and only while the tab is hidden or unfocused; it shows agent, workspace
+  and the sanitized title, `tag = approval id` (no duplicates), and clicking it
+  focuses the tab at the Approvals page. This is **not** Web Push: it needs an open
+  tab (Web Push is RFE-011b, phase 4). Account also has the "E-mail me approvals
+  nobody is watching" switch (`approval_email`).
 - **Policy editor**: draft/publish ("Apply changes"), drag reorder with
   stale-revision detection, identity and target pickers (apps/tools from the
   catalogue, connections, secrets, network patterns), conditions, modifiers,
-  simulate panel (method + URL + body → decision trace), warnings panel,
+  (phase 2, RFE-011a) a "Approval timeout" field on require-approval rules and on
+  *ask* tools of custom grants (bounded by the instance maximum, shown with the
+  default),
+  simulate panel (method + URL + body → decision trace; phase 2, RFE-005: a
+  "speaker" picker, default you, plus "no speaker"), identity picker labelling
+  `user` identities **"when <name> is speaking"** with the warning of `07`, warnings panel,
   generation history with rollback.
 - **Plugin approval**: the permissions review is mandatory reading — approve is
   disabled until the reviewer expands every section (hooks, egress, context,

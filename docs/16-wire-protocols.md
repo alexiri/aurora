@@ -8,15 +8,15 @@ implementation repo and checked in (CI fails on drift).
 
 | # | Contract | Direction | Auth | Owner doc |
 |---|----------|-----------|------|-----------|
-| W1 | Proxy protocol | agent → gateway :4102 | `Proxy-Authorization` gateway credential | `06` |
+| W1 | Proxy protocol | agent → gateway :4102 | `Proxy-Authorization` gateway credential; (phase 1, RFE-002) carried inside a TLS session — TLS-only listener | `06` |
 | W2 | Management API | browser/CLI/SDK → API `/v1` | session / API key | `05` |
 | W3 | Gateway signals | API → gateways (`NOTIFY`), gateways → DB | DB roles | `05`, `06` |
-| W4 | Gateway internal | API/monitoring → gateway :4103 | internal secret | `06` |
+| W4 | Gateway internal | API/monitoring → gateway :4103 | internal secret (ring from phase 2, `08 §4`) | `06` |
 | W5 | Runner plane | runner → API `/v1/runner` | `aur_` + replica | this doc |
 | W6 | Supervisor channel | supervisor → runner :4105 (WebSocket) | bootstrap token / HMAC session | this doc |
 | W7 | Platform tools | harness → MCP bridge → supervisor → runner → API | stamped identity | this doc, `12` |
 | W8 | Connector contract | connector → API `/v1/connector` | `aun_` + replica | `13` |
-| W9 | Hook host | API/gateway → hookhost :4104; hookhost → API :4111 | internal secret | `09` |
+| W9 | Hook host | API/gateway → hookhost :4104; hookhost → API :4111 | internal secret (ring from phase 2, `08 §4`) | `09` |
 | W10 | Platform callbacks | chat platform → connector | connector-defined | `20` |
 | W11 | Upstream | gateway → internet | guarded resolver | `06` |
 | W12 | CLI / BYO | CLI → API; BYO agent → gateway | API key / agent token | `05`, `08` |
@@ -60,7 +60,10 @@ All requests: `Authorization: Bearer aur_…`; after registration also
 
 `RunnerCapabilities`: `{ backend, home_durability: "resident"|"snapshot",
 resources: { cpu: {min,max}, memory_mib: {min,max}, pids: {min,max}, home_gib:
-{min,max} }, max_sandboxes, harnesses: ["claude-code","fake"], max_attachment_bytes }`.
+{min,max} }, max_sandboxes, harnesses: ["claude-code","fake"], max_attachment_bytes,
+image_capabilities?: ["browser"] }` (phase 1, RFE-003: the capabilities the
+sandbox image declares via its `org.aurora.capabilities` label, read by the
+runner when it registers; open vocabulary, absent = none).
 
 ### Work items
 
@@ -77,6 +80,7 @@ All carry `{ item_id, kind, sandbox_id, boot_id }`.
 | `turn.abort` | `{ turn_id }` |
 | `turn.notice` | `{ turn_id, text }` (platform notice steered into the live run, e.g. ceiling warning) |
 | `session.release` | `{ conversation_id }` (surface changed; release idle session) |
+| `session.purge` | (phase 2, RFE-010) `{ conversation_id, session_ref }` — delete the stored harness session files (`12 §Session purge`) |
 
 `ModelChoice`: `{ provider, endpoint_id, base_url, dialect, model, effort,
 client_env: [[k,v]] }`. `TurnInput`: `{ text, speaker_label, door, recall: {
@@ -107,6 +111,7 @@ are dropped.
 | `watch.fired` | `{ watch_id, detail }` | watch turn |
 | `gate.result` | `{ turn_id, outcome: "quiet"|"wake"|"failed", output? }` | schedule run outcome |
 | `ports.state` | `{ ports: [int] }` | `listening_ports` |
+| `session.purged` | (phase 2, RFE-010) `{ conversation_id, session_ref, ok }` | completes the `session_purges` row (`ok = false` keeps it pending) |
 
 `turns.last_event_n` is maintained by the API for event idempotency.
 
@@ -128,7 +133,7 @@ are dropped.
 - Ping/pong every 20 s; 60 s silence = dead connection.
 
 Runner → supervisor kinds: `turn.deliver`, `turn.message`, `turn.send_now`,
-`turn.abort`, `turn.notice`, `session.release`, `home.sync`, `tool.result`,
+`turn.abort`, `turn.notice`, `session.release`, `session.purge` (phase 2, RFE-010), `home.sync`, `tool.result`,
 `memory.write.result`, `file.result`, `shutdown`.
 
 Supervisor → runner kinds: `ready`, `home.synced`, `turn.started`, `turn.event`

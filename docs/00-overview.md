@@ -104,7 +104,7 @@ Both kinds share the gateway, the secret stores and the policy engine.
 | **Space binding** | For a shared bot: which agent answers in a space (channel), listen mode and follow-up rule. Only workspace owners may set it. |
 | **DM default** | For a shared bot: which agent a person's top-level DMs go to. |
 | **Thread link** | Platform thread address ↔ conversation. |
-| **User link** | Platform user ↔ Aurora user; minted by platform-verified email or a core-issued sign-in link. |
+| **User link** | Platform user ↔ Aurora user; minted by a core-issued sign-in link (the signed-in person confirms), or — only when an org admin has enabled `verified_email_autolink` for the integration (phase 1, RFE-001) — by a connector-asserted verified email. |
 | **Reach grant** | Standing decision widening who (beyond workspace members) may talk to an agent in a space or as a person. |
 | **Action token** | Core-signed, single-use, short-lived token embedded in chat buttons and menus; connectors return it verbatim with the clicker's platform id. |
 | **Agent link / peer task** | Relationship between two agents and a bounded work exchange between them. |

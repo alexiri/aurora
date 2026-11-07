@@ -16,6 +16,10 @@ needed because the core does that.
   `user_tokens` = false. Per-integration narrowing at `credentials.validate`:
   without a system-admin token → no `ephemeral`, no `presence_dedicated`;
   when the server hides email addresses from the bot → no `email_verified`.
+  (phase 1, RFE-001) Even when `email_verified` is offered, the core uses it only
+  if an org admin enabled `verified_email_autolink` on the integration (default
+  off); otherwise the connector's `author.email` only pre-fills the sign-in link
+  flow, and the setup guide says so.
 - `public_callbacks: ["actions", "commands"]`.
 - `limits`: `message_max_chars` 16 383 (server `MaxPostSize` read at validate),
   `writes_per_space_per_minute` 30.
@@ -29,6 +33,10 @@ needed because the core does that.
 | `bot_token` | secret | access token of a bot account (shared mode; required) |
 | `admin_token` | secret, optional | system-admin personal access token: enables dedicated presences, ephemeral posts, slash-command registration |
 | `shared_bot_display_name` | text, default `agents.default_name` (`Daneel`) | applied to the bot profile when the bot token allows |
+
+`verified_email_autolink` (boolean, default `false`) is **not** a connector setup
+field: it is a core-owned integration setting stored in
+`channel_integrations.config` and edited by org admins (`13 §5.9`).
 
 `credentials.validate`: `GET /api/v4/users/me` (bot) → bot identity;
 `GET /api/v4/teams/name/{team}` (or by id) → `tenant_ref =

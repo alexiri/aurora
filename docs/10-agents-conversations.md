@@ -40,9 +40,15 @@ deleting it clears `is_default` (no replacement is created).
 - When a channel integration creates a **shared bot**, its default display name
 is also `agents.default_name` (`13`).
 
+### Freezing an agent (phase 2, RFE-006)
+
+`POST /v1/agents/{agent}/freeze` pauses the agent without deleting anything:
+no turns, no gateway access, sandbox parked, schedules/webhooks/presences paused,
+state kept; reversible with `unfreeze`. Full rules: `04 §Freeze`.
+
 ### Deleting an agent
 
-Cascades in the database to everything it owns. Before the delete commits, the
+Cascades in the database to everything it owns (conversations included; the sandbox home, which holds harness session files, is destroyed with it). Before the delete commits, the
 API enqueues connector `presence.deprovision` operations for dedicated
 presences and revokes all gateway credentials. The sandbox and home volume are
 destroyed by runner reconciliation (anything the control plane no longer knows
@@ -68,6 +74,33 @@ session (`harness_session_ref`) inside the shared sandbox.
 
 Direct conversations die with their user. `origin_conversation_id` points at the
 conversation where results of schedules, webhooks and peer tasks are reported.
+
+### Visibility of direct conversations (phase 1, RFE-009)
+
+Phase 0: every workspace member could read every direct conversation. **From
+phase 1 a `direct` conversation is visible only to its user and to workspace
+owners** (`can_own`, including org owners/admins), per `can_see_conversation`
+(`04 §The access law`); other kinds keep `can_use` visibility. Consequences,
+specified once here and enforced by the same predicate everywhere:
+
+- API/SSE/attachments: `05 §Conversation visibility`; the dashboard lists only
+  visible conversations and shows owners a separate "Direct conversations of
+  other members" group, each marked "visible to workspace owners".
+- **Everything that names a conversation follows**: approval cards and the
+  approvals feed (visible/decidable only by those who can see the conversation,
+  `07`), activity/request-log rows (omitted for invisible direct conversations),
+  schedule/webhook/peer-task conversation references (redacted), the SSE streams,
+  and search.
+- **Chat doors**: platform DMs and the dashboard chat are the *same* private
+  conversation ("one conversation, several doors", D-27); the thread-link card
+  and approval card of a DM go to that DM only.
+- **Agent preamble** (platform voice): *"Direct conversations are private to the
+  person you are talking with and the workspace owners. Do not quote or describe
+  what someone told you in a direct conversation in another conversation, in a
+  memory or in a shared artifact unless they asked you to."* Memory and skills are
+  agent-wide and **not** conversation-scoped (`17 §Residual risks`).
+- The agent's own context is unaffected: an agent still sees its conversations'
+  contents; visibility concerns people.
 
 ## Turns
 
@@ -114,13 +147,14 @@ turns become `aborted` immediately; dispatched/running ones get
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Supervisor never acknowledged (`STALE_DISPATCH`)   | back to `queued` once (`revived_at` fence), then `failed` `never_started`                                                                                    |
 | Cold-dead dispatch (sandbox died before any event) | revived once, then `failed` `agent_restarted`                                                                                                                |
-| No progress for `TURN_STALL`                       | `failed` `turn_stalled`                                                                                                                                      |
+| No progress for `TURN_STALL`                       | `failed` `turn_stalled` (phase 2, RFE-011a: **exempt while the turn has a `pending` approval**; the clock restarts at its resolution, `07 §Approval deadlines`; `TURN_CEILING` still applies) |
 | `TURN_CEILING − TURN_CEILING_WARNING` reached      | a platform notice is steered into the live run (once, `ceiling_warned_at`)                                                                                   |
 | `TURN_CEILING` reached                             | abort sent, `failed` `time_limit`                                                                                                                            |
 | Sandbox start failed                               | queued turns of that agent `failed` with the start reason (`image_unavailable`, `at_capacity` only after the capacity wait, `agent_start_failed`)            |
 | No compatible granted LLM key                      | `failed` `no_model_key` (before any sandbox start)                                                                                                           |
 | Harness/provider terminal errors                   | `provider_auth`, `provider_rate_limited`, `provider_quota`, `provider_overloaded`, `provider_refusal`, `harness_failed` (classified by the supervisor, `12`) |
 | Restart requested                                  | active turns `failed` `agent_restarted`                                                                                                                      |
+| Agent effectively frozen (phase 2, RFE-006)        | `queued`/`joining` rows and live turns `aborted` with `error_code = frozen`; new turns refused (`04 §Freeze`)                                                |
 
 
 Error codes are an **open vocabulary**: the API stores any bounded code;
@@ -158,6 +192,85 @@ after its last tool call*; narration between tools streams ephemerally. A tool
 call is a structural break; thinking is not. Within a tool-free stretch the
 harness's message framing decides message boundaries.
 
+### Archive, delete, redaction, retention, export (phase 2, RFE-010, D-53)
+
+Phase 0 kept conversations, transcript events and attachments forever: no delete,
+no redaction of a secret pasted into chat, no retention, no export. From phase 2:
+
+**Archive.** `POST /v1/conversations/{id}/archive` / `…/unarchive` set
+`conversations.archived_at`. Archiving is a tidy-up, not a lock: archived
+conversations are hidden from default lists and sidebars (`?archived=true` lists
+them) and a person-authored message into one unarchives it. Allowed for anyone who
+can see the conversation (`can_see_conversation`, `04`) and, for non-direct kinds,
+has `can_use`.
+
+**Delete.** `DELETE /v1/conversations/{id}` hard-deletes the conversation with its
+turns, transcript events, answer buffers, attachments (rows and blob bytes),
+thread links, context credentials, mention anchors and pending approvals'
+conversation references (approvals/action approvals keep their row with the
+reference nulled). Authorization: a `direct` conversation by **its user** or
+`can_own`; every other kind by `can_own`. Refused with 409 `conversation_active`
+while a turn is `queued`/`dispatched`/`running` (abort first). One transaction
+with its security-critical audit row `conversation.delete` (ids, kind and counts,
+never content, `04 §Audit`); blob bytes are removed after commit by the BlobStore
+(failures leave orphans that the daily orphan sweep removes). Because the **harness
+session** inside the agent's home holds the conversation's content too, the API
+records a `session_purges` row (`03 §Planned changes`) and sends the supervisor
+`session.purge { conversation_id, session_ref }` (`16 §W5/W6`); the harness adapter
+deletes the session files (`HarnessAdapter::purge_session`, `12`). A stopped sandbox
+purges at its next boot, before any turn (the pending list is part of the home
+sync); the row is deleted on the supervisor's `session.purged` report. Schedule/
+webhook run conversations: `run_conversation_id` becomes null and the next fire
+creates a fresh one; `origin_conversation_id` references become null (reports then
+have no destination). Messages already posted into a chat platform are **not**
+deleted (they live on the platform, `17 §Residual risks`).
+
+**Transcript redaction** (mirrors memory-revision redaction). `POST
+/v1/conversations/{id}/events/{seq}/redact { reason?, reset_session? }` replaces
+that event's payload **in place**: the row keeps `conversation_id`, `seq`, `turn_id`
+and `type` and structural ids (`turn_id`, `call_id`, `message_id`, `approval_id`,
+`attachment_id`), and every content field (`text`, `summary`, `message`, `filename`,
+`caption`, fields) is replaced by the marker `{ "redacted": true,
+"redacted_at": …, "redacted_by": <label>, "reason"?: … }`; `transcript_events.
+redacted_at/redacted_by_user_id` are set. A redacted `turn.queued` also scrubs
+`turns.text` and any `turn_answer_buffers` of that turn; a redacted `attachment`
+event leaves the file (delete it with the attachment route, `RFE-015`). `POST
+/v1/turns/{id}/redact` redacts every event of a turn. Authorization: the person
+who authored the event's turn (`turns.speaker_user_id`), the direct user of a
+direct conversation, or `can_own` — always limited to conversations the caller
+can see. Redaction is audited (`transcript_event.redact`, security-critical:
+seq/type/reason, never content), idempotent, irreversible, and emits an SSE
+`event.redacted { seq }` so open views refresh. It cannot reach the agent's own
+context: `reset_session: true` (default `false`) additionally bumps
+`harness_session_epoch` and queues a session purge, so the next turn starts a
+fresh session without the secret (the agent forgets the conversation).
+
+**Retention** (optional, per organization; default **none**). `PUT
+/v1/orgs/{org}/retention { conversations_days?: int|null }` (org `owner`/`admin`;
+`retention.update` is security-critical) stores `organizations.settings.retention`.
+Values are `RETENTION_MIN_DAYS`..`RETENTION_MAX_DAYS` (7..3650) and may not exceed
+an instance ceiling `retention.conversation_days_max` when set (422
+`retention_above_instance_maximum`; the instance can only tighten). The daily
+singleton **conversation retention sweep** (`05 §Background jobs`) deletes, per org,
+conversations whose `last_activity_at` is older than the window, that have no
+active turn and no pending approval, in batches of `RETENTION_SWEEP_BATCH` through
+the **same delete path** (actor `system`, one `conversation.delete` audit row per
+batch listing ids, `metadata.reason = "retention"`). The attachment parts of the
+retention object (`attachments_days`, quota) are specified with RFE-015 below.
+Direct conversations are retained/deleted by the same rule. The dashboard states the
+window on affected chat views and in org settings.
+
+**Export.** `GET /v1/conversations/{id}/export[?after_seq=&attachments=none|zip]`
+returns `application/json` (`Content-Disposition: attachment`) in format
+`aurora.conversation.v1`: `{ conversation, turns[], events[] (durable events in seq
+order; redacted ones as their marker), attachments[] (id, filename, size, sha256,
+content_type, direction, purged) }`; `attachments=zip` returns a `.zip` with the
+JSON plus the (non-purged) files. Authorization: `can_own` or the direct user of
+that direct conversation (`can_see_conversation` always applies — an org admin can
+therefore export a user's direct conversation for a subject-access request, audited
+best-effort as `conversation.export`). Bounded by `EXPORT_MAX` (256 MiB / 200 000
+events; over → 422 `export_too_large`, page with `after_seq`).
+
 ### Attachments
 
 - Inbound (people → agent): `POST /v1/conversations/{id}/attachments` (multipart)
@@ -172,6 +285,42 @@ caps `ATTACH_OUT_*`; produces an `attachment` event and, for threads, a
 - Storage through the **BlobStore** trait (`put`, `get`, `delete`; backend key
 per row). Phase 0 backend: `postgres` (`blobs` table). An S3-compatible
 backend is a later registry entry.
+- **Retention, quota and storage visibility (phase 2, RFE-015, D-54).** Phase 0
+  bounded single files and one conversation's daily output but nothing in total:
+  attachment bytes lived in a Postgres `bytea` table forever.
+  - **Quota.** Each org has an attachment **storage quota** (`attachment_quota_mib`
+    in `organizations.settings.retention`, default `attachments.default_org_quota_mib`
+    = 10 GiB, at most `attachments.org_quota_mib_max`; `0` in the instance setting
+    means unlimited). Usage is the sum of `size_bytes` of the org's non-purged
+    attachments (any direction or status), kept in a transactional counter
+    (`org_storage_usage`) updated with every insert/purge and reconciled daily.
+    Every path that stores bytes checks `used + size ≤ quota` **before** accepting
+    them: dashboard/API upload → **422 `attachment_quota_exceeded`**
+    (`details: { used_mib, quota_mib }`); a connector `file.fetch` → the attachment
+    is `failed` with `failure_reason = quota_exceeded` and the person gets a
+    platform-voice notice; the agent's `send_file` (runner `POST /attachments`) →
+    tool error `attachment_quota_exceeded`. At 80 % and 100 % the org's owners get a
+    dashboard notice (and the e-mail notification channel of RFE-011a when enabled).
+  - **Retention.** `attachments_days` (optional, default none; same bounds and
+    instance ceiling `attachments.days_max` as conversations, `RETENTION_MIN_DAYS`..
+    `RETENTION_MAX_DAYS`) purges attachment **bytes** older than the window: the
+    blob is deleted, the row stays (`purged_at`, `purge_reason = retention`) so
+    transcripts still show the chip as "expired"; `GET /v1/attachments/{id}/content`
+    then answers **410 `attachment_purged`**. Copies already delivered into a
+    sandbox inbox are the agent's files and are not touched.
+  - **Delete one.** `DELETE /v1/attachments/{id}` purges the bytes now
+    (`purge_reason = deleted`): by the attachment's uploader or `can_own`, always
+    subject to `can_see_conversation` (`04`); audited best-effort (`attachment.delete`).
+  - **Visibility.** `GET /v1/orgs/{org}/storage` (org `owner`/`admin`) returns usage
+    vs quota, retention settings and a breakdown by workspace and direction;
+    `GET /v1/admin/storage` (instance admin) returns the instance totals: blob bytes,
+    attachment bytes and counts per org (top 50), and the on-disk size of the big
+    tables (`blobs`, `attachments`, `transcript_events`, `request_log`,
+    `audit_log`). Metrics: `aurora_blob_bytes`, `aurora_org_attachment_bytes{org}`
+    (top 20 orgs, others summed), `aurora_attachment_quota_rejections_total`.
+  - **Sweep.** The daily singleton **attachment sweep** (`05 §Background jobs`):
+    purges by retention, removes orphan blobs (no attachment row), recomputes the
+    usage counters (fixing drift), and raises the quota notices.
 - Filenames sanitized to `[A-Za-z0-9._-]`, ≤128; downloads always
 `Content-Disposition: attachment` with `X-Content-Type-Options: nosniff`.
 
@@ -286,11 +435,18 @@ model, with `GATE_TIMEOUT`. Empty stdout or `{"wake_agent": false}` → quiet
 appended to the prompt; non-zero exit → `failed`.
 - **Fire** (due-work arm): claim rows with `next_fire_at <= now()` and no live
 `fire_lease_until` by stamping `fire_lease_until = now() + SCHEDULE_FIRE_LEASE`;
-re-check the creator's authority (`04 §Fire-time authority`); compute the
+re-check the creator's authority (`04 §Fire-time authority`); (phase 2, RFE-006)
+an effectively frozen agent is not fired — advance `next_fire_at`, write a
+`schedule_runs` row `skipped_frozen`, create no turn; compute the
 next real occurrence after `now()` (missed windows coalesce into one late
 fire); if the run conversation has an active turn → `skipped_busy`; else
 create the turn (prompt behind a "Scheduled task: <name>" header) and a
 `schedule_runs` row; clear the lease.
+- (phase 2, RFE-021) **Authority and anchor**: an item's fire-time authority is its
+  creator (`anchor = creator`, default) or "an active owner exists" (`anchor =
+  workspace`), `04 §Fire-time authority`; reassignment, bulk reassignment and the
+  offboarding view are specified there. A schedule disabled for `authorization`
+  tells the origin conversation "reassign it in the dashboard or recreate it".
 - `SCHEDULE_FAILURE_DISABLE` consecutive failures → disabled (`failures`) with a
 notice in the origin conversation.
 - The run report: when the run turn finishes, a short `notice` with the outcome
@@ -304,7 +460,10 @@ content type; stored only inside the created turn's text as a fenced,
 clamped block labelled as untrusted external data.
 - Optional verification (`hmac_sha256` over the raw body with a stored
 secret, constant-time compare) → 401 on mismatch.
-- Disabled or creator lost access → 410 / 403 and a `webhook_deliveries` row.
+- Disabled or creator lost access (phase 2, RFE-021: for `anchor = workspace`, no
+  active owner) → 410 / 403 and a `webhook_deliveries` row.
+  (phase 2, RFE-006) Effectively frozen agent → 410 `frozen` and a delivery row
+  `paused` (reason `frozen`); the webhook stays enabled.
 - Accepted → turn in the webhook's run conversation with the stored
 instructions + payload; responds `202 { "delivery_id" }` immediately.
 - Rate limit: 60 deliveries/min per webhook (429).

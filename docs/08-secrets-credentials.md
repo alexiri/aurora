@@ -153,6 +153,58 @@ value on the connect path, never per request.
 `AURORA_SIGNING_KEY` (32 bytes, base64) is the root for derived keys:
 `HKDF-SHA256(root, info = "aurora:<purpose>:v1")`.
 
+**Keyring-style lists (phase 2, RFE-007, D-51).** Phase 0 held one static value
+for each of `AURORA_SIGNING_KEY` and `AURORA_INTERNAL_SECRET`, with no rotation.
+From phase 2 both accept the **same shape as the encryption keyring** (§3):
+
+- `AURORA_SIGNING_KEY` = comma-separated `<key_id>:<base64 32 bytes>` (at most
+  `KEYRING_MAX` = 4 entries); `AURORA_SIGNING_ACTIVE_KEY` = the id used for
+  everything new. Key ids match `[a-z0-9]{1,16}`.
+- `AURORA_INTERNAL_SECRET` = comma-separated `<key_id>:<base64 ≥32 bytes>`;
+  `AURORA_INTERNAL_ACTIVE_KEY` = the id senders use.
+- **Backward compatible**: a value with no `:` is a one-entry ring with id `v0`,
+  active (the active variable may then be omitted). A list without its `*_ACTIVE_KEY`
+  fails startup naming the variable. Every service validates its ring at startup.
+- **Verify with any, sign with active.** Receivers accept anything signed or
+  presented with *any* key in their ring; producers use only the active key.
+  Nothing else widens: a key id outside the ring is refused.
+- **Derived artifacts carry their key id** so verification is one lookup:
+  AEAD states (`oauth-state`, `oidc-state`, `link-state`) are prefixed with the id
+  (`<key_id>.` before the base64url envelope); **action tokens** become
+  `v2.<key_id>.<b64url(payload)>.<b64url(HMAC)>` (`13 §4.4`); artifacts without an
+  id (phase 0, `v1.` tokens, unprefixed states) are verified by trying each key
+  (≤4, constant-time). Avatar public keys are *stored* values, so rotation does
+  not affect them. TTLs (`OAUTH_STATE_TTL` 10 min, `ACTION_TOKEN_TTL` ≤ 24 h) bound
+  how long an old key must stay in the ring.
+- **Internal secret on the wire**: `Authorization: Bearer <base64 secret>` plus
+  `X-Aurora-Key-Id: <key_id>` (not secret); the receiver compares in constant time
+  against that key, or — header absent (legacy/rolling) — against every key in
+  its ring. `GET /internal/v1/status` on the gateway and hook host, and `aurora-api
+  keys status`, report the **ids** (and a short fingerprint, never values) of each
+  service's ring and active key so an operator can verify convergence.
+
+**Rotation procedure** (rolling, no downtime; identical for the signing key and the
+internal secret):
+
+1. `aurora-api keys generate --kind signing|internal` prints a fresh
+   `<key_id>:<base64>` entry. Append it to the ring **on every service that holds
+   the ring** (signing key: api; internal secret: api, gateway, hookhost) but do
+   **not** change the active id. Roll the services; they now *accept* the new key.
+2. Confirm convergence (`keys status` / the status endpoints show the new id on
+   every replica). Only then set `*_ACTIVE_KEY` to the new id and roll again:
+   producers now use the new key while the old one still verifies in-flight
+   artifacts.
+3. After the old key's longest artifact lifetime (≥ 25 h for the signing key, the
+   action-token TTL plus margin; ≥ 5 min for the internal secret), remove it from
+   the ring and roll. If the old key is **compromised**, do this immediately:
+   in-flight states fail (users retry), outstanding chat-card tokens fail (the card
+   shows "expired", a new card is posted by the next approval event), nothing else.
+4. Setup tooling and Helm hooks only ever **append** (never overwrite) ring entries.
+
+Out of scope for phase 2 (owner decision: option a only): `AURORA_RUNNER_SESSION_KEY`
+and the gateway CA stay single static values with no orchestrated rotation, and no
+KMS-wrapping of the inline keyring is specified (`17 §Residual risks`).
+
 | Purpose | Use |
 |---------|-----|
 | `oauth-state` | AEAD for app-connect OAuth state |
@@ -162,7 +214,8 @@ value on the connect path, never per request.
 | `link-state` | AEAD for account-link landing pages |
 
 `AURORA_RUNNER_SESSION_KEY` (shared by runner replicas and the API) is separate
-(`11`). `AURORA_INTERNAL_SECRET` authenticates API ↔ gateway-internal ↔ hook host.
+(`11`) and remains a single static value. `AURORA_INTERNAL_SECRET` authenticates
+API ↔ gateway-internal ↔ hook host (a ring from phase 2, above).
 
 ## 5. Secrets
 
@@ -374,6 +427,25 @@ workspace secret it uses and records usage.
 Context credentials are for **attribution**, not isolation: conversations of
 one agent share a sandbox. The security boundary is the agent.
 
+(phase 2, RFE-005) A hosted `context` credential also carries the turn's
+**speaker** (`gateway_credentials.speaker_user_id`, copied from
+`turns.speaker_user_id` at mint when the speaker is a person; null otherwise).
+Policy `user` identities match only this value (`07`). `boot`, `agent` and BYO
+`context` credentials never carry a speaker. Because conversations of one agent
+share a sandbox, a compromised agent process could borrow another concurrent
+turn's credential; speaker-bound rules are therefore *attribution*, not
+isolation (`17 §Residual risks`) — pair sensitive grants with agent-level rules and
+approvals.
+
+(phase 1, RFE-003) **Capabilities.** `gateway_credentials.capabilities` (text
+array, default empty; open vocabulary, unknown values ignored) records what a
+credential may do beyond ordinary MITM traffic. Phase 1 defines one: `browser`
+— permission to use the **open lane** (`06 §Open-lane admission and posture`).
+It can be set only on `boot` credentials, by the API when it mints the boot
+token for a `sandbox.start` whose boot document carries the capability
+(`11 §The boot document`); `agent` and `context` credentials always have an
+empty set. It is fixed at mint time (a new boot gets a new credential).
+
 ## 8. OAuth token lifecycle (gateway)
 
 Connection credentials JSON contains the fields declared by the manifest
@@ -429,13 +501,14 @@ Rules: never overwrite a file that lacks the sentinel; `mkdir -p`; mode 0600.
 
 ```json
 {
-  "proxy_url": "http://x:aug_…@gateway.example.org:4102",
+  "proxy_url": "https://x:aug_…@gateway.example.org:4102",
   "env": { "HTTPS_PROXY": "…", "HTTP_PROXY": "…", "https_proxy": "…", "http_proxy": "…",
            "NO_PROXY": "localhost,127.0.0.1", "SSL_CERT_FILE": "/aurora/ca.pem",
            "NODE_EXTRA_CA_CERTS": "/aurora/ca.pem", "REQUESTS_CA_BUNDLE": "/aurora/ca.pem",
            "CURL_CA_BUNDLE": "/aurora/ca.pem", "GIT_SSL_CAINFO": "/aurora/ca.pem" },
   "ca_pem": "-----BEGIN CERTIFICATE-----…",
   "ca_path": "/aurora/ca.pem",
+  "proxy_ca_path": "/aurora/ca.pem",
   "llm_env": { "ANTHROPIC_BASE_URL": "…", "ANTHROPIC_AUTH_TOKEN": "aurora-placeholder" },
   "stubs": [ { "path": "…", "content": "…", "mode": "0600" } ]
 }
@@ -446,6 +519,18 @@ creation/regeneration (otherwise `proxy_url` contains `<AGENT_TOKEN>` and the
 CLI substitutes its stored token). Hosted agents are refused (403
 `hosted_agent_token_hidden`). `aurora run -- <cmd>` applies this to a child
 process (writes the CA to a temp file, sets env, builds a combined CA bundle).
+
+(phase 1, RFE-002) Phase 0 emitted `http://…:4102` because the gateway listener
+was plaintext. From phase 1 the gateway proxy listener is **TLS-only**, so
+`proxy_url` and every `*_PROXY` variable are `https://…` (the CLI refuses to
+emit or accept an `http://` gateway URL for a non-loopback host). `ca_pem` is
+the CA that signs both the proxy listener's certificate (outer leg) and the
+MITM leaves (inner leg); `proxy_ca_path` names the file for clients that take a
+separate trust anchor for the proxy leg (curl `--proxy-cacert`, git
+`http.proxySSLCAInfo`). If the operator configured
+`gateway.proxy_tls.cert_file`, `ca_pem` is still the MITM CA and the response
+adds `proxy_tls: "operator_certificate"` so the CLI uses the system roots for the
+outer leg. Client caveats are in `06 §Proxy listener TLS`.
 
 ## 11. LLM and egress governance
 
@@ -458,9 +543,9 @@ above, enforced at several points.
 
 | Level | Who | Where stored | Can |
 |-------|-----|--------------|-----|
-| **Instance ceiling** | operator | configuration `[governance]` and `[[llm.endpoints]]` (`15`) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org; set the known-LLM-hosts list and an egress baseline allow-list |
+| **Instance ceiling** | operator | configuration `[governance]` and `[[llm.endpoints]]` (`15`) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org (including, from phase 1, the **open-lane** minimum, RFE-003); set the known-LLM-hosts list and an egress baseline allow-list |
 | **Organization governance** | org owners/admins | `organizations.governance` (`03`) | permit a subset of endpoints; restrict key scopes per endpoint; narrow origin rules and model allow-lists; choose the LLM posture and the egress posture (never looser than the instance minimum); maintain the org egress allow-list |
-| **Workspace policy** | workspace owners | the workspace's policy generation (`07`) | block destinations with rules; set the workspace's own uncredentialed default to `block` with its own allow-list (it cannot loosen the org) |
+| **Workspace policy** | workspace owners | the workspace's policy generation (`07`) | block destinations with rules; set the workspace's own uncredentialed default to `block` with its own allow-list (it cannot loosen the org); (phase 1, RFE-003) set the workspace's **open-lane posture** (`enabled` \| `allowlist_only` \| `disabled`; it can only tighten) |
 | **Agent grants and rules** | workspace owners | grants, rules (`07`) | decide which permitted keys each agent may use |
 
 Effective settings are computed, never stored: `effective = instance ∩ org`
@@ -488,7 +573,8 @@ for optimistic concurrency):
   },
   "egress": {
     "posture": "open | credentialed_only",
-    "allowlist": [ { "host": "pypi.org" }, { "host": "*.githubusercontent.com", "path": "/**" } ]
+    "allowlist": [ { "host": "pypi.org" }, { "host": "*.githubusercontent.com", "path": "/**" } ],
+    "open_lane": "enabled | allowlist_only | disabled"
   }
 }
 ```
@@ -506,7 +592,12 @@ Rules (422 `governance_invalid` / `governance_below_instance_minimum`):
   shared instance pins its own Anthropic organization). An `origin` narrowing on
   an endpoint whose instance method is `endpoint` is refused, except
   `allowed_team_ids` which upgrades the check to `litellm_team`.
-- Postures cannot be below the instance minimums.
+- Postures cannot be below the instance minimums. (phase 1, RFE-003)
+  `egress.open_lane` (default `enabled`; absent = `enabled`) follows the same
+  rule with the order `enabled` < `allowlist_only` < `disabled`: it cannot be
+  looser than `governance.egress.open_lane_minimum`. Under `allowlist_only` the
+  org's `egress.allowlist` (∪ the instance baseline) is the list tunnels are
+  checked against (`06 §Open-lane admission and posture`).
 - Allow-list entries use the policy host/path patterns (`07`); ≤500 entries.
 
 Changing governance re-evaluates every LLM secret of the org against the new
@@ -586,6 +677,15 @@ any proxy check.
   are unaffected (they are governed by grants, rules and the credentialed
   default). Refusal: 403 `blocked_by_egress_policy`.
 
+(phase 1, RFE-003) The **open-lane posture** is a separate, orthogonal control
+for the tunnel lane only: `enabled` (default) / `allowlist_only` (tunnels reach
+only allow-listed hosts, even when the egress posture is `open`) / `disabled`
+(no tunnels). It is set per level (instance `governance.egress.open_lane_minimum`,
+org `egress.open_lane`, workspace policy `open_lane_posture`), tightens
+downwards only, and the effective value is the strictest. Admission order and
+errors: `06 §Open-lane admission and posture`; CONNECT-time rule semantics:
+`07 §CONNECT-time evaluation`.
+
 The org posture is evaluated as the org scope's *uncredentialed default*; a
 workspace may set its own uncredentialed default to `block` in its policy
 generation (`07 §Evaluation`). Typical allow-list contents: package registries,
@@ -602,6 +702,7 @@ otherwise hosted agents cannot install packages.
 | API: model selection and pickers | only usable keys; only allowed models |
 | Gateway step *governance* (`06`) | endpoint/scope permitted and stored origin compliant for the selected LLM key; `sanctioned_only` (no agent-supplied LLM credentials, no unconfigured providers); model allow-list |
 | Gateway policy evaluation (`07`) | uncredentialed default per scope (`credentialed_only`) with allow-lists |
+| Gateway open-lane admission (`06`, phase 1) | `browser` capability on the credential; effective open-lane posture (`disabled` / `allowlist_only`) before policy; CONNECT-time rule semantics |
 | Gateway before injection | origin preflight for unseen key values |
 | Gateway after response | origin backstop |
 

@@ -112,3 +112,20 @@ See [19](19-implementation-plan.md) for milestones and acceptance criteria.
   instance, org and workspace levels that can only tighten.
 - Every new workspace gets a **default hosted agent named `Daneel`**
   (handle `daneel`); the name is configurable. See `10`.
+- **Design-review decisions (owner, `80`; `90` D-43…D-58).** The owner's verdicts
+  on the design review are written into the owning documents as phase-tagged rules
+  ("(phase N, RFE-nnn)"). **Phase 1**: connector-asserted e-mail auto-linking is an
+  opt-in per integration (RFE-001); the gateway proxy listener is **TLS-only**
+  (RFE-002); the open lane has a posture, CONNECT-time rule semantics and a
+  `browser` capability (RFE-003); **sign-in is OIDC only**, the IdP enforcing MFA
+  (RFE-004); direct conversations are visible only to their user and workspace
+  owners (RFE-009); streaming deltas go through a `DeltaBus` seam (RFE-016).
+  **Phase 2**: policy `user` identities bind to the turn's speaker (RFE-005);
+  freeze for agents, workspaces and orgs (RFE-006); keyring-style signing key and
+  internal secret (RFE-007); atomic audit for the security-critical set (RFE-008);
+  conversation delete/archive, redaction, retention and export (RFE-010) with
+  attachment retention and quota (RFE-015); approval timeouts, stall exemption and
+  notifications (RFE-011a); the `approver` role (RFE-012); management-API rate
+  limiting (RFE-017); automation reassignment, offboarding view and workspace
+  anchors (RFE-021). Where a phase-tagged rule replaces a phase-0 rule, both stay
+  readable in the owning document.

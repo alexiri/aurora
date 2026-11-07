@@ -11,7 +11,7 @@ interchangeable; all coordination is through Postgres.
 
 1. Management API (`/v1/…`) for the dashboard, CLI and API keys; OpenAPI
    document at `/v1/openapi.json`.
-2. Identity: sign-up/in, sessions, OIDC, invitations, API keys, CLI login (`04`).
+2. Identity: sign-up/in, sessions, OIDC, invitations, API keys, CLI login (`04`); from phase 1 sign-in is OIDC only (RFE-004).
 3. Secrets and LLM keys through the secret-store registry (`08`).
 4. Plugin registry: package ingestion, verification, validation, operator
    approval, snapshot compilation (`09`); app connect flows; OAuth clients.
@@ -26,7 +26,7 @@ interchangeable; all coordination is through Postgres.
 10. Platform-tool execution through the **tool registry** (`12`).
 11. Channel core: inbox, routing, speaker authorization, outbox operations,
     action tokens, messaging tools (`13`).
-12. Audit log, request-log reads, runtime usage.
+12. Audit log (best-effort and, from phase 2, atomic security-critical rows, `04 §Audit`), request-log reads, runtime usage.
 
 ## Internal structure
 
@@ -47,7 +47,7 @@ if any declared id lacks an implementation.
 | Runner | `Authorization: Bearer aur_…` + `X-Aurora-Replica: <id>` (after register) | `/v1/runner/**` |
 | Connector | `Authorization: Bearer aun_…` + `X-Aurora-Replica` | `/v1/connector/**` |
 | Public capability | token in path | `POST /v1/hooks/{token}`, `GET /v1/public/avatars/{key}`, `GET /v1/oauth/callback`, OIDC callbacks |
-| Internal services (hook host) | `Authorization: Bearer <internal secret>` | `/internal/v1/**` |
+| Internal services (hook host) | `Authorization: Bearer <internal secret>` (phase 2, RFE-007: any key of the ring + `X-Aurora-Key-Id`) | `/internal/v1/**` |
 | Metrics / health | none | `/healthz`, `/readyz`, `/metrics` |
 
 `/metrics` and `/internal/**` MUST NOT be routed by the edge proxy (the edge
@@ -62,6 +62,32 @@ Internal routes (API port 4111):
 | GET `/internal/v1/registry/active?contract_max=` | active snapshot JSON + content hash |
 | GET `/internal/v1/registry/blobs/{digest}` | hook module bytes |
 
+### Conversation visibility (phase 1, RFE-009)
+
+Every handler that returns, streams or names a conversation applies
+`can_see_conversation` (`04 §The access law`) in addition to the permission
+matrix:
+
+- A conversation the caller cannot see answers **404** (not 403, as above):
+  `GET /v1/conversations/{id}`, `…/events`, `…/stream` (SSE), `…/messages`,
+  `…/attachments`, `GET /v1/attachments/{id}/content`, turn `abort`/`send-now`
+  (owners may), and any `conversation=` filter.
+- `GET /v1/agents/{agent}/conversations` lists only visible conversations (a
+  member sees their own direct one; owners see every direct one, marked
+  `direct_user: {id, display_name}`).
+- `POST …/messages` and attachment upload on a `direct` conversation by anyone but
+  its user → 403 `direct_conversation_forbidden` (even for owners).
+- **Conversation references elsewhere** (`conversation_id` / `origin_conversation_id`
+  on approvals, action approvals, schedules, webhooks, peer tasks, reach items)
+  are returned as `null` with `conversation_hidden: true` when the caller cannot
+  see the conversation; approvals and action approvals naming such a conversation
+  are **omitted** from lists, long-polls, the `approvals/stream` SSE and batch
+  decisions for that caller, and a direct decision attempt answers 404.
+- `GET /v1/workspaces/{ws}/activity` omits request-log rows whose conversation is
+  an invisible direct conversation; `…/usage` (aggregates only) is unaffected.
+- Any present or future search over conversations or transcript events applies
+  the same predicate inside the query (never as a post-filter).
+
 ### Request scoping
 
 - Paths carry ids (`/v1/workspaces/{workspace_id}/…`, `/v1/agents/{agent_id}`).
@@ -69,6 +95,11 @@ Internal routes (API port 4111):
 - Every handler resolves the target's workspace/org from the database and runs
   the permission check of `04 §Permission matrix`; a workspace key used on
   another workspace's resource → 403 `workspace_mismatch`.
+- (phase 2, RFE-006) Agent, workspace and org resources carry `frozen` (null or
+  `{ at, by_label, reason, authority, level: "agent"|"workspace"|"org" }`, `level` =
+  where it is set; `effective_frozen: bool` on agents). Operations that start
+  agent work on an effectively frozen agent (messages, attachments, send-now,
+  schedule run-now, webhook receive, peer messaging) answer **423 `frozen`**.
 - Resources the caller cannot see answer 404 (not 403) to avoid existence
   oracles, except where the caller can see the parent.
 
@@ -81,6 +112,55 @@ Internal routes (API port 4111):
 - Optimistic concurrency: resources with a `revision` accept
   `If-Match: <revision>` or a `revision` body field; stale → 409 `stale_revision`.
 - Long-poll endpoints accept `?wait=<secs>` capped at `LONG_POLL_MAX`.
+- **Rate limiting (phase 2, RFE-017, D-57).** Phase 0 limited only the auth
+  endpoints and webhook deliveries; any member or a leaked workspace key could
+  degrade the instance with unlimited posts, uploads, simulations or searches. From
+  phase 2 every **authenticated** `/v1/**` request passes the API limiter, after
+  the principal is resolved and before authorization (so probing is limited too).
+  - **Principal**: an API key (`key:<api_key_id>`), a signed-in user
+    (`user:<user_id>` — all of a user's sessions share the budget, so opening more
+    sessions buys nothing) or a BYO agent token (`agent:<agent_id>`, its two routes
+    only). Unauthenticated routes keep their per-IP limits (`04 §Rate limits`; plus
+    `API_RATE_UNAUTH` 120/min/IP for public GETs and 30/min/IP for requests with a
+    rejected bearer). **Exempt**: `/healthz`, `/readyz`, `/metrics`, the machine
+    planes (`/v1/runner/*`, `/v1/connector/*`, `/internal/*`) which apply their own
+    back-pressure, and `POST /v1/hooks/{token}` (its own 60/min per webhook).
+  - **Token buckets**, in memory per API replica (the same approximation as the
+    gateway, D-05; N replicas can allow up to N×; a shared `CounterStore` backend
+    is the later seam, `06 §Rate limiting`). A request must obtain a token from
+    **every** bucket that applies: the principal's *general* bucket, the principal's
+    *class* bucket, and the *org* bucket of the resource's organization:
+
+    | Bucket | Applies to | Refill / burst (defaults) |
+    |--------|------------|---------------------------|
+    | `general` | every authenticated request of the principal | 600 / min, burst 120 |
+    | `write` | any POST/PUT/PATCH/DELETE not in a stricter class | 120 / min, burst 30 |
+    | `message` | `POST /v1/conversations/{id}/messages`, `/v1/turns/{id}/send-now` | 30 / min, burst 10 |
+    | `upload` | `POST /v1/conversations/{id}/attachments`, avatar/skill-file/plugin uploads | 20 / min, burst 5 |
+    | `simulate` | `POST …/policy/simulate`, `GET /v1/agents/{agent}/effective` | 20 / min, burst 5 |
+    | `search` | `GET …/memories/search` and any future search route | 30 / min, burst 10 |
+    | `export` | `GET /v1/conversations/{id}/export`, `GET /v1/admin/storage`, `GET /v1/orgs/{org}/storage` | 6 / hour, burst 2 |
+    | `org` | every authenticated request touching an org's resources (all principals together) | 3 000 / min, burst 600 |
+
+  - **Concurrency cap** for streams: at most `API_STREAMS_PER_PRINCIPAL` (20)
+    concurrent SSE connections and long-polls per principal; the next one gets 429
+    `too_many_streams`.
+  - **Refusal**: 429 with the standard envelope, code `rate_limited`, `details:
+    { scope: "general"|"class"|"org", class, limit, per, retry_after_secs }`, header
+    **`retry-after`** (whole seconds until the blocking bucket holds a token) and the
+    informational `ratelimit-limit` / `ratelimit-remaining` / `ratelimit-reset` of
+    the blocking bucket; `x-should-retry: true`. A refused request consumes no
+    tokens from the buckets that would have allowed it. Idempotent safe retries are
+    the client's responsibility (RFE-018 adds idempotency keys in phase 3).
+  - **Tuning**: `ratelimit.api.enabled` (default `true`), `ratelimit.api.multiplier`
+    (0.1–100, scales every bucket), per-class overrides
+    `ratelimit.api.classes.<name> = { per_minute | per_hour, burst }` and
+    `ratelimit.api.org_per_minute`; minimum 1 per period. Metrics:
+    `aurora_api_rate_limited_total{class,scope}`. Buckets idle for 10 minutes are
+    evicted (LRU 100 000 entries); eviction only ever *refills* (fail-open for the
+    individual, never fail-open for the instance because the entry cap bounds memory).
+- (phase 2, RFE-010) The conversation SSE adds the ephemeral `event.redacted
+  { seq }` (no `id:`), telling clients to re-read that event.
 - SSE: `Content-Type: text/event-stream`; durable events carry `id: <seq>`;
   ephemeral events carry no id; keepalive comment every `SSE_KEEPALIVE`;
   resume with `Last-Event-ID` or `?after_seq=`.
@@ -95,7 +175,7 @@ caches, waiters return early). Payloads are JSON ≤ 7 000 bytes.
 | Channel | Payload | Producer → consumers |
 |---------|---------|----------------------|
 | `aurora_conversation` | `{ "c": conversation_id, "s": seq }` | API (after commit) → API SSE handlers |
-| `aurora_delta` | `{ "c", "t": turn_id, "type": "text.delta"|"thinking.delta"|"activity", "d": string }` | API (on runner events) → API SSE handlers |
+| `aurora_delta` | `{ "c", "t": turn_id, "type": "text.delta"|"thinking.delta"|"activity", "d": string }` | API (on runner events) → API SSE handlers; (phase 1, RFE-016) this is the `notify` implementation of the `DeltaBus` seam below |
 | `aurora_work` | `{ "sandbox_id"?: uuid }` | API → API runner long-polls |
 | `aurora_ops` | `{ "connector": id }` | API → API connector long-polls |
 | `aurora_inbox` | `{}` | API → API inbox workers |
@@ -109,6 +189,45 @@ caches, waiters return early). Payloads are JSON ≤ 7 000 bytes.
 Deltas are coalesced by the API before notifying (≥100 ms or ≥2 000 chars per
 turn per notification) so a busy stream does not flood the channel.
 
+### The delta bus seam (phase 1, RFE-016, D-48)
+
+Control signals (`aurora_conversation`, `aurora_work`, `aurora_approval`, …) stay
+on NOTIFY (D-03). The **streaming text** (`aurora_delta`) is different: it is
+high-volume, ephemeral, and — because Postgres serializes NOTIFY delivery in the
+commit path and every API replica receives every notification — the first shared
+bottleneck. From phase 1 deltas therefore flow through a named seam, not through
+NOTIFY calls scattered in handlers:
+
+```rust
+/// aurora-db::bus — registered by id; phase 1 implementation: `notify`.
+#[async_trait]
+pub trait DeltaBus: Send + Sync + 'static {
+    /// Publish one coalesced delta. Best effort: an error is logged and counted,
+    /// never fails the turn or the durable event write.
+    async fn publish(&self, delta: Delta) -> Result<()>;
+    /// One stream of every delta from every replica (including this one). A new
+    /// subscription (first or after a loss) makes the consumer resynchronize from
+    /// the database; the bus replays nothing.
+    async fn subscribe(&self) -> Result<BoxStream<'static, Delta>>;
+}
+pub struct Delta { pub conversation_id: Uuid, pub turn_id: Uuid,
+                   pub kind: DeltaKind /* text | thinking | activity */, pub data: String }
+```
+
+Contract: **at-most-once, lossy allowed** (a lost delta is repaired when the
+durable `text` event arrives; consumers discard a turn's deltas on it);
+per-`(conversation, turn)` order preserved; payload ≤ 7 000 bytes (JSON-encoded
+`Delta`); coalescing (≥100 ms or ≥2 000 chars, `DELTA_COALESCE`) happens in the
+publisher *above* the trait so every implementation sees the same load; no
+durability, no ack. Selection: `events.delta_bus` (default `notify`); an unknown id
+fails startup naming the key (registry rule, `01 §Design principles`). The phase 1
+`notify` implementation is exactly the `aurora_delta` channel described above;
+later implementations (Redis pub/sub, direct replica gossip) are registry
+entries, not a refactor. A conformance suite (`18`) runs against every
+implementation. Metrics: `aurora_delta_published_total`, `…_dropped_total`,
+`aurora_delta_publish_seconds`, `aurora_delta_subscriber_lag_seconds`, and for the
+`notify` implementation `aurora_pg_notify_queue_usage` (`pg_notification_queue_usage()`).
+
 ## Background jobs (every API replica)
 
 Singleton jobs take `pg_try_advisory_lock(<job hash>)` per run; others are
@@ -118,9 +237,13 @@ claim-based and safe to run everywhere.
 |-----|---------|------|
 | Inbox processor (`13`) | `aurora_inbox` + every 5 s | claims |
 | Approval card fan-out (`13`) | `aurora_approval created` + every 10 s catch-up | claims (`channel_ops.dedupe_key`) |
+| Approval e-mail notification (phase 2, RFE-011a, `07 §Approvals`): pending approvals older than `APPROVAL_NOTIFY_DELAY` without a live surface → e-mail to deciders | every 10 s | claims (`approval_notifications`) |
+| Approval watcher heartbeat (phase 2, RFE-011a): each replica upserts `approval_watchers` for its open approvals SSE/long-poll connections; stale rows pruned | every 15 s | idempotent |
 | Approval expiry: `pending` past `deadline + 30 s` → `expired`; pending rows of gateway instances unseen for 60 s → `abandoned` | every 10 s | idempotent updates |
 | Action-approval expiry | every 60 s | idempotent |
 | Attachment pending sweep (`ATTACH_PENDING_TTL`) | hourly | idempotent |
+| Conversation retention sweep (phase 2, RFE-010): delete conversations past the org window through the delete path; blob-orphan sweep | daily | singleton |
+| Attachment sweep (phase 2, RFE-015): purge attachment bytes past the org window, remove orphan blobs, reconcile `org_storage_usage`, quota notices | daily | singleton |
 | Request-log partition maintenance and retention | daily | singleton |
 | Retention pruning (inbox/ops/cards > `CHANNEL_LEDGER_RETENTION`, used action tokens, expired email/CLI tokens, sessions, expired context credentials) | daily | singleton |
 | Runtime daily rollup | hourly | singleton |
@@ -159,11 +282,17 @@ Arms, evaluated in this order per poll (detail of each in `10`/`11`):
    credential).
 7. **Steer**: `joining` follow-ups of running turns → `turn.message`.
 8. **Stale-turn recovery**: never-started dispatches (`STALE_DISPATCH`), stalls
-   (`TURN_STALL`), ceiling warnings and ceiling failures (`TURN_CEILING`).
+   (`TURN_STALL`; phase 2, RFE-011a: not for turns with a `pending` approval,
+   `07 §Approval deadlines`), ceiling warnings and ceiling failures (`TURN_CEILING`).
 9. **Schedules**: claim due schedules (`fire_lease_until`), create turns (`10`).
 10. **Watches**: convert watches of lost/parked processes; expire watches.
 11. **Housekeeping slices**: close runtime intervals for stopped boots; mark
     processes of ended boots `lost`/`parked`.
+
+(phase 2, RFE-006) Arms 3 (start), 6 (dispatch), 7 (steer), 9 (schedules) and 10
+(watches) **skip effectively frozen agents** (agent, workspace or org flag,
+`04 §Freeze`); arm 2 (stop) parks a running frozen sandbox with
+`stop_reason = frozen` and ignores its keep-awake reasons.
 
 Work items and reports are defined in `16 §W5`.
 
@@ -192,6 +321,7 @@ aurora_gateway_invalidate` after commit with the narrowest scope:
 | Policy publish/rollback | `workspace` or `org` |
 | Agent delete, token regeneration, credential revocation | `agent` / `credential` |
 | Workspace access or membership change | `workspace` / `org` |
+| Freeze / unfreeze (phase 2, RFE-006) | `agent` / `workspace` / `org` |
 | App availability change | `org` |
 | Org governance change (and the stored-origin re-evaluation it triggers) | `org` |
 | Snapshot activation | (`aurora_registry` instead) |
@@ -205,35 +335,39 @@ connector, **P** public capability. Permission checks per `04`.
 ### Health and instance
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/instance` | none | `{ version, signup_mode, oidc_providers:[{id,display_name}], features:{hosted, channels}, default_agent_name, external_url }` |
+| GET `/v1/instance` | none | `{ version, signup_mode, oidc_providers:[{id,display_name}], features:{hosted, channels}, default_agent_name, external_url }`; (phase 1, RFE-004) `oidc_providers` is the complete list of ways to sign in (may include the development provider `dev`, `04`) |
 | GET `/v1/resolve` | S/K | slug → ids |
 
 ### Auth and account
 | Method & path | Auth | Purpose |
 |---|---|---|
-| POST `/v1/auth/signup` | none | email, password, display_name |
-| POST `/v1/auth/login` / `/v1/auth/logout` | none / S | |
-| POST `/v1/auth/verify-email`, `/v1/auth/verify-email/resend` | none / S | |
-| POST `/v1/auth/password/forgot`, `/v1/auth/password/reset` | none | |
-| POST `/v1/auth/password/change`, `/v1/auth/sessions/revoke-others` | SO | |
-| GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC` |
+| POST `/v1/auth/signup` | none | email, password, display_name — **phase 0 only; removed in phase 1 (RFE-004)** |
+| POST `/v1/auth/login` | none | **phase 0 only; removed in phase 1 (RFE-004)** |
+| POST `/v1/auth/logout` | S | (all phases) |
+| POST `/v1/auth/verify-email`, `/v1/auth/verify-email/resend` | none / S | **phase 0 only; removed in phase 1** |
+| POST `/v1/auth/password/forgot`, `/v1/auth/password/reset` | none | **phase 0 only; removed in phase 1** |
+| POST `/v1/auth/password/change` | SO | **phase 0 only; removed in phase 1** |
+| POST `/v1/auth/sessions/revoke-others` | SO | |
+| GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC`; (phase 1, RFE-004) the only sign-in; `start` accepts `reauth=1` |
 | POST `/v1/auth/cli`, `/v1/auth/cli/token` | none | device flow |
 | POST `/v1/auth/cli/approve` | SO | `{ user_code, workspace_id }` |
-| GET/PATCH/DELETE `/v1/me` | S (DELETE: SO) | profile, memberships, default org |
+| GET/PATCH/DELETE `/v1/me` | S (DELETE: SO) | profile, memberships (phase 2, RFE-012: with the effective role per workspace), default org; (phase 2, RFE-011a) `PATCH { approval_email: bool }` |
 
 ### Organizations, members, keys
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET/POST `/v1/orgs` | S | list mine / create |
 | GET/PATCH/DELETE `/v1/orgs/{org}` | S/K | |
-| GET `/v1/orgs/{org}/members`; PATCH/DELETE `/v1/orgs/{org}/members/{user}` | S/K | role, suspend |
-| GET/POST `/v1/orgs/{org}/invitations`; DELETE `/v1/invitations/{id}` | S/K | |
+| GET `/v1/orgs/{org}/members`; PATCH/DELETE `/v1/orgs/{org}/members/{user}` | S/K | role, suspend; (phase 2, RFE-021) PATCH (suspend) and DELETE accept `reassign_to` (user id or `"workspace"`) to reassign the person's automations atomically |
+| GET `/v1/orgs/{org}/members/{user}/offboarding`; GET `/v1/workspaces/{ws}/members/{user}/offboarding` | S/K | (phase 2, RFE-021) what removing the person would disable: `{ schedules: [Item], webhooks: [Item], peer_tasks: [Item], api_keys: n }`, `Item = { id, name, agent, workspace, enabled, anchor, next_fire_at?, would_disable }` |
+| GET/POST `/v1/orgs/{org}/invitations`; DELETE `/v1/invitations/{id}` | S/K | (phase 2, RFE-012) body may carry `approver_workspace_ids` besides `workspace_ids` |
 | GET `/v1/invitations/preview?token=`; POST `/v1/invitations/accept` | none / SO | |
 | GET/POST `/v1/orgs/{org}/api-keys`; DELETE `/v1/api-keys/{id}` | S (POST: SO) | org keys |
-| GET `/v1/orgs/{org}/audit` | S/K | |
+| GET `/v1/orgs/{org}/audit` | S/K | (phase 2, RFE-008) filters `actor`, `action`, `target`, `critical=true` |
+| POST `/v1/orgs/{org}/freeze` `{ reason }`; POST `/v1/orgs/{org}/unfreeze` | S/K | (phase 2, RFE-006) org `owner` |
 | GET/PUT `/v1/orgs/{org}/app-availability` | S/K | posture + allow-list |
 | GET/PUT `/v1/orgs/{org}/governance` | S/K | org governance document (`08 §11.2`) with `revision`; PUT validates against the instance ceiling (422 `governance_invalid` / `governance_below_instance_minimum`) |
-| GET `/v1/orgs/{org}/governance/effective` | S/K (any org member) | effective LLM and egress governance (instance ∩ org), each value marked `source: instance|org`; non-compliant LLM secrets of the org |
+| GET `/v1/orgs/{org}/governance/effective` | S/K (any org member) | effective LLM and egress governance (instance ∩ org), each value marked `source: instance|org` (phase 1, RFE-003: includes `egress.open_lane`); non-compliant LLM secrets of the org |
 | GET `/v1/governance/instance` | S | the instance ceiling (config, without secrets) — read-only |
 
 ### Workspaces
@@ -241,11 +375,14 @@ connector, **P** public capability. Permission checks per `04`.
 |---|---|---|
 | GET/POST `/v1/orgs/{org}/workspaces` | S/K | |
 | GET/PATCH/DELETE `/v1/workspaces/{ws}` | S/K | name, timezone, memory_language |
-| GET `/v1/workspaces/{ws}/access`; PUT/DELETE `/v1/workspaces/{ws}/access/{user}` | S/K | bindings |
+| GET `/v1/workspaces/{ws}/access`; PUT/DELETE `/v1/workspaces/{ws}/access/{user}` | S/K | bindings (phase 2, RFE-021: DELETE accepts `reassign_to`); (phase 2, RFE-012) `PUT { role: "owner"\|"approver"\|"member" }`; `can_own` |
 | GET/POST `/v1/workspaces/{ws}/api-keys` | S (POST: SO) | workspace keys |
-| GET `/v1/workspaces/{ws}/audit` | S/K | |
+| GET `/v1/workspaces/{ws}/audit` | S/K | same filters |
+| GET `/v1/orgs/{org}/storage` | S/K | (phase 2, RFE-015) org `owner`/`admin`: usage vs quota, breakdown by workspace and direction |
+| GET/PUT `/v1/orgs/{org}/retention` | S/K | (phase 2, RFE-010/015) org `owner`/`admin`; `{ conversations_days?, attachments_days?, attachment_quota_mib? }`, `null` = none; 422 `retention_invalid` / `retention_above_instance_maximum` |
 | GET `/v1/workspaces/{ws}/activity` | S/K | request log, filters: agent, conversation, decision, host, app |
 | GET `/v1/workspaces/{ws}/usage` | S/K | runtime + tokens |
+| POST `/v1/workspaces/{ws}/freeze` `{ reason }`; POST `/v1/workspaces/{ws}/unfreeze` | S/K | (phase 2, RFE-006) `can_own`; as for agents |
 
 ### Secrets and LLM
 | Method & path | Auth | Purpose |
@@ -276,27 +413,31 @@ connector, **P** public capability. Permission checks per `04`.
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET `/v1/agents/{agent}/grants` | S/K | |
-| PUT/DELETE `/v1/agents/{agent}/grants/connections/{conn}` | S/K | `{ mode, allow_tools, ask_tools }` |
+| PUT/DELETE `/v1/agents/{agent}/grants/connections/{conn}` | S/K | `{ mode, allow_tools, ask_tools }`; (phase 2, RFE-011a) optional `ask_timeout_secs` |
 | PUT/DELETE `/v1/agents/{agent}/grants/secrets/{secret}` | S/K | |
 | GET `/v1/connections/{id}/grants` | S/K | agents granted |
-| GET `/v1/agents/{agent}/effective` | S/K | effective credentials and per-tool decisions with `org_ceiling` |
+| GET `/v1/agents/{agent}/effective` | S/K | effective credentials and per-tool decisions with `org_ceiling`; (phase 2, RFE-005) optional `?speaker=<user_id>\|none` |
 
 ### Policy
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET `/v1/workspaces/{ws}/policy`, `/v1/orgs/{org}/policy` | S/K | published + draft + revision |
-| PUT `…/policy/draft` | S/K | whole-draft replace with `revision` |
+| PUT `…/policy/draft` | S/K | whole-draft replace with `revision`; (phase 1, RFE-003) workspace scope also carries `open_lane_posture` (`enabled` \| `allowlist_only` \| `disabled`; a workspace can only tighten, so `enabled` simply adds no restriction beyond the org and instance) |
 | POST `…/policy/publish`, `…/policy/rollback` | S/K | `{ revision }` / `{ generation }` |
 | GET `…/policy/generations` | S/K | history |
 | GET `…/policy/warnings` | S/K | overlap/inert-rule warnings for the draft |
-| POST `/v1/workspaces/{ws}/policy/simulate` | S/K | `{ agent_id, method, url, body?, use_draft? }` → decision trace |
+| POST `/v1/workspaces/{ws}/policy/simulate` | S/K | `{ agent_id, method, url, body?, use_draft?, lane?, speaker_user_id? }` → decision trace (phase 2, RFE-005: `speaker_user_id` omitted = no speaker); (phase 1, RFE-003) `lane: "open"` evaluates CONNECT-time semantics (`07`) and the open-lane posture |
 
 ### Approvals
+(phase 2, RFE-012) Every route in this section requires **`can_approve`** on the
+approval's workspace (`04`), otherwise 403 `approver_required` (404 where the
+workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
+
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET `/v1/workspaces/{ws}/approvals?status=` | S/K | |
 | GET `/v1/approvals/pending?wait=` | S/K | long-poll across what the caller may decide |
-| GET `/v1/approvals/stream` | S | SSE of created/decided |
+| GET `/v1/approvals/stream` | S | SSE of created/decided; (phase 2, RFE-011a) `created` carries `{ id, workspace, agent, title, kind: "gateway"\|"action", expires_at }` so the dashboard can raise a browser notification; counts as a live surface (`approval_watchers`) |
 | POST `/v1/approvals/{id}/decision` | S/K | `{ "decision": "approve"|"deny" }`; first decision wins (409 `already_decided`) |
 | POST `/v1/approvals/batches/{batch_id}/decision` | S/K | all pending of the batch the caller may decide |
 | GET `/v1/workspaces/{ws}/action-approvals`; POST `/v1/action-approvals/{id}/decision` | S/K | |
@@ -311,6 +452,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/agent/container-config`; POST `/v1/agent/context-credentials` | A | BYO self-service (`08`) |
 | PUT/GET `/v1/agents/{agent}/avatar`; GET `/v1/public/avatars/{key}` | S/K; P | |
 | POST `/v1/agents/{agent}/restart` | S/K | restart sandbox |
+| POST `/v1/agents/{agent}/freeze` `{ reason }`; POST `/v1/agents/{agent}/unfreeze` | S/K | (phase 2, RFE-006) `can_own`; 200 with `frozen: {at, by_label, reason, authority, level}`; 403 `freeze_authority_insufficient` when lifting a higher authority's freeze; audited atomically |
 | GET `/v1/agents/{agent}/sandbox` | S/K | state, keep-awake reasons, processes, ports |
 | GET `/v1/agents/{agent}/models` | S/K | models available from granted LLM keys |
 | GET `/v1/gateway/ca.pem` | S/K | gateway CA certificate |
@@ -318,16 +460,20 @@ connector, **P** public capability. Permission checks per `04`.
 ### Conversations and turns
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/agents/{agent}/conversations` | S/K | filters: kind |
+| GET `/v1/agents/{agent}/conversations` | S/K | filters: kind; (phase 2, RFE-010) `archived=true\|false` (default false) |
 | POST `/v1/agents/{agent}/conversations/direct` | S | get-or-create caller's direct conversation |
 | POST `/v1/agents/{agent}/conversations` | K | `kind = api`, `external_ref` (get-or-create) |
 | GET `/v1/conversations/{id}` | S/K | |
+| POST `/v1/conversations/{id}/archive`, `/unarchive`; DELETE `/v1/conversations/{id}` | S/K | (phase 2, RFE-010) `10 §Archive, delete, redaction, retention, export`; delete 409 `conversation_active` |
+| POST `/v1/conversations/{id}/events/{seq}/redact`; POST `/v1/turns/{id}/redact` | S/K | (phase 2, RFE-010) `{ reason?, reset_session? }`; irreversible, audited |
+| GET `/v1/conversations/{id}/export` | S/K | (phase 2, RFE-010) JSON `aurora.conversation.v1` (`attachments=zip` → zip); 422 `export_too_large` |
 | GET `/v1/conversations/{id}/events?after_seq=&limit=` | S/K | durable history |
 | GET `/v1/conversations/{id}/stream` | S/K | SSE |
 | POST `/v1/conversations/{id}/messages` | S/K | `{ text, attachment_ids? }` → `{ turn }` or `{ followup }` |
 | POST `/v1/turns/{id}/abort`, `/v1/turns/{id}/send-now` | S/K | |
-| POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment |
-| GET `/v1/attachments/{id}/content` | S/K | `Content-Disposition: attachment` always |
+| POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment; (phase 2, RFE-015) 422 `attachment_quota_exceeded` when the org quota would be exceeded |
+| GET `/v1/attachments/{id}/content` | S/K | `Content-Disposition: attachment` always; (phase 2, RFE-015) 410 `attachment_purged` after retention/delete |
+| DELETE `/v1/attachments/{id}` | S/K | (phase 2, RFE-015) purge the bytes now; uploader or `can_own` |
 
 ### Memory, skills, schedules, webhooks, links
 | Method & path | Auth | Purpose |
@@ -336,8 +482,10 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `…/memories/{key}/revisions`; POST `…/memories/{key}/restore`; POST `…/memories/{key}/revisions/{rev}/redact` | S/K | |
 | GET `/v1/agents/{agent}/memories/search?q=` | S/K | |
 | GET/POST `/v1/agents/{agent}/skills`, `/v1/orgs/{org}/skills`; GET/PATCH/DELETE `/v1/skills/{id}`; PUT/DELETE `/v1/skills/{id}/files/{path}` | S/K | |
-| GET/POST `/v1/agents/{agent}/schedules`; GET/PATCH/DELETE `/v1/schedules/{id}`; GET `…/runs`; POST `…/run-now` | S/K | |
-| GET/POST `/v1/agents/{agent}/webhooks`; GET/PATCH/DELETE `/v1/webhooks/{id}`; POST `…/rotate`; GET `…/deliveries` | S/K | rotate returns new URL once |
+| GET/POST `/v1/agents/{agent}/schedules`; GET/PATCH/DELETE `/v1/schedules/{id}`; GET `…/runs`; POST `…/run-now` | S/K | (phase 2, RFE-021) items expose `creator`, `anchor` (`creator`\|`workspace`); POST/PATCH accept `anchor` (`can_own` only; tool-created items are always `creator`) |
+| PUT `/v1/schedules/{id}/creator`, PUT `/v1/webhooks/{id}/creator` | S/K | (phase 2, RFE-021) `{ user_id, re_enable? }`; `can_own`; 422 `new_creator_unauthorized`; audited `automation.reassign` |
+| POST `/v1/workspaces/{ws}/automations/reassign` | S/K | (phase 2, RFE-021) `{ from_user_id, to: <user_id> \| "workspace", kinds?: [schedule,webhook], ids? }` → `{ reassigned: n }`; `can_own`; one transaction, one audit row per item |
+| GET/POST `/v1/agents/{agent}/webhooks`; GET/PATCH/DELETE `/v1/webhooks/{id}`; POST `…/rotate`; GET `…/deliveries` | S/K | rotate returns new URL once; (phase 2, RFE-021) same `creator`/`anchor` fields as schedules |
 | POST `/v1/hooks/{token}` | P | webhook receive |
 | GET `/v1/agents/{agent}/links`; PUT `/v1/agent-links/{id}/policy`; GET `/v1/agents/{agent}/peer-tasks` | S/K | |
 
@@ -345,8 +493,8 @@ connector, **P** public capability. Permission checks per `04`.
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET `/v1/connectors` | S/K | active connectors with setup schemas, capabilities |
-| GET/POST `/v1/orgs/{org}/channel-integrations`; GET/PATCH/DELETE `/v1/channel-integrations/{id}` | S/K | create validates via `credentials.validate` op |
-| GET/POST `/v1/channel-integrations/{id}/user-links`; DELETE `/v1/user-links/{id}` | S/K | admin links |
+| GET/POST `/v1/orgs/{org}/channel-integrations`; GET/PATCH/DELETE `/v1/channel-integrations/{id}` | S/K | create validates via `credentials.validate` op; (phase 1, RFE-001) `config.verified_email_autolink` (bool, default false) is writable by org owner/admin only and refused with 422 `autolink_unsupported` when the integration lacks `email_verified`; changes are audited (security-critical set from phase 2, RFE-008) |
+| GET/POST `/v1/channel-integrations/{id}/user-links`; DELETE `/v1/user-links/{id}` | S/K | admin links; each item carries `method` (`verified_email` \| `sign_in_link` \| `admin`) |
 | GET/POST `/v1/agents/{agent}/presences`; DELETE `/v1/presences/{id}`; POST `/v1/presences/{id}/reattach` | S/K | |
 | GET `/v1/agents/{agent}/space-bindings`; DELETE `/v1/space-bindings/{id}`; PATCH `/v1/space-bindings/{id}` | S/K | owners only |
 | GET `/v1/me/channel-links`; DELETE `/v1/me/channel-links/{id}`; POST `/v1/channel-links/confirm` | S (confirm: SO) | sign-in link flow |
@@ -363,7 +511,9 @@ connector, **P** public capability. Permission checks per `04`.
 | GET/POST/DELETE `/v1/admin/trusted-keys` | IA | |
 | GET/POST/DELETE `/v1/admin/connectors`; POST `…/{id}/approve`, `…/{id}/token` | IA | provision token, approve manifest |
 | GET/POST/DELETE `/v1/admin/runners`; POST `…/{id}/token` | IA | |
+| GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`) |
 | GET `/v1/admin/registry/snapshot` | IA | active snapshot (JSON) |
+| POST `/v1/admin/orgs/{org}/freeze` `{ reason }`; POST `/v1/admin/orgs/{org}/unfreeze` | IA | (phase 2, RFE-006) operator kill-switch; `frozen_authority = instance_admin`; org data stays inaccessible |
 | GET/POST `/v1/admin/oauth-clients`; PATCH/DELETE `/v1/oauth-clients/{id}` | IA | instance-level OAuth clients (`08 §OAuth clients`) |
 
 ### Planes (machine callers)

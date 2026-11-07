@@ -23,7 +23,7 @@ platform's agent inside the agent's computer. It:
    from its environment.
 3. Writes boot `files` (`only_if_absent_or_sentinel` honoured: never overwrite a
    file lacking the `aurora-managed` sentinel), writes `/run/aurora/ca.pem`.
-4. Starts the loopback proxies.
+4. Starts the loopback proxies (the open proxy only with the `browser` capability, `11`).
 5. Dials the runner with the bootstrap token; on success stores the session
    credential for reconnects; sends `ready { harness_capabilities, version }`.
 6. Waits for the first complete home sync before accepting `turn.deliver`
@@ -36,17 +36,33 @@ stdin/stdout, logs on stderr) for tests and the dev loop. Identical vocabulary.
 
 All listen on 127.0.0.1 only and forward to the gateway proxy address from the
 boot document. Each strips any client-supplied `Proxy-Authorization` and adds
-its own.
+its own. (phase 1, RFE-002) The upstream connection to the gateway is **TLS**
+(rustls): the forwarder verifies the gateway's proxy certificate against the
+boot document's `ca_pem` and `gateway.server_name`, refuses to proceed on any
+verification failure (the client gets 502 `gateway_tls_failed` with no
+credential sent) and never falls back to plaintext. The client-facing side stays
+plain HTTP on loopback: it carries no credentials and is unreachable from outside
+the sandbox (`11 §The boot document`).
 
 | Listener | Credential added | Lane | Used by |
 |----------|------------------|------|---------|
 | `127.0.0.1:3128` (machine proxy) | boot token `aub_` | MITM | everything that reads `HTTPS_PROXY` from the container env: shells, background processes, tools started outside harness sessions |
-| `127.0.0.1:3129` (open proxy) | boot token, username `open` | open | browsers (configured in the Chromium wrapper); CONNECT only — absolute-form requests get 405 so it can never become an injecting proxy |
+| `127.0.0.1:3129` (open proxy) | boot token, username `open` | open | browsers (configured in the Chromium wrapper); CONNECT only — absolute-form requests get 405 so it can never become an injecting proxy. (phase 1, RFE-003) **Started only when the boot document's `capabilities` contains `browser`** (`11 §The boot document`); otherwise nothing listens on 3129 and the Chromium wrapper reports "browsing is disabled for this workspace". |
 | per-session ephemeral port | the session's **current turn context credential** `auc_` (boot token between turns) | MITM | the harness process of that conversation (its `HTTPS_PROXY` points here) |
 
 Context credentials therefore attribute every request made by a harness during
 a turn — including LLM calls and tool subprocesses inheriting the harness
 environment — to that conversation and turn.
+
+## Session purge (phase 2, RFE-010)
+
+On `session.purge { conversation_id, session_ref }` the supervisor aborts and
+releases any live session for that conversation, calls `HarnessAdapter::
+purge_session`, and reports `session.purged { conversation_id, session_ref, ok }`.
+Pending purges are also delivered in the **home sync** (`purges` entries of the
+`render_inputs` part) and executed before the supervisor accepts `turn.deliver`,
+so a parked sandbox cannot resume a deleted conversation. A failed purge is
+retried with the next sync and surfaced on the agent's Computer tab.
 
 ## Harness interface
 
@@ -68,6 +84,8 @@ pub trait HarnessAdapter: Send + Sync {
     fn id(&self) -> &'static str;                 // display/registry only, never a branch key elsewhere
     fn capabilities(&self) -> HarnessCapabilities; // declared, never probed
     async fn start_session(&self, opts: SessionOptions) -> Result<Box<dyn HarnessSession>, HarnessError>;
+    /// (phase 2, RFE-010) Delete the files of one stored session (no session may be live for it); idempotent.
+    async fn purge_session(&self, working_dir: &Path, session_ref: &str) -> Result<(), HarnessError>;
 }
 
 pub struct SessionOptions {

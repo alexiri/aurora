@@ -10,12 +10,74 @@ container, horizontally scalable.
 
 | Port | Name | Reachable from | Serves |
 |------|------|----------------|--------|
-| 4102 | **proxy** | sandboxes, BYO agents | `CONNECT host:port`; absolute-form `http://` requests; (phase 2) database wire protocols sniffed by first bytes. **Nothing else**: origin-form requests get 400 `not_a_proxy_request`. |
-| 4103 | **internal** | API replicas and monitoring only | `GET /healthz`, `GET /readyz` (snapshot loaded + DB reachable), `GET /metrics`, `GET /internal/v1/status` (instance id, snapshot hash, cache sizes, pending holds). Auth: `Authorization: Bearer <internal secret>` except health/metrics. |
+| 4102 | **proxy** | sandboxes, BYO agents | Phase 0: plain TCP. **From phase 1 (RFE-002): TLS only** (see *Proxy listener TLS* below): inside the TLS session, `CONNECT host:port`; absolute-form `http://` requests; (phase 2) database wire protocols (the database lane's transport is specified with that lane and MUST also be TLS-only). **Nothing else**: origin-form requests get 400 `not_a_proxy_request`. |
+| 4103 | **internal** | API replicas and monitoring only | `GET /healthz`, `GET /readyz` (snapshot loaded + DB reachable), `GET /metrics`, `GET /internal/v1/status` (instance id, snapshot hash, cache sizes, pending holds). Auth: `Authorization: Bearer <internal secret>` except health/metrics (phase 2, RFE-007: any key of the internal-secret ring, `X-Aurora-Key-Id` naming it; the status response lists the ring's key **ids**, `08 §4`). |
 
 The proxy port is raw TCP and cannot sit behind an HTTP path router. External
-BYO agents reach it directly (LoadBalancer/NodePort; VPN recommended). The
-advertised address is configured separately (`gateway.advertised_proxy_url`).
+BYO agents reach it directly (LoadBalancer/NodePort). The advertised address is
+configured separately (`gateway.advertised_proxy_url`). Phase 0 said "VPN
+recommended" because the listener was plaintext; from phase 1 the listener is
+TLS-only and that caveat no longer applies (restricting source networks remains
+good practice).
+
+### Proxy listener TLS (phase 1, RFE-002)
+
+Owner decision (D-44): **one TLS proxy listener, used by in-cluster and external
+clients alike; no plaintext listener exists.** `Proxy-Authorization` (the `aug_`,
+`aub_`, `auc_` token) and the `CONNECT` preamble therefore never cross a network
+unencrypted.
+
+- **Protocol**: TLS 1.2+ (rustls, aws-lc-rs provider; TLS 1.3 preferred, no
+  legacy suites) terminated *before* any HTTP parsing. ALPN offers only
+  `http/1.1` (proxy requests are HTTP/1.1; `h2` is not offered on this
+  listener). Inside the session the semantics are exactly those of this
+  document (authentication, lanes, errors). The client's `CONNECT` tunnel then
+  carries the *inner* TLS (or the open-lane byte pipe) over the outer TLS session.
+- **A plaintext connection** (first bytes are not a TLS ClientHello) is closed
+  immediately without a response (nothing parseable to answer, and no credential
+  is read); the gateway counts it in `gateway_proxy_plaintext_refused_total`.
+- **Server certificate source** (default, recommended): a **leaf issued by the
+  gateway CA** (`ca.pem`), `serverAuth` EKU, ECDSA P-256, validity
+  `PROXY_TLS_LEAF_VALIDITY` (30 days), regenerated in memory and hot-swapped
+  when < 10 days remain (no restart, no stored key). Rationale: every hosted
+  sandbox and every BYO container config already trusts this CA, so no new trust
+  distribution is needed. The SAN set is the union of: the host of
+  `gateway.advertised_proxy_url`; the sandbox-facing proxy address in the boot
+  document (`11`); the in-cluster service names (`aurora-gateway`,
+  `aurora-gateway.<ns>`, `aurora-gateway.<ns>.svc`,
+  `aurora-gateway.<ns>.svc.cluster.local`) and the fixed compose address
+  (`10.89.250.2`) when running there; and `gateway.proxy_tls.names` (extra DNS
+  names/IPs, e.g. a LoadBalancer hostname). A client connecting by a name not in
+  the SAN set fails verification — operators add the name, they do not disable
+  verification. Because `aurora-gateway generate-ca` mints the CA with
+  `pathlen 0` the proxy leaf is a leaf of that CA (no intermediate).
+- **Optional operator-supplied certificate**: `gateway.proxy_tls.cert_file` +
+  `key_file` (PEM chain + key, reloaded on change) replace the CA-issued leaf —
+  for example a publicly trusted certificate on the external name so BYO hosts
+  need no CA for the outer leg. The certificate must cover every name clients
+  use; startup refuses a missing/unreadable pair or an expired certificate,
+  naming the key. Clients that use this mode still need `ca.pem` for the *inner*
+  MITM leaves (unchanged).
+- **Client side**: every Aurora-controlled client verifies the server
+  certificate against the gateway CA bundle (plus the system roots when an
+  operator certificate is in use) and the name it dialled: the supervisor's
+  loopback forwarder (`12`), `aurora run`, and the container config (`08 §10`).
+  Verification is never optional.
+- **Client caveats for BYO tooling** (documented in the dashboard Connect tab
+  and the operator guide): the proxy URL is `https://…` and the HTTPS proxy leg
+  must be trusted *separately* from the origin leg by clients that distinguish
+  them (curl and git need `--proxy-cacert` / `http.proxySSLCAInfo`; the
+  container config sets the equivalent env where one exists and
+  `proxy_ca_path` otherwise); Node's global `fetch`/`https` need an HTTPS-capable
+  proxy agent (`undici` `ProxyAgent`, `https-proxy-agent`); Python needs
+  `urllib3` ≥ 2 (TLS-in-TLS) on Python ≥ 3.10; Go's `net/http` and Chromium
+  support `https://` proxies natively; stock Java (`HttpsURLConnection`) does
+  **not** speak TLS to a proxy and needs a client library that does. A tool that
+  cannot talk to an HTTPS proxy cannot use the gateway directly; the supported
+  workaround is a local forwarder (`aurora run --forward`, which listens on
+  loopback and speaks TLS upstream — the same pattern as the sandbox
+  supervisor) rather than a plaintext listener. The conformance matrix in `18`
+  pins which clients are verified.
 
 ### Subcommands
 
@@ -45,17 +107,36 @@ advertised address is configured separately (`gateway.advertised_proxy_url`).
   expired, the agent's workspace/org is gone, or the org has no active owner
   (org suspended). Context credentials are accepted until
   `expires_at` (turn end + `CONTEXT_CREDENTIAL_GRACE`).
+- (phase 2, RFE-006) Also rejected when the agent is **effectively frozen**
+  (agent, workspace or org, `04 §Freeze`): 403 `frozen` (`details.level`), not
+  407 — the credential is fine, the principal is paused. The frozen flags are part
+  of the cached identity (invalidated by scopes `agent`, `workspace`, `org`); on
+  such an invalidation the gateway **closes the live tunnels and WebSockets** of
+  the affected credentials and answers requests held for approval with 403
+  `frozen`.
 - Resolution yields the **request identity**: `{ credential_id, kind,
   agent_id, workspace_id, org_id, conversation_id?, turn_id?, context_label?,
-  principals }` where `principals = {agent_id} ∪ {user ids with can_use on the
-  workspace}` (resolved once per connect, cached with the credential).
+  principals }` where, in phase 0, `principals = {agent_id} ∪ {user ids with
+  can_use on the workspace}` (resolved once per connect, cached with the
+  credential).
+  **From phase 2 (RFE-005, D-49)** the roster is gone: `principals = {agent_id}`
+  and the identity carries `speaker_user_id?` — the person who authored the turn
+  the credential is bound to. It is set only for **hosted `context` credentials**
+  (minted by the API at `turn.deliver` from `turns.speaker_user_id` when the turn's
+  `speaker_kind = person`; stored in `gateway_credentials.speaker_user_id`) and
+  only while that user still has `can_use` on the workspace (checked at connect
+  resolution; invalidated with the `workspace`/`org` scopes). Every other
+  credential — `boot`, `agent` (BYO), BYO `context` (the agent mints those itself,
+  so a conversation id it names proves nothing), and context credentials of
+  turns with no person speaker (schedule, webhook, watch, peer, system, bot or
+  agent speakers) — has **no speaker**.
 
 ## Lanes
 
 | Lane | Selected by | Gateway sees | Injection | Approvals |
 |------|-------------|--------------|-----------|-----------|
 | **MITM** (default) | any username except `open` | method, path, headers, bounded body prefix | yes | held per request |
-| **Open** (tunnel) | username `open` | host and port only | **never** | a decision that would need approval refuses the CONNECT |
+| **Open** (tunnel) | username `open` **and** a credential holding the `browser` capability (phase 1, RFE-003) | host and port only | **never** | a decision that would need approval refuses the CONNECT |
 | **Database** (phase 2) | DB wire protocol on the proxy port | each statement | gateway logs in with stored credentials | statement-level, same machinery (`21`) |
 
 The open lane exists for browsers (TLS interception breaks bot defences and
@@ -67,6 +148,41 @@ uncredentialed default (`07 §Evaluation`), so under the `credentialed_only`
 egress posture browsers reach only allow-listed hosts, and it applies the LLM
 posture (governed LLM hosts are refused under `sanctioned_only`, since nothing
 can be injected in a tunnel).
+
+### Open-lane admission and posture (phase 1, RFE-003)
+
+Phase 0 gave every credential the open lane unconditionally (any client that set
+the username `open` got an uncredentialed tunnel under the default `open` egress
+posture). From phase 1 the open lane is admitted in this order, **before** any
+policy evaluation, with the first failure refusing the `CONNECT`:
+
+1. **Capability** (RFE-003 c). The authenticated credential must hold the
+   **`browser` capability** (`gateway_credentials.capabilities`, `08 §7`). Only
+   `aub_` boot credentials can hold it, and only when the sandbox's boot was
+   started with it (`11 §The boot document`: the sandbox image declares it and
+   the effective posture is not `disabled`). `aug_` BYO agent tokens and `auc_`
+   context credentials never hold it → 403 `open_lane_not_permitted`. A client
+   that merely sets the username `open` therefore gains nothing.
+2. **Posture** (RFE-003 a). The **effective open-lane posture** is the strictest
+   of instance, org and workspace (`08 §11.1`), ordered `enabled` <
+   `allowlist_only` < `disabled`:
+   - `disabled` → 403 `open_lane_disabled` (details `manage_url`);
+   - `allowlist_only` → the target host:port must be covered by the allow-list
+     of **every level that sets `allowlist_only`**: instance → the instance
+     baseline allow-list; org → org egress allow-list ∪ baseline; workspace → the
+     workspace's `uncredentialed_allowlist`. Matching uses the CONNECT-time
+     semantics of `07 §CONNECT-time evaluation` (an allow-list entry that carries
+     a `path` does **not** admit a tunnel). An explicit allow rule that is fully
+     knowable at CONNECT time also admits (as for `credentialed_only`). Otherwise
+     403 `blocked_by_egress_policy` with `details.open_lane = true`;
+   - `enabled` → no extra restriction.
+3. Then: destination guard, LLM posture, **CONNECT-time policy evaluation**
+   (`07 §CONNECT-time evaluation`), tunnel, one request-log row.
+
+The posture is read from the cached effective governance and the workspace's
+published policy generation (no DB on the hot path; invalidation scopes `org`
+and `workspace`), so changing it takes effect for the next `CONNECT`; open
+tunnels end at the idle limit or when the client closes them.
 
 ## MITM lane: connect-time resolution
 
@@ -224,15 +340,18 @@ both directions.
    for the tool → `approval.summarize` hook (only if declared; bounded call to
    the hook host with the body prefix ≤ `APPROVAL_BODY_PEEK`, no egress) →
    generic redacting summarizer. Raw bodies are never stored.
-2. `INSERT INTO approvals (…, status='pending', deadline=now()+APPROVAL_TIMEOUT,
-   gateway_instance_id)`; `NOTIFY aurora_approval created`. Failure to insert →
+2. `INSERT INTO approvals (…, status='pending', deadline=now()+<effective timeout>,
+   gateway_instance_id)`; `NOTIFY aurora_approval created`. (phase 2, RFE-011a) The
+   effective timeout comes from the matching rules (`07 §Approval deadlines`,
+   default `APPROVAL_TIMEOUT`) and is part of the cached rule data, so the hold
+   needs no extra lookup. Failure to insert →
    503 `approval_store_unavailable` (fail closed).
 3. Wait on the instance's LISTEN connection for `decided` of that id, with a
    2 s poll fallback reading the row. Keep the client connection open; do not
    read further body bytes.
 4. `approved` → continue at step 9. `denied` → 403 `manual_approval_denied`
    (`details.approval_id`). Deadline reached → the gateway sets
-   `status='expired'` (`WHERE status='pending'`) and answers 403
+   `status='expired'` (`WHERE status='pending'`; phase 2: and `resolved_at`) and answers 403
    `manual_approval_expired`. Client disconnect → `status='abandoned'`.
 5. On SIGTERM, every held request is answered 503 `gateway_restarting`
    (`retry-after: 1`) and its approval marked `abandoned`.
@@ -249,11 +368,14 @@ dashboard URL to fix the problem when one exists.
 | Code | Status | When | `details` |
 |------|--------|------|-----------|
 | `proxy_auth_required` | 407 | missing/invalid/expired credential | — |
+| `frozen` | 403 | (phase 2, RFE-006) the agent, its workspace or its org is frozen | `level` |
 | `not_a_proxy_request` | 400 | origin-form request on 4102 | — |
+| `open_lane_not_permitted` | 403 | (phase 1, RFE-003) open lane requested by a credential without the `browser` capability | — |
+| `open_lane_disabled` | 403 | (phase 1, RFE-003) effective open-lane posture is `disabled` | `manage_url` |
 | `destination_refused` | 403 | destination guard | `host` |
 | `method_override_refused` | 400 | step 3 | — |
 | `ambiguous_path` | 400 | step 3 | — |
-| `blocked_by_policy` | 403 | rule block | `rule_name`, `method`, `path`, `manage_url` |
+| `blocked_by_policy` | 403 | rule block (open lane, phase 1: `connect_time: true`; an approval-requiring rule matched at CONNECT time adds `reason: "approval_required"`) | `rule_name`, `method`, `path`, `manage_url` |
 | `blocked_by_default_policy` | 403 | default-deny | `manage_url` |
 | `blocked_by_egress_policy` | 403 | uncredentialed default (`credentialed_only`) | `host`, `manage_url` (org egress allow-list) |
 | `llm_provider_not_permitted` | 403 | governed LLM host not permitted for the org | `host` |

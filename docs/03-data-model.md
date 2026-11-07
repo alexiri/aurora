@@ -177,7 +177,7 @@ Device-style CLI login.
 | metadata | jsonb not null default `{}` | never contains secret values |
 | index | (org_id, created_at desc), (workspace_id, created_at desc) | |
 
-Audit writes are best-effort and never fail the action (logged on failure).
+Audit writes are best-effort and never fail the action (logged on failure). (phase 2, RFE-008) Except for the **security-critical set** of `04 §Audit`, whose rows are written in the same transaction as the change and make the action fail if they cannot be written.
 
 ---
 
@@ -1070,3 +1070,179 @@ view `gateway_users`), `api_keys`), `agents`, `gateway_credentials`, `secrets`,
 credentials_expires_at, status, status_reason, reauth_required_at,
 last_used_at)` on `app_connections`; `UPDATE (last_used_at, origin)` on `secrets`;
 `EXECUTE` on `pg_advisory_lock` family; `LISTEN` is implicit.
+
+---
+
+## Planned changes (later phases)
+
+This section lists schema and document-shape changes that later phases will
+introduce. It is **normative for those phases** but is *not* part of the
+phase-0 schema: the tables above are machine-checked against the migrations
+(`scripts/extract-schema.py`), and this section deliberately uses level-4
+headings and a different header so that the extractor ignores it. A migration
+for a planned change lands with its phase; the corresponding rows move into the
+tables above in the same change (and this section shrinks).
+
+#### `channel_integrations` (jsonb key in `config`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `config.verified_email_autolink` | bool, default `false` | org-admin opt-in: the core may create `verified_email` user links from the connector's asserted `email`/`email_verified` (`13 §5.9`). Requires the `email_verified` capability. No column: `config` is `jsonb`. | 1 (RFE-001) |
+
+#### `link_requests`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| platform_email_hint | citext null | email the platform asserted for the person; used only to pre-fill the sign-in (`login_hint`) and the confirm page; never authorizes | 1 (RFE-001) |
+
+#### `policy_generations`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| open_lane_posture | text CHECK in (`enabled`,`allowlist_only`,`disabled`) not null default `enabled` | the workspace's open-lane posture (`08 §11`, `06 §Open-lane admission and posture`); can only tighten. CHECK: `enabled` when `workspace_id IS NULL` (org scope uses `organizations.governance.egress.open_lane`) | 1 (RFE-003) |
+
+#### `organizations` (jsonb key in `governance`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `governance.egress.open_lane` | `enabled` \| `allowlist_only` \| `disabled`, default `enabled` | org open-lane posture (`08 §11.2`); not below the instance minimum. No column: `governance` is `jsonb`. | 1 (RFE-003) |
+
+#### `gateway_credentials`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| capabilities | text[] not null default `{}` | credential capabilities; phase 1 value `browser` (open-lane use), settable on `boot` credentials only (`08 §7`) | 1 (RFE-003) |
+
+#### `users`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| password_hash | (existing column) | cleared (`NULL`) by the phase-1 migration and ignored from phase 1 (RFE-004); the column is dropped by the contract migration in a later release (`15 §Upgrades`, expand → migrate → contract) | 1 → drop later (RFE-004) |
+
+#### `email_tokens`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| (whole table) | — | unused from phase 1 (no e-mail verification or password reset, RFE-004); existing rows are ignored and the table is dropped by the contract migration in a later release | 1 → drop later (RFE-004) |
+
+#### `sessions`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| reauth_at | timestamptz null | last successful OIDC re-authentication (`04 §OIDC`); account deletion needs it within 10 min | 1 (RFE-004) |
+
+#### `gateway_credentials` (speaker)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| speaker_user_id | uuid null (no FK; set null semantics by revocation on user delete) | kind=`context` hosted only: the person who authored the turn (`turns.speaker_user_id` when `speaker_kind = person`); null for every other credential. Policy `user` identities match only this (`07`) | 2 (RFE-005) |
+
+#### `request_log`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| speaker_user_id | uuid null | the request identity's speaker (no FK, ledger table); lets operators see which person's turn caused a request | 2 (RFE-005) |
+
+#### `agents`, `workspaces`, `organizations` (freeze)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| frozen_at | timestamptz null | set ⇒ frozen at this level (`04 §Freeze`); effective freeze of an agent = agent ∨ workspace ∨ org | 2 (RFE-006) |
+| frozen_by_user_id | uuid null FK→users (set null) | | 2 (RFE-006) |
+| frozen_reason | text null | 1..500 chars, sanitized; required when `frozen_at` is set | 2 (RFE-006) |
+| frozen_authority | text null CHECK in (`workspace_owner`,`org_admin`,`instance_admin`) | highest authority of the freezer; lifting needs at least this | 2 (RFE-006) |
+
+(The same four columns on each of the three tables; a CHECK keeps them all null or all set.)
+
+#### `sandboxes`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| stop_reason | CHECK gains `frozen` | agent effectively frozen (`11`) | 2 (RFE-006) |
+
+#### `schedules`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| last_outcome | CHECK gains `skipped_frozen` | fire skipped because the agent is effectively frozen (`10 §Schedules`); `schedule_runs.outcome` (open text) records `skipped_frozen` too | 2 (RFE-006) |
+
+#### `audit_log`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| critical | bool not null default false | true for rows of the security-critical set (`04 §Audit`); index (org_id, critical, created_at desc) so auditors can filter them | 2 (RFE-008) |
+
+#### `conversations`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| archived_at | timestamptz null | hidden from default lists; a person message unarchives (`10 §Archive, delete, redaction, retention, export`) | 2 (RFE-010) |
+| archived_by_user_id | uuid null FK→users (set null) | | 2 (RFE-010) |
+
+#### `transcript_events`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| redacted_at | timestamptz null | set when the payload was replaced by the redaction marker `{ "redacted": true, "redacted_at", "redacted_by", "reason"? }` (≤64 KiB bound unchanged) | 2 (RFE-010) |
+| redacted_by_user_id | uuid null FK→users (set null) | | 2 (RFE-010) |
+
+#### `session_purges` (new table)
+Pending deletions of harness session files after a conversation delete or a `reset_session` redaction.
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 2 (RFE-010) |
+| agent_id | uuid FK→agents (cascade) | | 2 (RFE-010) |
+| conversation_id | uuid null | the conversation that is gone (no FK) | 2 (RFE-010) |
+| session_ref | text not null | `harness_session_ref` to purge | 2 (RFE-010) |
+| created_at / done_at | timestamptz / null | row deleted or stamped on `session.purged`; index (agent_id) WHERE done_at IS NULL | 2 (RFE-010) |
+
+#### `organizations` (jsonb key in `settings`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `settings.retention` | `{ "conversations_days"?: int\|null, "attachments_days"?: int\|null, "attachment_quota_mib"?: int\|null }` | per-org retention (RFE-010) and attachment limits (RFE-015); null/absent = keep forever / unlimited. No column: `settings` is `jsonb`. | 2 (RFE-010/015) |
+
+#### `attachments`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| purged_at | timestamptz null | bytes deleted (retention or explicit delete); the row stays for the transcript chip; content GET answers 410 | 2 (RFE-015) |
+| purge_reason | text null CHECK in (`retention`,`deleted`) | | 2 (RFE-015) |
+| `failure_reason` | (existing column) gains the value `quota_exceeded` | open vocabulary, no schema change | 2 (RFE-015) |
+
+#### `org_storage_usage` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| org_id | uuid pk FK→organizations (cascade) | | 2 (RFE-015) |
+| attachment_bytes | bigint not null default 0 | transactional counter of non-purged attachment bytes; reconciled daily from `attachments` | 2 (RFE-015) |
+| updated_at | timestamptz not null | churn column | 2 (RFE-015) |
+
+#### `workspace_access`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| role | CHECK gains `approver` → in (`owner`,`approver`,`member`) | `approver` = chats and decides approvals (`04 §The access law`); the migration does **not** change existing rows (members stay members) | 2 (RFE-012) |
+
+#### `invitations`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| approver_workspace_ids | uuid[] not null default `{}` | workspaces bound as `approver` on accept (disjoint from `workspace_ids`, which stay `member`) | 2 (RFE-012) |
+
+#### `policy_rules`, `grants`, `derived_rules` (approval timeout)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| policy_rules.approval_timeout_secs | int null | only with `require_approval`; 60 … `approvals.max_timeout_secs`; null = no preference (`07 §Approval deadlines`) | 2 (RFE-011a) |
+| grants.ask_timeout_secs | int null | custom connection grants with `ask_tools`; compiled into the derived ask rule | 2 (RFE-011a) |
+| derived_rules.rule | jsonb gains `approval_timeout_secs` | same field as in `policy_rules` | 2 (RFE-011a) |
+
+#### `approvals`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| resolved_at | timestamptz null | set on every terminal transition (approve, deny, expire, abandon); the stall clock restarts here (`07 §Approval deadlines`). Gateway role may write it with `status` | 2 (RFE-011a) |
+
+#### `approval_watchers` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| replica_id | uuid | API replica holding the connection; pk part | 2 (RFE-011a) |
+| user_id | uuid FK→users (cascade) | pk part | 2 (RFE-011a) |
+| workspace_id | uuid FK→workspaces (cascade) | pk part; the workspace whose approvals the connection watches | 2 (RFE-011a) |
+| last_seen_at | timestamptz not null | churn column; live when within `APPROVAL_WATCHER_TTL` | 2 (RFE-011a) |
+
+#### `approval_notifications` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| approval_id | uuid | gateway or action approval id; pk part (no FK: approval history survives) | 2 (RFE-011a) |
+| user_id | uuid FK→users (cascade) | pk part | 2 (RFE-011a) |
+| kind | text CHECK in (`gateway`,`action`) | | 2 (RFE-011a) |
+| sent_at | timestamptz not null | insert-on-conflict claim makes the e-mail idempotent across replicas; pruned with the daily retention pruning | 2 (RFE-011a) |
+
+#### `users`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| approval_email_enabled | bool not null default true | per-user opt-out of approval e-mails | 2 (RFE-011a) |
+
+#### `schedules`, `webhooks` (anchor)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| anchor | text not null CHECK in (`creator`,`workspace`) default `creator` | fire-time authority: the creator's access (`creator`) or "an active owner exists" (`workspace`); `creator_user_id` stays as provenance (`04 §Fire-time authority`) | 2 (RFE-021) |
