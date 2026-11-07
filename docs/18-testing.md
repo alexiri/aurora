@@ -158,6 +158,21 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Image build: building with and without a `SANDBOX_BASE_IMAGE` override yields the
   same package list and `org.aurora.capabilities` label (smoke test).
 
+### Workspace-tier skills (phase 3, RFE-020, SEC-56)
+- Effective set: all combinations of one name at agent/workspace/org tiers with
+  enabled/disabled (highest *enabled* tier wins; a disabled higher tier does not
+  veto); names unique per tier but allowed across tiers; reserved names refused at
+  every tier; CHECK forbids agent+workspace on one row; index replacement migration
+  keeps existing org skills unique.
+- Authorization matrix for list/create/edit/delete/files per tier; org admin writes
+  a workspace skill (as `can_own`); plain member read-only; agent tools cannot write
+  workspace/org tiers and `skill_list` shows tier and `shadows`.
+- Projection: every agent of the workspace (and only it) receives the skill after a
+  generation bump; unchanged for agents of other workspaces; removed skill is pruned
+  by the manifest; shadowed skill is not projected; read-only modes unchanged.
+- Dashboard: tier badges, shadow indicators, read-only open from the agent tab,
+  workspace skills page (owner vs member).
+
 ### Governance
 - Governance validation: org documents below the instance minimum, scope and
   list subset rules, defaults for new orgs.

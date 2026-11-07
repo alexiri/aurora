@@ -86,7 +86,7 @@ All carry `{ item_id, kind, sandbox_id, boot_id }`.
 client_env: [[k,v]] }`. `TurnInput`: `{ text, speaker_label, door, recall: {
 index, snippets: [] }, notices: [] }`. `HomeSyncPart`: `{ kind: "skills" |
 "memory" | "render_inputs" | "tools" | "manifest" | "final", entries: [...] }`
-(`12 §Sync protocol`).
+(`12 §Sync protocol`). (phase 3, RFE-020) `skills` parts carry the agent's **effective** set only; the three tiers and their precedence are resolved by the API, so the wire format is unchanged.
 
 ### Reports
 

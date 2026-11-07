@@ -227,7 +227,7 @@ arguments; state changes are reported to the API.
 | Family | Tools |
 |--------|-------|
 | Memory | `memory_save {key, title?, description?, content}`, `memory_get {key}`, `memory_list {}`, `memory_search {query}`, `memory_delete {key}` |
-| Skills | `skill_list {}`, `skill_get {name}`, `skill_create {name, description, body, files?}`, `skill_update {name, …}`, `skill_delete {name}` (agent tier only) |
+| Skills | `skill_list {}`, `skill_get {name}`, `skill_create {name, description, body, files?}`, `skill_update {name, …}`, `skill_delete {name}` (agent tier only; phase 3, RFE-020: `skill_list`/`skill_get` return the effective set of all three tiers with `tier` and `shadows`, writes touch the agent tier only) |
 | Schedules | `schedule_create {name, prompt, cron, timezone?, gate_command?, gate_description?}`, `schedule_list {}`, `schedule_update {id, …}`, `schedule_delete {id}` |
 | Webhooks | `webhook_list {}`, `webhook_deliveries {id}`, `webhook_update {id, instructions?, enabled?}` |
 | Processes (local) | `process_start {name, command, cwd?}`, `process_status {id?}`, `process_stop {id}`, `process_watch {id, kind, pattern?, silence_secs?}` |
@@ -263,7 +263,7 @@ The home (`/workspace`) holds:
 - Paths outside managed roots are refused (warning), although traversal is
   already unrepresentable on the wire.
 - Desired generation = `agents.home_sync_generation` + workspace generation +
-  org-skill generation (the API computes a combined monotonic value); any change
+  org-skill generation (the API computes a combined monotonic value; phase 3, RFE-020: workspace-tier skill changes bump the workspace generation); any change
   to skills, memory, brief, name, presences, peers, grants/connected apps,
   memory language, timezone or tool availability bumps it. A bump never wakes a
   parked sandbox.

@@ -664,7 +664,7 @@ Phase 0 blob backend (`postgres`).
 |---|---|---|
 | id | uuid pk | |
 | org_id | uuid FK→organizations (restrict) | |
-| agent_id | uuid null FK→agents (cascade) | null ⇒ org skill |
+| agent_id | uuid null FK→agents (cascade) | null ⇒ org skill (phase 3, RFE-020: or a workspace skill when `workspace_id` is set, `03 §Planned changes`) |
 | name | text not null | `[a-z0-9]+(-[a-z0-9]+)*` ≤64, immutable; `aurora-*` reserved |
 | description | text not null | single line ≤500 |
 | body | text not null | `SKILL.md` body |
@@ -1278,3 +1278,14 @@ Pending deletions of harness session files after a conversation delete or a `res
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | source_event_id | (existing column and partial unique index `(conversation_id, source_event_id)`) | no schema change. Phase 3 adds a **value convention**: turns and follow-ups created by `POST …/messages` with an `Idempotency-Key` store `api:<user_id>:<key>` (≤ 170 chars); connector event ids starting with `api:` are rejected (`13`). Promoted turns keep null (`10 §Turns`) | 3 (RFE-018) |
+
+#### `skills` (workspace tier)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| workspace_id | uuid null FK→workspaces (cascade) | non-null ⇒ **workspace-tier** skill (`10 §Skills`). CHECK: `workspace_id IS NULL OR agent_id IS NULL` (agent skills keep `workspace_id` null; their workspace is the agent's). Tier = agent (`agent_id` set) \| workspace (`workspace_id` set) \| org (both null) | 3 (RFE-020) |
+| unique | (workspace_id, name) WHERE workspace_id IS NOT NULL | new partial unique index; the existing org-tier index becomes `(org_id, name) WHERE agent_id IS NULL AND workspace_id IS NULL` (migration replaces it); the agent-tier index is unchanged | 3 (RFE-020) |
+| index | (workspace_id) WHERE workspace_id IS NOT NULL | effective-set computation and home-sync bumps | 3 (RFE-020) |
+
+Home-sync generation (`12 §Sync protocol`, I-32): a change to a workspace-tier skill
+or its files bumps `workspaces.home_sync_generation` (database trigger, as for the
+other projection inputs); no new counter is needed. `skill_files` is unchanged.

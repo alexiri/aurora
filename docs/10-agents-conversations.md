@@ -441,9 +441,27 @@ from searching the incoming message with score ≥ 0.1.
 
 ## Skills
 
-- Tiers: **agent** and **organization**. Same name at both tiers → the agent's
-wins in the projection; a *disabled* agent skill drops out without vetoing an
-enabled org skill of the same name.
+- Tiers: **agent** and **organization** (phase 0–2). **From phase 3 (RFE-020,
+  D-64) there are three tiers: agent, *workspace* and organization**, with
+  precedence **agent > workspace > organization**. Same name at several tiers → the
+  highest tier's skill wins in the projection (the same shadowing rule as before,
+  now over three tiers); a *disabled* skill drops out without vetoing an enabled
+  skill of the same name at a lower tier. Names are unique within a tier (the
+  workspace tier has its own namespace); the reserved-name rule applies to every
+  tier. The API computes the **effective set** per agent (one skill per name,
+  winner chosen as above) and only that set is projected, so the supervisor and
+  the wire format (`16`) are unchanged.
+- **Workspace-tier skills** (phase 3, RFE-020) belong to one workspace and are
+  projected into **every agent of that workspace** (hosted agents, on their next
+  home sync) — "all agents in this workspace follow our deploy checklist" without
+  copying the skill per agent or publishing it org-wide. Readable by every member
+  who can use the workspace; **created, edited, enabled/disabled and deleted by
+  `can_own` only** (org owners/admins included) and **never by agent tools**
+  (`skill_create`/`update`/`delete` still touch the agent tier only; `skill_list`
+  and `skill_get` return all effective tiers with a `tier` field, and flag an
+  agent skill that shadows a higher-tier one with `shadows`). Deleting a workspace
+  deletes its skills (cascade).
+  The dashboard shows, per agent, each skill's tier and what it shadows.
 - Name = directory name (immutable; `aurora-*` reserved). Single-line
 description (frontmatter the harness uses to decide when to load). Body ≤
 `SKILL_BODY_MAX`; body + files ≤ `SKILL_TOTAL_MAX` chars (binary counted as
@@ -454,7 +472,7 @@ no name equal to `skill.md` case-insensitively; optional executable bit
 - Projection: `<harness skills dir>/<name>/SKILL.md` + files, read-only; the
 supervisor prunes by manifest.
 - Agents may create/update/delete their **own agent-tier** skills via tools;
-org skills are dashboard-only. (The git-backed skill library is phase 4.)
+org skills (and, from phase 3, workspace skills) are dashboard/API-only. (The git-backed skill library is phase 4.)
 
 ## Schedules
 

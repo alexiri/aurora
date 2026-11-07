@@ -90,7 +90,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   automatically by verified email"** (default off; shown only when the
   connector offers `email_verified`), with the trust warning of `13 §5.9`;
   toggling it needs a confirm dialog.
-- **Skills**: org skills editor.
+- **Skills**: org skills editor (tier badge "Organization"; phase 3, RFE-020: states that workspace and agent skills with the same name take precedence).
 - **Retention** (phase 2, RFE-010/015): conversation and attachment windows,
   attachment quota with the storage breakdown (by workspace and direction), a
   usage bar with the 80 %/100 % notices, validation against the instance maximum.
@@ -130,7 +130,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
     capabilities; status; re-attach/detach), space bindings, reach requests.
   - **Memory** — list, editor with revisions, restore, redact, search; banner
     "Memories in this workspace are written in <Language>".
-  - **Skills** — editor with file tree, executable bit, size meter.
+  - **Skills** — editor with file tree, executable bit, size meter. (phase 3, RFE-020) Lists the agent's **effective** skills with a tier badge (Agent / Workspace / Organization) and, for shadowing, "overrides the Workspace skill of the same name" / "overridden by …"; workspace and org skills open read-only here with a link to where they are edited.
   - **Schedules**, **Webhooks** (URL shown once on create/rotate; phase 2,
     RFE-021: each item shows its owner — a person or "Workspace" — with
     **Reassign…** (picker of members who can use the workspace; re-enable option
@@ -168,6 +168,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   organization"), shows the verified account after saving, and offers
   "Re-verify"; refused keys show the governance reason.
 - **Policy** — workspace rules editor.
+- **Skills** (phase 3, RFE-020) — workspace skills editor (owners; members read-only): same editor as the agent tier, a banner "Applies to every agent in this workspace", and a per-skill list of the agents it reaches and any agent-level skill that overrides it.
 - **Activity** — request log (decision, rule name, app/tool, conversation
   link), usage.
 - **Policy** also edits the workspace's uncredentialed default and allow-list

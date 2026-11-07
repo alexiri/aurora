@@ -316,7 +316,8 @@ conversation and hour; best-effort).
 | Workspace secrets, connections, grants, workspace policy (incl. the workspace uncredentialed default), workspace API keys | `can_own` |
 | Workspace LLM keys | `can_own`, **and** org governance permits `workspace`-scoped keys for that endpoint, **and** the key's origin complies (`08 §11`) |
 | Space bindings for an agent of the workspace | `can_own` |
-| Create/edit/delete agents, brief, model, avatar; memory; skills; schedules; webhooks; restart sandbox | `can_use` |
+| Create/edit/delete agents, brief, model, avatar; memory; agent-tier skills; schedules; webhooks; restart sandbox | `can_use` |
+| Create/edit/delete **workspace-tier skills** (phase 3, RFE-020); read them | `can_own` to write (org owners/admins included); read: `can_use` |
 | Create a **BYO** agent; regenerate a BYO agent's token (phase 2, RFE-025) | phase 0/1: `can_use`. **From phase 2: by the effective BYO posture** (`08 §11.9`): `enabled` → `can_use`; `owners_only` (default) → `can_own`; `disabled` → nobody |
 | Edit a BYO agent's source CIDR list and "require context credentials" setting (phase 2, RFE-025) | `can_own` |
 | Workspace BYO posture (phase 2, RFE-025) | `can_own` (tighten-only) |
