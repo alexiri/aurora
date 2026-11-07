@@ -875,3 +875,141 @@ pub async fn turn_boot(conn: &mut PgConnection, turn: Uuid) -> Result<Option<Uui
             .flatten(),
     )
 }
+
+/// The turn's durable answer buffer (`[{id,text,reply_to?}]`), if any (FUP-M4.1).
+pub async fn answer_buffer_get(
+    conn: &mut PgConnection,
+    turn: Uuid,
+) -> Result<Option<serde_json::Value>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT msgs FROM turn_answer_buffers WHERE turn_id = $1")
+            .bind(turn)
+            .fetch_optional(conn)
+            .await?,
+    )
+}
+
+pub async fn answer_buffer_set(
+    conn: &mut PgConnection,
+    turn: Uuid,
+    msgs: &serde_json::Value,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO turn_answer_buffers (turn_id, msgs) VALUES ($1, $2)
+         ON CONFLICT (turn_id) DO UPDATE SET msgs = EXCLUDED.msgs, updated_at = now()",
+    )
+    .bind(turn)
+    .bind(msgs)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Remove and return the turn's answer buffer.
+pub async fn answer_buffer_take(
+    conn: &mut PgConnection,
+    turn: Uuid,
+) -> Result<Option<serde_json::Value>, DbError> {
+    Ok(
+        sqlx::query_scalar("DELETE FROM turn_answer_buffers WHERE turn_id = $1 RETURNING msgs")
+            .bind(turn)
+            .fetch_optional(conn)
+            .await?,
+    )
+}
+
+// ------------------------------------------------------------------ render inputs (FUP-M4.5)
+
+/// An agent's usable connection grant (active connection), for the rendered instructions.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct HomeAppConn {
+    pub connection_id: Uuid,
+    pub app_id: String,
+    pub label: String,
+}
+
+/// Active connections the agent holds a grant on, stable order.
+pub async fn home_app_connections(
+    conn: &mut PgConnection,
+    agent: Uuid,
+) -> Result<Vec<HomeAppConn>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT c.id AS connection_id, c.app_id, c.label
+         FROM grants g JOIN app_connections c ON c.id = g.connection_id
+         WHERE g.agent_id = $1 AND c.status = 'active'
+         ORDER BY c.app_id, g.created_at, g.id",
+    )
+    .bind(agent)
+    .fetch_all(conn)
+    .await?)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct HomePresence {
+    pub platform: String,
+    pub tenant_label: String,
+    pub mode: String,
+    pub handle: Option<String>,
+}
+
+/// The agent's active presences on usable integrations.
+pub async fn home_presences(
+    conn: &mut PgConnection,
+    agent: Uuid,
+) -> Result<Vec<HomePresence>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT i.connector_id AS platform, i.tenant_label, p.mode,
+                COALESCE(p.handle, i.shared_bot->>'handle') AS handle
+         FROM channel_presences p JOIN channel_integrations i ON i.id = p.integration_id
+         WHERE p.agent_id = $1 AND p.status = 'active' AND i.status = 'active'
+         ORDER BY i.connector_id, i.tenant_label, p.id",
+    )
+    .bind(agent)
+    .fetch_all(conn)
+    .await?)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct HomePeer {
+    pub handle: String,
+    pub name: String,
+    pub own_policy: String,
+    pub peer_policy: String,
+}
+
+/// Linked agents with the policy of each side.
+pub async fn home_peers(conn: &mut PgConnection, agent: Uuid) -> Result<Vec<HomePeer>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT o.handle, o.name,
+                CASE WHEN l.agent_a_id = $1 THEN l.policy_a ELSE l.policy_b END AS own_policy,
+                CASE WHEN l.agent_a_id = $1 THEN l.policy_b ELSE l.policy_a END AS peer_policy
+         FROM agent_links l
+         JOIN agents o ON o.id = CASE WHEN l.agent_a_id = $1 THEN l.agent_b_id ELSE l.agent_a_id END
+         WHERE l.agent_a_id = $1 OR l.agent_b_id = $1
+         ORDER BY o.handle, o.id",
+    )
+    .bind(agent)
+    .fetch_all(conn)
+    .await?)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct HomeSchedule {
+    pub name: String,
+    pub cron: String,
+    pub timezone: String,
+    pub enabled: bool,
+}
+
+pub async fn home_schedules(
+    conn: &mut PgConnection,
+    agent: Uuid,
+) -> Result<Vec<HomeSchedule>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT name, cron, timezone, enabled FROM schedules WHERE agent_id = $1
+         ORDER BY name, id",
+    )
+    .bind(agent)
+    .fetch_all(conn)
+    .await?)
+}

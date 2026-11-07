@@ -75,6 +75,8 @@ pub struct AppState {
     pub card_requests: Arc<dyn crate::domains::channels::card_requests::CardRequests>,
     /// SSE keepalive interval.
     pub sse_keepalive: std::time::Duration,
+    /// How often open SSE streams re-validate their principal (besides revocation NOTIFYs).
+    pub stream_recheck: std::time::Duration,
 }
 
 impl AppState {
@@ -153,6 +155,7 @@ impl AppState {
             connect,
             card_requests,
             sse_keepalive: aurora_core::limits::SSE_KEEPALIVE,
+            stream_recheck: crate::http::auth::STREAM_RECHECK,
         })
     }
 
@@ -184,6 +187,13 @@ impl AppState {
     #[must_use]
     pub fn with_sse_keepalive(mut self, d: std::time::Duration) -> Self {
         self.sse_keepalive = d;
+        self
+    }
+
+    /// Override the SSE principal re-check interval (tests).
+    #[must_use]
+    pub fn with_stream_recheck(mut self, d: std::time::Duration) -> Self {
+        self.stream_recheck = d;
         self
     }
 

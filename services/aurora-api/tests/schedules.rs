@@ -358,6 +358,16 @@ impl Rig {
     async fn fire_and_deliver(&self, id: &str) -> Value {
         self.due(id).await;
         self.work().await; // arm 9 creates the turn
+        // Creating/changing a schedule bumps the home-sync generation (the schedules summary is
+        // projected, FIX-005); dispatch waits for the sync, so apply it as the supervisor would.
+        sqlx::query(
+            "UPDATE sandboxes s SET home_applied_generation =
+                 a.home_sync_generation + w.home_sync_generation + 1
+             FROM agents a JOIN workspaces w ON w.id = a.workspace_id WHERE a.id = s.agent_id",
+        )
+        .execute(self.h.pool())
+        .await
+        .unwrap();
         self.deliver().await
     }
 

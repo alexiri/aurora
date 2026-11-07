@@ -713,6 +713,10 @@
       "publisher",
       "revoked_at"
     ],
+    "turn_answer_buffers": [
+      "msgs",
+      "turn_id"
+    ],
     "turns": [
       "abort_requested_at",
       "agent_id",

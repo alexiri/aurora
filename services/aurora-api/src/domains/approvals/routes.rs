@@ -82,6 +82,7 @@ async fn stream(
     let rx = s.approval_bus.subscribe(&s.pool).await?;
     let user = c.user_id;
     let keepalive = s.sse_keepalive;
+    let gone = crate::http::auth::revoked(s.clone(), c.0.clone());
     let events = futures::stream::unfold((rx, s), move |(mut rx, s)| async move {
         loop {
             match rx.recv().await {
@@ -106,6 +107,7 @@ async fn stream(
             }
         }
     });
+    let events = futures::StreamExt::take_until(events, gone);
     Ok(Sse::new(events).keep_alive(KeepAlive::new().interval(keepalive)))
 }
 
