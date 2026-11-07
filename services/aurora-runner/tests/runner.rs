@@ -39,6 +39,7 @@ fn fast_retry() -> RetryPolicy {
 
 fn settings(url: &str) -> RunnerSettings {
     RunnerSettings {
+        held_awake_ceiling: None,
         api_url: url.to_owned(),
         token: TOKEN.into(),
         version: "test".into(),

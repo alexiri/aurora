@@ -539,17 +539,3 @@ fn bootstrap_connector_tokens_are_validated_and_resolved() {
         assert!(e.has_key("AURORA_BOOTSTRAP_CONNECTOR_TOKENS"), "{bad}: {e}");
     }
 }
-
-#[test]
-fn held_awake_ceiling_reaches_the_api_config() {
-    let raw = load_with(&format!("{BASE}[runner]\nheld_awake_ceiling = 3\n"), &[]).unwrap();
-    assert_eq!(raw.api_config().unwrap().held_awake_ceiling, Some(3));
-    let raw = load_with(BASE, &[]).unwrap();
-    assert_eq!(raw.api_config().unwrap().held_awake_ceiling, None);
-    let raw = load_with(&format!("{BASE}[runner]\nheld_awake_ceiling = 0\n"), &[]).unwrap();
-    assert!(
-        raw.api_config()
-            .unwrap_err()
-            .has_key("runner.held_awake_ceiling")
-    );
-}

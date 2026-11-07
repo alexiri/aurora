@@ -61,6 +61,15 @@
           },
           "type": "array"
         },
+        "held_awake_ceiling": {
+          "description": "`runner.held_awake_ceiling` (docs/11 §Stop): running-but-idle sandboxes above this make\ndue-work evict for a waiting start. Absent from older runners: the API derives\n`max(1, max_sandboxes − 1)`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "home_durability": {
           "$ref": "#/$defs/HomeDurability"
         },

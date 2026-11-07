@@ -129,9 +129,6 @@ pub struct ApiConfig {
     pub gateway_ca_dir: String,
     pub hookhost_url: String,
     pub plugins: PluginsSection,
-    /// `runner.held_awake_ceiling` override for due-work eviction (docs/11 §Stop); `None`
-    /// keeps the derived `max(1, max_sandboxes − 1)`.
-    pub held_awake_ceiling: Option<u32>,
     pub retention: RetentionSection,
     pub tls: TlsSection,
     pub telemetry: TelemetrySection,
@@ -241,11 +238,6 @@ impl RawConfig {
             self.gateway.advertised_proxy_url.as_deref(),
         );
         check_url(&mut c, "api.hookhost_url", Some(&self.api.hookhost_url));
-        check_pos(
-            &mut c,
-            "runner.held_awake_ceiling",
-            self.runner.held_awake_ceiling,
-        );
         if self.plugins.dir.is_empty() {
             c.err("plugins.dir", "must not be empty");
         }
@@ -283,7 +275,6 @@ impl RawConfig {
             gateway_ca_dir: self.gateway.ca_dir.clone(),
             hookhost_url: self.api.hookhost_url.clone(),
             plugins: self.plugins.clone(),
-            held_awake_ceiling: self.runner.held_awake_ceiling,
             retention: self.retention.clone(),
             tls: self.tls.clone(),
             telemetry: self.telemetry.clone(),

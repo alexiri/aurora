@@ -103,8 +103,8 @@ async fn compute(
     } else {
         caps.as_ref().map_or(1, |c| c.max_sandboxes)
     });
-    // `runner.held_awake_ceiling` overrides the derived `max(1, max_sandboxes − 1)`.
-    let ceiling = held_awake_ceiling(s.config.held_awake_ceiling, max_slots);
+    // The runner's registered `runner.held_awake_ceiling`, else `max(1, max_sandboxes − 1)`.
+    let ceiling = held_awake_ceiling(caps.as_ref().and_then(|c| c.held_awake_ceiling), max_slots);
     let hosted = &s.config.hosted;
     let default_harness = hosted.default_harness.as_str();
 

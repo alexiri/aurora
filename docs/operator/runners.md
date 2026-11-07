@@ -61,9 +61,9 @@ installs. It does not replace the admin route for a second runner.
 | `runner.capacity_wait_secs` | `300` | How long a start waits for capacity. |
 | `server.bind` | `0.0.0.0` | Also the default bind of the sandbox-facing channel listener, port 4105. |
 
-`runner.held_awake_ceiling` overrides the eviction ceiling `max(1, max_sandboxes − 1)`. The API
-computes eviction in due-work, so it reads this key from its own copy of the config: keep the API
-and runner config files identical for it.
+`runner.held_awake_ceiling` overrides the eviction ceiling `max(1, max_sandboxes − 1)`. The runner
+reports it at registration and the API's due-work eviction uses that value for the runner; the
+key is set only in the runner's config.
 
 Start-up checks: the runner validates the backend and the sandbox network, and warns
 when the ops bind overlaps the sandbox-facing bind.

@@ -451,6 +451,7 @@ impl Backend for KubernetesBackend {
             max_attachment_bytes: 25 * 1024 * 1024,
             // Filled in by the runner from `runner.image` at registration.
             image: None,
+            held_awake_ceiling: None,
         }
     }
 

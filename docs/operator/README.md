@@ -76,8 +76,8 @@ OPS-013, and gaps 1, 2, 7 and 8 were fixed in FIX-003; all are listed as resolve
 - **8. Parsed but unused keys.** `gateway.condition_body_bytes` sets the body prefix buffered
   for policy conditions (never below the 16 KiB approval peek), `gateway.resolve_cache_ttl_secs`
   the host-resolution cache TTL, and `runner.held_awake_ceiling` overrides the derived
-  eviction ceiling `max(1, max_sandboxes − 1)`. The API evaluates eviction, so it reads
-  `runner.held_awake_ceiling` from the shared config; give the API the same config file as the runner.
+  eviction ceiling `max(1, max_sandboxes − 1)`. The runner reports the ceiling at
+  registration and the API's eviction uses it for that runner.
 
 ### Resolved in OPS-013
 
