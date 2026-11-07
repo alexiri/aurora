@@ -10,6 +10,7 @@ pub mod attachments;
 pub mod audit;
 pub mod availability;
 pub mod blobs;
+pub mod channel_cards;
 pub mod channel_inbox;
 pub mod channel_integrations;
 pub mod channel_ops;

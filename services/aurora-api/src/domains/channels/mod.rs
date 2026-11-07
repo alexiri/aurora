@@ -11,7 +11,10 @@
 //!   without an integration (claimable by any live replica of the connector, best effort);
 //! * plaintext credentials sent in a `credentials.validate` op payload are blanked once the op
 //!   finished.
+pub mod actions;
 mod bindings;
+pub mod card_requests;
+pub mod cards;
 mod dto;
 mod integrations;
 mod links;

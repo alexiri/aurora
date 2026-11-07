@@ -36,7 +36,7 @@ pub trait InboxHandler: Send + Sync {
 
 /// The registered handlers (BE-072/073 add theirs here).
 pub fn handlers() -> Vec<Arc<dyn InboxHandler>> {
-    Vec::new()
+    vec![Arc::new(crate::domains::channels::actions::ActionHandler)]
 }
 
 fn backoff_secs(attempts: i32) -> f64 {

@@ -155,6 +155,7 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     }
     aurora_api::jobs::spawn(pool, cfg.retention.request_log_days);
     aurora_api::domains::connectors::inbox::spawn(state.clone());
+    aurora_api::domains::channels::cards::fanout::spawn(state.clone());
     aurora_api::domains::plugins::scan::spawn(state.clone());
     aurora_api::domains::plugins::registry::spawn_initial(state.clone());
     let internal =

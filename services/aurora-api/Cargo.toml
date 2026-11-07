@@ -26,6 +26,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 aurora-db = { workspace = true }
 aurora-protocol = { workspace = true }
+aurora-channels = { workspace = true }
 sqlx = { workspace = true }
 base64 = { workspace = true }
 chrono = { workspace = true }
