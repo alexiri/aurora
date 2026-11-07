@@ -253,6 +253,14 @@ async fn crud_and_limits() {
     }
     let (s, _) = r.put(a, "big", &"x".repeat(100_001)).await;
     assert_eq!(s, 400);
+    // S-13: within the character limit but too large to sync once encoded (4-byte characters).
+    let (s, v) = r.put(a, "emoji", &"\u{1F600}".repeat(100_000)).await;
+    assert_eq!(s, 400, "{}", v["error"]);
+    // 60 000 three-byte characters (~176 KiB encoded) still fit.
+    let (s, v) = r.put(a, "cjk", &"\u{6F22}".repeat(60_000)).await;
+    assert!(matches!(s, 200 | 201), "{s} {}", v["error"]);
+    let (s, _) = r.user(Method::DELETE, &format!("{base}/cjk"), None).await;
+    assert!(matches!(s, 200 | 204), "{s}");
     let (s, v) = r.put(a, "house-rules", "Shoes off").await;
     assert_eq!((s, v["revision"].clone()), (200, json!(2)));
     let (s, v) = r

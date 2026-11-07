@@ -132,6 +132,18 @@ pub async fn save(
             &format!("at most {} characters", w.max_content),
         ));
     }
+    // S-13: the content must also fit one home-sync part once serialized.
+    if serde_json::to_string(w.content).map_or(usize::MAX, |s| s.len())
+        > limits::MEMORY_CONTENT_JSON_MAX
+    {
+        return Err(bad(
+            "/content",
+            &format!(
+                "too large to sync into the sandbox (at most {} KiB once encoded)",
+                limits::MEMORY_CONTENT_JSON_MAX / 1024
+            ),
+        ));
+    }
     let mut tx = pool.begin().await.map_err(DbError::from)?;
     repo::lock_agent(&mut tx, agent).await?;
     let existing = repo::get(&mut tx, agent, w.key).await?;

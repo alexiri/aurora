@@ -44,6 +44,10 @@ pub const MEMORY_MAX_PER_AGENT: u32 = 100;
 pub const MEMORY_REVISIONS_KEPT: u32 = 50;
 pub const MEMORY_TOOL_CONTENT_MAX: usize = 12_000;
 pub const MEMORY_CONTENT_MAX: usize = 100_000;
+/// Decision S-13: a memory's content, serialized as a JSON string, must also fit one home-sync
+/// part with its frontmatter and path (`HOME_SYNC_PART_MAX`); 100 000 multi-byte characters
+/// can exceed it.
+pub const MEMORY_CONTENT_JSON_MAX: usize = 180 * KIB;
 pub const MEMORY_INDEX_MAX: usize = 6_000;
 /// snippet count (each `MEMORY_SNIPPET_CHARS` chars, score >= `MEMORY_SNIPPET_MIN_SCORE`).
 pub const MEMORY_SNIPPETS: u32 = 3;

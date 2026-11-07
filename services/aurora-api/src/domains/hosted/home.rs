@@ -75,7 +75,9 @@ fn pack(kind: HomeSyncKind, entries: Vec<Value>, out: &mut Vec<HomeSyncPart>) {
     for e in entries {
         let n = e.to_string().len() + 1;
         if n > PACK_MAX {
-            tracing::warn!(kind = %kind.as_str(), "home sync entry exceeds the part size; skipped");
+            // Unreachable for validated content (S-13: memory writes are bounded by
+            // MEMORY_CONTENT_JSON_MAX, skills by SKILL_TOTAL_MAX); loud if it ever happens.
+            tracing::error!(kind = %kind.as_str(), "home sync entry exceeds the part size; skipped");
             continue;
         }
         if size + n > PACK_MAX && !cur.is_empty() {
