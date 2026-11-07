@@ -91,14 +91,18 @@ pub fn caps_from(manifest: Option<&Value>, config: &Value) -> CapabilitySet {
     )
 }
 
-/// First 8 base32 characters of an approval id (the `approve <code>` / `deny <code>` code).
+/// The 8-character code people type in `approve <code>` / `deny <code>` (13 §4.5 fallback):
+/// RFC 4648 base32 (upper case) of the first 40 bits of `sha256(id)`. Decision S-12: the spec's
+/// "first 8 base32 chars of the id" collides for UUIDv7 ids created close together (their leading
+/// bits are a timestamp). Matching scans the clicker's pending approvals, so collisions only make
+/// a code ambiguous (sent to the dashboard), never decide the wrong approval.
 pub fn approval_code(id: Uuid) -> String {
+    use sha2::{Digest, Sha256};
     const A: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-    let b = id.as_bytes();
-    let mut bits: u64 = 0;
-    for x in &b[..5] {
-        bits = (bits << 8) | u64::from(*x);
-    }
+    let d = Sha256::digest(id.as_bytes());
+    let bits = d[..5]
+        .iter()
+        .fold(0u64, |acc, x| (acc << 8) | u64::from(*x));
     (0..8)
         .map(|i| A[((bits >> (35 - 5 * i)) & 31) as usize] as char)
         .collect()
@@ -121,6 +125,16 @@ pub async fn workspace_page_url(
     workspace_id: Uuid,
     page: &str,
 ) -> Result<String, ApiError> {
+    workspace_page_url_for(conn, &state.config.external_url, workspace_id, page).await
+}
+
+/// [`workspace_page_url`] for callers without `AppState` (lifecycle hooks).
+pub async fn workspace_page_url_for(
+    conn: &mut PgConnection,
+    external_url: &str,
+    workspace_id: Uuid,
+    page: &str,
+) -> Result<String, ApiError> {
     let slugs: Option<(String, String)> = sqlx::query_as(
         "SELECT o.slug, w.slug FROM workspaces w JOIN organizations o ON o.id = w.org_id WHERE w.id = $1",
     )
@@ -129,8 +143,8 @@ pub async fn workspace_page_url(
     .await
     .map_err(DbError::from)?;
     Ok(match slugs {
-        Some((org, ws)) => dashboard_url(state, &format!("/o/{org}/w/{ws}/{page}")),
-        None => dashboard_url(state, "/"),
+        Some((org, ws)) => dashboard_url_for(external_url, &format!("/o/{org}/w/{ws}/{page}")),
+        None => dashboard_url_for(external_url, "/"),
     })
 }
 

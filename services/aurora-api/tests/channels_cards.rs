@@ -7,7 +7,7 @@ mod common;
 
 use aurora_api::domains::channels::actions::ActionHandler;
 use aurora_api::domains::channels::card_requests::{
-    AgentChoice, BindingChoose, DmDefaultChoose, ReachDecide, card_requests,
+    BindingChoose, DmDefaultChoose, ReachDecide, card_requests,
 };
 use aurora_api::domains::channels::cards::{self, fanout};
 use aurora_api::domains::connectors::inbox::{self, InboxHandler};
@@ -582,9 +582,8 @@ async fn reach_decide_needs_can_own() {
                 integration_id: w.integ,
                 grant_id: grant,
                 agent_id: w.agent,
-                agent_label: "bot".into(),
                 subject_label: "Xavier".into(),
-                owner_refs: vec!["U_OWNER".into()],
+                owners: vec![(w.owner, "U_OWNER".into())],
             },
         )
         .await
@@ -637,25 +636,19 @@ async fn binding_choose_creates_the_binding_for_owners_only() {
             &mut tx,
             BindingChoose {
                 integration_id: w.integ,
+                actor_user_id: w.owner,
+                actor_ref: "U_OWNER".into(),
                 space_ref: "C9".into(),
-                thread_ref: Some("T9".into()),
-                agents: vec![
-                    AgentChoice {
-                        agent_id: w.agent,
-                        label: "bot".into(),
-                    },
-                    AgentChoice {
-                        agent_id: w.agent2,
-                        label: "bot2".into(),
-                    },
-                ],
+                space_label: "C9".into(),
+                allowed_agent_ids: vec![w.agent, w.agent2],
             },
         )
         .await
         .unwrap();
     tx.commit().await.unwrap();
     let op = w.ops("message.post").await.pop().unwrap().1;
-    assert_eq!(op["target"], json!({"space_ref": "C9", "thread_ref": "T9"}));
+    // 13 §5.3: the select is DMed to the person who added the bot.
+    assert_eq!(op["target"], json!({"user_ref": "U_OWNER"}));
     let tok = W::token(&op, "select");
     let a = w.agent.to_string();
     // can_use only: refused.
@@ -673,17 +666,24 @@ async fn binding_choose_creates_the_binding_for_owners_only() {
     assert_eq!(out["reason"], "unavailable");
     assert_eq!(w.token_uses().await, 0);
     w.deliver().await;
-    let out = w.click(w.integ, &tok, "U_OWNER", Some(&a)).await;
+    // Clicked in the owner's DM with the bot: the card's space is learned and it is updated in place.
+    let out = w
+        .click_in(w.integ, &tok, "U_OWNER", Some(&a), Some("D_OWNER"))
+        .await;
     assert_eq!(out["result"], "done", "{out}");
     let (agent, by): (Uuid, Option<Uuid>) = sqlx::query_as("SELECT agent_id, bound_by_user_id FROM space_bindings WHERE integration_id=$1 AND space_ref='C9' AND active").bind(w.integ).fetch_one(w.pool()).await.unwrap();
     assert_eq!((agent, by), (w.agent, Some(w.owner)));
-    let upd = w.ops("message.update").await;
-    assert!(
-        upd[0].1["content"]["card"]["blocks"][0]["text"]
-            .as_str()
-            .unwrap()
-            .starts_with("Bound to bot by Olivia")
-    );
+    // A DM card is settled in place once its space is known, otherwise by a new message.
+    let mut settled = w.ops("message.update").await;
+    if settled.is_empty() {
+        settled = w.ops("message.post").await;
+    }
+    let content = &settled.last().unwrap().1["content"];
+    let text = content["card"]["blocks"][0]["text"]
+        .as_str()
+        .or_else(|| content["text"].as_str())
+        .unwrap_or_default();
+    assert!(text.starts_with("Bound to bot by Olivia"), "{content}");
 }
 
 #[tokio::test]
@@ -695,11 +695,11 @@ async fn dm_default_choose_sets_the_default_for_the_addressee_only() {
             &mut tx,
             DmDefaultChoose {
                 integration_id: w.integ,
+                user_id: w.member,
                 user_ref: "U_MEMBER".into(),
-                agents: vec![AgentChoice {
-                    agent_id: w.agent2,
-                    label: "bot2".into(),
-                }],
+                space_ref: "D_MEMBER".into(),
+                thread_ref: String::new(),
+                allowed_agent_ids: vec![w.agent2],
             },
         )
         .await
@@ -833,8 +833,16 @@ async fn without_buttons_or_edits_cards_fall_back() {
 }
 
 #[test]
-fn approval_code_is_eight_base32_chars() {
-    let c = cards::approval_code(Uuid::from_u128(0xFFFF_FFFF_FF00_0000_0000_0000_0000_0000));
-    assert_eq!(c, "77777777");
-    assert_eq!(cards::approval_code(Uuid::nil()), "AAAAAAAA");
+fn approval_code_is_eight_base32_chars_and_spreads_uuidv7() {
+    let c = cards::approval_code(Uuid::nil());
+    assert_eq!(c.len(), 8);
+    assert!(
+        c.bytes()
+            .all(|b| b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".contains(&b))
+    );
+    // S-12: ids minted back to back (same timestamp prefix) get distinct codes.
+    let codes: std::collections::HashSet<String> = (0..200)
+        .map(|_| cards::approval_code(Uuid::now_v7()))
+        .collect();
+    assert_eq!(codes.len(), 200);
 }

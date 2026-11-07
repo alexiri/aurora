@@ -4,10 +4,11 @@
 use super::build;
 use super::{Minter, NewPost, capabilities, dashboard_url_for, post_card};
 use crate::domains::channels::card_requests::{
-    BindingChoose, CardRequests, DmDefaultChoose, ReachDecide,
+    AgentChoice, BindingChoose, CardRequests, DmDefaultChoose, ReachDecide,
 };
 use aurora_core::ApiError;
 use aurora_crypto::DerivedKeys;
+use aurora_db::DbError;
 use aurora_protocol::connector::{Sender, Target};
 use chrono::Utc;
 use sqlx::PgConnection;
@@ -39,6 +40,29 @@ impl CardsImpl {
     }
 }
 
+/// Picker entries for agent ids (labels are agent names; unknown ids are dropped).
+async fn choices(tx: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<AgentChoice>, ApiError> {
+    let rows: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT id, name FROM agents WHERE id = ANY($1) ORDER BY name, id")
+            .bind(ids)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(DbError::from)?;
+    Ok(rows
+        .into_iter()
+        .map(|(agent_id, label)| AgentChoice { agent_id, label })
+        .collect())
+}
+
+async fn agent_name(tx: &mut PgConnection, id: Uuid) -> Result<String, ApiError> {
+    let name: Option<String> = sqlx::query_scalar("SELECT name FROM agents WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(DbError::from)?;
+    Ok(name.unwrap_or_else(|| "an agent".to_owned()))
+}
+
 fn bucket(secs: i64) -> i64 {
     Utc::now().timestamp() / secs
 }
@@ -54,18 +78,19 @@ impl CardRequests for CardsImpl {
         tx: &mut PgConnection,
         req: BindingChoose,
     ) -> Result<(), ApiError> {
-        if req.agents.is_empty() {
+        let agents = choices(tx, &req.allowed_agent_ids).await?;
+        if agents.is_empty() {
             return Ok(());
         }
         let caps = capabilities(tx, req.integration_id).await?;
         let card_id = Uuid::now_v7();
-        let thread = req.thread_ref.clone().unwrap_or_default();
         let card = build::binding_choose(
             &self.minter(req.integration_id),
             card_id,
             &req.space_ref,
-            &req.agents,
+            &agents,
         )?;
+        // 13 §5.3: the select is DMed to the person who added the bot.
         post_card(
             tx,
             &caps,
@@ -74,9 +99,8 @@ impl CardRequests for CardsImpl {
                 subject_kind: "binding",
                 subject_id: card_id,
                 card_id,
-                target: Target::Space {
-                    space_ref: req.space_ref.clone(),
-                    thread_ref: req.thread_ref,
+                target: Target::User {
+                    user_ref: req.actor_ref.clone(),
                 },
                 sender: Sender::shared(),
                 card,
@@ -86,7 +110,7 @@ impl CardRequests for CardsImpl {
                     "binding:{}:{}:{}:{}",
                     req.integration_id,
                     req.space_ref,
-                    thread,
+                    req.actor_ref,
                     bucket(REQUEST_WINDOW_SECS)
                 ),
             },
@@ -100,13 +124,13 @@ impl CardRequests for CardsImpl {
         tx: &mut PgConnection,
         req: DmDefaultChoose,
     ) -> Result<(), ApiError> {
-        if req.agents.is_empty() {
+        let agents = choices(tx, &req.allowed_agent_ids).await?;
+        if agents.is_empty() {
             return Ok(());
         }
         let caps = capabilities(tx, req.integration_id).await?;
         let card_id = Uuid::now_v7();
-        let card =
-            build::dm_default_choose(&self.minter(req.integration_id), card_id, &req.agents)?;
+        let card = build::dm_default_choose(&self.minter(req.integration_id), card_id, &agents)?;
         post_card(
             tx,
             &caps,
@@ -115,6 +139,8 @@ impl CardRequests for CardsImpl {
                 subject_kind: "binding",
                 subject_id: card_id,
                 card_id,
+                // Sent to the person directly: the card is bound to its addressee (`user:<ref>`),
+                // which the click handler enforces ("only they may set their own default").
                 target: Target::User {
                     user_ref: req.user_ref.clone(),
                 },
@@ -135,15 +161,16 @@ impl CardRequests for CardsImpl {
     }
 
     async fn reach_decide(&self, tx: &mut PgConnection, req: ReachDecide) -> Result<(), ApiError> {
-        if req.owner_refs.is_empty() {
+        if req.owners.is_empty() {
             return Ok(());
         }
+        let agent_label = agent_name(tx, req.agent_id).await?;
         let caps = capabilities(tx, req.integration_id).await?;
-        for owner in &req.owner_refs {
+        for (_, owner) in &req.owners {
             let card = build::reach(
                 &self.minter(req.integration_id),
                 req.grant_id,
-                &req.agent_label,
+                &agent_label,
                 &req.subject_label,
             )?;
             post_card(
@@ -159,10 +186,7 @@ impl CardRequests for CardsImpl {
                     },
                     sender: Sender::shared(),
                     card,
-                    dashboard_url: Some(dashboard_url_for(
-                        &self.external_url,
-                        &format!("/agents/{}", req.agent_id),
-                    )),
+                    dashboard_url: Some(dashboard_url_for(&self.external_url, "/")),
                     approval_code: None,
                     dedupe_key: format!(
                         "reach:{}:{}:{}",

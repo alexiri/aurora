@@ -101,3 +101,85 @@ pub async fn bump_revision<'e, E: PgExecutor<'e>>(
     .fetch_optional(exec)
     .await?)
 }
+
+/// A link by id.
+pub async fn get<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+) -> Result<Option<ThreadLinkRow>, DbError> {
+    Ok(
+        sqlx::query_as(&format!("SELECT {COLS} FROM thread_links WHERE id=$1"))
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
+}
+
+/// The most recently used link of a platform thread across agents (BE-072 target routing).
+pub async fn latest_for_thread<'e, E: PgExecutor<'e>>(
+    exec: E,
+    integration: Uuid,
+    space_ref: &str,
+    thread_ref: &str,
+) -> Result<Option<ThreadLinkRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM thread_links
+          WHERE integration_id=$1 AND space_ref=$2 AND thread_ref=$3
+          ORDER BY updated_at DESC, id DESC LIMIT 1"
+    ))
+    .bind(integration)
+    .bind(space_ref)
+    .bind(thread_ref)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// The most recently used link of a conversation (doorless turns are mirrored there).
+pub async fn latest_for_conversation<'e, E: PgExecutor<'e>>(
+    exec: E,
+    conversation: Uuid,
+) -> Result<Option<ThreadLinkRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM thread_links WHERE conversation_id=$1
+          ORDER BY updated_at DESC, id DESC LIMIT 1"
+    ))
+    .bind(conversation)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// Whether the conversation has a link in this space of the integration.
+pub async fn exists_in_space<'e, E: PgExecutor<'e>>(
+    exec: E,
+    conversation: Uuid,
+    integration: Uuid,
+    space_ref: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM thread_links
+          WHERE conversation_id=$1 AND integration_id=$2 AND space_ref=$3)",
+    )
+    .bind(conversation)
+    .bind(integration)
+    .bind(space_ref)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// Finished turns that came in through this link, other than `except` (attribution: the first
+/// post in a thread carries the "via" line).
+pub async fn finished_turns_via<'e, E: PgExecutor<'e>>(
+    exec: E,
+    link: Uuid,
+    except: Uuid,
+) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM turns
+          WHERE role='turn' AND status IN ('done','failed') AND id <> $2
+            AND door->>'kind' = 'thread' AND door->>'thread_link_id' = $1::text",
+    )
+    .bind(link)
+    .bind(except)
+    .fetch_one(exec)
+    .await?)
+}

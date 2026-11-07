@@ -147,3 +147,49 @@ pub async fn delete_expired_pending(
     .fetch_all(exec)
     .await?)
 }
+
+/// A fetch that failed (file too large, connector error): a `failed` row bound to the turn so
+/// the transcript shows what was dropped. It carries no blob.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_failed(
+    exec: impl PgExecutor<'_>,
+    id: Uuid,
+    workspace_id: Uuid,
+    conversation_id: Uuid,
+    turn_id: Uuid,
+    filename: &str,
+    content_type: &str,
+    size_bytes: i64,
+    reason: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO attachments (id, workspace_id, conversation_id, turn_id, direction, status,
+            filename, content_type, size_bytes, sha256, blob_backend, blob_key, failure_reason)
+         VALUES ($1,$2,$3,$4,'in','failed',$5,$6,$7,'','','',$8)",
+    )
+    .bind(id)
+    .bind(workspace_id)
+    .bind(conversation_id)
+    .bind(turn_id)
+    .bind(filename)
+    .bind(content_type)
+    .bind(size_bytes)
+    .bind(reason)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// Bound outbound files of a turn (`send_file`), oldest first.
+pub async fn out_for_turn(
+    exec: impl PgExecutor<'_>,
+    turn_id: Uuid,
+) -> Result<Vec<AttachmentRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM attachments
+          WHERE turn_id=$1 AND direction='out' AND status='bound' ORDER BY created_at, id"
+    ))
+    .bind(turn_id)
+    .fetch_all(exec)
+    .await?)
+}

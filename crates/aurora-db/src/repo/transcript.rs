@@ -105,3 +105,21 @@ pub async fn notify_delta<'e, E: PgExecutor<'e>>(
 ) -> Result<(), BusError> {
     bus::notify(exec, Channel::Delta, payload).await
 }
+
+/// The durable `text` events of a turn (its answer), in order.
+pub async fn answer_texts<'e, E: PgExecutor<'e>>(
+    exec: E,
+    conversation_id: Uuid,
+    turn_id: Uuid,
+) -> Result<Vec<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT payload->>'text' FROM transcript_events
+          WHERE conversation_id = $1 AND turn_id = $2 AND type = 'text'
+            AND COALESCE(payload->>'text', '') <> ''
+          ORDER BY seq",
+    )
+    .bind(conversation_id)
+    .bind(turn_id)
+    .fetch_all(exec)
+    .await?)
+}

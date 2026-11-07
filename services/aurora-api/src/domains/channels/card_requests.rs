@@ -1,88 +1,101 @@
-//! Seam between inbox processing (BE-072) and cards (BE-073): typed requests for interactive
-//! cards that ask a person to choose. BE-072 calls these inside its transaction; BE-073's
-//! implementation ([`super::cards::requests`]) renders and queues the card. The default is a
-//! no-op so the inbox can fall back to plain text.
+//! The seam between the inbox (BE-072) and cards (BE-073): requests for interactive cards the
+//! inbox raises (docs/13 §5.1 steps 3 and 5, §5.3). BE-073 implements [`CardRequests`] and
+//! switches [`card_requests`] to its implementation. [`NoopCardRequests`] queues nothing; the
+//! inbox then falls back to plain-text instructions (`use <handle>`, `bind <handle>`).
 
 use crate::app::AppState;
 use aurora_core::ApiError;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-/// An agent a person may pick.
+/// An agent offered in a picker card (built by the card implementation from agent ids).
 #[derive(Debug, Clone)]
 pub struct AgentChoice {
     pub agent_id: Uuid,
-    /// Display label (untrusted; sanitized by the card builder).
+    /// Display label (agent name; sanitized by the card builder).
     pub label: String,
 }
 
-/// `binding.choose`: which agent a shared bot binds to a space.
+/// `binding.choose`: DM the person who added the shared bot a select of agents they own.
 #[derive(Debug, Clone)]
 pub struct BindingChoose {
     pub integration_id: Uuid,
+    pub actor_user_id: Uuid,
+    /// The adder's platform user; the DM goes there.
+    pub actor_ref: String,
     pub space_ref: String,
-    /// Where to post the card (thread of the message that triggered it).
-    pub thread_ref: Option<String>,
-    /// Agents the clicker may choose from (≤ 25).
-    pub agents: Vec<AgentChoice>,
+    pub space_label: String,
+    /// Agents the adder can own that have a shared presence on the integration.
+    pub allowed_agent_ids: Vec<Uuid>,
 }
 
-/// `dm_default.choose`: which agent answers a person's DMs with the shared bot.
+/// `dm_default.choose`: an agent picker for a person's top-level DMs with the shared bot.
 #[derive(Debug, Clone)]
 pub struct DmDefaultChoose {
     pub integration_id: Uuid,
-    /// The platform user whose default is chosen; the card is DMed to them.
+    pub user_id: Uuid,
+    /// The platform user who wrote.
     pub user_ref: String,
-    pub agents: Vec<AgentChoice>,
+    /// Where the picker is posted: the DM and thread the person wrote in.
+    pub space_ref: String,
+    pub thread_ref: String,
+    pub allowed_agent_ids: Vec<Uuid>,
 }
 
-/// `reach.decide`: a pending reach grant, DMed to the workspace owners linked on the integration.
+/// `reach.decide`: DM a card to owners linked on the integration.
 #[derive(Debug, Clone)]
 pub struct ReachDecide {
     pub integration_id: Uuid,
     pub grant_id: Uuid,
     pub agent_id: Uuid,
-    pub agent_label: String,
-    /// What asks for reach (person or space label; untrusted).
+    /// Sanitized label of the person asking.
     pub subject_label: String,
-    /// Platform refs of the owners to DM.
-    pub owner_refs: Vec<String>,
+    /// Workspace owners with a user link on the integration: `(user id, platform user ref)`.
+    pub owners: Vec<(Uuid, String)>,
 }
 
+/// Card requests; `tx` is the caller's connection (ops are queued on it).
 #[async_trait::async_trait]
 pub trait CardRequests: Send + Sync {
+    /// Whether this implementation renders cards. When `false` the inbox adds the plain-text
+    /// instructions itself.
+    fn renders_cards(&self) -> bool {
+        false
+    }
     async fn binding_choose(
         &self,
-        _tx: &mut PgConnection,
-        _req: BindingChoose,
-    ) -> Result<(), ApiError> {
+        tx: &mut PgConnection,
+        req: BindingChoose,
+    ) -> Result<(), ApiError>;
+    async fn dm_default_choose(
+        &self,
+        tx: &mut PgConnection,
+        req: DmDefaultChoose,
+    ) -> Result<(), ApiError>;
+    async fn reach_decide(&self, tx: &mut PgConnection, req: ReachDecide) -> Result<(), ApiError>;
+}
+
+/// The default: no cards.
+pub struct NoopCardRequests;
+
+#[async_trait::async_trait]
+impl CardRequests for NoopCardRequests {
+    async fn binding_choose(&self, _: &mut PgConnection, _: BindingChoose) -> Result<(), ApiError> {
         Ok(())
     }
     async fn dm_default_choose(
         &self,
-        _tx: &mut PgConnection,
-        _req: DmDefaultChoose,
+        _: &mut PgConnection,
+        _: DmDefaultChoose,
     ) -> Result<(), ApiError> {
         Ok(())
     }
-    async fn reach_decide(
-        &self,
-        _tx: &mut PgConnection,
-        _req: ReachDecide,
-    ) -> Result<(), ApiError> {
+    async fn reach_decide(&self, _: &mut PgConnection, _: ReachDecide) -> Result<(), ApiError> {
         Ok(())
-    }
-    /// Whether this implementation renders cards (the inbox then skips its plain-text fallback).
-    fn renders_cards(&self) -> bool {
-        false
     }
 }
 
-/// Default: does nothing.
-pub struct NoopCardRequests;
-
-impl CardRequests for NoopCardRequests {}
-
+/// The card implementation in use (`AppState::card_requests`, set at startup to the cards module).
 pub fn card_requests(state: &AppState) -> &dyn CardRequests {
     &*state.card_requests
 }
