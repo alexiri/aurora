@@ -148,8 +148,8 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | FIX-005 | Spec-required runtime follow-ups: SSE closes on revocation, durable answer text, render inputs, model-list cache | Rust | done (bb9ca8d6) | — | Sonnet (worktree) | sse_revocation 5, home_render_inputs 2, hosted answer-restart test; I-32 |
 | FIX-006 | Spec-required apps/gateway follow-ups: missing_scopes (I-33, C-42), tenant_host on first OAuth connect (S-14), governance typing, ask-hold test, tools SQL | both | done (4143733a) | — | Sonnet (worktree) | connect 12, ask_tool_hold 1; 552 tests across 6 crates; web 146 |
 | FIX-007 | restart_to_update on image change; render inputs/env respect app availability | Rust | done (93512503) | FIX-005, OPS-014 | Sonnet (worktree) | `UPGRADE_STRICT=1 bash scripts/e2e/upgrade.sh` 32/32; sandbox_env 4, home_render_inputs 3 |
-| SPEC-RFE-P12 | Spec updates for phase 1+2 design-review items (phase-tagged; D-43+) | spec | in-progress | 80 decisions | Sonnet (worktree) + Opus review per RFE | |
-| SPEC-RFE-P3 | Spec updates for phase 3 design-review items | spec | todo (after SPEC-RFE-P12; same docs) | SPEC-RFE-P12 | — | |
+| SPEC-RFE-P12 | Spec updates for phase 1+2 design-review items | spec | done (e3ba8cd3) | 80 decisions | Sonnet + Opus review | D-43..D-58, SEC-40..51; report `docs/tasks/SPEC-RFE-P12-report.md` (14 choices made) |
+| SPEC-RFE-P3 | Spec updates for phase 3 design-review items | spec | in-progress | SPEC-RFE-P12 | — | |
 | AUDIT-001 | Phase-0 exit verification from scratch | audit | done (baabe11f) | all | Sonnet (worktree) + Opus review | `docs/audit/phase0-exit.md`: all green after 2 fixes (log formatter, compose IPAM); open: compose hosted backend → OPS-015 |
 | OPS-015 | Compose hosted profile runs real podman sandboxes; hosted.sh scope; deny/lint warnings | Ops | in-progress | AUDIT-001 | Sonnet (worktree) | |
 | TEST-018 | Security invariant coverage SEC-01..39 (`docs/tests/security-coverage.md`) | tests | done (13ac4bba) | 39 rows; 14 tests/guards added; SEC-18..20 proven via TEST-016; SEC-30 avatars → BE-067 |
@@ -162,22 +162,22 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 
 | RFE | Decision (short) | Phase | Spec update | Implementation |
 |---|---|---|---|---|
-| RFE-001 | Verified-email auto-link opt-in per integration (default off); else sign-in-link flow | 1 | SPEC-RFE-P12 | todo |
-| RFE-002 | TLS-only gateway proxy listener, internal and external | 1 | SPEC-RFE-P12 | todo |
-| RFE-003 | Open-lane posture (enabled/allowlist_only/disabled), CONNECT-time rule semantics, 3129 only with browser capability | 1 | SPEC-RFE-P12 | todo |
-| RFE-004 | OIDC-only sign-in (IdP enforces MFA) | 1 | SPEC-RFE-P12 | todo |
-| RFE-009 | Direct conversations visible to their user + workspace owners | 1 | SPEC-RFE-P12 | todo |
-| RFE-016 | `DeltaBus` seam (NOTIFY impl) + sizing note | 1 | SPEC-RFE-P12 | todo |
-| RFE-005 | Policy `user` identities bind to the turn's speaker | 2 | SPEC-RFE-P12 | todo |
-| RFE-006 | Freeze agent/workspace/org (reversible, audited) | 2 | SPEC-RFE-P12 | todo |
-| RFE-007 | Keyring-style lists for signing key and internal secret | 2 | SPEC-RFE-P12 | todo |
-| RFE-008 | Security-critical audit rows written in the same transaction | 2 | SPEC-RFE-P12 | todo |
-| RFE-010 | Conversation delete/archive, transcript redaction, retention, export | 2 | SPEC-RFE-P12 | todo |
-| RFE-011a | Stall exemption, per-rule approval timeouts, email-to-owners when no surface is live, SSE browser notification | 2 | SPEC-RFE-P12 | todo |
-| RFE-012 | Third workspace role `approver` | 2 | SPEC-RFE-P12 | todo |
-| RFE-015 | Attachment retention + per-tenant quota + storage breakdown + sweep | 2 | SPEC-RFE-P12 | todo |
-| RFE-017 | Management API per-principal rate limiting | 2 | SPEC-RFE-P12 | todo |
-| RFE-021 | Creator reassignment, offboarding view, workspace-anchored automations | 2 | SPEC-RFE-P12 | todo |
+| RFE-001 | Verified-email auto-link opt-in per integration (default off); else sign-in-link flow | 1 | SPEC-RFE-P12 | spec done |
+| RFE-002 | TLS-only gateway proxy listener, internal and external | 1 | SPEC-RFE-P12 | spec done |
+| RFE-003 | Open-lane posture (enabled/allowlist_only/disabled), CONNECT-time rule semantics, 3129 only with browser capability | 1 | SPEC-RFE-P12 | spec done |
+| RFE-004 | OIDC-only sign-in (IdP enforces MFA) | 1 | SPEC-RFE-P12 | spec done |
+| RFE-009 | Direct conversations visible to their user + workspace owners | 1 | SPEC-RFE-P12 | spec done |
+| RFE-016 | `DeltaBus` seam (NOTIFY impl) + sizing note | 1 | SPEC-RFE-P12 | spec done |
+| RFE-005 | Policy `user` identities bind to the turn's speaker | 2 | SPEC-RFE-P12 | spec done |
+| RFE-006 | Freeze agent/workspace/org (reversible, audited) | 2 | SPEC-RFE-P12 | spec done |
+| RFE-007 | Keyring-style lists for signing key and internal secret | 2 | SPEC-RFE-P12 | spec done |
+| RFE-008 | Security-critical audit rows written in the same transaction | 2 | SPEC-RFE-P12 | spec done |
+| RFE-010 | Conversation delete/archive, transcript redaction, retention, export | 2 | SPEC-RFE-P12 | spec done |
+| RFE-011a | Stall exemption, per-rule approval timeouts, email-to-owners when no surface is live, SSE browser notification | 2 | SPEC-RFE-P12 | spec done |
+| RFE-012 | Third workspace role `approver` | 2 | SPEC-RFE-P12 | spec done |
+| RFE-015 | Attachment retention + per-tenant quota + storage breakdown + sweep | 2 | SPEC-RFE-P12 | spec done |
+| RFE-017 | Management API per-principal rate limiting | 2 | SPEC-RFE-P12 | spec done |
+| RFE-021 | Creator reassignment, offboarding view, workspace-anchored automations | 2 | SPEC-RFE-P12 | spec done |
 | RFE-013 | Optional per-instance/org agent-token max age (default none) | 3 | SPEC-RFE-P3 | todo |
 | RFE-014 | Gateway under Postgres outage: serve within TTL, reconnect-then-flush, degraded readyz | 3 | SPEC-RFE-P3 | todo |
 | RFE-018 | Idempotency keys for message creation | 3 | SPEC-RFE-P3 | todo |
