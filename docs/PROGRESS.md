@@ -149,7 +149,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | FIX-006 | Spec-required apps/gateway follow-ups: missing_scopes (I-33, C-42), tenant_host on first OAuth connect (S-14), governance typing, ask-hold test, tools SQL | both | done (4143733a) | — | Sonnet (worktree) | connect 12, ask_tool_hold 1; 552 tests across 6 crates; web 146 |
 | FIX-007 | restart_to_update on image change; render inputs/env respect app availability | Rust | done (93512503) | FIX-005, OPS-014 | Sonnet (worktree) | `UPGRADE_STRICT=1 bash scripts/e2e/upgrade.sh` 32/32; sandbox_env 4, home_render_inputs 3 |
 | SPEC-RFE-P12 | Spec updates for phase 1+2 design-review items | spec | done (e3ba8cd3) | 80 decisions | Sonnet + Opus review | D-43..D-58, SEC-40..51; report `docs/tasks/SPEC-RFE-P12-report.md` (14 choices made) |
-| SPEC-RFE-P3 | Spec updates for phase 3 design-review items | spec | in-progress | SPEC-RFE-P12 | — | |
+| SPEC-RFE-P3 | Spec updates for phase 3 design-review items + RFE-025 | spec | done | SPEC-RFE-P12 | Sonnet + Opus review | D-59..D-67, SEC-52..58 |
 | AUDIT-001 | Phase-0 exit verification from scratch | audit | done (baabe11f) | all | Sonnet (worktree) + Opus review | `docs/audit/phase0-exit.md`: all green after 2 fixes (log formatter, compose IPAM); open: compose hosted backend → OPS-015 |
 | OPS-015 | Compose hosted profile runs real podman sandboxes; hosted.sh scope; deny/lint warnings | Ops | in-progress | AUDIT-001 | Sonnet (worktree) | |
 | TEST-018 | Security invariant coverage SEC-01..39 (`docs/tests/security-coverage.md`) | tests | done (13ac4bba) | 39 rows; 14 tests/guards added; SEC-18..20 proven via TEST-016; SEC-30 avatars → BE-067 |
@@ -178,15 +178,15 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | RFE-015 | Attachment retention + per-tenant quota + storage breakdown + sweep | 2 | SPEC-RFE-P12 | spec done |
 | RFE-017 | Management API per-principal rate limiting | 2 | SPEC-RFE-P12 | spec done |
 | RFE-021 | Creator reassignment, offboarding view, workspace-anchored automations | 2 | SPEC-RFE-P12 | spec done |
-| RFE-025 | BYO posture (enabled/owners_only/disabled, `byo.enabled`), source CIDR allow-lists, empty-identity rule warning, optional required context credentials | 2 | SPEC-RFE-P3 (added) | todo |
-| RFE-013 | Optional per-instance/org agent-token max age (default none) | 3 | SPEC-RFE-P3 | todo |
-| RFE-014 | Gateway under Postgres outage: serve within TTL, reconnect-then-flush, degraded readyz | 3 | SPEC-RFE-P3 | todo |
-| RFE-018 | Idempotency keys for message creation | 3 | SPEC-RFE-P3 | todo |
-| RFE-019 | Neutral default brief (Daneel persona → instance config); public base image | 3 | SPEC-RFE-P3 | todo |
-| RFE-020 | Workspace-tier skills | 3 | SPEC-RFE-P3 | todo |
-| RFE-022 | Plugin major upgrade → `reauth_required` + approval warning | 3 | SPEC-RFE-P3 | todo |
-| RFE-023 | Document the LLM-host default-rule carve-out (+ UI note) | 3 | SPEC-RFE-P3 | todo |
-| RFE-024 | Self-contained deprovision ops, ordering guarantee | 3 | SPEC-RFE-P3 | todo |
+| RFE-025 | BYO posture (enabled/owners_only/disabled, `byo.enabled`), source CIDR allow-lists, empty-identity rule warning, optional required context credentials | 2 | spec done (SPEC-RFE-P3) | todo |
+| RFE-013 | Optional per-instance/org agent-token max age (default none) | 3 | spec done (SPEC-RFE-P3) | todo |
+| RFE-014 | Gateway under Postgres outage: serve within TTL, reconnect-then-flush, degraded readyz | 3 | spec done (SPEC-RFE-P3) | todo |
+| RFE-018 | Idempotency keys for message creation | 3 | spec done (SPEC-RFE-P3) | todo |
+| RFE-019 | Neutral default brief (Daneel persona → instance config); public base image | 3 | spec done (SPEC-RFE-P3) | todo |
+| RFE-020 | Workspace-tier skills | 3 | spec done (SPEC-RFE-P3) | todo |
+| RFE-022 | Plugin major upgrade → `reauth_required` + approval warning | 3 | spec done (SPEC-RFE-P3) | todo |
+| RFE-023 | Document the LLM-host default-rule carve-out (+ UI note) | 3 | spec done (SPEC-RFE-P3) | todo |
+| RFE-024 | Self-contained deprovision ops, ordering guarantee | 3 | spec done (SPEC-RFE-P3) | todo |
 | RFE-011b | Approval park-and-resume, Web Push | 4 | later | todo |
 
 ## Open spec issues (found by PROTO-001; S-06..S-11 resolved)
