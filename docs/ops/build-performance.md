@@ -30,7 +30,6 @@ Changes and why:
 |---|---|---|
 | Before (run 42367335980) | 13m47s, failed (linker SIGBUS) | n/a |
 | After | TO BE RECORDED after the first push | TO BE RECORDED |
-
 | e2e-gateway | TO BE RECORDED after first push | |
 | e2e-hosted (image cache miss / hit) | TO BE RECORDED | |
 
