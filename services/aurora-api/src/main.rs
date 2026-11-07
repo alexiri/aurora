@@ -40,11 +40,36 @@ enum Command {
         #[arg(long)]
         email: String,
     },
+    /// Signing-key / internal-secret rings (`docs/operator/key-rotation.md`).
+    Keys {
+        #[command(subcommand)]
+        command: KeysCommand,
+    },
     /// Instance-admin management.
     Admin {
         #[command(subcommand)]
         command: AdminCommand,
     },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum KeyKind {
+    Signing,
+    Internal,
+}
+
+#[derive(Subcommand)]
+enum KeysCommand {
+    /// Print a fresh `<key_id>:<base64>` ring entry to append (never activates it).
+    Generate {
+        #[arg(long, value_enum)]
+        kind: KeyKind,
+        /// Key id (`[a-z0-9]{1,16}`); default: random `k` + 8 hex chars.
+        #[arg(long)]
+        id: Option<String>,
+    },
+    /// Print the key ids, fingerprints and active id of this process's configured rings.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -72,6 +97,9 @@ async fn main() -> ExitCode {
             }
         };
     }
+    if let Command::Keys { command } = &cli.command {
+        return keys_command(&cli, command);
+    }
     let cfg: ApiConfig = aurora_config::load(cli.config.as_deref(), std::env::vars())
         .and_then(|raw| raw.api_config())
         .unwrap_or_else(|e| exit_config(e));
@@ -88,7 +116,7 @@ async fn main() -> ExitCode {
         Command::Admin {
             command: AdminCommand::Revoke { email },
         } => revoke_admin(cfg, &email).await,
-        Command::Openapi { .. } => Ok(()),
+        Command::Openapi { .. } | Command::Keys { .. } => Ok(()),
     };
     service::telemetry_shutdown();
     match result {
@@ -212,4 +240,48 @@ async fn serve_all(servers: Vec<(tokio::net::TcpListener, Router)>) -> std::io::
         }
     }
     result
+}
+
+/// `aurora-api keys {generate,status}` (docs/08 §4, RFE-007). Prints ids and fingerprints only,
+/// except `generate`, whose whole purpose is to print the new entry once.
+fn keys_command(cli: &Cli, command: &KeysCommand) -> ExitCode {
+    use base64::Engine as _;
+    match command {
+        KeysCommand::Generate { id, .. } => {
+            let mut raw = [0u8; 32];
+            let mut idb = [0u8; 4];
+            if aws_lc_rs::rand::fill(&mut raw).is_err() || aws_lc_rs::rand::fill(&mut idb).is_err()
+            {
+                eprintln!("error: random number generator failure");
+                return ExitCode::FAILURE;
+            }
+            let id = id.clone().unwrap_or_else(|| {
+                let hex: String = idb.iter().map(|b| format!("{b:02x}")).collect();
+                format!("k{hex}")
+            });
+            if !aurora_crypto::valid_ring_id(&id) {
+                eprintln!("error: key id must match [a-z0-9]{{1,16}}");
+                return ExitCode::FAILURE;
+            }
+            println!(
+                "{id}:{}",
+                base64::engine::general_purpose::STANDARD.encode(raw)
+            );
+            ExitCode::SUCCESS
+        }
+        KeysCommand::Status => {
+            let rings = aurora_config::load(cli.config.as_deref(), std::env::vars())
+                .and_then(|raw| raw.rings())
+                .unwrap_or_else(|e| exit_config(e));
+            for (name, ring) in [("signing_key", &rings.0), ("internal_secret", &rings.1)] {
+                let (active, keys) = ring.status();
+                println!("{name}: active={active}");
+                for (id, fp) in keys {
+                    let mark = if id == active { " (active)" } else { "" };
+                    println!("  {id}  fingerprint={fp}{mark}");
+                }
+            }
+            ExitCode::SUCCESS
+        }
+    }
 }

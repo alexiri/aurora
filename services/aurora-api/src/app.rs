@@ -121,15 +121,13 @@ impl AppState {
             .build()
             .map_err(|e| format!("http client: {e}"))?;
         let derived = Arc::new(
-            aurora_crypto::DerivedKeys::new(aurora_core::secret::Secret::new(
-                *config.signing_key.expose(),
-            ))
-            .map_err(|e| format!("derived keys: {e}"))?,
+            aurora_crypto::DerivedKeys::from_ring(&config.signing_ring)
+                .map_err(|e| format!("derived keys: {e}"))?,
         );
         let oidc = Arc::new(crate::domains::oidc::OidcClients::new()?);
         let connect = Arc::new(crate::domains::connect::Env::new(
             &config.hookhost_url,
-            config.internal_secret.expose(),
+            &config.internal_ring,
         )?);
         let card_requests: Arc<dyn crate::domains::channels::card_requests::CardRequests> =
             Arc::new(crate::domains::channels::cards::requests::CardsImpl::new(
@@ -200,10 +198,9 @@ impl AppState {
     /// Redirect guarded connect-flow requests to a test server (tests only).
     #[must_use]
     pub fn with_connect_override(mut self, origin: &str) -> Self {
-        if let Ok(env) = crate::domains::connect::Env::new(
-            &self.config.hookhost_url,
-            self.config.internal_secret.expose(),
-        ) {
+        if let Ok(env) =
+            crate::domains::connect::Env::new(&self.config.hookhost_url, &self.config.internal_ring)
+        {
             let mut env = env;
             env.override_origin = reqwest::Url::parse(origin).ok();
             self.connect = Arc::new(env);

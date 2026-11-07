@@ -566,3 +566,112 @@ fn sec13_hookhost_holds_no_keys_or_database_credentials() {
         assert!(!dbg.contains(needle), "{needle} in {dbg}");
     }
 }
+
+// ---- RFE-007: signing-key / internal-secret rings ----
+
+const KEY2: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="; // 32 x 0x01
+
+#[test]
+fn bare_values_are_ring_v0_for_every_service() {
+    let raw = load_with(BASE, &[]).unwrap();
+    let api = raw.api_config().unwrap();
+    assert_eq!(api.signing_ring.active_id(), "v0");
+    assert_eq!(api.internal_ring.ids().collect::<Vec<_>>(), ["v0"]);
+    assert_eq!(
+        raw.gateway_config().unwrap().internal_ring.active_id(),
+        "v0"
+    );
+    assert_eq!(
+        raw.hookhost_config().unwrap().internal_ring.active_id(),
+        "v0"
+    );
+    let (s, i) = raw.rings().unwrap();
+    assert_eq!((s.active_id(), i.active_id()), ("v0", "v0"));
+}
+
+#[test]
+fn lists_with_active_key_validate_per_service() {
+    let sk = format!("a1:{KEY},b2:{KEY2}");
+    let raw = load_with(
+        BASE,
+        &[
+            ("AURORA_SIGNING_KEY", sk.as_str()),
+            ("AURORA_SIGNING_ACTIVE_KEY", "b2"),
+            ("AURORA_INTERNAL_SECRET", sk.as_str()),
+            ("AURORA_INTERNAL_ACTIVE_KEY", "a1"),
+        ],
+    )
+    .unwrap();
+    let api = raw.api_config().unwrap();
+    assert_eq!(api.signing_ring.active_id(), "b2");
+    assert_eq!(api.internal_ring.active_id(), "a1");
+    assert_eq!(api.internal_ring.ids().collect::<Vec<_>>(), ["a1", "b2"]);
+    assert_eq!(
+        raw.gateway_config().unwrap().internal_ring.active_id(),
+        "a1"
+    );
+    assert_eq!(
+        raw.hookhost_config().unwrap().internal_ring.active_id(),
+        "a1"
+    );
+    // Values never appear in Debug output.
+    assert!(!format!("{api:?}").contains(KEY2));
+}
+
+#[test]
+fn list_without_active_key_fails_naming_the_variable() {
+    let sk = format!("a1:{KEY},b2:{KEY2}");
+    let raw = load_with(BASE, &[("AURORA_SIGNING_KEY", sk.as_str())]).unwrap();
+    let e = raw.api_config().unwrap_err();
+    assert!(e.has_key("AURORA_SIGNING_ACTIVE_KEY"), "{e}");
+    let raw = load_with(BASE, &[("AURORA_INTERNAL_SECRET", sk.as_str())]).unwrap();
+    for e in [
+        raw.api_config().unwrap_err(),
+        raw.gateway_config().unwrap_err(),
+        raw.hookhost_config().unwrap_err(),
+    ] {
+        assert!(e.has_key("AURORA_INTERNAL_ACTIVE_KEY"), "{e}");
+    }
+}
+
+#[test]
+fn ring_limits_and_unknown_active_id_fail_startup() {
+    let five = format!("a:{KEY},b:{KEY},c:{KEY},d:{KEY},e:{KEY}");
+    let raw = load_with(
+        BASE,
+        &[
+            ("AURORA_SIGNING_KEY", five.as_str()),
+            ("AURORA_SIGNING_ACTIVE_KEY", "a"),
+        ],
+    )
+    .unwrap();
+    assert!(raw.api_config().unwrap_err().has_key("AURORA_SIGNING_KEY"));
+    let two = format!("a:{KEY},b:{KEY2}");
+    let raw = load_with(
+        BASE,
+        &[
+            ("AURORA_INTERNAL_SECRET", two.as_str()),
+            ("AURORA_INTERNAL_ACTIVE_KEY", "zz"),
+        ],
+    )
+    .unwrap();
+    assert!(
+        raw.hookhost_config()
+            .unwrap_err()
+            .has_key("AURORA_INTERNAL_ACTIVE_KEY")
+    );
+    // A signing key must be exactly 32 bytes.
+    let long = format!(
+        "a:{}",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    );
+    let raw = load_with(
+        BASE,
+        &[
+            ("AURORA_SIGNING_KEY", long.as_str()),
+            ("AURORA_SIGNING_ACTIVE_KEY", "a"),
+        ],
+    )
+    .unwrap();
+    assert!(raw.api_config().unwrap_err().has_key("AURORA_SIGNING_KEY"));
+}

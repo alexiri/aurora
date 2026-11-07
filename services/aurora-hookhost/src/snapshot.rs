@@ -25,6 +25,7 @@ pub struct Catalog {
     http: reqwest::Client,
     base: String,
     bearer: String,
+    key_id: Option<String>,
     runtime: Runtime,
     current: RwLock<Option<Arc<Loaded>>>,
     modules: Mutex<HashMap<String, Module>>,
@@ -37,6 +38,16 @@ fn strip(d: &str) -> &str {
 
 impl Catalog {
     pub fn new(api_internal_url: &str, bearer: String, runtime: Runtime) -> Arc<Self> {
+        Self::with_key_id(api_internal_url, bearer, None, runtime)
+    }
+
+    /// As [`Catalog::new`], presenting `X-Aurora-Key-Id: key_id` (RFE-007).
+    pub fn with_key_id(
+        api_internal_url: &str,
+        bearer: String,
+        key_id: Option<String>,
+        runtime: Runtime,
+    ) -> Arc<Self> {
         Arc::new(Self {
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
@@ -45,6 +56,7 @@ impl Catalog {
                 .unwrap_or_default(),
             base: api_internal_url.trim_end_matches('/').to_owned(),
             bearer,
+            key_id,
             runtime,
             current: RwLock::new(None),
             modules: Mutex::new(HashMap::new()),
@@ -69,6 +81,21 @@ impl Catalog {
             .http
             .get(format!("{}{path}", self.base))
             .bearer_auth(&self.bearer)
+            .headers(
+                self.key_id
+                    .iter()
+                    .filter_map(|i| {
+                        reqwest::header::HeaderValue::from_str(i).ok().map(|v| {
+                            (
+                                reqwest::header::HeaderName::from_static(
+                                    aurora_core::limits::KEY_ID_HEADER,
+                                ),
+                                v,
+                            )
+                        })
+                    })
+                    .collect(),
+            )
             .send()
             .await
             .map_err(|e| e.without_url().to_string())?;

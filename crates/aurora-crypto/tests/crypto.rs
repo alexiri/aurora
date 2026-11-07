@@ -159,3 +159,159 @@ fn ed25519_round_trip() {
     assert!(parse_public_key_b64("AAAA").is_err());
     assert!(parse_signature_b64("%%%").is_err());
 }
+
+// ---- Signing-key / internal-secret rings (RFE-007, SEC-46) ----
+
+mod rings {
+    use aurora_core::secret::Secret;
+    use aurora_crypto::{CryptoError, DerivedKeys, Purpose, RingKind, SecretRing};
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+
+    fn b(byte: u8, n: usize) -> String {
+        STANDARD.encode(vec![byte; n])
+    }
+
+    fn list(ids: &[(&str, u8)]) -> String {
+        ids.iter()
+            .map(|(i, v)| format!("{i}:{}", b(*v, 32)))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    #[test]
+    fn bare_value_is_ring_v0() {
+        let r = SecretRing::parse(&b(1, 32), None, RingKind::Signing).unwrap();
+        assert_eq!(r.ids().collect::<Vec<_>>(), ["v0"]);
+        assert_eq!(r.active_id(), "v0");
+        // Explicit active id must be v0.
+        assert!(SecretRing::parse(&b(1, 32), Some("v0"), RingKind::Signing).is_ok());
+        assert!(SecretRing::parse(&b(1, 32), Some("k1"), RingKind::Signing).is_err());
+    }
+
+    #[test]
+    fn list_needs_active_id_in_ring() {
+        let l = list(&[("a1", 1), ("b2", 2)]);
+        assert_eq!(
+            SecretRing::parse(&l, None, RingKind::Signing).unwrap_err(),
+            CryptoError::InvalidKeyring("active key id is required")
+        );
+        assert!(SecretRing::parse(&l, Some("zz"), RingKind::Signing).is_err());
+        let r = SecretRing::parse(&l, Some("b2"), RingKind::Signing).unwrap();
+        assert_eq!(r.active_id(), "b2");
+        assert_eq!(r.active_value(), &[2u8; 32]);
+        assert_eq!(r.ids().collect::<Vec<_>>(), ["a1", "b2"]);
+    }
+
+    #[test]
+    fn at_most_four_entries_no_duplicates_valid_ids() {
+        let four = list(&[("a", 1), ("b", 2), ("c", 3), ("d", 4)]);
+        assert!(SecretRing::parse(&four, Some("a"), RingKind::Signing).is_ok());
+        let five = format!("{four},e:{}", b(5, 32));
+        assert!(SecretRing::parse(&five, Some("a"), RingKind::Signing).is_err());
+        let dup = list(&[("a", 1), ("a", 2)]);
+        assert!(SecretRing::parse(&dup, Some("a"), RingKind::Signing).is_err());
+        let bad = list(&[("A", 1)]);
+        assert!(SecretRing::parse(&bad, Some("A"), RingKind::Signing).is_err());
+    }
+
+    #[test]
+    fn value_lengths_per_kind() {
+        assert!(SecretRing::parse(&b(1, 31), None, RingKind::Signing).is_err());
+        assert!(SecretRing::parse(&b(1, 33), None, RingKind::Signing).is_err());
+        assert!(SecretRing::parse(&b(1, 31), None, RingKind::Internal).is_err());
+        assert!(SecretRing::parse(&b(1, 48), None, RingKind::Internal).is_ok());
+        assert!(SecretRing::parse("not base64 !!", None, RingKind::Signing).is_err());
+    }
+
+    #[test]
+    fn debug_never_prints_values() {
+        let l = list(&[("a1", 9)]);
+        let r = SecretRing::parse(&l, Some("a1"), RingKind::Signing).unwrap();
+        let d = format!("{r:?}");
+        assert!(d.contains("a1") && !d.contains(&b(9, 32)));
+    }
+
+    #[test]
+    fn presented_secret_with_and_without_key_id() {
+        let l = list(&[("a1", 1), ("b2", 2)]);
+        let r = SecretRing::parse(&l, Some("a1"), RingKind::Internal).unwrap();
+        assert!(r.verify_presented(Some("b2"), &[2u8; 32]));
+        assert!(
+            !r.verify_presented(Some("a1"), &[2u8; 32]),
+            "wrong key for id"
+        );
+        assert!(
+            !r.verify_presented(Some("zz"), &[2u8; 32]),
+            "id outside ring"
+        );
+        assert!(
+            r.verify_presented(None, &[1u8; 32]),
+            "header absent: any key"
+        );
+        assert!(!r.verify_presented(None, &[3u8; 32]));
+        let hdr = format!("Bearer {}", b(2, 32));
+        assert!(r.verify_bearer_header(Some("b2"), Some(&hdr)));
+        assert!(!r.verify_bearer_header(Some("a1"), Some(&hdr)));
+        assert!(!r.verify_bearer_header(None, Some("Basic x")));
+        assert!(!r.verify_bearer_header(None, None));
+        assert!(!SecretRing::default().verify_bearer_header(None, Some("Bearer ")));
+    }
+
+    fn dk(ids: &[(&str, u8)], active: &str) -> DerivedKeys {
+        let r = SecretRing::parse(&list(ids), Some(active), RingKind::Signing).unwrap();
+        DerivedKeys::from_ring(&r).unwrap()
+    }
+
+    #[test]
+    fn seal_uses_active_and_open_accepts_any() {
+        let old = dk(&[("a1", 1)], "a1");
+        let new = dk(&[("a1", 1), ("b2", 2)], "b2");
+        let s_old = old.seal(Purpose::OidcState, b"x", b"p").unwrap();
+        assert!(s_old.starts_with("a1."));
+        let s_new = new.seal(Purpose::OidcState, b"x", b"p").unwrap();
+        assert!(s_new.starts_with("b2."));
+        assert_eq!(
+            new.open(Purpose::OidcState, b"x", &s_old).unwrap().expose(),
+            b"p"
+        );
+        // Old receivers without the new key refuse it (id outside the ring).
+        assert_eq!(
+            old.open(Purpose::OidcState, b"x", &s_new).unwrap_err(),
+            CryptoError::UnknownKey
+        );
+        // Retired key removed: its states stop working.
+        let retired = dk(&[("b2", 2)], "b2");
+        assert!(retired.open(Purpose::OidcState, b"x", &s_old).is_err());
+    }
+
+    #[test]
+    fn unprefixed_values_are_tried_against_each_key() {
+        // Phase 0 value: bare b64url sealed by the single key (now ring v0).
+        let legacy = DerivedKeys::new(Secret::new([1u8; 32])).unwrap();
+        let sealed = legacy.seal(Purpose::LinkState, b"x", b"p").unwrap();
+        let bare = sealed.split_once('.').unwrap().1.to_owned();
+        let ring = dk(&[("a1", 9), ("b2", 1)], "a1");
+        assert_eq!(
+            ring.open(Purpose::LinkState, b"x", &bare).unwrap().expose(),
+            b"p"
+        );
+        let none = dk(&[("a1", 9), ("b2", 8)], "a1");
+        assert!(none.open(Purpose::LinkState, b"x", &bare).is_err());
+    }
+
+    #[test]
+    fn hmac_by_id_and_by_trial() {
+        let old = dk(&[("a1", 1)], "a1");
+        let new = dk(&[("a1", 1), ("b2", 2)], "b2");
+        let t_old = old.sign(Purpose::ActionToken, b"d");
+        let t_new = new.sign(Purpose::ActionToken, b"d");
+        assert!(new.verify_with("a1", Purpose::ActionToken, b"d", &t_old));
+        assert!(!new.verify_with("b2", Purpose::ActionToken, b"d", &t_old));
+        assert!(!old.verify_with("b2", Purpose::ActionToken, b"d", &t_new));
+        assert!(new.verify(Purpose::ActionToken, b"d", &t_old));
+        assert!(new.verify(Purpose::ActionToken, b"d", &t_new));
+        assert!(!old.verify(Purpose::ActionToken, b"d", &t_new));
+        assert_eq!(new.active_id(), "b2");
+    }
+}

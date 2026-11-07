@@ -2,18 +2,18 @@
 {{- $full := include "aurora.fullname" . -}}
 {{- $common := list "AURORA_ENCRYPTION_KEYS" "AURORA_ENCRYPTION_ACTIVE_KEY" "AURORA_INTERNAL_SECRET" -}}
 {{- $apiKeys := concat $common (list "AURORA_SIGNING_KEY" "AURORA_RUNNER_SESSION_KEY") -}}
-{{- $apiEnv := include "aurora.env" (dict "root" . "db" true "keys" $apiKeys) -}}
+{{- $apiEnv := include "aurora.env" (dict "root" . "db" true "keys" $apiKeys "optionalKeys" (list "AURORA_SIGNING_ACTIVE_KEY" "AURORA_INTERNAL_ACTIVE_KEY")) -}}
 {{- if .Values.api.bootstrap.runnerToken }}
 {{- $apiEnv = printf "%s\n- name: AURORA_BOOTSTRAP_RUNNER_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_RUNNER_TOKEN}}" $apiEnv (include "aurora.secretName" .) }}
 {{- end }}
 {{ include "aurora.workload" (dict "root" . "name" "api" "spec" .Values.api "caCert" true "image" (include "aurora.image" (dict "root" . "name" "aurora-api")) "args" (list "serve") "env" $apiEnv "pluginsMount" true "ports" (list (dict "name" "http" "port" 4101) (dict "name" "internal" "port" 4111))) }}
 ---
-{{ include "aurora.workload" (dict "root" . "name" "hookhost" "spec" .Values.hookhost "image" (include "aurora.image" (dict "root" . "name" "aurora-hookhost")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_INTERNAL_SECRET"))) "ports" (list (dict "name" "http" "port" 4104))) }}
+{{ include "aurora.workload" (dict "root" . "name" "hookhost" "spec" .Values.hookhost "image" (include "aurora.image" (dict "root" . "name" "aurora-hookhost")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_INTERNAL_SECRET") "optionalKeys" (list "AURORA_INTERNAL_ACTIVE_KEY"))) "ports" (list (dict "name" "http" "port" 4104))) }}
 ---
 {{ include "aurora.workload" (dict "root" . "name" "web" "spec" .Values.web "image" (include "aurora.image" (dict "root" . "name" "aurora-web")) "env" (include "aurora.env" (dict "root" .)) "ports" (list (dict "name" "http" "port" 4100))) }}
 ---
 {{/* gateway: Service for 4103 (internal) is separate from the proxy Service (4102) */}}
-{{ include "aurora.workload" (dict "root" . "name" "gateway" "spec" .Values.gateway "ca" true "image" (include "aurora.image" (dict "root" . "name" "aurora-gateway")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "db" true "keys" $common)) "ports" (list (dict "name" "internal" "port" 4103) (dict "name" "proxy" "port" 4102 "skipService" true))) }}
+{{ include "aurora.workload" (dict "root" . "name" "gateway" "spec" .Values.gateway "ca" true "image" (include "aurora.image" (dict "root" . "name" "aurora-gateway")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "db" true "keys" $common "optionalKeys" (list "AURORA_INTERNAL_ACTIVE_KEY"))) "ports" (list (dict "name" "internal" "port" 4103) (dict "name" "proxy" "port" 4102 "skipService" true))) }}
 ---
 apiVersion: v1
 kind: Service

@@ -5,7 +5,6 @@ use aurora_api::domains::plugins::{internal, registry};
 use aurora_crypto::{SigningKey, generate_signing_key};
 use aurora_registry::builder::PackageBuilder;
 use axum::body::Body;
-use base64::Engine;
 use http::{Method, Request};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
@@ -339,10 +338,7 @@ async fn internal_routes_need_secret_and_are_not_public() {
         .await
         .unwrap();
     assert_eq!(res.status(), 401);
-    let bearer = format!(
-        "Bearer {}",
-        base64::engine::general_purpose::STANDARD.encode(h.state.config.internal_secret.expose())
-    );
+    let bearer = format!("Bearer {}", h.state.config.internal_ring.active_bearer());
     let res = r
         .clone()
         .oneshot(get(

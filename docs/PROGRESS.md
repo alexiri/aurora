@@ -172,7 +172,7 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | RFE-016 | `DeltaBus` seam (NOTIFY impl) + sizing note | 1 | SPEC-RFE-P12 | spec done |
 | RFE-005 | Policy `user` identities bind to the turn's speaker | 2 | SPEC-RFE-P12 | spec done |
 | RFE-006 | Freeze agent/workspace/org (reversible, audited) | 2 | SPEC-RFE-P12 | spec done |
-| RFE-007 | Keyring-style lists for signing key and internal secret | 2 | SPEC-RFE-P12 | spec done |
+| RFE-007 | Keyring-style lists for signing key and internal secret | 2 | SPEC-RFE-P12 | implemented in P2-007 (see commit) |
 | RFE-008 | Security-critical audit rows written in the same transaction | 2 | SPEC-RFE-P12 | spec done |
 | RFE-010 | Conversation delete/archive, transcript redaction, retention, export | 2 | SPEC-RFE-P12 | spec done |
 | RFE-011a | Stall exemption, per-rule approval timeouts, email-to-owners when no surface is live, SSE browser notification | 2 | SPEC-RFE-P12 | spec done |

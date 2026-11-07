@@ -586,6 +586,15 @@ Rule: `can_see_conversation` (`04 §The access law`), `05 §Conversation visibil
 - C-48 **`ActionApproval.conversation_hidden`**: `bool`, always present. When the approval's workspace differs from its conversation's workspace, `conversation_id` and `turn_id` are `null` and `conversation_hidden` is `true` (D-47 clarification C); the frozen payload is never in any DTO. Within the same workspace the RFE-009 predicate (C-47) applies unchanged.
 - Audit: an owner (not the direct user) reading a direct conversation (`GET /v1/conversations/{id}`, `…/events`, `…/stream`, `GET /v1/attachments/{id}/content`) writes `conversation.owner_view` (target `conversation`, best-effort, once per actor, conversation and hour).
 
+### Phase 2 — RFE-007 (signing-key / internal-secret rings, D-51)
+
+Rule: `08 §4`, `13 §4.4`, `06 §Ports`, SEC-46. No public route changes; the OpenAPI document and the permission matrix are unchanged. These are the wire changes on the internal surfaces.
+
+- C-49 **`X-Aurora-Key-Id`** (internal calls: gateway/hook host/API `/internal/v1/**`): senders put the active internal-secret ring id in this header next to `Authorization: Bearer <base64 secret>`. The receiver compares in constant time against the ring entry of that id; an id outside its ring or a secret that does not match that entry answers **401**. With the header absent (older sender) the receiver tries every entry of its ring. Responses are unchanged.
+- C-50 **`GET /internal/v1/status`** (API internal listener 4111, gateway 4103, hook host 4104; same internal auth as C-49): `200 { service: "api"|"gateway"|"hookhost", internal_secret: { active: string, keys: [{ id: string, fingerprint: string }] }, signing_key?: { active, keys }}`. `signing_key` is present on the API only. `fingerprint` is 8 hex characters of SHA-256 of the entry; key values are never returned. 401 `unauthenticated`/`unauthorized` without a valid ring key.
+- C-51 **Action token wire format** (channel buttons, `13 §4.4`): new tokens are `v2.<key_id>.<b64url(payload)>.<b64url(HMAC)>` signed with the active signing key; `v1.<payload>.<HMAC>` tokens still verify by trying each ring key. Payload JSON is unchanged. A `v2` token naming an id outside the verifier's ring is refused like a bad signature. Sealed OAuth/OIDC state values are prefixed `<key_id>.` (cookie and `state` parameter); unprefixed values are tried against each key.
+- CLI (not HTTP): `aurora-api keys generate --kind signing|internal [--id <key_id>]` prints one `<key_id>:<base64>` entry; `aurora-api keys status` prints each ring's ids, fingerprints and active id from the process environment.
+
 ### W9 hook-host JSON encoding (C-18, C-19)
 
 - C-18 Internal snapshot route returns the exact canonical bytes so consumers verify `sha256(body) == x-snapshot-hash` without re-serialization.

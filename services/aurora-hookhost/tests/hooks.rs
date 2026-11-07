@@ -54,6 +54,10 @@ fn guest() -> Option<&'static Vec<u8>> {
     .as_ref()
 }
 
+fn ring() -> Arc<aurora_crypto::SecretRing> {
+    Arc::new(aurora_crypto::SecretRing::single(SECRET.to_vec()))
+}
+
 fn bearer() -> String {
     base64::engine::general_purpose::STANDARD.encode(SECRET)
 }
@@ -126,7 +130,7 @@ async fn setup() -> Option<Env> {
     let catalog = Catalog::new(&api.uri(), bearer(), rt);
     let app = router(AppState {
         catalog: catalog.clone(),
-        bearer: bearer().into(),
+        ring: ring(),
     });
     Some(Env {
         app,
@@ -322,7 +326,7 @@ async fn production_policy_blocks_private_and_http() {
     let env = Env {
         app: router(AppState {
             catalog: catalog.clone(),
-            bearer: bearer().into(),
+            ring: ring(),
         }),
         catalog,
         upstream,

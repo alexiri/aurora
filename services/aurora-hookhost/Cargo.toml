@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 aurora-core = { workspace = true, features = ["service"] }
+aurora-crypto = { workspace = true }
 aurora-config = { workspace = true }
 axum = { workspace = true }
 clap = { workspace = true }

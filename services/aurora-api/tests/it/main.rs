@@ -28,6 +28,7 @@ mod home_render_inputs;
 mod hosted;
 mod invitations;
 mod jobs;
+mod key_rings;
 mod keys;
 mod me;
 mod memory;

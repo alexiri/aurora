@@ -26,6 +26,7 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 | [runners.md](runners.md) | Adding a runner, podman and kubernetes backends, `runner.k8s.*` |
 | [plugins-and-connectors.md](plugins-and-connectors.md) | Plugin upload and approval, trusted keys, host claims, connector provisioning and approval |
 | [backups.md](backups.md) | Stateful components, what to back up, restore order, key pointers |
+| [key-rotation.md](key-rotation.md) | Rotating the signing key and the internal secret (rings, `aurora-api keys`, status endpoints) |
 | [upgrades.md](upgrades.md) | Upgrade order, migrations, running sandboxes during an upgrade |
 
 ## Things to know first

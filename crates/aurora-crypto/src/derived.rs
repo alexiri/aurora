@@ -4,7 +4,8 @@ use aws_lc_rs::hmac;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
-use crate::{CryptoError, Result, aead_open, aead_seal};
+use crate::ring::LEGACY_ID;
+use crate::{CryptoError, Result, SecretRing, aead_open, aead_seal};
 
 /// HKDF purposes (docs/08 §4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,9 +48,16 @@ impl KeyType for Len32 {
     }
 }
 
-/// Per-purpose keys derived from the signing root via HKDF-SHA256 with
-/// info `aurora:<purpose>:v1`.
+/// Per-purpose keys derived from each signing-ring root via HKDF-SHA256 with
+/// info `aurora:<purpose>:v1`. Seals and signs with the active ring entry; opens and
+/// verifies with any entry (docs/08 §4, RFE-007).
 pub struct DerivedKeys {
+    ring: Vec<RingKeys>,
+    active: usize,
+}
+
+struct RingKeys {
+    id: String,
     keys: [Secret<[u8; 32]>; 5],
 }
 
@@ -71,46 +79,118 @@ fn derive(root: &[u8; 32], purpose: Purpose) -> Result<Secret<[u8; 32]>> {
     Ok(Secret::new(out))
 }
 
+fn derive_all(id: &str, root: &[u8; 32]) -> Result<RingKeys> {
+    let [a, b, c, d, e] = Purpose::ALL;
+    Ok(RingKeys {
+        id: id.to_owned(),
+        keys: [
+            derive(root, a)?,
+            derive(root, b)?,
+            derive(root, c)?,
+            derive(root, d)?,
+            derive(root, e)?,
+        ],
+    })
+}
+
 impl DerivedKeys {
+    /// One-entry ring `v0` (phase 0 shape; tests).
     pub fn new(signing_root: Secret<[u8; 32]>) -> Result<Self> {
-        let [a, b, c, d, e] = Purpose::ALL;
-        let root = signing_root.expose();
         Ok(Self {
-            keys: [
-                derive(root, a)?,
-                derive(root, b)?,
-                derive(root, c)?,
-                derive(root, d)?,
-                derive(root, e)?,
-            ],
+            ring: vec![derive_all(LEGACY_ID, signing_root.expose())?],
+            active: 0,
         })
     }
 
-    fn key(&self, p: Purpose) -> &[u8; 32] {
-        self.keys[p.index()].expose()
+    /// Derive from a signing ring (every entry must be 32 bytes).
+    pub fn from_ring(ring: &SecretRing) -> Result<Self> {
+        let mut out = Vec::new();
+        let mut active = None;
+        for e in ring.entries() {
+            let root: [u8; 32] = e.value().try_into().map_err(|_| CryptoError::InvalidKey)?;
+            if e.id() == ring.active_id() {
+                active = Some(out.len());
+            }
+            out.push(derive_all(e.id(), &root)?);
+        }
+        Ok(Self {
+            ring: out,
+            active: active.ok_or(CryptoError::UnknownKey)?,
+        })
     }
 
-    /// Returns `b64url(nonce ‖ ct ‖ tag)`.
+    /// Id of the key producers use.
+    pub fn active_id(&self) -> &str {
+        &self.ring[self.active].id
+    }
+
+    /// Ids of every ring entry.
+    pub fn ids(&self) -> impl Iterator<Item = &str> {
+        self.ring.iter().map(|r| r.id.as_str())
+    }
+
+    fn by_id(&self, id: &str) -> Option<&RingKeys> {
+        self.ring.iter().find(|r| r.id == id)
+    }
+
+    fn key_of(r: &RingKeys, p: Purpose) -> &[u8; 32] {
+        r.keys[p.index()].expose()
+    }
+
+    /// Returns `<key_id>.b64url(nonce ‖ ct ‖ tag)` sealed under the active key.
     pub fn seal(&self, purpose: Purpose, aad: &[u8], plaintext: &[u8]) -> Result<String> {
-        Ok(URL_SAFE_NO_PAD.encode(aead_seal(self.key(purpose), aad, plaintext)?))
+        let r = &self.ring[self.active];
+        let blob = aead_seal(Self::key_of(r, purpose), aad, plaintext)?;
+        Ok(format!("{}.{}", r.id, URL_SAFE_NO_PAD.encode(blob)))
     }
 
+    /// Opens an id-prefixed value with the named key (an id outside the ring is refused),
+    /// or an unprefixed (phase 0) value by trying each key.
     pub fn open(&self, purpose: Purpose, aad: &[u8], sealed: &str) -> Result<Secret<Vec<u8>>> {
+        if let Some((id, rest)) = sealed.split_once('.') {
+            let r = self.by_id(id).ok_or(CryptoError::UnknownKey)?;
+            let blob = URL_SAFE_NO_PAD
+                .decode(rest)
+                .map_err(|_| CryptoError::Malformed)?;
+            return aead_open(Self::key_of(r, purpose), aad, &blob);
+        }
         let blob = URL_SAFE_NO_PAD
             .decode(sealed)
             .map_err(|_| CryptoError::Malformed)?;
-        aead_open(self.key(purpose), aad, &blob)
+        let mut last = CryptoError::Decrypt;
+        for r in &self.ring {
+            match aead_open(Self::key_of(r, purpose), aad, &blob) {
+                Ok(v) => return Ok(v),
+                Err(e) => last = e,
+            }
+        }
+        Err(last)
     }
 
-    /// HMAC-SHA256 tag.
+    /// HMAC-SHA256 tag under the active key.
     pub fn sign(&self, purpose: Purpose, data: &[u8]) -> Vec<u8> {
-        let key = hmac::Key::new(hmac::HMAC_SHA256, self.key(purpose));
+        let key = hmac::Key::new(
+            hmac::HMAC_SHA256,
+            Self::key_of(&self.ring[self.active], purpose),
+        );
         hmac::sign(&key, data).as_ref().to_vec()
     }
 
-    /// Constant-time verification.
+    /// Constant-time verification against the key `id` only (false if `id` is outside the ring).
+    pub fn verify_with(&self, id: &str, purpose: Purpose, data: &[u8], tag: &[u8]) -> bool {
+        self.by_id(id).is_some_and(|r| {
+            let key = hmac::Key::new(hmac::HMAC_SHA256, Self::key_of(r, purpose));
+            hmac::verify(&key, data, tag).is_ok()
+        })
+    }
+
+    /// Constant-time verification trying every ring key (artifacts without a key id).
     pub fn verify(&self, purpose: Purpose, data: &[u8], tag: &[u8]) -> bool {
-        let key = hmac::Key::new(hmac::HMAC_SHA256, self.key(purpose));
-        hmac::verify(&key, data, tag).is_ok()
+        let mut ok = false;
+        for r in &self.ring {
+            let key = hmac::Key::new(hmac::HMAC_SHA256, Self::key_of(r, purpose));
+            ok |= hmac::verify(&key, data, tag).is_ok();
+        }
+        ok
     }
 }

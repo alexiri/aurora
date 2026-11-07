@@ -10,8 +10,6 @@ use axum::Router;
 use axum::extract::{FromRequestParts, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use http::{HeaderValue, StatusCode, header, request::Parts};
 use serde::Deserialize;
 
@@ -19,38 +17,49 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/internal/v1/registry/active", get(active))
         .route("/internal/v1/registry/blobs/{digest}", get(blob))
+        .route("/internal/v1/status", get(status))
         .with_state(state)
 }
 
-fn ct_eq(a: &[u8], b: &[u8]) -> bool {
-    let mut d = u8::from(a.len() != b.len());
-    for i in 0..a.len().max(b.len()) {
-        d |= a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0);
-    }
-    d == 0
-}
-
-/// `Authorization: Bearer <base64(AURORA_INTERNAL_SECRET)>`.
+/// `Authorization: Bearer <base64(secret)>` + `X-Aurora-Key-Id` (RFE-007): any key of the
+/// internal-secret ring; with the header absent (legacy / rolling) every key is tried.
 struct Internal;
 
 impl FromRequestParts<AppState> for Internal {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, st: &AppState) -> Result<Self, ApiError> {
-        let secret = st.config.internal_secret.expose();
-        let ok = !secret.is_empty()
-            && parts.headers.get(header::AUTHORIZATION).is_some_and(|v| {
-                ct_eq(
-                    v.as_bytes(),
-                    format!("Bearer {}", STANDARD.encode(secret)).as_bytes(),
-                )
-            });
-        if ok {
+        let auth = parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok());
+        let key_id = parts
+            .headers
+            .get(aurora_core::limits::KEY_ID_HEADER)
+            .map(|v| v.to_str().unwrap_or("\u{0}"));
+        if st.config.internal_ring.verify_bearer_header(key_id, auth) {
             Ok(Self)
         } else {
             Err(ApiError::unauthenticated("Internal secret required."))
         }
     }
+}
+
+/// Ids and short fingerprints (never values) of this replica's rings, so an operator can
+/// confirm a rotation step converged (`08 §4`).
+async fn status(_i: Internal, State(s): State<AppState>) -> axum::Json<serde_json::Value> {
+    let (sa, sk) = s.config.signing_ring.status();
+    let (ia, ik) = s.config.internal_ring.status();
+    let list = |v: Vec<(String, String)>| {
+        v.into_iter()
+            .map(|(id, fp)| serde_json::json!({"id": id, "fingerprint": fp}))
+            .collect::<Vec<_>>()
+    };
+    axum::Json(serde_json::json!({
+        "service": "api",
+        "signing_key": {"active": sa, "keys": list(sk)},
+        "internal_secret": {"active": ia, "keys": list(ik)},
+    }))
 }
 
 #[derive(Deserialize)]
