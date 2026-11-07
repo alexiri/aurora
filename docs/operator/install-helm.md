@@ -19,8 +19,10 @@ contains `aurora`, otherwise `<release>-aurora`
   `postgres.enabled` is for evaluation only (see [Database](#database)).
 - An Ingress controller (values default to ingress-nginx) or a Gateway API implementation.
 - A runtime class for sandboxes, such as gVisor or Kata (recommended by docs/15).
-- Images pushed to a registry you control (`image.registry`), or available under bare
-  names. Tag defaults to the chart's appVersion (`image.tag`).
+- Images: by default the chart pulls the CI-published images from
+  `ghcr.io/alexiri/aurora-*` (public; `image.registry`), tag = the chart's appVersion
+  (`image.tag`). To use a mirror or private registry, set `image.registry` (and `image.pullSecrets`);
+  `image.registry: ""` means bare names (images you built and loaded yourself).
 - The sandbox image must be pullable by the nodes under the name in `config.runner.image`
   (default `aurora-sandbox:<version>`, which containerd resolves to
   `docker.io/library/aurora-sandbox:<version>`). The runner applies that setting to every
@@ -247,7 +249,7 @@ Minimal `my-values.yaml`:
 ```yaml
 externalUrl: https://aurora.example.org
 image:
-  registry: registry.example.org/aurora
+  registry: registry.example.org/aurora   # optional: default is ghcr.io/alexiri
   tag: "0.1.0"
 ingress:
   className: nginx

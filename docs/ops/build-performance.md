@@ -189,3 +189,25 @@ Changes and why:
 | e2e-hosted (image cache miss / hit) | TO BE RECORDED | |
 
 (Those two rows are not before/after pairs: the jobs are new.) Not measured locally: nextest could not be installed in the worker sandbox.
+
+## Container images (OPS-020)
+
+`images/services/Containerfile` and the supervisor stage of `images/sandbox/Containerfile` use cargo-chef
+(`planner` → `cargo chef cook` dependency layer → workspace build) with lld, and all six service images are
+copies of **one** `builder` stage compile. In CI the `images-builder` job (final jobs of `ci.yml`, after every
+check job) builds that stage once into the gha cache scope `services`; the per-image jobs import it.
+`target/` is deliberately kept in image layers, not a `--mount=type=cache`: `cache-to type=gha` exports layers
+only, so a cache-mounted `target/` would be lost between CI runs. The cargo registry/git use cache mounts.
+
+Local measurements (podman, shared 16-core host, cold layer cache for the first row; `localhost/ops-020-*`):
+
+| Image(s) | Wall time | Notes |
+|---|---|---|
+| `api` (first service target) | 1580 s | chef install + dependency cook + workspace compile of all 6 binaries |
+| `gateway`, `hookhost`, `runner`, `connector-fake` | 8 s each | `COPY` of one binary out of the cached builder |
+| `connector-mattermost` | 24 s | |
+| `web` | 89 s | |
+| `sandbox-min` | 310 s | supervisor compile + AlmaLinux OS layer |
+| `sandbox` (after `sandbox-min`) | 425 s | base tool set (dnf, Chromium, Node), claude-code npm install |
+
+CI timings (`ghcr.io` publish, cold and warm gha cache) are recorded here after the first push to `master`.
