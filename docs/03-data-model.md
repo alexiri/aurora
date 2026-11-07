@@ -1070,3 +1070,25 @@ view `gateway_users`), `api_keys`), `agents`, `gateway_credentials`, `secrets`,
 credentials_expires_at, status, status_reason, reauth_required_at,
 last_used_at)` on `app_connections`; `UPDATE (last_used_at, origin)` on `secrets`;
 `EXECUTE` on `pg_advisory_lock` family; `LISTEN` is implicit.
+
+---
+
+## Planned changes (later phases)
+
+This section lists schema and document-shape changes that later phases will
+introduce. It is **normative for those phases** but is *not* part of the
+phase-0 schema: the tables above are machine-checked against the migrations
+(`scripts/extract-schema.py`), and this section deliberately uses level-4
+headings and a different header so that the extractor ignores it. A migration
+for a planned change lands with its phase; the corresponding rows move into the
+tables above in the same change (and this section shrinks).
+
+#### `channel_integrations` (jsonb key in `config`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `config.verified_email_autolink` | bool, default `false` | org-admin opt-in: the core may create `verified_email` user links from the connector's asserted `email`/`email_verified` (`13 §5.9`). Requires the `email_verified` capability. No column: `config` is `jsonb`. | 1 (RFE-001) |
+
+#### `link_requests`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| platform_email_hint | citext null | email the platform asserted for the person; used only to pre-fill the sign-in (`login_hint`) and the confirm page; never authorizes | 1 (RFE-001) |

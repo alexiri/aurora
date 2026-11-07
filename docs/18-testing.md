@@ -91,7 +91,12 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Core with the fake connector: every scenario of the connector conformance
   suite plus routing matrix (dedicated vs shared, DM default, bindings, listen
   modes), speaker authorization and reach, verified-email linking vs link flow,
-  mirror rules (door-based), approval cards end-to-end, messaging tools with
+  mirror rules (door-based), approval cards end-to-end,
+  (phase 1, RFE-001) auto-link opt-in: default config never links on an asserted
+  email (sign-in link flow with `platform_email_hint` pre-fill), enabling
+  requires `email_verified` (422 `autolink_unsupported`), enabled path links only
+  verified users that are active org members, both paths audited, confirm by a
+  non-member refused (`not_org_member`), messaging tools with
   platform resolution and `proactive_messaging` modes, op error code handling,
   ownership failover between two fake connector replicas.
 

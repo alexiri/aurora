@@ -211,7 +211,7 @@ must match the event's. The connector never interprets tokens.
 | `native_status` | placeholder post as above |
 | `presence_dedicated` / `presence_shared` | only the other mode is offered |
 | `user_tokens` | read-as-user / send-as-user features hidden (phase 0 implements none) |
-| `email_verified` | linking always uses the sign-in link |
+| `email_verified` | linking always uses the sign-in link (phase 1, RFE-001: also whenever the integration's `verified_email_autolink` is `false`, which is the default; the platform email then only pre-fills the flow) |
 | `files` | the core enforces min(core caps, platform caps) |
 | `commands` | settings only in the dashboard |
 | `history` | no mid-thread context; `read_conversation` unavailable |
@@ -235,12 +235,26 @@ idempotent). Steps:
      if the bot was mentioned, reply that the space is not set up and name who
      can set it up (owners of workspaces with shared presences on this
      integration); stop.
-4. **Speaker**: user link → Aurora user. No link and the event reports a
-   platform-verified email equal to a verified Aurora user's email → create
-   link (`verified_email`). Otherwise create a `link_requests` row and send the
-   person an ephemeral (or DM) message with a sign-in link; stop. Bot authors:
-   allowed only through an approved `person` reach grant for the bot, metered
-   by the app-turn cap.
+4. **Speaker**: user link → Aurora user. No link:
+   - Phase 0: when the event reports a platform-verified email equal to a
+     verified Aurora user's email → create the link (`verified_email`).
+   - **From phase 1 (RFE-001) this is opt-in and off by default.** Auto-linking
+     is attempted only when **all** hold: the integration's
+     `config.verified_email_autolink` is `true` (set by an org owner/admin,
+     §5.9), the integration's effective capabilities include `email_verified`,
+     the event carries `author.email_verified = true`, and the email equals a
+     *verified* Aurora user's email who is an **active member of the
+     integration's org**. Then create the link (`method = verified_email`),
+     audit `user_link.create` (`via: verified_email`; in the security-critical audit
+     set of `04 §Audit` from phase 2, RFE-008) and continue.
+   - Otherwise (the default) create a `link_requests` row — storing the
+     platform email, if the event had one, as `platform_email_hint` — and send
+     the person an ephemeral (or DM) message with a sign-in link; stop. The hint
+     only **pre-fills** the sign-in (`login_hint` to the OIDC provider) and the
+     confirm page; it never authorizes anything and need not match the Aurora
+     account the person signs in with.
+   Bot authors: allowed only through an approved `person` reach grant for the
+   bot, metered by the app-turn cap.
 5. **Authorization**: `can_use(user, agent workspace)` or an approved reach
    grant (person = author, or space = this space). Otherwise send a polite
    refusal **before anything reaches the agent**, create/refresh a `pending`
@@ -352,11 +366,32 @@ through `POST /v1/connector/credentials` (CAS on `credentials_version`).
 
 ### 5.9 User linking
 
-Verified-email auto-link (5.1 step 4); sign-in link: `link_requests` token →
-`<external>/link/channel?token=aui_…` dashboard page → the signed-in person
-confirms → `POST /v1/channel-links/confirm` creates the user link; org admins
-may create links manually. A platform user links to at most one Aurora user
-per integration; people manage their links under Account.
+Phase 0: verified-email auto-link (5.1 step 4) or the sign-in link. **From
+phase 1 (RFE-001) the sign-in link is the default and only automatic path**:
+
+- **Sign-in link** (always available): `link_requests` token →
+  `<external>/link/channel?token=aui_…` dashboard page → the person signs in
+  (OIDC, `04`), the page shows the integration, the platform account's
+  handle/display name and the platform email hint if any, and the person
+  **confirms explicitly** → `POST /v1/channel-links/confirm` (session-only)
+  creates the user link (`method = sign_in_link`). The confirming user must be
+  an active member of the integration's org (else 403 `not_org_member`; the
+  link-request is not consumed). The token is single use and expires after 30
+  min.
+- **Verified-email auto-link** (opt-in): the org-admin setting
+  `channel_integrations.config.verified_email_autolink` (boolean, default
+  `false`). Setting it `true` requires the `email_verified` capability for the
+  integration (else 422 `autolink_unsupported`), is audited
+  (`channel_integration.autolink_enable` / `.autolink_disable`,
+  security-critical set from phase 2) and the dashboard states the consequence: *"This extends
+  trust to the connector: it can create links, and therefore speak and approve
+  as any of your members whose verified email it asserts."* Disabling it does
+  not remove existing links; org admins may delete links
+  (`DELETE /v1/user-links/{id}`), and the dashboard lists each link's
+  `method` so autolinked ones can be reviewed.
+- Org admins may create links manually (`method = admin`). A platform user
+  links to at most one Aurora user per integration; people manage their links
+  under Account.
 
 ### 5.10 Messaging tools
 
@@ -387,7 +422,9 @@ Available to an agent only while it has an `active` presence.
 ## 6. Invariants (enforced by the core)
 
 1. **The core authorizes; the platform never does** — speakers, reach,
-   bindings, clicks (5.1, 5.5).
+   bindings, clicks (5.1, 5.5). (phase 1, RFE-001) A connector-asserted email
+   mints a user link only under the explicit, audited per-integration opt-in
+   (5.9); by default every link is confirmed by the signed-in person.
 2. **No unauthorized input reaches an agent**; refusals are sent as operations.
 3. **At-least-once in, at-most-once out**: inbox dedupe by event id; claimed
    ops with markers.

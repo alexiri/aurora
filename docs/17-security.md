@@ -50,8 +50,8 @@ runs), configured external secret stores.
 | SEC-16 | Reserved hosts (LLM endpoints, the instance's own host, internal names) cannot be claimed by plugins; overlapping claims inject only for the admin-chosen winner. | 09 | validator tests; fixture-conflict e2e |
 | SEC-17 | Tenant-derived hosts, rewritten hosts and templated token endpoints are constrained to declared zones no broader than a registrable domain. | 09 | validator tests |
 | SEC-18 | Untrusted text (model, user, plugin, platform, upstream) is sanitized before entering platform voice, cards, notices, labels or one-line statuses, and is rendered as data in the dashboard. | 02, 13, 14 | sanitizer property tests; UI tests with hostile strings |
-| SEC-19 | The core authorizes every chat speaker and every click from the linked Aurora user and the access law; action tokens are HMAC-signed, integration-bound, short-lived and single-use. | 13 | conformance + core tests (replay, cross-integration, unlinked clicker) |
-| SEC-20 | A connector can read and act only on integrations of its own connector id and never receives Aurora user or API credentials. | 13 | connector-plane authorization tests |
+| SEC-19 | The core authorizes every chat speaker and every click from the linked Aurora user and the access law; action tokens are HMAC-signed, integration-bound, short-lived and single-use. (phase 1, RFE-001) A user link is created only by the signed-in person's confirmation, an org admin, or — if and only if an org admin enabled `verified_email_autolink` for that integration (default off) — a verified email asserted by that integration's connector. | 13 | conformance + core tests (replay, cross-integration, unlinked clicker); fake connector asserting an admin's verified email: no link with the default config, link only after opt-in |
+| SEC-20 | A connector can read and act only on integrations of its own connector id and never receives Aurora user or API credentials. (phase 1, RFE-001) It cannot create or change user links by assertion; `POST /v1/connector/link-start` only starts the sign-in flow. | 13 | connector-plane authorization tests; link-forgery test (a connector event naming a verified email never yields a link when `verified_email_autolink` is false) |
 | SEC-21 | The access law is applied on every surface, at fire time for schedules/webhooks/peer tasks, and suspended members are non-members everywhere (including API keys and channel clicks). | 04 | authz matrix tests |
 | SEC-22 | Cookie-authenticated unsafe requests require a trusted `Origin`; session cookies are `HttpOnly`, `SameSite=Lax`, `Secure` on https. | 04 | API tests |
 | SEC-23 | OAuth and OIDC state is encrypted, expiring, bound to the initiating browser (cookie) and user; callbacks without matching state are refused. | 04, 09 | API tests |
@@ -92,7 +92,16 @@ runs), configured external secret stores.
   not permitted at all.
 - **Per-replica rate limits**: with N gateways a limit can be exceeded up to N×.
 - **Connectors see their platform's traffic and credentials**: operators choose
-  which connectors to run.
+  which connectors to run. A connector also names the speaker/clicker platform
+  ref of every event, so a *malicious* connector can still speak and click as
+  platform users **who have already linked** their Aurora account (phase 1,
+  RFE-001: it can no longer create new links by assertion). Linked users are
+  bounded by the access law; approvals keep their own rules (`07`).
+- **Auto-linking widens that trust (opt-in, RFE-001)**: with
+  `verified_email_autolink = true` a malicious connector can mint a link to any
+  member of the org whose verified email it asserts, and then approve as them.
+  The setting is off by default, org-admin only, audited, and warned about in
+  the dashboard; enable it only for connectors the operator fully trusts.
 - **Podman home size limits are best-effort**; Kubernetes enforces PVC size.
 - **The runner holds boot material** for the sandboxes it starts; it is trusted
   infrastructure and should run in its own namespace/host with minimal access.

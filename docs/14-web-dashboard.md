@@ -41,7 +41,8 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
 `/auth/signup` (only if `signup_mode = open`), `/auth/forgot`, `/auth/reset`,
 `/auth/verify`, `/auth/cli` (approve a CLI login: shows the user code, workspace
 picker), `/join` (invitation preview + accept), `/link/channel` (confirm a chat
-platform account link), `/oauth/bridge` (fragment-callback bridge for app
+platform account link; from phase 1 it shows the platform account and email hint
+and requires an explicit confirm, RFE-001), `/oauth/bridge` (fragment-callback bridge for app
 connects), `/setup-error` (missing required configuration reported by
 `/v1/instance`).
 
@@ -69,7 +70,11 @@ keys), chat platform links, DM defaults, delete account.
   - Readable (not editable) by every org member, so users understand why a key
     or host is refused.
 - **Channels**: integrations per connector (setup form from the connector
-  manifest, status, shared bot identity), user links.
+  manifest, status, shared bot identity), user links (with their `method`).
+  (phase 1, RFE-001) Each integration has the switch **"Link members
+  automatically by verified email"** (default off; shown only when the
+  connector offers `email_verified`), with the trust warning of `13 §5.9`;
+  toggling it needs a confirm dialog.
 - **Skills**: org skills editor.
 - **API keys**, **Audit log**, **Settings** (name, slug, members can create
   workspaces, limits), **Danger zone**.

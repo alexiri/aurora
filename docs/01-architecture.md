@@ -88,7 +88,12 @@ database, no keys, no ambient network. It is called only on slow paths.
 7. **Connectors.** A connector is untrusted towards the core: it cannot act as
    a user, cannot authorize anything, and sees only the credentials of its own
    platform's integrations and presences. The core authorizes every click and
-   every speaker.
+   every speaker. (phase 1, RFE-001) A connector also cannot **mint user
+   links** by assertion: the core cannot tell which binary holds a connector
+   token, so a link is created only when the signed-in Aurora person confirms
+   it (sign-in link). The one exception is the per-integration, org-admin
+   opt-in `verified_email_autolink` (default **off**), which explicitly extends
+   trust to that connector's `email`/`email_verified` claims (`13 §5.9`).
 8. **Secrets.** Only the API, the gateway and (phase 3) the configured
    external stores ever see plaintext. The hook host sees one connection's
    plaintext per call. Connectors see their own platform credentials.

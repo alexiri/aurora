@@ -345,8 +345,8 @@ connector, **P** public capability. Permission checks per `04`.
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET `/v1/connectors` | S/K | active connectors with setup schemas, capabilities |
-| GET/POST `/v1/orgs/{org}/channel-integrations`; GET/PATCH/DELETE `/v1/channel-integrations/{id}` | S/K | create validates via `credentials.validate` op |
-| GET/POST `/v1/channel-integrations/{id}/user-links`; DELETE `/v1/user-links/{id}` | S/K | admin links |
+| GET/POST `/v1/orgs/{org}/channel-integrations`; GET/PATCH/DELETE `/v1/channel-integrations/{id}` | S/K | create validates via `credentials.validate` op; (phase 1, RFE-001) `config.verified_email_autolink` (bool, default false) is writable by org owner/admin only and refused with 422 `autolink_unsupported` when the integration lacks `email_verified`; changes are audited (security-critical set from phase 2, RFE-008) |
+| GET/POST `/v1/channel-integrations/{id}/user-links`; DELETE `/v1/user-links/{id}` | S/K | admin links; each item carries `method` (`verified_email` \| `sign_in_link` \| `admin`) |
 | GET/POST `/v1/agents/{agent}/presences`; DELETE `/v1/presences/{id}`; POST `/v1/presences/{id}/reattach` | S/K | |
 | GET `/v1/agents/{agent}/space-bindings`; DELETE `/v1/space-bindings/{id}`; PATCH `/v1/space-bindings/{id}` | S/K | owners only |
 | GET `/v1/me/channel-links`; DELETE `/v1/me/channel-links/{id}`; POST `/v1/channel-links/confirm` | S (confirm: SO) | sign-in link flow |

@@ -125,3 +125,13 @@ behaviour; they record environment and tooling choices.
   direct-to-upstream latency measured interleaved on the same connection type. (b) runs the same pipeline as a
   separate process pinned to one CPU with `taskset`, with the upstream and the load generator on other CPUs.
   The production binary needs Postgres and was not used for (b).
+
+## Design-review decisions (owner, 2026-11-08; `80`)
+
+Owner verdicts on `docs/80-design-review.md`, one row per item scheduled into
+phases 1 and 2. The owning docs carry the normative text, tagged
+"(phase N, RFE-nnn)".
+
+| Id | Decision | Alternatives rejected | Rationale |
+|----|----------|----------------------|-----------|
+| D-43 | **RFE-001 (phase 1)**: connector-asserted verified-email auto-linking is an explicit per-integration, org-admin opt-in (`config.verified_email_autolink`, default off, requires the `email_verified` capability, audited). When off, the sign-in-link flow applies and the platform email only pre-fills it. `13 §5.1/§5.9`, SEC-19/20. | Always on (phase 0); one-time dashboard confirmation only | A compromised connector must not be able to mint a link to an admin and approve as them; operators who fully trust their connector can still opt in. |
