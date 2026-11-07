@@ -12,6 +12,7 @@ pub fn tools() -> Vec<Box<dyn PlatformTool>> {
     v.extend(super::schedules::tools());
     v.extend(super::agents::tools());
     v.extend(super::apps::tools());
+    v.extend(super::messaging::tools());
     v
 }
 

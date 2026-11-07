@@ -20,6 +20,7 @@ mod dto;
 pub mod inbox;
 mod integrations;
 mod links;
+pub mod messaging;
 pub mod mirror;
 pub mod presences;
 mod reach;
