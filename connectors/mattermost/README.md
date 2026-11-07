@@ -55,7 +55,7 @@ Test profile only: `AURORA_MM_TEST_CONTROL=true` mounts `/mm/test/*` (re-run cat
 
 `bash scripts/conformance.sh --mattermost` builds this crate, starts the pinned
 `mattermost/mattermost-preview` container (`scripts/mattermost/setup.sh`), seeds a team, users and
-a bot, and runs all twelve scenarios of `tests/conformance/connector` through the Mattermost driver
+a bot, and runs all thirteen scenarios of `tests/conformance/connector` through the Mattermost driver
 (`src/mattermost_driver.rs`), one at a time. Each scenario gets its own users, channels and bot.
 
 Mattermost chooses its own ids, so the scenarios' `U1` / `C1` / `B1` / `F1` are aliases registered
@@ -64,7 +64,7 @@ from every API answer, so the driver reads it from the server's database via `po
 
 ### Exclusions (steps skipped through `PlatformDriver::quirks()`)
 
-All twelve scenarios run; these steps inside them are skipped on Mattermost:
+All thirteen scenarios run; these steps inside them are skipped on Mattermost:
 
 | Scenario | Skipped step | Why |
 |----------|--------------|-----|
