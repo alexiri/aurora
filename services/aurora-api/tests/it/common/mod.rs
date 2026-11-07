@@ -8,6 +8,7 @@ use aurora_api::http::pagination::PageParams;
 use aurora_api::http::ratelimit::Quota;
 use aurora_core::token::{self, TokenPrefix};
 use aurora_testkit::TestDb;
+use aurora_testkit::oidc::MockIdp;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -27,6 +28,15 @@ pub struct Harness {
     pub state: AppState,
     pub app: Router,
     pub mail: std::sync::Arc<aurora_api::domains::auth::mail::MemoryMailer>,
+    /// In-process OIDC mock registered as the development provider `dev` (phase 1, RFE-004).
+    pub idp: MockIdp,
+}
+
+/// A session created through the real OIDC start/callback flow.
+pub struct SignedIn {
+    pub user_id: Uuid,
+    /// `aurora_session=aus_…` (a `Cookie` header value).
+    pub cookie: String,
 }
 
 pub fn config(mutate: impl FnOnce(&mut aurora_config::ApiConfig)) -> aurora_config::ApiConfig {
@@ -69,15 +79,125 @@ impl Harness {
 
     pub async fn with_config(mutate: impl FnOnce(&mut aurora_config::ApiConfig)) -> Self {
         let db = TestDb::new().await;
+        let idp = MockIdp::start().await;
         let mail = aurora_api::domains::auth::mail::MemoryMailer::new();
-        let state = AppState::new(db.pool().clone(), config(mutate)).with_mailer(mail.clone());
+        let issuer = idp.issuer().to_owned();
+        let state = AppState::new(
+            db.pool().clone(),
+            config(|c| {
+                c.auth.dev_idp.issuer = Some(issuer.clone());
+                for p in &mut c.auth.oidc_providers {
+                    if p.id == aurora_config::DEV_IDP_PROVIDER_ID {
+                        p.issuer.clone_from(&issuer);
+                    }
+                }
+                mutate(c);
+            }),
+        )
+        .with_mailer(mail.clone());
         let app = test_router(state.clone());
         Harness {
             db,
             state,
             app,
             mail,
+            idp,
         }
+    }
+
+    /// Test helper `sign_in(email)` (docs/04 §Development and end-to-end sign-in): drives the
+    /// **real** OIDC `start` and `callback` of the development provider `dev` against the
+    /// in-process mock IdP (`login_hint = email`, verified e-mail) and returns the session cookie.
+    /// Obeys `auth.signup_mode` exactly like a browser would; panics if the sign-in is refused.
+    pub async fn sign_in(&self, email: &str) -> SignedIn {
+        self.try_sign_in("dev", email)
+            .await
+            .unwrap_or_else(|e| panic!("sign_in({email}) refused: {e}"))
+    }
+
+    /// Like [`Harness::sign_in`] for any provider; `Err` carries the `/auth/login?error=` code.
+    pub async fn try_sign_in(&self, provider: &str, email: &str) -> Result<SignedIn, String> {
+        self.try_sign_in_hint(provider, Some(email)).await
+    }
+
+    /// Sign in with the IdP's *configured claims* (`h.idp.set(..)`), no `login_hint`.
+    pub async fn try_sign_in_claims(&self, provider: &str) -> Result<SignedIn, String> {
+        self.try_sign_in_hint(provider, None).await
+    }
+
+    async fn try_sign_in_hint(
+        &self,
+        provider: &str,
+        email: Option<&str>,
+    ) -> Result<SignedIn, String> {
+        let (path, flow) = self.oidc_authorize(provider, "", email).await;
+        let (st, hd, _) = self
+            .send(Method::GET, &path, &[("cookie", &flow)], None)
+            .await;
+        assert_eq!(st, StatusCode::FOUND, "callback");
+        let loc = hd["location"].to_str().unwrap().to_owned();
+        let cookie = hd
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find(|c| c.starts_with("aurora_session=aus_"))
+            .and_then(|c| c.split(';').next())
+            .map(str::to_owned)
+            .ok_or_else(|| loc.rsplit("error=").next().unwrap_or(&loc).to_owned())?;
+        let (s, me) = self.get("/v1/me", &[("cookie", &cookie)]).await;
+        assert_eq!(s, StatusCode::OK, "{me}");
+        let user_id = me["user"]["id"].as_str().unwrap().parse().unwrap();
+        Ok(SignedIn { user_id, cookie })
+    }
+
+    /// `start` (with `extra` query, e.g. `&reauth=1`) plus the provider's authorize step.
+    /// Returns `(callback path+query, __Host-aurora_oidc cookie pair)`.
+    pub async fn oidc_authorize(
+        &self,
+        provider: &str,
+        extra: &str,
+        login_hint: Option<&str>,
+    ) -> (String, String) {
+        self.oidc_authorize_with(provider, extra, login_hint, &[])
+            .await
+    }
+
+    pub async fn oidc_authorize_with(
+        &self,
+        provider: &str,
+        extra: &str,
+        login_hint: Option<&str>,
+        headers: &[(&str, &str)],
+    ) -> (String, String) {
+        let hint = login_hint.map_or(String::new(), |h| {
+            format!(
+                "&login_hint={}",
+                percent_encoding::utf8_percent_encode(h, percent_encoding::NON_ALPHANUMERIC)
+            )
+        });
+        let uri = format!("/v1/auth/oidc/{provider}/start?x=1{hint}{extra}");
+        let (st, hd, body) = self.send(Method::GET, &uri, headers, None).await;
+        assert_eq!(st, StatusCode::FOUND, "start: {body}");
+        let flow = hd
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find(|c| c.starts_with("__Host-aurora_oidc="))
+            .and_then(|c| c.split(';').next())
+            .expect("flow cookie")
+            .to_owned();
+        let loc = hd["location"].to_str().unwrap().to_owned();
+        let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let res = http.get(&loc).send().await.unwrap();
+        assert_eq!(res.status().as_u16(), 303, "authorize: {loc}");
+        let back = res.headers()["location"].to_str().unwrap().to_owned();
+        let i = back
+            .find("/v1/auth/oidc/")
+            .expect("redirect_uri on external url");
+        (back[i..].to_owned(), flow)
     }
 
     pub fn pool(&self) -> &sqlx::PgPool {

@@ -8,3 +8,9 @@ bind = "127.0.0.1"
 [runner]
 backend = "fake"
 api_url = "http://localhost:4101"
+
+# Phase 1 (RFE-004): sign-in is OIDC only, so the API needs a provider to start. The dev provider
+# `dev` is registered here; `Harness::with_config` points its issuer at an in-process mock IdP.
+[auth.dev_idp]
+enabled = true
+issuer = "http://localhost:4107"

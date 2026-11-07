@@ -17,18 +17,6 @@ fn code(v: &Value) -> &str {
     v["error"]["code"].as_str().unwrap_or("")
 }
 
-async fn set_password(h: &Harness, user: Uuid, pw: &str) {
-    let hash = aurora_api::domains::auth::password::hash(pw.to_owned())
-        .await
-        .unwrap();
-    sqlx::query("UPDATE users SET password_hash = $2 WHERE id = $1")
-        .bind(user)
-        .bind(hash)
-        .execute(h.pool())
-        .await
-        .unwrap();
-}
-
 #[tokio::test]
 async fn me_shape_and_suspended_membership() {
     let h = Harness::new().await;
@@ -130,36 +118,51 @@ async fn patch_me_validation() {
     assert_eq!(v["default_org_id"], json!(o1));
 }
 
+async fn stamp_reauth(h: &Harness, sid: Uuid, ago_secs: i64) {
+    sqlx::query("UPDATE sessions SET reauth_at = now() - make_interval(secs => $2) WHERE id = $1")
+        .bind(sid)
+        .bind(ago_secs as f64)
+        .execute(h.pool())
+        .await
+        .unwrap();
+}
+
+/// RFE-004: account deletion needs an OIDC re-authentication of the session within 10 minutes
+/// (412 `reauth_required`); there is no password to supply any more.
 #[tokio::test]
-async fn delete_me_rules() {
+async fn delete_me_needs_recent_reauth() {
     let h = Harness::new().await;
     let u = h.user("d@x.io", false).await;
-    set_password(&h, u, "correct horse battery").await;
     let (sid, tok) = h.good_session(u).await;
     let org = h.org().await;
     h.member(org, u, "owner", "active").await;
-    // no / wrong password
-    let (s, v) = call(&h, &tok, Method::DELETE, "/v1/me", Some(json!({}))).await;
-    assert_eq!((s, code(&v)), (403, "reauthentication_required"));
+    // never re-authenticated
+    let (s, v) = call(&h, &tok, Method::DELETE, "/v1/me", None).await;
+    assert_eq!((s, code(&v)), (412, "reauth_required"));
+    // a body (the phase-0 password) does not help
     let (s, v) = call(
         &h,
         &tok,
         Method::DELETE,
         "/v1/me",
-        Some(json!({"password": "nope nope nope"})),
+        Some(json!({"password": "correct horse battery"})),
     )
     .await;
-    assert_eq!((s, code(&v)), (403, "reauthentication_required"));
-    // last owner
-    let good = json!({"password": "correct horse battery"});
-    let (s, v) = call(&h, &tok, Method::DELETE, "/v1/me", Some(good.clone())).await;
+    assert_eq!((s, code(&v)), (412, "reauth_required"));
+    // stale re-authentication (11 min)
+    stamp_reauth(&h, sid, 660).await;
+    let (s, v) = call(&h, &tok, Method::DELETE, "/v1/me", None).await;
+    assert_eq!((s, code(&v)), (412, "reauth_required"));
+    // fresh, but last owner
+    stamp_reauth(&h, sid, 5).await;
+    let (s, v) = call(&h, &tok, Method::DELETE, "/v1/me", None).await;
     assert_eq!((s, code(&v)), (409, "last_owner"));
     // second owner: ok
     let o2 = h.user("o2@x.io", false).await;
     h.member(org, o2, "owner", "active").await;
     let ws = h.workspace(org).await;
     h.bind_ws(ws, u, "owner").await;
-    let (s, _) = call(&h, &tok, Method::DELETE, "/v1/me", Some(good)).await;
+    let (s, _) = call(&h, &tok, Method::DELETE, "/v1/me", None).await;
     assert_eq!(s, 204);
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE id = $1")
         .bind(u)
@@ -177,23 +180,16 @@ async fn delete_me_rules() {
     assert_eq!(s, 401);
 }
 
+/// Another session of the same user does not inherit a re-authentication.
 #[tokio::test]
-async fn delete_me_sso_only_needs_recent_session() {
+async fn reauth_is_per_session() {
     let h = Harness::new().await;
-    let u = h.user("s@x.io", false).await;
-    let (sid, tok) = h.good_session(u).await;
-    sqlx::query("UPDATE sessions SET created_at = now() - interval '1 hour' WHERE id = $1")
-        .bind(sid)
-        .execute(h.pool())
-        .await
-        .unwrap();
-    let (s, v) = call(&h, &tok, Method::DELETE, "/v1/me", Some(json!({}))).await;
-    assert_eq!((s, code(&v)), (403, "reauthentication_required"));
-    sqlx::query("UPDATE sessions SET created_at = now() WHERE id = $1")
-        .bind(sid)
-        .execute(h.pool())
-        .await
-        .unwrap();
-    let (s, _) = call(&h, &tok, Method::DELETE, "/v1/me", Some(json!({}))).await;
+    let u = h.user("p@x.io", false).await;
+    let (s1, t1) = h.good_session(u).await;
+    let (_, t2) = h.good_session(u).await;
+    stamp_reauth(&h, s1, 1).await;
+    let (s, v) = call(&h, &t2, Method::DELETE, "/v1/me", None).await;
+    assert_eq!((s, code(&v)), (412, "reauth_required"));
+    let (s, _) = call(&h, &t1, Method::DELETE, "/v1/me", None).await;
     assert_eq!(s, 204);
 }

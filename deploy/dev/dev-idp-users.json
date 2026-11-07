@@ -1,0 +1,6 @@
+[
+  { "sub": "dev-alice", "email": "alice@example.test", "name": "Alice Admin", "email_verified": true },
+  { "sub": "dev-bob", "email": "bob@example.test", "name": "Bob Builder", "email_verified": true },
+  { "sub": "dev-carol", "email": "carol@example.test", "name": "Carol Member", "email_verified": true },
+  { "sub": "dev-unverified", "email": "unverified@example.test", "name": "Una Verified", "email_verified": false }
+]

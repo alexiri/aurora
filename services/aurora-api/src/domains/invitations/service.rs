@@ -211,6 +211,40 @@ pub async fn accept(
     Ok((org_row.into(), bound, inv.id))
 }
 
+/// Accept every pending invitation addressed to the new user's verified e-mail as part of their
+/// first OIDC sign-in (phase 1, RFE-004: `invite_only` / `sso_jit` sign-up). A seat-cap or
+/// duplicate-membership failure skips that invitation (it stays pending for an explicit accept).
+pub async fn accept_pending_for_email(
+    tx: &mut PgConnection,
+    user: &users::UserRow,
+) -> Result<usize, ApiError> {
+    let pending = repo::lock_pending_by_email(&mut *tx, &user.email).await?;
+    let mut accepted = 0;
+    for inv in &pending {
+        // A savepoint keeps one failing invitation from poisoning the sign-in transaction.
+        sqlx::query("SAVEPOINT accept_inv")
+            .execute(&mut *tx)
+            .await
+            .map_err(DbError::from)?;
+        match accept_in_tx(&mut *tx, user, inv).await {
+            Ok(_) => {
+                accepted += 1;
+                sqlx::query("RELEASE SAVEPOINT accept_inv")
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(DbError::from)?;
+            }
+            Err(_) => {
+                sqlx::query("ROLLBACK TO SAVEPOINT accept_inv")
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(DbError::from)?;
+            }
+        }
+    }
+    Ok(accepted)
+}
+
 async fn accept_in_tx(
     tx: &mut PgConnection,
     user: &users::UserRow,

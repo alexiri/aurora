@@ -126,7 +126,7 @@ impl AppState {
             aurora_crypto::DerivedKeys::from_ring(&config.signing_ring)
                 .map_err(|e| format!("derived keys: {e}"))?,
         );
-        let oidc = Arc::new(crate::domains::oidc::OidcClients::new()?);
+        let oidc = Arc::new(crate::domains::oidc::OidcClients::new(&config)?);
         let connect = Arc::new(crate::domains::connect::Env::new(
             &config.hookhost_url,
             &config.internal_ring,

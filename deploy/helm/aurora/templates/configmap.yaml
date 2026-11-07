@@ -21,6 +21,12 @@
 {{- if and (eq .Values.plugins.source "configMap") (not .Values.plugins.configMapName) }}{{ fail "plugins.configMapName is required when plugins.source is configMap" }}{{ end -}}
 {{- if and (eq .Values.plugins.source "pvc") (not .Values.plugins.pvcName) }}{{ fail "plugins.pvcName is required when plugins.source is pvc" }}{{ end -}}
 {{- $_ := set $cfg "plugins" (merge (dict "dir" .Values.plugins.dir) (default (dict) $cfg.plugins)) -}}
+{{- if .Values.devIdp.enabled }}
+{{- if not (regexMatch "^https?://(localhost|127\\.0\\.0\\.1|\\[::1\\]|[A-Za-z0-9.-]+\\.localhost)(:[0-9]+)?/?$" .Values.externalUrl) }}{{ fail "devIdp.enabled is development only: externalUrl must be a loopback origin (localhost, *.localhost, 127.0.0.1, [::1])" }}{{ end -}}
+{{- $auth := default (dict) $cfg.auth -}}
+{{- $_ := set $auth "dev_idp" (dict "enabled" true "issuer" (default (printf "%s%s" (trimSuffix "/" .Values.externalUrl) .Values.devIdp.pathPrefix) .Values.devIdp.issuer) "internal_url" (printf "http://%s-dev-idp:4107%s" $full .Values.devIdp.pathPrefix)) -}}
+{{- $_ := set $cfg "auth" $auth -}}
+{{- end -}}
 # Pre-install hook: the migrate job needs the config before regular resources exist.
 apiVersion: v1
 kind: ConfigMap

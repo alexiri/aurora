@@ -15,6 +15,7 @@ fn secrets() -> Vec<(String, String)> {
         ("AURORA_RUNNER_SESSION_KEY", KEY),
         ("AURORA_RUNNER_TOKEN", "aur_abc"),
         ("AURORA_CONNECTOR_TOKEN", "aun_abc"),
+        ("BASE_IDP_SECRET", "base-secret"),
     ]
     .iter()
     .map(|(a, b)| (a.to_string(), b.to_string()))
@@ -38,7 +39,8 @@ fn load_with(toml: &str, extra: &[(&str, &str)]) -> Result<RawConfig> {
     load(Some(&p), e.into_iter())
 }
 
-const BASE: &str = "[server]\nexternal_url = \"https://aurora.example.org\"\n";
+// Phase 1 (RFE-004): at least one OIDC provider is required, so every config carries one.
+const BASE: &str = "[[auth.oidc_providers]]\nid = \"base\"\nissuer = \"https://idp.example.org\"\nclient_id = \"b\"\nclient_secret_env = \"BASE_IDP_SECRET\"\n[server]\nexternal_url = \"https://aurora.example.org\"\n";
 
 #[test]
 fn toml_only_and_api_validates() {
@@ -78,7 +80,12 @@ fn env_only_without_file() {
     e.pop();
     e.push((
         "AURORA__SERVER__EXTERNAL_URL".into(),
-        "https://x.example".into(),
+        "http://localhost:4100".into(),
+    ));
+    e.push(("AURORA__AUTH__DEV_IDP__ENABLED".into(), "true".into()));
+    e.push((
+        "AURORA__AUTH__DEV_IDP__ISSUER".into(),
+        "http://localhost:4107".into(),
     ));
     // default path normally absent in test environments
     if !std::path::Path::new(DEFAULT_CONFIG_PATH).exists() {
@@ -290,9 +297,14 @@ fn oidc_provider_defaults_alias_and_domain_validation() {
     )
     .unwrap();
     let a = raw.api_config().unwrap();
-    let o = &a.auth.oidc_providers[0];
+    let o = a
+        .auth
+        .oidc_providers
+        .iter()
+        .find(|p| p.id == "corp")
+        .unwrap();
     assert_eq!(o.issuer, "https://idp.example.org");
-    assert!(o.require_email_verified);
+    assert_eq!(o.require_email_verified, None);
     assert_eq!(o.scopes, ["openid", "email", "profile"]);
     assert_eq!(a.oidc_client_secrets["corp"].expose(), "s3cret");
 
@@ -898,4 +910,73 @@ fn dev_supervisor_binary_is_accepted_only_in_dev_mode() {
             .unwrap_err()
             .has_key("runner.dev_supervisor_binary")
     );
+}
+
+#[test]
+fn phase1_oidc_only_startup_rules() {
+    // No provider and no dev IdP: startup fails (`no_oidc_provider`).
+    let raw = load_with(
+        "[server]\nexternal_url = \"https://aurora.example.org\"\n",
+        &[],
+    )
+    .unwrap();
+    let e = raw.api_config().unwrap_err();
+    assert!(e.has_key("auth.oidc_providers"), "{e}");
+    assert!(e.to_string().contains("no_oidc_provider"), "{e}");
+
+    // `require_email_verified = false` is refused naming the key; `true` is accepted and ignored.
+    let p = |v: &str| {
+        format!(
+            "[[auth.oidc_providers]]\nid = \"c\"\nissuer = \"https://i.example.org\"\nclient_id = \"c\"\nclient_secret_env = \"BASE_IDP_SECRET\"\nrequire_email_verified = {v}\n[server]\nexternal_url = \"https://aurora.example.org\"\n"
+        )
+    };
+    let e = load_with(&p("false"), &[])
+        .unwrap()
+        .api_config()
+        .unwrap_err();
+    assert!(
+        e.has_key("auth.oidc_providers[0].require_email_verified"),
+        "{e}"
+    );
+    load_with(&p("true"), &[]).unwrap().api_config().unwrap();
+
+    // The dev IdP registers the provider `dev` on a loopback origin ...
+    let dev = |url: &str| {
+        format!(
+            "[auth.dev_idp]\nenabled = true\nissuer = \"http://localhost:4107\"\n[server]\nexternal_url = \"{url}\"\n"
+        )
+    };
+    let api = load_with(&dev("http://localhost:4100"), &[])
+        .unwrap()
+        .api_config()
+        .unwrap();
+    let d = api
+        .auth
+        .oidc_providers
+        .iter()
+        .find(|p| p.id == DEV_IDP_PROVIDER_ID)
+        .unwrap();
+    assert_eq!(d.client_id, DEV_IDP_CLIENT_ID);
+    assert_eq!(d.display_name.as_deref(), Some("Development sign-in"));
+    assert_eq!(
+        api.oidc_client_secrets["dev"].expose(),
+        DEV_IDP_CLIENT_SECRET
+    );
+    for ok in [
+        "http://127.0.0.1:4100",
+        "http://app.localhost:4000",
+        "http://[::1]:4100",
+    ] {
+        load_with(&dev(ok), &[]).unwrap().api_config().unwrap();
+    }
+    // ... and is refused anywhere else, https or not.
+    for bad in [
+        "https://aurora.example.org",
+        "http://aurora.example.org",
+        "https://localhost.evil.example",
+        "https://127.0.0.1.example.org",
+    ] {
+        let e = load_with(&dev(bad), &[]).unwrap().api_config().unwrap_err();
+        assert!(e.has_key("auth.dev_idp.enabled"), "{bad}: {e}");
+    }
 }

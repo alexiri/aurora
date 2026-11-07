@@ -256,3 +256,35 @@ pub async fn mark_accepted<'e, E: PgExecutor<'e>>(
     .await?;
     Ok(())
 }
+
+/// Pending, unexpired invitations addressed to `email` (case-insensitive); rows locked. Used at
+/// the first OIDC sign-in (docs/04 §Sign-up semantics under OIDC-only).
+pub async fn lock_pending_by_email(
+    conn: &mut PgConnection,
+    email: &str,
+) -> Result<Vec<AcceptRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, org_id, email::text AS email, role, workspace_ids, approver_workspace_ids,
+                false AS expired
+         FROM invitations
+         WHERE email = $1::citext AND status = 'pending' AND expires_at > now()
+         ORDER BY created_at FOR UPDATE",
+    )
+    .bind(email)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// Is there a pending, unexpired invitation addressed to `email`?
+pub async fn has_pending_for_email<'e, E: PgExecutor<'e>>(
+    exec: E,
+    email: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM invitations
+         WHERE email = $1::citext AND status = 'pending' AND expires_at > now())",
+    )
+    .bind(email)
+    .fetch_one(exec)
+    .await?)
+}

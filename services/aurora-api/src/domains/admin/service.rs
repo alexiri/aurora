@@ -1,9 +1,7 @@
 use crate::app::AppState;
-use crate::domains::auth::service::{RESET_TTL_SECS, normalize_email};
-use aurora_core::token::{self, TokenPrefix};
+use crate::domains::auth::service::normalize_email;
 use aurora_core::{ApiError, FieldError, ids};
 use aurora_db::repo::account::{self, AdminUserRow};
-use aurora_db::repo::email_tokens::{self, RESET_PASSWORD};
 use aurora_db::repo::sessions;
 use aurora_db::{DbError, PgPool};
 use serde_json::json;
@@ -34,15 +32,26 @@ pub async fn patch_user(
     Ok(row)
 }
 
-/// Create (or promote) a verified, password-less instance admin and return the one-time
-/// password-set link (reset token, 1 h).
+/// Pre-provision an instance admin (phase 1, RFE-004): create (or promote) the user with this
+/// e-mail — `email_verified_at` set, `is_instance_admin = true`, no password, no identity — and
+/// return the sign-in URL. The person's first OIDC sign-in with that verified e-mail binds the
+/// identity (`docs/04 §OIDC` step 3). No secret exists; nothing but the IdP can sign in.
+///
+/// Refuses (`no_oidc_provider`) when no OIDC provider is configured.
 pub async fn bootstrap_admin(
     pool: &PgPool,
     external_url: &str,
+    providers_configured: bool,
     email: &str,
 ) -> Result<String, ApiError> {
+    if !providers_configured {
+        return Err(ApiError::unprocessable(
+            "no_oidc_provider",
+            "No OIDC provider is configured (auth.oidc_providers or auth.dev_idp): nobody could sign in.",
+        ));
+    }
     let email = normalize_email(email);
-    if !email.contains('@') || email.len() > 254 {
+    if !email.contains('@') || email.len() > 254 || email.chars().any(char::is_whitespace) {
         return Err(ApiError::invalid_request(
             "Invalid email.",
             vec![FieldError::new("/email", "must be a valid email address")],
@@ -50,23 +59,9 @@ pub async fn bootstrap_admin(
     }
     let name = email.split('@').next().unwrap_or("admin");
     let mut tx = pool.begin().await.map_err(DbError::from)?;
-    let uid = account::upsert_bootstrap_admin(&mut *tx, ids::new_id(), &email, name).await?;
-    email_tokens::invalidate_unused(&mut *tx, uid, RESET_PASSWORD).await?;
-    let tok = token::generate(TokenPrefix::Invitation).expose().clone();
-    email_tokens::create(
-        &mut *tx,
-        ids::new_id(),
-        uid,
-        RESET_PASSWORD,
-        &token::hash(&tok),
-        RESET_TTL_SECS,
-    )
-    .await?;
+    account::upsert_bootstrap_admin(&mut *tx, ids::new_id(), &email, name).await?;
     tx.commit().await.map_err(DbError::from)?;
-    Ok(format!(
-        "{}/auth/reset?token={tok}",
-        external_url.trim_end_matches('/')
-    ))
+    Ok(format!("{}/auth/login", external_url.trim_end_matches('/')))
 }
 
 /// Clear the instance-admin flag; returns whether the user existed.

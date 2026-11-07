@@ -2,8 +2,6 @@ import { readFileSync } from "node:fs";
 
 import { expect, test, type Page } from "@playwright/test";
 
-const PASSWORD = "correct-horse-battery-staple";
-
 function invitationLink(logPath: string, email: string): string | null {
   const lines = readFileSync(logPath, "utf8").split("\n").reverse();
   for (const line of lines) {
@@ -23,23 +21,28 @@ async function openDialog(page: Page, button: string) {
   }).toPass({ timeout: 20_000 });
 }
 
-async function signUp(page: Page, name: string, email: string | null) {
-  await page.getByLabel("Name", { exact: true }).fill(name);
-  if (email) await page.getByLabel("Email", { exact: true }).fill(email);
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Create account" }).click();
+// Phase 1 (RFE-004): all sign-in is OIDC. The login page offers the development provider; the
+// development IdP (`aurora-dev-idp`) signs a user in non-interactively when the authorize request
+// carries `login_hint=<email>`, which the API forwards from `/v1/auth/oidc/dev/start?login_hint=`.
+async function signInAs(page: Page, email: string, returnTo = "/") {
+  await page.goto(`/auth/login?next=${encodeURIComponent(returnTo)}`);
+  await expect(page.getByLabel("Password")).toHaveCount(0); // no password form any more
+  await expect(page.getByRole("link", { name: "Development sign-in" })).toBeVisible();
+  await page.goto(
+    `/v1/auth/oidc/dev/start?login_hint=${encodeURIComponent(email)}&return_to=${encodeURIComponent(returnTo)}`,
+  );
 }
 
-test("sign-up -> workspace -> invite -> accept", async ({ page, browser }) => {
+test("sign-in (dev IdP) -> workspace -> invite -> accept", async ({ page, browser }) => {
   const apiLog = process.env.AURORA_E2E_API_LOG;
   expect(apiLog, "AURORA_E2E_API_LOG must be set (run via scripts/e2e/m1.sh)").toBeTruthy();
   const run = Date.now().toString(36);
   const emailA = `a-${run}@example.test`;
   const emailB = `b-${run}@example.test`;
 
-  // User A signs up (open mode) and lands in the default workspace.
-  await page.goto("/auth/signup");
-  await signUp(page, "Alice", emailA);
+  // User A signs in through the dev IdP (open mode: first sign-in creates the user, org and
+  // default workspace).
+  await signInAs(page, emailA);
   await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible({ timeout: 30_000 });
   await expect(page).toHaveURL(/\/o\/[^/]+\/w\/[^/]+$/);
 
@@ -87,9 +90,10 @@ test("sign-up -> workspace -> invite -> accept", async ({ page, browser }) => {
     const b = await ctx.newPage();
     await b.goto(`/join?token=${encodeURIComponent(token)}`);
     await expect(b.getByText(emailB).first()).toBeVisible();
-    await b.getByRole("link", { name: "Create account" }).click();
-    await expect(b.getByLabel("Email", { exact: true })).toHaveValue(emailB);
-    await signUp(b, "Bob", null) /* email is read-only, prefilled from the invitation */;
+    await expect(b.getByRole("link", { name: "Create account" })).toHaveCount(0);
+    await b.getByRole("link", { name: "Sign in to accept" }).click();
+    await expect(b).toHaveURL(/\/auth\/login\?next=/);
+    await signInAs(b, emailB, `/join?token=${encodeURIComponent(token)}`);
     await expect(b).toHaveURL(/\/join\?token=/);
     await b.getByRole("button", { name: "Accept invitation" }).click();
 

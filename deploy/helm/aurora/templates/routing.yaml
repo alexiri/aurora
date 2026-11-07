@@ -26,6 +26,11 @@ spec:
           - path: /v1
             pathType: Prefix
             backend: {service: {name: {{ $full }}-api, port: {number: 4101}}}
+          {{- if and .Values.devIdp.enabled .Values.devIdp.pathPrefix }}
+          - path: {{ .Values.devIdp.pathPrefix }}
+            pathType: Prefix
+            backend: {service: {name: {{ $full }}-dev-idp, port: {number: 4107}}}
+          {{- end }}
           - path: /
             pathType: Prefix
             backend: {service: {name: {{ $full }}-web, port: {number: 4100}}}

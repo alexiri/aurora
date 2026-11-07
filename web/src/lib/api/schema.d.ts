@@ -1172,23 +1172,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/auth/login": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Sign in with email and password; sets the session cookie. */
-        post: operations["login"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/auth/logout": {
         parameters: {
             query?: never;
@@ -1243,57 +1226,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/auth/password/change": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Change the password (session only). */
-        post: operations["changePassword"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/auth/password/forgot": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Request a password-reset email (always 202). */
-        post: operations["forgotPassword"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/auth/password/reset": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Set a new password with a reset token; revokes all sessions. */
-        post: operations["resetPassword"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/auth/sessions/revoke-others": {
         parameters: {
             query?: never;
@@ -1305,57 +1237,6 @@ export interface paths {
         put?: never;
         /** Revoke all other sessions of the caller (session only). */
         post: operations["revokeOtherSessions"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/auth/signup": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create an account (and, in `open` mode, its organization); sets the session cookie. */
-        post: operations["signup"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/auth/verify-email": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Consume an email-verification token. */
-        post: operations["verifyEmail"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/auth/verify-email/resend": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Send a fresh verification email to the signed-in user. */
-        post: operations["resendVerification"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1745,7 +1626,7 @@ export interface paths {
         get: operations["getMe"];
         put?: never;
         post?: never;
-        /** Delete the caller's own account. */
+        /** Delete the caller's own account (needs a recent OIDC re-authentication, else 412 `reauth_required`). */
         delete: operations["deleteMe"];
         options?: never;
         head?: never;
@@ -3480,10 +3361,6 @@ export interface components {
             /** Format: int64 */
             reassigned: number;
         };
-        ChangePasswordRequest: {
-            current_password: string;
-            new_password: string;
-        };
         ChannelIntegration: {
             /**
              * @description Connector configuration without credentials; `_capabilities` holds the narrowing
@@ -3922,10 +3799,6 @@ export interface components {
         };
         /** @enum {string} */
         DefaultAction: "none" | "allow" | "block";
-        DeleteMeRequest: {
-            /** @description Required for accounts that have a password. */
-            password?: string | null;
-        };
         /** @description The person a `direct` conversation belongs to (phase 1, RFE-009). */
         DirectUser: {
             display_name: string;
@@ -4044,9 +3917,6 @@ export interface components {
             /** @description `joining` | `joined` | `promoted` */
             status: string;
             text: string;
-        };
-        ForgotRequest: {
-            email: string;
         };
         FormField: {
             help_url?: string | null;
@@ -4283,10 +4153,6 @@ export interface components {
             /** @description Defaults to `api_key`. */
             auth_mode?: string | null;
             endpoint_id: string;
-        };
-        LoginRequest: {
-            email: string;
-            password: string;
         };
         Me: {
             /** Format: uuid */
@@ -5774,10 +5640,6 @@ export interface components {
             /** Format: int32 */
             upstream_status?: number | null;
         };
-        ResetRequest: {
-            password: string;
-            token: string;
-        };
         ResolveResponse: {
             org: components["schemas"]["OrgSummary"];
             workspace?: null | components["schemas"]["ResolvedWorkspace"];
@@ -6061,12 +5923,6 @@ export interface components {
         ShowWhen: {
             equals: string;
             field: string;
-        };
-        SignupRequest: {
-            display_name: string;
-            email: string;
-            invitation_token?: string | null;
-            password: string;
         };
         SimCandidate: {
             /** Format: uuid */
@@ -6405,9 +6261,6 @@ export interface components {
             /** Format: uuid */
             id: string;
         };
-        UserResponse: {
-            user: components["schemas"]["User"];
-        };
         /** @description Write-only verification settings. */
         VerificationInput: {
             /** @description Header carrying the signature/token (defaults: `X-Signature`, `Authorization`). */
@@ -6422,9 +6275,6 @@ export interface components {
             header?: string | null;
             /** @description `none` | `hmac_sha256` | `bearer`. */
             kind: string;
-        };
-        VerifyEmailRequest: {
-            token: string;
         };
         VerifyResult: {
             origin: components["schemas"]["StoredOrigin"];
@@ -10048,53 +9898,6 @@ export interface operations {
             };
         };
     };
-    login: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LoginRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserResponse"];
-                };
-            };
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     logout: {
         parameters: {
             query?: never;
@@ -10152,6 +9955,14 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     oidcStart: {
@@ -10159,6 +9970,10 @@ export interface operations {
             query?: {
                 /** @description Same-origin path to return to after sign-in (default `/`). */
                 return_to?: string;
+                /** @description `1` = re-authenticate the signed-in user (`prompt=login&max_age=0`); needs a session. */
+                reauth?: string;
+                /** @description Passed to the provider as `login_hint` (the development IdP signs that user in). */
+                login_hint?: string;
             };
             header?: never;
             path: {
@@ -10184,52 +9999,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    changePassword: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ChangePasswordRequest"];
-            };
-        };
-        responses: {
-            /** @description Password changed */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -10238,35 +10007,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            403: {
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
-            };
-        };
-    };
-    forgotPassword: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ForgotRequest"];
-            };
-        };
-        responses: {
-            /** @description Accepted */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             429: {
                 headers: {
@@ -10276,29 +10023,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-        };
-    };
-    resetPassword: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResetRequest"];
-            };
-        };
-        responses: {
-            /** @description Password changed */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            400: {
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10326,126 +10051,6 @@ export interface operations {
                 };
             };
             403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    signup: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SignupRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserResponse"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    verifyEmail: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VerifyEmailRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserResponse"];
-                };
-            };
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    resendVerification: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Accepted */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11569,11 +11174,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DeleteMeRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Deleted */
             204: {
@@ -11591,6 +11192,14 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            412: {
                 headers: {
                     [name: string]: unknown;
                 };

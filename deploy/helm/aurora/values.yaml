@@ -172,6 +172,25 @@ connectors: []
 #         - name: AURORA_CONNECTOR_CALLBACK_HMAC_KEY      # >= 32 bytes, shared by all replicas
 #           valueFrom: {secretKeyRef: {name: aurora-connector-mattermost, key: callback-hmac-key}}
 
+# ---- Development IdP (P1-005, RFE-004) --------------------------------------------
+# DEVELOPMENT ONLY, never enable on a real instance: `aurora-dev-idp` signs the listed users in
+# without a password. Enabling it registers the OIDC provider `dev` (config auth.dev_idp) and serves
+# the IdP through the ingress under `pathPrefix`. The chart refuses it unless `externalUrl` is a
+# loopback origin (localhost, *.localhost, 127.0.0.1, [::1]), and so does the API at startup.
+devIdp:
+  enabled: false
+  image: ""               # default: <image.registry>/aurora-dev-idp:<image.tag>
+  pathPrefix: /dev-idp    # URL path the ingress forwards to the IdP ("" = served at the root)
+  issuer: ""              # as the browser reaches it; default: externalUrl + pathPrefix
+  allowAnyHint: false     # also sign in a login_hint that is not listed (e2e harnesses)
+  users:                  # the login page lists these
+    - {sub: dev-alice, email: alice@example.test, name: Alice Admin, email_verified: true}
+    - {sub: dev-bob, email: bob@example.test, name: Bob Builder, email_verified: true}
+    - {sub: dev-carol, email: carol@example.test, name: Carol Member, email_verified: true}
+  resources:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {memory: 128Mi}
+
 # ---- Routing -------------------------------------------------------------------
 ingress:
   enabled: true

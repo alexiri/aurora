@@ -86,19 +86,6 @@ pub async fn is_active_member<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// When the session was created (database clock age in seconds).
-pub async fn session_age_secs<'e, E: PgExecutor<'e>>(
-    exec: E,
-    session: Uuid,
-) -> Result<Option<f64>, DbError> {
-    Ok(sqlx::query_scalar(
-        "SELECT EXTRACT(EPOCH FROM (now() - created_at))::float8 FROM sessions WHERE id = $1",
-    )
-    .bind(session)
-    .fetch_optional(exec)
-    .await?)
-}
-
 /// Orgs where `user` is the only active owner (rows locked; call inside a transaction).
 pub async fn sole_owner_orgs(conn: &mut PgConnection, user: Uuid) -> Result<Vec<Uuid>, DbError> {
     let orgs: Vec<Uuid> = sqlx::query_scalar(
@@ -227,7 +214,8 @@ pub async fn revoke_instance_admin_by_email<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// Insert a verified, password-less instance admin, or promote/verify the existing user.
+/// Pre-provision a verified instance admin (no identity yet; the first OIDC sign-in with this
+/// e-mail binds one), or promote/verify the existing user.
 pub async fn upsert_bootstrap_admin<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,

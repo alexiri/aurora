@@ -273,7 +273,8 @@ impl RawConfig {
         }
         let bootstrap_connector_tokens =
             bootstrap_connectors(&mut c, &s.bootstrap_connector_tokens);
-        let (signup_mode, org_creation) = check_auth(&mut c, &self.auth, s);
+        let (signup_mode, org_creation) =
+            check_auth(&mut c, &self.auth, s, external_url.as_deref());
         check_email(&mut c, &self.email);
         check_secret_stores(&mut c, &self.secrets);
         check_llm(&mut c, &self.llm, &self.governance);
@@ -302,6 +303,23 @@ impl RawConfig {
         check_common(&mut c, &self.tls, &self.telemetry);
         let advertised_proxy_url = advertised_proxy_url(&self.gateway, external_url.as_deref());
         c.finish()?;
+        // (phase 1, RFE-004) `auth.dev_idp.enabled` registers the extra provider `dev`.
+        let mut auth = self.auth.clone();
+        let mut oidc_client_secrets = s.oidc_client_secrets.clone();
+        if auth.dev_idp.enabled {
+            auth.oidc_providers.push(OidcProvider {
+                id: DEV_IDP_PROVIDER_ID.into(),
+                display_name: Some("Development sign-in".into()),
+                issuer: auth.dev_idp.issuer.clone().unwrap_or_default(),
+                client_id: DEV_IDP_CLIENT_ID.into(),
+                client_secret_env: "(built-in development client)".into(),
+                ..OidcProvider::default()
+            });
+            oidc_client_secrets.insert(
+                DEV_IDP_PROVIDER_ID.into(),
+                Redacted::new(DEV_IDP_CLIENT_SECRET.to_owned()),
+            );
+        }
         Ok(ApiConfig {
             server: self.server.clone(),
             external_url: external_url.unwrap_or_default(),
@@ -314,10 +332,10 @@ impl RawConfig {
             runner_session_key: runner_session_key.unwrap_or_default(),
             bootstrap_runner_token: s.bootstrap_runner_token.clone(),
             bootstrap_connector_tokens,
-            auth: self.auth.clone(),
+            auth,
             signup_mode: signup_mode.unwrap_or(SignupMode::InviteOnly),
             org_creation: org_creation.unwrap_or(OrgCreation::InstanceAdmins),
-            oidc_client_secrets: s.oidc_client_secrets.clone(),
+            oidc_client_secrets,
             email: self.email.clone(),
             secrets: self.secrets.clone(),
             llm: self.llm.clone(),
@@ -1090,6 +1108,7 @@ fn check_auth(
     c: &mut Ctx,
     a: &AuthSection,
     s: &EnvSecrets,
+    external_url: Option<&str>,
 ) -> (Option<SignupMode>, Option<OrgCreation>) {
     let signup = match a.signup_mode.as_str() {
         "open" => Some(SignupMode::Open),
@@ -1150,6 +1169,12 @@ fn check_auth(
         } else {
             check_url(c, &k("issuer"), Some(&p.issuer));
         }
+        if p.require_email_verified == Some(false) {
+            c.err(
+                k("require_email_verified"),
+                "removed in phase 1 (RFE-004): an ID token without email_verified = true is always refused; delete the key",
+            );
+        }
         if p.client_id.is_empty() {
             c.err(k("client_id"), "required");
         }
@@ -1185,13 +1210,56 @@ fn check_auth(
             }
         }
     }
-    if signup == Some(SignupMode::SsoJit) && a.oidc_providers.is_empty() {
+    if a.dev_idp.enabled {
+        check_dev_idp(c, &a.dev_idp, &a.oidc_providers, external_url);
+    } else if a.oidc_providers.is_empty() {
+        // Phase 1, RFE-004: there is no other way to sign in.
         c.err(
             "auth.oidc_providers",
-            "at least one provider is required when auth.signup_mode = sso_jit",
+            "no_oidc_provider: at least one OIDC provider is required (or auth.dev_idp.enabled for development)",
         );
     }
     (signup, org)
+}
+
+/// `localhost`, `*.localhost`, `127.0.0.1` / any IPv4 loopback, `[::1]`.
+fn is_dev_idp_host(h: &str) -> bool {
+    let h = h
+        .strip_prefix('[')
+        .and_then(|x| x.strip_suffix(']'))
+        .unwrap_or(h)
+        .to_ascii_lowercase();
+    h == "localhost"
+        || h.ends_with(".localhost")
+        || h.parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// `auth.dev_idp` (docs/04 §Development and end-to-end sign-in): the development IdP can never be
+/// exposed by accident, so it is refused unless `server.external_url` is a loopback origin.
+fn check_dev_idp(c: &mut Ctx, d: &DevIdp, providers: &[OidcProvider], external_url: Option<&str>) {
+    match d.issuer.as_deref() {
+        None | Some("") => c.err("auth.dev_idp.issuer", "required when auth.dev_idp.enabled"),
+        Some(u) => check_url(c, "auth.dev_idp.issuer", Some(u)),
+    }
+    if let Some(u) = d.internal_url.as_deref() {
+        check_url(c, "auth.dev_idp.internal_url", Some(u));
+    }
+    if providers.iter().any(|p| p.id == DEV_IDP_PROVIDER_ID) {
+        c.err(
+            "auth.oidc_providers",
+            "the provider id `dev` is reserved for auth.dev_idp",
+        );
+    }
+    let loopback = external_url
+        .and_then(host_of)
+        .is_some_and(|h| is_dev_idp_host(&h));
+    if !loopback {
+        c.err(
+            "auth.dev_idp.enabled",
+            "refused: the development IdP requires server.external_url on localhost, *.localhost, 127.0.0.1 or [::1] (never https on a non-loopback host)",
+        );
+    }
 }
 
 fn check_email(c: &mut Ctx, e: &EmailSection) {

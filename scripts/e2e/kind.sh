@@ -64,6 +64,7 @@ collect_logs() {
 
 cleanup() {
   [ -n "$PF_PID" ] && kill "$PF_PID" >/dev/null 2>&1
+  [ -n "${IDP_PF_PID:-}" ] && kill "$IDP_PF_PID" >/dev/null 2>&1
   if [ "$STATUS" -ne 0 ] && kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then collect_logs; fi
   if [ "$KEEP" -eq 0 ]; then
     log "tearing down cluster $CLUSTER (use --keep to skip)"
@@ -131,12 +132,14 @@ log "NetworkPolicy enforced: connection allowed before the default-deny policy, 
 k delete ns "$NPNS" --wait=false >/dev/null 2>&1
 
 # ---- 3. images ----------------------------------------------------------------------------
-IMAGES=(aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-web aurora-sandbox)
+IMAGES=(aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-web aurora-sandbox aurora-dev-idp)
 if [ "$SKIP_BUILD" != "1" ]; then
   for t in api gateway hookhost runner; do
     log "building aurora-$t"
     podman build -q -f images/services/Containerfile --target "$t" -t "$REGISTRY/aurora-$t:$TAG" . >/dev/null || exit 1
   done
+  log "building aurora-dev-idp (development IdP for OIDC-only sign-in, P1-005)"
+  podman build -q -f deploy/dev/dev-idp.Containerfile -t "$REGISTRY/aurora-dev-idp:$TAG" . >/dev/null || exit 1
   log "building aurora-web"
   podman build -q -f images/services/web.Containerfile -t "$REGISTRY/aurora-web:$TAG" . >/dev/null || exit 1
   log "building aurora-sandbox (sandbox-min target, fake harness)"
@@ -179,6 +182,17 @@ for _ in $(seq 60); do
   sleep 1
 done
 curl -fsS "http://127.0.0.1:$LOCAL_PORT/readyz" >/dev/null || { echo "api not ready via port-forward" >&2; exit 1; }
+# P1-005 (RFE-004): sign-in is OIDC only; the dev IdP (values-e2e.yaml: devIdp) is reached at the issuer URL
+# the API hands out, http://localhost:4107, so forward that port too.
+log "port-forward svc/$FULL-dev-idp -> 127.0.0.1:4107"
+k -n "$NS" port-forward "svc/$FULL-dev-idp" 4107:4107 >"$WORK/port-forward-idp.log" 2>&1 &
+IDP_PF_PID=$!
+for _ in $(seq 30); do
+  curl -fsS "http://localhost:4107/.well-known/openid-configuration" >/dev/null 2>&1 && break
+  kill -0 "$IDP_PF_PID" 2>/dev/null || { cat "$WORK/port-forward-idp.log" >&2; exit 1; }
+  sleep 1
+done
+curl -fsS "http://localhost:4107/.well-known/openid-configuration" >/dev/null || { echo "dev IdP not reachable via port-forward" >&2; exit 1; }
 
 log "running tests/e2e-hosted/tests/k8s.rs"
 AURORA_TEST_KIND=1 \

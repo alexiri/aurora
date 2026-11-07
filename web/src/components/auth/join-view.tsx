@@ -13,7 +13,6 @@ import { isUnauthorized } from "@/lib/auth/use-unauthorized-redirect";
 
 import { AuthCard, Notice } from "./auth-card";
 import { FormError } from "./form-error";
-import { ResendButton } from "./resend-button";
 
 const STATUS_TEXT: Record<string, string> = {
   expired: "This invitation has expired. Ask for a new one.",
@@ -54,7 +53,19 @@ export function JoinView() {
     const missing = preview.error instanceof ApiError && preview.error.status === 404;
     return (
       <AuthCard title="Join an organization">
-        {missing ? (
+        {missing && session.data ? (
+          // Phase 1 (RFE-004): a first sign-in accepts the pending invitation for the verified
+          // e-mail, so the link may simply have been used by that sign-in.
+          <>
+            <Notice>
+              This invitation is no longer pending. If you just signed in with the invited
+              address, you have already joined.
+            </Notice>
+            <Button asChild className="w-full">
+              <Link href="/">Open Aurora</Link>
+            </Button>
+          </>
+        ) : missing ? (
           <FormError message="This invitation link is not valid." />
         ) : (
           <ErrorState error={preview.error} onRetry={() => preview.refetch()} />
@@ -77,7 +88,6 @@ export function JoinView() {
   const signedOut = isUnauthorized(session.error);
   const joinPath = `/join?token=${encodeURIComponent(token)}`;
   const err = accept.error;
-  const unverified = err instanceof ApiError && err.code === "email_unverified";
 
   return (
     <AuthCard title={title}>
@@ -94,22 +104,16 @@ export function JoinView() {
             </Notice>
           ) : null}
           <FormError error={err} />
-          {unverified ? <ResendButton /> : null}
           <Button className="w-full" disabled={accept.isPending} onClick={() => accept.mutate()}>
             {accept.isPending ? "Joining…" : "Accept invitation"}
           </Button>
         </>
       ) : signedOut ? (
-        <div className="flex gap-3">
-          <Button asChild className="flex-1">
-            <Link href={`/auth/login?next=${encodeURIComponent(joinPath)}`}>Sign in</Link>
-          </Button>
-          <Button asChild variant="outline" className="flex-1">
-            <Link href={`/auth/signup?invitation=${encodeURIComponent(token)}`}>
-              Create account
-            </Link>
-          </Button>
-        </div>
+        <Button asChild className="w-full">
+          <Link href={`/auth/login?next=${encodeURIComponent(joinPath)}`}>
+            Sign in to accept
+          </Link>
+        </Button>
       ) : (
         <ErrorState error={session.error} onRetry={() => session.refetch()} />
       )}

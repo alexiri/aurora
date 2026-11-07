@@ -41,7 +41,6 @@ utoipa = { workspace = true }
 utoipa-axum = { workspace = true }
 uuid = { workspace = true }
 futures = { workspace = true }
-argon2 = { workspace = true }
 lettre = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }

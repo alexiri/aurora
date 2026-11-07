@@ -2,7 +2,7 @@
 
 (phase 1, OPS-017; replaces the podman compose install.) A local Kubernetes cluster running the
 production Helm chart, for development and integration testing. It is **not** a production install: the
-Postgres is the chart's evaluation StatefulSet, sign-up is open and the images are built from your checkout.
+Postgres is the chart's evaluation StatefulSet, sign-up is open, sign-in goes through a development identity provider (no passwords) and the images are built from your checkout.
 Why this replaced compose, with measurements: [`docs/ops/dev-environments.md`](../ops/dev-environments.md);
 design: [docs/15 §Development](../15-deployment-operations.md#development-kind--helm-deploykind-deploydev).
 Production installs: [install-helm.md](install-helm.md).
@@ -26,8 +26,23 @@ just kind-down                                # delete the cluster (the cargo ca
 (`just` forwards to `bash deploy/dev/kind-dev.sh up|dev|status|down`.) Cluster `aurora-dev`, release `aurora` in
 namespace `aurora`, sandboxes in `aurora-sandboxes`. **One URL: http://localhost:4000** (the chart's Ingress behind
 ingress-nginx, published on 127.0.0.1:4000 by `deploy/kind/kind-config-dev.yaml`). Sign-up is open
-(`deploy/kind/values-dev.yaml`): create the first account in the browser. `kubectl --context kind-aurora-dev -n aurora …`
-reaches everything; the first-administrator command is the one in [install-helm.md](install-helm.md#post-install-checks).
+(`deploy/kind/values-dev.yaml`). All sign-in is OIDC (phase 1, RFE-004): click **Development sign-in** and pick a user;
+your first sign-in creates the account. `kubectl --context kind-aurora-dev -n aurora …` reaches everything.
+
+**First instance administrator.** Pre-provision the e-mail, then sign in with it (the first OIDC sign-in binds the identity):
+
+```sh
+deploy/dev/kind-dev.sh bootstrap-admin you@example.test
+# = kubectl --context kind-aurora-dev -n aurora exec deploy/aurora-api -- /usr/local/bin/aurora-service bootstrap-admin --email you@example.test
+```
+
+The dev images name the binary `/usr/local/bin/aurora-service` (`deploy/dev/thin.Containerfile`), **not**
+`/usr/local/bin/aurora-api` as in the release images ([install-helm.md](install-helm.md#post-install-checks)).
+
+**Development IdP.** The chart's `devIdp` component (`aurora-dev-idp`, served at `http://localhost:4000/dev-idp`, reached
+by the API in-cluster through `auth.dev_idp.internal_url`) is enabled by `values-dev.yaml` with `allowAnyHint: true`, so a
+script or Playwright can sign in any e-mail with `login_hint`; the login page lists `devIdp.users`. It is refused on any
+non-loopback `externalUrl`, by the chart and by the API. `just kind-dev dev-idp` rebuilds it.
 
 `scripts/e2e/kind.sh` is separate: it uses its own cluster `aurora-e2e` and is the Kubernetes e2e.
 
@@ -48,7 +63,7 @@ Host-built binaries are not used: the host glibc is newer than the distroless ba
 
 | Flag | Values file | Adds |
 |------|-------------|------|
-| (always) | `deploy/kind/values-dev.yaml` | single replicas, open sign-up, hosted agents with the fake harness (`hosted.allow_fake_harness`), Ingress `nginx` |
+| (always) | `deploy/kind/values-dev.yaml` | single replicas, open sign-up, the development IdP (`devIdp`), hosted agents with the fake harness (`hosted.allow_fake_harness`), Ingress `nginx` |
 | `--llm-mock` | `deploy/kind/values-llm-mock.yaml` + `deploy/dev/llm-mock/llm-mock.yaml` | LiteLLM in front of VidaiMock in namespace `aurora-dev-mock` (decision I-30; **not a model**), endpoint `litellm-mock`, dev key `sk-aurora-mock-dev` ([llm-endpoints.md](llm-endpoints.md#running-with-the-mock-dev-and-e2e-only)) |
 | `--connector-fake` | `deploy/kind/values-connector-fake.yaml` | the fake connector Deployment; the API upserts connector `fake` from the generated token (still needs manifest approval, [plugins-and-connectors.md](plugins-and-connectors.md#connectors)) |
 
@@ -69,7 +84,7 @@ AURORA_KIND_CONTEXT=kind-aurora-dev AURORA_KIND_NS=aurora AURORA_KIND_SBX_NS=aur
   cargo test -p aurora-e2e-hosted --test k8s -- --test-threads=1     # the Kubernetes scenarios (chat in a sandbox Pod, park/wake, …)
 ```
 
-`m1.sh --kind` signs up two users; the API rate-limits sign-ups per client IP, so after several runs restart the API
+`m1.sh --kind` signs two users in through the dev IdP; the API rate-limits OIDC `start`/`callback` per client IP (20/min), so after several runs restart the API
 (`kubectl --context kind-aurora-dev -n aurora rollout restart deploy/aurora-api`). The first `kind-up` is slow (about 24 min:
 builder image, a cold cargo build, image pulls); later ones reuse the cargo volume and images.
 

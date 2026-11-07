@@ -38,13 +38,10 @@ export function useUpdateMe() {
   });
 }
 
-export const changePassword = (body: components["schemas"]["ChangePasswordRequest"]) =>
-  unwrap(api.POST("/v1/auth/password/change", { body }));
-
 export const revokeOtherSessions = () => unwrap(api.POST("/v1/auth/sessions/revoke-others"));
 
-export const deleteAccount = (password: string | null) =>
-  unwrap(api.DELETE("/v1/me", { body: password ? { password } : {} }));
+/** 412 `reauth_required` unless the session re-authenticated through OIDC within 10 minutes. */
+export const deleteAccount = () => unwrap(api.DELETE("/v1/me"));
 
 export function useMyApiKeys() {
   return useQuery({

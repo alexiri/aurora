@@ -17,4 +17,7 @@ bash scripts/guards/dep-graph.sh
 echo "== edge-routes (Helm Ingress/HTTPRoute)"
 bash scripts/guards/edge-routes.sh
 
+echo "== no-dev-idp-in-release (SEC-42)"
+bash scripts/guards/no-dev-idp-in-release.sh
+
 echo "== all guards passed"

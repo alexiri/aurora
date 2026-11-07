@@ -117,6 +117,11 @@ advertised_proxy_url = "$4://aurora-gateway:4102"
 [api]
 hookhost_url = "http://127.0.0.1:9"
 EOF
+    # Phase 1 (RFE-004): HEAD needs an OIDC provider to start (the baseline predates the key and
+    # rejects unknown ones). Nothing signs in on HEAD here: the baseline session is the test.
+    if [ "$1" = head ]; then
+      printf '\n[auth.dev_idp]\nenabled = true\nissuer = "http://localhost:4107"\n' >>"$f"
+    fi
   }
 
   PIDS=()
@@ -241,7 +246,7 @@ http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[2])), H).serve_foreve
   start_svc head "$HEAD_BIN" aurora-runner "$W/head-runner.toml"
   wait_ok "http://$OPS_IP:4103/readyz" && wait_ok "http://$OPS_IP:4106/readyz" && ok "HEAD gateway and runner ready" || { bad "HEAD gateway/runner"; svc_logs; }
   # The session cookie of the baseline survives (sessions are rows).
-  [ "$(api GET /v1/me | code)" = 200 ] && ok "baseline session still valid on HEAD api" || { bad "session invalid after upgrade"; api POST /v1/auth/login '{"email":"upg@e2e.test","password":"correct horse battery staple 42"}' >/dev/null; }
+  [ "$(api GET /v1/me | code)" = 200 ] && ok "baseline session still valid on HEAD api" || bad "session invalid after upgrade"
 
   echo "== phase 3: verify"
   SB=$(wait_sandbox running 90) && ok "sandbox reported running by HEAD api" || bad "sandbox state after upgrade: $(echo "$SB" | jq -c '{state,failure_code}')"

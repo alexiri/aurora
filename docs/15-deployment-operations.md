@@ -83,7 +83,7 @@ one new entry without activating it.
 | `auth.trusted_origins` | `[]` | api | extra origins for CSRF checks |
 | `auth.session_idle_secs` / `auth.session_absolute_secs` | 1209600 / 2592000 | api | |
 | `auth.oidc_providers[]` | — | api | `04 §OIDC`; (phase 1, RFE-004) **at least one required** (or `auth.dev_idp.enabled`), `require_email_verified` removed |
-| `auth.dev_idp.enabled`, `auth.dev_idp.issuer` | `false`, — | api | (phase 1, RFE-004) registers the development provider `dev` served by `aurora-dev-idp`; refused on a non-loopback https `server.external_url` (`04 §Development and end-to-end sign-in`) |
+| `auth.dev_idp.enabled`, `auth.dev_idp.issuer`, `auth.dev_idp.internal_url` | `false`, —, `issuer` | api | (phase 1, RFE-004) registers the development provider `dev` served by `aurora-dev-idp`; `issuer` is the URL the browser reaches, `internal_url` (optional) where the API itself reaches the IdP (discovery, token, JWKS; the chart sets it to the Service); refused unless `server.external_url` is on `localhost`, `*.localhost`, `127.0.0.1` or `[::1]` (`04 §Development and end-to-end sign-in`) |
 | `email.smtp_url`, `email.from` | — | api | unset ⇒ log-only mode; used for invitations and (phase 2, RFE-011a) approval notifications |
 | `secrets.default_store`, `secrets.stores[]` | `inline` | api, gateway | `08 §2` |
 | `llm.enabled_providers`, `llm.provider_preference`, `llm.endpoints[]` | `["litellm","anthropic"]` | api, gateway | `08 §6`; each endpoint may set `allowed_models` and `key_origin` (`method` = `endpoint` \| `litellm_team` \| `provider_account`, with `allowed_organization_ids`, `allowed_workspace_ids`, `allowed_team_ids`) |
@@ -268,7 +268,7 @@ Files: `deploy/dev/kind-dev.sh` (driven by `just kind-up | kind-dev | kind-statu
 | `runner` (profile `hosted`, podman socket) | `runner` with the Kubernetes backend: sandboxes are Pods in `aurora-sandboxes`, enforced by NetworkPolicies (so SEC-02/SEC-09 are exercised the way production runs them) |
 | `connector-fake` (profile) | `values-connector-fake.yaml`: a chart `connectors` entry; `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` from the generated token |
 | `vidaimock`, `litellm` (profile `llm-mock`, decision I-30) | `deploy/dev/llm-mock/llm-mock.yaml` (namespace `aurora-dev-mock`, LiteLLM Service at the fixed ClusterIP `10.96.100.40`) plus `values-llm-mock.yaml` (endpoint `litellm-mock`, `gateway.allowed_private = ["10.96.100.40/32"]`, `networkPolicy.gatewayExtraEgress`); dev master key `sk-aurora-mock-dev`; **not a model** |
-| `dev-idp` (profile, RFE-004) | not provided by OPS-017: the dev OIDC provider has to be added as a chart/kind component by RFE-004 |
+| `dev-idp` (profile, RFE-004) | the chart component `devIdp` (`templates/dev-idp.yaml`, image `aurora-dev-idp`, P1-005): served through the Ingress at `/dev-idp`, registered as provider `dev` through `config.auth.dev_idp` (`issuer` = the browser URL, `internal_url` = the in-cluster Service); enabled by `values-dev.yaml`, disabled by default, refused on a non-loopback `externalUrl`. Host loop: `just dev` runs it on `:4107` (`scripts/dev/live.py`, `deploy/dev/env.sh`) |
 
 `kind-dev.sh up` creates the cluster, installs ingress-nginx, builds and loads the images and runs
 `helm upgrade --install`. Rust services are built in a builder container against the bind-mounted source with a

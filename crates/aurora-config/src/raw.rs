@@ -98,6 +98,26 @@ pub struct AuthSection {
     pub session_idle_secs: u64,
     pub session_absolute_secs: u64,
     pub oidc_providers: Vec<OidcProvider>,
+    /// (phase 1, RFE-004) The development IdP, `docs/04 §Development and end-to-end sign-in`.
+    pub dev_idp: DevIdp,
+}
+
+/// Fixed development client of the `dev` provider (`aurora-dev-idp`, `aurora_testkit::oidc`).
+pub const DEV_IDP_PROVIDER_ID: &str = "dev";
+pub const DEV_IDP_CLIENT_ID: &str = "aurora-dev-client";
+pub const DEV_IDP_CLIENT_SECRET: &str = "aurora-dev-secret";
+
+/// `auth.dev_idp`: registers the extra provider `dev` served by `aurora-dev-idp`. Development
+/// and tests only: refused on a non-loopback `server.external_url` (`validate::check_auth`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DevIdp {
+    pub enabled: bool,
+    /// Issuer URL as the *browser* reaches it (also the `iss` claim).
+    pub issuer: Option<String>,
+    /// Where the API itself reaches the IdP (discovery, token, JWKS) when that differs from
+    /// `issuer` (e.g. the in-cluster Service while the browser uses the ingress). Default: `issuer`.
+    pub internal_url: Option<String>,
 }
 impl Default for AuthSection {
     fn default() -> Self {
@@ -109,6 +129,7 @@ impl Default for AuthSection {
             session_idle_secs: 1_209_600,
             session_absolute_secs: 2_592_000,
             oidc_providers: vec![],
+            dev_idp: DevIdp::default(),
         }
     }
 }
@@ -125,7 +146,9 @@ pub struct OidcProvider {
     /// Name of the environment variable holding the client secret.
     pub client_secret_env: String,
     pub scopes: Vec<String>,
-    pub require_email_verified: bool,
+    /// Removed in phase 1 (RFE-004): an unverified e-mail is always refused. `false` fails
+    /// startup; `true` is accepted and ignored.
+    pub require_email_verified: Option<bool>,
     pub allowed_email_domains: Vec<String>,
     pub jit: Option<OidcJit>,
 }
@@ -138,7 +161,7 @@ impl Default for OidcProvider {
             client_id: String::new(),
             client_secret_env: String::new(),
             scopes: strs(&["openid", "email", "profile"]),
-            require_email_verified: true,
+            require_email_verified: None,
             allowed_email_domains: vec![],
             jit: None,
         }

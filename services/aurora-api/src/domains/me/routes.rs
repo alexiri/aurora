@@ -42,21 +42,16 @@ async fn patch_me(
     Ok(Json(me))
 }
 
-/// Delete the caller's own account.
+/// Delete the caller's own account (needs a recent OIDC re-authentication, else 412 `reauth_required`).
 #[utoipa::path(delete, path = "/me", operation_id = "deleteMe", tag = "me",
-    request_body = DeleteMeRequest,
     responses((status = 204, description = "Deleted"), (status = 403, body = ErrorEnvelope),
-        (status = 409, body = ErrorEnvelope)),
+        (status = 409, body = ErrorEnvelope), (status = 412, body = ErrorEnvelope)),
     security(("session" = [])))]
-async fn delete_me(
-    c: SessionCaller,
-    State(s): State<AppState>,
-    Json(req): Json<DeleteMeRequest>,
-) -> Result<StatusCode, ApiError> {
+async fn delete_me(c: SessionCaller, State(s): State<AppState>) -> Result<StatusCode, ApiError> {
     let Principal::Session { id } = c.principal else {
         return Err(ApiError::forbidden("Session required."));
     };
-    service::delete_me(&s, c.user_id, id, req.password).await?;
+    service::delete_me(&s, c.user_id, id).await?;
     audit::record(
         &s,
         AuditEvent::new(AuditActor::from_caller(&c), "user.delete", Outcome::Success)

@@ -26,6 +26,13 @@ hookhost: {replicas: 1}
 web: {replicas: 1}
 runner: {replicas: 1}
 
+# P1-005 (RFE-004): all sign-in is OIDC. The dev IdP is served through the ingress at
+# http://localhost:4000/dev-idp; the API reaches it in-cluster. Any login_hint signs in (the e2e specs
+# mint their own e-mails); the login page lists the users below. Dev only; loopback only.
+devIdp:
+  enabled: true
+  allowAnyHint: true
+
 config:
   auth:
     signup_mode: open

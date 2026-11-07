@@ -397,8 +397,10 @@ done when its tests exist, pass in CI, and the security invariants it touches
   `auth.instance_admins` flag via OIDC; unverified e-mail, disabled user,
   re-authentication (`reauth=1`, `reauth_required` on account deletion);
   startup refusals (no provider, dev IdP on a public URL, `require_email_verified
-  = false`); the dev IdP and `aurora_testkit::oidc` `sign_in` helper used by the
-  Playwright flows; API keys and CLI device login unchanged.
+  = false`); the dev IdP (`aurora-dev-idp`) and the sign-in helpers (`Harness::sign_in` in
+  the API suite, `aurora_testkit::oidc::sign_in_over_http` for the e2e crates, a `login_hint`
+  route for the Playwright flows) — none of them is a bypass: they drive the real
+  `start`/`callback`; API keys and CLI device login unchanged.
 
 - (phase 2, RFE-008) Atomic audit (SEC-32): the audit coverage test enumerates
   `SECURITY_CRITICAL_ACTIONS` against the route catalogue (every critical route

@@ -399,7 +399,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC`; (phase 1, RFE-004) the only sign-in; `start` accepts `reauth=1` |
 | POST `/v1/auth/cli`, `/v1/auth/cli/token` | none | device flow |
 | POST `/v1/auth/cli/approve` | SO | `{ user_code, workspace_id }` |
-| GET/PATCH/DELETE `/v1/me` | S (DELETE: SO) | profile, memberships (phase 2, RFE-012: with the effective role per workspace), default org; (phase 2, RFE-011a) `PATCH { approval_email: bool }` |
+| GET/PATCH/DELETE `/v1/me` | S (DELETE: SO) | (phase 1, RFE-004: DELETE needs a recent OIDC re-authentication, 412 `reauth_required`, no body) profile, memberships (phase 2, RFE-012: with the effective role per workspace), default org; (phase 2, RFE-011a) `PATCH { approval_email: bool }` |
 
 ### Organizations, members, keys
 | Method & path | Auth | Purpose |

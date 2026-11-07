@@ -310,8 +310,13 @@ kubectl -n aurora get pods
 kubectl -n aurora exec deploy/aurora-api -- /usr/local/bin/aurora-api bootstrap-admin --email you@example.org
 ```
 
-`bootstrap-admin` prints a one-time password-set link. The `kubectl exec` line is
-not run here, and the image has no shell. The binary path is the image's `ENTRYPOINT`.
+All sign-in is OIDC (phase 1, RFE-004): configure at least one provider under `config.auth.oidc_providers`
+(`docs/04 §OIDC`), or the API refuses to start (`no_oidc_provider`). `bootstrap-admin` **pre-provisions** an
+instance administrator with a verified e-mail and no credential, and prints the sign-in URL
+(`<externalUrl>/auth/login`); the person's first OIDC sign-in with that e-mail binds their identity. It refuses to
+run when no provider is configured. The `kubectl exec` line is not run here, and the image has no shell. The binary
+path is the image's `ENTRYPOINT`. In the **dev** images of `deploy/dev/kind-dev.sh` the binary is
+`/usr/local/bin/aurora-service` instead (`deploy/dev/thin.Containerfile`; `kind-dev.sh bootstrap-admin <email>` wraps it).
 
 Then register a runner ([runners.md](runners.md#add-a-runner)).
 
