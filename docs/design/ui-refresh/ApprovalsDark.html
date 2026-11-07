@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Aurora — Approvals (dark)</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0;background:#0B1020;color-scheme:dark}
+a{color:#5EEAD4;text-decoration:none}a:hover{color:#99F6E4;text-decoration:underline}
+button{font:inherit}
+</style>
+</helmet>
+<div style="display: flex; flex-wrap: wrap; min-height: 100vh; font-family: Inter, system-ui, sans-serif; color: #E8ECF3; background: #0B1020; font-size: 14px; line-height: 1.45">
+
+<aside style="flex: 1 1 248px; max-width: 100%; box-sizing: border-box; background: #121829; border-right: 1px solid #252E44; padding: 16px 12px; display: flex; flex-direction: column; gap: 16px">
+  <div style="display: flex; align-items: center; gap: 10px; padding: 4px 8px">
+    <img src="brand/aurora-lockup-horizontal-dark.svg" alt="Aurora" style="display: block; height: 38px; width: auto">
+  </div>
+  <button type="button" aria-label="Switch organization or workspace: Acme Labs, Platform" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 8px 10px; border: 1px solid #252E44; border-radius: 10px; background: #161D30; cursor: pointer; text-align: left; color: #E8ECF3">
+    <span style="width: 28px; height: 28px; border-radius: 7px; background: #0F2E2B; color: #5EEAD4; display: grid; place-items: center; font-weight: 600; font-size: 13px">A</span>
+    <span style="display: flex; flex-direction: column; flex: 1; min-width: 0"><span style="font-size: 12px; color: #8B95A7">Acme Labs</span><span style="font-weight: 600">Platform</span></span>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8B95A7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 15 5 5 5-5"></path><path d="m7 9 5-5 5 5"></path></svg>
+  </button>
+  <nav aria-label="Workspace" style="display: flex; flex-direction: column; gap: 2px">
+    <a href="OverviewDark.html" style="display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px; border-radius: 8px; color: #C3CBD8; text-decoration: none">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>
+      Overview
+    </a>
+    <a href="AgentDark.html" style="display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px; border-radius: 8px; color: #C3CBD8; text-decoration: none">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="12" rx="3"></rect><path d="M12 8V4"></path><circle cx="9" cy="14" r="1"></circle><circle cx="15" cy="14" r="1"></circle></svg>
+      Agents
+    </a>
+    <a href="ApprovalsDark.html" aria-current="page" style="display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px; border-radius: 8px; background: #1C2438; color: #E8ECF3; font-weight: 600; text-decoration: none">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2DD4BF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8 8 9 4.6-1 8-4.5 8-9V6z"></path><path d="m9 12 2 2 4-4"></path></svg>
+      <span style="flex: 1">Approvals</span>
+      <span aria-label="3 pending" style="min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box; border-radius: 999px; background: #3A2A0E; color: #FBC66B; font-size: 12px; font-weight: 600; display: grid; place-items: center">3</span>
+    </a>
+    <a href="#activity" style="display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px; border-radius: 8px; color: #C3CBD8; text-decoration: none">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"></path></svg>
+      Activity
+    </a>
+    <a href="#credentials" style="display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px; border-radius: 8px; color: #C3CBD8; text-decoration: none">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"></circle><path d="m11 12 9-9"></path><path d="m17 6 3 3"></path></svg>
+      Credentials
+    </a>
+    <a href="#policy" style="display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px; border-radius: 8px; color: #C3CBD8; text-decoration: none">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16"></path><path d="M4 12h10"></path><path d="M4 18h6"></path><circle cx="18" cy="16" r="3"></circle></svg>
+      Policy
+    </a>
+  </nav>
+  <div style="margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 0 2px 0 10px">
+    <span id="theme-d" style="flex: 1; font-size: 12px; color: #8B95A7">Theme</span>
+    <div role="radiogroup" aria-labelledby="theme-d" style="display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: #1C2438">
+      <a href="ApprovalsDark.html" role="radio" aria-checked="false" aria-label="Match system" style="width: 36px; height: 36px; border-radius: 999px; display: grid; place-items: center; color: #8B95A7; text-decoration: none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"></rect><path d="M8 20h8"></path><path d="M12 16v4"></path></svg></a>
+      <a href="Approvals.html" role="radio" aria-checked="false" aria-label="Light" style="width: 36px; height: 36px; border-radius: 999px; display: grid; place-items: center; color: #8B95A7; text-decoration: none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m5 5 1.5 1.5"></path><path d="m17.5 17.5 1.5 1.5"></path><path d="m5 19 1.5-1.5"></path><path d="m17.5 6.5 1.5-1.5"></path></svg></a>
+      <a href="ApprovalsDark.html" role="radio" aria-checked="true" aria-label="Dark" style="width: 36px; height: 36px; border-radius: 999px; display: grid; place-items: center; background: #2A3348; color: #E8ECF3; text-decoration: none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"></path></svg></a>
+    </div>
+  </div>
+  <button type="button" aria-label="Account menu for Alex Iribarren" style="display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; cursor: pointer; text-align: left; color: #E8ECF3">
+    <span style="width: 30px; height: 30px; border-radius: 999px; background: #E8ECF3; color: #0B1020; display: grid; place-items: center; font-size: 12px; font-weight: 600">AI</span>
+    <span style="display: flex; flex-direction: column; flex: 1; min-width: 0"><span style="font-weight: 500">Alex Iribarren</span><span style="font-size: 12px; color: #8B95A7">Owner</span></span>
+  </button>
+</aside>
+
+<main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 28px clamp(16px, 4vw, 48px) 48px">
+  <div style="max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px">
+
+    <header style="display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px">
+      <div style="flex: 1 1 320px; display: flex; flex-direction: column; gap: 6px">
+        <nav aria-label="Breadcrumb" style="font-size: 13px; color: #8B95A7; display: flex; gap: 6px; align-items: center"><a href="OverviewDark.html" style="color: #8B95A7">Platform</a><span aria-hidden="true">/</span><span>Approvals</span></nav>
+        <h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 30px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.15">Approvals</h1>
+        <p style="margin: 0; color: #B4BDCC">Requests held by policy. Nothing leaves the gateway until someone decides.</p>
+      </div>
+      <span role="status" style="display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 12px; border-radius: 999px; background: #0F2E2B; color: #5EEAD4; font-size: 13px; font-weight: 500"><span style="width: 8px; height: 8px; border-radius: 999px; background: #2DD4BF; box-shadow: 0 0 0 3px #134E48"></span>Live</span>
+    </header>
+
+    <div role="tablist" aria-label="Approvals" style="display: flex; gap: 4px; padding: 4px; background: #1C2438; border-radius: 10px; width: fit-content; max-width: 100%; flex-wrap: wrap">
+      <button type="button" role="tab" aria-selected="true" style="min-height: 36px; padding: 0 14px; border: 0; border-radius: 7px; background: #2A3348; color: #E8ECF3; font-weight: 600; cursor: pointer">Pending <span style="color: #FBC66B">3</span></button>
+      <button type="button" role="tab" aria-selected="false" style="min-height: 36px; padding: 0 14px; border: 0; border-radius: 7px; background: transparent; color: #B4BDCC; font-weight: 500; cursor: pointer">Actions</button>
+      <button type="button" role="tab" aria-selected="false" style="min-height: 36px; padding: 0 14px; border: 0; border-radius: 7px; background: transparent; color: #B4BDCC; font-weight: 500; cursor: pointer">History</button>
+    </div>
+
+    <section aria-label="Release prep" style="display: flex; flex-direction: column; gap: 10px">
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8B95A7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h18"></path><path d="M3 12h18"></path><path d="M3 17h18"></path></svg>
+        <h2 style="margin: 0; font-size: 14px; font-weight: 600">Release prep</h2>
+        <span style="font-size: 13px; color: #8B95A7">Batch from @daneel · 2 requests</span>
+        <div style="margin-left: auto; display: flex; gap: 8px">
+          <button type="button" style="min-height: 36px; padding: 0 12px; border-radius: 8px; border: 1px solid #34405A; background: #121829; color: #E8ECF3; font-weight: 500; cursor: pointer">Deny all</button>
+          <button type="button" style="min-height: 36px; padding: 0 12px; border-radius: 8px; border: 0; background: #2DD4BF; color: #042F2B; font-weight: 600; cursor: pointer">Approve all 2</button>
+        </div>
+      </div>
+
+      <ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px">
+        <li style="background: #121829; border: 1px solid #252E44; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 14px">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+            <span style="width: 32px; height: 32px; border-radius: 8px; background: #0F2E2B; color: #5EEAD4; display: grid; place-items: center; font-weight: 600">D</span>
+            <span style="font-weight: 600">Daneel</span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">@daneel</span>
+            <span style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #FBC66B; font-variant-numeric: tabular-nums">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+              Expires in 4m 12s
+            </span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <p style="margin: 0; font-size: 16px; font-weight: 600">Open an issue in acme/web</p>
+            <p style="margin: 0; color: #B4BDCC">Track the flaky login test seen on the last three CI runs.</p>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; background: #0B1020; border: 1px solid #1F2739; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 12px">
+            <span style="font-weight: 500; padding: 1px 6px; border-radius: 4px; background: #E8ECF3; color: #0B1020">POST</span>
+            <span style="overflow-wrap: anywhere; color: #D5DBE5">api.github.com/repos/acme/web/issues</span>
+          </div>
+          <dl style="margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 20px; font-size: 13px">
+            <dt style="color: #8B95A7">Repository</dt><dd style="margin: 0">acme/web</dd>
+            <dt style="color: #8B95A7">Title</dt><dd style="margin: 0">Flaky test: login redirects twice</dd>
+            <dt style="color: #8B95A7">Labels</dt><dd style="margin: 0">bug, ci</dd>
+          </dl>
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 14px; border-top: 1px solid #1F2739">
+            <span style="font-size: 12px; color: #8B95A7">Rule <span style="font-family: 'JetBrains Mono', monospace; color: #C3CBD8">github-writes-need-approval</span></span>
+            <div style="margin-left: auto; display: flex; gap: 8px">
+              <button type="button" style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #34405A; background: #121829; color: #E8ECF3; font-weight: 500; cursor: pointer">Deny</button>
+              <button type="button" style="display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 16px; border-radius: 8px; border: 0; background: #2DD4BF; color: #042F2B; font-weight: 600; cursor: pointer">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5 9-10"></path></svg>
+                Approve
+              </button>
+            </div>
+          </div>
+        </li>
+
+        <li style="background: #121829; border: 1px solid #252E44; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 14px">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+            <span style="width: 32px; height: 32px; border-radius: 8px; background: #0F2E2B; color: #5EEAD4; display: grid; place-items: center; font-weight: 600">D</span>
+            <span style="font-weight: 600">Daneel</span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8B95A7">@daneel</span>
+            <span style="margin-left: auto; font-size: 13px; color: #FBC66B; font-variant-numeric: tabular-nums">Expires in 4m 12s</span>
+          </div>
+          <p style="margin: 0; font-size: 16px; font-weight: 600">Create a release draft v0.4.0</p>
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; background: #0B1020; border: 1px solid #1F2739; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 12px">
+            <span style="font-weight: 500; padding: 1px 6px; border-radius: 4px; background: #E8ECF3; color: #0B1020">POST</span>
+            <span style="overflow-wrap: anywhere; color: #D5DBE5">api.github.com/repos/acme/web/releases</span>
+          </div>
+          <p role="alert" style="margin: 0; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 8px; background: #221B0F; border: 1px solid #4A3712; color: #FBC66B; font-size: 13px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20z"></path><path d="M12 10v4"></path><path d="M12 17h.01"></path></svg>
+            Already decided by someone else.
+          </p>
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 14px; border-top: 1px solid #1F2739">
+            <span style="font-size: 12px; color: #8B95A7">Rule <span style="font-family: 'JetBrains Mono', monospace; color: #C3CBD8">github-writes-need-approval</span></span>
+            <div style="margin-left: auto; display: flex; gap: 8px">
+              <button type="button" disabled style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #252E44; background: #161D30; color: #8B95A7; font-weight: 500">Deny</button>
+              <button type="button" disabled style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 0; background: #2A3348; color: #B4BDCC; font-weight: 500">Approve</button>
+            </div>
+          </div>
+        </li>
+      </ul>
+    </section>
+  </div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

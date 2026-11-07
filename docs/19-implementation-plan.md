@@ -165,6 +165,13 @@ removal handling.
   Calendar, Drive with MIME summaries via hook), Microsoft 365 package,
   AWS keys and AWS role (SigV4 + mint), Sentry, Notion, Linear, PostgreSQL.
 - Gateway database lane (`21 §Database lane`).
+- Dashboard visual design and brand (`14 §Visual design`, D-68, task P2-UI):
+  light and dark tokens with a System/Light/Dark switch, the Aurora mark,
+  favicon and app icons, self-hosted fonts, sidebar shell, restyled UI
+  primitives and screens.
+  Frontend only. Run it **early in phase 2**: stage 1 (tokens, primitives,
+  shell) merges before the phase-2 RFE tasks add their dashboard screens, so
+  those screens are built on the new components rather than restyled later.
 - Design-review items (`80`): RFE-005 (policy `user` identities bind to the
   turn's speaker), RFE-006 (freeze agent/workspace/org), RFE-007 (keyring-style
   lists for the signing key and internal secret), RFE-008 (atomic audit for the

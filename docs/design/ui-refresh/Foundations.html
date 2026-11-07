@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Aurora — Foundations</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+button,input{font:inherit}
+</style>
+</helmet>
+<div style="width: 1100px; height: 1240px; box-sizing: border-box; padding: 56px; background: #FFFFFF; font-family: Inter, system-ui, sans-serif; color: #0E1525; font-size: 14px; line-height: 1.45; display: flex; flex-direction: column; gap: 44px">
+
+  <header style="display: flex; flex-direction: column; gap: 6px">
+    <p style="margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #0F766E">Aurora UI</p>
+    <h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 36px; font-weight: 600; letter-spacing: -0.02em">Foundations</h1>
+    <p style="margin: 0; color: #475569; max-width: 640px">Tokens to drop into <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px">globals.css</span> as CSS variables and expose through Tailwind’s <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px">@theme</span>.</p>
+  </header>
+
+  <section style="display: flex; flex-direction: column; gap: 16px">
+    <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 20px; font-weight: 600">Color</h2>
+    <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px">
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #0E1525"></div><p style="margin: 0; font-weight: 600">ink</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">#0E1525 · text, primary</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #475569"></div><p style="margin: 0; font-weight: 600">ink-2</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">#475569 · body</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #5B6576"></div><p style="margin: 0; font-weight: 600">muted</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">#5B6576 · meta</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #E4E7EC"></div><p style="margin: 0; font-weight: 600">line</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">#E4E7EC · borders</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #F6F7F9; border: 1px solid #E4E7EC; box-sizing: border-box"></div><p style="margin: 0; font-weight: 600">canvas</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">#F6F7F9 · app bg</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #FFFFFF; border: 1px solid #E4E7EC; box-sizing: border-box"></div><p style="margin: 0; font-weight: 600">surface</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">#FFFFFF · cards</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #0F766E"></div><p style="margin: 0; font-weight: 600">aurora</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">#0F766E · accent, approve</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #E7F5F2"></div><p style="margin: 0; font-weight: 600">aurora-soft</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">#E7F5F2 / #0B5F58</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #2DD4BF"></div><p style="margin: 0; font-weight: 600">glow</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">#2DD4BF · logo, on dark</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #FDECC8"></div><p style="margin: 0; font-weight: 600">pending</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">#FDECC8 / #7A3E06</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #FDE8E8"></div><p style="margin: 0; font-weight: 600">danger</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">#FDE8E8 / #9B1C1C</p></div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 72px; border-radius: 10px; background: #D6D8FF"></div><p style="margin: 0; font-weight: 600">avatar tints</p><p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">#D6D8FF / #3B2A9E, blue, teal</p></div>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 16px">
+    <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 20px; font-weight: 600">Type</h2>
+    <div style="display: grid; grid-template-columns: 180px 1fr; gap: 14px 24px; align-items: baseline">
+      <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">Display · Space Grotesk 600 / 30</span>
+      <span style="font-family: 'Space Grotesk', Inter, sans-serif; font-size: 30px; font-weight: 600; letter-spacing: -0.02em">Platform workspace</span>
+      <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">Section · Space Grotesk 600 / 18</span>
+      <span style="font-family: 'Space Grotesk', Inter, sans-serif; font-size: 18px; font-weight: 600">Agents</span>
+      <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">Body · Inter 400 / 14</span>
+      <span>Requests held by policy. Nothing leaves the gateway until someone decides.</span>
+      <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">Label · Inter 600 / 11 caps</span>
+      <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #5B6576">Manage</span>
+      <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">Code · JetBrains Mono / 12</span>
+      <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px">@daneel · POST api.github.com/repos/acme/web/issues</span>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 20px">
+    <h2 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 20px; font-weight: 600">Components</h2>
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+      <button type="button" style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 0; background: #0E1525; color: #FFFFFF; font-weight: 500">Primary</button>
+      <button type="button" style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #D5DAE1; background: #FFFFFF; color: #0E1525; font-weight: 500">Outline</button>
+      <button type="button" style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 0; background: #0F766E; color: #FFFFFF; font-weight: 500">Approve</button>
+      <button type="button" style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 0; background: transparent; color: #334155; font-weight: 500">Ghost</button>
+      <button type="button" style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #F3B4B4; background: #FFFFFF; color: #9B1C1C; font-weight: 500">Delete agent</button>
+      <button type="button" disabled style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 0; background: #DDE2E8; color: #475569; font-weight: 500">Disabled</button>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+      <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.04em; padding: 3px 8px; border-radius: 999px; background: #EEF1F4; color: #334155">HOSTED</span>
+      <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.04em; padding: 3px 8px; border-radius: 999px; background: #EEF1F4; color: #334155">BYO</span>
+      <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.04em; padding: 3px 8px; border-radius: 999px; background: #E7F5F2; color: #0B5F58">DEFAULT</span>
+      <span style="font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 6px; background: #E7F5F2; color: #0B5F58">ALLOW</span>
+      <span style="font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 6px; background: #FDECC8; color: #7A3E06">HELD</span>
+      <span style="font-size: 11px; font-weight: 600; padding: 2px 6px; border-radius: 6px; background: #FDE8E8; color: #9B1C1C">DENY</span>
+      <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #0B5F58"><span style="width: 7px; height: 7px; border-radius: 999px; background: #14B8A6"></span>Running</span>
+      <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #5B6576"><span style="width: 7px; height: 7px; border-radius: 999px; background: #A3ACB9"></span>Idle</span>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: start">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <label for="f-name" style="font-weight: 500">Agent name</label>
+        <input id="f-name" value="Daneel" style="min-height: 40px; box-sizing: border-box; padding: 0 12px; border-radius: 8px; border: 1px solid #CBD2DB; color: #0E1525">
+        <span style="font-size: 12px; color: #5B6576">Shown in chat and approvals.</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <label for="f-handle" style="font-weight: 500">Handle</label>
+        <input id="f-handle" value="dan eel" aria-invalid="true" aria-describedby="f-handle-err" style="min-height: 40px; box-sizing: border-box; padding: 0 12px; border-radius: 8px; border: 1px solid #C81E1E; color: #0E1525; font-family: 'JetBrains Mono', monospace; font-size: 13px">
+        <span id="f-handle-err" style="font-size: 12px; color: #9B1C1C">Use lowercase letters, numbers and dashes.</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <span style="font-weight: 500">Tabs</span>
+        <div role="tablist" aria-label="Example" style="display: flex; gap: 4px; padding: 4px; background: #EEF1F4; border-radius: 10px; width: fit-content">
+          <button type="button" role="tab" aria-selected="true" style="min-height: 32px; padding: 0 12px; border: 0; border-radius: 7px; background: #FFFFFF; color: #0E1525; font-weight: 600; box-shadow: 0 1px 2px rgba(14,21,37,.08)">Pending</button>
+          <button type="button" role="tab" aria-selected="false" style="min-height: 32px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: #475569; font-weight: 500">History</button>
+        </div>
+      </div>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 24px; font-size: 13px; color: #475569">
+      <span><b style="color: #0E1525">Radius</b> 8 controls · 10 inputs on auth · 12–14 cards · 999 pills</span>
+      <span><b style="color: #0E1525">Spacing</b> 4-pt scale; 24 between sections, 16–20 card padding</span>
+      <span><b style="color: #0E1525">Focus</b> 2px aurora ring + 3px #C7EDE6 halo</span>
+      <span><b style="color: #0E1525">Targets</b> ≥ 36px dense, 44px primary actions</span>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1100,"height":1240}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>
