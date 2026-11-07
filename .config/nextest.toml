@@ -2,6 +2,11 @@
 # Locally: `cargo nextest run --workspace --all-features` (default profile).
 [profile.default]
 fail-fast = false
+# services/aurora-cli/tests/plugin.rs launches `aurora` with AURORA_GATEWAY_BIN pointing at the
+# sibling aurora-gateway binary; ship it in the archive so shard runners (which do not compile) have it.
+archive.include = [
+  { path = "debug/aurora-gateway", relative-to = "target", on-missing = "error" },
+]
 
 [profile.ci]
 fail-fast = false

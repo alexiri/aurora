@@ -188,6 +188,16 @@ jobs:
         run: |
           bash scripts/images/build-sandbox-min.sh aurora-sandbox:0.1.0
           podman save -o sandbox-image.tar localhost/aurora-sandbox:0.1.0
+      - name: Start rootless podman API socket (the runner talks to it over a unix socket)
+        run: |
+          export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+          mkdir -p "$XDG_RUNTIME_DIR/podman"
+          sock="$XDG_RUNTIME_DIR/podman/podman.sock"
+          setsid nohup podman system service --time=0 "unix://$sock" > podman-service.log 2>&1 &
+          for _ in $(seq 30); do [ -S "$sock" ] && break; sleep 1; done
+          [ -S "$sock" ] || { echo "podman socket $sock did not appear"; cat podman-service.log; exit 1; }
+          podman info --format '{{.Host.RemoteSocket.Path}} exists={{.Host.RemoteSocket.Exists}}'
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
       - name: e2e-hosted
         env:
           AURORA_TEST_PODMAN: "1"

@@ -1,5 +1,6 @@
 //! SEC-34 / I-23: no child (process manager, gate, harness launcher) inherits `AURORA_BOOT` or
-//! credential-shaped values; ordinary container/app env still passes.
+//! credential-shaped values; ordinary container/app env still passes. Probes print `env -0`
+//! (NUL-separated) because CI runner values contain newlines.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod common;
 
@@ -22,7 +23,7 @@ const MARK: &str = "AURORA_TEST_INNER";
 fn check(env: &str) {
     assert!(!env.contains("AURORA_BOOT"), "leaked AURORA_BOOT: {env}");
     assert!(!env.contains("leak-me"), "leaked boot value: {env}");
-    assert!(env.lines().any(|l| l.starts_with("PATH=")), "{env}");
+    assert!(env.split('\0').any(|l| l.starts_with("PATH=")), "{env}");
     assert!(env.contains("HTTPS_PROXY=http://127.0.0.1:3128"), "{env}");
     assert!(!env.contains(MARK), "{env}");
     // snapshot app env (set on the container) still reaches children; credential-shaped
@@ -65,16 +66,19 @@ async fn inner_probe() {
     let (tx, _rx) = mpsc::channel(64);
     let mut cfg = ProcessConfig::new(d.path().to_path_buf());
     cfg.uid = None;
+    // The default 4 KiB tail truncates a large CI runner environment (PATH= falls off the front);
+    // the probe must see the whole environment to keep every assertion meaningful.
+    cfg.tail = 256 * 1024;
     let pm = ProcessManager::new(cfg, ChannelSender::from_mpsc(tx));
 
     // gate
-    let g = pm.run_gate(Uuid::nil(), "env", 10).await;
+    let g = pm.run_gate(Uuid::nil(), "env -0", 10).await;
     assert_eq!(g.outcome, GateOutcome::Wake);
     check(&g.output.unwrap());
 
     // process manager
     let r = pm
-        .call("process_start", &json!({"name": "e", "command": "env"}))
+        .call("process_start", &json!({"name": "e", "command": "env -0"}))
         .unwrap();
     let id = r["id"].as_str().unwrap().to_owned();
     let mut tail = String::new();
@@ -90,7 +94,7 @@ async fn inner_probe() {
 
     // claude-code launcher with a stub binary
     let stub = d.path().join("stub.sh");
-    std::fs::write(&stub, "#!/bin/sh\nenv\n").unwrap();
+    std::fs::write(&stub, "#!/bin/sh\nenv -0\n").unwrap();
     std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
     let io = ProcessLauncher { program: stub }
         .launch(LaunchSpec {
