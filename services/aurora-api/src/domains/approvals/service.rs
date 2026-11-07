@@ -88,6 +88,8 @@ pub async fn decide(
     {
         return Err(ApiError::not_found("Approval not found."));
     }
+    // RFE-012 (D-55, SEC-28): only `can_approve` decides; a plain member gets 403.
+    crate::http::auth::require_approve(&auth)?;
     let row = approvals::decide(
         &s.pool,
         id,
@@ -116,6 +118,10 @@ pub async fn decide_batch(
 ) -> Result<u32, ApiError> {
     let (org, ws) = scope(c);
     if !approvals::batch_visible(&s.pool, c.user_id, org, ws, agent_id, batch_id).await? {
+        // RFE-012: a plain member who can see the batch is told it needs an approver.
+        if approvals::batch_undecidable(&s.pool, c.user_id, org, ws, agent_id, batch_id).await? {
+            return Err(crate::http::auth::approver_required());
+        }
         return Err(ApiError::not_found("Batch not found."));
     }
     let rows = approvals::decide_batch(
@@ -189,7 +195,7 @@ pub async fn stream_item(
     id: Uuid,
     workspace_id: Uuid,
 ) -> Option<Approval> {
-    match authz::can_use(&s.pool, user, workspace_id).await {
+    match authz::can_approve(&s.pool, user, workspace_id).await {
         Ok(true) => {}
         Ok(false) => return None,
         Err(e) => {

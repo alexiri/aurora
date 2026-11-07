@@ -15,6 +15,7 @@ export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => voi
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"admin" | "member">("member");
   const [wsIds, setWsIds] = useState<string[]>([]);
+  const [approverIds, setApproverIds] = useState<string[]>([]);
   const [clientErr, setClientErr] = useState("");
   const fe = create.error ? fieldErrors(create.error) : {};
 
@@ -24,7 +25,7 @@ export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => voi
     if (msg) return setClientErr(msg);
     setClientErr("");
     create.mutate(
-      { email: email.trim(), role, workspace_ids: wsIds },
+      { email: email.trim(), role, workspace_ids: wsIds, approver_workspace_ids: approverIds },
       { onSuccess: onDone },
     );
   }
@@ -55,18 +56,31 @@ export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => voi
       {workspaces.data && workspaces.data.items.length > 0 ? (
         <fieldset className="space-y-1">
           <legend className="text-sm font-medium">Workspace access (optional)</legend>
-          {workspaces.data.items.map((w) => (
-            <label key={w.id} className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={wsIds.includes(w.id)}
-                onChange={(e) =>
-                  setWsIds((cur) => (e.target.checked ? [...cur, w.id] : cur.filter((x) => x !== w.id)))
-                }
-              />
-              {w.name}
-            </label>
-          ))}
+          <p className="text-xs text-neutral-600">
+            Member chats with agents. Approver also decides approvals.
+          </p>
+          {workspaces.data.items.map((w) => {
+            const level = approverIds.includes(w.id) ? "approver" : wsIds.includes(w.id) ? "member" : "none";
+            return (
+              <div key={w.id} className="flex items-center justify-between gap-2 text-sm">
+                <label htmlFor={`inv-ws-${w.id}`}>{w.name}</label>
+                <select
+                  id={`inv-ws-${w.id}`}
+                  className={inputClass}
+                  value={level}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setWsIds((cur) => cur.filter((x) => x !== w.id).concat(v === "member" ? [w.id] : []));
+                    setApproverIds((cur) => cur.filter((x) => x !== w.id).concat(v === "approver" ? [w.id] : []));
+                  }}
+                >
+                  <option value="none">No access</option>
+                  <option value="member">Member</option>
+                  <option value="approver">Approver</option>
+                </select>
+              </div>
+            );
+          })}
         </fieldset>
       ) : null}
       {create.error && Object.keys(fe).length === 0 ? (

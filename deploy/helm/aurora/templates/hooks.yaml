@@ -3,6 +3,10 @@
 {{- $ca := include "aurora.caSecretName" . -}}
 {{- $genSecrets := not .Values.secrets.existingSecret -}}
 {{- $genCA := not .Values.gateway.ca.existingSecret -}}
+{{- $rotate := .Values.secrets.rotate | default dict -}}
+{{- $rotating := and $genSecrets (or $rotate.signing $rotate.internal) -}}
+{{- /* RFE-007: a rotation request needs the hook on upgrade too (it only appends, never activates). */ -}}
+{{- $secretHook := ternary "pre-install,pre-upgrade" "pre-install" (and $rotating true) -}}
 {{- if or $genSecrets $genCA }}
 # Hook ServiceAccount + Role: may only read/create/patch Secrets in the release namespace.
 apiVersion: v1
@@ -10,7 +14,7 @@ kind: ServiceAccount
 metadata:
   name: {{ $full }}-hooks
   annotations:
-    "helm.sh/hook": pre-install
+    "helm.sh/hook": {{ $secretHook }}
     "helm.sh/hook-weight": "-20"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 ---
@@ -19,7 +23,7 @@ kind: Role
 metadata:
   name: {{ $full }}-hooks
   annotations:
-    "helm.sh/hook": pre-install
+    "helm.sh/hook": {{ $secretHook }}
     "helm.sh/hook-weight": "-20"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 rules:
@@ -32,7 +36,7 @@ kind: RoleBinding
 metadata:
   name: {{ $full }}-hooks
   annotations:
-    "helm.sh/hook": pre-install
+    "helm.sh/hook": {{ $secretHook }}
     "helm.sh/hook-weight": "-20"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $full }}-hooks}
@@ -47,7 +51,7 @@ metadata:
   name: {{ $full }}-secrets
   labels: {{- include "aurora.labels" . | nindent 4 }}
   annotations:
-    "helm.sh/hook": pre-install
+    "helm.sh/hook": {{ $secretHook }}
     "helm.sh/hook-weight": "-10"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
@@ -82,6 +86,30 @@ spec:
               put AURORA_ENCRYPTION_ACTIVE_KEY k1
               put AURORA_SIGNING_KEY "$(b64)"
               put AURORA_INTERNAL_SECRET "$(b64)"
+              # RFE-007 (docs/08 §4, docs/operator/key-rotation.md): `secrets.rotate.*` APPENDS one new
+              # ring entry and never activates it; the operator sets *_ACTIVE_KEY after every
+              # service has rolled. A bare value becomes ring `v0` (kept active). Idempotent: if a
+              # non-active entry is already pending, nothing is added.
+              get() { kubectl get secret "$NAME" -o "jsonpath={.data.$1}" | base64 -d; }
+              set_key() { kubectl patch secret "$NAME" -p "{\"stringData\":{\"$1\":\"$2\"}}" >/dev/null; }
+              rotate() {
+                key=$1; activekey=$2
+                cur="$(get "$key")"
+                case "$cur" in *:*) list="$cur"; act="$(get "$activekey")";; *) list="v0:$cur"; act=v0;; esac
+                [ -n "$act" ] || { echo "$key is a list but $activekey is unset; refusing to rotate" >&2; exit 1; }
+                n=$(printf '%s' "$list" | tr ',' '\n' | grep -c .)
+                if [ "$n" -ge 2 ]; then echo "$key already has a pending entry; not appending" >&2; return 0; fi
+                id="r$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+                set_key "$key" "$list,$id:$(b64)"
+                set_key "$activekey" "$act"
+                echo "appended ring entry $id to $key (not active)"
+              }
+              {{- if $rotate.signing }}
+              rotate AURORA_SIGNING_KEY AURORA_SIGNING_ACTIVE_KEY
+              {{- end }}
+              {{- if $rotate.internal }}
+              rotate AURORA_INTERNAL_SECRET AURORA_INTERNAL_ACTIVE_KEY
+              {{- end }}
               put AURORA_RUNNER_SESSION_KEY "$(b64)"
               put AURORA_RUNNER_TOKEN "aur_$(hex)"
               put AURORA_CONNECTOR_TOKEN "aun_$(hex)"
@@ -162,7 +190,7 @@ spec:
           args: ["migrate"]
           {{- include "aurora.containerSecurity" . | nindent 10 }}
           env:
-            {{- include "aurora.env" (dict "root" . "db" true "keys" (list "AURORA_ENCRYPTION_KEYS" "AURORA_ENCRYPTION_ACTIVE_KEY" "AURORA_INTERNAL_SECRET" "AURORA_SIGNING_KEY" "AURORA_RUNNER_SESSION_KEY")) | nindent 12 }}
+            {{- include "aurora.env" (dict "root" . "db" true "keys" (list "AURORA_ENCRYPTION_KEYS" "AURORA_ENCRYPTION_ACTIVE_KEY" "AURORA_INTERNAL_SECRET" "AURORA_SIGNING_KEY" "AURORA_RUNNER_SESSION_KEY") "optionalKeys" (list "AURORA_SIGNING_ACTIVE_KEY" "AURORA_INTERNAL_ACTIVE_KEY")) | nindent 12 }}
           volumeMounts: [{name: config, mountPath: /etc/aurora, readOnly: true}, {name: tmp, mountPath: /tmp}]
       volumes:
         - {name: config, configMap: {name: {{ $full }}-config}}

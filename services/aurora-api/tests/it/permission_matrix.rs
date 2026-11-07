@@ -38,6 +38,8 @@ enum P {
     Admin,
     /// Org member bound to the workspace as `member`.
     WsMember,
+    /// Org member bound to the workspace as `approver` (phase 2, RFE-012).
+    WsApprover,
     /// Org member bound to the workspace as `owner`.
     WsOwner,
     /// Org member with no workspace binding.
@@ -58,11 +60,12 @@ enum P {
     OrgKeyMember,
 }
 
-const ALL: [P; 13] = [
+const ALL: [P; 14] = [
     P::Anon,
     P::Owner,
     P::Admin,
     P::WsMember,
+    P::WsApprover,
     P::WsOwner,
     P::Unbound,
     P::Suspended,
@@ -91,6 +94,7 @@ impl P {
 enum WsAccess {
     None,
     Member,
+    Approver,
     Owner,
 }
 
@@ -98,6 +102,7 @@ fn ws_access(p: P) -> WsAccess {
     match p {
         P::Owner | P::Admin | P::OrgKeyAdmin => WsAccess::Owner,
         P::WsOwner | P::WsKeySame => WsAccess::Owner,
+        P::WsApprover => WsAccess::Approver,
         P::WsMember | P::OrgKeyMember => WsAccess::Member,
         _ => WsAccess::None,
     }
@@ -108,7 +113,9 @@ fn org_role(p: P) -> Option<(&'static str, bool)> {
     match p {
         P::Owner => Some(("owner", true)),
         P::Admin | P::OrgKeyAdmin => Some(("admin", true)),
-        P::WsMember | P::WsOwner | P::Unbound | P::OrgKeyMember => Some(("member", true)),
+        P::WsMember | P::WsApprover | P::WsOwner | P::Unbound | P::OrgKeyMember => {
+            Some(("member", true))
+        }
         P::Suspended => Some(("member", false)),
         _ => None,
     }
@@ -130,6 +137,9 @@ enum G {
     Owner,
     /// Workspace visible: `can_use`.
     WsUse,
+    /// Workspace approver or owner: `can_approve` (phase 2, RFE-012); a plain member gets
+    /// 403 `approver_required`.
+    WsApprove,
     /// Workspace owner: `can_own`.
     WsOwn,
     /// Org-scope credential metadata (I-27 amendment): org owner/admin, or an org member who
@@ -361,7 +371,7 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/workspaces/{ws}/agents", G::WsUse, false),
     r("GET", "/v1/workspaces/{ws}/api-keys", G::WsOwn, false),
     r("POST", "/v1/workspaces/{ws}/api-keys", G::WsOwn, true),
-    r("GET", "/v1/workspaces/{ws}/approvals", G::WsUse, false),
+    r("GET", "/v1/workspaces/{ws}/approvals", G::WsApprove, false),
     r("GET", "/v1/workspaces/{ws}/audit", G::WsOwn, false),
     r("GET", "/v1/workspaces/{ws}/connections", G::WsOwn, false),
     r("GET", "/v1/workspaces/{ws}/oauth-clients", G::WsOwn, false),
@@ -516,11 +526,11 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/attachments/{id}/content", G::WsUse, false),
     r("POST", "/v1/turns/{id}/abort", G::WsUse, false),
     r("POST", "/v1/turns/{id}/send-now", G::WsUse, false),
-    r("POST", "/v1/approvals/{id}/decision", G::WsUse, false),
+    r("POST", "/v1/approvals/{id}/decision", G::WsApprove, false),
     r(
         "POST",
         "/v1/approvals/batches/{batch_id}/decision",
-        G::WsUse,
+        G::WsApprove,
         false,
     ),
     r("GET", "/v1/connections/{id}", G::WsOwn, false),
@@ -539,13 +549,13 @@ const ROWS: &[Row] = &[
     r(
         "GET",
         "/v1/workspaces/{ws}/action-approvals",
-        G::WsUse,
+        G::WsApprove,
         false,
     ),
     r(
         "POST",
         "/v1/action-approvals/{id}/decision",
-        G::WsUse,
+        G::WsApprove,
         false,
     ),
     r("GET", "/v1/agents/{agent}/links", G::WsUse, false),
@@ -654,7 +664,7 @@ fn want(g: G, so: bool, p: P) -> Want {
                 _ => Deny(&[404], None),
             }
         }
-        G::WsUse | G::WsOwn | G::WsUseKeyOnly => {
+        G::WsUse | G::WsApprove | G::WsOwn | G::WsUseKeyOnly => {
             if matches!(g, G::WsUseKeyOnly) && !p.is_key() {
                 return Deny(&[403], Some("forbidden"));
             }
@@ -664,6 +674,14 @@ fn want(g: G, so: bool, p: P) -> Want {
             match ws_access(p) {
                 WsAccess::None => Deny(&[404], None),
                 WsAccess::Member if matches!(g, G::WsOwn) => Deny(&[403], Some("forbidden")),
+                WsAccess::Approver if matches!(g, G::WsOwn) => Deny(&[403], Some("forbidden")),
+                WsAccess::Member | WsAccess::Approver if matches!(g, G::WsApprove) => {
+                    if ws_access(p) == WsAccess::Approver {
+                        Allow
+                    } else {
+                        Deny(&[403], Some("approver_required"))
+                    }
+                }
                 _ => Allow,
             }
         }
@@ -741,10 +759,13 @@ async fn seed(h: &Harness, n: u32) -> Fx {
     let nm = h.user(&format!("nm{n}@x.io"), false).await;
     let ia = h.user(&format!("ia{n}@x.io"), true).await;
     let victim = h.user(&format!("victim{n}@x.io"), false).await;
+    let ap = h.user(&format!("ap{n}@x.io"), false).await;
 
     h.member(org, adm, "admin", "active").await;
     h.member(org, m, "member", "active").await;
     h.member(org, wo, "member", "active").await;
+    h.member(org, ap, "member", "active").await;
+    h.bind_ws(ws, ap, "approver").await;
     h.member(org, u, "member", "active").await;
     h.member(org, s_user, "member", "suspended").await;
     h.member(org, victim, "member", "active").await;
@@ -758,6 +779,7 @@ async fn seed(h: &Harness, n: u32) -> Fx {
     auth.insert(P::Owner, Auth::Cookie(owner_tok));
     auth.insert(P::Admin, Auth::Cookie(h.good_session(adm).await.1));
     auth.insert(P::WsMember, Auth::Cookie(h.good_session(m).await.1));
+    auth.insert(P::WsApprover, Auth::Cookie(h.good_session(ap).await.1));
     auth.insert(P::WsOwner, Auth::Cookie(h.good_session(wo).await.1));
     auth.insert(P::Unbound, Auth::Cookie(h.good_session(u).await.1));
     auth.insert(P::Suspended, Auth::Cookie(h.good_session(s_user).await.1));

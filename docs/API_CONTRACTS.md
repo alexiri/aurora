@@ -239,7 +239,8 @@ interface Secret { id: Uuid; org_id: Uuid; workspace_id: Uuid | null; scope: "or
   last_used_at: Timestamp | null; created_at: Timestamp; updated_at: Timestamp }
 
 interface ContainerConfig { proxy_url: string /* contains <AGENT_TOKEN> unless revealed */; env: Record<string, string>;
-  ca_pem: string; ca_path: string; llm_env: Record<string, string>; stubs: { path: string; content: string; mode: string }[] }
+  ca_pem: string; ca_path: string; proxy_ca_path: string /* C-44 */; proxy_tls: "operator_certificate" | null /* C-44 */;
+  llm_env: Record<string, string>; stubs: { path: string; content: string; mode: string }[] }
 
 type Identity = { kind: "agent"; id: Uuid } | { kind: "user"; id: Uuid };
 type Target =
@@ -585,6 +586,38 @@ Rule: `can_see_conversation` (`04 §The access law`), `05 §Conversation visibil
 - C-47 **Omission** (no schema change): `GET /v1/workspaces/{ws}/approvals`, `…/action-approvals`, `GET /v1/approvals/pending` (long-poll, incl. wake-ups), `GET /v1/approvals/stream` (SSE), `POST /v1/approvals/batches/{batch_id}/decision` and `GET /v1/workspaces/{ws}/activity` omit rows whose `conversation_id` is a `direct` conversation the caller cannot see (also when filtered by `conversation_id=`); `POST /v1/approvals/{id}/decision` and `POST /v1/action-approvals/{id}/decision` on such a row answer **404**. Channel card clicks on such an approval are refused (`forbidden`) before the token is consumed. `GET /v1/conversations/{id}/stream` ends at the next resync once the viewer stops being able to see the conversation.
 - C-48 **`ActionApproval.conversation_hidden`**: `bool`, always present. When the approval's workspace differs from its conversation's workspace, `conversation_id` and `turn_id` are `null` and `conversation_hidden` is `true` (D-47 clarification C); the frozen payload is never in any DTO. Within the same workspace the RFE-009 predicate (C-47) applies unchanged.
 - Audit: an owner (not the direct user) reading a direct conversation (`GET /v1/conversations/{id}`, `…/events`, `…/stream`, `GET /v1/attachments/{id}/content`) writes `conversation.owner_view` (target `conversation`, best-effort, once per actor, conversation and hour).
+
+### Phase 2 — RFE-007 (signing-key / internal-secret rings, D-51)
+
+Rule: `08 §4`, `13 §4.4`, `06 §Ports`, SEC-46. No public route changes; the OpenAPI document and the permission matrix are unchanged. These are the wire changes on the internal surfaces.
+
+- C-49 **`X-Aurora-Key-Id`** (internal calls: gateway/hook host/API `/internal/v1/**`): senders put the active internal-secret ring id in this header next to `Authorization: Bearer <base64 secret>`. The receiver compares in constant time against the ring entry of that id; an id outside its ring or a secret that does not match that entry answers **401**. With the header absent (older sender) the receiver tries every entry of its ring. Responses are unchanged.
+- C-50 **`GET /internal/v1/status`** (API internal listener 4111, gateway 4103, hook host 4104; same internal auth as C-49): `200 { service: "api"|"gateway"|"hookhost", internal_secret: { active: string, keys: [{ id: string, fingerprint: string }] }, signing_key?: { active, keys }}`. `signing_key` is present on the API only. `fingerprint` is 8 hex characters of SHA-256 of the entry; key values are never returned. 401 `unauthenticated`/`unauthorized` without a valid ring key.
+- C-51 **Action token wire format** (channel buttons, `13 §4.4`): new tokens are `v2.<key_id>.<b64url(payload)>.<b64url(HMAC)>` signed with the active signing key; `v1.<payload>.<HMAC>` tokens still verify by trying each ring key. Payload JSON is unchanged. A `v2` token naming an id outside the verifier's ring is refused like a bad signature. Sealed OAuth/OIDC state values are prefixed `<key_id>.` (cookie and `state` parameter); unprefixed values are tried against each key.
+- CLI (not HTTP): `aurora-api keys generate --kind signing|internal [--id <key_id>]` prints one `<key_id>:<base64>` entry; `aurora-api keys status` prints each ring's ids, fingerprints and active id from the process environment.
+
+### Phase 2 — RFE-017 (management API rate limiting, D-57)
+
+Rule: `05 §Conventions` "Rate limiting", SEC-50. No route is added or removed; the wire changes are the refusal shapes and headers below.
+
+- C-52 **`429 rate_limited`** on any authenticated `/v1/**` route (exempt: `/healthz`, `/readyz`, `/metrics`, `/internal/*`, `/v1/runner/*`, `/v1/connector/*`, `POST /v1/hooks/{token}`): body `{ "error": { "code": "rate_limited", "message", "details": { "scope": "general"|"class"|"org", "class": "general"|"write"|"message"|"upload"|"simulate"|"search"|"export"|"org"|"unauth", "limit": number, "per": "minute"|"hour", "retry_after_secs": number } } }`; headers `retry-after` (whole seconds, >= 1), `ratelimit-limit`, `ratelimit-remaining` (always `0` on a refusal), `ratelimit-reset` (= `retry-after`), `x-should-retry: true`. `class` is `unauth` and `scope` is `general` for the per-IP limits of unauthenticated traffic (120/min public GETs; 30/min for requests carrying a rejected bearer). The principal is `key:<api_key_id>`, `user:<user_id>` (all of the user's sessions) or `agent:<agent_id>`; a refused request consumes no token from any bucket.
+- C-53 **`429 too_many_streams`**: `GET /v1/conversations/{id}/stream`, `GET /v1/approvals/stream` and any GET with `?wait=<n>` (n > 0, long-poll) beyond 20 concurrent per principal answer `{ "error": { "code": "too_many_streams", "message", "details": { "scope": "streams", "limit": 20 } } }` with no `retry-after`; a slot is released when the response body ends or the client disconnects. Streams that are refused by authorization (non-2xx) release at once.
+
+### Phase 2 — RFE-012 (approver workspace role, D-55)
+
+Rule: `04 §Roles`, `04 §The access law` (`can_approve`), `05 §Approvals`, SEC-28. No route is added or removed; these are the wire changes.
+
+- C-60 **`WorkspaceRole`** (`Workspace.my_role`, `GET /v1/me` `memberships[].workspaces[].my_role`, `AccessBinding.role`, `PUT /v1/workspaces/{ws}/access/{user}` body `role`): the enum gains **`approver`** → `"owner" | "approver" | "member"`. `PUT …/access/{user}` (`can_own`) accepts all three. `Workspace.my_role` in `GET /v1/orgs/{org}/workspaces` is the caller's effective role (not a constant `member`). Existing rows are unchanged by the migration.
+- C-61 **`approver_required`**: every approvals route needs `can_approve` on the approval's workspace, otherwise **403** `{ "error": { "code": "approver_required" } }` — `GET /v1/workspaces/{ws}/approvals`, `GET /v1/workspaces/{ws}/action-approvals`, `POST /v1/approvals/{id}/decision`, `POST /v1/action-approvals/{id}/decision`, `POST /v1/approvals/batches/{batch_id}/decision` (a plain member who can see the batch). Invisible workspaces, approvals and direct conversations the caller cannot see (C-47) still answer **404** first. `GET /v1/approvals/pending` and `GET /v1/approvals/stream` carry no error: they list/emit only rows of workspaces where the caller `can_approve` (a plain member gets an empty list / no events).
+- C-62 **`Invitation.approver_workspace_ids`**: `uuid[]`, always present (default `[]`); `POST /v1/orgs/{org}/invitations` accepts `approver_workspace_ids?: uuid[]` next to `workspace_ids` (bound as `member`). The two sets must be disjoint (400 `invalid_request`, field `/approver_workspace_ids`) and every id must belong to the org (400, as for `workspace_ids`). Invitations never grant `owner`. On accept, `AcceptInvitationResponse.workspace_ids` lists every bound workspace (members and approvers).
+- C-63 **JIT** (config, not HTTP): `auth.oidc_providers[].jit.workspace_role: "member" | "approver"` (default `member`) is the role JIT binds the user to every `workspace_slugs` entry with; anything else fails config validation.
+- C-64 **Channel decisions** (no wire change): approval, batch, action-approval and agent-link-decision clicks, and `approve|deny <code>`, need `can_approve`; a linked user who lacks it gets the ephemeral "Only approvers can decide this." (result `refused`/`approver_required`), the token is not consumed and the card stays pending. Cards carry "Needs an approver" in the context line.
+||||||| b2ce6405
+
+### Phase 1 — RFE-002 (TLS-only gateway proxy listener, D-44)
+
+- C-54 `ContainerConfig` (`GET /v1/agents/{agent}/container-config`, `GET /v1/agent/container-config`, the `container_config` of `POST /v1/workspaces/{ws}/agents` and `POST /v1/agents/{agent}/token`; 08 §10) gains `proxy_ca_path: string` (the file that holds the trust anchor for the HTTPS proxy leg: curl `--proxy-cacert`, git `http.proxySSLCAInfo`; same value as `ca_path`) and `proxy_tls: "operator_certificate" | null` (`"operator_certificate"` when `gateway.proxy_tls.cert_file` is configured, so the outer leg is verified with the system roots; `null` when the gateway CA issued the listener certificate). `proxy_url` and the `HTTPS_PROXY`/`HTTP_PROXY`/`https_proxy`/`http_proxy` env values are always `https://x:<token>@host:4102` (an `http://` `gateway.advertised_proxy_url` is refused at startup); with a CA-issued certificate `env` also carries `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=http.proxySSLCAInfo`, `GIT_CONFIG_VALUE_0=<proxy_ca_path>`. Clients must ignore unknown fields.
+- C-55 `ContextCredential.proxy_url` (`POST /v1/agent/context-credentials`; 08 §10) is `https://…` for the same reason; no other field changes. The hosted sandbox boot document (11 §The boot document, not an API route) carries `gateway: { proxy, tls: true, server_name, boot_token }`; the supervisor refuses any other `tls` value.
 
 ### W9 hook-host JSON encoding (C-18, C-19)
 

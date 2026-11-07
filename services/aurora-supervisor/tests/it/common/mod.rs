@@ -1,23 +1,79 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use std::sync::{Arc, Mutex};
 
+use aurora_supervisor::proxy::GatewayUpstream;
 use base64::Engine as _;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 const LO: &str = "127.0.0.1:0";
 
-/// Stub gateway: records every `Proxy-Authorization` header per request.
-pub async fn stub_gateway() -> (String, Arc<Mutex<Vec<Vec<String>>>>) {
+/// A throwaway CA plus a `serverAuth` leaf for `names`; returns `(ca_pem, acceptor)`.
+pub fn tls_fixture(names: &[&str]) -> (String, tokio_rustls::TlsAcceptor) {
+    use rcgen::{
+        BasicConstraints, CertificateParams, DistinguishedName, ExtendedKeyUsagePurpose, IsCa,
+        KeyPair, KeyUsagePurpose,
+    };
+    let ca_key = KeyPair::generate().unwrap();
+    let mut p = CertificateParams::default();
+    p.distinguished_name = DistinguishedName::new();
+    p.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
+    p.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+    let ca = p.self_signed(&ca_key).unwrap();
+    let leaf_key = KeyPair::generate().unwrap();
+    let mut lp =
+        CertificateParams::new(names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>()).unwrap();
+    lp.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    let leaf = lp.signed_by(&leaf_key, &ca, &ca_key).unwrap();
+    let chain = vec![rustls::pki_types::CertificateDer::from(leaf.der().to_vec())];
+    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+        leaf_key.serialize_der(),
+    ));
+    let mut cfg = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(chain, key)
+    .unwrap();
+    cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
+    (
+        ca.pem(),
+        tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(cfg)),
+    )
+}
+
+/// An upstream that is never dialled (`127.0.0.1:1`) but is valid to construct.
+pub fn dead_upstream() -> GatewayUpstream {
+    let (ca, _) = tls_fixture(&["localhost"]);
+    GatewayUpstream::new("127.0.0.1:1", &ca, "localhost").unwrap()
+}
+
+/// Stub gateway (TLS, name `localhost`): records every `Proxy-Authorization` header per request.
+pub async fn stub_gateway() -> (GatewayUpstream, Arc<Mutex<Vec<Vec<String>>>>) {
+    let (ca, acceptor) = tls_fixture(&["localhost"]);
+    let (addr, seen) = stub_gateway_with(acceptor).await;
+    (GatewayUpstream::new(addr, &ca, "localhost").unwrap(), seen)
+}
+
+/// Stub gateway behind `acceptor`; returns its address.
+pub async fn stub_gateway_with(
+    acceptor: tokio_rustls::TlsAcceptor,
+) -> (String, Arc<Mutex<Vec<Vec<String>>>>) {
     let l = TcpListener::bind(LO).await.unwrap();
     let addr = l.local_addr().unwrap().to_string();
     let seen: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
     let s2 = seen.clone();
     tokio::spawn(async move {
         loop {
-            let (mut c, _) = l.accept().await.unwrap();
+            let (tcp, _) = l.accept().await.unwrap();
             let seen = s2.clone();
+            let acceptor = acceptor.clone();
             tokio::spawn(async move {
+                let Ok(mut c) = acceptor.accept(tcp).await else {
+                    return;
+                };
                 let mut buf = Vec::new();
                 let mut chunk = [0u8; 2048];
                 while !buf.windows(4).any(|w| w == b"\r\n\r\n") {

@@ -1,11 +1,11 @@
 //! API-side W9 client for `connect.authorize` / `connect.exchange` (C-19).
 use aurora_core::limits::HOOK_WALL;
-use base64::Engine;
 use serde_json::{Map, Value, json};
 
 pub struct HookClient {
     base: String,
     bearer: String,
+    key_id: String,
     http: reqwest::Client,
 }
 
@@ -66,10 +66,11 @@ pub struct Call<'a> {
 }
 
 impl HookClient {
-    pub fn new(base: &str, secret: &[u8]) -> Result<Self, String> {
+    pub fn new(base: &str, ring: &aurora_crypto::SecretRing) -> Result<Self, String> {
         Ok(Self {
             base: base.trim_end_matches('/').to_owned(),
-            bearer: base64::engine::general_purpose::STANDARD.encode(secret),
+            bearer: ring.active_bearer(),
+            key_id: ring.active_id().to_owned(),
             http: reqwest::Client::builder()
                 .timeout(HOOK_WALL)
                 .redirect(reqwest::redirect::Policy::none())
@@ -85,6 +86,7 @@ impl HookClient {
             .http
             .post(format!("{}/internal/v1/hooks/{hook}", self.base))
             .bearer_auth(&self.bearer)
+            .header(aurora_core::limits::KEY_ID_HEADER, &self.key_id)
             .headers(aurora_core::telemetry::headers())
             .json(&body)
             .send()

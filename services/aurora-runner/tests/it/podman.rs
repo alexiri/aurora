@@ -18,6 +18,8 @@ use bollard::exec::{CreateExecOptions, StartExecResults};
 use futures::StreamExt;
 use uuid::Uuid;
 
+/// A valid (never trusted for anything) CA: the supervisor builds its gateway TLS config from it.
+const PROBE_CA_PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIBnzCCAUSgAwIBAgIUM9r7jwTt+H50+gskkfbctBQg0sowCgYIKoZIzj0EAwIw\nGjEYMBYGA1UEAwwPQXVyb3JhIHByb2JlIENBMCAXDTI2MTEwNzEzMjMyMloYDzIx\nMjYxMDE0MTMyMzIyWjAaMRgwFgYDVQQDDA9BdXJvcmEgcHJvYmUgQ0EwWTATBgcq\nhkjOPQIBBggqhkjOPQMBBwNCAASdiPf1x/r5vS0uY0nK0X3wfuEftek+6V7nsozQ\nwCJKGRDKzjU59cfBr+an8uoDuPo0DJl0CkHxqrD643MFTD2Lo2YwZDAdBgNVHQ4E\nFgQUIYO3pRSPN1VCDAVE+sMSFUz/urIwHwYDVR0jBBgwFoAUIYO3pRSPN1VCDAVE\n+sMSFUz/urIwEgYDVR0TAQH/BAgwBgEB/wIBADAOBgNVHQ8BAf8EBAMCAgQwCgYI\nKoZIzj0EAwIDSQAwRgIhAJYDTz1V0xJaySFLV71ajMjhmwEh3OGF1s9z5yaY8sM0\nAiEA8s1UeriAsGDKFM2OfjSCULwfCM5Q4Z8puur8GY2njI0=\n-----END CERTIFICATE-----\n";
 const BOOT_MARKER: &str = "aub_probe_marker_7f3a";
 
 fn enabled() -> bool {
@@ -64,8 +66,8 @@ fn boot_secret(sandbox: Uuid, boot: Uuid) -> String {
         "agent": {"id": Uuid::nil(), "handle": "probe", "name": "Probe"},
         "runner_url": "ws://aurora-runner:4105/v1/supervisor",
         "bootstrap_token": "aup_probe",
-        "gateway": {"proxy": "aurora-gateway:4102", "boot_token": BOOT_MARKER},
-        "ca_pem": "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+        "gateway": {"proxy": "aurora-gateway:4102", "tls": true, "server_name": "aurora-gateway", "boot_token": BOOT_MARKER},
+        "ca_pem": PROBE_CA_PEM,
         "files": [],
         "harness": {"id": "fake", "capabilities_expected": []},
     });

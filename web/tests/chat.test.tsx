@@ -98,7 +98,12 @@ describe("error mapping", () => {
 
 describe("ApprovalCard", () => {
   it("posts the decision", async () => {
-    const fn = vi.fn(async () => new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } }));
+    const fn = vi.fn(async (r: Request) =>
+      new Response(JSON.stringify(r.url.endsWith("/v1/workspaces/w1") ? { my_role: "approver" } : {}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
     vi.stubGlobal("fetch", fn);
     const pending = ev(1, "approval.pending", { approval_id: "ap1", summary: "Call example.com" });
     const state = applyEvent(emptyTranscript, pending);
@@ -107,11 +112,26 @@ describe("ApprovalCard", () => {
         <ApprovalCard ev={pending} state={state} wsId="w1" />
       </QueryClientProvider>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(fn).toHaveBeenCalled());
-    const req = fn.mock.calls[0] as unknown as [Request];
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(fn.mock.calls.some((c) => c[0].url.includes("/decision"))).toBe(true));
+    const req = fn.mock.calls.find((c) => c[0].url.includes("/decision")) as unknown as [Request];
     expect(req[0].url).toContain("/v1/approvals/ap1/decision");
     expect(await req[0].clone().json()).toEqual({ decision: "approve" });
+  });
+  it("shows a plain member a read-only card (RFE-012)", async () => {
+    const fn = vi.fn(async () =>
+      new Response(JSON.stringify({ my_role: "member" }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fn);
+    const pending = ev(1, "approval.pending", { approval_id: "ap1", summary: "Call example.com" });
+    const state = applyEvent(emptyTranscript, pending);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ApprovalCard ev={pending} state={state} wsId="w1" />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("Waiting for an approver")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   });
   it("shows the decided state without buttons", () => {
     const pending = ev(1, "approval.pending", { approval_id: "ap1", summary: "s" });

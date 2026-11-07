@@ -50,6 +50,16 @@
               }
             }
           },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "404": {
             "description": "",
             "content": {
@@ -4956,6 +4966,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Approval"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -13696,6 +13716,16 @@
               }
             }
           },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "404": {
             "description": "",
             "content": {
@@ -14198,6 +14228,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Page_Approval"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -17331,6 +17371,7 @@
           "env",
           "ca_pem",
           "ca_path",
+          "proxy_ca_path",
           "llm_env",
           "stubs"
         ],
@@ -17358,6 +17399,17 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "proxy_ca_path": {
+            "type": "string",
+            "description": "(phase 1, RFE-002) File holding the trust anchor for the HTTPS proxy leg (curl\n`--proxy-cacert`, git `http.proxySSLCAInfo`); same file as `ca_path`."
+          },
+          "proxy_tls": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(phase 1, RFE-002) `\"operator_certificate\"` when the proxy listener presents an\noperator-supplied certificate (verify the outer leg with the system roots); `null` when\nthe gateway CA issued it."
           },
           "proxy_url": {
             "type": "string",
@@ -17633,6 +17685,14 @@
           "role"
         ],
         "properties": {
+          "approver_workspace_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Phase 2, RFE-012: workspaces to bind as `approver` (never `owner`)."
+          },
           "email": {
             "type": "string"
           },
@@ -19164,11 +19224,20 @@
           "email",
           "role",
           "workspace_ids",
+          "approver_workspace_ids",
           "status",
           "expires_at",
           "created_at"
         ],
         "properties": {
+          "approver_workspace_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Workspaces bound as `approver` on accept (phase 2, RFE-012); disjoint from `workspace_ids`."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -21312,11 +21381,20 @@
                 "email",
                 "role",
                 "workspace_ids",
+                "approver_workspace_ids",
                 "status",
                 "expires_at",
                 "created_at"
               ],
               "properties": {
+                "approver_workspace_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "description": "Workspaces bound as `approver` on accept (phase 2, RFE-012); disjoint from `workspace_ids`."
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -27104,6 +27182,7 @@
         "type": "string",
         "enum": [
           "owner",
+          "approver",
           "member"
         ]
       }

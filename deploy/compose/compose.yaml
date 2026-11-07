@@ -2,7 +2,7 @@
 # Setup:  ./setup.sh   Start: podman compose up -d   (from this directory or -f)
 # Healthchecks: distroless images have no curl/shell, so only postgres has a
 # healthcheck; other services use depends_on service_started. Verify health from
-# the host: curl localhost:4000/v1/instance (api via edge), localhost:4102 (gateway).
+# the host: curl localhost:4000/v1/instance (api via edge), https://localhost:4102 (gateway proxy, TLS-only).
 name: aurora
 
 x-env: &aurora-env
@@ -10,8 +10,11 @@ x-env: &aurora-env
   AURORA_DATABASE_URL: postgres://aurora:${POSTGRES_PASSWORD:?run setup.sh}@postgres:5432/aurora
   AURORA_ENCRYPTION_KEYS: ${AURORA_ENCRYPTION_KEYS:?run setup.sh}
   AURORA_ENCRYPTION_ACTIVE_KEY: ${AURORA_ENCRYPTION_ACTIVE_KEY:-k1}
+  # Rings (RFE-007): a bare value = ring v0; a `id:b64,id2:b64` list needs its *_ACTIVE_KEY.
   AURORA_SIGNING_KEY: ${AURORA_SIGNING_KEY:?run setup.sh}
+  AURORA_SIGNING_ACTIVE_KEY: ${AURORA_SIGNING_ACTIVE_KEY:-}
   AURORA_INTERNAL_SECRET: ${AURORA_INTERNAL_SECRET:?run setup.sh}
+  AURORA_INTERNAL_ACTIVE_KEY: ${AURORA_INTERNAL_ACTIVE_KEY:-}
   AURORA_RUNNER_SESSION_KEY: ${AURORA_RUNNER_SESSION_KEY:?run setup.sh}
   AURORA_RUNNER_TOKEN: ${AURORA_RUNNER_TOKEN:?run setup.sh}
   AURORA_CONNECTOR_TOKEN: ${AURORA_CONNECTOR_TOKEN:?run setup.sh}

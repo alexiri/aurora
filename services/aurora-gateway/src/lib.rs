@@ -19,11 +19,13 @@ pub mod mint;
 pub mod pipeline;
 pub mod plaintext;
 pub mod proxy;
+pub mod proxy_tls;
 pub mod refresh;
 pub mod reqlog;
 pub mod resolve;
 pub mod resolver;
 pub mod snapshot;
+pub mod status;
 pub mod summarize_client;
 pub mod upstream;
 
@@ -40,4 +42,13 @@ pub fn empty_body() -> Body {
 
 pub fn full_body(b: impl Into<Bytes>) -> Body {
     Full::new(b.into()).map_err(|e| match e {}).boxed_unsync()
+}
+
+/// `X-Aurora-Key-Id` header for internal calls (RFE-007); empty when no id is configured.
+pub(crate) fn key_id_headers(id: Option<&str>) -> reqwest::header::HeaderMap {
+    let mut h = reqwest::header::HeaderMap::new();
+    if let Some(v) = id.and_then(|i| reqwest::header::HeaderValue::from_str(i).ok()) {
+        h.insert(aurora_core::limits::KEY_ID_HEADER, v);
+    }
+    h
 }

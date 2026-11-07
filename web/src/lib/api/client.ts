@@ -1,5 +1,6 @@
 import createClient from "openapi-fetch";
 
+import { retryingFetch } from "./rate-limit";
 import type { paths } from "./schema";
 
 export const api = createClient<paths>({
@@ -7,7 +8,8 @@ export const api = createClient<paths>({
   baseUrl: typeof window === "undefined" ? "" : window.location.origin,
   credentials: "same-origin",
   // Resolve lazily so tests can stub `fetch`.
-  fetch: (req) => globalThis.fetch(req),
+  // 429 is retried for idempotent reads only (RFE-017).
+  fetch: (req) => retryingFetch(req),
 });
 
 export interface ApiErrorEnvelope {

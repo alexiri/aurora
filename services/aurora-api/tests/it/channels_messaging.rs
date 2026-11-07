@@ -40,7 +40,7 @@ impl W {
         let stranger = h.user("stranger@x.io", false).await;
         h.member(org, member, "member", "active").await;
         h.member(org, stranger, "member", "active").await;
-        h.bind_ws(ws, member, "member").await;
+        h.bind_ws(ws, member, "approver").await;
         let p = h.pool();
         sqlx::query("INSERT INTO connectors (id, token_hash, display_name, manifest, status) VALUES ('chat', $1, 'chat', $2, 'active')")
             .bind(vec![7u8; 32]).bind(caps(cap_names)).execute(p).await.unwrap();

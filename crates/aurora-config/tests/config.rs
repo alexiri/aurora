@@ -46,7 +46,7 @@ fn toml_only_and_api_validates() {
     let api = raw.api_config().unwrap();
     assert_eq!(api.external_url, "https://aurora.example.org");
     assert_eq!(api.max_connections, 20);
-    assert_eq!(api.advertised_proxy_url, "http://aurora.example.org:4102");
+    assert_eq!(api.advertised_proxy_url, "https://aurora.example.org:4102");
     assert_eq!(api.keyring.active, "main");
 }
 
@@ -365,6 +365,8 @@ const HELM_RENDERED_TOML: &str = r#"
 [gateway]
   ca_dir = "/var/lib/aurora/ca"
   internal_bind = "0.0.0.0"
+  [gateway.proxy_tls]
+    names = ["aurora-gateway", "t-aurora-gateway-proxy", "t-aurora-gateway-proxy.default.svc"]
 
 [hosted]
   enabled = true
@@ -565,4 +567,229 @@ fn sec13_hookhost_holds_no_keys_or_database_credentials() {
     for needle in ["pw@db", KEY, "aur_abc", "aun_abc"] {
         assert!(!dbg.contains(needle), "{needle} in {dbg}");
     }
+}
+
+// ---- RFE-007: signing-key / internal-secret rings ----
+
+const KEY2: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="; // 32 x 0x01
+
+#[test]
+fn bare_values_are_ring_v0_for_every_service() {
+    let raw = load_with(BASE, &[]).unwrap();
+    let api = raw.api_config().unwrap();
+    assert_eq!(api.signing_ring.active_id(), "v0");
+    assert_eq!(api.internal_ring.ids().collect::<Vec<_>>(), ["v0"]);
+    assert_eq!(
+        raw.gateway_config().unwrap().internal_ring.active_id(),
+        "v0"
+    );
+    assert_eq!(
+        raw.hookhost_config().unwrap().internal_ring.active_id(),
+        "v0"
+    );
+    let (s, i) = raw.rings().unwrap();
+    assert_eq!((s.active_id(), i.active_id()), ("v0", "v0"));
+}
+
+#[test]
+fn lists_with_active_key_validate_per_service() {
+    let sk = format!("a1:{KEY},b2:{KEY2}");
+    let raw = load_with(
+        BASE,
+        &[
+            ("AURORA_SIGNING_KEY", sk.as_str()),
+            ("AURORA_SIGNING_ACTIVE_KEY", "b2"),
+            ("AURORA_INTERNAL_SECRET", sk.as_str()),
+            ("AURORA_INTERNAL_ACTIVE_KEY", "a1"),
+        ],
+    )
+    .unwrap();
+    let api = raw.api_config().unwrap();
+    assert_eq!(api.signing_ring.active_id(), "b2");
+    assert_eq!(api.internal_ring.active_id(), "a1");
+    assert_eq!(api.internal_ring.ids().collect::<Vec<_>>(), ["a1", "b2"]);
+    assert_eq!(
+        raw.gateway_config().unwrap().internal_ring.active_id(),
+        "a1"
+    );
+    assert_eq!(
+        raw.hookhost_config().unwrap().internal_ring.active_id(),
+        "a1"
+    );
+    // Values never appear in Debug output.
+    assert!(!format!("{api:?}").contains(KEY2));
+}
+
+#[test]
+fn list_without_active_key_fails_naming_the_variable() {
+    let sk = format!("a1:{KEY},b2:{KEY2}");
+    let raw = load_with(BASE, &[("AURORA_SIGNING_KEY", sk.as_str())]).unwrap();
+    let e = raw.api_config().unwrap_err();
+    assert!(e.has_key("AURORA_SIGNING_ACTIVE_KEY"), "{e}");
+    let raw = load_with(BASE, &[("AURORA_INTERNAL_SECRET", sk.as_str())]).unwrap();
+    for e in [
+        raw.api_config().unwrap_err(),
+        raw.gateway_config().unwrap_err(),
+        raw.hookhost_config().unwrap_err(),
+    ] {
+        assert!(e.has_key("AURORA_INTERNAL_ACTIVE_KEY"), "{e}");
+    }
+}
+
+#[test]
+fn ring_limits_and_unknown_active_id_fail_startup() {
+    let five = format!("a:{KEY},b:{KEY},c:{KEY},d:{KEY},e:{KEY}");
+    let raw = load_with(
+        BASE,
+        &[
+            ("AURORA_SIGNING_KEY", five.as_str()),
+            ("AURORA_SIGNING_ACTIVE_KEY", "a"),
+        ],
+    )
+    .unwrap();
+    assert!(raw.api_config().unwrap_err().has_key("AURORA_SIGNING_KEY"));
+    let two = format!("a:{KEY},b:{KEY2}");
+    let raw = load_with(
+        BASE,
+        &[
+            ("AURORA_INTERNAL_SECRET", two.as_str()),
+            ("AURORA_INTERNAL_ACTIVE_KEY", "zz"),
+        ],
+    )
+    .unwrap();
+    assert!(
+        raw.hookhost_config()
+            .unwrap_err()
+            .has_key("AURORA_INTERNAL_ACTIVE_KEY")
+    );
+    // A signing key must be exactly 32 bytes.
+    let long = format!(
+        "a:{}",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    );
+    let raw = load_with(
+        BASE,
+        &[
+            ("AURORA_SIGNING_KEY", long.as_str()),
+            ("AURORA_SIGNING_ACTIVE_KEY", "a"),
+        ],
+    )
+    .unwrap();
+    assert!(raw.api_config().unwrap_err().has_key("AURORA_SIGNING_KEY"));
+}
+
+#[test]
+fn api_ratelimit_defaults_overrides_and_validation() {
+    // RFE-017: defaults (enabled, x1.0, org 3000/min), TOML class overrides, env multiplier.
+    let api = load_with(BASE, &[]).unwrap().api_config().unwrap();
+    let r = &api.ratelimit.api;
+    assert!(r.enabled && r.classes.is_empty());
+    assert_eq!((r.multiplier, r.org_per_minute), (1.0, 3000));
+    let raw = load_with(
+        &format!(
+            "{BASE}[ratelimit.api]\norg_per_minute = 100\n[ratelimit.api.classes.export]\nper_hour = 3\nburst = 1\n"
+        ),
+        &[("AURORA__RATELIMIT__API__MULTIPLIER", "2.5")],
+    )
+    .unwrap();
+    let r = raw.api_config().unwrap().ratelimit.api;
+    assert_eq!((r.multiplier, r.org_per_minute), (2.5, 100));
+    assert_eq!(r.classes["export"].per_hour, Some(3));
+    // out-of-range multiplier, unknown class, both periods, zero values: all reported by key
+    for (toml, key) in [
+        (
+            "[ratelimit.api]\nmultiplier = 0.05\n",
+            "ratelimit.api.multiplier",
+        ),
+        (
+            "[ratelimit.api]\nmultiplier = 101\n",
+            "ratelimit.api.multiplier",
+        ),
+        (
+            "[ratelimit.api]\norg_per_minute = 0\n",
+            "ratelimit.api.org_per_minute",
+        ),
+        (
+            "[ratelimit.api.classes.bogus]\nburst = 1\n",
+            "ratelimit.api.classes.bogus",
+        ),
+        (
+            "[ratelimit.api.classes.write]\nper_minute = 1\nper_hour = 1\n",
+            "ratelimit.api.classes.write",
+        ),
+        (
+            "[ratelimit.api.classes.write]\nburst = 0\n",
+            "ratelimit.api.classes.write.burst",
+        ),
+        ("[ratelimit.api]\nnope = 1\n", "ratelimit.api.nope"),
+    ] {
+        let e = load_with(&format!("{BASE}{toml}"), &[])
+            .and_then(|r| r.api_config().map(|_| ()))
+            .unwrap_err();
+        assert!(e.has_key(key), "{key}: {e}");
+    }
+}
+
+// (phase 1, RFE-002) The proxy listener is TLS-only: no http:// advertised URL, cert/key in pairs.
+#[test]
+fn advertised_proxy_url_must_be_https() {
+    let raw = load_with(
+        &format!("{BASE}[gateway]\nadvertised_proxy_url = \"http://aurora-gateway:4102\"\n"),
+        &[],
+    )
+    .unwrap();
+    for e in [
+        raw.api_config().unwrap_err().to_string(),
+        raw.gateway_config().unwrap_err().to_string(),
+    ] {
+        assert!(e.contains("gateway.advertised_proxy_url"), "{e}");
+        assert!(e.contains("https://"), "{e}");
+    }
+    let raw = load_with(
+        &format!("{BASE}[gateway]\nadvertised_proxy_url = \"https://aurora-gateway:4102\"\n"),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        raw.gateway_config().unwrap().advertised_proxy_url,
+        "https://aurora-gateway:4102"
+    );
+}
+
+#[test]
+fn proxy_tls_cert_and_key_come_together() {
+    let only_cert = load_with(
+        &format!("{BASE}[gateway.proxy_tls]\ncert_file = \"/c.pem\"\n"),
+        &[],
+    )
+    .unwrap();
+    let e = only_cert.gateway_config().unwrap_err().to_string();
+    assert!(e.contains("gateway.proxy_tls.key_file"), "{e}");
+    let only_key = load_with(
+        &format!("{BASE}[gateway.proxy_tls]\nkey_file = \"/k.pem\"\n"),
+        &[],
+    )
+    .unwrap();
+    let e = only_key.gateway_config().unwrap_err().to_string();
+    assert!(e.contains("gateway.proxy_tls.cert_file"), "{e}");
+    let ok = load_with(
+        &format!(
+            "{BASE}[gateway.proxy_tls]\ncert_file = \"/c.pem\"\nkey_file = \"/k.pem\"\nnames = [\"gw.example.org\", \"10.0.0.5\"]\n"
+        ),
+        &[],
+    )
+    .unwrap();
+    let g = ok.gateway_config().unwrap().gateway;
+    assert_eq!(g.proxy_tls.names, ["gw.example.org", "10.0.0.5"]);
+    let bad = load_with(
+        &format!("{BASE}[gateway.proxy_tls]\nnames = [\"bad name!\"]\n"),
+        &[],
+    )
+    .unwrap();
+    assert!(
+        bad.gateway_config()
+            .unwrap_err()
+            .to_string()
+            .contains("gateway.proxy_tls.names")
+    );
 }

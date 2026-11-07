@@ -97,10 +97,33 @@ pub fn build_env(
         env.entry(k.to_string()).or_insert_with(|| bundle_s.clone());
     }
     let proxy = sub(&cfg.proxy_url)?;
-    for k in ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"] {
+    for k in PROXY_VARS {
         env.entry(k.to_string()).or_insert_with(|| proxy.clone());
     }
+    // (phase 1, RFE-002, SEC-40) The gateway proxy listener is TLS-only: never hand a child a
+    // cleartext gateway URL for a non-loopback host.
+    crate::forward::require_tls_url(&proxy)?;
+    for k in PROXY_VARS {
+        if let Some(v) = env.get(k) {
+            crate::forward::require_tls_url(v)?;
+        }
+    }
     Ok(env)
+}
+
+pub const PROXY_VARS: [&str; 4] = ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"];
+
+/// The gateway proxy URL with the agent token substituted.
+pub fn resolved_proxy_url(cfg: &ContainerConfig, token: &str) -> String {
+    cfg.proxy_url.replace(PLACEHOLDER, token)
+}
+
+/// `--forward`: point every proxy variable at the loopback forwarder (plain HTTP on 127.0.0.1,
+/// no credentials; the forwarder adds them and speaks TLS upstream).
+pub fn apply_forwarder(env: &mut BTreeMap<String, String>, forwarder_url: &str) {
+    for k in PROXY_VARS {
+        env.insert(k.to_owned(), forwarder_url.to_owned());
+    }
 }
 
 /// Exit code passthrough (128+signal when killed).
@@ -117,8 +140,8 @@ mod tests {
 
     fn cfg() -> ContainerConfig {
         serde_json::from_value(serde_json::json!({
-            "proxy_url": "http://x:<AGENT_TOKEN>@gw:4102",
-            "env": {"HTTPS_PROXY": "http://x:<AGENT_TOKEN>@gw:4102", "SSL_CERT_FILE": "/aurora/ca.pem",
+            "proxy_url": "https://x:<AGENT_TOKEN>@gw:4102",
+            "env": {"HTTPS_PROXY": "https://x:<AGENT_TOKEN>@gw:4102", "SSL_CERT_FILE": "/aurora/ca.pem",
                     "NO_PROXY": "localhost"},
             "ca_pem": "-----BEGIN CERTIFICATE-----\nGW\n-----END CERTIFICATE-----\n",
             "ca_path": "/aurora/ca.pem",
@@ -132,8 +155,8 @@ mod tests {
     fn substitutes_token_and_builds_bundle() {
         let dir = make_temp_dir().unwrap();
         let env = build_env(&cfg(), Some("aug_tok"), &dir, "-----SYS-----\n").unwrap();
-        assert_eq!(env["HTTPS_PROXY"], "http://x:aug_tok@gw:4102");
-        assert_eq!(env["HTTP_PROXY"], "http://x:aug_tok@gw:4102");
+        assert_eq!(env["HTTPS_PROXY"], "https://x:aug_tok@gw:4102");
+        assert_eq!(env["HTTP_PROXY"], "https://x:aug_tok@gw:4102");
         assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "aurora-placeholder");
         let bundle = std::fs::read_to_string(&env["SSL_CERT_FILE"]).unwrap();
         assert!(bundle.starts_with("-----SYS-----") && bundle.contains("GW"));
@@ -145,6 +168,35 @@ mod tests {
         assert_eq!(mode & 0o777, 0o600);
         // No API key or other real secret appears in the env.
         assert!(env.values().all(|v| !v.contains("auk_")));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn cleartext_gateway_url_is_refused() {
+        let dir = make_temp_dir().unwrap();
+        let mut c = cfg();
+        c.proxy_url = "http://x:<AGENT_TOKEN>@gw:4102".into();
+        c.env.clear();
+        let e = build_env(&c, Some("aug_tok"), &dir, "")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("TLS-only") && !e.contains("aug_tok"), "{e}");
+        let mut c = cfg();
+        c.env
+            .insert("HTTP_PROXY".into(), "http://x:<AGENT_TOKEN>@gw:4102".into());
+        assert!(build_env(&c, Some("aug_tok"), &dir, "").is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn forwarder_replaces_the_proxy_variables_with_loopback() {
+        let dir = make_temp_dir().unwrap();
+        let mut env = build_env(&cfg(), Some("aug_tok"), &dir, "").unwrap();
+        apply_forwarder(&mut env, "http://127.0.0.1:41000");
+        for k in PROXY_VARS {
+            assert_eq!(env[k], "http://127.0.0.1:41000");
+        }
+        assert!(env.values().all(|v| !v.contains("aug_tok")));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

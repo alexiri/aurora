@@ -4,7 +4,7 @@ use super::dto::{
 };
 use super::{bus::BusMsg, service};
 use crate::app::AppState;
-use crate::http::auth::{Caller, SessionCaller};
+use crate::http::auth::{Caller, SessionCaller, require_approve};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, Pagination};
@@ -30,7 +30,7 @@ pub fn router() -> OpenApiRouter<AppState> {
 /// Approvals of a workspace, newest first.
 #[utoipa::path(get, path = "/workspaces/{ws}/approvals", operation_id = "listApprovals", tag = "approvals",
     params(("ws" = Uuid, Path, description = "Workspace id"), ListQuery),
-    responses((status = 200, body = Page<Approval>), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Page<Approval>), (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_approvals(
     c: Caller,
@@ -38,7 +38,7 @@ async fn list_approvals(
     Path(ws): Path<Uuid>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<Approval>>, ApiError> {
-    c.workspace(&s, ws).await?;
+    require_approve(&c.workspace(&s, ws).await?)?;
     service::validate_status(q.status.as_deref())?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = repo::list_workspace(
@@ -116,7 +116,7 @@ async fn stream(
 #[utoipa::path(post, path = "/approvals/{id}/decision", operation_id = "decideApproval", tag = "approvals",
     params(("id" = Uuid, Path, description = "Approval id")),
     request_body = DecisionBody,
-    responses((status = 200, body = Approval), (status = 404, body = ErrorEnvelope),
+    responses((status = 200, body = Approval), (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
         (status = 409, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn decide(

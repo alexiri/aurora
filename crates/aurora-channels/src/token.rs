@@ -1,5 +1,6 @@
-//! Action tokens (docs/13 §4.4): `v1.<b64url(payload)>.<b64url(HMAC)>` signed
-//! with the HKDF `action-token` key. This module signs and verifies and exposes
+//! Action tokens (docs/13 §4.4): `v2.<key_id>.<b64url(payload)>.<b64url(HMAC)>` signed
+//! with the active signing key's HKDF `action-token` key (RFE-007); phase 0 `v1.<payload>.<HMAC>`
+//! tokens still verify by trying each ring key. This module signs and verifies and exposes
 //! the token id (`jti`); single use is enforced by the API (`action_token_uses`).
 
 use aurora_crypto::{DerivedKeys, Purpose};
@@ -11,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const VERSION: &str = "v1";
+/// Phase 0 token version (verify only).
+pub const VERSION_V1: &str = "v1";
+/// Current token version: carries the signing-key id.
+pub const VERSION: &str = "v2";
 /// Upper bound on a whole token (fits platform button value limits comfortably).
 pub const MAX_TOKEN_LEN: usize = 2048;
 pub const MAX_ALLOWED_AGENTS: usize = 25;
@@ -125,7 +129,8 @@ impl ActionToken {
         let payload = serde_json::to_vec(claims).map_err(|_| TokenError::Malformed)?;
         let tag = keys.sign(Purpose::ActionToken, &payload);
         let token = format!(
-            "{VERSION}.{}.{}",
+            "{VERSION}.{}.{}.{}",
+            keys.active_id(),
             URL_SAFE_NO_PAD.encode(&payload),
             URL_SAFE_NO_PAD.encode(tag)
         );
@@ -146,11 +151,11 @@ impl ActionToken {
         if token.len() > MAX_TOKEN_LEN {
             return Err(TokenError::Malformed);
         }
-        let mut parts = token.split('.');
-        let (Some(VERSION), Some(p), Some(t), None) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        else {
-            return Err(TokenError::Malformed);
+        let parts: Vec<&str> = token.split('.').collect();
+        let (key_id, p, t) = match parts.as_slice() {
+            [VERSION, id, p, t] => (Some(*id), *p, *t),
+            [VERSION_V1, p, t] => (None, *p, *t),
+            _ => return Err(TokenError::Malformed),
         };
         let payload = URL_SAFE_NO_PAD
             .decode(p)
@@ -158,7 +163,13 @@ impl ActionToken {
         let tag = URL_SAFE_NO_PAD
             .decode(t)
             .map_err(|_| TokenError::Malformed)?;
-        if !keys.verify(Purpose::ActionToken, &payload, &tag) {
+        let good = match key_id {
+            // `v2`: one lookup; an id outside the ring is refused.
+            Some(id) => keys.verify_with(id, Purpose::ActionToken, &payload, &tag),
+            // `v1`: no id, try each ring key.
+            None => keys.verify(Purpose::ActionToken, &payload, &tag),
+        };
+        if !good {
             return Err(TokenError::BadSignature);
         }
         let claims: Claims = serde_json::from_slice(&payload).map_err(|_| TokenError::Malformed)?;

@@ -19,8 +19,10 @@ contains `aurora`, otherwise `<release>-aurora`
   `postgres.enabled` is for evaluation only (see [Database](#database)).
 - An Ingress controller (values default to ingress-nginx) or a Gateway API implementation.
 - A runtime class for sandboxes, such as gVisor or Kata (recommended by docs/15).
-- Images pushed to a registry you control (`image.registry`), or available under bare
-  names. Tag defaults to the chart's appVersion (`image.tag`).
+- Images: by default the chart pulls the CI-published images from
+  `ghcr.io/alexiri/aurora-*` (public; `image.registry`), tag = the chart's appVersion
+  (`image.tag`). To use a mirror or private registry, set `image.registry` (and `image.pullSecrets`);
+  `image.registry: ""` means bare names (images you built and loaded yourself).
 - The sandbox image must be pullable by the nodes under the name in `config.runner.image`
   (default `aurora-sandbox:<version>`, which containerd resolves to
   `docker.io/library/aurora-sandbox:<version>`). The runner applies that setting to every
@@ -154,7 +156,7 @@ Packages still need approval in the admin API before they take effect.
 | Component | Values | Default | Notes |
 |-----------|--------|---------|-------|
 | api | `api.replicas`, `api.resources`, `api.nodeSelector`, `api.tolerations`, `api.extraEnv` | 2 | Ports 4101 (public) and 4111 (internal). `extraEnv` supports `valueFrom` (for example OIDC client secrets). |
-| gateway | `gateway.replicas`, `gateway.ca.existingSecret`, `gateway.proxy.service.type`, `gateway.proxy.service.loadBalancerSourceRanges`, `gateway.proxy.service.annotations` | 2 | Ports 4103 (internal) and 4102 (proxy, Service `<fullname>-gateway-proxy`). `ClusterIP` by default. `LoadBalancer` exposes 4102 to external BYO agents and bypasses the edge. |
+| gateway | `gateway.replicas`, `gateway.ca.existingSecret`, `gateway.proxy.service.type`, `gateway.proxy.service.loadBalancerSourceRanges`, `gateway.proxy.service.annotations`, `gateway.proxy.tls.externalHost`, `gateway.proxy.tls.names`, `gateway.proxy.tls.existingSecret` | 2 | Ports 4103 (internal) and 4102 (proxy, Service `<fullname>-gateway-proxy`). `ClusterIP` by default. `LoadBalancer` exposes 4102 to external BYO agents and bypasses the edge; it must be layer 4 (the proxy listener is TLS-only, never terminate TLS in front of it). The proxy certificate is issued by the gateway CA for the Service names plus `tls.externalHost` and `tls.names`; `tls.existingSecret` (a `kubernetes.io/tls` Secret) replaces it with an operator certificate that must cover every name clients use. |
 | hookhost | `hookhost.replicas` | 2 | Port 4104. |
 | web | `web.replicas` | 2 | Port 4100. |
 | runner | `runner.enabled`, `runner.replicas` (default 1), `runner.k8s.*` | enabled | Port 4105 is reachable only from the sandboxes namespace. See [runners.md](runners.md#kubernetes-backend). |
@@ -247,7 +249,7 @@ Minimal `my-values.yaml`:
 ```yaml
 externalUrl: https://aurora.example.org
 image:
-  registry: registry.example.org/aurora
+  registry: registry.example.org/aurora   # optional: default is ghcr.io/alexiri
   tag: "0.1.0"
 ingress:
   className: nginx

@@ -38,14 +38,23 @@ pub trait Summarizer: Send + Sync + 'static {
 pub struct HttpSummarizer {
     base: String,
     secret: String,
+    key_id: Option<String>,
     http: reqwest::Client,
 }
 
 impl HttpSummarizer {
+    /// Name the internal-secret ring entry presented (`X-Aurora-Key-Id`, RFE-007).
+    #[must_use]
+    pub fn with_key_id(mut self, id: &str) -> Self {
+        self.key_id = Some(id.to_owned());
+        self
+    }
+
     pub fn new(base_url: &str, internal_secret: &str) -> Self {
         Self {
             base: base_url.trim_end_matches('/').to_owned(),
             secret: internal_secret.to_owned(),
+            key_id: None,
             http: reqwest::Client::builder()
                 .timeout(HOOK_WALL_SUMMARIZE)
                 .build()
@@ -140,6 +149,8 @@ impl Summarizer for HttpSummarizer {
                     self.base
                 ))
                 .bearer_auth(&self.secret)
+                .headers(crate::key_id_headers(self.key_id.as_deref()))
+                .headers(crate::key_id_headers(self.key_id.as_deref()))
                 .headers(aurora_core::telemetry::headers())
                 .json(&body)
                 .send()

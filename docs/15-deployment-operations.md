@@ -19,6 +19,18 @@ One OCI image per component, all tagged with the Aurora version
 | `aurora-connector-mattermost` | phase 1 |
 | `aurora-sandbox` | sandbox image (`11 §Sandbox image`) — not a service; referenced by the runner. (phase 3, RFE-019) Built on the public official AlmaLinux image by default; a private or mirrored base is a **build-time** override (`SANDBOX_BASE_IMAGE`, see below), not a runtime configuration key |
 
+(phase 1, OPS-020) **Registry and tags.** CI builds and publishes every image to
+`ghcr.io/alexiri/aurora-<name>` (`api`, `gateway`, `hookhost`, `runner`, `web`,
+`connector-fake`, `connector-mattermost`, `sandbox`, `sandbox-min`) with `GITHUB_TOKEN`, only after the
+lint, test, e2e, web and guard jobs of the same workflow run are green. Pushes to `master` and `v*` tags
+publish; pull requests build without pushing. Tags: `sha-<short>` (every publish), `master` (moving),
+`<version>` and `<major>.<minor>` from a `vX.Y.Z` git tag, and `latest` only for the newest
+non-prerelease semver tag. Images carry OCI labels (source, revision, version, license
+`GPL-3.0-or-later`) plus SBOM and max-mode provenance attestations. The Helm chart defaults to
+`image.registry: ghcr.io/alexiri` with the chart `appVersion` as tag. The six service images are copies of a
+single compile of the workspace (`images/services/Containerfile`, cargo-chef dependency layer, lld).
+`aurora-sandbox-min` is the slim e2e sandbox (OS + supervisor).
+
 Service images are distroless (`gcr.io/distroless/cc` or equivalent), run as
 non-root, contain only their binary, and are multi-arch (amd64, arm64).
 
@@ -269,7 +281,7 @@ The runner runs as the invoking user because the rootless socket is `srw-rw---- 
 nonroot uid 65532 would map to an unprivileged sub-uid that cannot open it. That is no more privilege than the socket
 access itself; the other services keep the nonroot user. `setup.sh` writes `AURORA_UID`/`AURORA_GID`, warns when
 `systemctl --user is-active podman.socket` fails, and exports the public `ca.pem` to `deploy/compose/ca/` for the `api`
-service. The `hosted` profile needs `gateway.advertised_proxy_url = http://aurora-gateway:4102` and `runner.sandbox_hosts`
+service. The `hosted` profile needs `gateway.advertised_proxy_url = https://aurora-gateway:4102` and `runner.sandbox_hosts`
 (both in the shipped `aurora.toml`); `gateway.allowed_private` opens only the mock LiteLLM's static address.
 
 Networks: `core` (bridge) and `sandbox` (external, created by `setup.sh`,
@@ -344,6 +356,13 @@ restarting it invalidates in-flight turns (bootstrap tokens are single use).
   Gateways and runners of the previous version keep working during the roll.
 - Running sandboxes keep their image until their next boot; the dashboard shows
   "restart to update" when an agent's boot image differs from the runner's.
+- (phase 1, RFE-002) Upgrading to phase 1 requires restarting running sandboxes; the
+  dashboard flags them. The proxy listener becomes TLS-only (no dual-mode
+  listener, D-44), so a phase-0 supervisor, which forwards plaintext to 4102,
+  fails closed (its requests are refused, no credential is sent in the clear)
+  until its sandbox restarts. The boot inputs include the gateway transport
+  (`gateway.tls`), so the API reports `restart_to_update` for those sandboxes
+  automatically; the next boot runs the TLS-capable supervisor.
 
 ## Observability
 

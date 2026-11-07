@@ -58,14 +58,27 @@ pub async fn create(
     let mut ws: Vec<Uuid> = req.workspace_ids.clone();
     ws.sort_unstable();
     ws.dedup();
+    let mut appr: Vec<Uuid> = req.approver_workspace_ids.clone();
+    appr.sort_unstable();
+    appr.dedup();
+    if appr.iter().any(|w| ws.contains(w)) {
+        return Err(ApiError::invalid_request(
+            "A workspace cannot be bound as both member and approver.",
+            vec![FieldError::new(
+                "/approver_workspace_ids",
+                "must be disjoint from workspace_ids",
+            )],
+        ));
+    }
 
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     let (org_name, settings) = repo::lock_org(&mut tx, org)
         .await?
         .ok_or_else(|| ApiError::not_found("Organization not found."))?;
-    if !ws.is_empty() {
-        let found = repo::workspaces_in_org(&mut *tx, org, &ws).await?;
-        if found.len() != ws.len() {
+    let all_ws: Vec<Uuid> = ws.iter().chain(appr.iter()).copied().collect();
+    if !all_ws.is_empty() {
+        let found = repo::workspaces_in_org(&mut *tx, org, &all_ws).await?;
+        if found.len() != all_ws.len() {
             return Err(ApiError::invalid_request(
                 "Unknown workspace.",
                 vec![FieldError::new(
@@ -94,6 +107,7 @@ pub async fn create(
             email: &email,
             role: req.role.as_str(),
             workspace_ids: &ws,
+            approver_workspace_ids: &appr,
             token_hash: &token::hash(&tok),
             invited_by: inviter,
         },
@@ -214,10 +228,17 @@ async fn accept_in_tx(
         return Err(limit_reached());
     }
     members::insert(&mut *tx, inv.org_id, user.id, &inv.role).await?;
-    let bound = repo::workspaces_in_org(&mut *tx, inv.org_id, &inv.workspace_ids).await?;
+    let mut bound = repo::workspaces_in_org(&mut *tx, inv.org_id, &inv.workspace_ids).await?;
     for ws in &bound {
         workspaces::bind_user(&mut *tx, *ws, user.id, "member").await?;
     }
+    // Phase 2, RFE-012: approver bindings (an invitation never grants `owner`).
+    let approver =
+        repo::workspaces_in_org(&mut *tx, inv.org_id, &inv.approver_workspace_ids).await?;
+    for ws in &approver {
+        workspaces::bind_user(&mut *tx, *ws, user.id, "approver").await?;
+    }
+    bound.extend(approver);
     if user.default_org_id.is_none() {
         users::set_default_org(&mut *tx, user.id, inv.org_id).await?;
     }

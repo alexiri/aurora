@@ -21,8 +21,12 @@ pub struct EnvSecrets {
     pub database_url: Option<Redacted<String>>,
     pub encryption_keys: Option<Redacted<String>>,
     pub encryption_active_key: Option<Redacted<String>>,
+    /// Ring list or bare value (RFE-007, `08 §4`).
     pub signing_key: Option<Redacted<String>>,
+    pub signing_active_key: Option<Redacted<String>>,
+    /// Ring list or bare value (RFE-007, `08 §4`).
     pub internal_secret: Option<Redacted<String>>,
+    pub internal_active_key: Option<Redacted<String>>,
     pub runner_session_key: Option<Redacted<String>>,
     pub runner_token: Option<Redacted<String>>,
     pub connector_token: Option<Redacted<String>>,
@@ -53,6 +57,7 @@ pub struct RawConfig {
     pub runner: RunnerSection,
     pub tls: TlsSection,
     pub retention: RetentionSection,
+    pub ratelimit: RatelimitSection,
     pub telemetry: TelemetrySection,
     #[serde(skip)]
     pub env_secrets: EnvSecrets,
@@ -147,6 +152,8 @@ pub struct OidcJit {
     /// `member` or `admin`.
     pub role: String,
     pub workspace_slugs: Vec<String>,
+    /// Phase 2, RFE-012: `member` (default, also when empty) or `approver`.
+    pub workspace_role: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -353,6 +360,19 @@ pub struct GatewaySection {
     pub resolve_cache_ttl_secs: u64,
     pub ca_dir: String,
     pub hookhost_url: String,
+    /// (phase 1, RFE-002) Proxy listener certificate settings (docs/06 §Proxy listener TLS).
+    pub proxy_tls: ProxyTlsSection,
+}
+
+/// `[gateway.proxy_tls]` (phase 1, RFE-002).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProxyTlsSection {
+    /// Extra DNS names / IPs for the CA-issued proxy certificate.
+    pub names: Vec<String>,
+    /// Operator-supplied certificate chain (PEM); replaces the CA-issued leaf. Both or neither.
+    pub cert_file: Option<String>,
+    pub key_file: Option<String>,
 }
 impl Default for GatewaySection {
     fn default() -> Self {
@@ -366,6 +386,7 @@ impl Default for GatewaySection {
             resolve_cache_ttl_secs: 60,
             ca_dir: "/var/lib/aurora/ca".into(),
             hookhost_url: "http://aurora-hookhost:4104".into(),
+            proxy_tls: ProxyTlsSection::default(),
         }
     }
 }
@@ -500,6 +521,45 @@ impl Default for RetentionSection {
             request_log_days: 30,
         }
     }
+}
+
+/// `[ratelimit]` (phase 2, RFE-017).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RatelimitSection {
+    pub api: ApiRateSection,
+}
+
+/// `[ratelimit.api]`: management-API token buckets (docs/05 §Conventions).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ApiRateSection {
+    pub enabled: bool,
+    /// Scales every bucket (0.1-100).
+    pub multiplier: f64,
+    /// Per-organization bucket refill per minute (burst = one fifth of it).
+    pub org_per_minute: u32,
+    /// Per-class overrides keyed by class name.
+    pub classes: BTreeMap<String, RateClassOverride>,
+}
+impl Default for ApiRateSection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            multiplier: 1.0,
+            org_per_minute: 3000,
+            classes: BTreeMap::new(),
+        }
+    }
+}
+
+/// `{ per_minute | per_hour, burst }`; omitted fields keep the class default.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RateClassOverride {
+    pub per_minute: Option<u32>,
+    pub per_hour: Option<u32>,
+    pub burst: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

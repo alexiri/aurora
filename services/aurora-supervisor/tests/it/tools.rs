@@ -91,7 +91,7 @@ async fn bridge_supervisor_runner_round_trip() {
     let sock = root.join("tools.sock");
     let (out_tx, mut out_rx) = mpsc::channel(256);
     let (in_tx, in_rx) = mpsc::channel(256);
-    let mut cfg = SupervisorConfig::new("127.0.0.1:1", "aub_x");
+    let mut cfg = SupervisorConfig::new(crate::common::dead_upstream(), "aub_x");
     cfg.working_dir = root.clone();
     cfg.process = ProcessConfig::new(root.clone());
     cfg.tools.socket = Some(sock.clone());

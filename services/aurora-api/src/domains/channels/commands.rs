@@ -1,7 +1,7 @@
 //! Platform-neutral commands (docs/13 §5.4): `help`, `agents`, `use`, `link`, `unlink`, `bind`,
 //! `unbind`, `approve`, `deny`. Replies are private (ephemeral where the platform has it).
 //! Every command resolves the caller through their user link, so the platform never
-//! authorizes (§5.5); `approve`/`deny` need `can_use` on the approval's workspace.
+//! authorizes (§5.5); `approve`/`deny` need `can_approve` (phase 2, RFE-012) on the approval's workspace.
 
 use super::inbox::send::{self, Ctx};
 use super::inbox::{Retry, approval_code_matches, ignored, outcome};
@@ -380,7 +380,7 @@ impl Cmd<'_> {
 
     /// `approve <code>` / `deny <code>`: the code is `cards::approval_code` (S-12: base32 of the
     /// first 40 bits of sha256(id)); only approvals of conversations that live in this space are candidates,
-    /// and the caller needs a user link and `can_use` (the access law).
+    /// and the caller needs a user link and `can_approve` (the access law; phase 2, RFE-012).
     async fn decide(&self, args: &str, approve: bool) -> Result<Value, InboxError> {
         let pool = &self.state.pool;
         let Some(user) = self.user().await? else {
@@ -406,6 +406,30 @@ impl Cmd<'_> {
                     .retry()?
             {
                 matches.push(a);
+            }
+        }
+        if matches.is_empty() {
+            // Phase 2, RFE-012: a plain member who can see the approval is told why nothing happened.
+            for a in approvals::list_pending_undecidable_for(pool, user, 200)
+                .await
+                .retry()?
+            {
+                let Some(conv) = a.conversation_id else {
+                    continue;
+                };
+                if approval_code_matches(a.id, code)
+                    && thread_links::exists_in_space(
+                        pool,
+                        conv,
+                        self.ctx.id(),
+                        &self.c.space.reference,
+                    )
+                    .await
+                    .retry()?
+                {
+                    self.reply("Only approvers can decide this.").await?;
+                    return Ok(outcome("approver_required"));
+                }
             }
         }
         let [a] = matches.as_slice() else {

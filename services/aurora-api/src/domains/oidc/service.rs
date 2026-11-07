@@ -502,9 +502,15 @@ async fn apply_jit(
     }
     let role = if j.role == "admin" { "admin" } else { "member" };
     members::insert(&mut *tx, org_id, user.id, role).await?;
+    // Phase 2, RFE-012: JIT may bind as `approver`, never `owner`.
+    let ws_role = if j.workspace_role == "approver" {
+        "approver"
+    } else {
+        "member"
+    };
     for slug in &j.workspace_slugs {
         match workspaces::get_by_slug(&mut *tx, org_id, slug).await? {
-            Some(ws) => workspaces::bind_user(&mut *tx, ws.id, user.id, "member").await?,
+            Some(ws) => workspaces::bind_user(&mut *tx, ws.id, user.id, ws_role).await?,
             None => tracing::warn!("oidc: jit workspace `{slug}` does not exist"),
         }
     }

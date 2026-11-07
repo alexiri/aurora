@@ -63,7 +63,10 @@ impl Resolve for Guarded {
 pub struct Refused;
 
 impl Env {
-    pub fn new(hookhost_url: &str, internal_secret: &[u8]) -> Result<Self, String> {
+    pub fn new(
+        hookhost_url: &str,
+        internal_ring: &aurora_crypto::SecretRing,
+    ) -> Result<Self, String> {
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(10))
@@ -72,7 +75,7 @@ impl Env {
             .map_err(|e| format!("connect http client: {e}"))?;
         Ok(Self {
             http,
-            hooks: HookClient::new(hookhost_url, internal_secret)?,
+            hooks: HookClient::new(hookhost_url, internal_ring)?,
             override_origin: None,
         })
     }

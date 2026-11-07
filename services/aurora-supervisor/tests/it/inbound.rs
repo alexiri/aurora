@@ -286,7 +286,7 @@ async fn rig() -> Rig {
     let sock = ws.join("tools.sock");
     let (out_tx, out_rx) = mpsc::channel(256);
     let (in_tx, in_rx) = mpsc::channel(256);
-    let mut cfg = SupervisorConfig::new("127.0.0.1:1", "aub_x");
+    let mut cfg = SupervisorConfig::new(crate::common::dead_upstream(), "aub_x");
     cfg.working_dir = ws.clone();
     cfg.process = ProcessConfig::new(ws.clone());
     cfg.tools.socket = Some(sock.clone());

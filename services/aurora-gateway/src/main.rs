@@ -12,6 +12,10 @@ use aurora_gateway::instance;
 use aurora_gateway::invalidation::Hub;
 use aurora_gateway::plaintext::PlaintextCache;
 use aurora_gateway::proxy::{Proxy, ProxyParts};
+use aurora_gateway::proxy_tls::{
+    ProxyTls, REFRESH_INTERVAL, SanInputs, cert_names, compose_addr_is_local, detect_namespace,
+    name_covers, san_set, url_host,
+};
 use aurora_gateway::reqlog::{DbWriter, FLUSH_INTERVAL, RequestLog};
 use aurora_gateway::resolve::{DbSource, Resolver};
 use aurora_gateway::resolver::DbCredentialResolver;
@@ -173,13 +177,16 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     hub.register(policy_resolver.cache());
     // `gateway.hookhost_url` (docs/15); bearer = the configured internal secret (W9).
     let hookhost_url = cfg.gateway.hookhost_url.clone();
-    let hook_bearer =
-        base64::engine::general_purpose::STANDARD.encode(cfg.internal_secret.expose());
+    let ring = Arc::new(cfg.internal_ring.clone());
+    let hook_bearer = ring.active_bearer();
+    let hook_key_id = ring.active_id().to_owned();
     let minter: Arc<dyn aurora_gateway::mint::Minter> = Arc::new(
-        aurora_gateway::mint::HttpMinter::new(&hookhost_url, &hook_bearer),
+        aurora_gateway::mint::HttpMinter::new(&hookhost_url, &hook_bearer)
+            .with_key_id(&hook_key_id),
     );
     let summarizer: Arc<dyn aurora_gateway::summarize_client::Summarizer> = Arc::new(
-        aurora_gateway::summarize_client::HttpSummarizer::new(&hookhost_url, &hook_bearer),
+        aurora_gateway::summarize_client::HttpSummarizer::new(&hookhost_url, &hook_bearer)
+            .with_key_id(&hook_key_id),
     );
     let tokens = Arc::new(aurora_gateway::refresh::TokenManager::new(
         pool.clone(),
@@ -261,6 +268,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             ("registry", snapshot_check),
         ],
     )
+    .merge(aurora_gateway::status::router(ring))
     .layer(axum::middleware::from_fn(service::trace_context));
     let ca = Arc::new(Ca::load(Path::new(&cfg.gateway.ca_dir))?);
     let bind = cfg.server.bind.as_str();
@@ -292,8 +300,44 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         Some(p) => Some(std::fs::read(p)?),
         None => None,
     };
+    // (phase 1, RFE-002) The proxy listener is TLS-only; startup fails (naming the key) when the
+    // certificate cannot be established.
+    let proxy_tls = match (
+        &cfg.gateway.proxy_tls.cert_file,
+        &cfg.gateway.proxy_tls.key_file,
+    ) {
+        (Some(cert), Some(key)) => {
+            let tls = ProxyTls::operator(Path::new(cert), Path::new(key))?;
+            if let Some(host) = url_host(&cfg.advertised_proxy_url) {
+                let covered = tls
+                    .current_chain()
+                    .first()
+                    .is_some_and(|c| cert_names(c).iter().any(|n| name_covers(n, &host)));
+                if !covered {
+                    tracing::warn!(
+                        host,
+                        "the operator proxy certificate does not cover the advertised proxy host"
+                    );
+                }
+            }
+            tls
+        }
+        _ => {
+            let namespace = detect_namespace();
+            let names = san_set(&SanInputs {
+                advertised_proxy_url: &cfg.advertised_proxy_url,
+                extra_names: &cfg.gateway.proxy_tls.names,
+                namespace: namespace.as_deref(),
+                compose_addr_local: compose_addr_is_local(),
+            });
+            tracing::info!(sans = ?names, "proxy listener certificate issued by the gateway CA");
+            ProxyTls::from_ca(ca.clone(), names)?
+        }
+    };
+    let tls_task = tokio::spawn(proxy_tls.clone().run_refresh(REFRESH_INTERVAL, rx.clone()));
     let proxy = Proxy::new(ProxyParts {
         ca,
+        tls: proxy_tls,
         resolver,
         handler,
         guard,
@@ -327,5 +371,6 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let _ = snapshot_task.await;
     let _ = instance_task.await;
     let _ = reqlog_task.await;
+    let _ = tls_task.await;
     Ok(())
 }

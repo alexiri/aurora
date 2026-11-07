@@ -21,23 +21,16 @@ const BODY_MAX: usize = 4 * 1024 * 1024;
 #[derive(Clone)]
 pub struct AppState {
     pub catalog: Arc<Catalog>,
-    /// Expected `Authorization` header value.
-    pub bearer: Arc<str>,
+    /// Internal-secret ring: any key is accepted, `X-Aurora-Key-Id` names it (RFE-007).
+    pub ring: Arc<aurora_crypto::SecretRing>,
 }
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/internal/v1/hooks/{hook}", post(handle))
+        .route("/internal/v1/status", axum::routing::get(ring_status))
         .layer(DefaultBodyLimit::max(BODY_MAX))
         .with_state(state)
-}
-
-fn ct_eq(a: &[u8], b: &[u8]) -> bool {
-    let mut d = (a.len() ^ b.len()) as u8;
-    for i in 0..a.len().max(b.len()) {
-        d |= a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0);
-    }
-    d == 0
 }
 
 fn status(code: &str) -> StatusCode {
@@ -57,21 +50,50 @@ fn err(e: &CallError) -> Response {
         .into_response()
 }
 
+/// `Some(401)` unless the caller presents a key of the ring (constant-time).
+fn unauthorized(st: &AppState, headers: &HeaderMap) -> Option<Response> {
+    let key_id = headers
+        .get(aurora_core::limits::KEY_ID_HEADER)
+        .map(|v| v.to_str().unwrap_or("\u{0}"));
+    let auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if st.ring.verify_bearer_header(key_id, auth) {
+        return None;
+    }
+    Some(
+        (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(json!({ "error": { "code": "unauthorized", "message": "internal secret required" } })),
+        )
+            .into_response(),
+    )
+}
+
+/// Ring ids + fingerprints (never values), to confirm rotation convergence (`08 §4`).
+async fn ring_status(State(st): State<AppState>, headers: HeaderMap) -> Response {
+    if let Some(r) = unauthorized(&st, &headers) {
+        return r;
+    }
+    let (active, keys) = st.ring.status();
+    let keys: Vec<_> = keys
+        .into_iter()
+        .map(|(id, fp)| json!({ "id": id, "fingerprint": fp }))
+        .collect();
+    axum::Json(
+        json!({ "service": "hookhost", "internal_secret": { "active": active, "keys": keys } }),
+    )
+    .into_response()
+}
+
 async fn handle(
     State(st): State<AppState>,
     Path(hook): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let authed = headers
-        .get(header::AUTHORIZATION)
-        .is_some_and(|v| ct_eq(v.as_bytes(), format!("Bearer {}", st.bearer).as_bytes()));
-    if !authed {
-        return (
-            StatusCode::UNAUTHORIZED,
-            axum::Json(json!({ "error": { "code": "unauthorized", "message": "internal secret required" } })),
-        )
-            .into_response();
+    if let Some(r) = unauthorized(&st, &headers) {
+        return r;
     }
     let Some(kind) = HookKind::parse(&hook) else {
         return (

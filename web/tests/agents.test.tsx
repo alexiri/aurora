@@ -43,7 +43,7 @@ const agent = (kind: "byo" | "hosted") => ({
   updated_at: "2026-01-01T00:00:00Z",
 });
 const config = {
-  proxy_url: "http://aug_SECRET@gw:1", env: { A: "b" }, ca_pem: "", ca_path: "/ca.pem", llm_env: {}, stubs: [],
+  proxy_url: "https://aug_SECRET@gw:1", env: { A: "b" }, ca_pem: "", ca_path: "/ca.pem", proxy_ca_path: "/ca.pem", proxy_tls: null, llm_env: {}, stubs: [],
 };
 const instance = (hosted: boolean) => ({ features: { hosted, channels: false } });
 
@@ -72,6 +72,7 @@ describe("create agent", () => {
     await createFlow("byo");
     expect(await screen.findByTestId("secret-key")).toHaveTextContent("aug_SECRET");
     expect(screen.getByTestId("revealed-config")).toBeInTheDocument();
+    expect(screen.getByTestId("proxy-tls-note")).toHaveTextContent("TLS-only");
     fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
     await waitFor(() => expect(screen.queryByTestId("secret-key")).not.toBeInTheDocument());
     expect(document.body.textContent).not.toContain("aug_SECRET");
@@ -124,7 +125,7 @@ describe("workspace nav", () => {
       "GET /v1/resolve": () => json(200, { org: { id: "o1", slug: "acme", name: "Acme" } }),
       "GET /v1/orgs/o1": () => json(200, org(role)),
     });
-    wrap(<WorkspaceNav base="/o/acme/w/main" orgSlug="acme" pathname="/o/acme/w/main" />);
+    wrap(<WorkspaceNav base="/o/acme/w/main" orgSlug="acme" wsId={undefined} pathname="/o/acme/w/main" />);
   }
   it("links Members for admins", async () => {
     navWith("admin");

@@ -6,7 +6,9 @@
 externalUrl: https://aurora.example.org
 
 image:
-  registry: ""            # e.g. registry.example.org/aurora (empty = bare image names)
+  # Published by CI (OPS-020): ghcr.io/alexiri/aurora-<component>. Override for a mirror or private
+  # registry (e.g. registry.example.org/aurora); "" = bare image names (locally built images).
+  registry: ghcr.io/alexiri
   tag: ""                 # defaults to .Chart.AppVersion
   pullPolicy: IfNotPresent
   pullSecrets: []         # [{name: regcred}]
@@ -19,11 +21,20 @@ hookImage: docker.io/alpine/k8s:1.31.2
 secrets:
   # Name of a pre-existing Secret holding ALL of: AURORA_ENCRYPTION_KEYS,
   # AURORA_ENCRYPTION_ACTIVE_KEY, AURORA_SIGNING_KEY, AURORA_INTERNAL_SECRET,
+  # (optional: AURORA_SIGNING_ACTIVE_KEY, AURORA_INTERNAL_ACTIVE_KEY - ring active ids),
   # AURORA_RUNNER_SESSION_KEY, AURORA_RUNNER_TOKEN, AURORA_CONNECTOR_TOKEN
   # (and POSTGRES_PASSWORD when postgres.enabled). When set, the generator hook is not rendered.
   existingSecret: ""
   # Name of the generated Secret (when existingSecret is empty). Existing keys are never overwritten.
   generatedName: ""       # default: <release>-aurora-secrets
+  # Key rings (RFE-007, docs/08 §4, docs/operator/key-rotation.md). AURORA_SIGNING_KEY and
+  # AURORA_INTERNAL_SECRET accept `id:base64,id2:base64` plus AURORA_SIGNING_ACTIVE_KEY /
+  # AURORA_INTERNAL_ACTIVE_KEY (optional keys of the Secret; a bare value is ring `v0`). With an
+  # existingSecret, edit those keys yourself. For a generated Secret, one `helm upgrade` with a
+  # flag below APPENDS one new entry and never activates it (a pending entry blocks another append).
+  rotate:
+    signing: false
+    internal: false
 
 database:
   # External Postgres is expected in production. Supply a Secret with key
@@ -91,6 +102,16 @@ gateway:
       type: ClusterIP     # LoadBalancer exposes 4102 to external BYO agents (bypasses the edge)
       loadBalancerSourceRanges: []
       annotations: {}
+    # (RFE-002) The proxy listener is TLS-only (never terminate TLS in front of it: a LoadBalancer
+    # must be layer 4). Its certificate is issued by the gateway CA for the Service names below.
+    tls:
+      # Hostname of the LoadBalancer/NodePort that external BYO agents dial; added to the certificate.
+      externalHost: ""
+      # Extra DNS names / IPs in the certificate (rendered as gateway.proxy_tls.names).
+      names: []
+      # Optional operator certificate: a kubernetes.io/tls Secret (tls.crt chain + tls.key) that
+      # replaces the CA-issued leaf. It must cover every name clients use.
+      existingSecret: ""
 
 hookhost:
   replicas: 2

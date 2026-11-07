@@ -1,8 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use std::net::SocketAddr;
 
-use crate::common::{decode_basic, stub_gateway};
+use crate::common::{decode_basic, stub_gateway, stub_gateway_with, tls_fixture};
 use aurora_supervisor::boot::{self, BootDocument};
+use aurora_supervisor::proxy::GatewayUpstream;
 use aurora_supervisor::proxy::{Credential, ProxyMode, spawn_proxy};
 use base64::Engine as _;
 use serde_json::json;
@@ -78,7 +79,7 @@ fn boot_json(dir: &std::path::Path) -> String {
         "agent": {"id": "00000000-0000-0000-0000-000000000003", "handle": "daneel", "name": "Daneel"},
         "runner_url": "ws://aurora-runner:4105/v1/supervisor",
         "bootstrap_token": "aup_x",
-        "gateway": {"proxy": "aurora-gateway:4102", "boot_token": "aub_x"},
+        "gateway": {"proxy": "aurora-gateway:4102", "tls": true, "server_name": "aurora-gateway", "boot_token": "aub_x"},
         "ca_pem": "PEM",
         "files": [
             {"path": dir.join("a/new.conf"), "mode": "0600", "content_b64": b64("fresh"), "only_if_absent_or_sentinel": true},
@@ -160,7 +161,7 @@ fn boot_files_are_confined_to_the_home() {
             "boot_id": "00000000-0000-0000-0000-000000000002",
             "agent": {"id": "00000000-0000-0000-0000-000000000003", "handle": "d", "name": "D"},
             "runner_url": "ws://r:4105/v1/supervisor", "bootstrap_token": "aup_x",
-            "gateway": {"proxy": "g:4102", "boot_token": "aub_x"}, "ca_pem": "PEM",
+            "gateway": {"proxy": "g:4102", "tls": true, "boot_token": "aub_x"}, "ca_pem": "PEM",
             "files": [{"path": path, "mode": "0600", "content_b64": b64("x"), "only_if_absent_or_sentinel": true}],
             "harness": {"id": "fake"}
         });
@@ -183,4 +184,120 @@ fn boot_files_are_confined_to_the_home() {
     // the default home is /workspace
     let d = BootDocument::parse(&doc(&outside.join("y"))).unwrap();
     assert!(boot::write_boot_files(&d, &ca).is_err());
+}
+
+const CONNECT: &str = "CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n";
+
+// SEC-40: the forwarder verifies the gateway certificate and sends no credential otherwise.
+#[tokio::test]
+async fn forwarder_refuses_a_wrong_server_name_without_sending_a_credential() {
+    let (ca, acceptor) = tls_fixture(&["localhost"]);
+    let (addr, seen) = stub_gateway_with(acceptor).await;
+    let up = GatewayUpstream::new(addr, &ca, "not-the-gateway.example").unwrap();
+    let p = spawn_proxy(
+        LO.parse().unwrap(),
+        up,
+        Credential::new("x", "aub_boot"),
+        ProxyMode::Mitm,
+    )
+    .await
+    .unwrap();
+    let r = raw(p.addr, CONNECT).await;
+    assert!(r.starts_with("HTTP/1.1 502"), "{r}");
+    assert!(r.contains("gateway_tls_failed"), "{r}");
+    assert!(seen.lock().unwrap().is_empty(), "no credential may be sent");
+    let r = raw(
+        p.addr,
+        "GET http://example.test/ HTTP/1.1\r\nHost: example.test\r\n\r\n",
+    )
+    .await;
+    assert!(r.contains("gateway_tls_failed"), "{r}");
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn forwarder_refuses_an_untrusted_ca() {
+    let (_, acceptor) = tls_fixture(&["localhost"]);
+    let (other_ca, _) = tls_fixture(&["localhost"]);
+    let (addr, seen) = stub_gateway_with(acceptor).await;
+    let up = GatewayUpstream::new(addr, &other_ca, "localhost").unwrap();
+    let p = spawn_proxy(
+        LO.parse().unwrap(),
+        up,
+        Credential::new("x", "aub_boot"),
+        ProxyMode::Mitm,
+    )
+    .await
+    .unwrap();
+    let r = raw(p.addr, CONNECT).await;
+    assert!(r.contains("gateway_tls_failed"), "{r}");
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+// A plaintext gateway is never spoken to in cleartext: the forwarder only ever offers a
+// ClientHello, so the credential never reaches the wire.
+#[tokio::test]
+async fn forwarder_never_falls_back_to_plaintext() {
+    use tokio::io::AsyncReadExt as _;
+    let l = tokio::net::TcpListener::bind(LO).await.unwrap();
+    let addr = l.local_addr().unwrap().to_string();
+    let got = tokio::spawn(async move {
+        let (mut c, _) = l.accept().await.unwrap();
+        let mut buf = vec![0u8; 4096];
+        let n = tokio::time::timeout(std::time::Duration::from_secs(2), c.read(&mut buf))
+            .await
+            .unwrap_or(Ok(0))
+            .unwrap_or(0);
+        buf.truncate(n);
+        buf
+    });
+    let (ca, _) = tls_fixture(&["localhost"]);
+    let up = GatewayUpstream::new(addr, &ca, "localhost").unwrap();
+    let p = spawn_proxy(
+        LO.parse().unwrap(),
+        up,
+        Credential::new("x", "aub_boot"),
+        ProxyMode::Mitm,
+    )
+    .await
+    .unwrap();
+    let r = raw(p.addr, CONNECT).await;
+    assert!(r.starts_with("HTTP/1.1 502"), "{r}");
+    let seen = got.await.unwrap();
+    assert_eq!(
+        seen.first(),
+        Some(&0x16),
+        "first byte is a TLS handshake record"
+    );
+    assert!(!String::from_utf8_lossy(&seen).contains("Proxy-Authorization"));
+}
+
+#[test]
+fn boot_document_requires_tls_true() {
+    let dir = std::env::temp_dir().join("aurora-sup-tls-flag");
+    let ok = boot_json(&dir);
+    let decode = |s: &str| -> serde_json::Value {
+        serde_json::from_slice(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(s)
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let encode = |v: &serde_json::Value| {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v.to_string())
+    };
+    let doc = BootDocument::parse(&ok).unwrap();
+    assert!(doc.gateway.tls);
+    assert_eq!(doc.gateway.verify_name(), "aurora-gateway");
+    let mut v = decode(&ok);
+    v["gateway"]["tls"] = json!(false);
+    assert!(BootDocument::parse(&encode(&v)).is_err());
+    v["gateway"].as_object_mut().unwrap().remove("tls");
+    assert!(BootDocument::parse(&encode(&v)).is_err());
+    // server_name defaults to the host part of proxy
+    let mut v = decode(&ok);
+    v["gateway"].as_object_mut().unwrap().remove("server_name");
+    let d = BootDocument::parse(&encode(&v)).unwrap();
+    assert_eq!(d.gateway.verify_name(), "aurora-gateway");
 }

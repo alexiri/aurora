@@ -63,6 +63,8 @@ pub struct Invitation {
     pub email: String,
     pub role: InvitedRole,
     pub workspace_ids: Vec<Uuid>,
+    /// Workspaces bound as `approver` on accept (phase 2, RFE-012); disjoint from `workspace_ids`.
+    pub approver_workspace_ids: Vec<Uuid>,
     pub status: InvitationStatus,
     pub invited_by: Option<InviterRef>,
     pub expires_at: DateTime<Utc>,
@@ -81,6 +83,7 @@ impl From<InvitationRow> for Invitation {
                 InvitedRole::Member
             },
             workspace_ids: r.workspace_ids,
+            approver_workspace_ids: r.approver_workspace_ids,
             status: InvitationStatus::parse(&r.status),
             invited_by: r.invited_by.map(|id| InviterRef {
                 id,
@@ -98,6 +101,9 @@ pub struct CreateInvitationRequest {
     pub role: InvitedRole,
     #[serde(default)]
     pub workspace_ids: Vec<Uuid>,
+    /// Phase 2, RFE-012: workspaces to bind as `approver` (never `owner`).
+    #[serde(default)]
+    pub approver_workspace_ids: Vec<Uuid>,
 }
 
 #[derive(Deserialize, IntoParams)]

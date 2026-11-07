@@ -6,6 +6,7 @@ mod derived;
 mod ed25519;
 mod error;
 mod inline;
+mod ring;
 
 pub use derived::{DerivedKeys, Purpose};
 pub use ed25519::{
@@ -13,6 +14,7 @@ pub use ed25519::{
 };
 pub use error::CryptoError;
 pub use inline::{Aad, Keyring};
+pub use ring::{LEGACY_ID, RingEntry, RingKind, SecretRing, valid_ring_id};
 
 /// Re-exported so callers can name ed25519 types without a direct dependency.
 pub use ed25519_dalek::{Signature, SigningKey, VerifyingKey};

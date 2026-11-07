@@ -9,7 +9,14 @@
 {{- $_ := set $cfg "runner" (merge (dict "backend" "kubernetes" "api_url" (printf "http://%s-api:4101" $full) "k8s" $k8s) (default (dict) $cfg.runner)) -}}
 {{- $_ := set $cfg "database" (merge (dict "max_connections" .Values.database.maxConnections.api) (default (dict) $cfg.database)) -}}
 {{- if .Values.database.gatewayRole }}{{ $_ := set $cfg.database "gateway_role" .Values.database.gatewayRole }}{{ end -}}
-{{- $_ := set $cfg "gateway" (merge (dict "ca_dir" "/var/lib/aurora/ca") (default (dict) $cfg.gateway)) -}}
+{{- /* (RFE-002) proxy listener certificate: the Service names, the external host and extra names */ -}}
+{{- $px := printf "%s-gateway-proxy" $full -}}
+{{- $ptNames := list "aurora-gateway" $px (printf "%s.%s" $px .Release.Namespace) (printf "%s.%s.svc" $px .Release.Namespace) (printf "%s.%s.svc.cluster.local" $px .Release.Namespace) -}}
+{{- with .Values.gateway.proxy.tls.externalHost }}{{ $ptNames = append $ptNames . }}{{ end -}}
+{{- range .Values.gateway.proxy.tls.names }}{{ $ptNames = append $ptNames . }}{{ end -}}
+{{- $pt := dict "names" $ptNames -}}
+{{- if .Values.gateway.proxy.tls.existingSecret }}{{ $_ := set $pt "cert_file" "/var/lib/aurora/proxy-tls/tls.crt" }}{{ $_ := set $pt "key_file" "/var/lib/aurora/proxy-tls/tls.key" }}{{ end -}}
+{{- $_ := set $cfg "gateway" (merge (dict "ca_dir" "/var/lib/aurora/ca" "proxy_tls" $pt) (default (dict) $cfg.gateway)) -}}
 {{- if not (has .Values.plugins.source (list "none" "configMap" "pvc")) }}{{ fail "plugins.source must be none, configMap or pvc" }}{{ end -}}
 {{- if and (eq .Values.plugins.source "configMap") (not .Values.plugins.configMapName) }}{{ fail "plugins.configMapName is required when plugins.source is configMap" }}{{ end -}}
 {{- if and (eq .Values.plugins.source "pvc") (not .Values.plugins.pvcName) }}{{ fail "plugins.pvcName is required when plugins.source is pvc" }}{{ end -}}

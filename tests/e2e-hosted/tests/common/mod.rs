@@ -181,7 +181,14 @@ log_level = "info"
 internal_bind = "{OPS_IP}"
 allowed_private = ["127.0.0.1/32"]
 ca_dir = "{ca}"
-advertised_proxy_url = "http://aurora-gateway:4102"
+advertised_proxy_url = "https://aurora-gateway:4102"
+
+[gateway.proxy_tls]
+names = ["{BRIDGE}"]
+
+# RFE-017: suites poll and hammer one principal far above real use; keep the limiter on, scaled up.
+[ratelimit.api]
+multiplier = 10.0
 
 [api]
 hookhost_url = "http://127.0.0.1:9"

@@ -50,12 +50,66 @@ const SELECT: &str = "SELECT a.id, a.org_id, a.workspace_id, a.agent_id, ag.name
     FROM approvals a LEFT JOIN agents ag ON ag.id = a.agent_id \
     LEFT JOIN users u ON u.id = a.decided_by_user_id";
 
-/// `$1` = user: the access law for `can_use` on the approval's workspace.
+/// `$1` = user: the access law for `can_approve` on the approval's workspace (phase 2, RFE-012:
+/// workspace owner/approver or org owner/admin; a plain member is excluded).
 const MAY_DECIDE_BASE: &str = "EXISTS (SELECT 1 FROM workspaces w \
     JOIN org_members m ON m.org_id = w.org_id AND m.user_id = $1 AND m.status = 'active' \
     LEFT JOIN workspace_access wa ON wa.workspace_id = w.id AND wa.user_id = $1 \
     WHERE w.id = a.workspace_id AND w.org_id = a.org_id \
-      AND (m.role IN ('owner', 'admin') OR wa.user_id IS NOT NULL))";
+      AND (m.role IN ('owner', 'admin') OR wa.role IN ('owner', 'approver')))";
+
+/// `$1` = user: a plain workspace member of the approval's workspace (`can_use` but not
+/// `can_approve`).
+const MEMBER_ONLY: &str = "EXISTS (SELECT 1 FROM workspaces w \
+    JOIN org_members m ON m.org_id = w.org_id AND m.user_id = $1 AND m.status = 'active' \
+    JOIN workspace_access wa ON wa.workspace_id = w.id AND wa.user_id = $1 \
+    WHERE w.id = a.workspace_id AND w.org_id = a.org_id \
+      AND m.role = 'member' AND wa.role = 'member')";
+
+/// Does a batch of `agent` exist whose approvals the user can use-but-not-decide (RFE-012)?
+pub async fn batch_undecidable(
+    pool: &PgPool,
+    user: Uuid,
+    org: Option<Uuid>,
+    ws: Option<Uuid>,
+    agent: Uuid,
+    batch_id: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT EXISTS (SELECT 1 FROM approvals a WHERE a.batch_id = $5 AND a.agent_id = $4 \
+         AND {MEMBER_ONLY} AND ($2::uuid IS NULL OR a.org_id = $2) \
+         AND ($3::uuid IS NULL OR a.workspace_id = $3) AND NOT {})",
+        crate::authz::hidden_direct_conversation_sql("a.conversation_id", "$1", "a.workspace_id")
+    ))
+    .bind(user)
+    .bind(org)
+    .bind(ws)
+    .bind(agent)
+    .bind(batch_id)
+    .fetch_one(pool)
+    .await?)
+}
+
+/// Pending approvals the user can *see the existence of* (`can_use`, conversation visible) but may
+/// **not** decide (phase 2, RFE-012: plain members). Used only to answer a refused
+/// `approve <code>` with the right ephemeral.
+pub async fn list_pending_undecidable_for(
+    pool: &PgPool,
+    user: Uuid,
+    limit: i64,
+) -> Result<Vec<ApprovalRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "{SELECT} WHERE a.status = 'pending' \
+         AND {MEMBER_ONLY} \
+         AND NOT {} \
+         ORDER BY a.created_at ASC, a.id ASC LIMIT $2",
+        crate::authz::hidden_direct_conversation_sql("a.conversation_id", "$1", "a.workspace_id")
+    ))
+    .bind(user)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
 
 /// `MAY_DECIDE` plus conversation visibility (phase 1, RFE-009): an approval naming a direct
 /// conversation the user cannot see is neither visible nor decidable.
