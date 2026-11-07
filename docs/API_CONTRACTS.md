@@ -239,7 +239,8 @@ interface Secret { id: Uuid; org_id: Uuid; workspace_id: Uuid | null; scope: "or
   last_used_at: Timestamp | null; created_at: Timestamp; updated_at: Timestamp }
 
 interface ContainerConfig { proxy_url: string /* contains <AGENT_TOKEN> unless revealed */; env: Record<string, string>;
-  ca_pem: string; ca_path: string; llm_env: Record<string, string>; stubs: { path: string; content: string; mode: string }[] }
+  ca_pem: string; ca_path: string; proxy_ca_path: string /* C-44 */; proxy_tls: "operator_certificate" | null /* C-44 */;
+  llm_env: Record<string, string>; stubs: { path: string; content: string; mode: string }[] }
 
 type Identity = { kind: "agent"; id: Uuid } | { kind: "user"; id: Uuid };
 type Target =
@@ -574,6 +575,11 @@ interface ReachGrant { id: Uuid; agent_id: Uuid; integration_id: Uuid; subject_k
 | POST `/v1/channel-links/confirm` | S (SO) | `{ token }` | 200 `UserLink` (C-36) | 409; 410 `link_expired` |
 | GET/PUT `/v1/me/dm-defaults` | S | `{ integration_id, agent_id }` | 200 `{ items: DmDefault[] }`; 200 `DmDefault` (C-37) | 404; 422 `agent_not_reachable` |
 | GET `/v1/agents/{agent}/reach`; POST `/v1/reach-grants/{id}/decision` | S/K can_use (list), can_own (decide) | (C-35) | 200 `Page<ReachGrant>`; 200 `ReachGrant` | 404; 409 `stale_revision` |
+
+### Phase 1 — RFE-002 (TLS-only gateway proxy listener, D-44)
+
+- C-44 `ContainerConfig` (`GET /v1/agents/{agent}/container-config`, `GET /v1/agent/container-config`, the `container_config` of `POST /v1/workspaces/{ws}/agents` and `POST /v1/agents/{agent}/token`; 08 §10) gains `proxy_ca_path: string` (the file that holds the trust anchor for the HTTPS proxy leg: curl `--proxy-cacert`, git `http.proxySSLCAInfo`; same value as `ca_path`) and `proxy_tls: "operator_certificate" | null` (`"operator_certificate"` when `gateway.proxy_tls.cert_file` is configured, so the outer leg is verified with the system roots; `null` when the gateway CA issued the listener certificate). `proxy_url` and the `HTTPS_PROXY`/`HTTP_PROXY`/`https_proxy`/`http_proxy` env values are always `https://x:<token>@host:4102` (an `http://` `gateway.advertised_proxy_url` is refused at startup); with a CA-issued certificate `env` also carries `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=http.proxySSLCAInfo`, `GIT_CONFIG_VALUE_0=<proxy_ca_path>`. Clients must ignore unknown fields.
+- C-45 `ContextCredential.proxy_url` (`POST /v1/agent/context-credentials`; 08 §10) is `https://…` for the same reason; no other field changes. The hosted sandbox boot document (11 §The boot document, not an API route) carries `gateway: { proxy, tls: true, server_name, boot_token }`; the supervisor refuses any other `tls` value.
 
 ### W9 hook-host JSON encoding (C-18, C-19)
 

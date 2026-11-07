@@ -51,7 +51,31 @@ pub struct BootAgent {
 pub struct BootGateway {
     /// `host:port` of the gateway proxy.
     pub proxy: String,
+    /// (phase 1, RFE-002) Always `true`: the gateway proxy listener is TLS-only; any other value
+    /// (or a missing field) is refused at start.
+    #[serde(default)]
+    pub tls: bool,
+    /// Name the gateway's proxy certificate is verified against; defaults to the host part of
+    /// `proxy`, which must be in the certificate's SAN set.
+    #[serde(default)]
+    pub server_name: Option<String>,
     pub boot_token: SecretString,
+}
+
+impl BootGateway {
+    /// The verification name: `server_name`, else the host part of `proxy`.
+    pub fn verify_name(&self) -> String {
+        if let Some(n) = self.server_name.as_deref().filter(|n| !n.is_empty()) {
+            return n.to_owned();
+        }
+        let host = self
+            .proxy
+            .rsplit_once(':')
+            .map_or(self.proxy.as_str(), |(h, _)| h);
+        host.trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_owned()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -111,6 +135,11 @@ impl BootDocument {
         }
         if !self.gateway.proxy.contains(':') {
             return Err(BootError::Invalid("gateway.proxy must be host:port"));
+        }
+        if !self.gateway.tls {
+            return Err(BootError::Invalid(
+                "gateway.tls must be true: the gateway proxy listener is TLS-only",
+            ));
         }
         if self.bootstrap_token.expose().is_empty() || self.gateway.boot_token.expose().is_empty() {
             return Err(BootError::Invalid("missing token"));

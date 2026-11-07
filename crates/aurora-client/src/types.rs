@@ -125,6 +125,12 @@ pub struct ContainerConfig {
     pub ca_pem: String,
     #[serde(default)]
     pub ca_path: String,
+    /// (phase 1, RFE-002) Trust anchor file for the HTTPS proxy leg.
+    #[serde(default)]
+    pub proxy_ca_path: String,
+    /// (phase 1, RFE-002) `"operator_certificate"`: verify the proxy leg with the system roots.
+    #[serde(default)]
+    pub proxy_tls: Option<String>,
     #[serde(default)]
     pub llm_env: BTreeMap<String, String>,
     #[serde(default)]

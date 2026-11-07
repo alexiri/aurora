@@ -3,11 +3,12 @@
 //! The mock provider is Anthropic-style: `GET /v1/models` reports the key's account in
 //! `anthropic-organization-id`, `POST /v1/messages` does too.
 
+mod common;
 use async_trait::async_trait;
 use aurora_config::{EgressEntry, LlmEndpoint, LlmSection, SecretsSection};
 use aurora_db::repo::gateway::{PolicyRuleRow, RequestLogRow, ScopePolicyRows, SecretMetaRow};
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
-use aurora_gateway::ca::{self, Ca};
+use aurora_gateway::ca;
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
 use aurora_gateway::governance::{GovSource, Governance, instance_from_config};
 use aurora_gateway::guard::Guard;
@@ -32,7 +33,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use uuid::Uuid;
 
 const TOKEN: &str = "aug_good";
@@ -355,8 +356,10 @@ async fn start(o: Opts) -> Env {
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();
     let guard = Arc::new(Guard::new(&["127.0.0.0/8".to_owned()], vec![proxy]).unwrap());
+    let (gw_ca, gw_tls) = common::gateway_tls(&gw, proxy);
     let p = Proxy::new(ProxyParts {
-        ca: Arc::new(Ca::from_pem(&gw.cert_pem, &gw.key_pem).unwrap()),
+        ca: gw_ca,
+        tls: gw_tls,
         resolver: Arc::new(Static(w)),
         handler,
         guard,
@@ -401,7 +404,7 @@ async fn request(
     extra: &str,
     body: &[u8],
 ) -> Reply {
-    let mut s = TcpStream::connect(env.proxy).await.unwrap();
+    let mut s = common::connect(env.proxy).await;
     let head = format!(
         "{method} http://{target}{path} HTTP/1.1\r\nHost: {target}\r\n{}{extra}Content-Length: {}\r\nConnection: close\r\n\r\n",
         auth("agent"),
@@ -436,7 +439,7 @@ async fn msg(env: &Env, extra: &str, body: &Value) -> Reply {
 }
 
 async fn connect(env: &Env, target: SocketAddr) -> u16 {
-    let mut s = TcpStream::connect(env.proxy).await.unwrap();
+    let mut s = common::connect(env.proxy).await;
     s.write_all(
         format!(
             "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n{}\r\n",

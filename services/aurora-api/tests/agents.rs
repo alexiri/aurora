@@ -207,6 +207,25 @@ async fn container_config_placeholder_and_ca() {
     assert_eq!(s, 200);
     assert!(cfg["proxy_url"].as_str().unwrap().contains("<AGENT_TOKEN>"));
     assert!(cfg["ca_pem"].as_str().unwrap().starts_with("-----BEGIN"));
+    // (phase 1, RFE-002, SEC-40) the container config never names a plaintext gateway URL
+    let url = cfg["proxy_url"].as_str().unwrap();
+    assert!(url.starts_with("https://"), "{url}");
+    for (k, v) in cfg["env"].as_object().unwrap() {
+        assert!(
+            !v.as_str().unwrap().contains("http://"),
+            "env {k} must not hold a plaintext URL: {v}"
+        );
+    }
+    for k in ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"] {
+        assert!(
+            cfg["env"][k].as_str().unwrap().starts_with("https://"),
+            "{k}"
+        );
+    }
+    assert_eq!(cfg["proxy_ca_path"], cfg["ca_path"]);
+    assert_eq!(cfg["env"]["GIT_CONFIG_KEY_0"], "http.proxySSLCAInfo");
+    assert_eq!(cfg["env"]["GIT_CONFIG_VALUE_0"], cfg["proxy_ca_path"]);
+    assert!(cfg["proxy_tls"].is_null(), "CA-issued proxy certificate");
     let c = cookie(&w.member_tok);
     let (s, hd, _) =
         w.h.send(Method::GET, "/v1/gateway/ca.pem", &[("cookie", &c)], None)
@@ -341,4 +360,36 @@ async fn patch_and_delete_revoke() {
     )
     .await;
     assert_eq!(s, 404);
+}
+
+#[tokio::test]
+async fn container_config_flags_an_operator_proxy_certificate() {
+    let dir = std::env::temp_dir().join(format!("aurora-ca-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("ca.pem"), "-----BEGIN CERTIFICATE-----\nX\n").unwrap();
+    let d = dir.to_string_lossy().into_owned();
+    let h = Harness::with_config(move |c| {
+        c.gateway_ca_dir = d;
+        c.gateway_proxy_operator_cert = true;
+    })
+    .await;
+    let org = h.org().await;
+    let member = h.user("m@x.io", false).await;
+    h.member(org, member, "member", "active").await;
+    let ws = h.workspace(org).await;
+    h.bind_ws(ws, member, "member").await;
+    let (_, tok) = h.good_session(member).await;
+    let (s, v) = sess(
+        &h,
+        &tok,
+        Method::POST,
+        &format!("/v1/workspaces/{ws}/agents"),
+        Some(json!({"name":"Bot","kind":"byo"})),
+    )
+    .await;
+    assert_eq!(s, 201, "{v}");
+    let cfg = &v["container_config"];
+    assert_eq!(cfg["proxy_tls"], "operator_certificate");
+    // The proxy leg is verified with system roots: no separate proxy trust anchor env for git.
+    assert!(cfg["env"].get("GIT_CONFIG_KEY_0").is_none());
 }

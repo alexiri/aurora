@@ -3576,6 +3576,17 @@ export interface components {
             llm_env: {
                 [key: string]: string;
             };
+            /**
+             * @description (phase 1, RFE-002) File holding the trust anchor for the HTTPS proxy leg (curl
+             *     `--proxy-cacert`, git `http.proxySSLCAInfo`); same file as `ca_path`.
+             */
+            proxy_ca_path: string;
+            /**
+             * @description (phase 1, RFE-002) `"operator_certificate"` when the proxy listener presents an
+             *     operator-supplied certificate (verify the outer leg with the system roots); `null` when
+             *     the gateway CA issued it.
+             */
+            proxy_tls?: string | null;
             /** @description Contains `<AGENT_TOKEN>` unless the token is revealed. */
             proxy_url: string;
             stubs: components["schemas"]["StubFile"][];

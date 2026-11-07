@@ -9,6 +9,7 @@ use rcgen::{
 };
 use rustls::ServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls::sign::CertifiedKey;
 use std::net::IpAddr;
 use std::num::NonZeroUsize;
 use std::path::Path;
@@ -31,6 +32,12 @@ pub enum CaError {
     Rcgen(#[from] rcgen::Error),
     #[error("tls: {0}")]
     Tls(#[from] rustls::Error),
+}
+
+/// A leaf issued for the proxy listener.
+pub struct IssuedLeaf {
+    pub key: Arc<CertifiedKey>,
+    pub not_after: std::time::SystemTime,
 }
 
 pub struct GeneratedCa {
@@ -164,6 +171,61 @@ impl Ca {
         Ok(config)
     }
 
+    /// (phase 1, RFE-002) Issues the proxy listener's leaf: `serverAuth`, ECDSA P-256, SANs =
+    /// `names` (DNS names and IP literals), valid for `validity`. The key is generated in memory
+    /// and never stored (docs/06 §Proxy listener TLS).
+    pub fn issue_proxy_leaf(
+        &self,
+        names: &[String],
+        validity: Duration,
+    ) -> Result<IssuedLeaf, CaError> {
+        if names.is_empty() {
+            return Err(CaError::Invalid(
+                "proxy certificate needs at least one SAN".into(),
+            ));
+        }
+        let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
+        let mut p = CertificateParams::default();
+        let mut sans = Vec::with_capacity(names.len());
+        for n in names {
+            sans.push(match n.parse::<IpAddr>() {
+                Ok(ip) => SanType::IpAddress(ip),
+                Err(_) => SanType::DnsName(
+                    n.clone()
+                        .try_into()
+                        .map_err(|_| CaError::Invalid(format!("invalid SAN {n:?}")))?,
+                ),
+            });
+        }
+        p.subject_alt_names = sans;
+        let mut dn = DistinguishedName::new();
+        dn.push(
+            DnType::CommonName,
+            names[0].chars().take(64).collect::<String>(),
+        );
+        p.distinguished_name = dn;
+        p.is_ca = IsCa::NoCa;
+        p.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        // Strict verifiers (OpenSSL 3.x `VERIFY_X509_STRICT`, as Python 3.13+ enables) require the
+        // leaf to carry the issuer's key identifier.
+        p.use_authority_key_identifier_extension = true;
+        let now = OffsetDateTime::now_utc();
+        p.not_before = now - time::Duration::hours(1);
+        let secs = i64::try_from(validity.as_secs()).unwrap_or(i64::MAX / 2);
+        let not_after = now + time::Duration::seconds(secs);
+        p.not_after = not_after;
+        let cert = p.signed_by(&key, &self.issuer, &self.key)?;
+        let chain = vec![CertificateDer::from(cert.der().to_vec())];
+        let pk = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
+        let signer = rustls::crypto::aws_lc_rs::sign::any_ecdsa_type(&pk)?;
+        Ok(IssuedLeaf {
+            key: Arc::new(CertifiedKey::new(chain, signer)),
+            not_after: std::time::SystemTime::UNIX_EPOCH
+                + Duration::from_secs(u64::try_from(not_after.unix_timestamp()).unwrap_or(0)),
+        })
+    }
+
     fn mint(&self, host: &str) -> Result<Arc<ServerConfig>, CaError> {
         let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
         let mut p = CertificateParams::default();
@@ -184,6 +246,7 @@ impl Ca {
         p.is_ca = IsCa::NoCa;
         p.key_usages = vec![KeyUsagePurpose::DigitalSignature];
         p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        p.use_authority_key_identifier_extension = true;
         let now = OffsetDateTime::now_utc();
         p.not_before = now - time::Duration::hours(1);
         p.not_after = now + time::Duration::days(7);

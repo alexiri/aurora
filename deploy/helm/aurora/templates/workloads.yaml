@@ -12,8 +12,8 @@
 ---
 {{ include "aurora.workload" (dict "root" . "name" "web" "spec" .Values.web "image" (include "aurora.image" (dict "root" . "name" "aurora-web")) "env" (include "aurora.env" (dict "root" .)) "ports" (list (dict "name" "http" "port" 4100))) }}
 ---
-{{/* gateway: Service for 4103 (internal) is separate from the proxy Service (4102) */}}
-{{ include "aurora.workload" (dict "root" . "name" "gateway" "spec" .Values.gateway "ca" true "image" (include "aurora.image" (dict "root" . "name" "aurora-gateway")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "db" true "keys" $common)) "ports" (list (dict "name" "internal" "port" 4103) (dict "name" "proxy" "port" 4102 "skipService" true))) }}
+{{/* gateway: Service for 4103 (internal) is separate from the proxy Service (4102, TLS-only: RFE-002) */}}
+{{ include "aurora.workload" (dict "root" . "name" "gateway" "spec" .Values.gateway "ca" true "image" (include "aurora.image" (dict "root" . "name" "aurora-gateway")) "args" (list "serve") "proxyTlsSecret" .Values.gateway.proxy.tls.existingSecret "env" (printf "%s\n- name: POD_NAMESPACE\n  valueFrom: {fieldRef: {fieldPath: metadata.namespace}}" (include "aurora.env" (dict "root" . "db" true "keys" $common))) "ports" (list (dict "name" "internal" "port" 4103) (dict "name" "proxy" "port" 4102 "skipService" true))) }}
 ---
 apiVersion: v1
 kind: Service

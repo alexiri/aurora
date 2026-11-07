@@ -52,6 +52,18 @@ fn proxy_hostport(url: &str) -> String {
     rest.rsplit('@').next().unwrap_or(rest).to_owned()
 }
 
+/// Host part of the advertised proxy URL (no port, brackets or credentials).
+fn proxy_host(url: &str) -> String {
+    let hp = proxy_hostport(url);
+    match hp.strip_prefix('[') {
+        Some(r) => r.split(']').next().unwrap_or(r).to_owned(),
+        None => hp
+            .rsplit_once(':')
+            .map_or(hp.as_str(), |(h, _)| h)
+            .to_owned(),
+    }
+}
+
 pub struct BootInput<'a> {
     pub sandbox_id: Uuid,
     pub boot_id: Uuid,
@@ -181,7 +193,15 @@ pub fn boot_secret(s: &AppState, i: &BootInput<'_>) -> Result<SecretString, ApiE
         "agent": {"id": i.agent_id, "handle": i.handle, "name": i.name},
         "runner_url": format!("ws://{host}/v1/supervisor"),
         "bootstrap_token": i.bootstrap_token,
-        "gateway": {"proxy": proxy_hostport(&s.config.advertised_proxy_url), "boot_token": i.boot_token},
+        // (phase 1, RFE-002) The supervisor always dials the gateway over TLS, verifying the
+        // proxy certificate against `ca_pem` and `server_name` (the host of the proxy address,
+        // which is in the certificate's SAN set, docs/06 §Proxy listener TLS).
+        "gateway": {
+            "proxy": proxy_hostport(&s.config.advertised_proxy_url),
+            "tls": true,
+            "server_name": proxy_host(&s.config.advertised_proxy_url),
+            "boot_token": i.boot_token,
+        },
         "ca_pem": i.ca_pem,
         "files": i.files,
         "harness": {"id": i.harness, "capabilities_expected": []},

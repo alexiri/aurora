@@ -154,6 +154,9 @@ spec:
             {{- if or .ca .caCert }}
             - {name: ca, mountPath: /var/lib/aurora/ca, readOnly: true}
             {{- end }}
+            {{- if .proxyTlsSecret }}
+            - {name: proxy-tls, mountPath: /var/lib/aurora/proxy-tls, readOnly: true}
+            {{- end }}
             {{- if and .pluginsMount (ne $r.Values.plugins.source "none") }}
             - {name: plugins, mountPath: {{ $r.Values.plugins.dir | quote }}, readOnly: true}
             {{- end }}
@@ -172,6 +175,10 @@ spec:
             secretName: {{ include "aurora.caSecretName" $r }}
             defaultMode: 0440
             items: [{key: ca.pem, path: ca.pem}]
+        {{- end }}
+        {{- if .proxyTlsSecret }}
+        - name: proxy-tls
+          secret: {secretName: {{ .proxyTlsSecret | quote }}, defaultMode: 0440}
         {{- end }}
         {{- if and .pluginsMount (ne $r.Values.plugins.source "none") }}
         {{- if eq $r.Values.plugins.source "pvc" }}

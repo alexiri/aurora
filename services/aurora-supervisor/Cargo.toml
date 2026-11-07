@@ -25,11 +25,13 @@ clap = { workspace = true }
 futures = { workspace = true }
 hex = { workspace = true }
 reqwest = { workspace = true }
+rustls = { workspace = true }
 rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
+tokio-rustls = { workspace = true }
 tokio = { workspace = true, features = ["io-std"] }
 tokio-tungstenite = { workspace = true }
 tracing = { workspace = true }
@@ -38,3 +40,4 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
+rcgen = { workspace = true }

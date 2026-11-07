@@ -2,12 +2,13 @@
 //! GW-003 pipeline tests: policy view, selection, decision, injection, guidance, log.
 //! The policy source is in memory; DB-backed loading is covered in `policy_db.rs`.
 
+mod common;
 use async_trait::async_trait;
 use aurora_config::{LlmEndpoint, LlmSection, SecretsSection};
 use aurora_core::Secret;
 use aurora_db::repo::gateway::{PolicyRuleRow, RequestLogRow, ScopePolicyRows, SecretMetaRow};
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
-use aurora_gateway::ca::{self, Ca};
+use aurora_gateway::ca;
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
 use aurora_gateway::guard::Guard;
 use aurora_gateway::invalidation::{Invalidatable, Invalidate, Scope};
@@ -35,7 +36,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use uuid::Uuid;
 
 const TOKEN: &str = "aug_good";
@@ -283,8 +284,10 @@ async fn start_with(
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();
     let guard = Arc::new(Guard::new(&["127.0.0.0/8".to_owned()], vec![proxy]).unwrap());
+    let (gw_ca, gw_tls) = common::gateway_tls(&gw, proxy);
     let p = Proxy::new(ProxyParts {
-        ca: Arc::new(Ca::from_pem(&gw.cert_pem, &gw.key_pem).unwrap()),
+        ca: gw_ca,
+        tls: gw_tls,
         resolver: Arc::new(Static(w.clone())),
         handler,
         guard,
@@ -335,7 +338,7 @@ impl Reply {
 
 /// Absolute-form GET through the proxy.
 async fn get(env: &Env, path_and_query: &str, extra: &str) -> Reply {
-    let mut s = TcpStream::connect(env.proxy).await.unwrap();
+    let mut s = common::connect(env.proxy).await;
     let req = format!(
         "GET http://{}{path_and_query} HTTP/1.1\r\nHost: {}\r\n{}{extra}Connection: close\r\n\r\n",
         env.up,
@@ -745,14 +748,14 @@ async fn open_lane_policy_and_tunnel_row() {
         );
         format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n{auth}\r\n")
     };
-    let mut s = TcpStream::connect(env.proxy).await.unwrap();
+    let mut s = common::connect(env.proxy).await;
     s.write_all(connect("blocked.example:443".into()).as_bytes())
         .await
         .unwrap();
     let mut buf = vec![0u8; 2048];
     let n = s.read(&mut buf).await.unwrap();
     assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 403"));
-    let mut s = TcpStream::connect(env.proxy).await.unwrap();
+    let mut s = common::connect(env.proxy).await;
     s.write_all(connect(env.up.to_string()).as_bytes())
         .await
         .unwrap();
@@ -776,7 +779,7 @@ async fn open_lane_policy_and_tunnel_row() {
 
 /// Absolute-form POST with `payload` through the proxy; returns the status code.
 async fn post_status(env: &Env, payload: &str) -> u16 {
-    let mut s = TcpStream::connect(env.proxy).await.unwrap();
+    let mut s = common::connect(env.proxy).await;
     let req = format!(
         "POST http://{}/x HTTP/1.1\r\nHost: {}\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n{payload}",
         env.up,

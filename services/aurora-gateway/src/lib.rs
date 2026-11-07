@@ -19,6 +19,7 @@ pub mod mint;
 pub mod pipeline;
 pub mod plaintext;
 pub mod proxy;
+pub mod proxy_tls;
 pub mod refresh;
 pub mod reqlog;
 pub mod resolve;

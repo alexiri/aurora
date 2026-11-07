@@ -72,7 +72,8 @@ if [ "${1:-}" = "--inner" ]; then
   }
   secrets_env
 
-  # cfg <name> <image-line>
+  # cfg <name> <bind> <image-line> <proxy-scheme>: the phase-0 baseline gateway serves plaintext
+  # (http), HEAD is TLS-only (RFE-002: https; an old in-sandbox supervisor must be restarted).
   write_cfg() {
     local f="$W/$1.toml"
     cat >"$f" <<EOF
@@ -111,7 +112,7 @@ log_level = "info"
 internal_bind = "$OPS_IP"
 allowed_private = ["127.0.0.1/32"]
 ca_dir = "$W/ca"
-advertised_proxy_url = "http://aurora-gateway:4102"
+advertised_proxy_url = "$4://aurora-gateway:4102"
 
 [api]
 hookhost_url = "http://127.0.0.1:9"
@@ -168,7 +169,7 @@ EOF
   BASE_BIN="$W/base/target/debug"; HEAD_BIN="$ROOT/target/debug"
   rm -rf "$W/ca" "$W/pids" "$W/cookies"; mkdir -p "$W/ca"
   "$BASE_BIN/aurora-gateway" generate-ca --out "$W/ca" >/dev/null || { echo "generate-ca failed"; exit 1; }
-  write_cfg base "$BRIDGE" ""            # baseline: image is fixed by the API (aurora-sandbox:0.1.0)
+  write_cfg base "$BRIDGE" "" http            # baseline: image is fixed by the API (aurora-sandbox:0.1.0)
   for n in api gateway runner; do cp "$W/base.toml" "$W/base-$n.toml"; done
   sed -i "s/^bind = .*/bind = \"$API_IP\"/" "$W/base-api.toml"
   sed -i "s/^bind = .*/bind = \"$BRIDGE\"/" "$W/base-gateway.toml" "$W/base-runner.toml"
@@ -206,7 +207,7 @@ EOF
   stop_svcs   # baseline api/gateway/runner stop; the sandbox container stays
   sleep 1
   [ "$(podman inspect -f '{{.State.Running}}' "$CID" 2>/dev/null)" = true ] && ok "sandbox container still running with services down" || bad "sandbox died when services stopped"
-  write_cfg head "$BRIDGE" "image = \"$HEAD_IMG\""
+  write_cfg head "$BRIDGE" "image = \"$HEAD_IMG\"" https
   for n in api gateway runner; do cp "$W/head.toml" "$W/head-$n.toml"; done
   sed -i "s/^bind = .*/bind = \"$API_IP\"/" "$W/head-api.toml"
   AURORA_CONFIG="$W/head-api.toml" "$HEAD_BIN/aurora-api" migrate >"$W/head-migrate.log" 2>&1 && ok "HEAD migrate over the baseline schema" || { bad "HEAD migrate"; cat "$W/head-migrate.log"; }

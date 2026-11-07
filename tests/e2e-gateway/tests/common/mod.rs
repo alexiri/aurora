@@ -92,8 +92,11 @@ log_level = "info"
 [gateway]
 allowed_private = ["127.0.0.1/32"]
 ca_dir = "{ca}"
-advertised_proxy_url = "http://{GW_A_IP}:4102"
+advertised_proxy_url = "https://{GW_A_IP}:4102"
 hookhost_url = "{hh_url}"
+
+[gateway.proxy_tls]
+names = ["{GW_B_IP}"]
 
 [api]
 hookhost_url = "http://127.0.0.1:9"
@@ -499,9 +502,10 @@ pub fn net_rule(name: &str, action: &str, host: &str, extra: Value) -> Value {
     r
 }
 
-/// reqwest client that goes through gateway `gw` ("ip:port") as `token`, trusting the gateway CA.
+/// reqwest client that goes through gateway `gw` ("ip:port") as `token`, trusting the gateway CA
+/// (the proxy listener is TLS-only: the CA issues its certificate, so one anchor covers both legs).
 pub fn via_proxy(gw: &str, token: &str, ca_pem: &str) -> reqwest::Client {
-    let proxy = reqwest::Proxy::all(format!("http://{gw}"))
+    let proxy = reqwest::Proxy::all(format!("https://{gw}"))
         .unwrap()
         .basic_auth("agent", token);
     reqwest::Client::builder()

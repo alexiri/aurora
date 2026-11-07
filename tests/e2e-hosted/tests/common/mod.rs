@@ -181,7 +181,10 @@ log_level = "info"
 internal_bind = "{OPS_IP}"
 allowed_private = ["127.0.0.1/32"]
 ca_dir = "{ca}"
-advertised_proxy_url = "http://aurora-gateway:4102"
+advertised_proxy_url = "https://aurora-gateway:4102"
+
+[gateway.proxy_tls]
+names = ["{BRIDGE}"]
 
 [api]
 hookhost_url = "http://127.0.0.1:9"

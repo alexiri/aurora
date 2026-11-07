@@ -301,6 +301,13 @@ async fn start_item_has_valid_boot_document_and_tokens_match_db() {
     let boot_tok = doc["gateway"]["boot_token"].as_str().unwrap();
     assert!(bootstrap.starts_with("aup_") && boot_tok.starts_with("aub_"));
     assert!(!doc["gateway"]["proxy"].as_str().unwrap().contains("://"));
+    // (phase 1, RFE-002) the supervisor dials the gateway over TLS, verifying the proxy host
+    assert_eq!(doc["gateway"]["tls"], true);
+    let proxy = doc["gateway"]["proxy"].as_str().unwrap();
+    assert_eq!(
+        doc["gateway"]["server_name"].as_str().unwrap(),
+        proxy.rsplit_once(':').map_or(proxy, |(h, _)| h)
+    );
 
     let (h, owner, state): (Vec<u8>, Uuid, String) = sqlx::query_as(
         "SELECT bootstrap_token_hash, owner_replica_id, state FROM sandboxes WHERE id = $1::uuid",

@@ -123,7 +123,7 @@ impl Conn {
     }
 }
 
-async fn start(gateway: String) -> (Runner, Conn) {
+async fn start(gateway: aurora_supervisor::proxy::GatewayUpstream) -> (Runner, Conn) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}/v1/supervisor", listener.local_addr().unwrap());
     let mut cfg = ChannelConfig::new(url, SecretString::new("aup_test"));
@@ -161,7 +161,8 @@ async fn full_fake_turn_ordered_events_and_context_credential() {
     let (_r, mut c) = start(gw.clone()).await;
     c.home_sync().await;
     let text = format!(
-        "[[say: hi]] [[tool: memory_save {{}}]] [[http: GET http://{gw}/ping]] [[say: bye]]"
+        "[[say: hi]] [[tool: memory_save {{}}]] [[http: GET http://{}/ping]] [[say: bye]]",
+        gw.addr
     );
     c.deliver(TURN, &text, "auc_turn1").await;
     assert_eq!(c.next_of("turn.started").await["turn_id"], TURN);

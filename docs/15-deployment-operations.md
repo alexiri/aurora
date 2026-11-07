@@ -269,7 +269,7 @@ The runner runs as the invoking user because the rootless socket is `srw-rw---- 
 nonroot uid 65532 would map to an unprivileged sub-uid that cannot open it. That is no more privilege than the socket
 access itself; the other services keep the nonroot user. `setup.sh` writes `AURORA_UID`/`AURORA_GID`, warns when
 `systemctl --user is-active podman.socket` fails, and exports the public `ca.pem` to `deploy/compose/ca/` for the `api`
-service. The `hosted` profile needs `gateway.advertised_proxy_url = http://aurora-gateway:4102` and `runner.sandbox_hosts`
+service. The `hosted` profile needs `gateway.advertised_proxy_url = https://aurora-gateway:4102` and `runner.sandbox_hosts`
 (both in the shipped `aurora.toml`); `gateway.allowed_private` opens only the mock LiteLLM's static address.
 
 Networks: `core` (bridge) and `sandbox` (external, created by `setup.sh`,

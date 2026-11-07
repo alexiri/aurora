@@ -37,7 +37,7 @@ impl Proxy {
                         let live = self.track();
                         tokio::spawn(async move {
                             let _live = live;
-                            this.serve_plain(stream).await;
+                            this.serve_tls(stream).await;
                         });
                     }
                     Err(e) => {
@@ -63,7 +63,31 @@ impl Proxy {
         }
     }
 
-    async fn serve_plain(self: &Arc<Self>, stream: tokio::net::TcpStream) {
+    /// (phase 1, RFE-002) TLS-only: a connection whose first bytes are not a TLS record is closed
+    /// at once, unanswered and unread (no credential is ever parsed from cleartext); everything
+    /// else is handshaken before any HTTP parsing.
+    async fn serve_tls(self: &Arc<Self>, stream: tokio::net::TcpStream) {
+        match tokio::time::timeout(HANDSHAKE_TIMEOUT, looks_like_tls(&stream)).await {
+            Ok(Ok(true)) => {}
+            Ok(Ok(false)) => {
+                metrics::counter!("gateway_proxy_plaintext_refused_total").increment(1);
+                return;
+            }
+            _ => return,
+        }
+        let accepted =
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, self.tls.acceptor().accept(stream)).await;
+        let Ok(Ok(tls)) = accepted else {
+            tracing::debug!("proxy TLS handshake failed");
+            return;
+        };
+        self.serve_plain(tls).await;
+    }
+
+    async fn serve_plain<IO>(self: &Arc<Self>, stream: IO)
+    where
+        IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
         let this = self.clone();
         let svc = service_fn(move |req: Request<Incoming>| {
             let this = this.clone();
@@ -83,5 +107,27 @@ impl Proxy {
                 let _ = conn.await;
             }
         }
+    }
+}
+
+/// How long a client has to produce its first bytes and finish the TLS handshake.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Peeks (without consuming) until the first bytes can be told apart from a TLS record header
+/// (`0x16 0x03 0x0n` handshake, TLS 1.0-1.3 record versions).
+async fn looks_like_tls(stream: &tokio::net::TcpStream) -> std::io::Result<bool> {
+    let mut buf = [0u8; 3];
+    loop {
+        let n = stream.peek(&mut buf).await?;
+        if n == 0 {
+            return Ok(false);
+        }
+        if buf[0] != 0x16 || (n >= 2 && buf[1] != 0x03) || (n >= 3 && buf[2] > 0x04) {
+            return Ok(false);
+        }
+        if n >= 3 {
+            return Ok(true);
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
 }
