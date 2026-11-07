@@ -85,6 +85,12 @@ pub trait PlatformTool: Send + Sync {
     /// JSON Schema (`type: object`).
     fn input_schema(&self) -> Value;
     fn available(&self, ctx: &ToolContext) -> bool;
+    /// Availability that needs the database (e.g. messaging tools exist only while the agent
+    /// has an active channel presence). Checked in addition to [`available`](Self::available)
+    /// when the catalogue is rendered ([`Registry::catalogue_for`]) and at call time.
+    async fn enabled(&self, _ctx: &ToolContext) -> bool {
+        true
+    }
     /// Explanation returned when a stale session calls a tool that is no longer available.
     fn unavailable_reason(&self) -> &'static str {
         "This tool is not available to this agent."
@@ -137,6 +143,21 @@ impl Registry {
             .collect()
     }
 
+    /// [`catalogue`](Self::catalogue) plus the tools' database-backed [`PlatformTool::enabled`].
+    pub async fn catalogue_for(&self, ctx: &ToolContext) -> Vec<ToolDescriptor> {
+        let mut out = Vec::new();
+        for t in self.order.iter().filter_map(|n| self.tools.get(n)) {
+            if t.available(ctx) && t.enabled(ctx).await {
+                out.push(ToolDescriptor {
+                    name: t.name().to_owned(),
+                    description: Some(t.description(ctx)),
+                    input_schema: t.input_schema(),
+                });
+            }
+        }
+        out
+    }
+
     /// Routes a call; every failure is an in-band `ok: false` result. Bounded by `timeout`.
     pub async fn call(
         &self,
@@ -156,7 +177,7 @@ impl Registry {
                 },
             );
         };
-        if !t.available(&ctx.agent) {
+        if !t.available(&ctx.agent) || !t.enabled(&ctx.agent).await {
             return fail(ToolError::Unavailable(t.unavailable_reason().into()));
         }
         match tokio::time::timeout(timeout, t.call(ctx, args)).await {
@@ -214,7 +235,7 @@ pub async fn catalogue(pool: &PgPool, agent_id: Uuid) -> Result<Vec<ToolDescript
         workspace_id: a.workspace_id,
         org_id: a.org_id,
     };
-    Ok(registry().catalogue(&ctx))
+    Ok(registry().catalogue_for(&ctx).await)
 }
 
 /// Default per-call budget.

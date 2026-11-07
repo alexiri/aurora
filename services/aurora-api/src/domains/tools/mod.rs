@@ -9,6 +9,7 @@ mod agents;
 mod apps;
 mod builtin;
 mod memory;
+mod messaging;
 mod registry;
 mod schedules;
 pub mod service;

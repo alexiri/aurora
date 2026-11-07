@@ -34,7 +34,10 @@ pub trait ActionHandler: Send + Sync {
     ) -> Result<ActionOutcome, ActionError>;
 }
 
-static REGISTRY: &[&dyn ActionHandler] = &[&crate::domains::agent_links::handler::MessageAgent];
+static REGISTRY: &[&dyn ActionHandler] = &[
+    &crate::domains::agent_links::handler::MessageAgent,
+    &crate::domains::channels::messaging::SendMessage,
+];
 
 /// The handler for `key`, if registered.
 pub fn handler(key: &str) -> Option<&'static dyn ActionHandler> {
