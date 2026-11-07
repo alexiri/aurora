@@ -1,17 +1,26 @@
-# cargo-nextest configuration (OPS-019). The `ci` profile is used by .github/workflows/ci.yml.
-# Locally: `cargo nextest run --workspace --all-features` (default profile).
+# cargo-nextest configuration (OPS-016 local defaults, OPS-019 CI profile).
+# `cargo test` keeps working; see docs/ops/build-performance.md.
+# Tests get isolated databases from aurora-testkit, so process-per-test is safe.
 [profile.default]
-fail-fast = false
-# services/aurora-cli/tests/plugin.rs launches `aurora` with AURORA_GATEWAY_BIN pointing at the
-# sibling aurora-gateway binary; ship it in the archive so shard runners (which do not compile) have it.
+# Each test process opens its own pool to the shared dev Postgres (max_connections 100, shared by
+# every lane): 16 parallel processes hit "too many clients" (OPS-016 measurement). Keep it modest.
+test-threads = 8
+retries = 0                       # a flaky test is a bug: report it, don't hide it
+fail-fast = false                 # run everything, list every failure
+status-level = "retry"
+final-status-level = "slow"
+slow-timeout = { period = "60s", terminate-after = 10 }   # warn at 60 s, kill at 10 min
+# services/aurora-cli/tests (plugin) launches `aurora` with AURORA_GATEWAY_BIN pointing at the
+# sibling aurora-gateway binary; ship it in the archive so CI shard runners (which do not compile) have it.
 archive.include = [
   { path = "debug/aurora-gateway", relative-to = "target", on-missing = "error" },
 ]
 
 [profile.ci]
+test-threads = 8
 fail-fast = false
 retries = 0
-slow-timeout = { period = "60s", terminate-after = 5 }
+slow-timeout = { period = "60s", terminate-after = 10 }
 failure-output = "immediate-final"
 status-level = "retry"
 final-status-level = "fail"

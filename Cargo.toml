@@ -169,6 +169,13 @@ incremental = false
 [profile.dev.package."*"]
 debug = false
 
+# Developer loop only (`just dev`, `just build-fast`); never used by tests, CI or worker lanes (I-36).
+# Incremental compilation applies to workspace members only; with one test binary per crate (I-34)
+# and per-lane target dirs that are deleted after the lane (I-35) the cache stays bounded.
+[profile.dev-fast]
+inherits = "dev"
+incremental = true
+
 [profile.release]
 lto = "thin"
 codegen-units = 4
