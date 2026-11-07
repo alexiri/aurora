@@ -12,6 +12,9 @@ if [[ "${AURORA_SCCACHE:-1}" != "0" ]]; then
   for c in "${SCCACHE_PATH:-}" "$(command -v sccache 2>/dev/null || true)" "$HOME/.cargo/bin/sccache"; do
     if [[ -n "$c" && -x "$c" ]]; then
       export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-30G}"
+      # sccache hashes every CARGO_* env var into the cache key; CARGO_TARGET_DIR is only inherited
+      # from the caller (rustc never reads it), so a per-lane target dir would make every compile miss.
+      unset CARGO_TARGET_DIR
       exec "$c" "$@"
     fi
   done
