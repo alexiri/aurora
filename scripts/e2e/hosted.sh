@@ -9,6 +9,8 @@
 # /etc/hosts entries aurora-gateway/aurora-runner. Postgres runs as a container on a separate network
 # (10.89.252.5), unreachable from the sandbox network. An "anchor" container keeps the bridge up.
 # Env: SKIP_IMAGE_BUILD=1 reuses the existing localhost/aurora-sandbox:0.1.0.
+# Runs only the hosted test target. The channel tests belong to scripts/e2e/channels.sh; the k8s and
+# llm targets are added only when their gates are set (AURORA_TEST_KIND=1, AURORA_TEST_LLM=1).
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
@@ -39,7 +41,10 @@ if [ "${SKIP_IMAGE_BUILD:-}" != "1" ]; then
   scripts/images/build-sandbox-min.sh aurora-sandbox:0.1.0 || { echo "image build failed" >&2; exit 1; }
 fi
 podman image exists "$IMAGE" || { echo "missing $IMAGE" >&2; exit 1; }
-cargo test -p aurora-e2e-hosted --no-run || exit 1
+TARGETS=(--test hosted)
+[ "${AURORA_TEST_KIND:-}" = "1" ] && TARGETS+=(--test k8s)
+[ "${AURORA_TEST_LLM:-}" = "1" ] && TARGETS+=(--test llm)
+cargo test -p aurora-e2e-hosted "${TARGETS[@]}" --no-run || exit 1
 
 podman network create --internal --disable-dns --subnet 10.89.251.0/24 --gateway 10.89.251.1 "$SBX_NET" >/dev/null || exit 1
 podman network create --disable-dns --subnet 10.89.252.0/24 --gateway 10.89.252.1 "$DB_NET" >/dev/null || exit 1
@@ -57,6 +62,6 @@ podman unshare --rootless-netns env \
   AURORA_TEST_DATABASE_URL="postgres://aurora:aurora@10.89.252.5:5432/postgres" \
   AURORA_E2EH_SOCK="$SOCK" AURORA_E2EH_NETWORK="$SBX_NET" AURORA_E2EH_TOKEN="$TOKEN" \
   AURORA_E2EH_FP="$FP" AURORA_E2EH_IMAGE="$IMAGE" \
-  cargo test -p aurora-e2e-hosted -- --test-threads=1 --nocapture "$@"
+  cargo test -p aurora-e2e-hosted "${TARGETS[@]}" -- --test-threads=1 --nocapture "$@"
 rc=$?
 exit $rc

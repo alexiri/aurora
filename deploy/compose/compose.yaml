@@ -54,7 +54,12 @@ services:
     build: { context: ../.., dockerfile: images/services/Containerfile, target: api }
     command: ["serve"]
     environment: *aurora-env
-    volumes: *aurora-cfg
+    # The API hands the gateway CA certificate (public half only, as in the Helm chart) to the
+    # runner for sandbox boot; without it the runner's work poll fails with gateway_ca_unavailable.
+    # setup.sh copies ca.pem out of the aurora-ca volume into ./ca/. ca.key stays gateway-only.
+    volumes:
+      - ./aurora.toml:/etc/aurora/aurora.toml:ro
+      - ./ca/ca.pem:/var/lib/aurora/ca/ca.pem:ro
     networks:
       core:
         aliases: [aurora-api]
@@ -127,10 +132,23 @@ services:
     environment:
       <<: *aurora-env
       AURORA__RUNNER__OPS_BIND: 10.89.249.3
+      # The hosted profile runs real sandboxes: podman backend, the sandbox image on the host's
+      # podman, and the internal sandbox network that setup.sh creates (sandbox_hosts is in aurora.toml).
+      AURORA__RUNNER__BACKEND: podman
+      AURORA__RUNNER__IMAGE: ${AURORA_SANDBOX_IMAGE:-localhost/aurora-sandbox:0.1.0}
+      AURORA__RUNNER__SANDBOX_NETWORK: aurora-sandbox
     volumes:
       - ./aurora.toml:/etc/aurora/aurora.toml:ro
       - ${XDG_RUNTIME_DIR:-/run/user/1000}/podman/podman.sock:/run/podman/podman.sock
     security_opt: [label=disable]
+    # Rootless podman socket access. The socket is `srw-rw---- <you>:<you>`. Under the default user
+    # namespace the image's nonroot uid 65532 maps to a host sub-uid that cannot open it. keep-id
+    # maps the invoking user to the same uid inside the container, and the runner runs as that
+    # uid (AURORA_UID/AURORA_GID, written to .env by setup.sh). This is no more privilege than the
+    # socket access itself: whoever can open the socket can already start any container as that
+    # user. Only this service changes; the other services keep the image's nonroot user.
+    userns_mode: keep-id
+    user: "${AURORA_UID:-1000}:${AURORA_GID:-1000}"
     networks:
       core:
         ipv4_address: 10.89.249.3
@@ -181,6 +199,8 @@ services:
       - ./litellm.yaml:/etc/litellm/litellm.yaml:ro
     networks:
       core:
+        # Static so aurora.toml can open exactly this address to agents (gateway.allowed_private).
+        ipv4_address: 10.89.249.4
         aliases: [litellm]
     ports:
       - "127.0.0.1:4400:4000"

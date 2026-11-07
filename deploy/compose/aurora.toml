@@ -13,6 +13,18 @@ trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 [runner]
 backend = "fake"
 api_url = "http://aurora-api:4101"
+# Used only by the podman backend (the `hosted` profile selects it in compose.yaml); inert for `fake`.
+sandbox_hosts = { "aurora-gateway" = "10.89.250.2", "aurora-runner" = "10.89.250.3" }
+
+# SEC-09 / docs/06: the gateway refuses private destinations. The llm-mock profile's LiteLLM has the
+# static core address 10.89.249.4; only that /32 is opened (not the core network, which holds the
+# API and Postgres). Inert unless that profile runs.
+[gateway]
+# What hosted sandboxes dial (runner.sandbox_hosts maps aurora-gateway to the gateway's sandbox-network
+# address). The default, derived from server.external_url, would be localhost:4102, which is not
+# reachable from a sandbox. Agents connecting from the host itself use http://localhost:4102 instead.
+advertised_proxy_url = "http://aurora-gateway:4102"
+allowed_private = ["10.89.249.4/32"]
 
 [hosted]
 enabled = true
