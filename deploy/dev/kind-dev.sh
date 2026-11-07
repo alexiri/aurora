@@ -211,6 +211,8 @@ cmd_down() {
   return 0
 }
 
+# OPS-023: scripts/e2e/kind.sh sources this file for build_rust/thin_image (AURORA_DEV_SOURCED=1): no dispatch then.
+if [ -z "${AURORA_DEV_SOURCED:-}" ]; then
 case "${1:-}" in
   up) shift; cmd_up "$@" ;;
   dev) shift; cmd_dev "$@" ;;
@@ -218,3 +220,4 @@ case "${1:-}" in
   down) cmd_down ;;
   *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
+fi

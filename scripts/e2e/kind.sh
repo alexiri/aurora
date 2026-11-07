@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # OPS-011: Kubernetes e2e on a local kind cluster (rootless podman provider).
 #
-#   scripts/e2e/kind.sh [--keep] [--fresh] [--skip-build] [-- <cargo test filter/args>]
+#   scripts/e2e/kind.sh [--keep] [--fresh] [--skip-build] [--release-images] [-- <cargo test filter/args>]
 #
 #   --keep        leave the cluster (and the Helm release) in place when done
 #   --fresh       delete the cluster aurora-e2e first (default: reuse it, reinstall the release)
 #   --skip-build  reuse the localhost/aurora-e2e/* images already in podman storage
+#   --release-images  build the Rust service images from images/services/Containerfile (release profile, what CI
+#                 publishes). Default (OPS-023): the OPS-017 dev path, i.e. the builder container with a
+#                 persistent target volume + thin distroless images (deploy/dev/kind-dev.sh), debug profile.
+#                 CI (and anything that must prove the shipped image) passes --release-images or sets
+#                 AURORA_E2E_RELEASE_IMAGES=1.
 #
 # Steps: kind cluster (deploy/kind/kind-config.yaml) -> NetworkPolicy enforcement check with a
 # probe pod -> build + `kind load image-archive` the service and sandbox images -> `helm install`
@@ -31,13 +36,14 @@ TAG=e2e
 LOCAL_PORT="${AURORA_KIND_PORT:-14101}"
 LOGDIR="$ROOT/target/kind-logs"
 WORK="$ROOT/target/kind"
-KEEP=0; FRESH=0; SKIP_BUILD="${SKIP_IMAGE_BUILD:-0}"
+KEEP=0; FRESH=0; SKIP_BUILD="${SKIP_IMAGE_BUILD:-0}"; RELEASE_IMAGES="${AURORA_E2E_RELEASE_IMAGES:-0}"
 CARGO_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --keep) KEEP=1 ;;
     --fresh) FRESH=1 ;;
     --skip-build) SKIP_BUILD=1 ;;
+    --release-images) RELEASE_IMAGES=1 ;;
     --) shift; CARGO_ARGS=("$@"); break ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -131,12 +137,33 @@ log "NetworkPolicy enforced: connection allowed before the default-deny policy, 
 k delete ns "$NPNS" --wait=false >/dev/null 2>&1
 
 # ---- 3. images ----------------------------------------------------------------------------
+# OPS-023: the dev build path of OPS-017. kind-dev.sh is sourced in a subshell (its variables must not leak into
+# this script) and its own build_rust / thin_image do the work: cargo in the builder container against the
+# bind-mounted source with a persistent target volume, binaries copied into thin distroless images. Images are
+# tagged $REGISTRY/aurora-<svc>:$TAG, like the release build's, so everything below is unchanged.
+dev_rust_images() (
+  e2e_reg=$REGISTRY; e2e_tag=$TAG
+  AURORA_DEV_SOURCED=1 . deploy/dev/kind-dev.sh
+  REG=$e2e_reg; TAG=$e2e_tag; WORK="$ROOT/target/kind/dev"   # own sha bookkeeping: not the dev cluster's
+  CHANGED_SVCS=()
+  build_rust || exit 1
+  for s in api gateway hookhost runner; do
+    thin_image "$s" || exit 1
+    [ -f "$WORK/bin/$s.sha.pending" ] && mv -f "$WORK/bin/$s.sha.pending" "$WORK/bin/$s.sha"
+    podman image exists "$REG/aurora-$s:$TAG" || { echo "thin image for $s missing" >&2; exit 1; }
+  done
+  exit 0
+)
 IMAGES=(aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-web aurora-sandbox)
 if [ "$SKIP_BUILD" != "1" ]; then
-  for t in api gateway hookhost runner; do
-    log "building aurora-$t"
-    podman build -q -f images/services/Containerfile --target "$t" -t "$REGISTRY/aurora-$t:$TAG" . >/dev/null || exit 1
-  done
+  if [ "$RELEASE_IMAGES" = "1" ]; then
+    for t in api gateway hookhost runner; do
+      log "building aurora-$t (release Containerfile)"
+      podman build -q -f images/services/Containerfile --target "$t" -t "$REGISTRY/aurora-$t:$TAG" . >/dev/null || exit 1
+    done
+  else
+    dev_rust_images || exit 1
+  fi
   log "building aurora-web"
   podman build -q -f images/services/web.Containerfile -t "$REGISTRY/aurora-web:$TAG" . >/dev/null || exit 1
   log "building aurora-sandbox (sandbox-min target, fake harness)"

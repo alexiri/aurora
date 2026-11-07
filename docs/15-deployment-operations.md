@@ -20,6 +20,8 @@ One OCI image per component, all tagged with the Aurora version
 | `aurora-connector-mattermost` | phase 1 |
 | `aurora-sandbox` | sandbox image (`11 §Sandbox image`) — not a service; referenced by the runner. (phase 3, RFE-019) Built on the public official AlmaLinux image by default; a private or mirrored base is a **build-time** override (`SANDBOX_BASE_IMAGE`, see below), not a runtime configuration key |
 
+(phase 1, OPS-023) **Dev images** (`localhost/aurora-dev/*`, `localhost/aurora-e2e/*`) are built from a debug-profile binary in the kind builder container into thin distroless images, for local kind runs only; they are never pushed, and the released images above come only from `images/services/Containerfile` (release profile, sccache-accelerated, `docs/ops/build-performance.md`).
+
 (phase 1, OPS-020) **Registry and tags.** CI builds and publishes every image to
 `ghcr.io/alexiri/aurora-<name>` (`api`, `gateway`, `hookhost`, `runner`, `web`,
 `connector-fake`, `connector-mattermost`, `sandbox`, `sandbox-min`) with `GITHUB_TOKEN`, only after the
@@ -275,6 +277,7 @@ Files: `deploy/dev/kind-dev.sh` (driven by `just kind-up | kind-dev | kind-statu
 persistent cargo target volume and copied into thin distroless images; `kind-dev.sh dev [svc…]` rebuilds, loads
 and restarts only the services whose binary (web: sources) changed. Images are `localhost/aurora-dev/aurora-<svc>:dev`
 with `pullPolicy: Never`.
+`scripts/e2e/kind.sh` uses the same builder + thin images by default (`--release-images` builds the release `Containerfile` instead); dev images are local only and never pushed (OPS-023, I-44).
 
 Developer loop without containers (phase 1, OPS-018; `docs/ops/live-reload.md`, decision I-43): `just dev` starts
 Postgres in podman, applies migrations and runs a watch → incremental rebuild → restart loop
