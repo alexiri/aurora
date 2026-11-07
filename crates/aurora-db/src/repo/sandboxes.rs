@@ -511,8 +511,34 @@ async fn end_boot(
     .bind(sandbox)
     .bind(boot)
     .bind(process_status)
-    .execute(conn)
+    .execute(&mut *conn)
     .await?;
+    // docs/10 §Processes and watches: armed watches of the ended boot convert likewise and
+    // post a notice to the arming conversation.
+    let converted: Vec<(Uuid, String)> = sqlx::query_as(
+        "UPDATE watches w SET status = $3, updated_at = now()
+         FROM processes p
+         WHERE p.id = w.process_id AND p.sandbox_id = $1 AND p.boot_id = $2 AND w.status = 'armed'
+         RETURNING w.conversation_id, p.name",
+    )
+    .bind(sandbox)
+    .bind(boot)
+    .bind(process_status)
+    .fetch_all(&mut *conn)
+    .await?;
+    for (conversation, name) in converted {
+        crate::repo::transcript::append_durable_event(
+            conn,
+            conversation,
+            None,
+            "notice",
+            &serde_json::json!({
+                "code": format!("watch_{process_status}"),
+                "text": format!("The process \"{name}\" was {process_status}; its watch was cancelled."),
+            }),
+        )
+        .await?;
+    }
     Ok(())
 }
 

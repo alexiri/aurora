@@ -670,3 +670,90 @@ async fn projection_entries_in_home_sync() {
         false
     );
 }
+
+/// TEST-014: parts stay within `HOME_SYNC_PART_MAX` at worst-case encodings (docs/12 §Sync
+/// protocol: CJK x3 bytes, JSON-escaped controls x6) with every entry delivered exactly once.
+#[tokio::test]
+async fn home_sync_parts_pack_within_the_wire_max_at_worst_case_encodings() {
+    let r = rig().await;
+    let b = r.booted("pk1").await;
+    // Skill bodies of control characters: each is escaped to `\u0001` (6 bytes) on the wire.
+    let ctrl = "\u{1}".repeat(aurora_core::limits::SKILL_BODY_MAX);
+    for i in 0..3 {
+        sqlx::query(
+            "INSERT INTO skills (id, org_id, agent_id, name, description, body, enabled, created_by_kind)
+             VALUES ($1,$2,$3,$4,'d',$5,true,'user')",
+        )
+        .bind(Uuid::now_v7())
+        .bind(r.org)
+        .bind(b.agent)
+        .bind(format!("ctrl-{i}"))
+        .bind(&ctrl)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    }
+    // Memories at the tool content cap in 3-byte CJK.
+    let cjk = "漢".repeat(aurora_core::limits::MEMORY_TOOL_CONTENT_MAX);
+    for i in 0..30 {
+        sqlx::query(
+            "INSERT INTO memories (id, agent_id, key, content, revision) VALUES ($1,$2,$3,$4,1)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(b.agent)
+        .bind(format!("cjk-{i}"))
+        .bind(&cjk)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    }
+    let claim = aurora_db::repo::hosted::HomeSyncClaim {
+        sandbox_id: b.sandbox,
+        boot_id: b.boot,
+        agent_id: b.agent,
+        generation: 7,
+        harness_id: Some("fake".into()),
+    };
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let parts = aurora_api::domains::hosted::home::render(&r.h.state, &mut conn, &claim)
+        .await
+        .unwrap();
+    let count = u32::try_from(parts.len()).unwrap();
+    for (i, p) in parts.iter().enumerate() {
+        let wire = serde_json::to_string(p).unwrap();
+        assert!(
+            wire.len() <= aurora_protocol::runner::MAX_HOME_SYNC_PART,
+            "part {i} ({}) is {} bytes",
+            p.part.kind.as_str(),
+            wire.len()
+        );
+        assert_eq!(
+            (p.generation, p.part_index, p.part_count),
+            (7, u32::try_from(i).unwrap(), count)
+        );
+    }
+    assert_eq!(parts.last().unwrap().part.kind.as_str(), "final");
+    let paths = |kind: &str| -> Vec<String> {
+        parts
+            .iter()
+            .filter(|p| p.part.kind.as_str() == kind)
+            .flat_map(|p| p.part.entries.iter())
+            .map(|e| e["path"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(paths("skills").len(), 3);
+    assert!(
+        parts
+            .iter()
+            .filter(|p| p.part.kind.as_str() == "skills")
+            .count()
+            >= 3
+    );
+    // 30 memories + index, each once, and the manifest names every managed path.
+    let mem = paths("memory");
+    assert_eq!(mem.len(), 31);
+    let manifest = paths("manifest");
+    for p in paths("skills").iter().chain(mem.iter()) {
+        assert!(manifest.contains(p), "{p} missing from the manifest");
+    }
+}
