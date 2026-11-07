@@ -539,3 +539,28 @@ async fn signup_rate_limited() {
     assert_eq!(s, StatusCode::TOO_MANY_REQUESTS);
     assert!(hd.get("retry-after").is_some());
 }
+
+/// SEC-22: under an https external URL the session cookie is `Secure` as well as
+/// `HttpOnly; SameSite=Lax`, and the cookie-authenticated request needs a trusted Origin.
+#[tokio::test]
+async fn sec22_session_cookie_is_secure_on_https() {
+    let h = Harness::with_config(|c| {
+        c.signup_mode = SignupMode::Open;
+        c.external_url = "https://aurora.example.com".into();
+    })
+    .await;
+    let (s, hd, v) = h
+        .send(
+            Method::POST,
+            "/v1/auth/signup",
+            &[("origin", "https://aurora.example.com")],
+            Some(json!({"email": "sec@example.com", "password": PW, "display_name": "S"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let c = hd.get("set-cookie").unwrap().to_str().unwrap();
+    assert!(
+        c.contains("HttpOnly") && c.contains("SameSite=Lax") && c.contains("Secure"),
+        "{c}"
+    );
+}

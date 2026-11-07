@@ -286,3 +286,54 @@ async fn resolve_with_workspace_key() {
     .await;
     assert_eq!(s, 404);
 }
+
+async fn audit_count(h: &Harness, action: &str) -> i64 {
+    for _ in 0..100 {
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = $1")
+            .bind(action)
+            .fetch_one(h.pool())
+            .await
+            .unwrap();
+        if n > 0 {
+            return n;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    0
+}
+
+/// SEC-32: key creation and revocation are audited, and the audit row never carries
+/// the token.
+#[tokio::test]
+async fn sec32_key_create_and_revoke_are_audited_without_the_token() {
+    let w = world().await;
+    let h = &w.h;
+    let u = format!("/v1/workspaces/{}/api-keys", w.ws);
+    let (_, v) = sess(
+        h,
+        &w.owner_tok,
+        Method::POST,
+        &u,
+        Some(json!({"name":"aud"})),
+    )
+    .await;
+    let k = v["key"].as_str().unwrap().to_owned();
+    let id = v["api_key"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(audit_count(h, "api_key.create").await, 1);
+    let (s, _) = sess(
+        h,
+        &w.owner_tok,
+        Method::DELETE,
+        &format!("/v1/api-keys/{id}"),
+        None,
+    )
+    .await;
+    assert_eq!(s, 204);
+    assert_eq!(audit_count(h, "api_key.revoke").await, 1);
+    let all: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT metadata FROM audit_log WHERE action LIKE 'api_key.%'")
+            .fetch_all(h.pool())
+            .await
+            .unwrap();
+    assert!(!all.iter().any(|m| m.to_string().contains(&k)));
+}

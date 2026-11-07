@@ -846,3 +846,30 @@ fn approval_code_is_eight_base32_chars_and_spreads_uuidv7() {
         .collect();
     assert_eq!(codes.len(), 200);
 }
+
+/// SEC-21/SEC-19: a suspended member is a non-member on the channel surface too: their
+/// click on a valid card is refused, decides nothing and burns no token; reinstating
+/// them makes the same token work.
+#[tokio::test]
+async fn suspended_member_click_is_refused_everywhere() {
+    let w = W::new(&FULL).await;
+    let (id, op) = w.approval_card().await;
+    let tok = W::token(&op, "Approve");
+    w.h.set_member_status(w.org, w.member, "suspended").await;
+    let out = w
+        .click_in(w.integ, &tok, "U_MEMBER", None, Some("C1"))
+        .await;
+    assert_eq!(
+        (out["result"].as_str(), out["reason"].as_str()),
+        (Some("refused"), Some("forbidden")),
+        "{out}"
+    );
+    assert_eq!(w.status("approvals", id).await, "pending");
+    assert_eq!(w.token_uses().await, 0);
+    w.h.set_member_status(w.org, w.member, "active").await;
+    assert_eq!(
+        w.click(w.integ, &tok, "U_MEMBER", None).await["result"],
+        "done"
+    );
+    assert_eq!(w.status("approvals", id).await, "approved");
+}

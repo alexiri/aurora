@@ -408,3 +408,36 @@ async fn sse_emits_created_decided_and_keepalive() {
     }
     assert!(!txt.contains("event: approval"), "{txt}");
 }
+
+/// SEC-32: an approval decision is audited.
+#[tokio::test]
+async fn sec32_approval_decision_is_audited() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let member = h.user("m@x.io", false).await;
+    h.member(f.org, member, "member", "active").await;
+    h.bind_ws(f.ws, member, "member").await;
+    let (_, mt) = h.good_session(member).await;
+    let a1 = approval(&h, &f, f.ws, f.agent, None).await;
+    let c = cookie(&mt);
+    let (s, v) = post(
+        &h,
+        &format!("/v1/approvals/{a1}/decision"),
+        ("cookie", &c),
+        json!({"decision":"approve"}),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    let mut n = 0i64;
+    for _ in 0..100 {
+        n = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action='approval.decide'")
+            .fetch_one(h.pool())
+            .await
+            .unwrap();
+        if n > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(n, 1);
+}

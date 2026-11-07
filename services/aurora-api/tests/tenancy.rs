@@ -587,3 +587,35 @@ async fn resolve_and_deletes() {
         );
     }
 }
+
+async fn audit_n(h: &Harness, action: &str) -> i64 {
+    for _ in 0..100 {
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = $1")
+            .bind(action)
+            .fetch_one(h.pool())
+            .await
+            .unwrap();
+        if n > 0 {
+            return n;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    0
+}
+
+/// SEC-32: role changes and member removal are audited.
+#[tokio::test]
+async fn sec32_role_changes_and_removal_are_audited() {
+    let h = Harness::new().await;
+    let (_, ot) = Who::new(&h, "o@x.io", true).await;
+    let org = id(&setup_org(&h, &ot, "Org").await["org"]["id"]);
+    let (member, _) = Who::new(&h, "m@x.io", false).await;
+    h.member(org, member, "member", "active").await;
+    let mem = format!("/v1/orgs/{org}/members/{member}");
+    let (s, v) = call(&h, &ot, Method::PATCH, &mem, Some(json!({"role": "admin"}))).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(audit_n(&h, "member.update").await, 1);
+    let (s, _) = call(&h, &ot, Method::DELETE, &mem, None).await;
+    assert_eq!(s, 204);
+    assert_eq!(audit_n(&h, "member.remove").await, 1);
+}
