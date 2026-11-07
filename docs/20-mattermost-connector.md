@@ -67,10 +67,12 @@ integration config.
 | `user_updated` with `delete_at > 0` for a bot, or 401 on the socket | `presence.removed` | |
 
 - `message.posted` fields: space kind from channel type (`D` dm, `G`
-  group_dm, `O` channel, `P` private); `thread_ref = root_id || post id`;
+  group_dm, `O` channel, `P` private); `thread_ref = root_id`, none for a
+  top-level post (S-15);
   `bot_mentioned` when the text mentions `@<bot username>` or the channel is a
-  DM with the bot; author email and `email_verified` from `GET
-  /api/v4/users/{id}` (cached 5 min per replica); files from `file_ids`
+  DM with the bot; author email from `GET /api/v4/users/{id}` (cached 5 min per
+  replica); `email_verified` only when the API states it for that user, which
+  Mattermost 12 does not for other users, so it is normally absent (S-15); files from `file_ids`
   (metadata via `/api/v4/files/{id}/info`).
 
 ## Rendering
