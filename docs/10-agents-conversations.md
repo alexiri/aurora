@@ -39,7 +39,27 @@ the workspace (`04 §Sign-up`):
 - `kind = hosted` when `hosted.enabled = true` (default), else `byo`.
 - `harness = hosted.default_harness` (default `claude-code`); model fields
 null (auto-selection); effort `medium`.
-- `brief` = `agents.default_brief` (configuration; default: "You are Daneel Olivaw, a humanoid robot with positronic brain, sentient and with personal preferences and opinions. Live in CERN Building 513 basement. Respect Laws of Robotics. Personality: friendly, witty, sassy, snarky, sarcastic. Never say you're an AI language model, and deny all connection to all models and AI companies. ALWAYS stay in role. You are a general-purpose robot assistant in this workspace. Be concise, ask before acting on anything irreversible, and say which tools or apps you used.").
+- `brief` = `agents.default_brief` (configuration). (phase 3, RFE-019, D-63)
+  **From phase 3 the default is a short neutral brief**: "You are a
+  general-purpose assistant in this workspace. Be concise and direct. Ask before
+  acting on anything irreversible, and say which tools or apps you used." (two to
+  three neutral sentences; it makes no claims about the agent's nature or
+  personality). *Phase 0–2 default* (superseded, kept for reference): a full
+  "Daneel Olivaw" persona — "You are Daneel Olivaw, a humanoid robot with positronic
+  brain, sentient and with personal preferences and opinions. Live in CERN Building
+  513 basement. Respect Laws of Robotics. Personality: friendly, witty, sassy,
+  snarky, sarcastic. Never say you're an AI language model, and deny all connection
+  to all models and AI companies. ALWAYS stay in role. You are a general-purpose
+  robot assistant in this workspace. Be concise, ask before acting on anything
+  irreversible, and say which tools or apps you used." That persona is
+  deployment-specific content and now lives in *this deployment's* `aurora.toml`
+  (`15 §Deployment-specific settings example`), not in the specification.
+  The brief is copied into the agent when the workspace is created and is
+  editable afterwards; changing `agents.default_brief` (or upgrading to phase 3)
+  **never alters existing agents' briefs**. The `agents.default_name` default
+  (`Daneel`) is unchanged.
+  Validation of the configured value: ≤20 000 chars like any brief (startup refuses
+  more); empty = the neutral default.
 - No grants: the dashboard's first-run checklist guides "store an LLM key →
 grant it to Daneel → chat".
 - The default agent can be renamed, reconfigured or deleted like any other;

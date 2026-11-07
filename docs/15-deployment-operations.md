@@ -17,7 +17,7 @@ One OCI image per component, all tagged with the Aurora version
 | `aurora-web` | Next.js standalone build |
 | `aurora-connector-fake` | test/dev only |
 | `aurora-connector-mattermost` | phase 1 |
-| `aurora-sandbox` | sandbox image (`11 §Sandbox image`) — not a service; referenced by the runner |
+| `aurora-sandbox` | sandbox image (`11 §Sandbox image`) — not a service; referenced by the runner. (phase 3, RFE-019) Built on the public official AlmaLinux image by default; a private or mirrored base is a **build-time** override (`SANDBOX_BASE_IMAGE`, see below), not a runtime configuration key |
 
 Service images are distroless (`gcr.io/distroless/cc` or equivalent), run as
 non-root, contain only their binary, and are multi-arch (amd64, arm64).
@@ -81,7 +81,7 @@ one new entry without activating it.
 | `governance.egress.baseline_allowlist` | `[]` | api, gateway | `[{ host, path? }]` merged into every org's egress allow-list |
 | `governance.egress.open_lane_minimum` | `enabled` | api, gateway | (phase 1, RFE-003) `enabled` \| `allowlist_only` \| `disabled` — floor of the open-lane posture for every org and workspace; `allowlist_only` uses the baseline allow-list (set one) |
 | `agents.default_name` | `Daneel` | api | default agent and shared-bot name |
-| `agents.default_brief` | (text in `10`) | api | |
+| `agents.default_brief` | (neutral text in `10`; phase 3, RFE-019: was the Daneel persona in phase 0–2) | api | brief given to the default agent of **new** workspaces; ≤20 000 chars; empty = the default; never changes existing agents |
 | `hosted.enabled` | `true` | api | hosted agents available |
 | `hosted.default_harness` | `claude-code` | api | |
 | `hosted.allow_fake_harness` | `false` | api | tests/dev |
@@ -165,6 +165,38 @@ Built-in `known_llm_hosts` (maintained with releases): `api.openai.com`,
 `api.perplexity.ai`, `openrouter.ai`, `api.anthropic.com` (when no
 `anthropic` endpoint is configured). Hosts that are also endpoint hosts are
 removed from the list automatically.
+
+### Deployment-specific settings example (phase 3, RFE-019, D-63)
+
+The specification's defaults are generic (neutral default brief, public base
+image). Choices that belong to one deployment live in that deployment's own
+configuration. This deployment's (CERN) values, as an example of the mechanism:
+
+```toml
+[agents]
+default_name = "Daneel"
+default_brief = """
+You are Daneel Olivaw, a humanoid robot with positronic brain, sentient and with
+personal preferences and opinions. Live in CERN Building 513 basement. Respect
+Laws of Robotics. Personality: friendly, witty, sassy, snarky, sarcastic. Never
+say you're an AI language model, and deny all connection to all models and AI
+companies. ALWAYS stay in role. You are a general-purpose robot assistant in this
+workspace. Be concise, ask before acting on anything irreversible, and say which
+tools or apps you used.
+"""
+```
+
+Operators who adopt a persona like this should check that instructing an agent to
+deny being an AI suits their users and applicable rules; the platform default does
+not.
+
+The sandbox base image is a **build-time** choice, passed to the image build
+(`podman build --build-arg SANDBOX_BASE_IMAGE=…`, the compose `.env`
+`SANDBOX_BASE_IMAGE`, or the CI variable of the same name; unset = the public
+default of `11 §Sandbox image`). This deployment sets
+`SANDBOX_BASE_IMAGE=gitlab-registry.cern.ch/linuxsupport/alma10-base:<tag>`. The
+override changes nothing else (same package list, same labels, same tag scheme
+— the content-hash tag includes the resolved base digest).
 
 ## Networking: one URL
 

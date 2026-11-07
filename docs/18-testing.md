@@ -145,6 +145,19 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Reserved prefix: a connector `event_id` starting `api:` is `rejected`
   (`reserved_event_id`); ordinary connector dedupe unchanged.
 
+### Deployment-neutral defaults (phase 3, RFE-019)
+- New workspace → default agent brief equals the configured `agents.default_brief`;
+  unset/empty → the neutral default of `10` (2–3 sentences, no persona, no claims
+  about the agent's nature); an over-long value fails startup naming the key;
+  existing agents' briefs are untouched by a config change or an upgrade.
+- Architecture guard (extends `scripts/guards`): the normative defaults carry no
+  deployment-specific content — the Containerfile's `SANDBOX_BASE_IMAGE` default is
+  a public registry image pinned by digest (no `*.cern.ch` or other private host),
+  `agents.default_brief`'s built-in default contains no persona names or
+  backstory — and the CERN values appear only in the documented deployment example.
+- Image build: building with and without a `SANDBOX_BASE_IMAGE` override yields the
+  same package list and `org.aurora.capabilities` label (smoke test).
+
 ### Governance
 - Governance validation: org documents below the instance minimum, scope and
   list subset rules, defaults for new orgs.

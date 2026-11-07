@@ -58,7 +58,7 @@ Both kinds share the gateway, the secret stores and the policy engine.
 | **Workspace access** | Binding of a user to a workspace with role `owner` or `member`. |
 | **Access law** | The single authorization predicate used everywhere a person acts on a workspace: workspace exists → user is an *active* org member → user has workspace access (org owners/admins pass implicitly). See `04`. |
 | **Agent** | Durable principal: name, handle (unique per workspace), kind (`byo`/`hosted`) and for hosted agents harness, model, effort, brief, avatar. |
-| **Daneel** | The default hosted agent created in every new workspace (name configurable). |
+| **Daneel** | The default hosted agent created in every new workspace (name configurable). (phase 3, RFE-019) The name is only a default; its personality is not part of the specification — the default brief is neutral and a deployment may configure a persona (`15`). |
 | **Gateway credential** | Any token the gateway accepts in `Proxy-Authorization`: a BYO **agent token** (`aug_`), a hosted **boot token** (`aub_`, valid for one sandbox boot) or a **context credential** (`auc_`, valid for one turn or one BYO context). |
 | **Context credential** | Short-lived gateway credential that additionally names a conversation and turn, so approvals and request logs are attributed exactly. Attribution only — the security boundary stays the agent. |
 | **API key** | Bearer credential for the management API: workspace key or org key; kind `user` or `service`. |
