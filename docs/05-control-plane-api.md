@@ -346,7 +346,7 @@ connector, **P** public capability. Permission checks per `04`.
 | PUT/DELETE `/v1/agents/{agent}/grants/connections/{conn}` | S/K | `{ mode, allow_tools, ask_tools }` |
 | PUT/DELETE `/v1/agents/{agent}/grants/secrets/{secret}` | S/K | |
 | GET `/v1/connections/{id}/grants` | S/K | agents granted |
-| GET `/v1/agents/{agent}/effective` | S/K | effective credentials and per-tool decisions with `org_ceiling` |
+| GET `/v1/agents/{agent}/effective` | S/K | effective credentials and per-tool decisions with `org_ceiling`; (phase 2, RFE-005) optional `?speaker=<user_id>\|none` |
 
 ### Policy
 | Method & path | Auth | Purpose |
@@ -356,7 +356,7 @@ connector, **P** public capability. Permission checks per `04`.
 | POST `…/policy/publish`, `…/policy/rollback` | S/K | `{ revision }` / `{ generation }` |
 | GET `…/policy/generations` | S/K | history |
 | GET `…/policy/warnings` | S/K | overlap/inert-rule warnings for the draft |
-| POST `/v1/workspaces/{ws}/policy/simulate` | S/K | `{ agent_id, method, url, body?, use_draft?, lane? }` → decision trace; (phase 1, RFE-003) `lane: "open"` evaluates CONNECT-time semantics (`07`) and the open-lane posture |
+| POST `/v1/workspaces/{ws}/policy/simulate` | S/K | `{ agent_id, method, url, body?, use_draft?, lane?, speaker_user_id? }` → decision trace (phase 2, RFE-005: `speaker_user_id` omitted = no speaker); (phase 1, RFE-003) `lane: "open"` evaluates CONNECT-time semantics (`07`) and the open-lane posture |
 
 ### Approvals
 | Method & path | Auth | Purpose |

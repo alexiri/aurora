@@ -158,7 +158,9 @@ token rotation, manifest approval with capability/setup-field diff), **Runners**
 - **Policy editor**: draft/publish ("Apply changes"), drag reorder with
   stale-revision detection, identity and target pickers (apps/tools from the
   catalogue, connections, secrets, network patterns), conditions, modifiers,
-  simulate panel (method + URL + body → decision trace), warnings panel,
+  simulate panel (method + URL + body → decision trace; phase 2, RFE-005: a
+  "speaker" picker, default you, plus "no speaker"), identity picker labelling
+  `user` identities **"when <name> is speaking"** with the warning of `07`, warnings panel,
   generation history with rollback.
 - **Plugin approval**: the permissions review is mandatory reading — approve is
   disabled until the reviewer expands every section (hooks, egress, context,

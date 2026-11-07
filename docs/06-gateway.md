@@ -109,8 +109,20 @@ unencrypted.
   `expires_at` (turn end + `CONTEXT_CREDENTIAL_GRACE`).
 - Resolution yields the **request identity**: `{ credential_id, kind,
   agent_id, workspace_id, org_id, conversation_id?, turn_id?, context_label?,
-  principals }` where `principals = {agent_id} ∪ {user ids with can_use on the
-  workspace}` (resolved once per connect, cached with the credential).
+  principals }` where, in phase 0, `principals = {agent_id} ∪ {user ids with
+  can_use on the workspace}` (resolved once per connect, cached with the
+  credential).
+  **From phase 2 (RFE-005, D-49)** the roster is gone: `principals = {agent_id}`
+  and the identity carries `speaker_user_id?` — the person who authored the turn
+  the credential is bound to. It is set only for **hosted `context` credentials**
+  (minted by the API at `turn.deliver` from `turns.speaker_user_id` when the turn's
+  `speaker_kind = person`; stored in `gateway_credentials.speaker_user_id`) and
+  only while that user still has `can_use` on the workspace (checked at connect
+  resolution; invalidated with the `workspace`/`org` scopes). Every other
+  credential — `boot`, `agent` (BYO), BYO `context` (the agent mints those itself,
+  so a conversation id it names proves nothing), and context credentials of
+  turns with no person speaker (schedule, webhook, watch, peer, system, bot or
+  agent speakers) — has **no speaker**.
 
 ## Lanes
 

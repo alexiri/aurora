@@ -374,6 +374,16 @@ workspace secret it uses and records usage.
 Context credentials are for **attribution**, not isolation: conversations of
 one agent share a sandbox. The security boundary is the agent.
 
+(phase 2, RFE-005) A hosted `context` credential also carries the turn's
+**speaker** (`gateway_credentials.speaker_user_id`, copied from
+`turns.speaker_user_id` at mint when the speaker is a person; null otherwise).
+Policy `user` identities match only this value (`07`). `boot`, `agent` and BYO
+`context` credentials never carry a speaker. Because conversations of one agent
+share a sandbox, a compromised agent process could borrow another concurrent
+turn's credential; speaker-bound rules are therefore *attribution*, not
+isolation (`17 §Residual risks`) — pair sensitive grants with agent-level rules and
+approvals.
+
 (phase 1, RFE-003) **Capabilities.** `gateway_credentials.capabilities` (text
 array, default empty; open vocabulary, unknown values ignored) records what a
 credential may do beyond ordinary MITM traffic. Phase 1 defines one: `browser`

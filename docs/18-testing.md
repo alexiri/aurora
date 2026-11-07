@@ -24,6 +24,14 @@ done when its tests exist, pass in CI, and the security invariants it touches
 ### Policy and gateway
 - Matcher property tests: host patterns (exact, single `*`, rejection of
   multiple `*`), path patterns (`*`, `**`, segment prefix), never panics.
+- (phase 2, RFE-005) Speaker binding: corpus cases per `07 §Rule anatomy` — a rule
+  naming Alice matches Alice's turns and not Bob's in the same workspace/agent;
+  boot-token, BYO agent-token, BYO context, schedule/webhook/watch/peer/system
+  turns never match `user` identities (allow rules select no credential); a
+  speaker who lost `can_use` stops matching after invalidation; the context
+  credential's `speaker_user_id` is set from the turn only for person speakers;
+  simulate/effective with and without `speaker`; request-log rows carry
+  `speaker_user_id`.
 - Evaluator corpus (`crates/aurora-policy/tests/corpus/*.yaml`): request facts
   + rule sets → expected verdict and trace; covers scope combination, default
   carve-out, rate-limit accounting, condition polarity, GraphQL fail-closed,

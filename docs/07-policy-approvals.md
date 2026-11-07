@@ -37,11 +37,22 @@ gateway step before evaluation (`06`), so it cannot be loosened by any rule.
 
 ## Rule anatomy
 
+**Fail-closed speaker binding (phase 2, RFE-005).** A privilege tied to a
+person is never granted to unattributed traffic: an **allow** rule whose
+identities are `user` kinds does not match (so it neither allows nor *selects a
+credential for injection*, see *Injection selection*) when there is no matching
+speaker. A **block / require-approval / rate-limit** rule naming a `user` also
+does not match speakerless traffic — that traffic is not that person's; to
+restrict unattributed traffic write the rule with an `agent` identity or empty
+identities. Authors who want "anyone with access" write empty identities, not a
+roster of users. Existing phase-0 rules are not rewritten; their meaning
+narrows, and the editor/warnings say so (below).
+
 Stored in `policy_rules` (hand) or `derived_rules.rule` (derived).
 
 | Part | Shape / meaning |
 |------|-----------------|
-| `identities` | `[{ "kind": "agent", "id": uuid } | { "kind": "user", "id": uuid }]`. Empty = anyone. A `user` identity matches when the user is in the request identity's `principals` (users with `can_use` on the agent's workspace). |
+| `identities` | `[{ "kind": "agent", "id": uuid } | { "kind": "user", "id": uuid }]`. Empty = anyone. An `agent` identity matches when the id equals the request's agent. A `user` identity: **phase 0** matched when the user is in the request identity's `principals` (users with `can_use` on the agent's workspace — "workspace roster" semantics, so a rule naming Alice matched every request by the agent whoever was speaking). **From phase 2 (RFE-005)** a `user` identity matches **only when the request's `speaker_user_id` equals that user**, i.e. the turn that caused the request was authored by that person (`06 §Credential authentication`). With **no speaker** (boot-token, BYO agent-token and BYO context traffic, schedule/webhook/watch/peer/system/bot-authored turns, or a speaker who lost `can_use`) a `user` identity **never matches**. Several identities are OR-ed. |
 | `targets` | Empty = anywhere. Kinds below. A rule matches if **any** target matches. |
 | `action` | `allow` \| `block` |
 | `require_approval` | allow only |
@@ -63,7 +74,8 @@ Target kinds (matching uses the **request facts** below):
 **Request facts**: `host`, `port`, `path` (normalized), `method`, `body_prefix`
 + `truncated`, `app_id?`, `tool_id?`, `winning_credential?` (`connection{id,
 app_id, scope}` \| `secret{id, kind, scope}`), `injected` (= winning credential
-present), `is_llm_host`, `identity` (agent id, principals).
+present), `is_llm_host`, `identity` (agent id, principals; from phase 2 also
+`speaker_user_id?`).
 
 ## Matching primitives
 
@@ -225,8 +237,11 @@ separate mode.
 
 ### Effective views
 
-`GET /v1/agents/{agent}/effective` returns, for every candidate credential in
-scope: whether it is selected, by which rule(s), and for each app tool the
+`GET /v1/agents/{agent}/effective[?speaker=<user_id>]` (phase 2, RFE-005: the
+optional `speaker` selects the person whose turns are evaluated; default: the
+caller; `speaker=none` shows speakerless traffic; credentials whose selection
+depends on the speaker are flagged `depends_on_speaker`) returns, for every
+candidate credential in scope: whether it is selected, by which rule(s), and for each app tool the
 combined decision with the org-only decision exposed as `org_ceiling` so the UI
 can explain locks. Computed by running the evaluator over synthetic request
 facts per tool (one per tool's first method/path example).
@@ -247,12 +262,18 @@ facts per tool (one per tool's first method/path example).
   targets outside scope, unknown app or tool ids (warn only — may be a removed
   tool), modifiers on block rules, rate limits out of range, condition values
   too long.
-- **Warnings** (`GET …/policy/warnings`): rules shadowed by an earlier
+- **Warnings** (`GET …/policy/warnings`; phase 2, RFE-005: rules with `user`
+  identities carry the informational warning `user_rule_needs_speaker` — "matches
+  only turns spoken by <name>; never schedules, webhooks, BYO or boot traffic" —
+  and, for allow rules that grant credentials, `user_rule_no_agent_fallback`):
+  rules shadowed by an earlier
   unconditional rule with identical/broader identities and targets; rules
   naming removed tools or lost host claims (inert); allow rules in workspace
   scope fully overridden by an org block.
 - **Simulate**: `POST /v1/workspaces/{ws}/policy/simulate` builds request facts
-  from `{agent_id, method, url, body?}` using the same resolution code as the
+  from `{agent_id, method, url, body?, speaker_user_id?}` (phase 2, RFE-005:
+  omitted = no speaker, so `user` rules do not match; the dashboard pre-fills the
+  caller) using the same resolution code as the
   gateway (candidates, selection, app/tool identification) and returns the
   verdict, the winning credential, and the full trace; `use_draft: true`
   substitutes the draft generations.

@@ -1122,3 +1122,13 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | reauth_at | timestamptz null | last successful OIDC re-authentication (`04 §OIDC`); account deletion needs it within 10 min | 1 (RFE-004) |
+
+#### `gateway_credentials` (speaker)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| speaker_user_id | uuid null (no FK; set null semantics by revocation on user delete) | kind=`context` hosted only: the person who authored the turn (`turns.speaker_user_id` when `speaker_kind = person`); null for every other credential. Policy `user` identities match only this (`07`) | 2 (RFE-005) |
+
+#### `request_log`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| speaker_user_id | uuid null | the request identity's speaker (no FK, ledger table); lets operators see which person's turn caused a request | 2 (RFE-005) |

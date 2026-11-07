@@ -75,6 +75,7 @@ runs), configured external secret stores.
 | SEC-41 | (phase 1, RFE-003) The open lane is available only to credentials holding the `browser` capability (hosted boots started with it) and only while the effective open-lane posture (strictest of instance, org, workspace) permits it; a tunnel is judged by host and port only, restrictive rules treat unknowable parts (path, method, body, tool) as matched, allow rules and allow-list entries need a full match on what is knowable, and the supervisor opens the loopback open proxy only with the capability. | 06, 07, 08 §11, 11, 12 | e2e-gateway: BYO/context credential with username `open` refused; posture matrix (`enabled`/`allowlist_only`/`disabled` × instance/org/workspace); CONNECT-time corpus (path-scoped block refuses the tunnel, path-scoped allow does not admit it); e2e-hosted: no listener on 3129 in an image without the label |
 | SEC-42 | (phase 1, RFE-004) There is no local credential: every interactive sign-in is an OIDC sign-in with a provider-verified e-mail, so the IdP's MFA and offboarding apply to every account including instance admins; the only other bearer credentials are API keys, CLI-login keys and gateway/connector/runner tokens, none of which can create a session. The development IdP cannot be enabled on a non-loopback https deployment. | 04, 05, 14, 15 | API tests: removed routes 404; OIDC refusals (unverified e-mail, wrong nonce/audience/expiry, disabled user, `signup_closed` per mode); `bootstrap-admin` + OIDC binds the identity; startup refusal for dev IdP on a public URL and for zero providers |
 | SEC-43 | (phase 1, RFE-009) A `direct` conversation, and everything that names it (events, SSE, attachments, approval cards and feeds, activity rows, conversation references), is visible only to its user (while they have access) and to workspace owners; only its user can write to it. | 04, 05, 07, 10, 13, 14 | authz matrix test over every conversation-returning route × {direct user, other member, owner, org admin, key of each}; approval feed/SSE/long-poll/batch redaction tests; activity-row omission test; owner-view audit test |
+| SEC-44 | (phase 2, RFE-005) A policy `user` identity matches only the speaker of the turn that made the request (hosted context credential, speaker still holding `can_use`); traffic without a speaker never matches `user` identities, so person-scoped privileges are never granted to unattributed traffic. | 06, 07, 08 §7 | evaluator corpus: same agent, different speakers; boot/agent/BYO-context/schedule/webhook traffic; speaker loses access mid-turn; injection selection with user-only allow rules |
 
 ## Residual risks (accepted, documented to operators)
 
@@ -110,6 +111,12 @@ runs), configured external secret stores.
   into memory or a skill, which every workspace member can read. The preamble
   asks it not to; nothing enforces it. Owners can always read direct
   conversations (audited), and org owners/admins are implicit owners.
+- **Speaker binding is attribution, not isolation** (phase 2, RFE-005): conversations
+  of one agent share a sandbox, so a compromised agent process can use another
+  concurrent turn's loopback session port and inherit that turn's speaker.
+  `user`-scoped rules narrow honest traffic; they are not a boundary against a
+  compromised agent. Use agent-level grants, approvals and (for the most
+  sensitive credentials) a dedicated agent.
 - **Per-replica rate limits**: with N gateways a limit can be exceeded up to N×.
 - **Connectors see their platform's traffic and credentials**: operators choose
   which connectors to run. A connector also names the speaker/clicker platform
