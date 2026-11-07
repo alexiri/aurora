@@ -193,6 +193,9 @@ networks:
     ipam:
       config:
         - subnet: 10.89.249.0/24
+          # Dynamic addresses come from the upper half so they cannot take the static ones
+          # (gateway 10.89.249.2, runner 10.89.249.3) that start order would otherwise race for.
+          ip_range: 10.89.249.128/25
   sandbox:
     external: true
     name: aurora-sandbox

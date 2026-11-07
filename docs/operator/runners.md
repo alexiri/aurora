@@ -100,7 +100,10 @@ sandbox_hosts = { "aurora-gateway" = "10.89.250.2", "aurora-runner" = "10.89.250
 ```
 
 The compose file already mounts the podman socket and gives the runner its static address
-(`10.89.250.3`). Test on a host before relying on it. `compose/aurora.toml` does not set
+(`10.89.250.3`). **Known limit (AUDIT-001):** on a rootless host the runner container (uid 65532)
+fails at startup with ``podman socket `/run/podman/podman.sock` does not answer: ... Connect``, so
+this switch does not work from compose as shipped. Run `aurora-runner serve` on the host instead
+(as `scripts/e2e/hosted.sh` does). `compose/aurora.toml` does not set
 `sandbox_hosts` or `podman_socket` today (see [install-compose.md](install-compose.md#configuration-in-deploycomposeauroratoml)).
 
 ## Kubernetes backend

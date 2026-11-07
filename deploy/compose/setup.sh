@@ -65,6 +65,6 @@ Start:  podman compose -f $(pwd)/compose.yaml up -d
 Check:  curl -i localhost:4000/v1/instance ; curl -i localhost:4102
 Note:   distroless images have no curl, so compose only waits for service_started;
         verify health from the host through the published edge (4000) and gateway (4102) ports.
-First admin (available once BE-016 lands):
+First admin:
   podman compose -f $(pwd)/compose.yaml run --rm api bootstrap-admin --email you@example.org
 MSG
