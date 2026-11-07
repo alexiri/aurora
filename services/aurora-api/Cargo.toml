@@ -30,6 +30,7 @@ aurora-protocol = { workspace = true }
 sqlx = { workspace = true }
 base64 = { workspace = true }
 chrono = { workspace = true }
+aurora-supervisor = { path = "../aurora-supervisor" }
 chrono-tz = { workspace = true }
 croner = { workspace = true }
 http = { workspace = true }
@@ -64,3 +65,4 @@ percent-encoding = { workspace = true }
 http-body-util = { workspace = true }
 tower = { workspace = true }
 chrono = { workspace = true }
+aurora-supervisor = { path = "../aurora-supervisor" }

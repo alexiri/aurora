@@ -254,6 +254,7 @@ dependencies = [
  "aurora-protocol",
  "aurora-registry",
  "aurora-secrets",
+ "aurora-supervisor",
  "aurora-testkit",
  "aws-lc-rs",
  "axum",

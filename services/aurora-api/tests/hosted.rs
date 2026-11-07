@@ -660,3 +660,67 @@ async fn sandbox_restart_and_models_routes() {
     assert_eq!(s, 200, "{v}");
     assert!(v["items"].is_array());
 }
+
+/// FUP-M4.1: the answer buffer is durable. Events land through one AppState, the result through
+/// a fresh one (an API replica restart between `turn.events` and `turn.result`); the durable
+/// `text` event is complete and the buffer row is consumed.
+#[tokio::test]
+async fn answer_text_survives_api_restart_between_events_and_result() {
+    let r = rig().await;
+    let lv = r.boot("daneel").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+            .await,
+        "applied"
+    );
+    let batch1 = json!({"kind": "turn.events", "turn_id": turn, "events": [
+        ev(1, "text.delta", json!({"message_id": "m0", "delta": "narration"})),
+        ev(2, "tool.started", json!({"call_id": "c1", "name": "memory_list", "summary": "list"})),
+        ev(3, "tool.finished", json!({"call_id": "c1", "ok": true})),
+        ev(4, "text.delta", json!({"message_id": "m1", "delta": "The "})),
+    ]});
+    assert_eq!(r.report(&lv, batch1).await, "applied");
+    // Buffer is in the database, not in process memory.
+    let buf: Value =
+        sqlx::query_scalar("SELECT msgs FROM turn_answer_buffers WHERE turn_id = $1::uuid")
+            .bind(&turn)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(buf[0]["text"], "The ");
+
+    // "Restart": a brand-new AppState/router continues the turn.
+    let app2 = test_router(aurora_api::app::AppState::new(
+        r.h.pool().clone(),
+        config(|_| {}),
+    ));
+    let batch2 = json!({"kind": "turn.events", "turn_id": turn, "events": [
+        ev(5, "text.delta", json!({"message_id": "m1", "delta": "full "})),
+        ev(6, "text.delta", json!({"message_id": "m1", "delta": "answer"})),
+    ]});
+    assert_eq!(r.report_on(&app2, &lv, batch2).await, "applied");
+    let app3 = test_router(aurora_api::app::AppState::new(
+        r.h.pool().clone(),
+        config(|_| {}),
+    ));
+    assert_eq!(
+        r.report_on(
+            &app3,
+            &lv,
+            json!({"kind": "turn.result", "turn_id": turn, "status": "done"})
+        )
+        .await,
+        "applied"
+    );
+    let evs = r.events(lv.conv).await;
+    let texts: Vec<&Value> = evs.iter().filter(|e| e.0 == "text").map(|e| &e.1).collect();
+    assert_eq!(texts.len(), 1, "{evs:?}");
+    assert_eq!(texts[0]["text"], "The full answer");
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM turn_answer_buffers")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "buffer consumed by the result");
+}

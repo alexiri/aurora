@@ -296,6 +296,7 @@ async fn stream(
     // Subscribe before the first read so nothing committed in between is missed.
     let rx = s.conversation_bus.subscribe(&s.pool).await?;
     let keepalive = s.sse_keepalive;
+    let gone = crate::http::auth::revoked(s.clone(), c.clone());
     let mut tick = tokio::time::interval(RESYNC_EVERY);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let st = Stream_ {
@@ -356,5 +357,6 @@ async fn stream(
             }
         }
     });
+    let events = futures::StreamExt::take_until(events, gone);
     Ok(Sse::new(events).keep_alive(KeepAlive::new().interval(keepalive)))
 }

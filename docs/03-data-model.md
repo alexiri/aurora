@@ -586,6 +586,12 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | last_event_n | int not null default 0 | highest applied supervisor event number (`16 §W5` idempotency) |
 | partial unique | (conversation_id) WHERE role=`turn` AND status IN (`queued`,`dispatched`,`running`) | one active turn per conversation |
 
+### `turn_answer_buffers`
+| Column | Type | Notes |
+|---|---|---|
+| turn_id | uuid pk FK→turns (cascade) | |
+| msgs | jsonb not null default `[]` | answer-rule buffer `[{id,text,reply_to?}]` (text after the turn's last tool call, `10 §Transcript events`); written with each `turn.events` batch, deleted when `turn.result` emits the durable `text` events; spec fix FUP-M4.1 |
+
 ### `transcript_events`
 | Column | Type | Notes |
 |---|---|---|

@@ -631,14 +631,16 @@ async fn language_change_bumps_generation() {
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(gen_of().await, before + 1);
-    // Unchanged language or other fields do not bump.
+    // An unchanged language does not bump.
     r.user(
         Method::PATCH,
         &uri,
         Some(json!({"memory_language": "german"})),
     )
     .await;
+    assert_eq!(gen_of().await, before + 1);
+    // The workspace name is part of the rendered instructions (FIX-005): a rename bumps too.
     r.user(Method::PATCH, &uri, Some(json!({"name": "Renamed"})))
         .await;
-    assert_eq!(gen_of().await, before + 1);
+    assert_eq!(gen_of().await, before + 2);
 }

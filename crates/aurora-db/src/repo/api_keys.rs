@@ -196,3 +196,19 @@ pub async fn list_for_user<'e, E: PgExecutor<'e>>(
     .fetch_all(exec)
     .await?)
 }
+
+/// Whether API key `id` is still live (same rule as [`KeyRecord::live`]); unknown => false.
+pub async fn is_live<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbError> {
+    let live: Option<bool> = sqlx::query_scalar(
+        "SELECT (k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > now())
+                 AND u.disabled_at IS NULL
+                 AND EXISTS (SELECT 1 FROM org_members m
+                             WHERE m.org_id = k.org_id AND m.user_id = k.user_id
+                               AND m.status = 'active'))
+         FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.id = $1",
+    )
+    .bind(id)
+    .fetch_optional(exec)
+    .await?;
+    Ok(live.unwrap_or(false))
+}

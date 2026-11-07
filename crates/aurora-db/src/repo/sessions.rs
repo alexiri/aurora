@@ -112,3 +112,22 @@ pub async fn revoke_all_for_user_except(
     tx.commit().await?;
     Ok(r.rows_affected())
 }
+
+/// Whether session `id` is still live (same rule as [`SessionRecord::live`]); unknown => false.
+pub async fn is_live<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    idle_secs: u64,
+) -> Result<bool, DbError> {
+    let live: Option<bool> = sqlx::query_scalar(
+        "SELECT (s.revoked_at IS NULL AND s.expires_at > now()
+                 AND s.last_seen_at > now() - make_interval(secs => $2::float8)
+                 AND u.disabled_at IS NULL)
+         FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = $1",
+    )
+    .bind(id)
+    .bind(idle_secs as f64)
+    .fetch_optional(exec)
+    .await?;
+    Ok(live.unwrap_or(false))
+}

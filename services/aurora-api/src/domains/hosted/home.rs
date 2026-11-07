@@ -95,6 +95,96 @@ fn pack(kind: HomeSyncKind, entries: Vec<Value>, out: &mut Vec<HomeSyncPart>) {
     }
 }
 
+fn schedules_summary(rows: &[hosted::HomeSchedule]) -> Value {
+    if rows.is_empty() {
+        return Value::Null;
+    }
+    let mut out = format!("{} schedule(s):", rows.len());
+    for r in rows.iter().take(20) {
+        out.push_str(&format!(
+            " {}: `{}` ({}){};",
+            r.name,
+            r.cron,
+            r.timezone,
+            if r.enabled { "" } else { ", disabled" }
+        ));
+    }
+    if rows.len() > 20 {
+        out.push_str(&format!(" ... and {} more", rows.len() - 20));
+    }
+    json!(out)
+}
+
+/// `render_inputs` entry: shapes of `aurora-supervisor`'s `instructions::RenderInputs`.
+async fn render_inputs(
+    state: &AppState,
+    conn: &mut PgConnection,
+    agent: uuid::Uuid,
+    inputs: &hosted::HomeInputs,
+) -> Result<Value, ApiError> {
+    // Apps with an effective grant: one entry per app, accounts = the granted connections.
+    let snap = crate::domains::plugins::registry::active_typed(state).await?;
+    let mut apps: Vec<Value> = Vec::new();
+    if let Some(snap) = snap {
+        let conns = hosted::home_app_connections(conn, agent).await?;
+        let mut seen: Vec<&str> = Vec::new();
+        for c in &conns {
+            if seen.contains(&c.app_id.as_str()) {
+                continue;
+            }
+            seen.push(&c.app_id);
+            let Some(app) = snap.apps.iter().find(|a| a.app_id == c.app_id) else {
+                continue;
+            };
+            let accounts: Vec<Value> = conns
+                .iter()
+                .filter(|x| x.app_id == c.app_id)
+                .map(|x| json!({"id": x.connection_id, "label": x.label}))
+                .collect();
+            let docs_links: Vec<&String> = [&app.about.api_docs, &app.about.api_spec]
+                .into_iter()
+                .flatten()
+                .collect();
+            let snippet = app
+                .agent
+                .as_ref()
+                .map(|g| clamp(g.instructions.trim(), limits::AGENT_SNIPPET_MAX))
+                .filter(|t| !t.is_empty());
+            apps.push(json!({
+                "name": app.about.name,
+                "accounts": accounts,
+                "docs_links": docs_links,
+                "snippet": snippet,
+            }));
+        }
+    }
+    let channels: Vec<Value> = hosted::home_presences(conn, agent)
+        .await?
+        .into_iter()
+        .map(|p| {
+            json!({"platform": p.platform, "label": p.tenant_label, "mode": p.mode,
+                   "handle": p.handle})
+        })
+        .collect();
+    let peers: Vec<Value> = hosted::home_peers(conn, agent)
+        .await?
+        .into_iter()
+        .map(|p| {
+            json!({"handle": p.handle, "description": p.name,
+                   "policy": p.own_policy, "peer_policy": p.peer_policy})
+        })
+        .collect();
+    let schedules = schedules_summary(&hosted::home_schedules(conn, agent).await?);
+    Ok(json!({
+        "agent": {"name": inputs.name, "handle": inputs.handle, "workspace": inputs.workspace_name},
+        "brief": if inputs.brief.trim().is_empty() { Value::Null } else { json!(inputs.brief) },
+        "apps": apps, "channels": channels, "peers": peers,
+        "memory_language": inputs.memory_language,
+        "schedules": schedules,
+        "timezone": inputs.timezone,
+    }))
+}
+
 /// All `home.sync` parts of generation `claim.generation`, in order.
 pub async fn render(
     state: &AppState,
@@ -137,14 +227,17 @@ pub async fn render(
     manifest.push(json!({"path": "memory/index.md"}));
     memory_entries.push(json!({"path": "memory/index.md", "content": memory_index(&mems)}));
 
-    let render_inputs = json!({
-        "agent": {"name": inputs.name, "handle": inputs.handle, "workspace": inputs.workspace_name},
-        "brief": if inputs.brief.trim().is_empty() { Value::Null } else { json!(inputs.brief) },
-        "apps": [], "channels": [], "peers": [],
-        "memory_language": inputs.memory_language,
-        "schedules": null,
-        "timezone": inputs.timezone,
-    });
+    let mut render_inputs = render_inputs(state, conn, claim.agent_id, &inputs).await?;
+    if render_inputs.to_string().len() > PACK_MAX {
+        // Pathological fan-out (hundreds of apps/accounts): keep the structure, shed the
+        // third-party snippets so the part still fits the wire bound.
+        tracing::warn!(agent = %claim.agent_id, "render inputs too large; plugin snippets dropped");
+        if let Some(apps) = render_inputs.get_mut("apps").and_then(Value::as_array_mut) {
+            for a in apps {
+                a["snippet"] = Value::Null;
+            }
+        }
+    }
     let tools: Vec<Value> = crate::domains::tools::catalogue(&state.pool, claim.agent_id)
         .await?
         .iter()

@@ -14,8 +14,6 @@ use aurora_protocol::runner::{
 };
 use serde_json::{Value, json};
 use sqlx::PgConnection;
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
 /// Per-payload text bound for durable events (payload cap is 64 KiB).
@@ -42,22 +40,21 @@ fn clip(s: &str, max: usize) -> &str {
     &s[..e]
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Msg {
     id: String,
     text: String,
     reply_to: Option<String>,
 }
 
-/// Answer text after the turn's last tool call, assembled from deltas (the answer rule, 10).
-/// Held in memory by the replica holding the channel; a tool call or the turn end resets it.
-fn answers() -> &'static Mutex<HashMap<Uuid, Vec<Msg>>> {
-    static A: OnceLock<Mutex<HashMap<Uuid, Vec<Msg>>>> = OnceLock::new();
-    A.get_or_init(|| Mutex::new(HashMap::new()))
-}
+// The answer-rule buffer (text after the turn's last tool call, 10) is persisted in
+// `turn_answer_buffers` under the turn lock (FUP-M4.1): a replica restart loses nothing.
 
-fn with_answers<T>(f: impl FnOnce(&mut HashMap<Uuid, Vec<Msg>>) -> T) -> T {
-    let mut g = answers().lock().unwrap_or_else(|p| p.into_inner());
-    f(&mut g)
+async fn load_answers(tx: &mut PgConnection, turn: Uuid) -> Result<Vec<Msg>, ApiError> {
+    Ok(hosted::answer_buffer_get(tx, turn)
+        .await?
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default())
 }
 
 fn str_of<'a>(m: &'a serde_json::Map<String, Value>, k: &str) -> Option<&'a str> {
@@ -262,7 +259,7 @@ async fn events(
     sorted.sort_by_key(|e| e.n);
     let mut n_done = i64::from(last_n);
     let mut applied = false;
-    // Buffer changes are staged locally and published once the batch succeeded.
+    // Buffer changes are staged and persisted in this transaction after the batch succeeded.
     let mut staged: Vec<(Uuid, StageOp)> = Vec::new();
     for e in sorted {
         let n = i64::try_from(e.n).unwrap_or(i64::MAX);
@@ -275,8 +272,13 @@ async fn events(
     }
     if applied {
         hosted::set_last_event_n(tx, turn, i32::try_from(n_done).unwrap_or(i32::MAX)).await?;
-        for (_, op) in staged {
-            with_answers(|m| op.apply(m, turn));
+        if !staged.is_empty() {
+            let mut buf = load_answers(tx, turn).await?;
+            for (_, op) in staged {
+                op.apply(&mut buf);
+            }
+            let v = serde_json::to_value(&buf).unwrap_or_else(|_| json!([]));
+            hosted::answer_buffer_set(tx, turn, &v).await?;
         }
     }
     Ok(res(
@@ -298,8 +300,7 @@ enum StageOp {
 }
 
 impl StageOp {
-    fn apply(self, m: &mut HashMap<Uuid, Vec<Msg>>, turn: Uuid) {
-        let v = m.entry(turn).or_default();
+    fn apply(self, v: &mut Vec<Msg>) {
         match self {
             Self::Clear => v.clear(),
             Self::Retract(id) => v.retain(|x| x.id != id),
@@ -450,7 +451,10 @@ async fn result(
         return Ok(res(r, ReportStatus::Duplicate, None));
     }
     s.conversation_bus.flush_turn(&s.pool, cid, turn).await;
-    let msgs = with_answers(|m| m.remove(&turn)).unwrap_or_default();
+    let msgs: Vec<Msg> = hosted::answer_buffer_take(tx, turn)
+        .await?
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
     for m in msgs.iter().filter(|m| !m.text.trim().is_empty()) {
         let mut p =
             json!({"turn_id": turn, "message_id": m.id, "text": clip(&m.text, TEXT_MAX_BYTES)});

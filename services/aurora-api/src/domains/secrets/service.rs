@@ -687,6 +687,61 @@ async fn open_key(state: &AppState, row: &SecretRow) -> Result<Plain<String>, Ap
     Ok(Plain::new(s.trim().to_owned()))
 }
 
+/// Upstream model-catalogue lookups are cached 10 min (08 §Platform-internal LLM calls), per
+/// endpoint and per key: the key's hash is part of the cache key, so replacing or rotating the key
+/// misses immediately. Only successes are cached; the governance allow-list is applied after the
+/// cache so policy changes take effect at once.
+type CacheKey = (Uuid, String, [u8; 32]);
+type CacheMap =
+    std::collections::HashMap<CacheKey, (std::time::Instant, Vec<aurora_llm::ModelInfo>)>;
+
+pub struct ModelCache {
+    ttl: std::time::Duration,
+    map: std::sync::Mutex<CacheMap>,
+}
+
+pub const MODEL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+
+impl ModelCache {
+    pub fn new(ttl: std::time::Duration) -> Self {
+        Self {
+            ttl,
+            map: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+    fn lock(&self) -> std::sync::MutexGuard<'_, CacheMap> {
+        self.map.lock().unwrap_or_else(|p| p.into_inner())
+    }
+    pub fn get(&self, org: Uuid, endpoint: &str, key: &str) -> Option<Vec<aurora_llm::ModelInfo>> {
+        let k = (org, endpoint.to_owned(), aurora_core::token::hash(key));
+        let mut m = self.lock();
+        match m.get(&k) {
+            Some((at, v)) if at.elapsed() < self.ttl => Some(v.clone()),
+            Some(_) => {
+                m.remove(&k);
+                None
+            }
+            None => None,
+        }
+    }
+    pub fn put(&self, org: Uuid, endpoint: &str, key: &str, v: Vec<aurora_llm::ModelInfo>) {
+        let mut m = self.lock();
+        if m.len() > 1_000 {
+            let ttl = self.ttl;
+            m.retain(|_, (at, _)| at.elapsed() < ttl);
+        }
+        m.insert(
+            (org, endpoint.to_owned(), aurora_core::token::hash(key)),
+            (std::time::Instant::now(), v),
+        );
+    }
+}
+
+fn model_cache() -> &'static ModelCache {
+    static C: std::sync::OnceLock<ModelCache> = std::sync::OnceLock::new();
+    C.get_or_init(|| ModelCache::new(MODEL_CACHE_TTL))
+}
+
 pub async fn models(state: &AppState, row: &SecretRow) -> Result<Models, ApiError> {
     if row.kind != "llm" || row.status != "active" {
         return Err(ApiError::unprocessable(
@@ -703,19 +758,28 @@ pub async fn models(state: &AppState, row: &SecretRow) -> Result<Models, ApiErro
         false,
     )
     .await?;
-    let list = lc
-        .provider
-        .list_models(lc.ep, &key, &state.llm_http)
-        .await
-        .map_err(|e| match e {
-            aurora_llm::LlmError::InvalidKey => {
-                ApiError::unprocessable("llm_key_invalid", "The provider rejected this API key.")
-            }
-            _ => ApiError::bad_gateway(
-                "llm_endpoint_unreachable",
-                "The LLM endpoint could not be reached.",
-            ),
-        })?;
+    let ep_id = row.llm_endpoint_id.as_deref().unwrap_or_default();
+    let list = match model_cache().get(row.org_id, ep_id, key.expose()) {
+        Some(l) => l,
+        None => {
+            let l = lc
+                .provider
+                .list_models(lc.ep, &key, &state.llm_http)
+                .await
+                .map_err(|e| match e {
+                    aurora_llm::LlmError::InvalidKey => ApiError::unprocessable(
+                        "llm_key_invalid",
+                        "The provider rejected this API key.",
+                    ),
+                    _ => ApiError::bad_gateway(
+                        "llm_endpoint_unreachable",
+                        "The LLM endpoint could not be reached.",
+                    ),
+                })?;
+            model_cache().put(row.org_id, ep_id, key.expose(), l.clone());
+            l
+        }
+    };
     let allowed = &lc.eff.allowed_models;
     Ok(Models {
         items: list
@@ -879,4 +943,34 @@ pub async fn propose(
     .await
     .map_err(|e| conflict_code(e, &[(repo::NAME_CONSTRAINT, "name_taken")]))?;
     Ok(id)
+}
+
+#[cfg(test)]
+mod model_cache_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn mi(id: &str) -> Vec<aurora_llm::ModelInfo> {
+        vec![aurora_llm::ModelInfo {
+            id: id.into(),
+            display_name: None,
+        }]
+    }
+
+    #[test]
+    fn hit_miss_per_endpoint_and_key_and_ttl() {
+        let org = Uuid::nil();
+        let c = ModelCache::new(Duration::from_millis(60));
+        c.put(org, "ep1", "key-a", mi("m1"));
+        assert_eq!(c.get(org, "ep1", "key-a"), Some(mi("m1")));
+        assert_eq!(c.get(org, "ep2", "key-a"), None, "per endpoint");
+        assert_eq!(c.get(org, "ep1", "key-b"), None, "a new key misses");
+        std::thread::sleep(Duration::from_millis(80));
+        assert_eq!(c.get(org, "ep1", "key-a"), None, "expires");
+    }
+
+    #[test]
+    fn ttl_is_ten_minutes() {
+        assert_eq!(MODEL_CACHE_TTL, Duration::from_secs(600));
+    }
 }

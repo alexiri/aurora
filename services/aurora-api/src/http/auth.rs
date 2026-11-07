@@ -201,6 +201,9 @@ pub fn require_own(a: &WorkspaceAuth) -> Result<(), ApiError> {
 /// <=30 s cache of authentication results keyed by token hash.
 pub struct AuthCache {
     ttl: Duration,
+    /// Pinged whenever an `aurora_auth_revoked` notification (or resync) is applied, so open
+    /// SSE streams can re-validate their principal immediately.
+    revoked: tokio::sync::broadcast::Sender<()>,
     map: Mutex<HashMap<[u8; 32], (Instant, Caller)>>,
 }
 
@@ -214,6 +217,7 @@ impl AuthCache {
     pub fn new(ttl: Duration) -> Self {
         Self {
             ttl: ttl.min(CACHE_TTL),
+            revoked: tokio::sync::broadcast::channel(16).0,
             map: Mutex::new(HashMap::new()),
         }
     }
@@ -245,6 +249,12 @@ impl AuthCache {
 
     pub fn clear(&self) {
         self.lock().clear();
+        let _ = self.revoked.send(());
+    }
+
+    /// Subscribe to revocation pings (see [`AuthCache::revoked`] field).
+    pub fn subscribe_revoked(&self) -> tokio::sync::broadcast::Receiver<()> {
+        self.revoked.subscribe()
     }
 
     /// Apply an `aurora_auth_revoked` payload `{kind, id}`; unknown shapes flush everything.
@@ -257,6 +267,7 @@ impl AuthCache {
         let (Some(kind), Some(id)) = (kind, id) else {
             return self.clear();
         };
+        let _ping = Pinger(&self.revoked);
         let mut m = self.lock();
         match kind {
             "session" => m.retain(
@@ -267,6 +278,64 @@ impl AuthCache {
             ),
             "user" => m.retain(|_, (_, c)| c.user_id != id),
             _ => m.clear(),
+        }
+    }
+}
+
+/// Sends a revocation ping when dropped (after the cache lock is released).
+struct Pinger<'a>(&'a tokio::sync::broadcast::Sender<()>);
+impl Drop for Pinger<'_> {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+
+/// How often an open SSE stream re-checks its principal regardless of NOTIFYs (must stay
+/// well under [`CACHE_TTL`]).
+pub const STREAM_RECHECK: Duration = Duration::from_secs(10);
+
+/// Whether the caller's session / API key (and its user) is still live in the database.
+pub async fn principal_live(state: &AppState, c: &Caller) -> Result<bool, ApiError> {
+    Ok(match &c.principal {
+        Principal::Session { id } => {
+            let live =
+                sessions::is_live(&state.pool, *id, state.config.auth.session_idle_secs).await?;
+            if live {
+                // An open stream is activity: keep the session from idling out under it.
+                if let Err(e) = sessions::touch(&state.pool, *id).await {
+                    tracing::warn!(error = %e, "session touch failed");
+                }
+            }
+            live
+        }
+        Principal::ApiKey { id, .. } => api_keys::is_live(&state.pool, *id).await?,
+        Principal::Channel { .. } => true,
+    })
+}
+
+/// Resolves once the authenticating session / key is revoked, expired, or its user suspended.
+/// Re-validates on every auth-revocation NOTIFY and at least every [`STREAM_RECHECK`]. Use as
+/// `stream.take_until(revoked(..))` so SSE responses end promptly (docs/04 §Sessions). Database
+/// errors never end the stream (the next check retries).
+pub async fn revoked(state: AppState, c: Caller) {
+    let every = state.stream_recheck.min(CACHE_TTL);
+    let mut rx = state.session_cache.subscribe_revoked();
+    let mut tick = tokio::time::interval(every);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick.tick().await;
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {}
+            r = rx.recv() => {
+                if matches!(r, Err(tokio::sync::broadcast::error::RecvError::Closed)) {
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
+        match principal_live(&state, &c).await {
+            Ok(false) => return,
+            Ok(true) => {}
+            Err(e) => tracing::warn!(error = %e, "stream revalidation failed; will retry"),
         }
     }
 }
