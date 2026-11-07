@@ -611,7 +611,7 @@ fn strings_of(v: &Value, out: &mut Vec<String>) {
 impl PlatformDriver for MattermostDriver {
     fn quirks(&self) -> PlatformQuirks {
         PlatformQuirks {
-            // Mattermost 12 does not expose other users' `email_verified` over REST.
+            // Mattermost 11.7 does not expose other users' `email_verified` over REST.
             email_verified_visible: false,
             // Every Mattermost account has an email address.
             users_without_email: false,
@@ -684,7 +684,7 @@ impl PlatformDriver for MattermostDriver {
             .await?;
         let id = created["id"].as_str().context("user id")?.to_owned();
         if u.email_verified {
-            // Best effort: Mattermost 12 does not show the flag to other users anyway.
+            // Best effort: Mattermost 11.7 does not show the flag to other users anyway.
             let _ = self
                 .admin(
                     Method::PUT,

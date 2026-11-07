@@ -5,9 +5,10 @@
 #   scripts/mattermost/setup.sh down    # remove the container
 #   scripts/mattermost/setup.sh env     # print the seeded environment (sourced by conformance.sh)
 #
-# Image: mattermost/mattermost-preview, pinned by digest (the multi-arch index).
-#   digest   sha256:71fe954345f056d074fdd489ff8aa944eeffa6602bb8c7c1ef53c230d728b233
-#   size     ~1.7 GB uncompressed (amd64 image 1,677,923,592 bytes), all-in-one: it bundles
+# Image: mattermost/mattermost-preview 11.7.15 (MM-003: production runs Mattermost 11.7), pinned
+# by digest (the multi-arch index).
+#   digest   sha256:6483f05baf4f6234d897dd7e9ca333183002645ea0217bcb202c91bd4c0b64cf
+#   size     ~1.5 GB uncompressed (amd64 image 1,541,227,780 bytes), all-in-one: it bundles
 #            PostgreSQL 14 and Mattermost Team Edition.
 #   license  Mattermost Team Edition: the compiled binary is MIT-licensed; PostgreSQL is under the
 #            PostgreSQL license. The preview image is meant for evaluation and CI, never production,
@@ -16,12 +17,12 @@
 #
 # The container runs on the host network (Mattermost on 127.0.0.1:$AURORA_MM_PORT, its bundled
 # PostgreSQL on 127.0.0.1:5432) so the server can call the connector's loopback callbacks.
-# Resources are prefixed `aurora-mm-`. State lives in target/mattermost/env (gitignored).
+# Resources are prefixed `aurora-mm2-` (override the container name with AURORA_MM_CONTAINER). State lives in target/mattermost/env (gitignored).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-IMAGE="docker.io/mattermost/mattermost-preview@sha256:71fe954345f056d074fdd489ff8aa944eeffa6602bb8c7c1ef53c230d728b233"
-NAME="aurora-mm-server"
+IMAGE="docker.io/mattermost/mattermost-preview@sha256:6483f05baf4f6234d897dd7e9ca333183002645ea0217bcb202c91bd4c0b64cf"
+NAME="${AURORA_MM_CONTAINER:-aurora-mm2-server}"
 PORT="${AURORA_MM_PORT:-18065}"
 URL="http://127.0.0.1:${PORT}"
 STATE="$ROOT/target/mattermost"
@@ -151,6 +152,7 @@ AURORA_MM_BOT_ID=$bot_id
 AURORA_MM_BOT_TOKEN=$bot_token
 AURORA_MM_ALICE_ID=$alice_id
 AURORA_MM_BOB_ID=$bob_id
+AURORA_MM_CONTAINER=$NAME
 EOF
   log "seeded: team $TEAM ($team_id), users alice/bob, bot $BOT_NAME; env in $ENVFILE"
 }
