@@ -582,6 +582,22 @@ const ROWS: &[Row] = &[
     r("PUT", "/v1/agent-links/{id}/policy", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/peer-tasks", G::WsUse, false),
     r("POST", "/v1/conversations/{id}/continue", G::WsUse, false),
+    // P2-010 (RFE-010): the per-conversation decision (direct user / turn author / `can_own`) needs
+    // a real conversation and is covered by tests/it/conversation_lifecycle.rs; the matrix asserts
+    // the visibility floor (`can_use`).
+    r("POST", "/v1/conversations/{id}/archive", G::WsUse, false),
+    r("POST", "/v1/conversations/{id}/unarchive", G::WsUse, false),
+    r("DELETE", "/v1/conversations/{id}", G::WsUse, false),
+    r(
+        "POST",
+        "/v1/conversations/{id}/events/{seq}/redact",
+        G::WsUse,
+        false,
+    ),
+    r("POST", "/v1/turns/{id}/redact", G::WsUse, false),
+    r("GET", "/v1/conversations/{id}/export", G::WsUse, false),
+    r("GET", "/v1/orgs/{org}/retention", G::Admin, false),
+    r("PUT", "/v1/orgs/{org}/retention", G::Admin, false),
     // BE-074 (M6): channel management.
     r(
         "GET",
@@ -857,7 +873,7 @@ fn fill(path: &str, fx: &Fx) -> String {
             "ws" => fx.ws.to_string(),
             "agent" => fx.agent.to_string(),
             "user" => fx.victim.to_string(),
-            "rev" => "1".to_owned(),
+            "rev" | "seq" => "1".to_owned(),
             _ => Uuid::now_v7().to_string(),
         };
         out.push_str(&v);

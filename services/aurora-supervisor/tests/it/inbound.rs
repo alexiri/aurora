@@ -243,6 +243,13 @@ impl HarnessAdapter for Recording {
         let s = FakeHarness.start_session(opts).await?;
         Ok(Box::new(RecordingSession(s, self.0.clone())))
     }
+    async fn purge_session(
+        &self,
+        working_dir: &std::path::Path,
+        session_ref: &str,
+    ) -> Result<(), HarnessError> {
+        FakeHarness.purge_session(working_dir, session_ref).await
+    }
 }
 
 #[async_trait]

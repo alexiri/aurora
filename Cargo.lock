@@ -262,6 +262,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "clap",
+ "crc32fast",
  "croner",
  "futures",
  "http",

@@ -98,6 +98,10 @@ fn work_items_roundtrip() -> R {
         env("turn.abort", json!({"turn_id": U1})),
         env("turn.notice", json!({"turn_id": U1, "text": "ceiling"})),
         env("session.release", json!({"conversation_id": U1})),
+        env(
+            "session.purge",
+            json!({"conversation_id": U1, "session_ref": "sess-1"}),
+        ),
     ];
     for it in items {
         let w: WorkItem = rt(it)?;
@@ -149,6 +153,10 @@ fn reports_roundtrip() -> R {
         base(
             "session",
             json!({"conversation_id": U4, "session_ref": "r", "epoch": 1}),
+        ),
+        base(
+            "session.purged",
+            json!({"conversation_id": U4, "session_ref": "r", "ok": false}),
         ),
         base(
             "process.state",

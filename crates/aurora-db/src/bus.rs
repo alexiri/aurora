@@ -193,6 +193,8 @@ pub enum DeltaKind {
     Text,
     Thinking,
     Activity,
+    /// (phase 2, RFE-010) `data` is the seq of a transcript event whose payload was redacted.
+    Redacted,
 }
 
 impl DeltaKind {
@@ -202,6 +204,7 @@ impl DeltaKind {
             DeltaKind::Text => "text.delta",
             DeltaKind::Thinking => "thinking.delta",
             DeltaKind::Activity => "activity",
+            DeltaKind::Redacted => "event.redacted",
         }
     }
 
@@ -210,6 +213,7 @@ impl DeltaKind {
             "text.delta" => Some(DeltaKind::Text),
             "thinking.delta" => Some(DeltaKind::Thinking),
             "activity" => Some(DeltaKind::Activity),
+            "event.redacted" => Some(DeltaKind::Redacted),
             _ => None,
         }
     }

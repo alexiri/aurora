@@ -78,6 +78,8 @@ pub struct Conversation {
     pub app_turn_capped: bool,
     pub active_turn: Option<Turn>,
     pub last_activity_at: Option<DateTime<Utc>>,
+    /// (phase 2, RFE-010) set while the conversation is archived (hidden from default lists).
+    pub archived_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -115,6 +117,8 @@ pub struct SendMessage {
 #[into_params(parameter_in = Query)]
 pub struct ListQuery {
     pub kind: Option<String>,
+    /// (phase 2, RFE-010) `true` lists archived conversations; default `false` hides them.
+    pub archived: Option<bool>,
     pub limit: Option<u32>,
     pub cursor: Option<String>,
 }
@@ -205,6 +209,7 @@ impl Conversation {
                 .is_ok_and(|n| n >= aurora_core::limits::APP_TURN_CAP),
             active_turn: active.map(Turn::from),
             last_activity_at: Some(c.last_activity_at),
+            archived_at: c.archived_at,
             created_at: c.created_at,
         }
     }
@@ -219,4 +224,57 @@ impl From<EventRow> for TranscriptEvent {
             payload: e.payload,
         }
     }
+}
+
+/// (phase 2, RFE-010) `POST .../redact` body.
+#[derive(Deserialize, ToSchema, Default)]
+pub struct RedactRequest {
+    /// Why the content is removed (max 500 characters); recorded in the audit row.
+    pub reason: Option<String>,
+    /// Also start a fresh harness session on the next turn (the agent forgets the conversation).
+    #[serde(default)]
+    pub reset_session: bool,
+}
+
+/// (phase 2, RFE-010) Result of a redaction.
+#[derive(Serialize, ToSchema)]
+pub struct RedactResult {
+    /// Sequence numbers whose payload was replaced by this call (empty when already redacted).
+    pub redacted_seqs: Vec<i64>,
+    /// A session reset was queued.
+    pub session_reset: bool,
+}
+
+/// (phase 2, RFE-010) `GET/PUT /orgs/{org}/retention`.
+#[derive(Serialize, ToSchema)]
+pub struct Retention {
+    /// Delete conversations idle for this many days (7..=3650); null = keep forever.
+    pub conversations_days: Option<i64>,
+    /// The instance maximum, when one is configured.
+    pub conversations_days_max: Option<i64>,
+}
+
+fn double_option<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct PutRetention {
+    /// Absent = unchanged, `null` = none.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(value_type = Option<i64>)]
+    pub conversations_days: Option<Option<i64>>,
+}
+
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ExportQuery {
+    /// Export events with `seq` greater than this (paging past `export_too_large`).
+    pub after_seq: Option<i64>,
+    /// `none` (default) or `zip` (JSON plus the attachment files).
+    pub attachments: Option<String>,
 }

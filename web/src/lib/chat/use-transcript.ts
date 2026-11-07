@@ -42,7 +42,19 @@ export function useTranscript(conversationId: string | undefined): TranscriptHoo
         };
         const onMsg = (e: Event) => {
           const ev: TranscriptEvent | null = parseStreamEvent((e as MessageEvent<string>).data);
-          if (ev) setState((s) => applyEvent(s, ev));
+          if (ev?.type === "event.redacted") {
+            // RFE-010: another view redacted an event; re-read it so the content disappears here too.
+            const seq = Number(ev.payload.seq);
+            if (Number.isInteger(seq) && seq > 0) {
+              void chatApi
+                .events(conversationId, seq - 1)
+                .then((page) => {
+                  const fresh = page.items.find((i) => i.seq === seq);
+                  if (fresh && !cancelled) setState((s) => applyEvent(s, fresh as TranscriptEvent));
+                })
+                .catch(() => undefined);
+            }
+          } else if (ev) setState((s) => applyEvent(s, ev));
         };
         for (const t of STREAM_EVENT_TYPES) es.addEventListener(t, onMsg);
       } catch (err) {

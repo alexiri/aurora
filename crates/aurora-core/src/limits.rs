@@ -71,6 +71,16 @@ pub const ATTACH_OUT_COUNT: u32 = 10;
 pub const ATTACH_OUT_DAILY_PER_CONVERSATION: u64 = 200 * MIB as u64;
 pub const ATTACH_CAPTION_MAX: usize = 500;
 pub const ATTACH_PENDING_TTL: Duration = Duration::from_secs(86400);
+/// (phase 2, RFE-010) bounds of an org's conversation retention window, in days.
+pub const RETENTION_MIN_DAYS: i64 = 7;
+pub const RETENTION_MAX_DAYS: i64 = 3650;
+/// conversations deleted per retention-sweep transaction.
+pub const RETENTION_SWEEP_BATCH: i64 = 200;
+/// conversations deleted per organization and sweep run.
+pub const RETENTION_SWEEP_PER_ORG: i64 = 5_000;
+/// (phase 2, RFE-010) one conversation export: bytes and events.
+pub const EXPORT_MAX_BYTES: u64 = 256 * MIB as u64;
+pub const EXPORT_MAX_EVENTS: i64 = 200_000;
 pub const SCHEDULE_FIRE_LEASE: Duration = Duration::from_secs(300);
 /// consecutive failures.
 pub const SCHEDULE_FAILURE_DISABLE: u32 = 5;

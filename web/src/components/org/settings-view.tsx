@@ -6,7 +6,7 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
-import { deleteOrg, usePatchOrg } from "@/lib/api/org";
+import { deleteOrg, usePatchOrg, usePutRetention, useRetention } from "@/lib/api/org";
 import type { Org } from "@/lib/api/queries";
 
 function parseLimit(v: string): number | null | "invalid" {
@@ -143,6 +143,68 @@ function GeneralForm({ org, isOwner }: { org: Org; isOwner: boolean }) {
   );
 }
 
+/** Conversation retention (RFE-010): a window of 7 to 3650 days, or none; owners and admins. */
+function RetentionForm({ orgId }: { orgId: string }) {
+  const current = useRetention(orgId);
+  const put = usePutRetention(orgId);
+  const [days, setDays] = useState<string | null>(null);
+  const [clientErr, setClientErr] = useState<string | undefined>();
+  const [saved, setSaved] = useState(false);
+  if (current.isPending) return null;
+  const max = current.data?.conversations_days_max ?? null;
+  const value = days ?? current.data?.conversations_days?.toString() ?? "";
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    setSaved(false);
+    const t = value.trim();
+    let n: number | null = null;
+    if (t !== "") {
+      n = /^\d+$/.test(t) ? Number(t) : NaN;
+      if (!(n >= 7 && n <= 3650)) return setClientErr("Enter a whole number of days from 7 to 3650, or leave empty to keep conversations.");
+      if (max !== null && n > max) return setClientErr(`Your instance allows at most ${max} days.`);
+    }
+    setClientErr(undefined);
+    put.mutate(n, { onSuccess: () => setSaved(true) });
+  }
+
+  const serverErr = put.error ? errorMessage(put.error) : undefined;
+  return (
+    <form onSubmit={submit} noValidate aria-label="Conversation retention" className="max-w-md space-y-3">
+      <h2 className="text-lg font-medium">Conversation retention</h2>
+      <p className="text-sm text-neutral-600">
+        Delete conversations (messages, attachments and the agent&apos;s stored session) after this many days without activity. Leave
+        empty to keep them until someone deletes them.
+      </p>
+      <Field
+        id="retention-days"
+        label="Days of inactivity"
+        hint={max !== null ? `Between 7 and ${max} days.` : "Between 7 and 3650 days."}
+        error={clientErr ?? serverErr}
+      >
+        <input
+          id="retention-days"
+          inputMode="numeric"
+          className={inputClass}
+          value={value}
+          onChange={(e) => {
+            setDays(e.target.value);
+            setSaved(false);
+          }}
+        />
+      </Field>
+      {saved ? (
+        <p role="status" className="text-sm text-green-700">
+          Retention saved.
+        </p>
+      ) : null}
+      <Button type="submit" disabled={put.isPending}>
+        {put.isPending ? "Saving…" : "Save retention"}
+      </Button>
+    </form>
+  );
+}
+
 export function OrgDangerZone({
   orgId,
   slug,
@@ -205,6 +267,11 @@ export function OrgSettingsView({ org }: { org: Org }) {
     <div className="max-w-4xl space-y-8">
       <h1 className="text-xl font-semibold">Organization settings</h1>
       <GeneralForm key={`${org.slug}:${org.name}`} org={org} isOwner={isOwner} />
+      {isOwner || org.my_role === "admin" ? (
+        <section aria-label="Retention" className="border-t border-neutral-200 pt-6">
+          <RetentionForm orgId={org.id} />
+        </section>
+      ) : null}
       {isOwner ? (
         <section aria-label="Danger zone" className="border-t border-neutral-200 pt-6">
           <OrgDangerZone orgId={org.id} slug={org.slug} onDeleted={() => router.replace("/")} />

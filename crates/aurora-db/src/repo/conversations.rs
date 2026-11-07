@@ -20,10 +20,11 @@ pub struct ConversationRow {
     pub app_turn_streak: i32,
     pub last_activity_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    pub archived_at: Option<DateTime<Utc>>,
 }
 
 const COLS: &str = "id, agent_id, workspace_id, kind, external_ref, direct_user_id, title, \
-    origin_conversation_id, last_seq, app_turn_streak, last_activity_at, created_at";
+    origin_conversation_id, last_seq, app_turn_streak, last_activity_at, created_at, archived_at";
 
 pub struct NewConversation<'a> {
     pub agent_id: Uuid,
@@ -80,22 +81,36 @@ pub async fn get_or_create(
     Ok((row, done.rows_affected() == 1))
 }
 
+/// Which conversations of an agent a caller lists.
+pub struct ListFilter<'a> {
+    pub kind: Option<&'a str>,
+    /// The caller; direct conversations of other users are excluded unless `viewer_owns`.
+    pub viewer: Uuid,
+    pub viewer_owns: bool,
+    /// (RFE-010) `true` lists only archived conversations, `false` only the others.
+    pub archived: bool,
+}
+
 /// Conversations of an agent by last activity (desc); `after` is `(last_activity_at, id)`.
-/// Direct conversations of other users are excluded (`viewer`).
 pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     exec: E,
     agent_id: Uuid,
-    kind: Option<&str>,
-    viewer: Uuid,
-    viewer_owns: bool,
+    f: &ListFilter<'_>,
     after: After,
     fetch: i64,
 ) -> Result<Vec<ConversationRow>, DbError> {
+    let ListFilter {
+        kind,
+        viewer,
+        viewer_owns,
+        archived,
+    } = *f;
     let (t, id) = split(after);
     Ok(sqlx::query_as(&format!(
         "SELECT {COLS} FROM conversations
          WHERE agent_id = $1 AND ($2::text IS NULL OR kind = $2)
            AND (kind <> 'direct' OR direct_user_id = $3 OR $7)
+           AND ((archived_at IS NOT NULL) = $8)
            AND ($4::timestamptz IS NULL OR (last_activity_at, id) < ($4, $5))
          ORDER BY last_activity_at DESC, id DESC LIMIT $6"
     ))
@@ -106,6 +121,7 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     .bind(id)
     .bind(fetch)
     .bind(viewer_owns)
+    .bind(archived)
     .fetch_all(exec)
     .await?)
 }

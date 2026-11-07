@@ -4,7 +4,9 @@
 //! [`bus::ConversationBus::publish_delta`].
 pub mod bus;
 pub mod dto;
+pub mod lifecycle;
 mod routes;
 pub mod service;
+mod zip;
 
 pub use routes::router;

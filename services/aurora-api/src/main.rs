@@ -189,7 +189,11 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = aurora_api::domains::connectors::bootstrap_tokens(&state).await {
         tracing::warn!(error = %e, "bootstrap connector tokens not applied");
     }
-    aurora_api::jobs::spawn(pool, cfg.retention.request_log_days);
+    aurora_api::jobs::spawn(
+        pool,
+        cfg.retention.request_log_days,
+        cfg.retention.conversation_days_max,
+    );
     aurora_api::domains::connectors::inbox::spawn(state.clone());
     aurora_api::domains::channels::cards::fanout::spawn(state.clone());
     aurora_api::domains::plugins::scan::spawn(state.clone());

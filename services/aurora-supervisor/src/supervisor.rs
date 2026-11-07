@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use aurora_protocol::runner::{
     Code, Gate, GateOutcome, HarnessId, HarnessInfo, HomeSynced, SendNowOutcome, SendNowResult,
-    SessionReport, SteerOutcome, SteerResult, SupervisorReady, TurnDeliver, TurnEvent, TurnMessage,
-    TurnRef, TurnResult, TurnStatus,
+    SessionPurged, SessionReport, SteerOutcome, SteerResult, SupervisorReady, TurnDeliver,
+    TurnEvent, TurnMessage, TurnRef, TurnResult, TurnStatus,
 };
 use aurora_protocol::supervisor::{RunnerToSupervisor, SupervisorToRunner};
 use tokio::sync::{Mutex, Notify, mpsc};
@@ -98,6 +98,8 @@ pub struct Supervisor {
     hub: Arc<ToolHub>,
     procs: Arc<ProcessManager>,
     inbox: Inbox,
+    /// (RFE-010) Session purges received in the home sync, executed before any turn is accepted.
+    pending_purges: Vec<(Uuid, String)>,
 }
 
 /// Home projection state: staged sync, plus the memory harvest bookkeeping.
@@ -166,6 +168,7 @@ impl Supervisor {
             sessions: HashMap::new(),
             turns: HashMap::new(),
             ready: false,
+            pending_purges: Vec::new(),
         }
     }
 
@@ -276,6 +279,9 @@ impl Supervisor {
                     let _ = m.into_inner().release().await;
                 }
             }
+            RunnerToSupervisor::SessionPurge(p) => {
+                self.purge(p.conversation_id, p.session_ref).await;
+            }
             RunnerToSupervisor::HomeSync(h) => self.home_sync(h).await,
             RunnerToSupervisor::MemoryWriteResult(r) => {
                 if !r.ok
@@ -319,7 +325,79 @@ impl Supervisor {
         n
     }
 
+    /// (RFE-010) Abort and release any live session of the conversation, delete the stored
+    /// session files and report `session.purged`. A failure keeps the purge pending upstream.
+    async fn purge(&mut self, conversation_id: Uuid, session_ref: String) {
+        let live: Vec<Uuid> = self
+            .turns
+            .iter()
+            .filter(|(_, t)| t.conversation_id == conversation_id)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in live {
+            if let Some(t) = self.turns.get(&id) {
+                t.aborted.store(true, Ordering::SeqCst);
+                t.abort.notify_one();
+                let _ = t.session.lock().await.abort().await;
+            }
+            // The turn task ends on its terminal event; the session is dropped below regardless.
+            self.finish_turn(id);
+        }
+        if let Some(e) = self.sessions.remove(&conversation_id)
+            && let Ok(m) = Arc::try_unwrap(e.session)
+        {
+            let _ = m.into_inner().release().await;
+        }
+        let ok = match self
+            .adapter
+            .purge_session(&self.cfg.working_dir, &session_ref)
+            .await
+        {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(%conversation_id, code = %e.code, "session purge failed");
+                false
+            }
+        };
+        self.pending_purges
+            .retain(|(c, r)| !(*c == conversation_id && *r == session_ref && ok));
+        self.send(SupervisorToRunner::SessionPurged(SessionPurged {
+            conversation_id,
+            session_ref,
+            ok,
+        }))
+        .await;
+    }
+
+    async fn run_pending_purges(&mut self) {
+        for (c, r) in std::mem::take(&mut self.pending_purges) {
+            self.purge(c, r).await;
+        }
+    }
+
     async fn home_sync(&mut self, h: aurora_protocol::runner::HomeSync) {
+        if h.part.kind == aurora_protocol::runner::HomeSyncKind::RenderInputs {
+            for e in &h.part.entries {
+                let Some(list) = e.get("purges").and_then(serde_json::Value::as_array) else {
+                    continue;
+                };
+                for p in list {
+                    let c = p
+                        .get("conversation_id")
+                        .and_then(|v| v.as_str())
+                        .and_then(|v| v.parse::<Uuid>().ok());
+                    let r = p.get("session_ref").and_then(|v| v.as_str());
+                    if let (Some(c), Some(r)) = (c, r)
+                        && !self
+                            .pending_purges
+                            .iter()
+                            .any(|(pc, pr)| *pc == c && pr == r)
+                    {
+                        self.pending_purges.push((c, r.to_owned()));
+                    }
+                }
+            }
+        }
         let home = self.home.clone();
         let hc = h.clone();
         let staged = tokio::task::spawn_blocking(move || {
@@ -348,6 +426,8 @@ impl Supervisor {
         .await;
         match committed {
             Ok(Ok(())) => {
+                // Deleted conversations' session files go before the sandbox can run any turn.
+                self.run_pending_purges().await;
                 self.ready = true;
                 self.send(SupervisorToRunner::HomeSynced(HomeSynced { generation }))
                     .await;
@@ -377,6 +457,7 @@ impl Supervisor {
                 .fail_turn(d.turn_id, "not_ready", "home sync incomplete")
                 .await;
         }
+        self.run_pending_purges().await;
         if self
             .turns
             .values()

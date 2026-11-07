@@ -55,8 +55,16 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 
 export const chatApi = {
   direct: (agent: string) => unwrap(api.POST("/v1/agents/{agent}/conversations/direct", { params: { path: { agent } } })),
-  list: (agent: string) =>
-    unwrap(api.GET("/v1/agents/{agent}/conversations", { params: { path: { agent }, query: { limit: 50 } } })),
+  list: (agent: string, archived = false) =>
+    unwrap(api.GET("/v1/agents/{agent}/conversations", { params: { path: { agent }, query: { limit: 50, archived } } })),
+  archive: (id: string) => unwrap(api.POST("/v1/conversations/{id}/archive", { params: { path: { id } } })),
+  unarchive: (id: string) => unwrap(api.POST("/v1/conversations/{id}/unarchive", { params: { path: { id } } })),
+  remove: async (id: string) => {
+    const { error, response } = await api.DELETE("/v1/conversations/{id}", { params: { path: { id } } });
+    if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
+  },
+  redact: (id: string, seq: number, body: { reason?: string; reset_session?: boolean }) =>
+    unwrap(api.POST("/v1/conversations/{id}/events/{seq}/redact", { params: { path: { id, seq } }, body })),
   events: (id: string, afterSeq: number) =>
     unwrap(api.GET("/v1/conversations/{id}/events", { params: { path: { id }, query: { after_seq: afterSeq, limit: 500 } } })),
   send: (id: string, text: string, attachmentIds: string[] = []) =>
@@ -77,9 +85,17 @@ export const chatApi = {
 export function useDirectConversation(agentId: string) {
   return useQuery({ queryKey: ["agents", agentId, "direct"] as const, queryFn: () => chatApi.direct(agentId), retry: false, staleTime: Infinity });
 }
-export function useConversations(agentId: string) {
-  return useQuery({ queryKey: ["agents", agentId, "conversations"] as const, queryFn: () => chatApi.list(agentId), retry: false });
+export function useConversations(agentId: string, archived = false) {
+  return useQuery({
+    queryKey: ["agents", agentId, "conversations", archived] as const,
+    queryFn: () => chatApi.list(agentId, archived),
+    retry: false,
+  });
 }
+
+/** Download URL of a conversation export (`aurora.conversation.v1` JSON, or a zip with the files). */
+export const exportUrl = (id: string, kind: "json" | "zip") =>
+  `/v1/conversations/${id}/export${kind === "zip" ? "?attachments=zip" : ""}`;
 export function useSandbox(agentId: string) {
   return useQuery({
     queryKey: ["agents", agentId, "sandbox"] as const,

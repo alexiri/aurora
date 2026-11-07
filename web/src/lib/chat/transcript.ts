@@ -38,7 +38,14 @@ export function applyEvent(state: TranscriptState, ev: TranscriptEvent): Transcr
     }
     return state; // thinking.delta and unknown ephemerals are not rendered
   }
-  if (state.events.some((e) => e.seq === ev.seq)) return state;
+  // A redacted event keeps its seq; a refreshed copy replaces the stale one (RFE-010).
+  if (state.events.some((e) => e.seq === ev.seq)) {
+    const stale = state.events.find((e) => e.seq === ev.seq);
+    if (stale && p.redacted === true && stale.payload.redacted !== true) {
+      return { ...state, events: state.events.map((e) => (e.seq === ev.seq ? ev : e)) };
+    }
+    return state;
+  }
   const events = [...state.events, ev].sort((a, b) => (a.seq as number) - (b.seq as number));
   let { deltas, activity } = state;
   if (ev.type === "text") {
@@ -80,6 +87,7 @@ export const STREAM_EVENT_TYPES = [
   "tool.started", "tool.finished", "correction", "message.joined", "message.sent_now",
   "approval.pending", "approval.decided", "approval.expired",
   "action_approval.pending", "action_approval.decided", "attachment", "notice", "error", "turn.finished",
+  "event.redacted",
 ] as const;
 
 export function parseStreamEvent(raw: string): TranscriptEvent | null {

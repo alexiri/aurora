@@ -298,6 +298,14 @@ impl RawConfig {
             "retention.request_log_days",
             Some(self.retention.request_log_days),
         );
+        if let Some(d) = self.retention.conversation_days_max
+            && !(7..=3650).contains(&d)
+        {
+            c.err(
+                "retention.conversation_days_max",
+                "must be between 7 and 3650 days",
+            );
+        }
         check_ratelimit(&mut c, &self.ratelimit.api);
         check_common(&mut c, &self.tls, &self.telemetry);
         let advertised_proxy_url = advertised_proxy_url(&self.gateway, external_url.as_deref());

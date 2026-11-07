@@ -285,6 +285,23 @@
       ],
       "type": "object"
     },
+    "SessionPurge": {
+      "description": "(phase 2, RFE-010) Delete the stored harness session files of one gone conversation.",
+      "properties": {
+        "conversation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "session_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "session_ref"
+      ],
+      "type": "object"
+    },
     "SessionRelease": {
       "properties": {
         "conversation_id": {
@@ -591,6 +608,24 @@
           "properties": {
             "kind": {
               "const": "session.release"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SessionPurge"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "session.purge"
             }
           },
           "required": [

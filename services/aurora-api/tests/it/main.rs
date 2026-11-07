@@ -21,6 +21,7 @@ mod common;
 mod connect;
 mod connector_ops;
 mod connectors;
+mod conversation_lifecycle;
 mod conversations;
 mod direct_visibility;
 mod foundation;

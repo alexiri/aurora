@@ -353,6 +353,21 @@ pub struct SessionRelease {
     pub conversation_id: Uuid,
 }
 
+/// (phase 2, RFE-010) Delete the stored harness session files of one gone conversation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionPurge {
+    pub conversation_id: Uuid,
+    pub session_ref: String,
+}
+
+/// (phase 2, RFE-010) Outcome of a [`SessionPurge`]; `ok = false` keeps the purge pending.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionPurged {
+    pub conversation_id: Uuid,
+    pub session_ref: String,
+    pub ok: bool,
+}
+
 tagged_open! {
     /// Work-item body, tagged by `kind`.
     pub enum WorkItemBody, mode = Internal, tag = "kind" {
@@ -365,6 +380,7 @@ tagged_open! {
         TurnAbort(TurnRef) = "turn.abort",
         TurnNotice(TurnNotice) = "turn.notice",
         SessionRelease(SessionRelease) = "session.release",
+        SessionPurge(SessionPurge) = "session.purge",
     }
 }
 
@@ -601,6 +617,7 @@ tagged_open! {
         SteerResult(SteerResult) = "steer.result",
         SendNowResult(SendNowResult) = "send_now.result",
         Session(SessionReport) = "session",
+        SessionPurged(SessionPurged) = "session.purged",
         ProcessState(ProcessStates) = "process.state",
         WatchFired(WatchFired) = "watch.fired",
         GateResult(GateResult) = "gate.result",
