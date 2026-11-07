@@ -200,8 +200,8 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | MM-002 | Mattermost dedicated mode + live scenario with the real core | 1 | done (3ecf14ce) | MM-001 |
 | P1-001 | RFE-001 auto-link opt-in; RFE-016 DeltaBus seam | 1 | done (ef1578e6) | — |
 | P1-002 | RFE-009 direct-conversation visibility | 1 | done (fff11f50) | — |
-| P1-003 | RFE-003 open-lane posture, CONNECT-time rules, browser capability | 1 | todo | — |
-| P1-004 | RFE-002 TLS-only gateway proxy listener | 1 | in-progress | — |
+| P1-003 | RFE-003 open-lane posture, CONNECT-time rules, browser capability | 1 | in-progress | — |
+| P1-004 | RFE-002 TLS-only gateway proxy listener | 1 | done (df211a2c); upgrade 36/36 | — |
 | P1-005 | RFE-004 OIDC-only sign-in (dev IdP, tests/e2e migrate off passwords) | 1 | todo | OPS-016 preferred |
 | MM-003 | Target Mattermost 11.7 (11.7.15 pinned by digest) | 1 | done (3ecf14ce) | MM-001 |
 | OPS-019 | CI green + fast (`rust-test` disk fix, sharded nextest, one compile), actions off Node 20 | 1 | done; master CI fully green (run 42382511618: build 15m cold, shards 2.5-3m, e2e-gateway 6.6m, e2e-hosted 12.7m) | OPS-016 for test layout |
