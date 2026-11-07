@@ -13,7 +13,7 @@ import {
   usePatchIntegration,
   type ChannelIntegration,
 } from "@/lib/api/channels";
-import { useConnectors, type ConnectorInfo } from "@/lib/api/connectors";
+import { hasCapability, useConnectors, type ConnectorInfo } from "@/lib/api/connectors";
 
 import { IntegrationDialog } from "./integration-dialog";
 import { MutationError, StatusChip } from "./shared";
@@ -45,6 +45,58 @@ function UserLinks({ integration }: { integration: ChannelIntegration }) {
         ))}
       </ul>
       <MutationError error={del.error} />
+    </div>
+  );
+}
+
+const AUTOLINK_WARNING =
+  "This extends trust to the connector: it can create links, and therefore speak and approve as any of your members whose verified email it asserts.";
+
+/** RFE-001: org-admin opt-in for verified-email auto-linking (default off), with a confirm step. */
+function AutolinkSwitch({
+  integration,
+  onChange,
+  pending,
+}: {
+  integration: ChannelIntegration;
+  onChange: (on: boolean) => void;
+  pending: boolean;
+}) {
+  const on = (integration.config as Record<string, unknown>).verified_email_autolink === true;
+  const [asking, setAsking] = useState<boolean | null>(null);
+  return (
+    <div className="space-y-1">
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={on}
+          disabled={pending || asking !== null}
+          onChange={(e) => setAsking(e.target.checked)}
+        />
+        Link members automatically by verified email
+      </label>
+      {asking !== null ? (
+        <div role="alertdialog" aria-label="Confirm automatic linking" className="space-y-2 rounded-md border border-amber-300 p-2">
+          <p className="text-sm text-amber-900">
+            {asking ? AUTOLINK_WARNING : "Members will be asked to sign in to link their accounts. Existing links stay."}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              disabled={pending}
+              onClick={() => {
+                onChange(asking);
+                setAsking(null);
+              }}
+            >
+              {asking ? "Confirm enable" : "Confirm disable"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setAsking(null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -85,6 +137,20 @@ function IntegrationRow({
         )}
       </p>
       <p className="text-xs text-neutral-500">Credentials: stored</p>
+      {connector && hasCapability(connector, "email_verified") ? (
+        <AutolinkSwitch
+          integration={integration}
+          pending={patch.isPending}
+          onChange={(on) => {
+            const { _capabilities: _drop, ...rest } = integration.config as Record<string, unknown>;
+            void _drop;
+            patch.mutate({
+              id: integration.id,
+              body: { config: { ...rest, verified_email_autolink: on } as never },
+            });
+          }}
+        />
+      ) : null}
       <div className="flex flex-wrap gap-2">
         {connector ? (
           <Button variant="outline" size="sm" onClick={onUpdate}>

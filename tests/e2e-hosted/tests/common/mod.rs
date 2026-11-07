@@ -509,6 +509,9 @@ impl Api {
     pub async fn post(&self, p: &str, b: Value) -> (u16, Value) {
         self.call(Method::POST, p, Some(b)).await
     }
+    pub async fn patch(&self, p: &str, b: Value) -> (u16, Value) {
+        self.call(Method::PATCH, p, Some(b)).await
+    }
     pub async fn put(&self, p: &str, b: Value) -> (u16, Value) {
         self.call(Method::PUT, p, Some(b)).await
     }

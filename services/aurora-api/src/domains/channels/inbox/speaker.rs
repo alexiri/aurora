@@ -25,9 +25,20 @@ pub enum Speaker {
     NeedsLink,
 }
 
-/// A person's platform-verified email equal to a verified Aurora user's email links them
+/// Whether an org admin enabled verified-email auto-linking for the integration
+/// (`config.verified_email_autolink`, default off; docs/13 §5.9, RFE-001).
+pub fn autolink_enabled(config: &serde_json::Value) -> bool {
+    config
+        .get("verified_email_autolink")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// Only when the integration opted in (`verified_email_autolink`), a person's
+/// platform-verified email equal to a verified Aurora user's email links them
 /// (`verified_email`), provided the platform reports it verified, the connector has
-/// `email_verified`, and that user is an active member of the integration's org.
+/// `email_verified`, and that user is an active member of the integration's org. Otherwise
+/// (the default) the person gets the sign-in link.
 pub async fn resolve_person(
     state: &AppState,
     ctx: &Ctx,
@@ -42,10 +53,11 @@ pub async fn resolve_person(
     {
         return Ok(Speaker::User(l.user_id));
     }
-    let method_ok = matches!(
-        ctx.caps.link_method(),
-        aurora_channels::capability::LinkMethod::VerifiedEmail
-    );
+    let method_ok = autolink_enabled(&ctx.integ.config)
+        && matches!(
+            ctx.caps.link_method(),
+            aurora_channels::capability::LinkMethod::VerifiedEmail
+        );
     let Some(email) = email.filter(|e| method_ok && email_verified && !e.trim().is_empty()) else {
         return Ok(Speaker::NeedsLink);
     };
@@ -88,8 +100,10 @@ pub async fn send_link_prompt(
     space_ref: &str,
     thread_ref: &str,
     user_ref: &str,
+    platform_email: Option<&str>,
     dedupe: String,
 ) -> Result<(), InboxError> {
+    let hint = platform_email.map(str::trim).filter(|e| !e.is_empty());
     let tok = token::generate(TokenPrefix::Invitation);
     link_requests::insert(
         &mut *conn,
@@ -97,6 +111,7 @@ pub async fn send_link_prompt(
         user_ref,
         &token::hash(tok.expose()),
         LINK_TTL_SECS,
+        hint,
     )
     .await
     .retry()?;

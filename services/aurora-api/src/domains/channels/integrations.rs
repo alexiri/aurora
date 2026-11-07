@@ -2,7 +2,7 @@
 
 use super::dto::*;
 use super::presences;
-use super::{map_correlated, object_field};
+use super::{capability_enabled, map_correlated, object_field};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::connectors::integration_seal_ctx;
@@ -81,7 +81,49 @@ fn check_config(config: &Value) -> Result<Value, ApiError> {
     if config.get("_capabilities").is_some() {
         return Err(invalid_field("/config/_capabilities", "reserved key"));
     }
+    if config
+        .get("verified_email_autolink")
+        .is_some_and(|v| !v.is_boolean())
+    {
+        return Err(invalid_field(
+            "/config/verified_email_autolink",
+            "must be a boolean",
+        ));
+    }
     Ok(config)
+}
+
+fn autolink_on(config: &Value) -> bool {
+    super::inbox::speaker::autolink_enabled(config)
+}
+
+/// RFE-001: auto-linking can only be on for an integration whose effective capabilities
+/// include `email_verified` (manifest narrowed by validation, already merged into `config`).
+fn check_autolink(config: &Value, manifest: Option<&Value>) -> Result<(), ApiError> {
+    if autolink_on(config) && !capability_enabled(manifest, config, "email_verified") {
+        return Err(ApiError::unprocessable(
+            "autolink_unsupported",
+            "This integration cannot report verified emails, so members cannot be linked automatically.",
+        ));
+    }
+    Ok(())
+}
+
+fn audit_autolink(s: &AppState, c: &Caller, org: Uuid, id: Uuid, was: bool, now: bool) {
+    if was == now {
+        return;
+    }
+    let action = if now {
+        "channel_integration.autolink_enable"
+    } else {
+        "channel_integration.autolink_disable"
+    };
+    audit::record(
+        s,
+        AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
+            .org(org)
+            .target("channel_integration", id),
+    );
 }
 
 /// `config` + the narrowing the connector reported (only capabilities the manifest enables
@@ -245,6 +287,10 @@ pub async fn create(
         }
     };
     let new_config = config_with_capabilities(config, connector.manifest.as_ref(), &res);
+    if let Err(e) = check_autolink(&new_config, connector.manifest.as_ref()) {
+        remove_failed(s, &row).await;
+        return Err(e);
+    }
     let shared = shared_bot_json(&res);
     if let Err(e) = repo::complete_validation(
         &s.pool,
@@ -276,6 +322,7 @@ pub async fn create(
         .target("channel_integration", id)
         .metadata(json!({"connector_id": row.connector_id, "tenant_ref": row.tenant_ref})),
     );
+    audit_autolink(s, c, org, id, false, autolink_on(&row.config));
     Ok(view(&row))
 }
 
@@ -331,6 +378,7 @@ pub async fn patch(
             ));
         }
         let config = config_with_capabilities(config, connector.manifest.as_ref(), &res);
+        check_autolink(&config, connector.manifest.as_ref())?;
         let shared = shared_bot_json(&res);
         let sealed = match &new_creds {
             Some(v) => Some(seal_json(s, row.id, row.org_id, v).await?),
@@ -371,7 +419,16 @@ pub async fn patch(
             "status": req.status.map(SettableStatus::as_str),
         })),
     );
-    get_row(s, row.id).await
+    let updated = get_row(s, row.id).await?;
+    audit_autolink(
+        s,
+        c,
+        row.org_id,
+        row.id,
+        autolink_on(&row.config),
+        autolink_on(&updated.config),
+    );
+    Ok(updated)
 }
 
 async fn get_row(s: &AppState, id: Uuid) -> Result<ChannelIntegration, ApiError> {

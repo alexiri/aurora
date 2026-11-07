@@ -456,6 +456,7 @@ async fn link_prompt(cmd: &Cmd<'_>, conn: &mut PgConnection) -> Result<(), Inbox
         &cmd.c.space.reference,
         cmd.thread(),
         &cmd.c.user_ref,
+        None,
         format!("link:{}", cmd.row.event_id),
     )
     .await

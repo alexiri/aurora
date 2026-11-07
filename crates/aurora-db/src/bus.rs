@@ -178,3 +178,200 @@ impl Listener {
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// The delta bus seam (docs/05 §The delta bus seam, phase 1, RFE-016, D-48).
+// ---------------------------------------------------------------------------------------------
+
+use async_trait::async_trait;
+use futures::stream::{BoxStream, StreamExt};
+use uuid::Uuid;
+
+/// What a delta carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DeltaKind {
+    Text,
+    Thinking,
+    Activity,
+}
+
+impl DeltaKind {
+    /// The wire name (`type` of the `aurora_delta` payload and of the SSE event).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            DeltaKind::Text => "text.delta",
+            DeltaKind::Thinking => "thinking.delta",
+            DeltaKind::Activity => "activity",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "text.delta" => Some(DeltaKind::Text),
+            "thinking.delta" => Some(DeltaKind::Thinking),
+            "activity" => Some(DeltaKind::Activity),
+            _ => None,
+        }
+    }
+}
+
+/// One coalesced ephemeral delta.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delta {
+    pub conversation_id: Uuid,
+    pub turn_id: Uuid,
+    pub kind: DeltaKind,
+    pub message_id: Option<String>,
+    pub reply_to: Option<String>,
+    pub data: String,
+}
+
+impl Delta {
+    /// The `aurora_delta` payload: `{"c","t","type","d"[,"message_id"][,"reply_to"]}`.
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut v = serde_json::json!({
+            "c": self.conversation_id,
+            "t": self.turn_id,
+            "type": self.kind.as_str(),
+            "d": self.data,
+        });
+        if let Some(m) = &self.message_id {
+            v["message_id"] = serde_json::Value::String(m.clone());
+        }
+        if let Some(r) = &self.reply_to {
+            v["reply_to"] = serde_json::Value::String(r.clone());
+        }
+        v
+    }
+
+    /// Inverse of [`Delta::to_json`]; `None` for a malformed payload.
+    pub fn from_json(p: &serde_json::Value) -> Option<Self> {
+        let uuid = |k: &str| p.get(k)?.as_str()?.parse::<Uuid>().ok();
+        let opt = |k: &str| p.get(k).and_then(|m| m.as_str()).map(str::to_owned);
+        Some(Self {
+            conversation_id: uuid("c")?,
+            turn_id: uuid("t")?,
+            kind: DeltaKind::parse(p.get("type")?.as_str()?)?,
+            message_id: opt("message_id"),
+            reply_to: opt("reply_to"),
+            data: p.get("d")?.as_str()?.to_owned(),
+        })
+    }
+}
+
+/// Fan-out of ephemeral streaming deltas to every API replica.
+///
+/// Contract: at-most-once, loss allowed (a lost delta is repaired by the durable `text`
+/// event); per-`(conversation, turn)` order preserved; JSON-encoded payload at most
+/// [`MAX_PAYLOAD_BYTES`]; coalescing happens above the trait; no durability, no ack.
+#[async_trait]
+pub trait DeltaBus: Send + Sync + 'static {
+    /// Publish one coalesced delta. Best effort: callers log the error and carry on.
+    async fn publish(&self, delta: Delta) -> Result<(), BusError>;
+
+    /// One stream of every delta from every replica, including this one. The bus replays
+    /// nothing: a new subscription (first, or after the previous stream ended because of a
+    /// loss) obliges the consumer to resynchronize from the database.
+    async fn subscribe(&self) -> Result<BoxStream<'static, Delta>, BusError>;
+}
+
+/// Registry id of the Postgres NOTIFY implementation (the default).
+pub const DELTA_BUS_NOTIFY: &str = "notify";
+
+/// The phase 1 implementation: the `aurora_delta` NOTIFY channel.
+pub struct NotifyDeltaBus {
+    pool: PgPool,
+}
+
+impl NotifyDeltaBus {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl DeltaBus for NotifyDeltaBus {
+    async fn publish(&self, delta: Delta) -> Result<(), BusError> {
+        notify(&self.pool, Channel::Delta, &delta.to_json()).await
+    }
+
+    /// The LISTEN is active when this returns. The stream ends when the connection was lost
+    /// and re-established (notifications may have been missed): subscribe again and resync.
+    async fn subscribe(&self) -> Result<BoxStream<'static, Delta>, BusError> {
+        let listener = Listener::connect(&self.pool, &[Channel::Delta]).await?;
+        let s = futures::stream::unfold((listener, true), |(mut l, mut first_resync)| async move {
+            loop {
+                match l.next().await {
+                    BusEvent::Resync if first_resync => first_resync = false,
+                    BusEvent::Resync => return None,
+                    BusEvent::Notification { payload, .. } => {
+                        if let Some(d) = Delta::from_json(&payload) {
+                            return Some((d, (l, first_resync)));
+                        }
+                    }
+                }
+            }
+        });
+        Ok(s.boxed())
+    }
+}
+
+/// Resolve a `events.delta_bus` id; an unknown id is an error naming the key.
+pub fn delta_bus_by_id(id: &str, pool: &PgPool) -> Result<std::sync::Arc<dyn DeltaBus>, String> {
+    match id {
+        DELTA_BUS_NOTIFY => Ok(std::sync::Arc::new(NotifyDeltaBus::new(pool.clone()))),
+        other => Err(format!(
+            "events.delta_bus: unknown delta bus `{other}` (known: {DELTA_BUS_NOTIFY})"
+        )),
+    }
+}
+
+/// An in-process `DeltaBus` (single replica): the reference implementation for tests and
+/// conformance runs. Slow subscribers lose deltas (allowed by the contract).
+pub struct InMemoryDeltaBus {
+    tx: tokio::sync::broadcast::Sender<Delta>,
+}
+
+impl Default for InMemoryDeltaBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl InMemoryDeltaBus {
+    pub fn new() -> Self {
+        Self {
+            tx: tokio::sync::broadcast::channel(1024).0,
+        }
+    }
+}
+
+#[async_trait]
+impl DeltaBus for InMemoryDeltaBus {
+    async fn publish(&self, delta: Delta) -> Result<(), BusError> {
+        let size = delta.to_json().to_string().len();
+        if size > MAX_PAYLOAD_BYTES {
+            return Err(BusError::PayloadTooLarge {
+                size,
+                max: MAX_PAYLOAD_BYTES,
+            });
+        }
+        // No subscriber is not an error: deltas are ephemeral.
+        let _ = self.tx.send(delta);
+        Ok(())
+    }
+
+    async fn subscribe(&self) -> Result<BoxStream<'static, Delta>, BusError> {
+        let rx = self.tx.subscribe();
+        Ok(futures::stream::unfold(rx, |mut rx| async move {
+            loop {
+                match rx.recv().await {
+                    Ok(d) => return Some((d, rx)),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        })
+        .boxed())
+    }
+}

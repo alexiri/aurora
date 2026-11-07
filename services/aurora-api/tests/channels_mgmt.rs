@@ -51,7 +51,8 @@ fn manifest(id: &str, presence_setup: Value) -> Value {
     json!({
         "package": {"id": id, "version": "1.0.0", "contract": 1, "publisher": "acme"},
         "about": {"name": id},
-        "capabilities": {"threads": true, "presence_dedicated": true, "presence_shared": true},
+        "capabilities": {"threads": true, "presence_dedicated": true, "presence_shared": true,
+                         "email_verified": id == "fake"},
         "integration_setup": {"fields": []},
         "presence_setup": presence_setup,
         "limits": {},
@@ -552,6 +553,96 @@ async fn integration_tenant_conflict_is_409() {
         .await
         .unwrap();
     assert_eq!(n, 1);
+}
+
+#[tokio::test]
+async fn verified_email_autolink_setting_is_validated_and_audited() {
+    let w = W::new().await;
+    // Audit writes are fire-and-forget: wait (briefly) for the expected count.
+    let audits = |action: &'static str, want: i64| {
+        let pool = w.h.pool().clone();
+        async move {
+            let mut n = 0;
+            for _ in 0..60 {
+                n = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM audit_log WHERE action=$1")
+                    .bind(action)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+                if n >= want {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            n
+        }
+    };
+    // A connector without `email_verified` cannot be switched to auto-linking.
+    let mut body = w.create_body(&w.manual);
+    body["config"]["verified_email_autolink"] = json!(true);
+    let (s, v, _) = w
+        .create_integration(&w.manual, &w.owner, body, |_| validate_ok("TM"), 1)
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("autolink_unsupported")),
+        "{v}"
+    );
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_integrations")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "the refused integration is not kept");
+    // Default off: absent means off and nothing is audited.
+    let id = w.integration(&w.fake, "T1").await;
+    let path = format!("/v1/channel-integrations/{id}");
+    let (_, v) = w.call(&w.owner, Method::GET, &path, None).await;
+    assert!(v["config"].get("verified_email_autolink").is_none(), "{v}");
+    assert_eq!(audits("channel_integration.autolink_enable", 0).await, 0);
+    // Not a boolean: 400 before any connector round trip.
+    let (s, v) = w
+        .call(
+            &w.owner,
+            Method::PATCH,
+            &path,
+            Some(json!({"config": {"verified_email_autolink": "yes"}})),
+        )
+        .await;
+    assert_eq!(s, 400, "{v}");
+    // Plain members cannot change it.
+    let patch = json!({"config": {"verified_email_autolink": true}});
+    assert_eq!(
+        w.call(&w.plain, Method::PATCH, &path, Some(patch.clone()))
+            .await
+            .0,
+        403
+    );
+    // An org admin enables it (re-validated), audited; then disables it, audited.
+    let ((s, v), _) = tokio::join!(
+        w.call(&w.admin, Method::PATCH, &path, Some(patch)),
+        w.serve(&w.fake, 1, |_| validate_ok("T1"))
+    );
+    assert_eq!(
+        (s, v["config"]["verified_email_autolink"].as_bool()),
+        (200, Some(true)),
+        "{v}"
+    );
+    assert_eq!(audits("channel_integration.autolink_enable", 1).await, 1);
+    let ((s, v), _) = tokio::join!(
+        w.call(
+            &w.owner,
+            Method::PATCH,
+            &path,
+            Some(json!({"config": {"verified_email_autolink": false}}))
+        ),
+        w.serve(&w.fake, 1, |_| validate_ok("T1"))
+    );
+    assert_eq!(
+        (s, v["config"]["verified_email_autolink"].as_bool()),
+        (200, Some(false)),
+        "{v}"
+    );
+    assert_eq!(audits("channel_integration.autolink_disable", 1).await, 1);
 }
 
 #[tokio::test]

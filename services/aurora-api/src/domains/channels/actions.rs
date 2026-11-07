@@ -151,6 +151,7 @@ impl Click<'_> {
             &self.ev.clicker_ref,
             &token::hash(tok.expose()),
             LINK_TTL_SECS,
+            None,
         )
         .await?;
         let url = format!(

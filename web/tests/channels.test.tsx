@@ -118,6 +118,39 @@ describe("ChannelsView", () => {
   });
 });
 
+describe("ChannelsView verified-email auto-link switch (RFE-001)", () => {
+  const withEmail = { ...slack, capabilities: { ...slack.capabilities, email_verified: true } };
+  function setup(connector: unknown, config: Record<string, unknown>) {
+    return mockFetch({
+      "GET /v1/connectors": () => json(200, { items: [connector] }),
+      "GET /v1/orgs/o1/channel-integrations": () => json(200, { items: [{ ...integ, config }], next_cursor: null }),
+      "PATCH /v1/channel-integrations/i1": () => json(200, { ...integ, config }),
+    });
+  }
+
+  it("is off by default, needs a confirm with the trust warning, then patches config", async () => {
+    const calls = setup(withEmail, { _capabilities: { email_verified: true }, workspace: "acme" });
+    wrap(<ChannelsView orgId="o1" />);
+    const box = (await screen.findByLabelText("Link members automatically by verified email")) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    fireEvent.click(box);
+    expect(screen.getByRole("alertdialog").textContent).toContain("it can create links");
+    expect(calls.some((c) => c.key.startsWith("PATCH"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm enable" }));
+    await waitFor(() => expect(calls.some((c) => c.key.startsWith("PATCH"))).toBe(true));
+    expect(calls.find((c) => c.key.startsWith("PATCH"))?.body).toEqual({
+      config: { workspace: "acme", verified_email_autolink: true },
+    });
+  });
+
+  it("is hidden when the connector does not offer email_verified", async () => {
+    setup(slack, {});
+    wrap(<ChannelsView orgId="o1" />);
+    await screen.findByText("Acme Slack");
+    expect(screen.queryByLabelText("Link members automatically by verified email")).toBeNull();
+  });
+});
+
 describe("ConnectorsAdminView", () => {
   const pending = {
     id: "slack", display_name: "Slack", status: "pending_approval", version: "2.0.0", contract: 1,

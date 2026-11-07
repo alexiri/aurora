@@ -1,12 +1,13 @@
-//! One shared `aurora_conversation` + `aurora_delta` LISTEN connection per API process, fanned out
-//! to SSE streams; plus the producer-side delta coalescer (>= 100 ms or >= 2 000 chars per turn).
+//! One shared `aurora_conversation` LISTEN connection and one [`DeltaBus`] subscription per API
+//! process (the default `notify` implementation is the `aurora_delta` channel), fanned out to SSE
+//! streams; plus the producer-side delta coalescer (>= 100 ms or >= 2 000 chars per turn).
 
 use aurora_core::ApiError;
 use aurora_db::PgPool;
-use aurora_db::bus::{BusEvent, Channel, Listener};
-use aurora_db::repo::transcript;
+use aurora_db::bus::{BusEvent, Channel, Delta, DeltaBus, DeltaKind, Listener, NotifyDeltaBus};
+use futures::StreamExt;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{OnceCell, broadcast};
 use uuid::Uuid;
@@ -52,23 +53,43 @@ struct Pending {
 #[derive(Default)]
 pub struct ConversationBus {
     tx: OnceCell<broadcast::Sender<BusMsg>>,
+    /// Ephemeral delta fan-out (RFE-016); `notify` unless injected.
+    delta_bus: OnceLock<Arc<dyn DeltaBus>>,
     pending: Mutex<HashMap<Key, Pending>>,
 }
 
 impl ConversationBus {
+    /// A bus whose deltas flow through `delta_bus` instead of the default NOTIFY channel.
+    pub fn with_delta_bus(delta_bus: Arc<dyn DeltaBus>) -> Self {
+        let b = Self::default();
+        let _ = b.delta_bus.set(delta_bus);
+        b
+    }
+
+    fn delta_bus(&self, pool: &PgPool) -> Arc<dyn DeltaBus> {
+        self.delta_bus
+            .get_or_init(|| Arc::new(NotifyDeltaBus::new(pool.clone())))
+            .clone()
+    }
+
     /// Subscribe; the LISTEN is active when this returns, so later NOTIFYs are seen.
     pub async fn subscribe(&self, pool: &PgPool) -> Result<broadcast::Receiver<BusMsg>, ApiError> {
         let tx = self
             .tx
             .get_or_try_init(|| async {
-                let mut listener =
-                    Listener::connect(pool, &[Channel::Conversation, Channel::Delta])
-                        .await
-                        .map_err(|e| {
-                            tracing::error!(error = %e, "conversation bus connect failed");
-                            ApiError::unavailable("bus_unavailable", "Event bus unavailable.")
-                        })?;
+                let mut listener = Listener::connect(pool, &[Channel::Conversation])
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(error = %e, "conversation bus connect failed");
+                        ApiError::unavailable("bus_unavailable", "Event bus unavailable.")
+                    })?;
+                let delta_bus = self.delta_bus(pool);
+                let first = delta_bus.subscribe().await.map_err(|e| {
+                    tracing::error!(error = %e, "delta bus subscribe failed");
+                    ApiError::unavailable("bus_unavailable", "Event bus unavailable.")
+                })?;
                 let (tx, _) = broadcast::channel(1024);
+                tokio::spawn(forward_deltas(delta_bus, first, tx.clone()));
                 let out = tx.clone();
                 tokio::spawn(async move {
                     loop {
@@ -104,7 +125,15 @@ impl ConversationBus {
         text: &str,
     ) {
         if kind == "activity" {
-            send(pool, conversation, turn, kind, (None, None), text).await;
+            send(
+                &*self.delta_bus(pool),
+                conversation,
+                turn,
+                kind,
+                (None, None),
+                text,
+            )
+            .await;
             return;
         }
         let key = Key {
@@ -145,7 +174,15 @@ impl ConversationBus {
             }
         };
         if let Some(t) = emit {
-            send(pool, conversation, turn, kind, (message_id, reply_to), &t).await;
+            send(
+                &*self.delta_bus(pool),
+                conversation,
+                turn,
+                kind,
+                (message_id, reply_to),
+                &t,
+            )
+            .await;
         }
         if arm {
             let bus = Arc::clone(self);
@@ -172,7 +209,7 @@ impl ConversationBus {
         };
         if !text.is_empty() {
             send(
-                pool,
+                &*self.delta_bus(pool),
                 key.conversation,
                 key.turn,
                 &key.kind,
@@ -204,25 +241,70 @@ impl ConversationBus {
 }
 
 async fn send(
-    pool: &PgPool,
+    bus: &dyn DeltaBus,
     conversation: Uuid,
     turn: Uuid,
     kind: &str,
     (message_id, reply_to): (Option<&str>, Option<&str>),
     text: &str,
 ) {
+    let Some(kind) = DeltaKind::parse(kind) else {
+        tracing::warn!(kind, "delta of unknown kind dropped");
+        return;
+    };
     let chars: Vec<char> = text.chars().collect();
     for chunk in chars.chunks(DELTA_CHUNK_CHARS) {
-        let d: String = chunk.iter().collect();
-        let mut v = serde_json::json!({"c": conversation, "t": turn, "type": kind, "d": d});
-        if let Some(m) = message_id {
-            v["message_id"] = serde_json::Value::String(m.to_owned());
+        let delta = Delta {
+            conversation_id: conversation,
+            turn_id: turn,
+            kind,
+            message_id: message_id.map(str::to_owned),
+            reply_to: reply_to.map(str::to_owned),
+            data: chunk.iter().collect(),
+        };
+        if let Err(e) = bus.publish(delta).await {
+            tracing::warn!(error = %e, "delta publish failed");
         }
-        if let Some(r) = reply_to {
-            v["reply_to"] = serde_json::Value::String(r.to_owned());
+    }
+}
+
+fn to_msg(d: Delta) -> BusMsg {
+    BusMsg::Delta {
+        conversation: d.conversation_id,
+        turn: d.turn_id,
+        kind: d.kind.as_str().to_owned(),
+        message_id: d.message_id,
+        reply_to: d.reply_to,
+        text: d.data,
+    }
+}
+
+/// Pump `stream` into `out`; when it ends (loss), resubscribe with capped backoff and tell
+/// consumers to resynchronize (the bus replays nothing). Stops when no receiver can ever exist.
+async fn forward_deltas(
+    bus: Arc<dyn DeltaBus>,
+    mut stream: futures::stream::BoxStream<'static, Delta>,
+    out: broadcast::Sender<BusMsg>,
+) {
+    let mut backoff = Duration::from_millis(250);
+    loop {
+        while let Some(d) = stream.next().await {
+            let _ = out.send(to_msg(d));
         }
-        if let Err(e) = transcript::notify_delta(pool, &v).await {
-            tracing::warn!(error = %e, "delta notify failed");
+        loop {
+            tokio::time::sleep(backoff).await;
+            match bus.subscribe().await {
+                Ok(s) => {
+                    stream = s;
+                    backoff = Duration::from_millis(250);
+                    let _ = out.send(BusMsg::Resync);
+                    break;
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "delta bus resubscribe failed; retrying");
+                    backoff = (backoff * 2).min(Duration::from_secs(10));
+                }
+            }
         }
     }
 }
@@ -234,20 +316,105 @@ fn parse(channel: Channel, p: &serde_json::Value) -> Option<BusMsg> {
             conversation: uuid("c")?,
             seq: p.get("s")?.as_i64()?,
         }),
-        Channel::Delta => Some(BusMsg::Delta {
-            conversation: uuid("c")?,
-            turn: uuid("t")?,
-            kind: p.get("type")?.as_str()?.to_owned(),
-            message_id: p
-                .get("message_id")
-                .and_then(|m| m.as_str())
-                .map(str::to_owned),
-            reply_to: p
-                .get("reply_to")
-                .and_then(|m| m.as_str())
-                .map(str::to_owned),
-            text: p.get("d")?.as_str()?.to_owned(),
-        }),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_db::bus::InMemoryDeltaBus;
+    use sqlx::postgres::PgPoolOptions;
+
+    /// The pool is never touched when an in-memory `DeltaBus` is injected.
+    fn unused_pool() -> PgPool {
+        PgPoolOptions::new()
+            .connect_lazy("postgres://unused@127.0.0.1:1/unused")
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn deltas_flow_through_an_injected_bus_coalesced_and_ordered() {
+        let mem = Arc::new(InMemoryDeltaBus::new());
+        let mut sub = mem.subscribe().await.unwrap();
+        let bus = Arc::new(ConversationBus::with_delta_bus(mem.clone()));
+        let pool = unused_pool();
+        let (c, t) = (Uuid::now_v7(), Uuid::now_v7());
+        // First delta flushes at once; the next two are held and coalesced by flush_turn.
+        bus.publish_delta(&pool, c, t, "text.delta", (Some("m1"), None), "a")
+            .await;
+        bus.publish_delta(&pool, c, t, "text.delta", (Some("m1"), None), "b")
+            .await;
+        bus.publish_delta(&pool, c, t, "text.delta", (Some("m1"), None), "c")
+            .await;
+        bus.publish_delta(&pool, c, t, "activity", (None, None), "running ls")
+            .await;
+        bus.flush_turn(&pool, c, t).await;
+        let mut got = Vec::new();
+        while let Ok(Some(d)) = tokio::time::timeout(Duration::from_millis(200), sub.next()).await {
+            got.push(d);
+        }
+        let text: Vec<&str> = got
+            .iter()
+            .filter(|d| d.kind == DeltaKind::Text)
+            .map(|d| d.data.as_str())
+            .collect();
+        assert_eq!(text, ["a", "bc"]);
+        assert!(got.iter().all(|d| d.conversation_id == c && d.turn_id == t));
+        assert!(
+            got.iter()
+                .any(|d| d.kind == DeltaKind::Activity && d.data == "running ls")
+        );
+    }
+
+    #[tokio::test]
+    async fn large_deltas_are_chunked_below_the_payload_limit() {
+        let mem = Arc::new(InMemoryDeltaBus::new());
+        let mut sub = mem.subscribe().await.unwrap();
+        let bus = Arc::new(ConversationBus::with_delta_bus(mem));
+        let big = "é".repeat(2_500);
+        bus.publish_delta(
+            &unused_pool(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            "thinking.delta",
+            (None, None),
+            &big,
+        )
+        .await;
+        let mut total = 0;
+        while let Ok(Some(d)) = tokio::time::timeout(Duration::from_millis(200), sub.next()).await {
+            assert!(d.to_json().to_string().len() <= aurora_db::bus::MAX_PAYLOAD_BYTES);
+            total += d.data.chars().count();
+        }
+        assert_eq!(total, 2_500);
+    }
+
+    #[tokio::test]
+    async fn forwarder_maps_published_deltas_to_bus_messages() {
+        let mem = Arc::new(InMemoryDeltaBus::new());
+        let first = mem.subscribe().await.unwrap();
+        let (tx, mut rx) = broadcast::channel(16);
+        tokio::spawn(forward_deltas(mem.clone(), first, tx));
+        let d = Delta {
+            conversation_id: Uuid::now_v7(),
+            turn_id: Uuid::now_v7(),
+            kind: DeltaKind::Thinking,
+            message_id: None,
+            reply_to: None,
+            data: "hm".into(),
+        };
+        mem.publish(d.clone()).await.unwrap();
+        match rx.recv().await.unwrap() {
+            BusMsg::Delta {
+                kind, text, turn, ..
+            } => {
+                assert_eq!(
+                    (kind.as_str(), text.as_str(), turn),
+                    ("thinking.delta", "hm", d.turn_id)
+                );
+            }
+            other => panic!("unexpected {other:?}"),
+        }
     }
 }
