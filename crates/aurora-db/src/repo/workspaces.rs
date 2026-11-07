@@ -172,6 +172,21 @@ pub async fn bind_user<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
+/// Explicit workspace roles of `user` among `ids` (phase 2, RFE-012: member/approver/owner).
+pub async fn roles_of<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<(Uuid, String)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT workspace_id, role FROM workspace_access WHERE user_id = $1 AND workspace_id = ANY($2)",
+    )
+    .bind(user)
+    .bind(ids)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Returns whether a row was removed.
 pub async fn unbind_user<'e, E: PgExecutor<'e>>(
     exec: E,

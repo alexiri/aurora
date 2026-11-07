@@ -341,6 +341,7 @@
     ],
     "invitations": [
       "accepted_by",
+      "approver_workspace_ids",
       "email",
       "expires_at",
       "id",

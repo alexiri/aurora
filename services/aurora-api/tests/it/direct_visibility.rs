@@ -72,8 +72,8 @@ async fn fx() -> Fx {
     let gw = Uuid::now_v7();
     sqlx::query("INSERT INTO gateway_instances (id, hostname, version, started_at, last_seen_at) VALUES ($1,'h','0',now(),now())")
         .bind(gw).execute(h.pool()).await.unwrap();
-    let u = who(&h, org, ws, "u@x.io", "member", Some("member")).await;
-    let m = who(&h, org, ws, "m@x.io", "member", Some("member")).await;
+    let u = who(&h, org, ws, "u@x.io", "member", Some("approver")).await;
+    let m = who(&h, org, ws, "m@x.io", "member", Some("approver")).await;
     let o = who(&h, org, ws, "o@x.io", "member", Some("owner")).await;
     let a = who(&h, org, ws, "a@x.io", "admin", None).await;
     let (s, _, v) = h
@@ -760,7 +760,7 @@ async fn can_see_conversation_predicate_matches_the_sql_fragment() {
 async fn cross_workspace_decider_cannot_read_the_dm_id_or_payload() {
     let f = fx().await;
     let ws2 = f.h.workspace(f.org).await;
-    let q = who(&f.h, f.org, ws2, "q@x.io", "member", Some("member")).await;
+    let q = who(&f.h, f.org, ws2, "q@x.io", "member", Some("approver")).await;
     let turn = Uuid::now_v7();
     let id = Uuid::now_v7();
     let secret = "SECRET-DM-TEXT-42";

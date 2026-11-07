@@ -50,6 +50,16 @@
               }
             }
           },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "404": {
             "description": "",
             "content": {
@@ -4956,6 +4966,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Approval"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -13696,6 +13716,16 @@
               }
             }
           },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "404": {
             "description": "",
             "content": {
@@ -14198,6 +14228,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Page_Approval"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -17633,6 +17673,14 @@
           "role"
         ],
         "properties": {
+          "approver_workspace_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Phase 2, RFE-012: workspaces to bind as `approver` (never `owner`)."
+          },
           "email": {
             "type": "string"
           },
@@ -19164,11 +19212,20 @@
           "email",
           "role",
           "workspace_ids",
+          "approver_workspace_ids",
           "status",
           "expires_at",
           "created_at"
         ],
         "properties": {
+          "approver_workspace_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Workspaces bound as `approver` on accept (phase 2, RFE-012); disjoint from `workspace_ids`."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -21312,11 +21369,20 @@
                 "email",
                 "role",
                 "workspace_ids",
+                "approver_workspace_ids",
                 "status",
                 "expires_at",
                 "created_at"
               ],
               "properties": {
+                "approver_workspace_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "description": "Workspaces bound as `approver` on accept (phase 2, RFE-012); disjoint from `workspace_ids`."
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -27104,6 +27170,7 @@
         "type": "string",
         "enum": [
           "owner",
+          "approver",
           "member"
         ]
       }

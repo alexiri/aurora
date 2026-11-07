@@ -1054,6 +1054,9 @@ fn check_auth(
             if j.role != "member" && j.role != "admin" {
                 c.err(k("jit.role"), "must be member or admin");
             }
+            if !matches!(j.workspace_role.as_str(), "" | "member" | "approver") {
+                c.err(k("jit.workspace_role"), "must be member or approver");
+            }
         }
     }
     if signup == Some(SignupMode::SsoJit) && a.oidc_providers.is_empty() {

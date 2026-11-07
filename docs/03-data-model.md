@@ -105,6 +105,7 @@ owner cannot be demoted or removed).
 | email | citext not null | |
 | role | text CHECK in (`admin`,`member`) | |
 | workspace_ids | uuid[] not null default `{}` | workspaces to bind on accept (role member) |
+| approver_workspace_ids | uuid[] not null default `{}` | workspaces bound as `approver` on accept (disjoint from `workspace_ids`, which stay `member`) (phase 2, RFE-012) |
 | token_hash | bytea unique | `aui_` |
 | status | text CHECK in (`pending`,`accepted`,`cancelled`,`expired`) | |
 | invited_by | uuid FK→users (set null) | |
@@ -128,7 +129,7 @@ owner cannot be demoted or removed).
 |---|---|---|
 | workspace_id | uuid FK→workspaces (cascade) | pk part |
 | user_id | uuid FK→users (cascade) | pk part |
-| role | text CHECK in (`owner`,`member`) | |
+| role | text CHECK in (`owner`,`approver`,`member`) | `approver` = chats and decides approvals (`04 §The access law`); the migration did **not** change existing rows (members stay members) (phase 2, RFE-012) |
 
 ### `api_keys`
 | Column | Type | Notes |
@@ -1194,16 +1195,6 @@ Pending deletions of harness session files after a conversation delete or a `res
 | org_id | uuid pk FK→organizations (cascade) | | 2 (RFE-015) |
 | attachment_bytes | bigint not null default 0 | transactional counter of non-purged attachment bytes; reconciled daily from `attachments` | 2 (RFE-015) |
 | updated_at | timestamptz not null | churn column | 2 (RFE-015) |
-
-#### `workspace_access`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| role | CHECK gains `approver` → in (`owner`,`approver`,`member`) | `approver` = chats and decides approvals (`04 §The access law`); the migration does **not** change existing rows (members stay members) | 2 (RFE-012) |
-
-#### `invitations`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| approver_workspace_ids | uuid[] not null default `{}` | workspaces bound as `approver` on accept (disjoint from `workspace_ids`, which stay `member`) | 2 (RFE-012) |
 
 #### `policy_rules`, `grants`, `derived_rules` (approval timeout)
 | Planned column | Type | Notes | Phase |

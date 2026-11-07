@@ -78,7 +78,7 @@ async fn decide_first_wins_authz_and_notify() {
     let unbound = h.user("u@x.io", false).await;
     h.member(f.org, member, "member", "active").await;
     h.member(f.org, unbound, "member", "active").await;
-    h.bind_ws(f.ws, member, "member").await;
+    h.bind_ws(f.ws, member, "approver").await;
     let (_, mt) = h.good_session(member).await;
     let (_, ot) = h.good_session(outsider).await;
     let (_, ut) = h.good_session(unbound).await;
@@ -151,7 +151,7 @@ async fn batch_decides_only_agents_rows_caller_may_decide() {
     let agent2 = agent(&h, f.org, ws2, "bot").await;
     let member = h.user("m@x.io", false).await;
     h.member(f.org, member, "member", "active").await;
-    h.bind_ws(f.ws, member, "member").await;
+    h.bind_ws(f.ws, member, "approver").await;
     let (_, mt) = h.good_session(member).await;
     let mine1 = approval(&h, &f, f.ws, f.agent, Some("b1")).await;
     let mine2 = approval(&h, &f, f.ws, f.agent, Some("b1")).await;
@@ -221,7 +221,7 @@ async fn list_filters_and_pagination() {
     let f = fixture(&h).await;
     let member = h.user("m@x.io", false).await;
     h.member(f.org, member, "member", "active").await;
-    h.bind_ws(f.ws, member, "member").await;
+    h.bind_ws(f.ws, member, "approver").await;
     let (_, mt) = h.good_session(member).await;
     let c = cookie(&mt);
     let mut ids = vec![];
@@ -286,7 +286,7 @@ async fn long_poll_returns_early_and_times_out_empty() {
     let f = fixture(&h).await;
     let member = h.user("m@x.io", false).await;
     h.member(f.org, member, "member", "active").await;
-    h.bind_ws(f.ws, member, "member").await;
+    h.bind_ws(f.ws, member, "approver").await;
     let (_, mt) = h.good_session(member).await;
     let c = cookie(&mt);
 
@@ -329,7 +329,7 @@ async fn sse_emits_created_decided_and_keepalive() {
     let member = h.user("m@x.io", false).await;
     let stranger = h.user("s@x.io", false).await;
     h.member(f.org, member, "member", "active").await;
-    h.bind_ws(f.ws, member, "member").await;
+    h.bind_ws(f.ws, member, "approver").await;
     let (_, mt) = h.good_session(member).await;
     let (_, st) = h.good_session(stranger).await;
     let (_, key) = h.api_key(member, f.org, Some(f.ws), false).await;
@@ -415,7 +415,7 @@ async fn sec32_approval_decision_is_audited() {
     let f = fixture(&h).await;
     let member = h.user("m@x.io", false).await;
     h.member(f.org, member, "member", "active").await;
-    h.bind_ws(f.ws, member, "member").await;
+    h.bind_ws(f.ws, member, "approver").await;
     let (_, mt) = h.good_session(member).await;
     let a1 = approval(&h, &f, f.ws, f.agent, None).await;
     let c = cookie(&mt);
@@ -439,4 +439,120 @@ async fn sec32_approval_decision_is_audited() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     assert_eq!(n, 1);
+}
+
+#[tokio::test]
+async fn member_cannot_decide_or_see_approvals_approver_can() {
+    // RFE-012 (D-55, SEC-28): `can_use` is not enough; `can_approve` is.
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let member = h.user("m@x.io", false).await;
+    let approver = h.user("a@x.io", false).await;
+    let owner = h.user("o@x.io", false).await;
+    let admin = h.user("ad@x.io", false).await;
+    for (u, role) in [(member, "member"), (approver, "member"), (owner, "member")] {
+        h.member(f.org, u, role, "active").await;
+    }
+    h.member(f.org, admin, "admin", "active").await;
+    h.bind_ws(f.ws, member, "member").await;
+    h.bind_ws(f.ws, approver, "approver").await;
+    h.bind_ws(f.ws, owner, "owner").await;
+    let ck = |u: Uuid| {
+        let h = &h;
+        async move { cookie(&h.good_session(u).await.1) }
+    };
+    let (mc, ac, oc, adc) = (
+        ck(member).await,
+        ck(approver).await,
+        ck(owner).await,
+        ck(admin).await,
+    );
+    let batch1 = approval(&h, &f, f.ws, f.agent, Some("bb")).await;
+    let single = approval(&h, &f, f.ws, f.agent, None).await;
+
+    // Member: 403 approver_required on decide, list and batch; feed is empty.
+    let (s, v) = post(
+        &h,
+        &format!("/v1/approvals/{single}/decision"),
+        ("cookie", &mc),
+        json!({"decision":"approve"}),
+    )
+    .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("approver_required")),
+        "{v}"
+    );
+    let (s, v) = h
+        .get(
+            &format!("/v1/workspaces/{}/approvals", f.ws),
+            &[("cookie", &mc)],
+        )
+        .await;
+    assert_eq!(
+        (s.as_u16(), v["error"]["code"].as_str()),
+        (403, Some("approver_required"))
+    );
+    let (s, v) = post(
+        &h,
+        "/v1/approvals/batches/bb/decision",
+        ("cookie", &mc),
+        json!({"decision":"approve","agent_id":f.agent}),
+    )
+    .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("approver_required")),
+        "{v}"
+    );
+    let (s, v) = h.get("/v1/approvals/pending", &[("cookie", &mc)]).await;
+    assert_eq!(
+        (s.as_u16(), v["items"].as_array().map(Vec::len)),
+        (200, Some(0))
+    );
+    let st = |id: Uuid| {
+        let p = h.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT status FROM approvals WHERE id=$1")
+                .bind(id)
+                .fetch_one(&p)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(st(single).await, "pending");
+    assert_eq!(st(batch1).await, "pending");
+
+    // Approver, owner and org admin see the feed and can decide.
+    for c in [&ac, &oc, &adc] {
+        let (s, v) = h.get("/v1/approvals/pending", &[("cookie", c)]).await;
+        assert_eq!(s.as_u16(), 200);
+        assert_eq!(v["items"].as_array().unwrap().len(), 2, "{v}");
+    }
+    let (s, v) = post(
+        &h,
+        &format!("/v1/approvals/{single}/decision"),
+        ("cookie", &ac),
+        json!({"decision":"approve"}),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+
+    // Role change applies on the next request: promote the member.
+    sqlx::query(
+        "UPDATE workspace_access SET role = 'approver' WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(f.ws)
+    .bind(member)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    let (s, v) = post(
+        &h,
+        "/v1/approvals/batches/bb/decision",
+        ("cookie", &mc),
+        json!({"decision":"deny","agent_id":f.agent}),
+    )
+    .await;
+    assert_eq!((s, v["decided"].as_u64()), (200, Some(1)), "{v}");
 }

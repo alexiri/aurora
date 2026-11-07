@@ -398,7 +398,37 @@ fn jit(p: &mut OidcProvider) {
         org_slug: "acme".into(),
         role: "member".into(),
         workspace_slugs: vec!["eng".into(), "missing".into()],
+        workspace_role: String::new(),
     });
+}
+
+fn jit_approver(p: &mut OidcProvider) {
+    p.jit = Some(OidcJit {
+        org_slug: "acme".into(),
+        role: "member".into(),
+        workspace_slugs: vec!["eng".into()],
+        workspace_role: "approver".into(),
+    });
+}
+
+#[tokio::test]
+async fn sso_jit_binds_as_approver_when_configured() {
+    // RFE-012: `jit.workspace_role = approver` binds the JIT user as approver (never owner).
+    let idp = MockIdp::start().await;
+    idp.identity("j2", "jita@example.com", true);
+    let h = harness(&idp, SignupMode::SsoJit, jit_approver, &[]).await;
+    let (_org, eng, _ops) = jit_seed(&h).await;
+    let (path, cookie) = authorize(&h, None).await;
+    let (_, hd) = callback(&h, &path, &cookie).await;
+    assert!(has_session(&hd));
+    assert_eq!(
+        count(
+            &h,
+            &format!("SELECT count(*) FROM workspace_access WHERE workspace_id = '{eng}' AND role = 'approver'")
+        )
+        .await,
+        1
+    );
 }
 
 #[tokio::test]
