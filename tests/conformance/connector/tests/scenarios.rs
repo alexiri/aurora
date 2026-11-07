@@ -231,7 +231,13 @@ async fn s02_dm_round_trip() -> R {
     assert_eq!(m.author.reference, "U1");
     assert_eq!(m.author.kind, AuthorKind::Person);
     assert_eq!(m.author.email.as_deref(), Some("alice@example.com"));
-    assert_eq!(m.author.email_verified, Some(true));
+    // A platform that does not show other users' verification flag reports none
+    // (never a guess); the core then only uses the email as a sign-in hint.
+    let q = c.0.driver.quirks();
+    assert_eq!(
+        m.author.email_verified,
+        q.email_verified_visible.then_some(true)
+    );
     assert_eq!(m.addressed_bot_ref, BOT_REF);
     assert_eq!(m.thread_ref, None);
 
@@ -332,7 +338,13 @@ async fn s04_bot_added_emits_event_and_renders_binding_card() -> R {
         c.0.driver.bot_added("C1", BOT_REF, "U1").await?,
         Ack::Accepted
     );
-    let ev = c.event_of(EventKind::BotAdded).await?;
+    // The event of *this* add: a platform may also report the bot's earlier membership
+    // (it was put in the channel when the scenario created it).
+    let ev = c
+        .event(|e| {
+            matches!(e.parse(), Ok(EventPayload::BotAdded(b)) if b.actor_ref.as_deref() == Some("U1"))
+        })
+        .await?;
     let EventPayload::BotAdded(b) = ev.parse()? else {
         panic!("not bot.added")
     };
@@ -411,16 +423,25 @@ async fn s05_unlinked_user_gets_a_link_privately() -> R {
     assert_eq!(d.ack, Ack::Accepted);
     let m = c.message_event(&d.message_ref).await?;
     assert_eq!(m.author.reference, "U2");
-    assert_eq!(m.author.email, None);
+    let q = c.0.driver.quirks();
+    if q.users_without_email {
+        assert_eq!(m.author.email, None);
+    }
     assert_eq!(m.author.email_verified, None);
 
-    // The connector asks the core for a sign-in link for that person.
-    let url = c.0.driver.request_link("U2").await?;
-    let calls = c.0.core.link_starts();
-    assert_eq!(calls.len(), 1, "link-start must be called once");
-    assert_eq!(calls[0].integration_id, c.0.integration);
-    assert_eq!(calls[0].platform_user_ref, "U2");
-    assert!(url.contains("aui_"), "{url}");
+    // The connector asks the core for a sign-in link for that person (on platforms
+    // with a person-initiated "link my account" action).
+    let url = if q.link_start_action {
+        let url = c.0.driver.request_link("U2").await?;
+        let calls = c.0.core.link_starts();
+        assert_eq!(calls.len(), 1, "link-start must be called once");
+        assert_eq!(calls[0].integration_id, c.0.integration);
+        assert_eq!(calls[0].platform_user_ref, "U2");
+        assert!(url.contains("aui_"), "{url}");
+        url
+    } else {
+        "https://aurora.example/link/channel?token=aui_0123456789abcdef".to_owned()
+    };
 
     // The core delivers it privately: ephemeral where possible.
     let caps = c.0.driver.capabilities().await?;
@@ -638,20 +659,22 @@ async fn s07_approval_card_click_and_settle() -> R {
 async fn s08_credential_dies() -> R {
     let c = ctx(StartOptions::default()).await?;
 
-    // (a) the platform tells the connector a bot is gone -> presence.removed.
-    let pid = Uuid::now_v7();
-    let ack =
-        c.0.driver
-            .presence_removed("B2", Some(pid), "token_revoked")
-            .await?;
-    assert_eq!(ack, Ack::Accepted);
-    let ev = c.event_of(EventKind::PresenceRemoved).await?;
-    let EventPayload::PresenceRemoved(p) = ev.parse()? else {
-        panic!("not presence.removed")
-    };
-    assert_eq!(p.presence_id, Some(pid));
-    assert_eq!(p.bot_ref, "B2");
-    assert_eq!(p.reason, PresenceRemovedReason::TokenRevoked);
+    if c.0.driver.quirks().dedicated_presences {
+        // (a) the platform tells the connector a bot is gone -> presence.removed.
+        let pid = Uuid::now_v7();
+        let ack =
+            c.0.driver
+                .presence_removed("B2", Some(pid), "token_revoked")
+                .await?;
+        assert_eq!(ack, Ack::Accepted);
+        let ev = c.event_of(EventKind::PresenceRemoved).await?;
+        let EventPayload::PresenceRemoved(p) = ev.parse()? else {
+            panic!("not presence.removed")
+        };
+        assert_eq!(p.presence_id, Some(pid));
+        assert_eq!(p.bot_ref, "B2");
+        assert_eq!(p.reason, PresenceRemovedReason::TokenRevoked);
+    }
 
     // (b) the platform rejects the credentials -> ops answer credential_dead
     // (a definitive error, reported once; never a silent drop or a hang).

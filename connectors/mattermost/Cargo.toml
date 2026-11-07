@@ -1,0 +1,49 @@
+[package]
+name = "aurora-connector-mattermost"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Aurora Mattermost connector (connector contract v1, docs/20)."
+
+[lints]
+workspace = true
+
+[lib]
+name = "aurora_connector_mattermost"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aurora-connector-mattermost"
+path = "src/main.rs"
+
+[dependencies]
+aurora-core = { workspace = true, features = ["service"] }
+aurora-config = { workspace = true }
+aurora-channels = { workspace = true }
+aurora-connector-sdk = { workspace = true }
+aurora-protocol = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+base64 = { workspace = true }
+bytes = { workspace = true }
+clap = { workspace = true }
+futures = { workspace = true }
+hmac = { workspace = true }
+percent-encoding = { workspace = true }
+regex = { workspace = true }
+reqwest = { workspace = true }
+rustls = { workspace = true }
+rustls-native-certs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }

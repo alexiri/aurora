@@ -82,6 +82,8 @@ struct State_ {
     violations: Vec<String>,
     retired: bool,
     retire_calls: u32,
+    /// `(alias, real)` pairs: platforms whose ids the suite cannot choose (see `set_alias`).
+    aliases: Vec<(String, String)>,
 }
 
 struct Inner {
@@ -150,6 +152,7 @@ impl FakeCore {
                 violations: vec![],
                 retired: false,
                 retire_calls: 0,
+                aliases: vec![],
             }),
             notify: Notify::new(),
             events_gate,
@@ -226,6 +229,43 @@ impl FakeCore {
         id
     }
 
+    /// Adds a fully specified integration (a platform whose setup needs real
+    /// `config`/`credentials`/`tenant_ref`). Returns its id.
+    pub fn add_integration_with(&self, integration: Integration) -> Uuid {
+        let id = integration.id;
+        let mut st = self.st();
+        st.credentials.insert(
+            format!("integration:{id}"),
+            (
+                integration.credentials_version,
+                integration.credentials.clone(),
+            ),
+        );
+        st.integrations.push(integration);
+        st.version += 1;
+        id
+    }
+
+    /// Registers `alias` for the platform id `real`, for platforms whose ids the
+    /// suite cannot choose. Scenarios talk in aliases (`U1`, `C1`, `B1`): they are
+    /// translated to real ids in operations the scenario enqueues, and back to
+    /// aliases in the events, results and duplicates the scenario reads. An alias
+    /// matches a whole string value, or the id part of a `<@user:…>`, `<@bot:…>`,
+    /// `<#space:…>` token.
+    pub fn set_alias(&self, alias: &str, real: &str) {
+        let mut st = self.st();
+        st.aliases.retain(|(a, _)| a != alias);
+        st.aliases.push((alias.to_owned(), real.to_owned()));
+    }
+
+    /// A cheap read-only view for platform drivers that need to see what the
+    /// connector delivered to the core (e.g. to answer "did the core accept it").
+    pub fn probe(&self) -> CoreProbe {
+        CoreProbe {
+            inner: self.inner.clone(),
+        }
+    }
+
     /// An instance admin approves the connector; its integrations are served.
     pub fn approve(&self) {
         let mut st = self.st();
@@ -269,8 +309,10 @@ impl FakeCore {
         op_id: Uuid,
         kind: &str,
         integration: Option<Uuid>,
-        payload: Value,
+        mut payload: Value,
     ) -> Uuid {
+        let aliases = self.st().aliases.clone();
+        translate(&mut payload, &aliases, false);
         let op = Operation {
             op_id,
             kind: OpKind::from_wire(kind).unwrap_or(OpKind::MessagePost),
@@ -294,11 +336,13 @@ impl FakeCore {
     /// Waits for the result of `op_id`.
     pub async fn wait_result(&self, op_id: Uuid, timeout: Duration) -> Option<OpResult> {
         eventually(timeout, || {
-            self.st()
+            let st = self.st();
+            let found = st
                 .ops
                 .iter()
                 .find(|o| o.op.op_id == op_id)
-                .and_then(|o| o.result.clone())
+                .and_then(|o| o.result.clone());
+            found.map(|r| alias_result(&st.aliases, r))
         })
         .await
     }
@@ -344,24 +388,32 @@ impl FakeCore {
         let st = self.st();
         let mut r: Vec<OpResult> = st.ops.iter().filter_map(|o| o.result.clone()).collect();
         r.sort_by_key(|x| st.ops.iter().position(|o| o.op.op_id == x.op_id));
-        r
+        let aliases = st.aliases.clone();
+        drop(st);
+        r.into_iter().map(|x| alias_result(&aliases, x)).collect()
     }
 
     /// Results reported for ops that were not claimed at the time (ignored).
     pub fn late_results(&self) -> Vec<OpResult> {
-        self.st().late_results.clone()
+        let st = self.st();
+        let aliases = st.aliases.clone();
+        let r = st.late_results.clone();
+        drop(st);
+        r.into_iter().map(|x| alias_result(&aliases, x)).collect()
     }
 
     // ---------------------------------------------------------- events
 
     /// Events accepted into the inbox, in order.
     pub fn events(&self) -> Vec<InboundEvent> {
-        self.st().events.clone()
+        let st = self.st();
+        aliased_events(&st.aliases, &st.events)
     }
 
     /// `event_id`s answered as duplicates.
     pub fn duplicates(&self) -> Vec<String> {
-        self.st().duplicates.clone()
+        let st = self.st();
+        aliased_ids(&st.aliases, &st.duplicates)
     }
 
     /// How many `POST /events` requests arrived.
@@ -376,7 +428,10 @@ impl FakeCore {
         pred: impl Fn(&InboundEvent) -> bool,
     ) -> Option<InboundEvent> {
         eventually(timeout, || {
-            self.st().events.iter().find(|e| pred(e)).cloned()
+            let st = self.st();
+            aliased_events(&st.aliases, &st.events)
+                .into_iter()
+                .find(|e| pred(e))
         })
         .await
     }
@@ -845,4 +900,120 @@ async fn retire(State(i): S, h: HeaderMap) -> Response {
     st.retire_calls += 1;
     st.version += 1;
     Json(OkResponse { ok: true }).into_response()
+}
+
+// ------------------------------------------------------------- aliases
+
+fn swap(s: &str, pairs: &[(&str, &str)]) -> Option<String> {
+    for (from, to) in pairs {
+        if s == *from {
+            return Some((*to).to_owned());
+        }
+    }
+    let mut out = s.to_owned();
+    let mut changed = false;
+    for (from, to) in pairs {
+        for tag in ["<@user:", "<@bot:", "<#space:"] {
+            let needle = format!("{tag}{from}>");
+            if out.contains(&needle) {
+                out = out.replace(&needle, &format!("{tag}{to}>"));
+                changed = true;
+            }
+        }
+    }
+    changed.then_some(out)
+}
+
+fn walk(v: &mut Value, pairs: &[(&str, &str)]) {
+    match v {
+        Value::String(s) => {
+            if let Some(n) = swap(s, pairs) {
+                *s = n;
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(|x| walk(x, pairs)),
+        Value::Object(m) => m.values_mut().for_each(|x| walk(x, pairs)),
+        _ => {}
+    }
+}
+
+/// `to_alias`: real → alias (what the scenario reads); else alias → real.
+fn translate(v: &mut Value, aliases: &[(String, String)], to_alias: bool) {
+    if aliases.is_empty() {
+        return;
+    }
+    let pairs: Vec<(&str, &str)> = aliases
+        .iter()
+        .map(|(a, r)| {
+            if to_alias {
+                (r.as_str(), a.as_str())
+            } else {
+                (a.as_str(), r.as_str())
+            }
+        })
+        .collect();
+    walk(v, &pairs);
+}
+
+fn alias_str(aliases: &[(String, String)], s: &str) -> String {
+    let mut v = Value::String(s.to_owned());
+    translate(&mut v, aliases, true);
+    v.as_str().unwrap_or(s).to_owned()
+}
+
+fn aliased_ids(aliases: &[(String, String)], ids: &[String]) -> Vec<String> {
+    ids.iter().map(|i| alias_str(aliases, i)).collect()
+}
+
+fn aliased_events(aliases: &[(String, String)], events: &[InboundEvent]) -> Vec<InboundEvent> {
+    events
+        .iter()
+        .map(|e| {
+            let mut e = e.clone();
+            e.event_id = alias_str(aliases, &e.event_id);
+            translate(&mut e.payload, aliases, true);
+            e
+        })
+        .collect()
+}
+
+fn alias_result(aliases: &[(String, String)], mut r: OpResult) -> OpResult {
+    if let Some(d) = r.data.as_mut() {
+        translate(d, aliases, true);
+    }
+    r
+}
+
+/// A read-only handle on a [`FakeCore`] (see [`FakeCore::probe`]). Answers use
+/// the same aliases as the core's own accessors.
+#[derive(Clone)]
+pub struct CoreProbe {
+    inner: Arc<Inner>,
+}
+
+impl CoreProbe {
+    pub fn events(&self) -> Vec<InboundEvent> {
+        let st = lock(&self.inner.st);
+        aliased_events(&st.aliases, &st.events)
+    }
+
+    pub fn duplicates(&self) -> Vec<String> {
+        let st = lock(&self.inner.st);
+        aliased_ids(&st.aliases, &st.duplicates)
+    }
+
+    pub fn registrations(&self) -> Vec<RegisterRequest> {
+        lock(&self.inner.st).registrations.clone()
+    }
+
+    /// The alias for a platform id (the id itself when none).
+    pub fn alias_of(&self, real: &str) -> String {
+        alias_str(&lock(&self.inner.st).aliases, real)
+    }
+
+    pub fn set_alias(&self, alias: &str, real: &str) {
+        let mut st = lock(&self.inner.st);
+        st.aliases.retain(|(a, _)| a != alias);
+        st.aliases.push((alias.to_owned(), real.to_owned()));
+    }
 }

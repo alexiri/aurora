@@ -362,10 +362,12 @@ dependencies = [
  "aurora-protocol",
  "axum",
  "bytes",
+ "futures",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
  "uuid",
 ]
 
@@ -385,6 +387,38 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
+name = "aurora-connector-mattermost"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "aurora-channels",
+ "aurora-config",
+ "aurora-connector-sdk",
+ "aurora-core",
+ "aurora-protocol",
+ "axum",
+ "base64 0.22.1",
+ "bytes",
+ "clap",
+ "futures",
+ "hmac 0.12.1",
+ "percent-encoding",
+ "regex",
+ "reqwest 0.12.28",
+ "rustls",
+ "rustls-native-certs",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
  "tracing",
  "uuid",
  "wiremock",

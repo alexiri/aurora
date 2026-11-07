@@ -24,6 +24,7 @@ members = [
   "services/aurora-supervisor",
   "services/aurora-cli",
   "connectors/fake",
+  "connectors/mattermost",
   "tests/e2e-gateway",
   "tests/e2e-hosted",
   "tests/conformance/connector",

@@ -14,4 +14,5 @@
 pub mod driver;
 pub mod fake_core;
 pub mod fake_driver;
+pub mod mattermost_driver;
 pub mod target;
