@@ -124,7 +124,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | FIX-002 | Sandbox env (`AURORA_AGENT_HANDLE`, app `agent.env`) + app stub files at boot; `restart_to_update` | Rust | done (ecbd49fc) | — | Sonnet (worktree) | |
 | OPS-012 | Operator documentation (`docs/operator/`) | Docs | done (e771adda) | OPS-010, RUN-004 | Haiku (worktree) | 8 pages; keys/commands cross-checked against code; 13 known gaps listed |
 | OPS-013 | Deployment gaps from OPS-012 (Helm nodeSelector/tolerations, plugin mount, compose CA, just dev, comments, eval Postgres) | Ops | done | OPS-012 | Haiku (worktree) | helm lint; aurora-config 20 (helm-render, dev-config); setup.sh CA idempotent (run twice); compose config |
-| FIX-003 | (in progress) Unused config wired (condition_body_bytes, resolve cache TTL, held_awake_ceiling), connector bootstrap tokens + allow_unsigned, OTLP export, sandbox image from config (OPS-011) | Rust | todo (ready) | BE-070 | Sonnet (worktree) | |
+| FIX-003 | Unused config wired (condition_body_bytes, resolve cache TTL, held_awake_ceiling), connector bootstrap tokens + allow_unsigned, OTLP export, sandbox image from config (OPS-011), k8s harness advertisement (TEST-017) | Rust | in-progress | BE-070 | Sonnet (worktree) | |
 | BE-066 | Apps tools `request_app_connection` (I-29), `propose_custom_connection` (08 §Agent-proposed) | Rust | done (73dab75f) | BE-031, BE-042 | Haiku (worktree) | |
 | FE-051 | Schedules, webhooks, peers tabs; action approvals; chat attachments; app-turn Continue | Next.js | done (55480baf) | BE-062..065 | Sonnet (worktree) | web 17 files / 123 tests; typecheck, lint (0 errors), build |
 | TEST-014 | M5 hosted suites (18) + live claude-code conformance (needs LiteLLM endpoint) | e2e | todo | M5 | Sonnet | |
@@ -139,7 +139,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | BE-075 | Messaging tools + `send_message` action handler | Rust | in-progress | BE-072, BE-074 | Sonnet (worktree) | |
 | TEST-015 | Connector conformance suite (fake core) | Rust test | done (872d94d3) | CON-001 | Sonnet (worktree) | 12/12 scenarios in-process and binary mode (`scripts/conformance.sh`); fake/SDK fixes; FUP-M6 closed |
 | FE-060 | Channel pages, admin connectors, /link/channel, account links + DM defaults | Next.js | done (1fe32db7) | API-006 | Sonnet (worktree) | web 18 files / 142 tests; build |
-| FIX-004 | Presence options for members (C-39), connector manifest diff (C-40) | both | todo (ready) | FE-060 | Sonnet (worktree) | |
+| FIX-004 | Presence options for members (C-39), connector manifest diff (C-40) | both | in-progress | FE-060 | Sonnet (worktree) | |
 | TEST-016 | e2e-hosted M6 scenario (fake platform DM → Daneel → approve from card) | e2e | todo | BE-072..075 | — | |
 | OPS-010 | Helm chart | Ops | done | — | Sonnet | `helm lint`, `helm template` |
 | RUN-004 | Kubernetes backend (+ runner.k8s.core_namespace config fix) | Rust | done (e65ec66d) | RUN-003 | Sonnet (Orca worker, worktree) + Opus (kube → aws-lc-rs) | config 18, k8s unit 15, k8s_mock 15 (fake API server), runner 10; clippy; cargo deny ok; helm-rendered ConfigMap loads |
