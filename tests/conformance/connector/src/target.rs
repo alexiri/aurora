@@ -80,6 +80,9 @@ impl Harness {
     /// Runs the suite's default target: `connectors/fake` in-process, or the
     /// binary named by `CONFORMANCE_CONNECTOR_BIN` (see `scripts/conformance.sh`).
     pub async fn start_fake(opts: StartOptions) -> Result<Self> {
+        if std::env::var(crate::mattermost_driver::PLATFORM_ENV).as_deref() == Ok("mattermost") {
+            return crate::mattermost_driver::start(opts).await;
+        }
         let core = FakeCore::start(TOKEN).await?;
         let integration = core.add_integration(BOT_REF);
         let (cut, driver): (ConnectorUnderTest, Arc<dyn PlatformDriver>) =

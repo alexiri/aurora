@@ -146,8 +146,40 @@ pub enum Failure {
     LoseResults(u32),
 }
 
+/// What a platform cannot do the way the neutral scenarios assume. Every field
+/// defaults to `true`; a driver turns a field off only for a documented platform
+/// limit, and the scenario then skips exactly that assertion (see the listed
+/// exclusions in `scripts/conformance.sh`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlatformQuirks {
+    /// The platform lets the connector read other users' `email_verified` flag.
+    pub email_verified_visible: bool,
+    /// A person can have no email address at all.
+    pub users_without_email: bool,
+    /// The connector serves dedicated presences (bots of its own per agent).
+    pub dedicated_presences: bool,
+    /// The platform has a person-initiated action that makes the connector call `POST /link-start`.
+    pub link_start_action: bool,
+}
+
+impl Default for PlatformQuirks {
+    fn default() -> Self {
+        Self {
+            email_verified_visible: true,
+            users_without_email: true,
+            dedicated_presences: true,
+            link_start_action: true,
+        }
+    }
+}
+
 #[async_trait]
 pub trait PlatformDriver: Send + Sync {
+    /// Documented platform limits (default: none).
+    fn quirks(&self) -> PlatformQuirks {
+        PlatformQuirks::default()
+    }
+
     /// Waits until the connector serves an integration (it has polled `config`
     /// after approval and opened the integration).
     async fn wait_ready(&self, timeout: Duration) -> Result<()>;

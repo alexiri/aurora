@@ -138,6 +138,18 @@ podDisruptionBudget:
 # Optional connectors: [{id, image, callbackPort (default 4190), tokenSecret: {name, key},
 #   callbackIngress: {enabled, host, path}, replicas, resources, env: []}]
 connectors: []
+# Example: the Mattermost connector (image aurora-connector-mattermost, callbacks on 4110; the
+# chart passes `serve` and AURORA_CONNECTOR_TOKEN). `public_url` is how Mattermost reaches the
+# callbacks; restrict the callback port to the Mattermost server (network policy / firewall).
+#   connectors:
+#     - id: mattermost
+#       callbackPort: 4110
+#       tokenSecret: {name: aurora-connector-mattermost, key: token}
+#       callbackIngress: {enabled: true, host: aurora-mm-callbacks.example.com, path: /mm}
+#       env:
+#         - {name: AURORA_CONNECTOR_PUBLIC_URL, value: "https://aurora-mm-callbacks.example.com"}
+#         - name: AURORA_CONNECTOR_CALLBACK_HMAC_KEY      # >= 32 bytes, shared by all replicas
+#           valueFrom: {secretKeyRef: {name: aurora-connector-mattermost, key: callback-hmac-key}}
 
 # ---- Routing -------------------------------------------------------------------
 ingress:

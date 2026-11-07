@@ -15,8 +15,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --locked \
       -p aurora-api -p aurora-gateway -p aurora-hookhost \
       -p aurora-runner -p aurora-connector-fake \
+      -p aurora-connector-mattermost \
     && mkdir /out \
-    && for b in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-fake; do \
+    && for b in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-fake \
+                 aurora-connector-mattermost; do \
          cp target/release/$b /out/; done
 
 FROM gcr.io/distroless/cc-debian12:nonroot AS api
@@ -44,3 +46,11 @@ FROM gcr.io/distroless/cc-debian12:nonroot AS connector-fake
 COPY --from=builder /out/aurora-connector-fake /usr/local/bin/aurora-connector-fake
 EXPOSE 4190
 ENTRYPOINT ["/usr/local/bin/aurora-connector-fake"]
+
+# The Mattermost connector: public callbacks (/mm/actions, /mm/commands) on 4110, health on 4191.
+#   podman build -f images/services/Containerfile --target connector-mattermost -t aurora-connector-mattermost .
+FROM gcr.io/distroless/cc-debian12:nonroot AS connector-mattermost
+COPY --from=builder /out/aurora-connector-mattermost /usr/local/bin/aurora-connector-mattermost
+EXPOSE 4110 4191
+ENTRYPOINT ["/usr/local/bin/aurora-connector-mattermost"]
+CMD ["serve"]
