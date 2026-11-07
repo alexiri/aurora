@@ -41,6 +41,7 @@ verdict. Severity is my judgement of impact if left as-is:
 | [RFE-022](#rfe-022) | Plugin major-version upgrades with existing connections are undefined                            | Plugins      | Low | 3 |
 | [RFE-023](#rfe-023) | Default Rule silently exempts LLM hosts — rationale undocumented                                 | Spec clarity | Low | 3 |
 | [RFE-024](#rfe-024) | Deprovision-before-delete ordering is racy and under-specified                                   | Spec clarity | Low | 3 |
+| [RFE-025](#rfe-025) | BYO agents: any member can create one, no instance/org/workspace controls, no source restriction | Security     | Medium | 2 |
 
 
 ---
@@ -278,6 +279,70 @@ tokens (expiry visible in the dashboard, regenerate flow already exists), plus
 `last_used_at` surfacing of stale tokens. Default could stay "no expiry".
 
 **Decision:** Implement optional per-instance/org maximum age, default to no expiry.
+
+---
+
+### RFE-025 — BYO agents: any member can create one, with no controls over who, where or whether
+
+**Severity: Medium** · Docs: `04 §Permission matrix`, `05 §Agents and sandboxes`, `07 §Injection selection`, `08 §7`, `08 §10`, `08 §11.8`, `06 §Lanes`
+
+**Problem.** A BYO agent is an `aug_` token that works from anywhere that can
+reach the gateway proxy port. The spec gives no control over BYO as such:
+
+1. **Who.** Creating an agent needs only `can_use`, so any workspace member
+   can create a BYO agent and receive its token. There is no instance, org or
+   workspace setting to disable BYO or restrict it to owners (`hosted.enabled`
+   controls only hosted agents; `max_agents` is just a count shared with them).
+2. **Broad rules arm new agents automatically.** The intended safeguard is
+   that a member can create an agent but cannot arm it (grants need
+   `can_own`). But injection selection takes *any* enabled allow rule whose
+   identities match and whose target names the credential, so a hand-authored
+   rule with empty identities (e.g. allow `secrets{scope: organization,
+   kind: llm}`) selects that credential for every agent, including a BYO agent
+   created minutes ago. Owners writing such convenience rules are unlikely to
+   realise this.
+3. **Uncredentialed egress from the organisation's network.** Even with no
+   credentials, a BYO token under the default `open` egress posture turns the
+   gateway into a general forward proxy: traffic exits from the organisation's
+   network position and IP space, and every destination in
+   `gateway.allowed_private` (internal hosts the operator opened for agents)
+   becomes reachable from any laptop that holds the token. (The open lane is
+   covered by RFE-003; the MITM lane has the same property for plain
+   uncredentialed requests.)
+4. **Where.** There is no source restriction on token use (no CIDR
+   allow-list), so a leaked token is usable from anywhere until someone
+   regenerates it (expiry: RFE-013).
+5. **Who is actually behind it.** Request-log rows and approvals name the
+   agent; the human operating the process is implied only by
+   `agents.created_by`, and the token can be shared freely.
+
+**Why it's suboptimal.** Deployments that want "agents run only on our
+infrastructure" (hosted only) or "only owners may run agents outside the
+platform" cannot express it, and the default lets the least-privileged role
+create an externally usable egress identity. The governance layering
+(`08 §11`) shows the right pattern exists; BYO just isn't part of it.
+
+**Possible fix (high level).**
+(a) A **BYO posture** with the same tighten-only layering as governance
+(instance ceiling → org → workspace): `enabled` / `owners_only` / `disabled`.
+`disabled` refuses BYO creation and makes the gateway refuse existing `aug_`
+and BYO `auc_` credentials of that scope (via the usual invalidation);
+`owners_only` requires `can_own` to create a BYO agent or regenerate its
+token. A sensible default is `owners_only`.
+(b) An optional per-agent **source CIDR allow-list** for BYO credentials,
+checked by the gateway at connect time (403 `source_not_permitted`), with an
+optional instance/org default list (e.g. "corporate networks and CI runners
+only").
+(c) A **policy-editor warning** (and an entry in `…/policy/warnings`) when an
+allow rule with empty identities selects credentials: "applies to all agents,
+including agents created later".
+(d) Optionally let a BYO agent be configured to require context credentials
+for credentialed requests, so every injected request is attributed to a
+labelled run.
+Related decisions already taken: TLS-only proxy listener (RFE-002), optional
+token maximum age (RFE-013), per-agent open-lane capability (RFE-003).
+
+**Decision:** _(pending)_
 
 ---
 

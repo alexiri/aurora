@@ -150,7 +150,8 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | FIX-007 | restart_to_update on image change; render inputs/env respect app availability | Rust | done (93512503) | FIX-005, OPS-014 | Sonnet (worktree) | `UPGRADE_STRICT=1 bash scripts/e2e/upgrade.sh` 32/32; sandbox_env 4, home_render_inputs 3 |
 | SPEC-RFE-P12 | Spec updates for phase 1+2 design-review items (phase-tagged; D-43+) | spec | in-progress | 80 decisions | Sonnet (worktree) + Opus review per RFE | |
 | SPEC-RFE-P3 | Spec updates for phase 3 design-review items | spec | todo (after SPEC-RFE-P12; same docs) | SPEC-RFE-P12 | — | |
-| AUDIT-001 | Phase-0 exit verification from scratch (`docs/audit/phase0-exit.md`) | audit | in-progress | all | Sonnet (worktree) + Opus review | |
+| AUDIT-001 | Phase-0 exit verification from scratch | audit | done (baabe11f) | all | Sonnet (worktree) + Opus review | `docs/audit/phase0-exit.md`: all green after 2 fixes (log formatter, compose IPAM); open: compose hosted backend → OPS-015 |
+| OPS-015 | Compose hosted profile runs real podman sandboxes; hosted.sh scope; deny/lint warnings | Ops | in-progress | AUDIT-001 | Sonnet (worktree) | |
 | TEST-018 | Security invariant coverage SEC-01..39 (`docs/tests/security-coverage.md`) | tests | done (13ac4bba) | 39 rows; 14 tests/guards added; SEC-18..20 proven via TEST-016; SEC-30 avatars → BE-067 |
 | BE-067 | Agent avatars: upload, re-encode to 256² PNG, rotating public URL, presence.set_icon (SEC-30) | both | done (4f7101df) | BE-064 | Sonnet (worktree) | avatars 7; web 149; I-31, C-41; SEC-30 proven |
 | OPS-014 | Gateway performance budgets (18) + upgrade test | Ops | done (51f6732c) | OPS-011 | Sonnet (worktree) | `bash scripts/perf/gateway.sh` PASS: (a) p50 0.033/p99 0.175 ms, (b) 11 563 rps/core, (c) p99 4.36 ms; `bash scripts/e2e/upgrade.sh` 31/31 (image-only restart flag → FIX-007) |
