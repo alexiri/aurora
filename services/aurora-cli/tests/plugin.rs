@@ -2,8 +2,16 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+/// Runtime path first (nextest sets `NEXTEST_BIN_EXE_aurora` when run from an archive that was
+/// built elsewhere), compile-time path as the fallback for plain `cargo test`.
+fn aurora_bin() -> PathBuf {
+    std::env::var_os("NEXTEST_BIN_EXE_aurora")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_aurora")))
+}
+
 fn aurora(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_aurora"))
+    Command::new(aurora_bin())
         .args(args)
         .env("AURORA_GATEWAY_BIN", gateway())
         .output()
@@ -11,7 +19,10 @@ fn aurora(args: &[&str]) -> Output {
 }
 
 fn gateway() -> PathBuf {
-    let exe = PathBuf::from(env!("CARGO_BIN_EXE_aurora"));
+    if let Some(p) = std::env::var_os("AURORA_GATEWAY_BIN") {
+        return PathBuf::from(p);
+    }
+    let exe = aurora_bin();
     exe.parent().unwrap().join("aurora-gateway")
 }
 
