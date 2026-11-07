@@ -71,6 +71,8 @@ pub struct AppState {
     pub oidc: Arc<crate::domains::oidc::OidcClients>,
     /// Connect-flow outbound clients (guarded HTTP, hook host).
     pub connect: Arc<crate::domains::connect::Env>,
+    /// Card requests from inbox processing (BE-073).
+    pub card_requests: Arc<dyn crate::domains::channels::card_requests::CardRequests>,
     /// SSE keepalive interval.
     pub sse_keepalive: std::time::Duration,
 }
@@ -127,6 +129,11 @@ impl AppState {
             &config.hookhost_url,
             config.internal_secret.expose(),
         )?);
+        let card_requests: Arc<dyn crate::domains::channels::card_requests::CardRequests> =
+            Arc::new(crate::domains::channels::cards::requests::CardsImpl::new(
+                derived.clone(),
+                &config.external_url,
+            ));
         Ok(Self {
             pool,
             config: Arc::new(config),
@@ -144,6 +151,7 @@ impl AppState {
             derived,
             oidc,
             connect,
+            card_requests,
             sse_keepalive: aurora_core::limits::SSE_KEEPALIVE,
         })
     }

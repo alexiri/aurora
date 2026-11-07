@@ -43,6 +43,12 @@ pub enum Principal {
         workspace_id: Option<Uuid>,
         kind: KeyKind,
     },
+    /// A person acting through a chat card (docs/13 §5.5): authenticated by the platform link
+    /// and signed action token, authorized by the core's access law at click time. Never
+    /// produced by the HTTP extractors.
+    Channel {
+        integration_id: Uuid,
+    },
 }
 
 /// An authenticated request principal.
@@ -62,6 +68,7 @@ impl Caller {
         match self.principal {
             Principal::Session { .. } => "dashboard",
             Principal::ApiKey { .. } => "api",
+            Principal::Channel { .. } => "channel",
         }
     }
 

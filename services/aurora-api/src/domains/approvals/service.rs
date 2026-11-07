@@ -20,12 +20,12 @@ pub fn scope(c: &Caller) -> (Option<Uuid>, Option<Uuid>) {
             workspace_id,
             ..
         } => (Some(*org_id), *workspace_id),
-        Principal::Session { .. } => (None, None),
+        Principal::Session { .. } | Principal::Channel { .. } => (None, None),
     }
 }
 
 fn via(c: &Caller) -> &'static str {
-    if c.is_session() { "dashboard" } else { "api" }
+    c.audit_source()
 }
 
 pub fn validate_status(status: Option<&str>) -> Result<(), ApiError> {
