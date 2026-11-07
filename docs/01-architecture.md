@@ -211,7 +211,7 @@ creates a turn in the schedule's run conversation. The sandbox wakes as in B.
 
 - **Registries keyed by ids with load-time completeness checks** (LLM providers,
   sandbox backends, harness adapters, secret stores, platform tools,
-  mechanisms). Adding one is a module plus one registration line. An id with no
+  mechanisms; from phase 1 also the delta bus, `05 §The delta bus seam`). Adding one is a module plus one registration line. An id with no
   implementation fails at startup, loudly.
 - **Every wire message is schema-validated at the receiver.** Codes, provider
   ids and reasons are **open bounded strings**: unknown values degrade (treated

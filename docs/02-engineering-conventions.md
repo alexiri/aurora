@@ -246,4 +246,5 @@ overridden by the named configuration key (`15`).
 | `AGENT_SNIPPET_MAX` | 2 000 chars per app | — | 09 |
 | `AVATAR_MAX` | 512 KiB (PNG/JPEG/WebP) | — | 10 |
 | `SSE_KEEPALIVE` | 15 s | — | 05 |
+| `DELTA_COALESCE` | (phase 1, RFE-016) 100 ms or 2 000 chars per turn per delta | `events.delta_coalesce_ms` (100–500) | 05 |
 | `LONG_POLL_MAX` | 30 s | — | 05 |

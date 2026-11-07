@@ -92,6 +92,18 @@ done when its tests exist, pass in CI, and the security invariants it touches
   rotation with `secrets rekey`, `secrets migrate` to the `memory` test store,
   reference-mode secrets via the `memory` store, store-unavailable fail-closed.
 
+### Delta bus (phase 1, RFE-016)
+- `DeltaBus` conformance suite (`tests/conformance/delta_bus`), run against the
+  `notify` implementation and an in-memory reference: fan-out to every replica,
+  per-(conversation, turn) order, payload bound, at-most-once with loss tolerated
+  (a dropped delta is repaired by the durable `text` event), resubscribe triggers
+  resync, publish failure never fails turn persistence, unknown
+  `events.delta_bus` id fails startup.
+- Benchmark `scripts/perf/delta_bus.sh` measures the planning figures of
+  `15 §Streaming fan-out ceiling` (N concurrent synthetic streams × R replicas) and
+  records them in the phase-1 report; a regression guard fails when p99 publish
+  latency at 100 streams exceeds 50 ms.
+
 ### Hosted agents
 - Due-work engine against the fake runner backend: every arm, claim races with
   concurrent pollers, ownership fencing, replica death and takeover.

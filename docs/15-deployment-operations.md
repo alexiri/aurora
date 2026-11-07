@@ -107,6 +107,8 @@ Setup tooling generates every secret and **never overwrites** an existing one.
 | `runner.podman_socket`, `runner.sandbox_network`, `runner.sandbox_hosts` | — | runner (podman) | `11` |
 | `runner.k8s.namespace`, `runner.k8s.core_namespace` (namespace holding the gateway/runner Services; default: the runner pod's own namespace, else `default`), `runner.k8s.storage_class`, `runner.k8s.runtime_class`, `runner.k8s.node_selector`, `runner.k8s.tolerations`, `runner.k8s.gateway_service`, `runner.k8s.runner_service` | — | runner (kubernetes) | `11` |
 | `tls.extra_ca_bundle` | — | api, gateway, hookhost, runner, connectors | PEM file of additional trusted CAs for all outbound TLS (e.g. an organization CA for internal LLM endpoints, OIDC, Vault) |
+| `events.delta_bus` | `notify` | api | (phase 1, RFE-016) `DeltaBus` implementation id; unknown id fails startup |
+| `events.delta_coalesce_ms` | 100 | api | (phase 1, RFE-016) delta coalescing window, 100–500 |
 | `retention.request_log_days` | 30 | api | |
 | `telemetry.otlp_endpoint` | — | all | optional tracing export |
 | `telemetry.log_level` | `info` | all | |
@@ -299,3 +301,27 @@ keyring and signing key. **Secrets are unrecoverable without the keyring.**
 Runner hosts: `max_sandboxes × sandbox memory + 1 GiB`. Held-awake sandboxes
 occupy a slot permanently: size for steady state, not peak. Postgres: modest;
 `request_log` dominates (≈300 bytes/request; partitioned and pruned).
+
+### Streaming fan-out ceiling (phase 1, RFE-016)
+
+Streaming text takes the `DeltaBus` (`05 §The delta bus seam`); with the default
+`notify` implementation every delta is a Postgres `NOTIFY`, serialized in the
+commit path and delivered to **every** API replica. Back-of-envelope, for
+planning (to be re-measured by `scripts/perf/delta_bus.sh`, an acceptance item of
+the phase-1 task, on the target Postgres):
+
+| Quantity | Value |
+|----------|-------|
+| Load per **concurrently streaming turn** | ≤ 10 notifications/s (100 ms coalescing), ≤ 2 000 chars each → ≤ ≈20 KB/s into Postgres, and the same **per API replica** (`R`× fan-out) |
+| Comfortable region | ≤ ~1 000 notifications/s total ≈ **100 concurrently streaming turns** (p99 publish < 50 ms on a modest managed Postgres) |
+| Ceiling before the NOTIFY queue/lock dominates | ~2 000–3 000 notifications/s ≈ **200–300 concurrently streaming turns**; beyond this commit latency of *all* writers rises |
+| Replica effect | each replica's listener must absorb the full stream: at 100 streaming turns ≈ 2 MB/s of payload per replica regardless of `R` |
+
+A turn streams only while the model emits text, so 100 *concurrent streams*
+typically corresponds to several hundred *active* agents. Watch
+`aurora_delta_publish_seconds` p99, `aurora_delta_dropped_total` and
+`aurora_pg_notify_queue_usage` (alert at 0.5; at 1.0 NOTIFY fails). Operators
+approaching the ceiling have three levers without code changes: raise coalescing
+(`events.delta_coalesce_ms`, default 100, up to 500), run fewer API replicas per
+streaming-heavy deployment, or switch `events.delta_bus` to a later
+implementation when available.

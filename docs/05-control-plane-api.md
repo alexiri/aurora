@@ -121,7 +121,7 @@ caches, waiters return early). Payloads are JSON ≤ 7 000 bytes.
 | Channel | Payload | Producer → consumers |
 |---------|---------|----------------------|
 | `aurora_conversation` | `{ "c": conversation_id, "s": seq }` | API (after commit) → API SSE handlers |
-| `aurora_delta` | `{ "c", "t": turn_id, "type": "text.delta"|"thinking.delta"|"activity", "d": string }` | API (on runner events) → API SSE handlers |
+| `aurora_delta` | `{ "c", "t": turn_id, "type": "text.delta"|"thinking.delta"|"activity", "d": string }` | API (on runner events) → API SSE handlers; (phase 1, RFE-016) this is the `notify` implementation of the `DeltaBus` seam below |
 | `aurora_work` | `{ "sandbox_id"?: uuid }` | API → API runner long-polls |
 | `aurora_ops` | `{ "connector": id }` | API → API connector long-polls |
 | `aurora_inbox` | `{}` | API → API inbox workers |
@@ -134,6 +134,45 @@ caches, waiters return early). Payloads are JSON ≤ 7 000 bytes.
 
 Deltas are coalesced by the API before notifying (≥100 ms or ≥2 000 chars per
 turn per notification) so a busy stream does not flood the channel.
+
+### The delta bus seam (phase 1, RFE-016, D-48)
+
+Control signals (`aurora_conversation`, `aurora_work`, `aurora_approval`, …) stay
+on NOTIFY (D-03). The **streaming text** (`aurora_delta`) is different: it is
+high-volume, ephemeral, and — because Postgres serializes NOTIFY delivery in the
+commit path and every API replica receives every notification — the first shared
+bottleneck. From phase 1 deltas therefore flow through a named seam, not through
+NOTIFY calls scattered in handlers:
+
+```rust
+/// aurora-db::bus — registered by id; phase 1 implementation: `notify`.
+#[async_trait]
+pub trait DeltaBus: Send + Sync + 'static {
+    /// Publish one coalesced delta. Best effort: an error is logged and counted,
+    /// never fails the turn or the durable event write.
+    async fn publish(&self, delta: Delta) -> Result<()>;
+    /// One stream of every delta from every replica (including this one). A new
+    /// subscription (first or after a loss) makes the consumer resynchronize from
+    /// the database; the bus replays nothing.
+    async fn subscribe(&self) -> Result<BoxStream<'static, Delta>>;
+}
+pub struct Delta { pub conversation_id: Uuid, pub turn_id: Uuid,
+                   pub kind: DeltaKind /* text | thinking | activity */, pub data: String }
+```
+
+Contract: **at-most-once, lossy allowed** (a lost delta is repaired when the
+durable `text` event arrives; consumers discard a turn's deltas on it);
+per-`(conversation, turn)` order preserved; payload ≤ 7 000 bytes (JSON-encoded
+`Delta`); coalescing (≥100 ms or ≥2 000 chars, `DELTA_COALESCE`) happens in the
+publisher *above* the trait so every implementation sees the same load; no
+durability, no ack. Selection: `events.delta_bus` (default `notify`); an unknown id
+fails startup naming the key (registry rule, `01 §Design principles`). The phase 1
+`notify` implementation is exactly the `aurora_delta` channel described above;
+later implementations (Redis pub/sub, direct replica gossip) are registry
+entries, not a refactor. A conformance suite (`18`) runs against every
+implementation. Metrics: `aurora_delta_published_total`, `…_dropped_total`,
+`aurora_delta_publish_seconds`, `aurora_delta_subscriber_lag_seconds`, and for the
+`notify` implementation `aurora_pg_notify_queue_usage` (`pg_notification_queue_usage()`).
 
 ## Background jobs (every API replica)
 
