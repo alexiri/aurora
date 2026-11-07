@@ -255,7 +255,9 @@ jobs:
           cache-to: type=gha,scope=services,mode=max
 
   images-services:
-    concurrency: { group: "images-services-${{ github.ref }}", cancel-in-progress: false }
+    # One group per image: a shared group lets only one matrix leg run and keeps a single pending
+    # slot, so the next push's legs replaced (cancelled) the siblings still waiting.
+    concurrency: { group: "images-services-${{ github.ref }}-${{ matrix.image }}", cancel-in-progress: false }
     needs: [images-builder]
     runs-on: ubuntu-24.04
     permissions:
