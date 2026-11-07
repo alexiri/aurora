@@ -777,3 +777,214 @@ async fn eviction_uses_the_runners_registered_ceiling() {
     assert!(evicts(Some(1)).await, "2 idle > ceiling 1 must evict");
     assert!(!evicts(None).await, "default ceiling is not exceeded");
 }
+
+impl Rig {
+    /// Start `agent`'s sandbox and report it running; returns (sandbox, boot).
+    async fn boot_running(&self, rep: Uuid) -> (String, String) {
+        let w = self.work(rep, 0).await;
+        let item = first(&w, "sandbox.start");
+        let (sb, boot) = (
+            item["sandbox_id"].as_str().unwrap().to_owned(),
+            item["boot_id"].as_str().unwrap().to_owned(),
+        );
+        self.report(rep, Uuid::now_v7(), &sb, &boot, "running")
+            .await;
+        (sb, boot)
+    }
+
+    async fn finish_turns(&self, agent: Uuid) {
+        sqlx::query("UPDATE turns SET status = 'done' WHERE agent_id = $1")
+            .bind(agent)
+            .execute(self.h.pool())
+            .await
+            .unwrap();
+    }
+
+    async fn process(&self, agent: Uuid, sb: &str, boot: &str, busy: bool) -> Uuid {
+        let id = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO processes (id, agent_id, sandbox_id, boot_id, name, command, status, busy, started_at)
+             VALUES ($1,$2,$3::uuid,$4::uuid,'dev','sleep 1000','running',$5,now())",
+        )
+        .bind(id)
+        .bind(agent)
+        .bind(sb)
+        .bind(boot)
+        .bind(busy)
+        .execute(self.h.pool())
+        .await
+        .unwrap();
+        id
+    }
+
+    async fn age(&self, sb: &str, hours: i32) {
+        sqlx::query(
+            "UPDATE sandboxes SET last_engaged_at = now() - make_interval(hours => $2),
+                 last_active_at = now() - make_interval(hours => $2) WHERE id = $1::uuid",
+        )
+        .bind(sb)
+        .bind(hours)
+        .execute(self.h.pool())
+        .await
+        .unwrap();
+    }
+}
+
+/// TEST-014 (arm 2): a busy process holds the box awake past `IDLE_STOP`, only until
+/// `BACKGROUND_CAP`, then the stop reason is `cap`.
+#[tokio::test]
+async fn background_process_holds_awake_until_the_cap() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent_with_turn("bg").await;
+    let (sb, boot) = r.boot_running(rep).await;
+    r.finish_turns(agent).await;
+    r.process(agent, &sb, &boot, true).await;
+    // Idle (3 h > 30 min) but background-busy: stays awake.
+    r.age(&sb, 3).await;
+    assert!(r.work(rep, 0).await["items"].as_array().unwrap().is_empty());
+    assert_eq!(r.sandbox_state(&sb).await, "running");
+    // Beyond the 12 h cap: stopped with reason `cap`.
+    r.age(&sb, 13).await;
+    let w = r.work(rep, 0).await;
+    let stop = first(&w, "sandbox.stop");
+    assert_eq!(
+        (stop["reason"].as_str(), stop["boot_id"].as_str()),
+        (Some("cap"), Some(boot.as_str()))
+    );
+}
+
+/// TEST-014 (arm 2): with a start waiting and held-awake boxes over the ceiling, the
+/// longest-idle one is evicted.
+#[tokio::test]
+async fn eviction_stops_the_longest_idle_when_a_start_is_waiting() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 2).await;
+    let work2 = || async {
+        let (s, v) = r
+            .call(
+                Some(rep),
+                "/v1/runner/work",
+                Some(json!({"wait_secs": 0, "capacity": {"running": 2, "max": 2}})),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        v
+    };
+    let a1 = r.agent_with_turn("e1").await;
+    let a2 = r.agent_with_turn("e2").await;
+    let w = r.work(rep, 0).await;
+    let starts: Vec<&Value> = w["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["kind"] == "sandbox.start")
+        .collect();
+    assert_eq!(starts.len(), 2, "{w}");
+    let mut ids = Vec::new();
+    for it in starts {
+        let (sb, boot) = (
+            it["sandbox_id"].as_str().unwrap(),
+            it["boot_id"].as_str().unwrap(),
+        );
+        r.report(rep, Uuid::now_v7(), sb, boot, "running").await;
+        ids.push(sb.to_owned());
+    }
+    let (s1, s2) = (ids[0].clone(), ids[1].clone());
+    r.finish_turns(a1).await;
+    r.finish_turns(a2).await;
+    // Both are idle but younger than IDLE_STOP; s1 has been idle longer. Nothing is waiting yet.
+    sqlx::query(
+        "UPDATE sandboxes SET last_engaged_at = now() - interval '10 minutes' WHERE id = $1::uuid",
+    )
+    .bind(&s1)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE sandboxes SET last_engaged_at = now() - interval '1 minute' WHERE id = $1::uuid",
+    )
+    .bind(&s2)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    assert!(work2().await["items"].as_array().unwrap().is_empty());
+    // A third agent needs a box: the longest-idle one is evicted.
+    r.agent_with_turn("e3").await;
+    let w = work2().await;
+    let stop = first(&w, "sandbox.stop");
+    assert_eq!(stop["reason"], "evict");
+    assert_eq!(stop["sandbox_id"], s1.as_str());
+    assert_eq!(r.sandbox_state(&s2).await, "running");
+}
+
+/// TEST-014 (arm 10/11): on boot end, running processes become `parked` (platform stop) or
+/// `lost` (container died) and their armed watches convert likewise with a notice.
+#[tokio::test]
+async fn boot_end_parks_or_loses_processes_and_converts_watches() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    for (kind, state, expect) in [("park", "stopped", "parked"), ("die", "failed", "lost")] {
+        let agent = r.agent_with_turn(kind).await;
+        let (sb, boot) = r.boot_running(rep).await;
+        let conv: Uuid =
+            sqlx::query_scalar("SELECT conversation_id FROM turns WHERE agent_id = $1")
+                .bind(agent)
+                .fetch_one(r.h.pool())
+                .await
+                .unwrap();
+        let p = r.process(agent, &sb, &boot, false).await;
+        let w = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO watches (id, process_id, agent_id, conversation_id, kind, status, expires_at)
+             VALUES ($1,$2,$3,$4,'exit','armed', now() + interval '1 hour')",
+        )
+        .bind(w)
+        .bind(p)
+        .bind(agent)
+        .bind(conv)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+        if state == "stopped" {
+            sqlx::query(
+                "UPDATE sandboxes SET state = 'stopping', stop_reason = 'idle' WHERE id = $1::uuid",
+            )
+            .bind(&sb)
+            .execute(r.h.pool())
+            .await
+            .unwrap();
+        }
+        let v = r.report(rep, Uuid::now_v7(), &sb, &boot, state).await;
+        assert_eq!(v["results"][0]["status"], "applied", "{v}");
+        let ps: String = sqlx::query_scalar("SELECT status FROM processes WHERE id = $1")
+            .bind(p)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+        let ws: String = sqlx::query_scalar("SELECT status FROM watches WHERE id = $1")
+            .bind(w)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+        assert_eq!((ps.as_str(), ws.as_str()), (expect, expect));
+        let notice: serde_json::Value = sqlx::query_scalar(
+            "SELECT payload FROM transcript_events WHERE conversation_id = $1 AND type = 'notice'",
+        )
+        .bind(conv)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+        assert_eq!(notice["code"], format!("watch_{expect}"));
+        // A duplicate stop report does not notify twice.
+        r.report(rep, Uuid::now_v7(), &sb, &boot, state).await;
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM transcript_events WHERE conversation_id = $1 AND type = 'notice'",
+        )
+        .bind(conv)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+        assert_eq!(n, 1);
+    }
+}
