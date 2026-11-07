@@ -216,7 +216,10 @@ impl Mm {
             .http
             .post(format!("{}/api/v4/users/{user_id}/image", self.base))
             .bearer_auth(token)
-            .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
             .body(body)
             .send()
             .await

@@ -524,6 +524,7 @@ dependencies = [
  "anyhow",
  "aurora-config",
  "aurora-connector-fake",
+ "aurora-connector-mattermost",
  "aurora-connector-sdk",
  "aurora-core",
  "aurora-crypto",

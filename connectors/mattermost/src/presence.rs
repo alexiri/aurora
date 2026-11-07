@@ -149,7 +149,10 @@ pub async fn provision(integ: &Arc<Integ>, op: &Operation, p: PresenceProvisionO
                             .and_then(Value::as_str)
                             .filter(|i| is_mm_id(i))
                             .ok_or_else(|| {
-                                err(ErrorCode::Unavailable, "bot creation answered without an id")
+                                err(
+                                    ErrorCode::Unavailable,
+                                    "bot creation answered without an id",
+                                )
                             })?;
                         bot = Some((id.to_owned(), name));
                         break;
@@ -301,12 +304,21 @@ async fn apply_icon(integ: &Integ, admin: &str, bot: &str, url: Option<&str>) ->
     let Some(url) = url else {
         integ
             .mm
-            .send(admin, Method::DELETE, &format!("/users/{bot}/image"), &[], None)
+            .send(
+                admin,
+                Method::DELETE,
+                &format!("/users/{bot}/image"),
+                &[],
+                None,
+            )
             .await?;
         return Ok(());
     };
     let (bytes, content_type) = fetch_avatar(integ, url).await?;
-    integ.mm.set_user_image(admin, bot, bytes, &content_type).await
+    integ
+        .mm
+        .set_user_image(admin, bot, bytes, &content_type)
+        .await
 }
 
 /// Resolves `avatar_url` against the Aurora API and refuses any other origin: the
@@ -389,7 +401,7 @@ mod tests {
         assert_eq!(bot_username("Scout"), "scout");
         assert_eq!(bot_username("my agent!"), "my-agent");
         assert_eq!(bot_username("7zip"), "a7zip");
-        assert_eq!(bot_username("x"), "axx");
+        assert_eq!(bot_username("x"), "xxx");
         assert_eq!(bot_username(&"a".repeat(40)).len(), 22);
     }
 

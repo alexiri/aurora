@@ -31,4 +31,5 @@ aurora-crypto = { workspace = true }
 aurora-protocol = { workspace = true }
 aurora-connector-sdk = { workspace = true }
 aurora-connector-fake = { path = "../../connectors/fake" }
+aurora-connector-mattermost = { path = "../../connectors/mattermost" }
 sha2 = { workspace = true }

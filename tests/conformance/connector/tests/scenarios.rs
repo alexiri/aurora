@@ -1152,7 +1152,10 @@ async fn s13_dedicated_presence_lifecycle() -> R {
             .await
             .ok_or_else(|| anyhow::anyhow!("no result for message.post"))?;
     let posted = ok_data(&r);
-    let message_ref = posted["message_ref"].as_str().unwrap_or_default().to_owned();
+    let message_ref = posted["message_ref"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     let post = c.find_post(&message_ref).await?;
     if profile.is_some() {
         assert_eq!(post.author_ref, res.platform_user_ref, "posted as the bot");

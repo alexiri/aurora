@@ -97,6 +97,18 @@ impl WsEvent {
         self.data.get(key).and_then(Value::as_str)
     }
 
+    /// The user a membership event is about: `data.user_id`, or, in the copy a removed
+    /// user receives about themself (`data` then has only `channel_id` and `remover_id`),
+    /// the broadcast's `user_id`.
+    pub fn member_id(&self) -> Option<&str> {
+        self.str_field("user_id").or_else(|| {
+            self.broadcast
+                .get("user_id")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+        })
+    }
+
     pub fn channel_id(&self) -> Option<&str> {
         self.broadcast
             .get("channel_id")
@@ -636,6 +648,19 @@ mod tests {
         // Replies to our own requests carry no event name.
         assert!(WsEvent::parse(r#"{"status":"OK","seq_reply":1}"#).is_none());
         assert!(WsEvent::parse("garbage").is_none());
+    }
+
+    #[test]
+    fn removed_user_gets_its_id_from_the_broadcast() {
+        // As Mattermost 11.7 sends it to the user who was removed.
+        let own = r#"{"event":"user_removed","data":{"channel_id":"c1","remover_id":"r1"},"broadcast":{"user_id":"u1","channel_id":""},"seq":6}"#;
+        let e = WsEvent::parse(own).unwrap();
+        assert_eq!(e.member_id(), Some("u1"));
+        assert_eq!(e.str_field("channel_id"), Some("c1"));
+        assert_eq!(e.str_field("remover_id"), Some("r1"));
+        // The copy other members get names the user in `data`.
+        let other = r#"{"event":"user_removed","data":{"user_id":"u1","channel_id":"c1"},"broadcast":{"channel_id":"c1"},"seq":7}"#;
+        assert_eq!(WsEvent::parse(other).unwrap().member_id(), Some("u1"));
     }
 
     #[test]

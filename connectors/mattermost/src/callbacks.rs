@@ -214,20 +214,6 @@ async fn lose_results(
     Json(json!({"ok": true})).into_response()
 }
 
-#[cfg(test)]
-#[allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn constant_time_compare() {
-        assert!(ct_eq("abc", "abc"));
-        assert!(!ct_eq("abc", "abd"));
-        assert!(!ct_eq("abc", "abcd"));
-        assert!(!ct_eq("", "x"));
-    }
-}
-
 /// Test profile: the dedicated bots the open integrations know (user ids), so a suite can
 /// wait until a presence it handed the core has been picked up.
 async fn test_bots(State(shared): State<Arc<Shared>>) -> Json<Value> {
@@ -245,4 +231,18 @@ async fn test_bots(State(shared): State<Arc<Shared>>) -> Json<Value> {
         })
         .collect();
     Json(json!({"bots": ids}))
+}
+
+#[cfg(test)]
+#[allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constant_time_compare() {
+        assert!(ct_eq("abc", "abc"));
+        assert!(!ct_eq("abc", "abd"));
+        assert!(!ct_eq("abc", "abcd"));
+        assert!(!ct_eq("", "x"));
+    }
 }

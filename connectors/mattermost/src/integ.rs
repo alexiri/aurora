@@ -514,7 +514,7 @@ impl Integ {
 
     async fn handle_membership(&self, ev: &WsEvent, added: bool, via: Option<Uuid>) {
         let event_at = now_ms();
-        let Some(user_id) = ev.str_field("user_id") else {
+        let Some(user_id) = ev.member_id() else {
             return;
         };
         if !self.bots().contains(user_id) {
@@ -739,7 +739,11 @@ impl Integ {
                 let s = since.to_string();
                 match self
                     .mm
-                    .get_q(token, &format!("/channels/{}/posts", ch.id), &[("since", &s)])
+                    .get_q(
+                        token,
+                        &format!("/channels/{}/posts", ch.id),
+                        &[("since", &s)],
+                    )
                     .await
                 {
                     Ok(v) => posts.extend(posts_of(&v)),

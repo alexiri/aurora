@@ -974,7 +974,12 @@ impl PlatformDriver for MattermostDriver {
         // The connector opens the bot's socket at its next config poll.
         let end = tokio::time::Instant::now() + WAIT;
         loop {
-            let seen = match self.http.get(format!("{}/bots", self.control_url)).send().await {
+            let seen = match self
+                .http
+                .get(format!("{}/bots", self.control_url))
+                .send()
+                .await
+            {
                 Ok(r) => r.text().await.unwrap_or_default().contains(&bot_id),
                 Err(_) => false,
             };
@@ -1004,9 +1009,15 @@ impl PlatformDriver for MattermostDriver {
     async fn bot_profile(&self, bot_ref: &str) -> Result<Option<BotProfile>> {
         let id = self.user_id(bot_ref);
         let bot = self
-            .admin(Method::GET, &format!("/bots/{id}?include_deleted=true"), None)
+            .admin(
+                Method::GET,
+                &format!("/bots/{id}?include_deleted=true"),
+                None,
+            )
             .await?;
-        let user = self.admin(Method::GET, &format!("/users/{id}"), None).await?;
+        let user = self
+            .admin(Method::GET, &format!("/users/{id}"), None)
+            .await?;
         Ok(Some(BotProfile {
             username: bot["username"].as_str().unwrap_or_default().to_owned(),
             display_name: bot["display_name"].as_str().unwrap_or_default().to_owned(),
