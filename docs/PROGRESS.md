@@ -127,7 +127,7 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | FIX-003 | Unused config wired (condition_body_bytes, resolve cache TTL, held_awake_ceiling), connector bootstrap tokens + allow_unsigned, OTLP export, sandbox image from config (OPS-011), k8s harness advertisement (TEST-017) | Rust | in-progress | BE-070 | Sonnet (worktree) | |
 | BE-066 | Apps tools `request_app_connection` (I-29), `propose_custom_connection` (08 §Agent-proposed) | Rust | done (73dab75f) | BE-031, BE-042 | Haiku (worktree) | |
 | FE-051 | Schedules, webhooks, peers tabs; action approvals; chat attachments; app-turn Continue | Next.js | done (55480baf) | BE-062..065 | Sonnet (worktree) | web 17 files / 123 tests; typecheck, lint (0 errors), build |
-| TEST-014 | M5 hosted suites (18) + live claude-code conformance (needs LiteLLM endpoint) | e2e | todo | M5 | Sonnet | |
+| TEST-014 | M5 hosted suites: audit 18 §Hosted agents, fill gaps | Rust/e2e | todo (briefed) | M5 | Sonnet (worktree) | |
 | CHAN-001 | aurora-channels (content, cards, action tokens, capabilities; I-26) | Rust | done | — | Sonnet | channels tests |
 | CON-001 | Connector contract W8 + SDK + fake connector | Rust | done | CHAN-001 | Sonnet | connector tests; FUP-M6 |
 | API-006 | M6 contract (connector admin, integrations, presences, bindings, user links, DM defaults, reach; C-31..C-37) | contract | done | — | Opus | API_CONTRACTS.md M6 |
@@ -136,11 +136,11 @@ Legend: done = acceptance evidence recorded; partial = code in tree, agent pause
 | BE-074 | Channel management API (API-006) + shared channel repos | Rust | done (1b48f47a) | BE-071 | Sonnet (worktree) | |
 | BE-072 | Inbox processing (13 §5.1), mirror (§5.2), commands (§5.4) | Rust | done (68e1c128; reconciled with BE-073, S-12) | BE-071, BE-074 | Sonnet (worktree) | |
 | BE-073 | Cards, action tokens, clicker authorization, approval fan-out | Rust | done (20fc85cc) | BE-071, BE-074 | Sonnet (worktree) | |
-| BE-075 | Messaging tools + `send_message` action handler | Rust | in-progress | BE-072, BE-074 | Sonnet (worktree) | |
+| BE-075 | Messaging tools + `send_message` action handler | Rust | done (bea142ff) | BE-072, BE-074 | Sonnet (worktree) | |
 | TEST-015 | Connector conformance suite (fake core) | Rust test | done (872d94d3) | CON-001 | Sonnet (worktree) | 12/12 scenarios in-process and binary mode (`scripts/conformance.sh`); fake/SDK fixes; FUP-M6 closed |
 | FE-060 | Channel pages, admin connectors, /link/channel, account links + DM defaults | Next.js | done (1fe32db7) | API-006 | Sonnet (worktree) | web 18 files / 142 tests; build |
 | FIX-004 | Presence options for members (C-39), connector manifest diff (C-40) | both | in-progress | FE-060 | Sonnet (worktree) | |
-| TEST-016 | e2e-hosted M6 scenario (fake platform DM → Daneel → approve from card) | e2e | todo | BE-072..075 | — | |
+| TEST-016 | M6 e2e: real core + fake connector (scenario of 19 M6, replica failover, linking, mirror, messaging approval, credential_dead) | e2e | in-progress | BE-070..075 | Sonnet (worktree) | |
 | OPS-010 | Helm chart | Ops | done | — | Sonnet | `helm lint`, `helm template` |
 | RUN-004 | Kubernetes backend (+ runner.k8s.core_namespace config fix) | Rust | done (e65ec66d) | RUN-003 | Sonnet (Orca worker, worktree) + Opus (kube → aws-lc-rs) | config 18, k8s unit 15, k8s_mock 15 (fake API server), runner 10; clippy; cargo deny ok; helm-rendered ConfigMap loads |
 | OPS-011 | kind e2e (Helm from scratch, k8s backend, NetworkPolicy/SEC-02 probes) | Ops | done (3f97f950) | RUN-004, OPS-013 | Sonnet (worktree) | |
