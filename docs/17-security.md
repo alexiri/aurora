@@ -146,6 +146,7 @@ runs), configured external secret stores.
   member is gone. Only owners can create them, they are labelled, and the
   offboarding and audit views list them; a freeze or the removal of the agent
   stops them.
+- **The credentialed Default Rule does not cover LLM hosts** (phase 3, RFE-023): an administrator's "default: block" does not stop model traffic; LLM access is governed by `08 §11` (and by explicit rules, which win). Operators who need to restrict model endpoints must set `sanctioned_only` / endpoint permissions rather than rely on the Default Rule.
 - **Revocation lag during a database outage** (phase 3, RFE-014): while Postgres or the LISTEN connection is down the gateway cannot learn of revocations, freezes or policy changes; they take effect when the cached entries' TTL (`gateway.resolve_cache_ttl_secs`, default 60 s) runs out. A held approval that expires during the outage is recorded when the database returns.
 - **BYO tokens are bearer secrets** (phase 2, RFE-025; phase 3, RFE-013: with no maximum age configured, which is the default, they still never expire): a source CIDR list limits
   *network position*, not identity — anyone behind an allowed NAT or on an allowed

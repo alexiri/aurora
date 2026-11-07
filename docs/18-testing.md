@@ -173,6 +173,18 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Dashboard: tier badges, shadow indicators, read-only open from the agent tab,
   workspace skills page (owner vs member).
 
+### Default Rule and LLM hosts (phase 3, RFE-023)
+- Policy corpus (`crates/aurora-policy/tests/corpus/`): Default Rule `block` +
+  injected non-LLM credential → `default_denied`; + injected LLM key on a governed
+  LLM host → no verdict (flows, subject to governance) with trace reason
+  `default_rule_skipped_llm_host`; + explicit block / require-approval / rate-limit
+  rule naming the LLM host → the rule wins; uncredentialed request to an LLM host
+  under `credentialed_only` → `egress_denied` unless allow-listed; same results for
+  org and workspace scope and for the combined verdict; simulate and effective view
+  report the reason.
+- Dashboard: the Default Rule note appears at org and workspace scope and links to
+  governance.
+
 ### Governance
 - Governance validation: org documents below the instance minimum, scope and
   list subset rules, defaults for new orgs.

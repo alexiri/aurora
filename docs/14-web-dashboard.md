@@ -65,7 +65,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   Suspend/remove first opens the **offboarding view** — "Removing Alice disables
   these N schedules and webhooks" with the list, a "Reassign to…" picker (a member
   or the workspace) and a Skip option; the removal then carries `reassign_to`.
-- **Policy**: org rules editor (draft/publish).
+- **Policy**: org rules editor (draft/publish). (phase 3, RFE-023) The **Default Rule** control carries the note "Does not affect LLM endpoints — see Governance" with a link to the governance page, and a tooltip explaining that explicit block rules naming an LLM host still apply.
 - **Credentials**: org secrets, org LLM keys, org app connections, OAuth clients.
 - **Apps**: app availability posture and allow-list.
 - **Governance** (`08 §11`; phase 3, RFE-013: a **BYO agent tokens** setting "maximum age (days)", empty = never expire, shown locked with "enforced by instance" when the instance value is lower, plus a stale/expiring token list with Regenerate shortcuts; phase 2, RFE-025: a **BYO agents** panel — posture selector limited to values not below the instance floor, default source CIDR list, org default "require context credentials"; shown locked with "enforced by instance" when `byo.enabled = false`):
@@ -167,7 +167,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   required account ("Keys must belong to the corporate Anthropic
   organization"), shows the verified account after saving, and offers
   "Re-verify"; refused keys show the governance reason.
-- **Policy** — workspace rules editor.
+- **Policy** — workspace rules editor. (phase 3, RFE-023) Its Default Rule control carries the same note ("Does not affect LLM endpoints — see Governance"); simulate shows `default_rule_skipped_llm_host` when the carve-out applied.
 - **Skills** (phase 3, RFE-020) — workspace skills editor (owners; members read-only): same editor as the agent tier, a banner "Applies to every agent in this workspace", and a per-skill list of the agents it reaches and any agent-level skill that overrides it.
 - **Activity** — request log (decision, rule name, app/tool, conversation
   link), usage.

@@ -187,7 +187,7 @@ The open lane exists for browsers (TLS interception breaks bot defences and
 browsers cannot install the CA). It keeps credential auth, host-level policy
 (block / approval → refuse with 403 / rate limit → 429), the destination guard,
 and writes one request-log row per tunnel with byte counts. It never applies
-the credentialed Default Rule and never injects; it **does** apply the
+the credentialed Default Rule and never injects (the Default Rule also never applies to governed LLM hosts, `07 §Why the Default Rule skips LLM hosts`, RFE-023); it **does** apply the
 uncredentialed default (`07 §Evaluation`), so under the `credentialed_only`
 egress posture browsers reach only allow-listed hosts, and it applies the LLM
 posture (governed LLM hosts are refused under `sanctioned_only`, since nothing

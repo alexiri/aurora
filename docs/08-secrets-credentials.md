@@ -723,6 +723,13 @@ operator chose not to restrict that endpoint).
   (§11.3). Requests to **known LLM hosts** (providers Aurora has no configured
   endpoint for) are refused outright.
 
+(phase 3, RFE-023) **Relation to the policy Default Rule.** The credentialed Default
+Rule (`07 §Evaluation`) deliberately does **not** apply to governed LLM hosts: the
+model loop is credentialed traffic and must not be bricked by a default-deny of
+tool credentials. This section — posture, endpoint and scope permissions, key
+origin, model allow-lists — *is* the control for LLM traffic. Explicit policy
+rules naming an LLM host still win (`07 §Why the Default Rule skips LLM hosts`).
+
 ### 11.5 Model allow-lists
 
 When the effective `allowed_models` for an endpoint is non-empty, every request
