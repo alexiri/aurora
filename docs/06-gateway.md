@@ -107,6 +107,13 @@ unencrypted.
   expired, the agent's workspace/org is gone, or the org has no active owner
   (org suspended). Context credentials are accepted until
   `expires_at` (turn end + `CONTEXT_CREDENTIAL_GRACE`).
+- (phase 2, RFE-006) Also rejected when the agent is **effectively frozen**
+  (agent, workspace or org, `04 §Freeze`): 403 `frozen` (`details.level`), not
+  407 — the credential is fine, the principal is paused. The frozen flags are part
+  of the cached identity (invalidated by scopes `agent`, `workspace`, `org`); on
+  such an invalidation the gateway **closes the live tunnels and WebSockets** of
+  the affected credentials and answers requests held for approval with 403
+  `frozen`.
 - Resolution yields the **request identity**: `{ credential_id, kind,
   agent_id, workspace_id, org_id, conversation_id?, turn_id?, context_label?,
   principals }` where, in phase 0, `principals = {agent_id} ∪ {user ids with
@@ -358,6 +365,7 @@ dashboard URL to fix the problem when one exists.
 | Code | Status | When | `details` |
 |------|--------|------|-----------|
 | `proxy_auth_required` | 407 | missing/invalid/expired credential | — |
+| `frozen` | 403 | (phase 2, RFE-006) the agent, its workspace or its org is frozen | `level` |
 | `not_a_proxy_request` | 400 | origin-form request on 4102 | — |
 | `open_lane_not_permitted` | 403 | (phase 1, RFE-003) open lane requested by a credential without the `browser` capability | — |
 | `open_lane_disabled` | 403 | (phase 1, RFE-003) effective open-lane posture is `disabled` | `manage_url` |

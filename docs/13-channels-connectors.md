@@ -225,6 +225,11 @@ idempotent). Steps:
 
 1. **Integration**: must be `active` and belong to the posting connector.
 2. **Echo guard**: author is one of this integration's bots → ignore.
+2a. (phase 2, RFE-006) **Frozen**: if the resolved agent is effectively frozen
+   (`04 §Freeze`), no turn is created and no sandbox is started; reply once per
+   (space/thread, person) per `FREEZE_REPLY_INTERVAL` with the platform-voice
+   line "<Agent> is paused by an administrator." and stop. (The same check applies
+   after step 3 resolves the agent; shown here for the reader.)
 3. **Target agent**:
    - addressed to a **dedicated** bot (DM to it, or it is mentioned) → its agent;
    - **shared** bot in a DM: an existing thread link for `(space, thread_ref)`

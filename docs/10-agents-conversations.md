@@ -40,6 +40,12 @@ deleting it clears `is_default` (no replacement is created).
 - When a channel integration creates a **shared bot**, its default display name
 is also `agents.default_name` (`13`).
 
+### Freezing an agent (phase 2, RFE-006)
+
+`POST /v1/agents/{agent}/freeze` pauses the agent without deleting anything:
+no turns, no gateway access, sandbox parked, schedules/webhooks/presences paused,
+state kept; reversible with `unfreeze`. Full rules: `04 §Freeze`.
+
 ### Deleting an agent
 
 Cascades in the database to everything it owns. Before the delete commits, the
@@ -148,6 +154,7 @@ turns become `aborted` immediately; dispatched/running ones get
 | No compatible granted LLM key                      | `failed` `no_model_key` (before any sandbox start)                                                                                                           |
 | Harness/provider terminal errors                   | `provider_auth`, `provider_rate_limited`, `provider_quota`, `provider_overloaded`, `provider_refusal`, `harness_failed` (classified by the supervisor, `12`) |
 | Restart requested                                  | active turns `failed` `agent_restarted`                                                                                                                      |
+| Agent effectively frozen (phase 2, RFE-006)        | `queued`/`joining` rows and live turns `aborted` with `error_code = frozen`; new turns refused (`04 §Freeze`)                                                |
 
 
 Error codes are an **open vocabulary**: the API stores any bounded code;
@@ -313,7 +320,9 @@ model, with `GATE_TIMEOUT`. Empty stdout or `{"wake_agent": false}` → quiet
 appended to the prompt; non-zero exit → `failed`.
 - **Fire** (due-work arm): claim rows with `next_fire_at <= now()` and no live
 `fire_lease_until` by stamping `fire_lease_until = now() + SCHEDULE_FIRE_LEASE`;
-re-check the creator's authority (`04 §Fire-time authority`); compute the
+re-check the creator's authority (`04 §Fire-time authority`); (phase 2, RFE-006)
+an effectively frozen agent is not fired — advance `next_fire_at`, write a
+`schedule_runs` row `skipped_frozen`, create no turn; compute the
 next real occurrence after `now()` (missed windows coalesce into one late
 fire); if the run conversation has an active turn → `skipped_busy`; else
 create the turn (prompt behind a "Scheduled task: <name>" header) and a
@@ -332,6 +341,8 @@ clamped block labelled as untrusted external data.
 - Optional verification (`hmac_sha256` over the raw body with a stored
 secret, constant-time compare) → 401 on mismatch.
 - Disabled or creator lost access → 410 / 403 and a `webhook_deliveries` row.
+  (phase 2, RFE-006) Effectively frozen agent → 410 `frozen` and a delivery row
+  `paused` (reason `frozen`); the webhook stays enabled.
 - Accepted → turn in the webhook's run conversation with the stored
 instructions + payload; responds `202 { "delivery_id" }` immediately.
 - Rate limit: 60 deliveries/min per webhook (429).

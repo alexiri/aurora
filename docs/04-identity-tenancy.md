@@ -252,7 +252,8 @@ per-principal API limiter of phase 2 (RFE-017) sits above these.
 |-------|--------|-------|
 | Org role | `owner` > `admin` > `member` | Always enforced. |
 | Membership status | `active`, `suspended` | Suspended = non-member for **every** check including API keys, channel clicks, schedules. |
-| Workspace access | `owner`, `member` | Org owners and admins are implicit workspace owners of every workspace in their org. |
+| Workspace access | `owner`, `member` (phase 2, RFE-012: `owner`, `approver`, `member`) | Org owners and admins are implicit workspace owners of every workspace in their org. |
+| Freeze state (phase 2, RFE-006) | not frozen / `frozen` — per **agent**, **workspace** and **organization** | A reversible, audited emergency switch, see *Freeze* below. |
 
 ### The access law
 
@@ -306,6 +307,9 @@ conversation and hour; best-effort).
 | Chat with agents, read transcripts, upload attachments | `can_use`; (phase 1, RFE-009) for `direct` conversations: the direct user (read + write) and `can_own` (read, abort/send-now only) — `can_see_conversation` |
 | Decide gateway approvals and action approvals for agents of the workspace | `can_use`; (phase 1, RFE-009) an approval that names a `direct` conversation is visible and decidable only by callers who `can_see_conversation` it (so: the direct user and `can_own`) |
 | Read activity (request log) of the workspace | `can_use`; (phase 1, RFE-009) rows whose conversation is a `direct` conversation the caller cannot see are **omitted** (owners see all) |
+| Freeze / unfreeze an **agent** (phase 2, RFE-006) | `can_own`; lifting a freeze imposed by a higher authority needs that authority (below) |
+| Freeze / unfreeze a **workspace** (phase 2, RFE-006) | `can_own` (org owners/admins included); same lifting rule |
+| Freeze / unfreeze an **organization** (phase 2, RFE-006) | org `owner`, or instance admin |
 | Plugins, trusted keys, host claims, connectors, runners | instance admin |
 
 Org admins/owners can therefore always repair a workspace; members of a shared
@@ -317,6 +321,69 @@ Schedules, webhooks, peer tasks and reach decisions store their **creator**.
 At every fire the access law is re-checked for that creator on the agent's
 workspace; if it fails the item is disabled with `disabled_reason =
 authorization` and the origin conversation receives a notice.
+
+## Freeze (phase 2, RFE-006, D-50)
+
+An emergency, **reversible** switch that stops an agent, every agent of a
+workspace, or every agent of an organization from acting, while keeping every
+byte of state for forensics. It exists because the phase-0 options (delete the
+agent, regenerate a token, restart, hand-edit policy) are destructive or partial.
+
+**State.** `agents`, `workspaces` and `organizations` each gain `frozen_at`,
+`frozen_by_user_id`, `frozen_reason` (1..500 chars, sanitized, required) and
+`frozen_authority` (`workspace_owner` < `org_admin` < `instance_admin`) — see
+`03 §Planned changes`. An agent is **effectively frozen** when it, its workspace
+or its organization is frozen. The flags are independent: unfreezing an agent does
+not unfreeze its frozen workspace.
+
+**Who.** Freezing an agent or a workspace needs `can_own` (a workspace owner,
+or an org owner/admin, who are implicit owners): the person closest to the agent
+decides to pull the plug, and freezing is safe to do fast. Freezing an
+**organization** needs org `owner` or an instance admin (an instance admin
+receives no org data access by this: the switch is an operator kill-switch for
+an incident such as a compromised org account, and lifts only as described
+next). **Lifting** requires at least the authority that froze (`frozen_authority`
+= the caller's highest applicable authority at freeze time): a workspace owner
+cannot unfreeze what an org admin froze, an org owner cannot lift an
+instance-admin freeze. All of it is idempotent (freezing a frozen scope keeps the
+original record, returns 200).
+
+**Effects** (all effective at the next gateway cache refresh ≤ 5 s, by
+`aurora_gateway_invalidate` scope `agent`/`workspace`/`org`, except where noted):
+
+1. **Gateway** refuses every credential of a frozen agent (403 `frozen`,
+   `details.level`), closes its live tunnels/WebSockets, and answers held
+   requests 403 `frozen` (their approvals become `abandoned`) — `06`, `07`.
+2. **Turns**: no turn starts. Creating one (any door) is refused: API 423
+   `frozen`; channel doors reply once per (space/thread, person) per
+   `FREEZE_REPLY_INTERVAL` (10 min) "*<Agent> is paused by an administrator.*"
+   and create nothing (`13 §5.1`); peer messaging says the same. `queued` and
+   `joining` rows are `aborted` (`error_code = frozen`); `dispatched`/`running`
+   turns get `turn.abort` and end `aborted` (`error_code = frozen`).
+3. **Due work**: the start, dispatch, steer, schedule and watch arms skip
+   effectively frozen agents (`05 §The due-work engine`); a running sandbox is
+   **parked** (`stop_reason = frozen`: container removed, home volume kept for
+   forensics, processes `parked`, armed watches kept but never fired). Reconcile
+   never destroys a frozen agent's home.
+4. **Webhooks** answer 410 `frozen` and record a `webhook_deliveries` row
+   `paused`; **schedules** are not fired and not disabled — `next_fire_at`
+   advances (missed fires coalesce, no catch-up burst) and a `schedule_runs` row
+   `skipped_frozen` is written; **presences** reply "paused" as above;
+   BYO `GET /v1/agent/container-config` and `POST /v1/agent/context-credentials`
+   answer 423 `frozen`.
+5. **Not frozen**: the management plane. Owners and admins can still read
+   transcripts, activity, audit, change policy/grants, rotate tokens, edit the
+   agent and unfreeze — only actions that *start agent work* are refused.
+   Credentials are **not revoked** (so unfreezing needs no redistribution);
+   boot/context credentials end with their boot/turn as usual.
+6. **Audit and notice**: `agent.freeze|unfreeze`, `workspace.freeze|unfreeze`,
+   `org.freeze|unfreeze` are in the security-critical set (written in the same
+   transaction, *Audit*). Each effectively frozen agent's direct conversations get
+   a platform `notice` (`code: "agent_frozen"`), and the dashboard shows a banner
+   at the scope.
+7. **Reversal**: unfreezing clears the flags, invalidates the gateway and wakes due
+   work. Nothing is replayed: aborted turns stay aborted, schedules resume at
+   their next occurrence, sandboxes start on demand.
 
 ## Invitations
 

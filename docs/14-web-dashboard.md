@@ -84,7 +84,8 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   toggling it needs a confirm dialog.
 - **Skills**: org skills editor.
 - **API keys**, **Audit log**, **Settings** (name, slug, members can create
-  workspaces, limits), **Danger zone**.
+  workspaces, limits), **Danger zone** (phase 2, RFE-006: **Freeze organization**
+  for owners).
 
 ### Workspace (`/o/<org>/w/<ws>/*`)
 - **Overview**: first-run checklist (store an LLM key → grant it to Daneel →
@@ -111,6 +112,10 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   - **Skills** — editor with file tree, executable bit, size meter.
   - **Schedules**, **Webhooks** (URL shown once on create/rotate),
     **Peers** (agent links and peer tasks).
+  - **Freeze** (phase 2, RFE-006) — a "Freeze agent" button on the agent header
+    (reason required, confirm dialog listing the effects); a frozen agent shows a
+    banner "Frozen by <name> on <date>: <reason>" with Unfreeze (disabled with the
+    explanation when a higher authority froze it).
   - **Computer** — sandbox state, "awake because…" reasons, processes,
     restart; BYO agents instead show **Connect** (token regenerate, container
     config, `aurora run` snippet, CA download).
@@ -135,11 +140,12 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   when a higher level is stricter). The simulate panel gets a lane switch
   (request / tunnel).
 - **Settings** — name, timezone, memory language (owners), access bindings,
-  workspace API keys, danger zone.
+  workspace API keys, danger zone. (phase 2, RFE-006) The danger zone offers
+  **Freeze workspace**; frozen workspaces and orgs show a banner on every page.
 
 ### Instance administration (`/admin/*`, instance admins only)
 Overview (versions, gateways, hook hosts, runners, connectors, active snapshot
-hash), Users, **Plugins** (installed packages, upload, pending approvals with a
+hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze action), Users, **Plugins** (installed packages, upload, pending approvals with a
 permissions review screen showing publisher, version, signer, hooks, egress per
 hook, context variables, host claims, and the diff against the previously
 approved version; reject/disable/uninstall with orphan warnings), **Host

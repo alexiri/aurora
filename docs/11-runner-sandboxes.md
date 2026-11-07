@@ -253,6 +253,9 @@ and the dashboard's "awake because…" badge.
 
 - **Idle**: no keep-awake reason and `now − last_engaged_at ≥ IDLE_STOP` →
 `stop_reason = idle`.
+- **Frozen** (phase 2, RFE-006): the agent is effectively frozen (`04 §Freeze`) →
+`stop_reason = frozen`, regardless of keep-awake reasons; the home volume is kept
+and a frozen agent is never started or reconciled away.
 - **Cap**: the background cap expired → `cap`.
 - **Evict**: a runner over its held-awake ceiling (`max(1, max_sandboxes − 1)`,
 override `runner.held_awake_ceiling`) needs a slot for a start; the

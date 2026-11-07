@@ -95,6 +95,11 @@ matrix:
 - Every handler resolves the target's workspace/org from the database and runs
   the permission check of `04 §Permission matrix`; a workspace key used on
   another workspace's resource → 403 `workspace_mismatch`.
+- (phase 2, RFE-006) Agent, workspace and org resources carry `frozen` (null or
+  `{ at, by_label, reason, authority, level: "agent"|"workspace"|"org" }`, `level` =
+  where it is set; `effective_frozen: bool` on agents). Operations that start
+  agent work on an effectively frozen agent (messages, attachments, send-now,
+  schedule run-now, webhook receive, peer messaging) answer **423 `frozen`**.
 - Resources the caller cannot see answer 404 (not 403) to avoid existence
   oracles, except where the caller can see the parent.
 
@@ -230,6 +235,11 @@ Arms, evaluated in this order per poll (detail of each in `10`/`11`):
 11. **Housekeeping slices**: close runtime intervals for stopped boots; mark
     processes of ended boots `lost`/`parked`.
 
+(phase 2, RFE-006) Arms 3 (start), 6 (dispatch), 7 (steer), 9 (schedules) and 10
+(watches) **skip effectively frozen agents** (agent, workspace or org flag,
+`04 §Freeze`); arm 2 (stop) parks a running frozen sandbox with
+`stop_reason = frozen` and ignores its keep-awake reasons.
+
 Work items and reports are defined in `16 §W5`.
 
 ## Turn and transcript persistence rules
@@ -257,6 +267,7 @@ aurora_gateway_invalidate` after commit with the narrowest scope:
 | Policy publish/rollback | `workspace` or `org` |
 | Agent delete, token regeneration, credential revocation | `agent` / `credential` |
 | Workspace access or membership change | `workspace` / `org` |
+| Freeze / unfreeze (phase 2, RFE-006) | `agent` / `workspace` / `org` |
 | App availability change | `org` |
 | Org governance change (and the stored-origin re-evaluation it triggers) | `org` |
 | Snapshot activation | (`aurora_registry` instead) |
@@ -298,6 +309,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/invitations/preview?token=`; POST `/v1/invitations/accept` | none / SO | |
 | GET/POST `/v1/orgs/{org}/api-keys`; DELETE `/v1/api-keys/{id}` | S (POST: SO) | org keys |
 | GET `/v1/orgs/{org}/audit` | S/K | |
+| POST `/v1/orgs/{org}/freeze` `{ reason }`; POST `/v1/orgs/{org}/unfreeze` | S/K | (phase 2, RFE-006) org `owner` |
 | GET/PUT `/v1/orgs/{org}/app-availability` | S/K | posture + allow-list |
 | GET/PUT `/v1/orgs/{org}/governance` | S/K | org governance document (`08 §11.2`) with `revision`; PUT validates against the instance ceiling (422 `governance_invalid` / `governance_below_instance_minimum`) |
 | GET `/v1/orgs/{org}/governance/effective` | S/K (any org member) | effective LLM and egress governance (instance ∩ org), each value marked `source: instance|org` (phase 1, RFE-003: includes `egress.open_lane`); non-compliant LLM secrets of the org |
@@ -313,6 +325,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/workspaces/{ws}/audit` | S/K | |
 | GET `/v1/workspaces/{ws}/activity` | S/K | request log, filters: agent, conversation, decision, host, app |
 | GET `/v1/workspaces/{ws}/usage` | S/K | runtime + tokens |
+| POST `/v1/workspaces/{ws}/freeze` `{ reason }`; POST `/v1/workspaces/{ws}/unfreeze` | S/K | (phase 2, RFE-006) `can_own`; as for agents |
 
 ### Secrets and LLM
 | Method & path | Auth | Purpose |
@@ -378,6 +391,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/agent/container-config`; POST `/v1/agent/context-credentials` | A | BYO self-service (`08`) |
 | PUT/GET `/v1/agents/{agent}/avatar`; GET `/v1/public/avatars/{key}` | S/K; P | |
 | POST `/v1/agents/{agent}/restart` | S/K | restart sandbox |
+| POST `/v1/agents/{agent}/freeze` `{ reason }`; POST `/v1/agents/{agent}/unfreeze` | S/K | (phase 2, RFE-006) `can_own`; 200 with `frozen: {at, by_label, reason, authority, level}`; 403 `freeze_authority_insufficient` when lifting a higher authority's freeze; audited atomically |
 | GET `/v1/agents/{agent}/sandbox` | S/K | state, keep-awake reasons, processes, ports |
 | GET `/v1/agents/{agent}/models` | S/K | models available from granted LLM keys |
 | GET `/v1/gateway/ca.pem` | S/K | gateway CA certificate |
@@ -431,6 +445,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET/POST/DELETE `/v1/admin/connectors`; POST `…/{id}/approve`, `…/{id}/token` | IA | provision token, approve manifest |
 | GET/POST/DELETE `/v1/admin/runners`; POST `…/{id}/token` | IA | |
 | GET `/v1/admin/registry/snapshot` | IA | active snapshot (JSON) |
+| POST `/v1/admin/orgs/{org}/freeze` `{ reason }`; POST `/v1/admin/orgs/{org}/unfreeze` | IA | (phase 2, RFE-006) operator kill-switch; `frozen_authority = instance_admin`; org data stays inaccessible |
 | GET/POST `/v1/admin/oauth-clients`; PATCH/DELETE `/v1/oauth-clients/{id}` | IA | instance-level OAuth clients (`08 §OAuth clients`) |
 
 ### Planes (machine callers)

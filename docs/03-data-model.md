@@ -1132,3 +1132,23 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | speaker_user_id | uuid null | the request identity's speaker (no FK, ledger table); lets operators see which person's turn caused a request | 2 (RFE-005) |
+
+#### `agents`, `workspaces`, `organizations` (freeze)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| frozen_at | timestamptz null | set ⇒ frozen at this level (`04 §Freeze`); effective freeze of an agent = agent ∨ workspace ∨ org | 2 (RFE-006) |
+| frozen_by_user_id | uuid null FK→users (set null) | | 2 (RFE-006) |
+| frozen_reason | text null | 1..500 chars, sanitized; required when `frozen_at` is set | 2 (RFE-006) |
+| frozen_authority | text null CHECK in (`workspace_owner`,`org_admin`,`instance_admin`) | highest authority of the freezer; lifting needs at least this | 2 (RFE-006) |
+
+(The same four columns on each of the three tables; a CHECK keeps them all null or all set.)
+
+#### `sandboxes`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| stop_reason | CHECK gains `frozen` | agent effectively frozen (`11`) | 2 (RFE-006) |
+
+#### `schedules`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| last_outcome | CHECK gains `skipped_frozen` | fire skipped because the agent is effectively frozen (`10 §Schedules`); `schedule_runs.outcome` (open text) records `skipped_frozen` too | 2 (RFE-006) |

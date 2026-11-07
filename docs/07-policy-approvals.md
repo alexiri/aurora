@@ -283,7 +283,7 @@ facts per tool (one per tool's first method/path example).
 **Trigger**: final verdict `needs_approval` (an *ask* tool or an explicit
 require-approval rule). The hold mechanics are in `06 §Approval holds`.
 
-**Lifecycle**: `pending` → `approved` | `denied` | `expired` | `abandoned`.
+**Lifecycle**: `pending` → `approved` | `denied` | `expired` | `abandoned`. (phase 2, RFE-006) Freezing the agent, its workspace or its org marks its `pending` approvals `abandoned` and pending action approvals `rejected` (reason `frozen`); unfreezing does not revive them.
 First decision wins (`UPDATE approvals SET status=… WHERE id=$1 AND
 status='pending'`); a losing decider gets 409 `already_decided`.
 

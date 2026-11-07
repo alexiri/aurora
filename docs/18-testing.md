@@ -112,6 +112,19 @@ done when its tests exist, pass in CI, and the security invariants it touches
   records them in the phase-1 report; a regression guard fails when p99 publish
   latency at 100 streams exceeds 50 ms.
 
+### Freeze (phase 2, RFE-006)
+- Effects matrix per level (agent, workspace, org): gateway `frozen` for MITM,
+  open lane and WebSocket; live tunnel closed ≤ 5 s after freezing; held request
+  answered `frozen` and approval `abandoned`; API 423 on messages/attachments/
+  run-now; queued turn aborted `frozen`, running turn aborted; due-work arms skip
+  (two pollers), sandbox parked `stop_reason = frozen` with home kept and not
+  reconciled away; webhook 410 + `paused` delivery; schedule `skipped_frozen`
+  without disabling; connector reply "paused" rate-limited by
+  `FREEZE_REPLY_INTERVAL`; BYO endpoints 423.
+- Authority: who may freeze/unfreeze at each level, `freeze_authority_insufficient`
+  when lifting a higher freeze, instance-admin freeze sees no org data, idempotent
+  repeat, audit rows in the same transaction (RFE-008), unfreeze resumes service.
+
 ### Hosted agents
 - Due-work engine against the fake runner backend: every arm, claim races with
   concurrent pollers, ownership fencing, replica death and takeover.
