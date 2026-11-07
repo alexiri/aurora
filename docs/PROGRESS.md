@@ -195,7 +195,7 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 
 | Task | Summary | Phase | Status | Depends on |
 |---|---|---|---|---|
-| OPS-016 | Faster builds/tests, lane clean-up | 1 | in-progress | — |
+| OPS-016 | Faster builds/tests, lane clean-up | 1 | done (2872c962): 96→22 test binaries, full test 27→14.5 min, target 20→6 GB, dev-fast rebuild 7-14 s | — |
 | MM-001 | Mattermost connector: crate, shared mode, conformance vs Mattermost container | 1 | done (70cf3c77; S-15) | — |
 | MM-002 | Mattermost dedicated mode + live scenario with the real core | 1 | done (3ecf14ce) | MM-001 |
 | P1-001 | RFE-001 auto-link opt-in; RFE-016 DeltaBus seam | 1 | done (ef1578e6) | — |
@@ -210,7 +210,7 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | OPS-017 | kind replaces compose | 1 | todo | OPS-016 |
 | OPS-018 | Live reload | 1 | todo | OPS-016, OPS-017 |
 | FIX-008 | Podman backend tolerates `stopped`/unknown container states (CI e2e-hosted on podman 4.9) | 1 | in-progress | — |
-| P2-005..P2-025 | Phase-2 RFE tasks (briefs in docs/tasks/P2-*.md) | 2 | briefed | P2-025 after P1-004 |
+| P2-005..P2-025 | Phase-2 RFE tasks (briefs in docs/tasks/P2-*.md) | 2 | P2-007, P2-017 in-progress; rest briefed | P2-025 after P1-004 |
 | P2-CAT / P2-DBL | Built-in app catalogue; gateway database lane (`21`) | 2 | to be briefed | — |
 
 ### Phase 1 developer tooling (owner, 2026-11-08)
