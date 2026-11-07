@@ -5,7 +5,7 @@ invariants `SEC-nn` (`17`). Phase 0 = M0–M7 (in scope now). Phase 1–4 are ou
 of scope until phase 0 exits (`MASTER_SPEC` "Phases are real").
 
 Status: `todo` · `planned` (briefs written) · `in-progress` · `done` (acceptance evidence in PROGRESS.md) · `blocked`.
-Last reconciled with git history: 2026-11-07 (after FE-060 merge, 1fe32db7).
+Last reconciled with git history: 2026-11-07 evening (after FIX-003 merge, 75f73761).
 
 | Requirement ID | Feature | Priority | Backend tasks | Frontend tasks | Dependencies | Status | Evidence |
 |---|---|---|---|---|---|---|---|
@@ -48,12 +48,12 @@ Last reconciled with git history: 2026-11-07 (after FE-060 merge, 1fe32db7).
 | M6/13§content | Neutral content, cards, action tokens, capabilities/fallbacks | P0 | CHAN-001 | — | — | done | channels tests; I-26 |
 | M6/13§contract | Connector contract v1 types, SDK, fake connector | P0 | CON-001, TEST-015 fixes | — | CHAN-001 | done | connector tests; FUP-M6 closed |
 | M6/13§plane | Registration, approval, ownership, config feed, inbox, ops, correlated ops, files | P0 | BE-070, BE-071 | — | API-006 | done (BE-070, BE-071) | connectors 12, connector_ops 11 |
-| M6/13§core | Inbox processing, routing, linking, reach, bindings, commands, mirror, cards, presence, messaging tools | P0 | BE-072..075 | FE-060 | BE-071 | in-progress (BE-072/073/074 + FE-060 done; BE-075 messaging, FIX-004 remain) | channels_mgmt 20, channels_inbox 23, channels_cards 16; web channels 17 |
+| M6/13§core | Inbox processing, routing, linking, reach, bindings, commands, mirror, cards, presence, messaging tools | P0 | BE-072..075 | FE-060 | BE-071 | done (BE-070..075, FE-060, FIX-004); e2e TEST-016 running | channels_mgmt 20, channels_inbox 23, channels_cards 16; web channels 17 |
 | M6/13§7 | Conformance suite (fake core) + e2e channel scenario | P0 | TEST-015, TEST-016 | — | CON-001 / BE-075 | conformance done (12/12); e2e todo | `scripts/conformance.sh` |
 | M7/11§k8s | Kubernetes runner backend | P0 | RUN-004 | — | RUN-003 | done | k8s_mock 15, unit 15; kind e2e 4/4 (OPS-011) |
 | M7/15§helm | Helm chart (jobs, policies, namespaces, RBAC, routing) | P0 | OPS-010 | — | — | done (FUP-M7) | `helm lint`, `helm template`; ConfigMap loads (RUN-004) |
-| M7/18 | kind e2e, SEC-02 on k8s, performance budgets, upgrade test | P0 | OPS-011 | — | RUN-004 | kind e2e done (OPS-011: 4/4, SEC-02/SEC-09 in-cluster); perf + upgrade (OPS-014) todo | |
-| M7/15§docs | Operator docs (install, LLM endpoints, runners, plugins, backups) | P0 | OPS-012 (+ OPS-013, FIX-003 for the gaps it found) | — | — | done (docs); gap fixes in progress | `docs/operator/` |
+| M7/18 | kind e2e, SEC-02 on k8s, performance budgets, upgrade test | P0 | OPS-011 | — | RUN-004 | kind e2e done (OPS-011: 4/4, SEC-02/SEC-09 in-cluster); perf + upgrade (OPS-014) in progress | |
+| M7/15§docs | Operator docs (install, LLM endpoints, runners, plugins, backups) | P0 | OPS-012 (+ OPS-013, FIX-003 for the gaps it found) | — | — | done | `docs/operator/` |
 | SEC-01..39 | Security invariants, each with a proving test (`17`) | P0 | per milestone | — | — | in-progress | proven so far: SEC-01/02/09/24/25/26/34 (TEST-013; SEC-02/09 also on k8s, OPS-011), SEC-35..39 (GW-005, TEST-020), CSRF (BE-010); full map at final audit |
 | P1/20 | Mattermost connector | P1 (later phase) | — | — | Phase 0 exit | out of scope now | |
 | P2..P4/21 | App catalogue, DB lane, Vault, SSH, previews, evals, … | later | — | — | Phase 0 exit | out of scope now | |
