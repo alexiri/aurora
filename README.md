@@ -43,17 +43,20 @@ After changing code, rebuild and restart only what changed (about 40 s per servi
 
 ```sh
 just kind-dev            # or name services: just kind-dev api gateway web
+just kind-live           # or let it watch your edits and run kind-dev for you
 just kind-status         # pods of the dev cluster
 just kind-down           # delete the cluster (the cargo cache volume is kept)
 ```
 
 ### Lightweight loop on the host
 
-The API, gateway, hook host and dashboard as plain host processes, with live reload for the dashboard. It
-needs the least setup, but there are no hosted agents, because the runner isn't started.
+The API, gateway, hook host, runner and dashboard as plain host processes, with live reload: a Rust service is
+rebuilt and restarted when you save, and the dashboard uses Next.js Fast Refresh. It needs the least setup.
+The runner uses a simulated sandbox backend by default; [live reload](docs/ops/live-reload.md) explains how
+to switch to real podman sandboxes.
 
 You need Rust (stable, via `rustup`; `rust-toolchain.toml` selects it), Node 20.9 or newer with `pnpm`,
-`podman` (for the dev Postgres) and `just`.
+`python3`, `podman` (for the dev Postgres) and `just`.
 
 ```sh
 pnpm --dir web install   # once
