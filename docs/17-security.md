@@ -72,6 +72,7 @@ runs), configured external secret stores.
 | SEC-38 | Under `credentialed_only`, uncredentialed traffic in both lanes reaches only allow-listed destinations or explicit allow rules. | 07, 08 §11 | e2e-gateway and e2e-hosted (browser via the open lane) |
 | SEC-39 | Governance only tightens downwards: an org cannot be looser than the instance, and no workspace setting or rule can loosen the org's LLM or egress governance. | 07, 08 §11 | evaluator corpus; API validation tests |
 | SEC-40 | (phase 1, RFE-002) The gateway proxy listener accepts TLS only; gateway credentials (`Proxy-Authorization`) and the `CONNECT` preamble never cross a network in cleartext, for sandboxes and BYO agents alike; every Aurora client verifies the listener certificate against the gateway CA (or the operator certificate) and the dialled name, and never falls back to plaintext. | 06, 08 §10, 11, 12, 15 | e2e-gateway: plaintext connect refused without reading a credential; TLS client with wrong name/untrusted CA refused; supervisor forwarder fails closed (no plaintext) when verification fails; container-config contains no `http://` gateway URL |
+| SEC-41 | (phase 1, RFE-003) The open lane is available only to credentials holding the `browser` capability (hosted boots started with it) and only while the effective open-lane posture (strictest of instance, org, workspace) permits it; a tunnel is judged by host and port only, restrictive rules treat unknowable parts (path, method, body, tool) as matched, allow rules and allow-list entries need a full match on what is knowable, and the supervisor opens the loopback open proxy only with the capability. | 06, 07, 08 §11, 11, 12 | e2e-gateway: BYO/context credential with username `open` refused; posture matrix (`enabled`/`allowlist_only`/`disabled` × instance/org/workspace); CONNECT-time corpus (path-scoped block refuses the tunnel, path-scoped allow does not admit it); e2e-hosted: no listener on 3129 in an image without the label |
 
 ## Residual risks (accepted, documented to operators)
 
@@ -84,7 +85,13 @@ runs), configured external secret stores.
 - **Context credentials are attribution, not isolation**: conversations of one
   agent share a sandbox.
 - **Open lane**: no request-level visibility for browser traffic; only host
-  policy and audit.
+  policy and audit. (phase 1, RFE-003) Access is now controlled — capability,
+  posture, CONNECT-time rule semantics (SEC-41) — but a permitted tunnel still
+  hides everything inside it, and any process in a sandbox with the `browser`
+  capability can reach the loopback open proxy (the capability is per sandbox
+  image/workspace, not per process). Operators who do not need browsers set the
+  open-lane posture to `disabled`; those who do and want containment use
+  `allowlist_only`.
 - **Governance covers gateway traffic only**: BYO agents outside Aurora's
   network control can reach providers directly; models hidden behind other
   APIs are not recognizable by host (only `credentialed_only` closes that).

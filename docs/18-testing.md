@@ -60,6 +60,16 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - Origin preflight and backstop against a mock Anthropic-style provider that
   returns configurable organization/workspace headers, including a
   reference-mode secret whose external value changes to a foreign key.
+- (phase 1, RFE-003) Open lane: credential-capability matrix (`aub_` with and
+  without `browser`, `aug_`, `auc_`, username `open` spoofing); posture matrix
+  (`enabled`/`allowlist_only`/`disabled` set at instance/org/workspace,
+  strictest wins, a workspace cannot loosen); `allowlist_only` per-level lists,
+  allow-list entries with a `path` do not admit tunnels; CONNECT-time corpus
+  (`crates/aurora-policy/tests/corpus/connect_time.yaml`): path/method/body-scoped
+  block and require-approval rules refuse the tunnel, path-scoped allow rules do
+  not admit it, credential targets never match, rate-limit counts once per
+  tunnel; supervisor starts 3129 only with the capability (image with and
+  without the label); simulate with `lane: "open"` agrees with the gateway.
 - Uncredentialed default: org `credentialed_only` with allow-list; workspace
   `block` with its own allow-list; a workspace allow rule cannot widen the org
   (SEC-38, SEC-39).

@@ -146,6 +146,48 @@ before defaults. Allow-list entries use the policy host/path patterns.
 Performance: rules are part of the cached ResolvedHost; **the per-request
 decision never touches the database**.
 
+### CONNECT-time evaluation (open lane; phase 1, RFE-003)
+
+In the open lane the gateway sees only `host` and `port` when it must decide
+(the tunnel is opaque afterwards) and injects nothing. Phase 0 left rules with
+`path`, `methods`, conditions or tools undefined at that moment. From phase 1:
+
+- **Unknowable** facts at CONNECT time: `path`, `method`, `body_prefix`,
+  `app_id`/`tool_id` beyond "this host is served by app X", and GraphQL/git
+  classification. **Known**: `host`, `port`, the request identity, and that
+  *no credential is injected* (`winning_credential = none`, `injected = false`).
+- **Restrictive rules** (`block`, `require_approval`, `rate_limit`) treat
+  every unknowable part as **matched** (consistent with *Conditions and
+  truncation*: doubt only tightens): a `network` target matches on host/port
+  alone even if it carries `path`/`methods`; an `app` target matches when the
+  host is served by that app (its `tools` are treated as matched); body
+  conditions are treated as matched. Targets that name a *winning credential*
+  (`connection`, `app_connections`, `secret`, `secrets`) do **not** match: the
+  tunnel uses no credential, which is known.
+  - `block` → CONNECT refused, 403 `blocked_by_policy` (`details.connect_time =
+    true`, so the agent learns the rule was applied to the whole host).
+  - `require_approval` → refused (a tunnel is never held), 403
+    `blocked_by_policy` with `details.reason = "approval_required"`.
+  - `rate_limit` → the tunnel counts as **one request** against the rule.
+- **Allow rules** need a **full match on what is knowable**: an allow rule
+  matches at CONNECT time only if *every* constraint it carries is knowable and
+  satisfied (identity, host, port). A rule with a `path`, `methods`, body
+  conditions, tools or credential targets is treated as **not matched** (an
+  allow scoped to `/org/**` must not admit a tunnel that can reach every path).
+  The same holds for uncredentialed allow-list entries: an entry with a `path`
+  does not admit a tunnel.
+- The credentialed Default Rule never applies to the open lane (nothing is
+  injected). The **uncredentialed default** applies as for the MITM lane
+  (`credentialed_only`, workspace `block`) using these matching rules, and the
+  open-lane posture of `06 §Open-lane admission and posture` adds the
+  `allowlist_only` check.
+- Scope combination, rate-limit accounting (increment only when the final
+  verdict is `allow`) and the trace are as in *Evaluation*; the request-log row
+  of a tunnel records `lane = open` and the deciding rule.
+
+Policy simulation (`POST …/policy/simulate`) accepts `"lane": "open"` with a
+`url` of the form `https://host[:port]` and evaluates under these rules.
+
 ## Grants and their compilation
 
 A grant attaches a connection or a secret to one agent. Grants are compiled

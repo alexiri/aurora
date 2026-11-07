@@ -1092,3 +1092,18 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | platform_email_hint | citext null | email the platform asserted for the person; used only to pre-fill the sign-in (`login_hint`) and the confirm page; never authorizes | 1 (RFE-001) |
+
+#### `policy_generations`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| open_lane_posture | text CHECK in (`enabled`,`allowlist_only`,`disabled`) not null default `enabled` | the workspace's open-lane posture (`08 §11`, `06 §Open-lane admission and posture`); can only tighten. CHECK: `enabled` when `workspace_id IS NULL` (org scope uses `organizations.governance.egress.open_lane`) | 1 (RFE-003) |
+
+#### `organizations` (jsonb key in `governance`)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `governance.egress.open_lane` | `enabled` \| `allowlist_only` \| `disabled`, default `enabled` | org open-lane posture (`08 §11.2`); not below the instance minimum. No column: `governance` is `jsonb`. | 1 (RFE-003) |
+
+#### `gateway_credentials`
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| capabilities | text[] not null default `{}` | credential capabilities; phase 1 value `browser` (open-lane use), settable on `boot` credentials only (`08 §7`) | 1 (RFE-003) |

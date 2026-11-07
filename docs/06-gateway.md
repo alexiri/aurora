@@ -117,7 +117,7 @@ unencrypted.
 | Lane | Selected by | Gateway sees | Injection | Approvals |
 |------|-------------|--------------|-----------|-----------|
 | **MITM** (default) | any username except `open` | method, path, headers, bounded body prefix | yes | held per request |
-| **Open** (tunnel) | username `open` | host and port only | **never** | a decision that would need approval refuses the CONNECT |
+| **Open** (tunnel) | username `open` **and** a credential holding the `browser` capability (phase 1, RFE-003) | host and port only | **never** | a decision that would need approval refuses the CONNECT |
 | **Database** (phase 2) | DB wire protocol on the proxy port | each statement | gateway logs in with stored credentials | statement-level, same machinery (`21`) |
 
 The open lane exists for browsers (TLS interception breaks bot defences and
@@ -129,6 +129,41 @@ uncredentialed default (`07 §Evaluation`), so under the `credentialed_only`
 egress posture browsers reach only allow-listed hosts, and it applies the LLM
 posture (governed LLM hosts are refused under `sanctioned_only`, since nothing
 can be injected in a tunnel).
+
+### Open-lane admission and posture (phase 1, RFE-003)
+
+Phase 0 gave every credential the open lane unconditionally (any client that set
+the username `open` got an uncredentialed tunnel under the default `open` egress
+posture). From phase 1 the open lane is admitted in this order, **before** any
+policy evaluation, with the first failure refusing the `CONNECT`:
+
+1. **Capability** (RFE-003 c). The authenticated credential must hold the
+   **`browser` capability** (`gateway_credentials.capabilities`, `08 §7`). Only
+   `aub_` boot credentials can hold it, and only when the sandbox's boot was
+   started with it (`11 §The boot document`: the sandbox image declares it and
+   the effective posture is not `disabled`). `aug_` BYO agent tokens and `auc_`
+   context credentials never hold it → 403 `open_lane_not_permitted`. A client
+   that merely sets the username `open` therefore gains nothing.
+2. **Posture** (RFE-003 a). The **effective open-lane posture** is the strictest
+   of instance, org and workspace (`08 §11.1`), ordered `enabled` <
+   `allowlist_only` < `disabled`:
+   - `disabled` → 403 `open_lane_disabled` (details `manage_url`);
+   - `allowlist_only` → the target host:port must be covered by the allow-list
+     of **every level that sets `allowlist_only`**: instance → the instance
+     baseline allow-list; org → org egress allow-list ∪ baseline; workspace → the
+     workspace's `uncredentialed_allowlist`. Matching uses the CONNECT-time
+     semantics of `07 §CONNECT-time evaluation` (an allow-list entry that carries
+     a `path` does **not** admit a tunnel). An explicit allow rule that is fully
+     knowable at CONNECT time also admits (as for `credentialed_only`). Otherwise
+     403 `blocked_by_egress_policy` with `details.open_lane = true`;
+   - `enabled` → no extra restriction.
+3. Then: destination guard, LLM posture, **CONNECT-time policy evaluation**
+   (`07 §CONNECT-time evaluation`), tunnel, one request-log row.
+
+The posture is read from the cached effective governance and the workspace's
+published policy generation (no DB on the hot path; invalidation scopes `org`
+and `workspace`), so changing it takes effect for the next `CONNECT`; open
+tunnels end at the idle limit or when the client closes them.
 
 ## MITM lane: connect-time resolution
 
@@ -312,10 +347,12 @@ dashboard URL to fix the problem when one exists.
 |------|--------|------|-----------|
 | `proxy_auth_required` | 407 | missing/invalid/expired credential | — |
 | `not_a_proxy_request` | 400 | origin-form request on 4102 | — |
+| `open_lane_not_permitted` | 403 | (phase 1, RFE-003) open lane requested by a credential without the `browser` capability | — |
+| `open_lane_disabled` | 403 | (phase 1, RFE-003) effective open-lane posture is `disabled` | `manage_url` |
 | `destination_refused` | 403 | destination guard | `host` |
 | `method_override_refused` | 400 | step 3 | — |
 | `ambiguous_path` | 400 | step 3 | — |
-| `blocked_by_policy` | 403 | rule block | `rule_name`, `method`, `path`, `manage_url` |
+| `blocked_by_policy` | 403 | rule block (open lane, phase 1: `connect_time: true`; an approval-requiring rule matched at CONNECT time adds `reason: "approval_required"`) | `rule_name`, `method`, `path`, `manage_url` |
 | `blocked_by_default_policy` | 403 | default-deny | `manage_url` |
 | `blocked_by_egress_policy` | 403 | uncredentialed default (`credentialed_only`) | `host`, `manage_url` (org egress allow-list) |
 | `llm_provider_not_permitted` | 403 | governed LLM host not permitted for the org | `host` |

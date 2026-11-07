@@ -374,6 +374,15 @@ workspace secret it uses and records usage.
 Context credentials are for **attribution**, not isolation: conversations of
 one agent share a sandbox. The security boundary is the agent.
 
+(phase 1, RFE-003) **Capabilities.** `gateway_credentials.capabilities` (text
+array, default empty; open vocabulary, unknown values ignored) records what a
+credential may do beyond ordinary MITM traffic. Phase 1 defines one: `browser`
+— permission to use the **open lane** (`06 §Open-lane admission and posture`).
+It can be set only on `boot` credentials, by the API when it mints the boot
+token for a `sandbox.start` whose boot document carries the capability
+(`11 §The boot document`); `agent` and `context` credentials always have an
+empty set. It is fixed at mint time (a new boot gets a new credential).
+
 ## 8. OAuth token lifecycle (gateway)
 
 Connection credentials JSON contains the fields declared by the manifest
@@ -471,9 +480,9 @@ above, enforced at several points.
 
 | Level | Who | Where stored | Can |
 |-------|-----|--------------|-----|
-| **Instance ceiling** | operator | configuration `[governance]` and `[[llm.endpoints]]` (`15`) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org; set the known-LLM-hosts list and an egress baseline allow-list |
+| **Instance ceiling** | operator | configuration `[governance]` and `[[llm.endpoints]]` (`15`) | enable providers and endpoints; set key-origin rules and model allow-lists per endpoint; set permitted key scopes; set **minimum** postures for every org (including, from phase 1, the **open-lane** minimum, RFE-003); set the known-LLM-hosts list and an egress baseline allow-list |
 | **Organization governance** | org owners/admins | `organizations.governance` (`03`) | permit a subset of endpoints; restrict key scopes per endpoint; narrow origin rules and model allow-lists; choose the LLM posture and the egress posture (never looser than the instance minimum); maintain the org egress allow-list |
-| **Workspace policy** | workspace owners | the workspace's policy generation (`07`) | block destinations with rules; set the workspace's own uncredentialed default to `block` with its own allow-list (it cannot loosen the org) |
+| **Workspace policy** | workspace owners | the workspace's policy generation (`07`) | block destinations with rules; set the workspace's own uncredentialed default to `block` with its own allow-list (it cannot loosen the org); (phase 1, RFE-003) set the workspace's **open-lane posture** (`enabled` \| `allowlist_only` \| `disabled`; it can only tighten) |
 | **Agent grants and rules** | workspace owners | grants, rules (`07`) | decide which permitted keys each agent may use |
 
 Effective settings are computed, never stored: `effective = instance ∩ org`
@@ -501,7 +510,8 @@ for optimistic concurrency):
   },
   "egress": {
     "posture": "open | credentialed_only",
-    "allowlist": [ { "host": "pypi.org" }, { "host": "*.githubusercontent.com", "path": "/**" } ]
+    "allowlist": [ { "host": "pypi.org" }, { "host": "*.githubusercontent.com", "path": "/**" } ],
+    "open_lane": "enabled | allowlist_only | disabled"
   }
 }
 ```
@@ -519,7 +529,12 @@ Rules (422 `governance_invalid` / `governance_below_instance_minimum`):
   shared instance pins its own Anthropic organization). An `origin` narrowing on
   an endpoint whose instance method is `endpoint` is refused, except
   `allowed_team_ids` which upgrades the check to `litellm_team`.
-- Postures cannot be below the instance minimums.
+- Postures cannot be below the instance minimums. (phase 1, RFE-003)
+  `egress.open_lane` (default `enabled`; absent = `enabled`) follows the same
+  rule with the order `enabled` < `allowlist_only` < `disabled`: it cannot be
+  looser than `governance.egress.open_lane_minimum`. Under `allowlist_only` the
+  org's `egress.allowlist` (∪ the instance baseline) is the list tunnels are
+  checked against (`06 §Open-lane admission and posture`).
 - Allow-list entries use the policy host/path patterns (`07`); ≤500 entries.
 
 Changing governance re-evaluates every LLM secret of the org against the new
@@ -599,6 +614,15 @@ any proxy check.
   are unaffected (they are governed by grants, rules and the credentialed
   default). Refusal: 403 `blocked_by_egress_policy`.
 
+(phase 1, RFE-003) The **open-lane posture** is a separate, orthogonal control
+for the tunnel lane only: `enabled` (default) / `allowlist_only` (tunnels reach
+only allow-listed hosts, even when the egress posture is `open`) / `disabled`
+(no tunnels). It is set per level (instance `governance.egress.open_lane_minimum`,
+org `egress.open_lane`, workspace policy `open_lane_posture`), tightens
+downwards only, and the effective value is the strictest. Admission order and
+errors: `06 §Open-lane admission and posture`; CONNECT-time rule semantics:
+`07 §CONNECT-time evaluation`.
+
 The org posture is evaluated as the org scope's *uncredentialed default*; a
 workspace may set its own uncredentialed default to `block` in its policy
 generation (`07 §Evaluation`). Typical allow-list contents: package registries,
@@ -615,6 +639,7 @@ otherwise hosted agents cannot install packages.
 | API: model selection and pickers | only usable keys; only allowed models |
 | Gateway step *governance* (`06`) | endpoint/scope permitted and stored origin compliant for the selected LLM key; `sanctioned_only` (no agent-supplied LLM credentials, no unconfigured providers); model allow-list |
 | Gateway policy evaluation (`07`) | uncredentialed default per scope (`credentialed_only`) with allow-lists |
+| Gateway open-lane admission (`06`, phase 1) | `browser` capability on the credential; effective open-lane posture (`disabled` / `allowlist_only`) before policy; CONNECT-time rule semantics |
 | Gateway before injection | origin preflight for unseen key values |
 | Gateway after response | origin backstop |
 

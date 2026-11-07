@@ -233,7 +233,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/orgs/{org}/audit` | S/K | |
 | GET/PUT `/v1/orgs/{org}/app-availability` | S/K | posture + allow-list |
 | GET/PUT `/v1/orgs/{org}/governance` | S/K | org governance document (`08 §11.2`) with `revision`; PUT validates against the instance ceiling (422 `governance_invalid` / `governance_below_instance_minimum`) |
-| GET `/v1/orgs/{org}/governance/effective` | S/K (any org member) | effective LLM and egress governance (instance ∩ org), each value marked `source: instance|org`; non-compliant LLM secrets of the org |
+| GET `/v1/orgs/{org}/governance/effective` | S/K (any org member) | effective LLM and egress governance (instance ∩ org), each value marked `source: instance|org` (phase 1, RFE-003: includes `egress.open_lane`); non-compliant LLM secrets of the org |
 | GET `/v1/governance/instance` | S | the instance ceiling (config, without secrets) — read-only |
 
 ### Workspaces
@@ -285,11 +285,11 @@ connector, **P** public capability. Permission checks per `04`.
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET `/v1/workspaces/{ws}/policy`, `/v1/orgs/{org}/policy` | S/K | published + draft + revision |
-| PUT `…/policy/draft` | S/K | whole-draft replace with `revision` |
+| PUT `…/policy/draft` | S/K | whole-draft replace with `revision`; (phase 1, RFE-003) workspace scope also carries `open_lane_posture` (`enabled` \| `allowlist_only` \| `disabled`; a workspace can only tighten, so `enabled` simply adds no restriction beyond the org and instance) |
 | POST `…/policy/publish`, `…/policy/rollback` | S/K | `{ revision }` / `{ generation }` |
 | GET `…/policy/generations` | S/K | history |
 | GET `…/policy/warnings` | S/K | overlap/inert-rule warnings for the draft |
-| POST `/v1/workspaces/{ws}/policy/simulate` | S/K | `{ agent_id, method, url, body?, use_draft? }` → decision trace |
+| POST `/v1/workspaces/{ws}/policy/simulate` | S/K | `{ agent_id, method, url, body?, use_draft?, lane? }` → decision trace; (phase 1, RFE-003) `lane: "open"` evaluates CONNECT-time semantics (`07`) and the open-lane posture |
 
 ### Approvals
 | Method & path | Auth | Purpose |

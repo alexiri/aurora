@@ -74,6 +74,7 @@ Setup tooling generates every secret and **never overwrites** an existing one.
 | `governance.llm.known_llm_hosts` | built-in list (below) | api, gateway | model-API hosts without a configured endpoint; `known_llm_hosts_extra` appends |
 | `governance.egress.minimum_posture` | `open` | api, gateway | `open` or `credentialed_only` — floor for every org |
 | `governance.egress.baseline_allowlist` | `[]` | api, gateway | `[{ host, path? }]` merged into every org's egress allow-list |
+| `governance.egress.open_lane_minimum` | `enabled` | api, gateway | (phase 1, RFE-003) `enabled` \| `allowlist_only` \| `disabled` — floor of the open-lane posture for every org and workspace; `allowlist_only` uses the baseline allow-list (set one) |
 | `agents.default_name` | `Daneel` | api | default agent and shared-bot name |
 | `agents.default_brief` | (text in `10`) | api | |
 | `hosted.enabled` | `true` | api | hosted agents available |

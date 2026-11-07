@@ -23,7 +23,7 @@ platform's agent inside the agent's computer. It:
    from its environment.
 3. Writes boot `files` (`only_if_absent_or_sentinel` honoured: never overwrite a
    file lacking the `aurora-managed` sentinel), writes `/run/aurora/ca.pem`.
-4. Starts the loopback proxies.
+4. Starts the loopback proxies (the open proxy only with the `browser` capability, `11`).
 5. Dials the runner with the bootstrap token; on success stores the session
    credential for reconnects; sends `ready { harness_capabilities, version }`.
 6. Waits for the first complete home sync before accepting `turn.deliver`
@@ -47,7 +47,7 @@ the sandbox (`11 §The boot document`).
 | Listener | Credential added | Lane | Used by |
 |----------|------------------|------|---------|
 | `127.0.0.1:3128` (machine proxy) | boot token `aub_` | MITM | everything that reads `HTTPS_PROXY` from the container env: shells, background processes, tools started outside harness sessions |
-| `127.0.0.1:3129` (open proxy) | boot token, username `open` | open | browsers (configured in the Chromium wrapper); CONNECT only — absolute-form requests get 405 so it can never become an injecting proxy |
+| `127.0.0.1:3129` (open proxy) | boot token, username `open` | open | browsers (configured in the Chromium wrapper); CONNECT only — absolute-form requests get 405 so it can never become an injecting proxy. (phase 1, RFE-003) **Started only when the boot document's `capabilities` contains `browser`** (`11 §The boot document`); otherwise nothing listens on 3129 and the Chromium wrapper reports "browsing is disabled for this workspace". |
 | per-session ephemeral port | the session's **current turn context credential** `auc_` (boot token between turns) | MITM | the harness process of that conversation (its `HTTPS_PROXY` points here) |
 
 Context credentials therefore attribute every request made by a harness during

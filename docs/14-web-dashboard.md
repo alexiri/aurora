@@ -65,6 +65,9 @@ keys), chat platform links, DM defaults, delete account.
   - *Egress*: posture (`open` / `credentialed_only`), org allow-list editor with
     a "recently blocked hosts" helper fed from the request log
     (`egress_denied` decisions), instance baseline shown read-only.
+    (phase 1, RFE-003) **Browser tunnels (open lane)**: `enabled` /
+    `allowlist_only` / `disabled`, with the sentence "Tunnels cannot be
+    inspected or given credentials; `allowlist_only` limits them to the allow-list".
   - *Compliance*: LLM secrets of the org that no longer comply (mismatch,
     unverifiable, not permitted) with links to fix them.
   - Readable (not editable) by every org member, so users understand why a key
@@ -119,7 +122,10 @@ keys), chat platform links, DM defaults, delete account.
 - **Activity** — request log (decision, rule name, app/tool, conversation
   link), usage.
 - **Policy** also edits the workspace's uncredentialed default and allow-list
-  (can only tighten the org's egress posture).
+  (can only tighten the org's egress posture) and, from phase 1 (RFE-003), the
+  workspace's **open-lane posture** (locked with "enforced by org/instance"
+  when a higher level is stricter). The simulate panel gets a lane switch
+  (request / tunnel).
 - **Settings** — name, timezone, memory language (owners), access bindings,
   workspace API keys, danger zone.
 
