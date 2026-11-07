@@ -92,7 +92,7 @@ pub async fn upload(
     conversation_id: Uuid,
     mp: Result<Multipart, MultipartRejection>,
 ) -> Result<Attachment, ApiError> {
-    let conv_row = conv::load_conversation(state, c, conversation_id).await?;
+    let conv_row = conv::load_conversation_for_write(state, c, conversation_id).await?;
     let mut mp = mp.map_err(|_| {
         ApiError::invalid_request(
             "Expected multipart/form-data.",
@@ -237,7 +237,7 @@ pub async fn download(state: &AppState, c: &Caller, id: Uuid) -> Result<Response
         .await?
         .filter(|a| a.status != "failed")
         .ok_or_else(att_404)?;
-    conv::load_conversation(state, c, row.conversation_id)
+    conv::read_conversation(state, c, row.conversation_id)
         .await
         .map_err(|_| att_404())?;
     let bytes = read_blob(state, &row).await?;

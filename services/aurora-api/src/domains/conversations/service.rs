@@ -1,15 +1,19 @@
 use super::dto::{Conversation, EventsPage, MessageAccepted, TranscriptEvent, Turn};
 use crate::app::AppState;
+use crate::audit::{AuditActor, Outcome};
 use crate::http::auth::Caller;
 use aurora_core::limits::{ATTACH_IN_COUNT, TURN_TEXT_MAX};
 use aurora_core::{ApiError, FieldError};
 use aurora_db::DbError;
+use aurora_db::authz::{self, WorkspaceAuth};
 use aurora_db::bus::{self, Channel};
 use aurora_db::repo::agents::{self, AgentRow};
+use aurora_db::repo::audit::{self as audit_repo, NewAudit};
 use aurora_db::repo::conversations::{self as convs, ConversationRow, NewConversation};
 use aurora_db::repo::transcript;
 use aurora_db::repo::turns::{self, Created, NewTurn, TurnRow};
 use aurora_db::repo::users;
+use aurora_db::repo::workspaces;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -38,16 +42,118 @@ pub async fn load_agent(state: &AppState, c: &Caller, id: Uuid) -> Result<AgentR
     Ok(a)
 }
 
-/// Conversation visible to the caller. Direct conversations are private to their user.
+/// Conversation visible to the caller (`can_see_conversation`, docs/04; RFE-009). A direct
+/// conversation is visible to its user and to workspace owners; anyone else gets 404. This is
+/// the predicate for reading, abort and send-now; writing needs [`load_conversation_for_write`].
 pub async fn load_conversation(
     state: &AppState,
     c: &Caller,
     id: Uuid,
 ) -> Result<ConversationRow, ApiError> {
+    Ok(load_conversation_auth(state, c, id).await?.0)
+}
+
+async fn load_conversation_auth(
+    state: &AppState,
+    c: &Caller,
+    id: Uuid,
+) -> Result<(ConversationRow, WorkspaceAuth), ApiError> {
     let row = convs::get(&state.pool, id).await?.ok_or_else(conv_404)?;
-    c.workspace(state, row.workspace_id).await?;
-    if row.kind == "direct" && row.direct_user_id != Some(c.user_id) {
+    let auth = c.workspace(state, row.workspace_id).await?;
+    if !authz::can_see_conversation(&auth, c.user_id, &row.kind, row.direct_user_id) {
         return Err(conv_404());
+    }
+    Ok((row, auth))
+}
+
+/// Like [`load_conversation`] for a *read* (transcript, events, stream, attachment bytes): an
+/// owner who is not the direct user also writes the best-effort `conversation.owner_view` audit
+/// row (once per actor, conversation and hour).
+pub async fn read_conversation(
+    state: &AppState,
+    c: &Caller,
+    id: Uuid,
+) -> Result<ConversationRow, ApiError> {
+    let (row, _) = load_conversation_auth(state, c, id).await?;
+    if row.kind == "direct" && row.direct_user_id != Some(c.user_id) {
+        note_owner_view(state, c, &row).await;
+    }
+    Ok(row)
+}
+
+async fn note_owner_view(state: &AppState, c: &Caller, row: &ConversationRow) {
+    if let Err(e) = try_note_owner_view(state, c, row).await {
+        // Best-effort (docs/04 §Audit): never fails the read.
+        tracing::warn!(error = %e, "conversation.owner_view audit failed");
+    }
+}
+
+/// Once per actor, conversation and hour: the check and the insert run under an advisory lock so
+/// concurrent reads (transcript + events + stream) write a single row.
+async fn try_note_owner_view(
+    state: &AppState,
+    c: &Caller,
+    row: &ConversationRow,
+) -> Result<(), DbError> {
+    let mut tx = state.pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("owner_view:{}:{}", c.user_id, row.id))
+        .execute(&mut *tx)
+        .await?;
+    let seen: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM audit_log WHERE workspace_id = $1 AND actor_id = $2
+           AND action = 'conversation.owner_view' AND target_id = $3
+           AND created_at > now() - interval '1 hour')",
+    )
+    .bind(row.workspace_id)
+    .bind(c.user_id)
+    .bind(row.id.to_string())
+    .fetch_one(&mut *tx)
+    .await?;
+    if seen {
+        return Ok(());
+    }
+    let org = workspaces::get(&mut *tx, row.workspace_id)
+        .await?
+        .map(|w| w.org_id);
+    let actor = AuditActor::from_caller(c);
+    audit_repo::insert(
+        &mut *tx,
+        &NewAudit {
+            org_id: org,
+            workspace_id: Some(row.workspace_id),
+            actor_kind: actor.kind,
+            actor_id: actor.id,
+            actor_label: &actor.label,
+            action: "conversation.owner_view",
+            target_kind: Some("conversation"),
+            target_id: Some(&row.id.to_string()),
+            outcome: Outcome::Success.as_str(),
+            source: actor.source,
+            ip: actor.ip,
+            metadata: &json!({"agent_id": row.agent_id, "direct_user_id": row.direct_user_id}),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// A conversation the caller may *write* into (post a message, upload an attachment): visible,
+/// and for `direct` conversations the direct user alone. An owner who can see it gets 403
+/// `direct_conversation_forbidden`.
+pub async fn load_conversation_for_write(
+    state: &AppState,
+    c: &Caller,
+    id: Uuid,
+) -> Result<ConversationRow, ApiError> {
+    let row = load_conversation(state, c, id).await?;
+    if !authz::can_write_conversation(c.user_id, &row.kind, row.direct_user_id) {
+        return Err(ApiError::new(
+            axum::http::StatusCode::FORBIDDEN,
+            "direct_conversation_forbidden",
+            "Only the person in a direct conversation can write to it.",
+        ));
     }
     Ok(row)
 }
@@ -120,7 +226,7 @@ pub async fn api_conversation(
 }
 
 pub async fn get(state: &AppState, c: &Caller, id: Uuid) -> Result<Conversation, ApiError> {
-    let row = load_conversation(state, c, id).await?;
+    let row = read_conversation(state, c, id).await?;
     let active = turns::active_turn(&state.pool, row.id).await?;
     Ok(Conversation::from_row(row, active))
 }
@@ -140,7 +246,7 @@ pub async fn events(
     if !(1..=500).contains(&limit) {
         return Err(bad("/limit", "must be between 1 and 500"));
     }
-    let conv = load_conversation(state, c, id).await?;
+    let conv = read_conversation(state, c, id).await?;
     let rows = transcript::list_after(&state.pool, id, after, i64::from(limit)).await?;
     // Page cursor: the last returned seq, or `after` when nothing is newer.
     let last_seq = rows
@@ -442,7 +548,7 @@ pub async fn post_message(
     attachment_ids: &[Uuid],
 ) -> Result<MessageAccepted, ApiError> {
     check_text(text)?;
-    let conv = load_conversation(state, c, conversation_id).await?;
+    let conv = load_conversation_for_write(state, c, conversation_id).await?;
     let agent = agents::get(&state.pool, conv.agent_id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
@@ -548,7 +654,7 @@ pub async fn continue_conversation(
     c: &Caller,
     id: Uuid,
 ) -> Result<Conversation, ApiError> {
-    load_conversation(state, c, id).await?;
+    load_conversation_for_write(state, c, id).await?;
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     if !convs::lock(&mut tx, id).await? {
         return Err(conv_404());

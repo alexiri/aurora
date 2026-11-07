@@ -1,6 +1,6 @@
 # Security invariant coverage (TEST-018)
 
-One row per invariant of `docs/17-security.md` (SEC-01..SEC-39). Test ids are
+One row per invariant of `docs/17-security.md` (SEC-01..SEC-39; later rows appended per phase). Test ids are
 `path::test_name` relative to the repo root, with these prefixes:
 `api` = `services/aurora-api/tests`, `gw` = `services/aurora-gateway/tests`,
 `sup` = `services/aurora-supervisor/tests`, `run` = `services/aurora-runner`,
@@ -56,6 +56,7 @@ their gate; they were run by their owning task (TEST-013, OPS-011), not by `carg
 | SEC-37 | Generic secrets/app connections never inject on governed LLM hosts | `gw/governance_db.rs::generic_secret_is_never_injected_on_governed_llm_hosts`, `api/secrets.rs::generic_secret_on_governed_llm_host_is_refused`, `api/secrets.rs::propose_refuses_values_bad_recipes_and_governed_hosts`, `reg/packages.rs::reserved_hosts` | service | proven |
 | SEC-38 | Under `credentialed_only`, uncredentialed traffic in both lanes only to allow-listed destinations or explicit allow rules | `gw/governance.rs::{egress_posture_blocks_uncredentialed_with_allow_list,open_lane_under_both_postures}`, `gw/pipeline.rs::open_lane_policy_and_tunnel_row`, corpus `08_egress_denied`, `09_allowlist_passes`, `11_explicit_allow_overrides_egress` | service | proven |
 | SEC-39 | Governance only tightens downwards | `api/governance.rs::{validation_stale_and_access,below_instance_minimum_and_instance_source}`, `gw/governance.rs::egress_posture_blocks_uncredentialed_with_allow_list` (instance minimum forces posture), corpus `01_org_block_beats_ws_allow`, `02_ws_block_beats_org_allow`, `03_org_default_block_ws_allow` | unit + service | proven |
+| SEC-43 | (phase 1, RFE-009) Direct conversations and everything naming them are visible only to their user (while they can use the workspace) and workspace owners; only the user writes | `api/direct_visibility.rs::{read_routes_follow_visibility_for_every_credential, other_kinds_stay_visible_to_every_member, owners_cannot_post_or_upload_but_member_gets_404, owners_can_abort_and_send_now_but_members_get_404, conversation_list_shows_owners_every_direct_conversation, direct_user_who_lost_workspace_access_sees_nothing, approvals_naming_a_direct_conversation_are_hidden_from_other_members, approval_batch_decision_skips_invisible_direct_approvals, approvals_sse_omits_invisible_direct_approvals, activity_rows_of_invisible_direct_conversations_are_omitted, schedule_and_peer_task_references_are_redacted, cross_workspace_decider_cannot_read_the_dm_id_or_payload, owner_reads_write_one_audit_row_per_hour_and_own_reads_none, can_see_conversation_predicate_matches_the_sql_fragment}`, `api/channels_cards.rs::dm_approval_card_click_by_non_participant_is_refused`, `web/tests/direct-visibility.test.tsx` | service | proven |
 
 ## Open gaps
 

@@ -3043,7 +3043,13 @@ export interface components {
             action_key: string;
             /** Format: uuid */
             agent_id: string;
-            /** Format: uuid */
+            /** @description True when `conversation_id`/`turn_id` were redacted (phase 1, RFE-009, D-47 clarification C). */
+            conversation_hidden: boolean;
+            /**
+             * Format: uuid
+             * @description Null when the approval belongs to another workspace than its conversation (the decider
+             *     never learns that conversation's id), see `conversation_hidden`.
+             */
             conversation_id?: string | null;
             /** Format: date-time */
             created_at: string;
@@ -3609,6 +3615,7 @@ export interface components {
             app_turn_streak: number;
             /** Format: date-time */
             created_at: string;
+            direct_user?: null | components["schemas"]["DirectUser"];
             /** Format: uuid */
             direct_user_id?: string | null;
             external_ref: string;
@@ -3783,6 +3790,12 @@ export interface components {
         DeleteMeRequest: {
             /** @description Required for accounts that have a password. */
             password?: string | null;
+        };
+        /** @description The person a `direct` conversation belongs to (phase 1, RFE-009). */
+        DirectUser: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
         };
         DmDefault: {
             /** Format: uuid */
@@ -4396,7 +4409,13 @@ export interface components {
                 action_key: string;
                 /** Format: uuid */
                 agent_id: string;
-                /** Format: uuid */
+                /** @description True when `conversation_id`/`turn_id` were redacted (phase 1, RFE-009, D-47 clarification C). */
+                conversation_hidden: boolean;
+                /**
+                 * Format: uuid
+                 * @description Null when the approval belongs to another workspace than its conversation (the decider
+                 *     never learns that conversation's id), see `conversation_hidden`.
+                 */
                 conversation_id?: string | null;
                 /** Format: date-time */
                 created_at: string;
@@ -4631,6 +4650,7 @@ export interface components {
                 app_turn_streak: number;
                 /** Format: date-time */
                 created_at: string;
+                direct_user?: null | components["schemas"]["DirectUser"];
                 /** Format: uuid */
                 direct_user_id?: string | null;
                 external_ref: string;
@@ -4756,6 +4776,8 @@ export interface components {
         };
         Page_PeerTask: {
             items: {
+                /** @description True when `origin_conversation_id` was redacted (phase 1, RFE-009). */
+                conversation_hidden: boolean;
                 /** Format: date-time */
                 created_at: string;
                 /** @description `outgoing` when the listed agent requested the task, `incoming` when it received it. */
@@ -4772,8 +4794,11 @@ export interface components {
                 message_budget: number;
                 /** Format: int32 */
                 messages_used: number;
-                /** Format: uuid */
-                origin_conversation_id: string;
+                /**
+                 * Format: uuid
+                 * @description Null when the caller cannot see that (direct) conversation; see `conversation_hidden`.
+                 */
+                origin_conversation_id?: string | null;
                 report?: string | null;
                 requester?: null | components["schemas"]["PeerTaskRequester"];
                 /** @description `queued` | `open` | `completed` | `cancelled` | `expired` */
@@ -4914,6 +4939,8 @@ export interface components {
                 agent_id: string;
                 /** Format: int32 */
                 consecutive_failures: number;
+                /** @description True when `origin_conversation_id` was redacted (phase 1, RFE-009). */
+                conversation_hidden: boolean;
                 /** Format: date-time */
                 created_at: string;
                 created_by?: null | components["schemas"]["ScheduleCreator"];
@@ -4931,7 +4958,10 @@ export interface components {
                 name: string;
                 /** Format: date-time */
                 next_fire_at?: string | null;
-                /** Format: uuid */
+                /**
+                 * Format: uuid
+                 * @description Null when the caller cannot see that (direct) conversation; see `conversation_hidden`.
+                 */
                 origin_conversation_id?: string | null;
                 prompt: string;
                 /** @description IANA timezone name. */
@@ -5187,6 +5217,8 @@ export interface components {
             timezone?: string | null;
         };
         PeerTask: {
+            /** @description True when `origin_conversation_id` was redacted (phase 1, RFE-009). */
+            conversation_hidden: boolean;
             /** Format: date-time */
             created_at: string;
             /** @description `outgoing` when the listed agent requested the task, `incoming` when it received it. */
@@ -5203,8 +5235,11 @@ export interface components {
             message_budget: number;
             /** Format: int32 */
             messages_used: number;
-            /** Format: uuid */
-            origin_conversation_id: string;
+            /**
+             * Format: uuid
+             * @description Null when the caller cannot see that (direct) conversation; see `conversation_hidden`.
+             */
+            origin_conversation_id?: string | null;
             report?: string | null;
             requester?: null | components["schemas"]["PeerTaskRequester"];
             /** @description `queued` | `open` | `completed` | `cancelled` | `expired` */
@@ -5644,6 +5679,8 @@ export interface components {
             agent_id: string;
             /** Format: int32 */
             consecutive_failures: number;
+            /** @description True when `origin_conversation_id` was redacted (phase 1, RFE-009). */
+            conversation_hidden: boolean;
             /** Format: date-time */
             created_at: string;
             created_by?: null | components["schemas"]["ScheduleCreator"];
@@ -5661,7 +5698,10 @@ export interface components {
             name: string;
             /** Format: date-time */
             next_fire_at?: string | null;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Null when the caller cannot see that (direct) conversation; see `conversation_hidden`.
+             */
             origin_conversation_id?: string | null;
             prompt: string;
             /** @description IANA timezone name. */

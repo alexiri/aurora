@@ -447,6 +447,15 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
    when the origin turn has already finished, a system follow-up turn is
    queued ("Your message to #ops was approved and sent.") so the agent learns
    the result.
+5. (phase 1, RFE-009, D-47 clarification C) **Cross-workspace approvals.** The
+   conversation-visibility rule applies to an approval only within the
+   conversation's own workspace. An action approval whose workspace differs from
+   its conversation's (the other side of a cross-workspace `message_agent`
+   sent from a direct conversation) is decided under its own workspace's law,
+   but its decider sees only the platform-composed summary: the frozen payload
+   (including the message text) and the conversation and turn ids are never
+   exposed to them in any DTO, card or activity row (`conversation_id` and
+   `turn_id` are `null`, `conversation_hidden: true`).
 
 ## Agent links and peer tasks
 

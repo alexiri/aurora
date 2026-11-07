@@ -44,12 +44,27 @@ async fn list_peer_tasks(
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
+    let mut items: Vec<PeerTask> = page
+        .items
+        .into_iter()
+        .map(|r| PeerTask::from_row(r, agent))
+        .collect();
+    // RFE-009: redact references to direct conversations the caller cannot see.
+    let ids: Vec<Uuid> = items
+        .iter()
+        .filter_map(|i| i.origin_conversation_id)
+        .collect();
+    let hidden = aurora_db::authz::hidden_conversations(&s.pool, c.user_id, &ids).await?;
+    for i in &mut items {
+        if i.origin_conversation_id
+            .is_some_and(|id| hidden.contains(&id))
+        {
+            i.origin_conversation_id = None;
+            i.conversation_hidden = true;
+        }
+    }
     Ok(Json(Page {
-        items: page
-            .items
-            .into_iter()
-            .map(|r| PeerTask::from_row(r, agent))
-            .collect(),
+        items,
         next_cursor: page.next_cursor,
     }))
 }

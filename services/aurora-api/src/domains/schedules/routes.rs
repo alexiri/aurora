@@ -59,6 +59,25 @@ fn record(c: &Caller, s: &AppState, a: &agents::AgentRow, r: &ScheduleRow, actio
     );
 }
 
+/// RFE-009: a reference to a direct conversation the caller cannot see is returned as `null`
+/// with `conversation_hidden: true`.
+async fn redact_all(c: &Caller, s: &AppState, items: &mut [Schedule]) -> Result<(), ApiError> {
+    let ids: Vec<Uuid> = items
+        .iter()
+        .filter_map(|i| i.origin_conversation_id)
+        .collect();
+    let hidden = aurora_db::authz::hidden_conversations(&s.pool, c.user_id, &ids).await?;
+    for i in items.iter_mut() {
+        if i.origin_conversation_id
+            .is_some_and(|id| hidden.contains(&id))
+        {
+            i.origin_conversation_id = None;
+            i.conversation_hidden = true;
+        }
+    }
+    Ok(())
+}
+
 /// List an agent's schedules.
 #[utoipa::path(get, path = "/agents/{agent}/schedules", operation_id = "listSchedules",
     tag = "schedules", params(("agent" = Uuid, Path, description = "Agent id")),
@@ -71,8 +90,10 @@ async fn list_schedules(
 ) -> Result<Json<Page<Schedule>>, ApiError> {
     visible_agent(&c, &s, agent).await?;
     let items = service::list(&s.pool, agent).await?;
+    let mut items: Vec<Schedule> = items.into_iter().map(Schedule::from).collect();
+    redact_all(&c, &s, &mut items).await?;
     Ok(Json(Page {
-        items: items.into_iter().map(Schedule::from).collect(),
+        items,
         next_cursor: None,
     }))
 }
@@ -102,7 +123,9 @@ async fn create_schedule(
     let row = service::create(&s.pool, &a, create, Some(c.user_id), None).await?;
     record(&c, &s, &a, &row, "schedule.create");
     let row = service::get(&s.pool, row.id).await?;
-    Ok((StatusCode::CREATED, Json(row.into())))
+    let mut out = vec![Schedule::from(row)];
+    redact_all(&c, &s, &mut out).await?;
+    Ok((StatusCode::CREATED, Json(out.remove(0))))
 }
 
 /// Get one schedule.
@@ -116,7 +139,9 @@ async fn get_schedule(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Schedule>, ApiError> {
     let (row, _) = authorized(&c, &s, id).await?;
-    Ok(Json(row.into()))
+    let mut out = vec![Schedule::from(row)];
+    redact_all(&c, &s, &mut out).await?;
+    Ok(Json(out.remove(0)))
 }
 
 /// Update a schedule; `enabled: true` re-enables and clears the failure count.
@@ -144,7 +169,9 @@ async fn update_schedule(
     };
     let row = service::patch(&s.pool, cur, p).await?;
     record(&c, &s, &a, &row, "schedule.update");
-    Ok(Json(row.into()))
+    let mut out = vec![Schedule::from(row)];
+    redact_all(&c, &s, &mut out).await?;
+    Ok(Json(out.remove(0)))
 }
 
 /// Delete a schedule and its run log.

@@ -15429,6 +15429,7 @@
           "id",
           "workspace_id",
           "agent_id",
+          "conversation_hidden",
           "action_key",
           "summary",
           "status",
@@ -15443,12 +15444,17 @@
             "type": "string",
             "format": "uuid"
           },
+          "conversation_hidden": {
+            "type": "boolean",
+            "description": "True when `conversation_id`/`turn_id` were redacted (phase 1, RFE-009, D-47 clarification C)."
+          },
           "conversation_id": {
             "type": [
               "string",
               "null"
             ],
-            "format": "uuid"
+            "format": "uuid",
+            "description": "Null when the approval belongs to another workspace than its conversation (the decider\nnever learns that conversation's id), see `conversation_hidden`."
           },
           "created_at": {
             "type": "string",
@@ -17452,6 +17458,17 @@
             "type": "string",
             "format": "date-time"
           },
+          "direct_user": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DirectUser",
+                "description": "Set on `direct` conversations returned by the agent's conversation list to a workspace\nowner who is not that person (RFE-009: \"visible to workspace owners\"); otherwise null."
+              }
+            ]
+          },
           "direct_user_id": {
             "type": [
               "string",
@@ -18111,6 +18128,23 @@
               "null"
             ],
             "description": "Required for accounts that have a password."
+          }
+        }
+      },
+      "DirectUser": {
+        "type": "object",
+        "description": "The person a `direct` conversation belongs to (phase 1, RFE-009).",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -20317,6 +20351,7 @@
                 "id",
                 "workspace_id",
                 "agent_id",
+                "conversation_hidden",
                 "action_key",
                 "summary",
                 "status",
@@ -20331,12 +20366,17 @@
                   "type": "string",
                   "format": "uuid"
                 },
+                "conversation_hidden": {
+                  "type": "boolean",
+                  "description": "True when `conversation_id`/`turn_id` were redacted (phase 1, RFE-009, D-47 clarification C)."
+                },
                 "conversation_id": {
                   "type": [
                     "string",
                     "null"
                   ],
-                  "format": "uuid"
+                  "format": "uuid",
+                  "description": "Null when the approval belongs to another workspace than its conversation (the decider\nnever learns that conversation's id), see `conversation_hidden`."
                 },
                 "created_at": {
                   "type": "string",
@@ -21191,6 +21231,17 @@
                   "type": "string",
                   "format": "date-time"
                 },
+                "direct_user": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DirectUser",
+                      "description": "Set on `direct` conversations returned by the agent's conversation list to a workspace\nowner who is not that person (RFE-009: \"visible to workspace owners\"); otherwise null."
+                    }
+                  ]
+                },
                 "direct_user_id": {
                   "type": [
                     "string",
@@ -21653,7 +21704,7 @@
                 "from_agent_id",
                 "to_agent_id",
                 "direction",
-                "origin_conversation_id",
+                "conversation_hidden",
                 "task_conversation_id",
                 "status",
                 "messages_used",
@@ -21663,6 +21714,10 @@
                 "updated_at"
               ],
               "properties": {
+                "conversation_hidden": {
+                  "type": "boolean",
+                  "description": "True when `origin_conversation_id` was redacted (phase 1, RFE-009)."
+                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -21696,8 +21751,12 @@
                   "format": "int32"
                 },
                 "origin_conversation_id": {
-                  "type": "string",
-                  "format": "uuid"
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "Null when the caller cannot see that (direct) conversation; see `conversation_hidden`."
                 },
                 "report": {
                   "type": [
@@ -22222,6 +22281,7 @@
                 "timezone",
                 "enabled",
                 "consecutive_failures",
+                "conversation_hidden",
                 "created_at",
                 "updated_at"
               ],
@@ -22233,6 +22293,10 @@
                 "consecutive_failures": {
                   "type": "integer",
                   "format": "int32"
+                },
+                "conversation_hidden": {
+                  "type": "boolean",
+                  "description": "True when `origin_conversation_id` was redacted (phase 1, RFE-009)."
                 },
                 "created_at": {
                   "type": "string",
@@ -22300,7 +22364,8 @@
                     "string",
                     "null"
                   ],
-                  "format": "uuid"
+                  "format": "uuid",
+                  "description": "Null when the caller cannot see that (direct) conversation; see `conversation_hidden`."
                 },
                 "prompt": {
                   "type": "string"
@@ -23241,7 +23306,7 @@
           "from_agent_id",
           "to_agent_id",
           "direction",
-          "origin_conversation_id",
+          "conversation_hidden",
           "task_conversation_id",
           "status",
           "messages_used",
@@ -23251,6 +23316,10 @@
           "updated_at"
         ],
         "properties": {
+          "conversation_hidden": {
+            "type": "boolean",
+            "description": "True when `origin_conversation_id` was redacted (phase 1, RFE-009)."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -23284,8 +23353,12 @@
             "format": "int32"
           },
           "origin_conversation_id": {
-            "type": "string",
-            "format": "uuid"
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Null when the caller cannot see that (direct) conversation; see `conversation_hidden`."
           },
           "report": {
             "type": [
@@ -24880,6 +24953,7 @@
           "timezone",
           "enabled",
           "consecutive_failures",
+          "conversation_hidden",
           "created_at",
           "updated_at"
         ],
@@ -24891,6 +24965,10 @@
           "consecutive_failures": {
             "type": "integer",
             "format": "int32"
+          },
+          "conversation_hidden": {
+            "type": "boolean",
+            "description": "True when `origin_conversation_id` was redacted (phase 1, RFE-009)."
           },
           "created_at": {
             "type": "string",
@@ -24958,7 +25036,8 @@
               "string",
               "null"
             ],
-            "format": "uuid"
+            "format": "uuid",
+            "description": "Null when the caller cannot see that (direct) conversation; see `conversation_hidden`."
           },
           "prompt": {
             "type": "string"

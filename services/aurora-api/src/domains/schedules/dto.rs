@@ -29,7 +29,10 @@ pub struct Schedule {
     pub next_fire_at: Option<DateTime<Utc>>,
     pub last_fired_at: Option<DateTime<Utc>>,
     pub created_by: Option<ScheduleCreator>,
+    /// Null when the caller cannot see that (direct) conversation; see `conversation_hidden`.
     pub origin_conversation_id: Option<Uuid>,
+    /// True when `origin_conversation_id` was redacted (phase 1, RFE-009).
+    pub conversation_hidden: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -55,6 +58,7 @@ impl From<ScheduleRow> for Schedule {
                 display_name: r.creator_name.unwrap_or_default(),
             }),
             origin_conversation_id: r.origin_conversation_id,
+            conversation_hidden: false,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }

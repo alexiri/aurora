@@ -77,6 +77,17 @@ pub async fn decide(
     if auth.org_id != existing.org_id || !auth.can_use() {
         return Err(ApiError::not_found("Approval not found."));
     }
+    // RFE-009: an approval naming a direct conversation the caller cannot see does not exist.
+    if !approvals::conversation_visible(
+        &s.pool,
+        c.user_id,
+        existing.workspace_id,
+        existing.conversation_id,
+    )
+    .await?
+    {
+        return Err(ApiError::not_found("Approval not found."));
+    }
     let row = approvals::decide(
         &s.pool,
         id,
@@ -187,7 +198,24 @@ pub async fn stream_item(
         }
     }
     match approvals::get(&s.pool, id).await {
-        Ok(row) => row.map(Into::into),
+        Ok(Some(row)) => {
+            match approvals::conversation_visible(
+                &s.pool,
+                user,
+                row.workspace_id,
+                row.conversation_id,
+            )
+            .await
+            {
+                Ok(true) => Some(row.into()),
+                Ok(false) => None,
+                Err(e) => {
+                    tracing::warn!(error = %e, "approval stream visibility failed");
+                    None
+                }
+            }
+        }
+        Ok(None) => None,
         Err(e) => {
             tracing::warn!(error = %e, "approval stream load failed");
             None

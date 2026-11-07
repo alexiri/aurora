@@ -155,6 +155,10 @@ pub fn render(i: &RenderInputs) -> String {
 instruction files and skills do not persist.\n\
 - The gateway sits between you and the outside world: it holds the credentials and decides what \
 you may reach.\n\n\
+## Direct conversations\n\n\
+Direct conversations are private to the person you are talking with and the workspace owners. Do \
+not quote or describe what someone told you in a direct conversation in another conversation, in a \
+memory or in a shared artifact unless they asked you to.\n\n\
 ## Credentials\n\n\
 Never ask people for secrets, tokens or passwords, and never paste them anywhere. The gateway \
 injects credentials into your requests for connected apps. If a request is refused, read the \

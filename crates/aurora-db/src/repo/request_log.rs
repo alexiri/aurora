@@ -45,20 +45,23 @@ pub struct ActivityFilter {
 }
 
 /// Workspace activity, `ts desc, id desc`; keyset on `(ts, id)`.
+/// Rows whose conversation is a direct conversation `viewer` cannot see are omitted
+/// (phase 1, RFE-009).
 pub async fn list_activity(
     pool: &PgPool,
+    viewer: Uuid,
     ws: Uuid,
     f: &ActivityFilter,
     after: After,
     fetch: i64,
 ) -> Result<Vec<LogRow>, DbError> {
     let (t, id) = split(after);
-    Ok(sqlx::query_as(
+    Ok(sqlx::query_as(&format!(
         "SELECT id, ts, agent_id, conversation_id, turn_id, credential_kind, lane, method, host, \
                 path, app_id, tool_id, connection_id, secret_id, decision, rule_logical_id, \
                 rule_name, upstream_status, status, error_code, injected, latency_ms, bytes_up, \
                 bytes_down \
-         FROM request_log WHERE workspace_id = $1 \
+         FROM request_log WHERE workspace_id = $1 AND NOT {} \
            AND ($2::uuid IS NULL OR agent_id = $2) \
            AND ($3::uuid IS NULL OR conversation_id = $3) \
            AND ($4::text IS NULL OR decision = $4) \
@@ -66,7 +69,8 @@ pub async fn list_activity(
            AND ($6::text IS NULL OR app_id = $6) \
            AND ($7::timestamptz IS NULL OR (ts, id) < ($7, $8)) \
          ORDER BY ts DESC, id DESC LIMIT $9",
-    )
+        crate::authz::hidden_direct_conversation_sql("conversation_id", "$10", "workspace_id")
+    ))
     .bind(ws)
     .bind(f.agent_id)
     .bind(f.conversation_id)
@@ -76,6 +80,7 @@ pub async fn list_activity(
     .bind(t)
     .bind(id)
     .bind(fetch)
+    .bind(viewer)
     .fetch_all(pool)
     .await?)
 }

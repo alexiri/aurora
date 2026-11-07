@@ -244,6 +244,29 @@ impl Click<'_> {
         Ok(())
     }
 
+    /// `authorize`, plus (phase 1, RFE-009) `can_see_conversation` for subjects that name a
+    /// conversation: a DM approval card clicked by anyone but that person or an owner is refused
+    /// before the token is consumed.
+    async fn authorize_subject(
+        &self,
+        c: &Caller,
+        ws: Uuid,
+        conversation: Option<Uuid>,
+    ) -> Result<(), Stop> {
+        self.authorize(c, ws, false).await?;
+        if !aurora_db::repo::approvals::conversation_visible(
+            &self.state.pool,
+            c.user_id,
+            ws,
+            conversation,
+        )
+        .await?
+        {
+            return refuse("forbidden", "You do not have access to do that.");
+        }
+        Ok(())
+    }
+
     async fn act(
         &self,
         c: &Caller,
@@ -258,7 +281,8 @@ impl Click<'_> {
                 let a = approvals::get(&s.pool, claims.subject_id)
                     .await?
                     .ok_or_else(gone)?;
-                self.authorize(c, a.workspace_id, false).await?;
+                self.authorize_subject(c, a.workspace_id, a.conversation_id)
+                    .await?;
                 self.consume(claims, exp).await?;
                 let d = gate(*decision);
                 crate::domains::approvals::service::decide(s, c, a.id, d).await?;
@@ -278,7 +302,8 @@ impl Click<'_> {
                 if cards::build::batch_uuid(&batch) != *batch_id || a.agent_id != *agent_id {
                     return refuse("invalid_token", "This action is not valid.");
                 }
-                self.authorize(c, a.workspace_id, false).await?;
+                self.authorize_subject(c, a.workspace_id, a.conversation_id)
+                    .await?;
                 self.consume(claims, exp).await?;
                 crate::domains::approvals::service::decide_batch(
                     s,
@@ -294,7 +319,8 @@ impl Click<'_> {
                 let a = action_approvals::get(&s.pool, claims.subject_id)
                     .await?
                     .ok_or_else(gone)?;
-                self.authorize(c, a.workspace_id, false).await?;
+                self.authorize_subject(c, a.workspace_id, a.conversation_id)
+                    .await?;
                 self.consume(claims, exp).await?;
                 let d = match decision {
                     Decision::Approve => ActionDecision::Approve,

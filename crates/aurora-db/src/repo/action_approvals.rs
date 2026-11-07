@@ -25,12 +25,16 @@ pub struct ActionApprovalRow {
     pub error: Option<String>,
     pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    /// Workspace of `conversation_id`'s conversation (null without one).
+    pub conversation_workspace_id: Option<Uuid>,
 }
 
 const SELECT: &str = "SELECT a.id, a.workspace_id, a.agent_id, a.conversation_id, a.turn_id, \
     a.action_key, a.payload, a.summary, a.status, a.decided_by_user_id, \
     u.display_name AS decided_by_name, a.decided_at, a.executed_at, a.error, a.expires_at, \
-    a.created_at FROM action_approvals a LEFT JOIN users u ON u.id = a.decided_by_user_id";
+    a.created_at, cv.workspace_id AS conversation_workspace_id FROM action_approvals a \
+    LEFT JOIN users u ON u.id = a.decided_by_user_id \
+    LEFT JOIN conversations cv ON cv.id = a.conversation_id";
 
 pub struct NewActionApproval<'a> {
     pub workspace_id: Uuid,
@@ -93,6 +97,7 @@ pub async fn get_for_update(
 /// Approvals of a workspace, newest first; `after` is `(created_at, id)`.
 pub async fn list_workspace<'e, E: PgExecutor<'e>>(
     exec: E,
+    viewer: Uuid,
     workspace_id: Uuid,
     status: Option<&str>,
     agent_id: Option<Uuid>,
@@ -100,11 +105,14 @@ pub async fn list_workspace<'e, E: PgExecutor<'e>>(
     fetch: i64,
 ) -> Result<Vec<ActionApprovalRow>, DbError> {
     let (t, id) = split(after);
+    // RFE-009: rows naming an invisible direct conversation are omitted.
     Ok(sqlx::query_as(&format!(
         "{SELECT} WHERE a.workspace_id = $1 AND ($2::text IS NULL OR a.status = $2)
            AND ($3::uuid IS NULL OR a.agent_id = $3)
            AND ($4::timestamptz IS NULL OR (a.created_at, a.id) < ($4, $5))
-         ORDER BY a.created_at DESC, a.id DESC LIMIT $6"
+           AND NOT {}
+         ORDER BY a.created_at DESC, a.id DESC LIMIT $6",
+        crate::authz::hidden_direct_conversation_sql("a.conversation_id", "$7", "a.workspace_id")
     ))
     .bind(workspace_id)
     .bind(status)
@@ -112,6 +120,7 @@ pub async fn list_workspace<'e, E: PgExecutor<'e>>(
     .bind(t)
     .bind(id)
     .bind(fetch)
+    .bind(viewer)
     .fetch_all(exec)
     .await?)
 }

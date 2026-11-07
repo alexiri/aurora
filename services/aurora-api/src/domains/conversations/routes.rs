@@ -7,8 +7,8 @@ use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, Pagination};
 use aurora_core::{ApiError, FieldError};
-use aurora_db::repo::transcript;
 use aurora_db::repo::{conversations as convs, turns};
+use aurora_db::repo::{transcript, users};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -61,12 +61,15 @@ async fn list_conversations(
         ));
     }
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
-    service::load_agent(&s, &c, agent).await?;
+    let agent_row = service::load_agent(&s, &c, agent).await?;
+    // RFE-009: owners see every direct conversation of the agent; others only their own.
+    let owns = c.workspace(&s, agent_row.workspace_id).await?.can_own();
     let rows = convs::list_for_agent(
         &s.pool,
         agent,
         q.kind.as_deref(),
         c.user_id,
+        owns,
         p.after.map(|a| (a.t, a.id)),
         p.fetch(),
     )
@@ -74,17 +77,30 @@ async fn list_conversations(
     let page = Page::from_rows(rows, p.limit, |r| (r.last_activity_at, r.id));
     let ids: Vec<Uuid> = page.items.iter().map(|r| r.id).collect();
     let mut active = turns::active_turns(&s.pool, &ids).await?;
-    let items = page
-        .items
-        .into_iter()
-        .map(|r| {
-            let a = active
-                .iter()
-                .position(|t| t.conversation_id == r.id)
-                .map(|i| active.swap_remove(i));
-            Conversation::from_row(r, a)
-        })
-        .collect();
+    let mut items = Vec::with_capacity(page.items.len());
+    for r in page.items {
+        let a = active
+            .iter()
+            .position(|t| t.conversation_id == r.id)
+            .map(|i| active.swap_remove(i));
+        let other_direct = if r.kind == "direct" {
+            r.direct_user_id.filter(|u| *u != c.user_id)
+        } else {
+            None
+        };
+        let mut conv = Conversation::from_row(r, a);
+        if let Some(u) = other_direct {
+            let display_name = users::find_by_id(&s.pool, u)
+                .await?
+                .map(|u| u.display_name)
+                .unwrap_or_default();
+            conv.direct_user = Some(DirectUser {
+                id: u,
+                display_name,
+            });
+        }
+        items.push(conv);
+    }
     Ok(Json(Page {
         items,
         next_cursor: page.next_cursor,
@@ -227,6 +243,7 @@ struct Stream_ {
     rx: broadcast::Receiver<BusMsg>,
     s: AppState,
     conv: Uuid,
+    user: Uuid,
     last: i64,
     buf: VecDeque<Event>,
     tick: tokio::time::Interval,
@@ -287,7 +304,7 @@ async fn stream(
     Query(q): Query<StreamQuery>,
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    service::load_conversation(&s, &c, id).await?;
+    service::read_conversation(&s, &c, id).await?;
     let from_header = headers
         .get("last-event-id")
         .and_then(|v| v.to_str().ok())
@@ -303,6 +320,7 @@ async fn stream(
         rx,
         s,
         conv: id,
+        user: c.user_id,
         last,
         buf: VecDeque::new(),
         tick,
@@ -353,7 +371,17 @@ async fn stream(
                     Ok(BusMsg::Resync) | Err(RecvError::Lagged(_)) => st.dirty = true,
                     Err(RecvError::Closed) => return None,
                 },
-                _ = st.tick.tick() => st.dirty = true,
+                _ = st.tick.tick() => {
+                    // RFE-009: a viewer who lost visibility (left the workspace, lost
+                    // ownership) stops receiving the stream at the next resync.
+                    if matches!(
+                        aurora_db::authz::can_see_conversation_id(&st.s.pool, st.user, st.conv).await,
+                        Ok(false)
+                    ) {
+                        return None;
+                    }
+                    st.dirty = true;
+                }
             }
         }
     });
