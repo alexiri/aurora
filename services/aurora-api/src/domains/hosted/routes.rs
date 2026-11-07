@@ -61,19 +61,6 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
         (Some(b), true) => hosted::processes_of_boot(&mut conn, r.id, b).await?,
         _ => vec![],
     };
-    // Env/stub changes apply at the next boot: compare what a boot would get now with the hash
-    // recorded when the running boot started (boots before this was recorded never flag).
-    let restart_to_update = if running {
-        match hosted::boot_app_inputs_hash(&mut conn, agent).await? {
-            Some(booted) => {
-                drop(conn);
-                boot::app_boot_for(s, a).await?.hash != booted
-            }
-            None => false,
-        }
-    } else {
-        false
-    };
     let mut reasons = Vec::new();
     if r.active_turn {
         reasons.push("turn".to_owned());
@@ -98,6 +85,22 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
         )
     } else {
         None
+    };
+    // Env/stub changes and a new runner image apply at the next boot: compare what a boot would
+    // get now with what was recorded when the running boot started. Boots recorded before the
+    // image was stored flag only on the env/stub hash.
+    let restart_to_update = if running {
+        let booted_hash = hosted::boot_app_inputs_hash(&mut conn, agent).await?;
+        let booted_image = hosted::boot_image(&mut conn, agent).await?;
+        drop(conn);
+        let image_changed = matches!((&booted_image, &image), (Some(b), Some(now)) if b != now);
+        let hash_changed = match booted_hash {
+            Some(h) => boot::app_boot_for(s, a).await?.hash != h,
+            None => false,
+        };
+        image_changed || hash_changed
+    } else {
+        false
     };
     Ok(SandboxView {
         agent_id: agent,

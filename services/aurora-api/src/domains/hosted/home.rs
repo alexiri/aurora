@@ -126,7 +126,17 @@ async fn render_inputs(
     let snap = crate::domains::plugins::registry::active_typed(state).await?;
     let mut apps: Vec<Value> = Vec::new();
     if let Some(snap) = snap {
-        let conns = hosted::home_app_connections(conn, agent).await?;
+        let av = crate::domains::apps::service::availability_of(
+            state,
+            inputs.org_id,
+            inputs.workspace_id,
+        )
+        .await?;
+        let conns: Vec<_> = hosted::home_app_connections(conn, agent)
+            .await?
+            .into_iter()
+            .filter(|c| av.is_available(&c.app_id))
+            .collect();
         let mut seen: Vec<&str> = Vec::new();
         for c in &conns {
             if seen.contains(&c.app_id.as_str()) {
