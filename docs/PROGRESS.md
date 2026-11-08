@@ -207,7 +207,7 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | OPS-019 | CI green + fast (`rust-test` disk fix, sharded nextest, one compile), actions off Node 20 | 1 | done; master CI fully green (run 42382511618: build 15m cold, shards 2.5-3m, e2e-gateway 6.6m, e2e-hosted 12.7m) | OPS-016 for test layout |
 | OPS-020 | CI builds images and pushes to ghcr.io after green tests (shared builder stage, cache) | 1 | done: run 42400978710 published all six service images + web + sandbox (builder 15.5 min warm, 782 s of it compiling the 20 workspace crates → OPS-023) | OPS-019, OPS-016 |
 | OPS-022 | Multi-arch images (amd64 + arm64) on native arm64 runners | 5 | deferred (owner 2026-11-07: no arm deployment planned; images are amd64 only until then) | OPS-020 |
-| OPS-021 | Dependabot (cargo, npm, actions, docker; grouped) | 4 | todo | OPS-019/020 |
+| OPS-021 | Dependabot (cargo, npm, actions, docker; grouped) | 5 | todo (moved to phase 5 by the owner, 2026-11-08) | OPS-019/020 |
 | OPS-017 | kind replaces compose | 1 | done (883a3928, I-42): compose removed; `just kind-up`, `just kind-dev <svc>` 33-42 s loop; kind.sh 4/4, llm.sh, m1.sh host + --kind. Follow-ups: FU-OPS-017a hosted claude-code through llm-mock inside kind not proven (needs llm.Containerfile sandbox image); FU-OPS-017b docs 04/06/11 and gateway `proxy_tls.rs` "fixed compose address" still mention compose (cleanup) | OPS-016 |
 | OPS-018 | Live reload | 1 | done (I-43): `just dev` watch→rebuild→restart (stdlib Python watcher) incl. runner (fake backend), `just kind-live`, dev-only read-only supervisor bind-mount (refused unless podman + loopback). Save-to-serving: hookhost/runner 3.7 s, api 15-17 s. Follow-ups: FU-OPS-018a api above the 5 s target; FU-OPS-018b gateway warm time, kind-live and the supervisor mount not exercised end to end; Fast Refresh not checked in a browser | OPS-016, OPS-017 |
 | OPS-023 | Faster image builds: sccache in the release builder (local cache mount, CI GHA backend via secrets); kind.sh e2e on the OPS-017 dev build path | 1 | done (I-44): sccache in the builder (local mount; CI GHA backend via BuildKit secrets), kind.sh on the dev build path by default (`--release-images` for release). Local release builder: cold 12m13s → 8m32s after a one-line api change (19/20 crates hit; the six thin-LTO links dominate and are never cacheable); kind.sh image prep 9-12 min → 60 s. CI: the GitHub Actions sccache backend got 0 hits on two consecutive runs and doubled `images-builder` (~15 → ~32 min; its entries compete with the BuildKit layer cache for the 10 GB Actions cache), so it was removed from CI after measuring (local sccache kept). Follow-ups: FU-OPS-023a sccache pinned at 0.10.0 (host has 0.19), bump it; FU-OPS-023b release link time (thin LTO × 6 binaries) is the remaining cost — consider one multi-call binary or lto=false for non-release CI images | — |
@@ -258,6 +258,7 @@ Shared files that no lane owns (each lane appends or regenerates them, and the c
 | P2-OPS-1 | Ops verification and supply chain: real-cluster Helm install + kind.sh/kind-dev image builds (FU-P1-005a); hosted claude-code through llm-mock inside kind (FU-OPS-017a); pin the Helm hook image `docker.io/alpine/k8s:1.31.2` by digest or build an Aurora tools image (FUP-M7, verified unpinned in `deploy/helm/aurora/values.yaml`); evaluation Postgres rendered as hook resources (FUP-M7: document or subchart); bump the sccache pin (FU-OPS-023a); if Q3 = yes, a Mattermost conformance job and a nightly kind e2e job in CI | `15`, `18 §CI pipeline`, `19 §Phase 1` acceptance, `19` M7 scope | M | ops | P2-DBL-1 merged (it edits the Containerfile and CI build deps) | `deploy/helm/**`, `scripts/e2e/kind.sh`, `scripts/e2e/llm.Containerfile`, `images/services/Containerfile` (sccache ARG), `.github/workflows/ci.yml` (new jobs) | needed | todo |
 | P2-UI-4 | Stage 4 enforcement: token guard, axe in both themes, theme and narrow-shell tests on every route, `Meter` primitive, `style=` guard | `18 §Dashboard visual design`, `14 §Visual design`, D-68 | M | Next.js | every phase-2 dashboard lane merged (P2-INST, P2-011A, P2-UI-3b, P2-UI-3c, P2-008, P2-DBL-2, P2-FU-1) | `web/src/**` (sweep, guards, `components/ui` Meter), `web/package.json` + `pnpm-lock.yaml` (`@axe-core/playwright`), `web/e2e` | `docs/tasks/P2-UI.md` stage 4 | todo |
 | P2-DOCS | Spec housekeeping (coordinator): drop landed jsonb rows from `03 §Planned changes` (RFE-001 `config.verified_email_autolink`, RFE-010/015 `settings.retention`); compose wording in `04`/`06`/`11` and the `proxy_tls.rs` comment (FU-OPS-017b); `docs/tests/security-coverage.md` header still says SEC-01..SEC-41; operator-docs note for accepted k8s residuals (FUP-M7) if the owner accepts them | `03`, `17`, `18`, `15` | S | docs | P2-008, P2-011A, P2-INST merged (they move `03` rows) | `docs/03` (§Planned changes only), `docs/04`/`06`/`11` (compose wording), `docs/tests/security-coverage.md` header, one comment in `services/aurora-gateway/src/proxy_tls.rs`, `docs/operator/**` | needed (short) | todo |
+| P2-E2E-1 | First-run journey on the Helm-deployed kind stack, dashboard only: new user signs in, adds a LiteLLM key, grants it, says hello, gets the mock LLM's reply through the gateway with the real claude-code harness (closes FU-OPS-017a); nightly CI job; README "Try it" | owner 2026-11-08 (phase-2 bar), `14 §Key flows`, I-30, TEST-017, FU-OPS-017a | M | both + ops | none (runs now; fixes what it finds) | `web/e2e/first-run.spec.ts`, `scripts/e2e/first-run.sh`, kind dev profile pieces, harness sandbox image build, nightly workflow, README "Try it", minimal fixes (reported) | `docs/tasks/P2-E2E-1.md` | todo (next free lane) |
 | AUDIT-002 | Phase 1 + 2 exit verification from scratch on one commit (shape of `docs/audit/phase0-exit.md`), incl. FU-P2-010a and FU-P2-025c reruns | `19 §Phase 1`/`§Phase 2`, exit criteria below | M | audit | every task above | `docs/audit/phase2-exit.md`; defects become fix tasks | needed: the command list of the exit criteria below, the install from scratch on kind and a real cluster | todo |
 
 ### Phase 3 tasks
@@ -277,7 +278,7 @@ Start after AUDIT-002 (owner: phases 3 and 4 start when 1 and 2 are done; they m
 | P3-024 | Self-contained `presence.deprovision` ops committed with the delete, sealed credentials bound to the op, 24 h retries, pruning, metrics and audit | `80 §RFE-024`, D-67, `13`, `20`, `04`, `10`, `03 §Planned changes`, SEC-58, `18 §Self-contained deprovision` | M | Rust | P3-018 merged (channels code), API-P3 | api delete paths (`domains/{agents,tenancy,channels}`), channel ops claim, `crates/aurora-connector-sdk`, the Mattermost connector's deprovision, `channel_ops` index migration, pruning job | needed | todo |
 | P3-019 | Neutral default brief; public AlmaLinux base pinned by digest with a build-time `SANDBOX_BASE_IMAGE` override (one lane with P3-023) | `80 §RFE-019`, D-63, `10 §Default agent: Daneel`, `11 §Sandbox image`, `15`, `18 §Deployment-neutral defaults` | S | ops/Rust | API-P3 | `crates/aurora-config` default brief, `images/sandbox/Containerfile`, `docs/operator` example | needed (shared with P3-023) | todo |
 | P3-023 | Simulate reports `default_rule_skipped_llm_host`; Default Rule note in the org and workspace policy editors; doc text check | `80 §RFE-023`, D-66, `07 §Why the Default Rule skips LLM hosts`, `08 §11.4`, `14`, `18 §Default Rule and LLM hosts` | S | both | API-P3 | `crates/aurora-policy` / api `domains/policy` simulate, web `components/policy` Default Rule control | needed (shared with P3-019) | todo |
-| CONTRACT-001 | Contract migration dropping `users.password_hash` and `email_tokens` (only if Q9 puts it in phase 3) | `03 §Planned changes`, `15 §Upgrades` | S | Rust | a release carrying the phase-1 migration; Q9 | one migration, `docs/03` rows | needed | todo (Q9) |
+| CONTRACT-001 | Contract migration dropping `users.password_hash` and `email_tokens` — **the first phase-3 task** (owner, Q9, 2026-11-08: no confirmation needed for this specific drop, there is no user data yet) | `03 §Planned changes`, `15 §Upgrades` | S | Rust | AUDIT-002 (phase 3 start) | one migration, `docs/03` rows, any code still naming the column or table | needed | todo (P3-B0) |
 | AUDIT-003 | Phase-3 exit verification | exit criteria below | M | audit | all phase-3 tasks | `docs/audit/phase3-exit.md` | needed | todo |
 
 ### Phase 4 tasks
@@ -287,7 +288,6 @@ Start after AUDIT-002 (owner: phases 3 and 4 start when 1 and 2 are done; they m
 | Task | Scope (one line) | Spec sources | Size | Lane | Depends on | Owns | Brief | Status |
 |---|---|---|---|---|---|---|---|---|
 | SPEC-P4 | Normative spec for the owner-selected phase-4 items and RFE-011b: `03 §Planned changes`, routes, limits, config keys, SEC invariants, `18` tests (shape of SPEC-RFE-P3) | `21 §Phase 4`, `80 §RFE-011`, `19 §Phase 4+` | L | docs (Sonnet + Opus review) | AUDIT-002; Q10 | `docs/0*`, `docs/1*`, `docs/21`, `docs/90` (new decisions) | needed | todo |
-| OPS-021 | Dependabot, grouped, with ignore rules and a review policy | owner (`docs/tasks/OPS-021.md`) | S | ops | OPS-019, OPS-020 | `.github/dependabot.yml`, `docs/ops/dependencies.md` | `docs/tasks/OPS-021.md` | planned |
 | P4-011B | Approval park-and-resume and Web Push | `80 §RFE-011` Decision, `07`, `14` | L | both | SPEC-P4 | approvals/due-work park path, gateway hold, web push (service worker) | needed after SPEC-P4 | todo |
 | P4-CNT | Shared rate-limit counters (`CounterStore`; Postgres or Redis) | `21 §Other later items`, `19 §Phase 4+` | M | Rust | SPEC-P4 | gateway rate limiter, api `http/apilimit.rs` | needed | todo |
 | P4-S3 | S3-compatible `BlobStore` | `21 §Other later items`, D-54 | M | Rust | SPEC-P4 | api attachments `storage.rs` / BlobStore registry, config | needed | todo |
@@ -303,7 +303,6 @@ Start after AUDIT-002 (owner: phases 3 and 4 start when 1 and 2 are done; they m
 | P4-GSL | Git-backed skill library | `21 §Phase 4 — Git skill library` | M | both | SPEC-P4, a git-hosting package (GitLab or GitHub) | api skills (library source), background refresh job, web skills | needed | todo |
 | P4-NARR | Live narration cards | `21 §Other later items` | M | Rust | Q11 | channels cards, connector rate hint | needed | todo (Q11) |
 | P4-UTOK | User-token features (`user_tokens` capability) | `21 §Other later items` | M | Rust | Q11 | channels/connector contract | needed | todo (Q11) |
-| P4-SLACK | Slack connector | `21 §Other later items`, `19 §Phase 4+` | L | Rust | owner decision (pending since `19`) | new connector crate only (no core change per `21`) | needed | todo (decision pending) |
 | AUDIT-004 | Phase-4 exit verification | exit criteria below | M | audit | the selected phase-4 tasks | `docs/audit/phase4-exit.md` | needed | todo |
 
 ### Phase 5 tasks
@@ -311,6 +310,8 @@ Start after AUDIT-002 (owner: phases 3 and 4 start when 1 and 2 are done; they m
 | Task | Scope (one line) | Spec sources | Size | Lane | Depends on | Owns | Brief | Status |
 |---|---|---|---|---|---|---|---|---|
 | OPS-022 | Multi-arch images (amd64 + arm64) on native arm64 runners | `15 §Images`, `19 §Phase 5` | M | ops | OPS-020 | image jobs in `.github/workflows/ci.yml`, `images/**` | `docs/tasks/OPS-022.md` (its "Phase 1" line is stale: phase 5) | deferred (owner 2026-11-07) |
+| OPS-021 | Dependabot, grouped, with ignore rules and a review policy (moved from phase 4 by the owner, 2026-11-08) | owner (`docs/tasks/OPS-021.md`) | S | ops | OPS-019, OPS-020 | `.github/dependabot.yml`, `docs/ops/dependencies.md` | `docs/tasks/OPS-021.md` | planned (phase 5) |
+| P5-SLACK | Slack connector (was P4-SLACK; moved to phase 5 by the owner, 2026-11-08) | `21 §Other later items`, `19 §Phase 4+` | L | Rust | the connector contract (`13`) | new connector crate only (no core change per `21`) | needed | planned (phase 5) |
 
 ### Execution order
 
@@ -320,14 +321,14 @@ At most three implementation lanes at a time, disjoint ownership; a lane starts 
 
 | Batch | Lanes | Starts when |
 |---|---|---|
-| B1 (running) | P2-INST, P2-011A, P2-UI-3c | now; the coordinator merges P2-CAT-H (renumbered D-77) |
-| B2 | P2-UI-3b, P2-CAT-T (+ P2-011A still running) | 3b: P2-INST merged; CAT-T: P2-CAT-H merged (its GitLab part waits for P2-INST) |
+| B1 (running) | P2-INST, P2-011A, P2-DBL-1 (P2-UI-3c, P2-CAT-H, P2-CAT-4 done) | now |
+| B2 | **P2-E2E-1 first** (owner's phase-2 bar), then P2-UI-3b, P2-CAT-T | E2E-1: the next free slot; 3b: P2-INST merged; CAT-T: its GitLab part waits for P2-INST |
 | B3 | P2-008, P2-DBL-1, P2-CAT-1 | P2-011A and P2-INST merged; CAT-1 also after P2-CAT-T |
 | B4 | P2-DBL-2, P2-CAT-2, P2-CAT-3 | DBL-2: P2-DBL-1 and P2-UI-3b merged |
 | B5 | P2-FU-1, P2-FU-2, P2-CAT-6 | FU-1: P2-011A, P2-UI-3c merged and Q7 answered; FU-2: P2-DBL-1 merged |
-| B6 | P2-CAT-4, P2-CAT-5b, P2-TEST-1 | TEST-1: P2-DBL-2 merged |
+| B6 | P2-CAT-5b, P2-TEST-1 | TEST-1: P2-DBL-2 merged |
 | B7 | P2-UI-4, P2-OPS-1 (+ P2-DOCS by the coordinator) | UI-4: every phase-2 dashboard lane merged; OPS-1: P2-DBL-1 merged |
-| B8 | AUDIT-002 | everything above merged, CI green |
+| B8 | AUDIT-002 | everything above merged, CI green, the P2-E2E-1 journey green on the audited commit |
 
 Critical path: P2-INST → P2-UI-3b → P2-DBL-2 (and P2-011A → P2-DBL-1 → P2-DBL-2) → P2-UI-4 → AUDIT-002. Catalogue lanes only touch `plugins/builtin/<package>/**`, so they fill free slots; if Q1 makes some packages non-blocking they move after AUDIT-002 and run alongside phase 3.
 
@@ -347,11 +348,11 @@ Collisions serialized, with the reason:
 
 | Batch | Lanes | Starts when |
 |---|---|---|
-| P3-B0 | API-P3 (coordinator, docs) | AUDIT-002 done; Q12 answered |
+| P3-B0 | CONTRACT-001 (first phase-3 task, owner Q9) + API-P3 (coordinator, docs) | AUDIT-002 done |
 | P3-B1 | P3-014, P3-020, P3-VLT-1 | API-P3 merged |
 | P3-B2 | P3-013, P3-018, P3-VLT-2 | P3-013: P3-014 merged; P3-VLT-2: P3-VLT-1 merged |
 | P3-B3 | P3-022, P3-024, P3-019 + P3-023 (one lane) | P3-022: P3-013 merged; P3-024: P3-018 merged |
-| P3-B4 | CONTRACT-001 (if Q9), AUDIT-003 | all above merged |
+| P3-B4 | AUDIT-003 | all above merged |
 
 Collisions serialized: **P3-013 after P3-014** (both rewrite gateway credential authentication and the identity cache); **P3-022 after P3-013** (both touch gateway credential paths: refresh/mint reseal vs. expiry/`last_used_at`); **P3-024 after P3-018** (both edit the channels domain: inbox ingest vs. ops/claim). P3-020 and P3-018 both touch the web agent page (skills tab vs. composer) but different components.
 
@@ -359,12 +360,12 @@ Collisions serialized: **P3-013 after P3-014** (both rewrite gateway credential 
 
 | Batch | Lanes | Starts when |
 |---|---|---|
-| P4-B0 | SPEC-P4 (docs), OPS-021 | AUDIT-002; Q10 |
+| P4-B0 | SPEC-P4 (docs) | AUDIT-002; Q10 |
 | P4-B1 | P4-CNT, P4-S3, P4-LLM | SPEC-P4 merged |
 | P4-B2 | P4-GRP-1, P4-011B, P4-HAR | P4-HAR after P4-LLM |
 | P4-B3 | P4-SSH-1, P4-PRV-1, P4-GRP-2 | P4-GRP-2 after P4-GRP-1 |
 | P4-B4 | P4-SSH-2, P4-EVAL, P4-GSL | P4-SSH-2 after P4-SSH-1 |
-| P4-B5 | P4-PRV-2 (+ P4-NARR, P4-UTOK, P4-SLACK if Q11/decision) | P4-PRV-2 after P4-SSH-2 |
+| P4-B5 | P4-PRV-2 (P4-NARR, P4-UTOK stay unscheduled per Q11) | P4-PRV-2 after P4-SSH-2 |
 | P4-B6 | AUDIT-004 | selected items merged |
 
 Collisions serialized: **P4-PRV-2 after P4-SSH-2** (both add a byte-stream API to the runner and the supervisor channel); **P4-HAR after P4-LLM** (dialects come from the providers); **P4-GRP-2 after P4-GRP-1** (SCIM writes the groups model).
@@ -459,8 +460,9 @@ In the spirit of `docs/audit/phase0-exit.md`: one commit, a fresh `target/`, eve
 7. Plugins: `scripts/fixtures/build.sh`; `scripts/plugins/check-builtin.sh` for every built-in, including hook and token-lifecycle coverage; the plugin link workflow green; the release image job signs the built-ins with the project key on CI (first signed run confirmed, CAT-0 note).
 8. e2e: `m1.sh`, `gateway.sh` (incl. instances and database lane), `AURORA_TEST_PODMAN=1 hosted.sh` (incl. freeze, `psql` scenario), `channels.sh`, `scripts/conformance.sh` (fake and `--mattermost`), `mattermost.sh` live scenario, `llm.sh`, `UPGRADE_STRICT=1 upgrade.sh` from the phase-0 release point to HEAD (many migrations since), `scripts/perf/gateway.sh` budgets, `kind.sh --fresh` and `deploy/dev/kind-dev.sh up`.
 9. Install from scratch: Helm on a fresh kind cluster and one real cluster (FU-P1-005a), following `docs/operator/`.
-10. CI on GitHub green on the audited commit, all jobs (and the Mattermost/nightly kind jobs if Q3 = yes).
+10. CI on GitHub green on the audited commit, all jobs, plus the nightly Mattermost conformance and kind jobs (Q3).
 11. Docs: operator docs cover the phase-1/2 configuration (TLS proxy listener, OIDC-only and the dev IdP, open-lane and BYO postures, retention/quota, rate limits, keyring rotation, approval timeouts and e-mail, app instances, built-in catalogue, database lane); PROGRESS and FEATURES reconciled; every FU either closed or deferred by the owner.
+12. **Deployable and usable (owner, 2026-11-08):** the P2-E2E-1 first-run journey passes on the Helm-deployed kind stack: a new user signs in, adds a LiteLLM key, says hello to the default agent and gets the reply from the mock LLM through the gateway, with the real claude-code harness, using the dashboard only. The same install, pointed at a real LiteLLM, is the owner's "kick the tires" setup, documented in the README.
 
 **Phase 3 (AUDIT-003)**: items 4–11 again on the phase-3 commit; SEC-53..SEC-58 (and the Q12 Vault invariant) proven; the `18` phase-3 suites pass (BYO token age, database outage incl. `readyz` states, message idempotency, deployment-neutral defaults, workspace-tier skills, Default Rule and LLM hosts, plugin major upgrades, self-contained deprovision); a CI job against a Vault dev server runs `secrets migrate` inline → Vault → inline and the CAS race test; `upgrade.sh` from the phase-2 exit commit; no phase-3 rows left in `03 §Planned changes`; operator docs for Vault, outage behaviour and alerts, deployment-specific settings.
 
@@ -469,6 +471,8 @@ In the spirit of `docs/audit/phase0-exit.md`: one commit, a fresh `target/`, eve
 **Phase 5**: every image on ghcr.io is a linux/amd64 + linux/arm64 manifest list, image jobs green, timings recorded (`docs/tasks/OPS-022.md`).
 
 ### Decisions needed from the owner (c)
+
+**Answered by the owner on 2026-11-08 (D-78):** every recommendation below is accepted, with these changes: **Q9** — yes, CONTRACT-001 is the first phase-3 task, and this specific drop needs no further confirmation (there is no user data yet); **Q14** — the Slack connector moves to phase 5 (P5-SLACK); **OPS-021** (Dependabot) moves to phase 5 as well; **Q15** — the recommendation was conditional, so it stays deferred until the owner reports that their tenant needs single-tenant registrations. New phase-2 bar: a deployable, usable system proven by the P2-E2E-1 first-run journey (exit criterion 12).
 
 | # | Question | Recommendation |
 |---|---|---|
@@ -496,7 +500,7 @@ In the spirit of `docs/audit/phase0-exit.md`: one commit, a fresh `target/`, eve
 
 ## Decisions requiring user input
 
-- Open questions Q1..Q15 from the planning review: §Remaining work plan (by feature) → "Decisions needed from the owner".
+- none open. Q1..Q15 of the planning review were answered on 2026-11-08 (D-78; §Remaining work plan → "Decisions needed from the owner").
 - (resolved 2026-11-08: the owner generated the project signing key; private half = GitHub Actions secret `AURORA_PROJECT_SIGNING_KEY` in environment `release`, public half compiled in as `AURORA_PROJECT_PUBLIC_KEY`)
 
 ## Open security findings

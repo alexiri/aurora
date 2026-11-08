@@ -187,6 +187,11 @@ removal handling.
   allow-lists, empty-identity rule warning, optional required context
   credentials).
 - Phases 1 and 2 may run in parallel once phase 0 is merged to `master`.
+- **Exit bar (owner, 2026-11-08, D-78):** at the end of phase 2 the system is deployable and usable.
+  On the Helm-deployed stack a new user signs in, adds a LiteLLM key, says hello to their agent and
+  gets the answer back from the (mock) LLM through the gateway with the real harness, using the
+  dashboard only (P2-E2E-1, Playwright). Pointed at a real LiteLLM, the same install is the owner's
+  evaluation setup.
 
 ## Phase 3 — External secret stores
 
@@ -202,12 +207,12 @@ RFE-024 (self-contained deprovision ops).
 ## Phase 4+ — Later
 
 SSH front door, port previews, evals, git-backed skill library, groups and
-SCIM, shared rate-limit counters, S3 blob store, additional LLM providers,
-additional connectors (Slack decision pending). See `21`.
+SCIM, shared rate-limit counters, S3 blob store, additional LLM providers.
+See `21`.
 Design-review item RFE-011b (approval park-and-resume, Web Push).
 Phases 3 and 4 start once phases 1 and 2 are done.
 
 ## Phase 5 — Later still
 
 Multi-arch (arm64) images, OPS-022 (owner, 2026-11-07: no arm deployment planned; images are
-amd64 only until then).
+amd64 only until then). Dependabot, OPS-021, and the Slack connector (owner, 2026-11-08, D-78).
