@@ -80,10 +80,14 @@ pub struct ParsedMemory {
 
 fn unquote(v: &str) -> String {
     let v = v.trim();
-    for q in ['"', '\''] {
-        if v.len() >= 2 && v.starts_with(q) && v.ends_with(q) {
-            return v[1..v.len() - 1].to_owned();
-        }
+    if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') {
+        // The API renders a double-quoted scalar with `serde_json::to_string`; read it back the
+        // same way. A slightly malformed hand edit keeps its inner text rather than being lost.
+        return serde_json::from_str::<String>(v).unwrap_or_else(|_| v[1..v.len() - 1].to_owned());
+    }
+    if v.len() >= 2 && v.starts_with('\'') && v.ends_with('\'') {
+        // YAML single-quoted: the only escape is `''` for a literal `'`.
+        return v[1..v.len() - 1].replace("''", "'");
     }
     v.to_owned()
 }
@@ -239,6 +243,36 @@ mod tests {
         assert_eq!(p.title.as_deref(), Some("T"));
         assert_eq!(p.description.as_deref(), Some("D"));
         assert_eq!(p.content, "hello\n");
+    }
+
+    #[test]
+    fn unquote_double_quoted_unescapes_like_the_renderer() {
+        assert_eq!(unquote(r#" "Cafe \"menu\"" "#), r#"Cafe "menu""#);
+        assert_eq!(unquote(r#""a\\b""#), r"a\b");
+        assert_eq!(unquote(r#""l1\nl2\tx""#), "l1\nl2\tx");
+        assert_eq!(unquote(r#""café 😀""#), "café 😀");
+        assert_eq!(unquote(r#""""#), "");
+    }
+
+    #[test]
+    fn unquote_single_quoted_unescapes_doubled_quote() {
+        assert_eq!(unquote("'it''s'"), "it's");
+        assert_eq!(unquote(r"'a\b'"), r"a\b");
+        assert_eq!(unquote("''"), "");
+    }
+
+    #[test]
+    fn unquote_unquoted_is_trimmed() {
+        assert_eq!(unquote("  plain \\n text "), "plain \\n text");
+        assert_eq!(unquote("\"half"), "\"half");
+        assert_eq!(unquote("\""), "\"");
+    }
+
+    #[test]
+    fn unquote_malformed_double_quoted_falls_back_to_inner_text() {
+        // An invalid escape and an unescaped inner quote: not valid JSON, so the inner text stays.
+        assert_eq!(unquote(r#""bad \q escape""#), r"bad \q escape");
+        assert_eq!(unquote(r#""say "hi" now""#), r#"say "hi" now"#);
     }
 
     #[test]
