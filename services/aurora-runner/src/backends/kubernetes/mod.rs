@@ -110,6 +110,7 @@ impl KubernetesSettings {
                 runtime_class: k.runtime_class.clone(),
                 node_selector: k.node_selector.clone(),
                 tolerations,
+                image_pull_secrets: k.image_pull_secrets.clone(),
             },
             max_sandboxes: r.max_sandboxes,
             capacity_wait: Duration::from_secs(r.capacity_wait_secs),

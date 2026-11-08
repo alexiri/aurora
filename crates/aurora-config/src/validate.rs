@@ -621,6 +621,14 @@ impl RawConfig {
         if r.image.is_empty() {
             c.err("runner.image", "must not be empty");
         }
+        for (i, n) in r.k8s.image_pull_secrets.iter().enumerate() {
+            if !is_dns_subdomain(n) {
+                c.err(
+                    format!("runner.k8s.image_pull_secrets[{i}]"),
+                    format!("`{n}` is not a valid Secret name (DNS-1123 subdomain: lowercase alphanumerics, `-` and `.`, at most 253 characters, starting and ending with an alphanumeric)"),
+                );
+            }
+        }
         if backend == Some(RunnerBackend::Podman) && r.sandbox_network.is_empty() {
             c.err("runner.sandbox_network", "must not be empty");
         }
@@ -969,6 +977,16 @@ fn check_ratelimit(c: &mut Ctx, r: &ApiRateSection) {
             }
         }
     }
+}
+
+/// Kubernetes DNS-1123 subdomain: what a Secret name must be.
+fn is_dns_subdomain(s: &str) -> bool {
+    let alnum = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
+    !s.is_empty() && s.len() <= 253 && s.split('.').all(|label| {
+        let mut ch = label.chars();
+        matches!((ch.next(), label.chars().next_back()), (Some(a), Some(b)) if alnum(a) && alnum(b))
+            && label.chars().all(|c| alnum(c) || c == '-')
+    })
 }
 
 fn check_pos<T: Into<u64> + Copy>(c: &mut Ctx, key: &str, v: Option<T>) {

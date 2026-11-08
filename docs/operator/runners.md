@@ -111,6 +111,24 @@ For production (docs/11 §Backend kubernetes). The Helm chart sets `runner.backe
 | `runner.k8s.runtime_class` | unset | RuntimeClass of each sandbox Pod. gVisor or Kata recommended. |
 | `runner.k8s.node_selector` | `{}` | Labels that sandbox Pods must match. Helm renders `runner.k8s.nodeSelector` here. |
 | `runner.k8s.tolerations` | `[]` | Tolerations of each sandbox Pod, as TOML tables. Helm renders `runner.k8s.tolerations` here. |
+| `runner.k8s.image_pull_secrets` | `[]` | Names of image-pull Secrets set as `imagePullSecrets` on each sandbox Pod, for a sandbox image in a private registry. Each must be a DNS-1123 subdomain name (startup fails otherwise). Helm renders `runner.sandboxImagePullSecrets` here. |
+
+#### Private sandbox registry
+
+The runner never reads or creates these Secrets, and its RBAC is unchanged. Create them in the
+**sandbox namespace** (`runner.k8s.namespace`, default `aurora-sandboxes`) before the first
+sandbox starts. The chart's own `imagePullSecrets` (for the service images) live in the release
+namespace and Secrets are namespaced, so they do not apply to sandbox Pods; the chart does not
+copy them. A sandbox whose Secret is missing or wrong fails with `image_unavailable`.
+
+```sh
+kubectl -n aurora-sandboxes create secret docker-registry sandbox-registry \
+  --docker-server=registry.example.org \
+  --docker-username=<user> --docker-password=<token>
+```
+
+Then set `runner.k8s.image_pull_secrets = ["sandbox-registry"]` (Helm:
+`--set 'runner.sandboxImagePullSecrets={sandbox-registry}'`) and restart the runner.
 
 Per sandbox the runner creates a PVC `home-<sandbox_id>`, a Pod `sbx-<handle>-<boot>` with
 `restartPolicy: Never`, and a Secret `boot-<boot_id>`, which is deleted when the boot ends.

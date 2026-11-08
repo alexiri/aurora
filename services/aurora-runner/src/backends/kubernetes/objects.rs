@@ -7,10 +7,10 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use k8s_openapi::api::core::v1::{
     Capabilities, Container, EmptyDirVolumeSource, EnvVar, EnvVarSource, HostAlias,
-    PersistentVolumeClaim, PersistentVolumeClaimSpec, PersistentVolumeClaimVolumeSource, Pod,
-    PodDNSConfig, PodSecurityContext, PodSpec, ResourceRequirements, SeccompProfile, Secret,
-    SecretKeySelector, SecurityContext, Toleration, Volume, VolumeMount,
-    VolumeResourceRequirements,
+    LocalObjectReference, PersistentVolumeClaim, PersistentVolumeClaimSpec,
+    PersistentVolumeClaimVolumeSource, Pod, PodDNSConfig, PodSecurityContext, PodSpec,
+    ResourceRequirements, SeccompProfile, Secret, SecretKeySelector, SecurityContext, Toleration,
+    Volume, VolumeMount, VolumeResourceRequirements,
 };
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -112,6 +112,8 @@ pub struct PodConfig {
     pub runtime_class: Option<String>,
     pub node_selector: BTreeMap<String, String>,
     pub tolerations: Vec<Toleration>,
+    /// Secret names (in the sandbox namespace) for `spec.imagePullSecrets`. Never read here.
+    pub image_pull_secrets: Vec<String>,
 }
 
 fn created_label(now: DateTime<Utc>) -> String {
@@ -350,6 +352,12 @@ pub fn pod_spec(
             runtime_class_name: cfg.runtime_class.clone(),
             node_selector: (!cfg.node_selector.is_empty()).then(|| cfg.node_selector.clone()),
             tolerations: (!cfg.tolerations.is_empty()).then(|| cfg.tolerations.clone()),
+            image_pull_secrets: (!cfg.image_pull_secrets.is_empty()).then(|| {
+                cfg.image_pull_secrets
+                    .iter()
+                    .map(|n| LocalObjectReference { name: n.clone() })
+                    .collect()
+            }),
             containers: vec![container],
             volumes: Some(vec![
                 Volume {

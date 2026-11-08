@@ -291,6 +291,7 @@ fn settings(max: u32, wait: Duration) -> KubernetesSettings {
             runtime_class: None,
             node_selector: BTreeMap::new(),
             tolerations: vec![],
+            image_pull_secrets: vec![],
         },
         max_sandboxes: max,
         capacity_wait: wait,
@@ -688,6 +689,7 @@ fn settings_come_from_config() {
         "namespace = \"sbx\"\ncore_namespace = \"core\"\nstorage_class = \"fast\"\n\
          runtime_class = \"gvisor\"\ngateway_service = \"gw\"\nrunner_service = \"rn\"\n\
          node_selector = { pool = \"sandbox\" }\n\
+         image_pull_secrets = [\"regcred\", \"second\"]\n\
          tolerations = [{ key = \"sandbox\", operator = \"Exists\", effect = \"NoSchedule\" }]",
     );
     let s = KubernetesSettings::from_config(&cfg).unwrap();
@@ -702,6 +704,7 @@ fn settings_come_from_config() {
     assert_eq!(s.pod.storage_class.as_deref(), Some("fast"));
     assert_eq!(s.pod.runtime_class.as_deref(), Some("gvisor"));
     assert_eq!(s.pod.node_selector["pool"], "sandbox");
+    assert_eq!(s.pod.image_pull_secrets, ["regcred", "second"]);
     assert_eq!(s.pod.tolerations.len(), 1);
     assert_eq!(s.pod.tolerations[0].key.as_deref(), Some("sandbox"));
     assert_eq!(s.capacity_wait, Duration::from_secs(7));

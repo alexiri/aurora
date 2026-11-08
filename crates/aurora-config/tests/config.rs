@@ -419,6 +419,41 @@ fn k8s_core_namespace_is_accepted() {
     assert!(raw.runner.k8s.core_namespace.is_none());
 }
 
+#[test]
+fn k8s_image_pull_secrets_are_validated() {
+    let with = |list: &str| {
+        load_with(
+            &format!(
+                "{BASE}[runner]\nbackend = \"kubernetes\"\napi_url = \"http://api:4101\"\n\
+                 [runner.k8s]\nimage_pull_secrets = {list}\n"
+            ),
+            &[],
+        )
+        .unwrap()
+    };
+    let r = with("[\"regcred\", \"my.registry-cred\"]")
+        .runner_config()
+        .unwrap();
+    assert_eq!(
+        r.runner.k8s.image_pull_secrets,
+        vec!["regcred".to_owned(), "my.registry-cred".to_owned()]
+    );
+    // Empty by default.
+    let r = load_with(BASE, &[]).unwrap();
+    assert!(r.runner.k8s.image_pull_secrets.is_empty());
+
+    for bad in ["Reg_Cred", "-x", "x-", "a..b", ""] {
+        let err = with(&format!("[\"ok\", \"{bad}\"]"))
+            .runner_config()
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("runner.k8s.image_pull_secrets[1]"),
+            "{bad}: {err}"
+        );
+    }
+}
+
 /// The ConfigMap TOML as rendered by the chart (`helm template t deploy/helm/aurora`).
 const HELM_RENDERED_TOML: &str = r#"
 [database]

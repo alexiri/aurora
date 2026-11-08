@@ -160,6 +160,13 @@ The values file says so, and [llm-endpoints.md](llm-endpoints.md) shows an examp
 so do not set it in `config`. `runner.k8s.nodeSelector` and `runner.k8s.tolerations` are
 rendered into `[runner.k8s]` as `node_selector` and `tolerations`.
 
+For a sandbox image in a private registry, set `runner.sandboxImagePullSecrets` (a list of
+Secret names), rendered as `[runner.k8s] image_pull_secrets`. The chart does not create the
+Secrets and does not reuse the service `imagePullSecrets`: create them in the sandboxes
+namespace (`sandboxes.namespace`), for example
+`kubectl -n aurora-sandboxes create secret docker-registry sandbox-registry --docker-server=registry.example.org --docker-username=<user> --docker-password=<token>`
+(see [runners.md](runners.md#kubernetes-backend)).
+
 ### Plugin packages
 
 The API scans `plugins.dir` at startup and every 60 s (see [plugins-and-connectors.md](plugins-and-connectors.md#plugins)).

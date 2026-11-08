@@ -30,6 +30,7 @@ toleration_seconds = 30"#,
             ))
             .unwrap(),
         ],
+        image_pull_secrets: vec!["regcred".into(), "second".into()],
     }
 }
 
@@ -161,6 +162,14 @@ fn pod_scheduling_and_resources() {
     assert_eq!(t.operator.as_deref(), Some("Exists"));
     assert_eq!(t.effect.as_deref(), Some("NoSchedule"));
     assert_eq!(t.toleration_seconds, Some(30));
+    let names: Vec<_> = spec
+        .image_pull_secrets
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|r| r.name.as_str())
+        .collect();
+    assert_eq!(names, ["regcred", "second"], "rendered in order");
 
     let r = spec.containers[0].resources.as_ref().unwrap();
     assert_eq!(r.requests, r.limits, "requests = limits");
@@ -179,10 +188,15 @@ fn unset_scheduling_options_are_omitted() {
         runtime_class: None,
         node_selector: BTreeMap::new(),
         tolerations: vec![],
+        image_pull_secrets: vec![],
         ..cfg()
     };
     let p = pod_spec(&bare, &req(), "n", "10.0.0.1", "10.0.0.2", Utc::now());
     let spec = p.spec.unwrap();
+    assert!(
+        spec.image_pull_secrets.is_none(),
+        "empty list sets no field"
+    );
     assert!(spec.runtime_class_name.is_none());
     assert!(spec.node_selector.is_none());
     assert!(spec.tolerations.is_none());
