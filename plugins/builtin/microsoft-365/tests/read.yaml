@@ -1,0 +1,266 @@
+# Read tools: each has a positive case and a `negative <tool>:` case. All credentials are fake.
+- name: "get_me: bearer is injected on the Graph host"
+  connection: { credentials: { access_token: "tok-fixture-1" }, metadata: { account: "alice@example.com" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me" }
+  expect:
+    app: microsoft-365
+    tool: get_me
+    upstream: { url: "https://graph.microsoft.com/v1.0/me", headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative get_me: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me" }
+  expect: { app: microsoft-365 }
+- name: "agent supplied authorization is overwritten"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: GET
+    url: "https://graph.microsoft.com/v1.0/me"
+    headers: { authorization: "Bearer agent-guess" }
+  expect:
+    tool: get_me
+    upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative get_me: the beta API is not claimed"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/beta/me" }
+  expect: { unmatched: true }
+- name: "negative get_me: the Entra sign-in host is not claimed"
+  request: { method: GET, url: "https://login.microsoftonline.com/common/oauth2/v2.0/token" }
+  expect: { unmatched: true }
+- name: "list_mail_folders"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/mailFolders?$top=20" }
+  expect:
+    tool: list_mail_folders
+    upstream: { url: "https://graph.microsoft.com/v1.0/me/mailFolders?$top=20" }
+- name: "negative list_mail_folders: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/mailFolders" }
+  expect: { app: microsoft-365 }
+- name: "list_folder_messages: well-known folder name"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$select=subject,from&$top=10" }
+  expect: { tool: list_folder_messages }
+- name: "negative list_folder_messages: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages" }
+  expect: { app: microsoft-365 }
+- name: "list_messages"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/messages?$filter=isRead%20eq%20false" }
+  expect: { tool: list_messages }
+- name: "negative list_messages: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/messages" }
+  expect: { app: microsoft-365 }
+- name: "get_message: opaque id"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/messages/AAMkADexample=" }
+  expect: { tool: get_message }
+- name: "negative get_message: PATCH (mark read) selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/messages/AAMkADexample=" }
+  expect: { app: microsoft-365 }
+- name: "negative get_message: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://graph.microsoft.com/v1.0/me/messages/AAMkADexample=" }
+  expect: { app: microsoft-365 }
+- name: "list_message_attachments"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/messages/AAMkADexample=/attachments" }
+  expect: { tool: list_message_attachments }
+- name: "negative list_message_attachments: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/messages/AAMkADexample=/attachments" }
+  expect: { app: microsoft-365 }
+- name: "list_calendars"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/calendars" }
+  expect: { tool: list_calendars }
+- name: "negative list_calendars: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/calendars" }
+  expect: { app: microsoft-365 }
+- name: "list_events"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/events?$top=5" }
+  expect: { tool: list_events }
+- name: "negative list_events: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/events" }
+  expect: { app: microsoft-365 }
+- name: "get_event"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/events/AAMkAGexample=" }
+  expect: { tool: get_event }
+- name: "negative get_event: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://graph.microsoft.com/v1.0/me/events/AAMkAGexample=" }
+  expect: { app: microsoft-365 }
+- name: "list_calendar_events"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/calendars/AAMkAGcal=/events" }
+  expect: { tool: list_calendar_events }
+- name: "negative list_calendar_events: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/calendars/AAMkAGcal=/events" }
+  expect: { app: microsoft-365 }
+- name: "get_calendar_view"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-01-01T00:00:00Z&endDateTime=2026-01-08T00:00:00Z" }
+  expect: { tool: get_calendar_view }
+- name: "negative get_calendar_view: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/calendarView" }
+  expect: { app: microsoft-365 }
+- name: "get_calendar_view_of_calendar"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/calendars/AAMkAGcal=/calendarView?startDateTime=2026-01-01T00:00:00Z&endDateTime=2026-01-08T00:00:00Z" }
+  expect: { tool: get_calendar_view_of_calendar }
+- name: "negative get_calendar_view_of_calendar: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/calendars/AAMkAGcal=/calendarView" }
+  expect: { app: microsoft-365 }
+- name: "get_drive"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive" }
+  expect: { tool: get_drive }
+- name: "negative get_drive: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive" }
+  expect: { app: microsoft-365 }
+- name: "list_drives"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drives" }
+  expect: { tool: list_drives }
+- name: "negative list_drives: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drives" }
+  expect: { app: microsoft-365 }
+- name: "get_drive_root"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/root" }
+  expect: { tool: get_drive_root }
+- name: "negative get_drive_root: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/root" }
+  expect: { app: microsoft-365 }
+- name: "list_drive_root_children"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/root/children?$top=50" }
+  expect: { tool: list_drive_root_children }
+- name: "negative list_drive_root_children: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/root/children" }
+  expect: { app: microsoft-365 }
+- name: "list_recent_files"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/recent" }
+  expect: { tool: list_recent_files }
+- name: "negative list_recent_files: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/recent" }
+  expect: { app: microsoft-365 }
+- name: "get_drive_item"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM" }
+  expect: { tool: get_drive_item }
+- name: "negative get_drive_item: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM" }
+  expect: { app: microsoft-365 }
+- name: "negative get_drive_item: path-addressed items are not a tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/root:/Documents/notes.txt" }
+  expect: { app: microsoft-365 }
+- name: "list_drive_item_children"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/children" }
+  expect: { tool: list_drive_item_children }
+- name: "negative list_drive_item_children: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/children" }
+  expect: { app: microsoft-365 }
+- name: "get_drive_item_content"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/content" }
+  expect: { tool: get_drive_item_content }
+- name: "negative get_drive_item_content: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/content" }
+  expect: { app: microsoft-365 }
+- name: "list_sites: search"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/sites?search=design" }
+  expect: { tool: list_sites }
+- name: "negative list_sites: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/sites" }
+  expect: { app: microsoft-365 }
+- name: "get_site: composite id with commas is one segment"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/sites/example.sharepoint.com,11111111-aaaa-bbbb-cccc-222222222222,33333333-dddd-eeee-ffff-444444444444" }
+  expect: { tool: get_site }
+- name: "negative get_site: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/sites/example.sharepoint.com,11111111-aaaa-bbbb-cccc-222222222222,33333333-dddd-eeee-ffff-444444444444" }
+  expect: { app: microsoft-365 }
+- name: "list_site_drives"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/sites/site-fixture-1/drives" }
+  expect: { tool: list_site_drives }
+- name: "negative list_site_drives: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/sites/site-fixture-1/drives" }
+  expect: { app: microsoft-365 }
+- name: "get_site_drive"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/sites/site-fixture-1/drive" }
+  expect: { tool: get_site_drive }
+- name: "negative get_site_drive: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/sites/site-fixture-1/drive" }
+  expect: { app: microsoft-365 }
+- name: "list_shared_drive_root_children"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/root/children" }
+  expect: { tool: list_shared_drive_root_children }
+- name: "negative list_shared_drive_root_children: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/root/children" }
+  expect: { app: microsoft-365 }
+- name: "get_shared_drive_item"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM" }
+  expect: { tool: get_shared_drive_item }
+- name: "negative get_shared_drive_item: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM" }
+  expect: { app: microsoft-365 }
+- name: "list_shared_drive_item_children"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/children" }
+  expect: { tool: list_shared_drive_item_children }
+- name: "negative list_shared_drive_item_children: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/children" }
+  expect: { app: microsoft-365 }
+- name: "get_shared_drive_item_content"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/content" }
+  expect: { tool: get_shared_drive_item_content }
+- name: "negative get_shared_drive_item_content: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/content" }
+  expect: { app: microsoft-365 }
+- name: "negative: the batch endpoint is deliberately not a tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://graph.microsoft.com/v1.0/$batch" }
+  expect: { app: microsoft-365 }
+# Token lifecycle: the gateway refreshes the OAuth token (oauth2_refresh) and stores the new
+# access token; what the package must guarantee is that the stored field is the one injected.
+- name: "token: a refreshed OAuth access token is what gets injected"
+  connection: { credentials: { access_token: "oauth-fixture-2", refresh_token: "refresh-fixture-2" }, metadata: { account: "alice@example.com" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/messages" }
+  expect:
+    tool: list_messages
+    upstream: { headers: { authorization: "Bearer oauth-fixture-2" } }

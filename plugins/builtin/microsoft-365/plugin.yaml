@@ -1,0 +1,167 @@
+package:
+  id: microsoft-365
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: Microsoft 365
+  description: Outlook mail, calendar and OneDrive or SharePoint files through Microsoft Graph, with Microsoft Entra ID sign-in
+  homepage: https://www.microsoft.com/microsoft-365
+oauth_clients:
+  - id: microsoft
+    authorize_url: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
+    token_url: https://login.microsoftonline.com/common/oauth2/v2.0/token
+    pkce: true
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: Application (client) ID }
+      - { name: client_secret, label: Client secret value, secret: true }
+    setup_note: "In the Microsoft Entra admin center open App registrations, add a Web registration whose supported account types include every organizational directory (and personal accounts if you need them), register the Aurora redirect URI, add a client secret, and grant only the delegated Graph permissions you will offer."
+apps:
+  - about:
+      id: microsoft-365
+      name: Microsoft 365
+      description: Read Outlook mail, calendar events and OneDrive or SharePoint files through Microsoft Graph, and send mail, create events and upload files when you allow it
+      category: productivity
+      api_docs: https://learn.microsoft.com/en-us/graph/api/overview?view=graph-rest-1.0
+      web_hosts: [outlook.office.com, outlook.live.com, onedrive.live.com]
+      connect_note:
+        text: "Sign-in uses the multi-tenant Microsoft Entra endpoint (common), so the Aurora application must be registered as multitenant. Some permissions, such as SharePoint site access, need tenant admin consent."
+        url: https://learn.microsoft.com/en-us/entra/identity-platform/permissions-consent-overview
+      label_hint: Microsoft account name
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: account }
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: microsoft
+        scopes:
+          - { scope: offline_access, name: Stay connected (refresh the sign-in without asking again), access: read }
+          - { scope: User.Read, name: Read your profile, access: read }
+          - { scope: Mail.Read, name: Read your mail, access: read }
+          - { scope: Calendars.Read, name: Read your calendars, access: read }
+          - { scope: Files.Read, name: Read your OneDrive files, access: read }
+          - { scope: Sites.Read.All, name: Read SharePoint sites and their files (admin consent usually required), access: read }
+          - { scope: Mail.Send, name: Send mail as you, access: write }
+          - { scope: Calendars.ReadWrite, name: Create and change calendar events, access: write }
+          - { scope: Files.ReadWrite, name: Create folders and upload or replace OneDrive files, access: write }
+        default_scopes: [offline_access, User.Read, Mail.Read, Calendars.Read, Files.Read]
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://graph.microsoft.com/v1.0/me"
+          expect_status: [200]
+          label: /userPrincipalName
+          metadata: { account: /userPrincipalName }
+    hosts:
+      - match: { host: graph.microsoft.com, path_prefix: /v1.0 }
+        inject:
+          - bearer: "{credentials.access_token}"
+    token:
+      kind: oauth2_refresh
+      client: microsoft
+      refresh_field: refresh_token
+      rotate_refresh_token: true
+      max_lifetime_secs: 3600
+      stale_codes:
+        - { status: 401, body_contains: InvalidAuthenticationToken }
+      reauth_codes: [invalid_grant, interaction_required]
+    tools:
+      read:
+        items:
+          - { id: get_me, name: Get the connected profile, host: graph.microsoft.com, path: /v1.0/me, methods: [GET] }
+          - { id: list_mail_folders, name: List mail folders, host: graph.microsoft.com, path: /v1.0/me/mailFolders, methods: [GET] }
+          - { id: list_folder_messages, name: List messages in a mail folder, host: graph.microsoft.com, path: "/v1.0/me/mailFolders/*/messages", methods: [GET] }
+          - { id: list_messages, name: List mail messages, host: graph.microsoft.com, path: /v1.0/me/messages, methods: [GET] }
+          - { id: get_message, name: Read a mail message, host: graph.microsoft.com, path: "/v1.0/me/messages/*", methods: [GET] }
+          - { id: list_message_attachments, name: List mail attachments, host: graph.microsoft.com, path: "/v1.0/me/messages/*/attachments", methods: [GET] }
+          - { id: list_calendars, name: List calendars, host: graph.microsoft.com, path: /v1.0/me/calendars, methods: [GET] }
+          - { id: list_events, name: List calendar events, host: graph.microsoft.com, path: /v1.0/me/events, methods: [GET] }
+          - { id: get_event, name: Get a calendar event, host: graph.microsoft.com, path: "/v1.0/me/events/*", methods: [GET] }
+          - { id: list_calendar_events, name: List events of one calendar, host: graph.microsoft.com, path: "/v1.0/me/calendars/*/events", methods: [GET] }
+          - { id: get_calendar_view, name: List events in a time range, host: graph.microsoft.com, path: /v1.0/me/calendarView, methods: [GET] }
+          - { id: get_calendar_view_of_calendar, name: List events of one calendar in a time range, host: graph.microsoft.com, path: "/v1.0/me/calendars/*/calendarView", methods: [GET] }
+          - { id: get_drive, name: Get your OneDrive, host: graph.microsoft.com, path: /v1.0/me/drive, methods: [GET] }
+          - { id: list_drives, name: List your drives, host: graph.microsoft.com, path: /v1.0/me/drives, methods: [GET] }
+          - { id: get_drive_root, name: Get the OneDrive root folder, host: graph.microsoft.com, path: /v1.0/me/drive/root, methods: [GET] }
+          - { id: list_drive_root_children, name: List files in the OneDrive root, host: graph.microsoft.com, path: /v1.0/me/drive/root/children, methods: [GET] }
+          - { id: list_recent_files, name: List recent files, host: graph.microsoft.com, path: /v1.0/me/drive/recent, methods: [GET] }
+          - { id: get_drive_item, name: Get a file or folder, host: graph.microsoft.com, path: "/v1.0/me/drive/items/*", methods: [GET] }
+          - { id: list_drive_item_children, name: List files in a folder, host: graph.microsoft.com, path: "/v1.0/me/drive/items/*/children", methods: [GET] }
+          - { id: get_drive_item_content, name: Download a file, host: graph.microsoft.com, path: "/v1.0/me/drive/items/*/content", methods: [GET] }
+          - { id: list_sites, name: Search SharePoint sites, host: graph.microsoft.com, path: /v1.0/sites, methods: [GET] }
+          - { id: get_site, name: Get a SharePoint site, host: graph.microsoft.com, path: "/v1.0/sites/*", methods: [GET] }
+          - { id: list_site_drives, name: List the document libraries of a site, host: graph.microsoft.com, path: "/v1.0/sites/*/drives", methods: [GET] }
+          - { id: get_site_drive, name: Get the default document library of a site, host: graph.microsoft.com, path: "/v1.0/sites/*/drive", methods: [GET] }
+          - { id: list_shared_drive_root_children, name: List files in a document library root, host: graph.microsoft.com, path: "/v1.0/drives/*/root/children", methods: [GET] }
+          - { id: get_shared_drive_item, name: Get a file or folder in a document library, host: graph.microsoft.com, path: "/v1.0/drives/*/items/*", methods: [GET] }
+          - { id: list_shared_drive_item_children, name: List files in a document library folder, host: graph.microsoft.com, path: "/v1.0/drives/*/items/*/children", methods: [GET] }
+          - { id: get_shared_drive_item_content, name: Download a file from a document library, host: graph.microsoft.com, path: "/v1.0/drives/*/items/*/content", methods: [GET] }
+      write:
+        items:
+          - { id: send_mail, name: Send mail, host: graph.microsoft.com, path: /v1.0/me/sendMail, methods: [POST] }
+          - { id: create_event, name: Create a calendar event, host: graph.microsoft.com, path: /v1.0/me/events, methods: [POST] }
+          - { id: create_calendar_event, name: Create an event in one calendar, host: graph.microsoft.com, path: "/v1.0/me/calendars/*/events", methods: [POST] }
+          - { id: upload_drive_item_content, name: Upload or replace file content, host: graph.microsoft.com, path: "/v1.0/me/drive/items/*/content", methods: [PUT] }
+          - { id: create_drive_root_folder, name: Create a folder in the OneDrive root, host: graph.microsoft.com, path: /v1.0/me/drive/root/children, methods: [POST] }
+          - { id: create_drive_item_folder, name: Create a folder inside a folder, host: graph.microsoft.com, path: "/v1.0/me/drive/items/*/children", methods: [POST] }
+          - { id: upload_shared_drive_item_content, name: Upload or replace a file in a document library, host: graph.microsoft.com, path: "/v1.0/drives/*/items/*/content", methods: [PUT] }
+    approvals:
+      send_mail:
+        title: Send mail
+        fields:
+          - { label: To, source: body, steps: [ { json: /message/toRecipients/0/emailAddress/address } ] }
+          - { label: Subject, source: body, steps: [ { json: /message/subject } ] }
+        link: "https://outlook.office.com/mail/"
+      create_event:
+        title: Create calendar event
+        fields:
+          - { label: Subject, source: body, steps: [ { json: /subject } ] }
+          - { label: Starts, source: body, steps: [ { json: /start/dateTime } ] }
+        link: "https://outlook.office.com/calendar/"
+      create_calendar_event:
+        title: Create calendar event
+        fields:
+          - { label: Calendar, source: path, segment: 4 }
+          - { label: Subject, source: body, steps: [ { json: /subject } ] }
+          - { label: Starts, source: body, steps: [ { json: /start/dateTime } ] }
+      upload_drive_item_content:
+        title: Upload file content
+        fields:
+          - { label: Item, source: path, segment: 5 }
+          - { label: Conflict, source: query, name: "@microsoft.graph.conflictBehavior" }
+      create_drive_root_folder:
+        title: Create OneDrive folder
+        fields:
+          - { label: Name, source: body, steps: [ { json: /name } ] }
+      create_drive_item_folder:
+        title: Create OneDrive folder
+        fields:
+          - { label: Parent, source: path, segment: 5 }
+          - { label: Name, source: body, steps: [ { json: /name } ] }
+      upload_shared_drive_item_content:
+        title: Upload file to document library
+        fields:
+          - { label: Drive, source: path, segment: 3 }
+          - { label: Item, source: path, segment: 5 }
+          - { label: Conflict, source: query, name: "@microsoft.graph.conflictBehavior" }
+    agent:
+      instructions: |
+        Microsoft 365 is connected through Microsoft Graph (https://graph.microsoft.com/v1.0). Aurora
+        adds the credentials; never ask for or write a token. Use only the signed-in user's resources
+        (/me/...) and SharePoint sites and drives by id. Address OneDrive files by item id
+        (/me/drive/items/{id}); paths of the form /me/drive/root:/folder/file are not available.
+        Send JSON bodies with content-type application/json so approvals can show what a change does.
+        Use $select, $top and $filter to keep responses small. Downloads redirect to a
+        pre-authenticated storage URL that is outside this connection.
+      env:
+        - { name: MICROSOFT_GRAPH_URL, value: "https://graph.microsoft.com/v1.0" }
