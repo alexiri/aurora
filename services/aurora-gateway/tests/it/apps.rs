@@ -1128,3 +1128,137 @@ async fn instance_connection_of_another_instance_is_refused_with_its_host() {
     assert_eq!(v["error"]["details"]["expected_host"], "other.example.test");
     assert!(!r.body.contains("OTHERSECRET"));
 }
+
+/// (FIX-009, D-86) A snapshot of an instance-bound OAuth app whose default host is
+/// `gitlab.test` and whose token URL is `https://{instance}/oauth/token`.
+fn refreshable_instance_snapshot() -> Value {
+    let mut a = app_json("inst", json!(null), false);
+    a["instances"] = json!({"label": "Inst", "default_host": "gitlab.test"});
+    a["token"] = json!({"kind": "oauth2_refresh", "client": "g", "refresh_field": "refresh_token",
+                        "rotate_refresh_token": true});
+    let inject = json!({"inject": [{"bearer": "{credentials.tok}"}]});
+    let mut dh = host_json("inst", None, inject.clone());
+    dh["host"] = json!("gitlab.test");
+    let mut ih = host_json("inst", None, inject);
+    ih["host"] = json!("{instance}");
+    let mut s = snapshot(vec![a], vec![dh]);
+    s["instance_hosts"] = json!([ih]);
+    s["oauth_clients"] = json!([{"package_id": "pkg", "client_key": "g",
+        "authorize_url": "https://{instance}/oauth/authorize",
+        "token_url": "https://{instance}/oauth/token", "pkce": false, "client_auth": "body",
+        "body_format": "form", "fields": []}]);
+    s
+}
+
+/// What the resolver hands the refresh path for `host`: each connection's `{instance}` host and
+/// the token URL a refresh would be sent to.
+async fn refresh_targets(
+    host: &str,
+    rows: impl FnOnce(&World) -> Rows,
+) -> Vec<(Option<String>, String)> {
+    let w = World {
+        org: Uuid::now_v7(),
+        ws: Uuid::now_v7(),
+        agent: Uuid::now_v7(),
+    };
+    let src = Arc::new(Src(Mutex::new(rows(&w))));
+    let store = SnapshotStore::new();
+    store.install(parse("h1", refreshable_instance_snapshot()).unwrap());
+    let llm = Arc::new(
+        aurora_llm::ProviderRegistry::from_config(&aurora_config::LlmSection {
+            enabled_providers: vec![],
+            provider_preference: vec![],
+            endpoints: vec![],
+        })
+        .unwrap(),
+    );
+    let resolver = Resolver::new(src, llm).with_snapshots(store.clone());
+    let id = RequestIdentity {
+        credential_id: Uuid::nil(),
+        kind: CredentialKind::Agent,
+        agent_id: w.agent,
+        workspace_id: w.ws,
+        org_id: w.org,
+        conversation_id: None,
+        turn_id: None,
+        context_label: None,
+        speaker_user_id: None,
+        capabilities: vec![],
+        byo: None,
+    };
+    let rv = resolver.resolve(&id, host, 443).await.unwrap();
+    let loaded = store.current().unwrap();
+    let app = loaded.snapshot.app("inst").unwrap();
+    let token = app.token.as_ref().unwrap();
+    let client = &loaded.snapshot.oauth_clients[0];
+    let current = serde_json::Map::from_iter([("refresh_token".to_owned(), json!("r1"))]);
+    rv.conns
+        .iter()
+        .map(|c| {
+            let url = aurora_gateway::refresh::build_exchange(
+                client,
+                token,
+                &current,
+                &serde_json::Map::new(),
+                &serde_json::Map::new(),
+                None,
+                c.instance_host.as_deref(),
+            )
+            .map(|r| r.url)
+            .unwrap_or_else(|_| "unavailable".into());
+            (c.instance_host.clone(), url)
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn default_host_connection_refreshes_against_the_default_host() {
+    let inst = Uuid::now_v7();
+    let got = refresh_targets("gitlab.test", move |w| {
+        let mut r = granted(bound(w, "c1", None))(w);
+        r.instances.push(instance_row(inst, "desk.acme.test"));
+        r
+    })
+    .await;
+    assert_eq!(
+        got,
+        vec![(
+            Some("gitlab.test".to_owned()),
+            "https://gitlab.test/oauth/token".to_owned()
+        )]
+    );
+}
+
+#[tokio::test]
+async fn refresh_never_crosses_between_default_and_instance_hosts() {
+    let inst = Uuid::now_v7();
+    // The default-host connection resolved on a registered instance's host still targets
+    // `gitlab.test` (the guard refuses to inject there; see the proxy tests), never the instance.
+    let on_instance = refresh_targets("desk.acme.test", move |w| {
+        let mut r = granted(bound(w, "c1", None))(w);
+        r.instances.push(instance_row(inst, "desk.acme.test"));
+        r
+    })
+    .await;
+    assert!(
+        on_instance
+            .iter()
+            .all(|(_, u)| u == "https://gitlab.test/oauth/token"),
+        "{on_instance:?}"
+    );
+    // The instance connection refreshes at its own instance, never at the default host, from
+    // either host it can be resolved on.
+    for host in ["gitlab.test", "desk.acme.test"] {
+        let got = refresh_targets(host, move |w| {
+            let mut r = granted(bound(w, "c2", Some(inst)))(w);
+            r.instances.push(instance_row(inst, "desk.acme.test"));
+            r
+        })
+        .await;
+        assert!(
+            got.iter()
+                .all(|(_, u)| u == "https://desk.acme.test/oauth/token"),
+            "{host}: {got:?}"
+        );
+    }
+}

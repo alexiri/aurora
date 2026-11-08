@@ -139,6 +139,9 @@ struct Expect {
 struct ExpectUpstream {
     #[serde(default)]
     headers: BTreeMap<String, String>,
+    /// Header names (case-insensitive) the upstream request must not carry.
+    #[serde(default)]
+    headers_absent: Vec<String>,
     url: Option<String>,
 }
 
@@ -297,6 +300,25 @@ fn execute(
         return Ok(json!({ "app": null, "tool": null }));
     };
     let mut refusal: Option<Value> = None;
+    if instance_host.is_none() {
+        // (D-86) No registered instance: a connection of an instance-bound app is the default-host
+        // connection, injected on the app's `default_host` only.
+        let dh = m
+            .app
+            .instances
+            .as_ref()
+            .and_then(|i| i.default_host.as_deref());
+        let on = on_instance.map(|_| uuid::Uuid::nil());
+        match instance_guard(None, dh, on, &host) {
+            Ok(()) => {}
+            Err(GuardError::Mismatch { expected }) => {
+                refusal = Some(json!({ "code": "host_mismatch", "expected_host": expected }));
+            }
+            Err(GuardError::Unavailable) => {
+                refusal = Some(json!({ "code": "credential_unavailable" }));
+            }
+        }
+    }
     if let Some(ih) = instance_host.as_deref() {
         let on = on_instance.map(|_| uuid::Uuid::nil());
         match instance_guard(Some(uuid::Uuid::nil()), Some(ih), on, &host) {
@@ -514,7 +536,13 @@ fn token_lifecycle(
         &serde_json::Map::new(),
         &conn.oauth_client,
         conn.tenant_host.as_deref(),
-        conn.instance_host.as_deref(),
+        // (D-86) A connection without a registered instance resolves `{instance}` to the app's
+        // `default_host`, as the gateway resolver does.
+        conn.instance_host.as_deref().or_else(|| {
+            app.instances
+                .as_ref()
+                .and_then(|i| i.default_host.as_deref())
+        }),
     ) {
         // Fail closed before any request (e.g. no instance host to bind the token URL to).
         Err(_) => "unavailable".to_owned(),
@@ -670,6 +698,14 @@ fn compare(e: &Expect, o: &Value) -> Vec<String> {
             if have != Some(v) {
                 f.push(format!(
                     "upstream.headers.{k}: expected `{v}`, got {have:?}"
+                ));
+            }
+        }
+        // (D-86) None of these headers may be on the upstream request (case-insensitive).
+        for k in &u.headers_absent {
+            if up["headers"][k.to_ascii_lowercase()].is_string() {
+                f.push(format!(
+                    "upstream.headers_absent.{k}: the upstream request carried `{k}`"
                 ));
             }
         }

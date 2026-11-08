@@ -54,7 +54,7 @@
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://indico.example.org/export/user/101.json" }
   expect: { app: indico }
-- name: "boundary (H8): preparing an event is an indico request and sends no authorization header (the runner cannot assert absence; the connection holds a token that must not be sent)"
+- name: "boundary (H8): preparing an event is an indico request and sends no authorization header (the connection holds a token that must not be sent)"
   connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
   request:
     method: POST
@@ -64,4 +64,4 @@
   expect:
     app: indico
     tool: prepare_event
-    upstream: { url: "https://indico.example.org/event/create/prepare" }
+    upstream: { url: "https://indico.example.org/event/create/prepare", headers_absent: [authorization] }

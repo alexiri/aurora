@@ -631,7 +631,7 @@ pub async fn app_connection_by_id(
 ) -> Result<Option<AppConnectionRow>, DbError> {
     Ok(sqlx::query_as::<_, AppConnectionRow>(
         "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
-                credentials_expires_at, metadata, tenant_host \
+                credentials_expires_at, metadata, tenant_host, instance_id \
          FROM app_connections \
          WHERE id = $1 AND org_id = $2 AND (workspace_id IS NULL OR workspace_id = $3)",
     )

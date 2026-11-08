@@ -241,7 +241,8 @@ def check_app(app, paired, err):
                 if r["status"] != "pass" or t.get("outcome") != outcome or not (c.get("token") or {}).get("http_cassette"):
                     continue
                 ih = (c.get("connection") or {}).get("instance_host")
-                if want_default is None or (ih == default_host) == want_default:
+                # no registered instance = the default-host connection (D-86)
+                if want_default is None or (ih in (None, default_host)) == want_default:
                     return True
             return False
 
