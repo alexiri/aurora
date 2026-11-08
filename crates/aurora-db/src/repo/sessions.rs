@@ -131,3 +131,35 @@ pub async fn is_live<'e, E: PgExecutor<'e>>(
     .await?;
     Ok(live.unwrap_or(false))
 }
+
+/// Stamp `reauth_at = now()` on a live session of `user_id` (OIDC re-authentication, docs/04).
+/// Returns whether a session was updated.
+pub async fn stamp_reauth<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, DbError> {
+    let r = sqlx::query(
+        "UPDATE sessions SET reauth_at = now(), updated_at = now()
+         WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(id)
+    .bind(user_id)
+    .execute(exec)
+    .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// Seconds since the session's last re-authentication (database clock); `None` if never.
+pub async fn reauth_age_secs<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+) -> Result<Option<f64>, DbError> {
+    let age: Option<Option<f64>> = sqlx::query_scalar(
+        "SELECT EXTRACT(EPOCH FROM (now() - reauth_at))::float8 FROM sessions WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(exec)
+    .await?;
+    Ok(age.flatten())
+}

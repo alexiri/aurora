@@ -19,7 +19,7 @@ Python 3 standard library only, so the owner installs nothing.
 rollout restart; OPS-017, ~35 s). Needs the cluster from `just kind-up`.
 
 Env: AURORA_DEV_PROFILE (cargo profile, default `dev`), AURORA_LIVE_SERVICES (default
-`api,gateway,hookhost,runner`), AURORA_LIVE_WEB=0 to skip `next dev`.
+`api,gateway,hookhost,runner,dev-idp`), AURORA_LIVE_WEB=0 to skip `next dev`.
 """
 import json
 import os
@@ -37,14 +37,16 @@ POLL = 0.15
 DEBOUNCE = 0.15
 STOP_GRACE = 0.5  # dev: in-flight long polls must not hold a restart up
 
-# name -> (package, readiness port)
+# name -> (package, readiness port, binary, argv). `dev-idp` (P1-005, RFE-004) is the development
+# OIDC provider every sign-in goes through: the `aurora-dev-idp` binary of the aurora-testkit package.
 SERVICES = {
-    "api": ("aurora-api", 4101),
-    "gateway": ("aurora-gateway", 4102),
-    "hookhost": ("aurora-hookhost", 4104),
-    "runner": ("aurora-runner", 4106),
+    "api": ("aurora-api", 4101, "aurora-api", ["serve"]),
+    "gateway": ("aurora-gateway", 4102, "aurora-gateway", ["serve"]),
+    "hookhost": ("aurora-hookhost", 4104, "aurora-hookhost", ["serve"]),
+    "runner": ("aurora-runner", 4106, "aurora-runner", ["serve"]),
+    "dev-idp": ("aurora-testkit", 4107, "aurora-dev-idp", []),
 }
-COLORS = {"api": 36, "gateway": 35, "hookhost": 33, "runner": 32, "web": 34, "live": 90}
+COLORS = {"api": 36, "gateway": 35, "hookhost": 33, "runner": 32, "dev-idp": 31, "web": 34, "live": 90}
 WATCHED_DIRS = ("src", "migrations", "assets", "templates")
 WATCHED_FILES = ("Cargo.toml", "build.rs")
 
@@ -160,7 +162,7 @@ def wait_listening(port, timeout=30.0):
 
 def main():
     kind = "--kind" in sys.argv[1:]
-    wanted = [s for s in os.environ.get("AURORA_LIVE_SERVICES", "api,gateway,hookhost,runner").split(",") if s]
+    wanted = [s for s in os.environ.get("AURORA_LIVE_SERVICES", "api,gateway,hookhost,runner,dev-idp").split(",") if s]
     for s in wanted:
         if s not in SERVICES:
             die(f"unknown service `{s}` (known: {', '.join(SERVICES)})")
@@ -174,7 +176,7 @@ def main():
     snap_dirs = sorted({d for c in watch.values() for d in c.values()})
     log("live", f"{'kind' if kind else 'profile=' + PROFILE}; watching {len(snap_dirs)} crates for {', '.join(wanted)}")
 
-    procs = {} if kind else {s: Proc(s, [str(target / SERVICES[s][0]), "serve"]) for s in wanted}
+    procs = {} if kind else {s: Proc(s, [str(target / SERVICES[s][2]), *SERVICES[s][3]]) for s in wanted}
     web = None
     if not kind and os.environ.get("AURORA_LIVE_WEB", "1") != "0":
         web = Proc("web", ["pnpm", "--dir", "web", "dev"])

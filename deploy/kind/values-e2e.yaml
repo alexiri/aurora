@@ -19,6 +19,14 @@ hookhost: {replicas: 1}
 web: {replicas: 1}
 runner: {replicas: 1}
 
+# P1-005 (RFE-004): sign-in is OIDC only. No ingress here, so the dev IdP is served at the root and
+# reached through `kubectl port-forward` on 127.0.0.1:4107 (kind.sh), the same URL the API hands the browser.
+devIdp:
+  enabled: true
+  pathPrefix: ""
+  issuer: http://localhost:4107
+  allowAnyHint: true
+
 config:
   auth:
     signup_mode: open

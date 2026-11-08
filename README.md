@@ -31,8 +31,21 @@ disk. Rust and Node are not needed on the host: everything is built in container
 just kind-up --llm-mock --connector-fake   # first run takes about 20–25 min; later runs reuse the build cache
 ```
 
-Open **http://localhost:4000** and sign up. Sign-up is open on the dev stack, and each new account gets its
-own organization with a default agent.
+Open **http://localhost:4000** and click **Development sign-in**: all sign-in is OIDC, and the dev stack ships
+a development identity provider (`aurora-dev-idp`) that lists a few users (`deploy/dev/dev-idp-users.json`
+and `devIdp.users` in the chart) and signs you in without a password. Sign-up is open on the dev stack, so
+your first sign-in creates your account with its own organization and a default agent. The development
+sign-in only runs on a `localhost` URL; never enable it anywhere else.
+
+To make someone an instance administrator (plugins, connectors, trusted keys), pre-provision them and then
+sign in with that e-mail, which binds the identity:
+
+```sh
+deploy/dev/kind-dev.sh bootstrap-admin you@example.test
+# the same thing by hand: the dev images call the binary /usr/local/bin/aurora-service, not aurora-api
+kubectl --context kind-aurora-dev -n aurora exec deploy/aurora-api -- \
+  /usr/local/bin/aurora-service bootstrap-admin --email you@example.test
+```
 
 - Agents run a **fake harness**, and `--llm-mock` adds a mock LLM endpoint (it is not a real model). To use
   a real model, see [LLM endpoints](docs/operator/llm-endpoints.md).
@@ -63,7 +76,11 @@ pnpm --dir web install   # once
 just dev                 # Postgres on 127.0.0.1:55432, migrations, then all services; Ctrl-C stops them
 ```
 
-Open **http://localhost:4100** and sign up.
+Open **http://localhost:4100** and click **Development sign-in**. `just dev` also starts the development
+identity provider on `http://localhost:4107` (all sign-in is OIDC); it lists the users of
+`deploy/dev/dev-idp-users.json`, and the first sign-in creates your account. For an instance administrator,
+run `. deploy/dev/env.sh && cargo run -p aurora-api -- bootstrap-admin --email you@example.test` and sign in
+with that e-mail.
 
 ### More detail
 

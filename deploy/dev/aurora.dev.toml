@@ -33,5 +33,11 @@ api_url = "http://localhost:4101"
 signup_mode = "open"
 org_creation = "anyone"
 
+# P1-005 (RFE-004): all sign-in is OIDC. `just dev` starts `aurora-dev-idp` on :4107 (users:
+# deploy/dev/dev-idp-users.json) and the API registers it as the provider `dev`.
+[auth.dev_idp]
+enabled = true
+issuer = "http://localhost:4107"
+
 [telemetry]
 log_level = "info"

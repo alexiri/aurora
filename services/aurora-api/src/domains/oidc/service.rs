@@ -2,23 +2,25 @@
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent, Outcome};
 use crate::domains::auth::service::{self as auth, Client, normalize_email};
-use crate::domains::tenancy;
+use crate::domains::{invitations, tenancy};
+use crate::http::ratelimit::Bucket;
 use aurora_config::{OidcProvider, SignupMode};
 use aurora_core::{ApiError, FieldError, ids};
 use aurora_crypto::Purpose;
 use aurora_db::DbError;
 use aurora_db::repo::identities::{self, NewSsoUser};
 use aurora_db::repo::users::{self, UserRow};
-use aurora_db::repo::{members, orgs, workspaces};
+use aurora_db::repo::{invitations as inv_repo, members, orgs, sessions, workspaces};
 use chrono::Utc;
 use http::StatusCode;
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient};
 use openidconnect::{
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, Nonce, PkceCodeChallenge,
+    AuthorizationCode, ClientId, ClientSecret, CsrfToken, LoginHint, Nonce, PkceCodeChallenge,
     PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use uuid::Uuid;
 
 /// Cookie binding the flow to the browser.
 pub const OIDC_COOKIE: &str = "__Host-aurora_oidc";
@@ -36,7 +38,13 @@ struct FlowState {
     r: String,
     /// Expiry (unix seconds).
     e: i64,
+    /// Re-authentication (phase 1, RFE-004): the signed-in `(session, user)` this flow is for.
+    #[serde(default)]
+    ra: Option<(Uuid, Uuid)>,
 }
+
+/// A re-authentication callback must carry an `auth_time` at most this old (docs/04 §OIDC).
+const REAUTH_AUTH_TIME_MAX_AGE_SECS: i64 = 60;
 
 fn aad(provider: &str) -> Vec<u8> {
     format!("oidc:{provider}").into_bytes()
@@ -124,13 +132,53 @@ pub struct Started {
     pub cookie: String,
 }
 
+/// What `GET /v1/auth/oidc/{provider}/start` was asked for.
+#[derive(Default)]
+pub struct StartRequest<'a> {
+    pub return_to: Option<&'a str>,
+    /// `reauth=1`: the caller's live session (must be present, else 401).
+    pub reauth: bool,
+    /// Forwarded to the provider as `login_hint` (the development IdP signs that user in).
+    pub login_hint: Option<&'a str>,
+}
+
+/// The caller's live session for a re-authentication, from the `aurora_session` cookie.
+async fn current_session(
+    state: &AppState,
+    session_token: Option<&str>,
+) -> Result<(Uuid, Uuid), ApiError> {
+    let unauth = || ApiError::unauthenticated("Sign in before re-authenticating.");
+    let tok = session_token
+        .filter(|t| t.starts_with(aurora_core::token::TokenPrefix::Session.as_str()))
+        .ok_or_else(unauth)?;
+    let rec = sessions::find_by_hash(
+        &state.pool,
+        &aurora_core::token::hash(tok),
+        state.config.auth.session_idle_secs,
+    )
+    .await?
+    .filter(|r| r.live)
+    .ok_or_else(unauth)?;
+    Ok((rec.id, rec.user_id))
+}
+
 pub async fn start(
     state: &AppState,
+    client: &Client,
     provider_id: &str,
-    return_to: Option<&str>,
+    req: StartRequest<'_>,
+    session_token: Option<&str>,
 ) -> Result<Started, ApiError> {
+    state
+        .rate_limiter
+        .check(Bucket::OidcStartIp, &client.ip_key())?;
     let p = provider(state, provider_id)?;
-    let return_to = validate_return_to(return_to)?;
+    let return_to = validate_return_to(req.return_to)?;
+    let ra = if req.reauth {
+        Some(current_session(state, session_token).await?)
+    } else {
+        None
+    };
     let client = core_client(state, p).await.map_err(internal)?;
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
     let nonce = Nonce::new_random();
@@ -141,6 +189,7 @@ pub async fn start(
         v: verifier.secret().clone(),
         r: return_to,
         e: Utc::now().timestamp() + ttl,
+        ra,
     };
     let sealed = state
         .derived
@@ -152,7 +201,7 @@ pub async fn start(
         .map_err(internal)?;
     let n = nonce.clone();
     let st = sealed.clone();
-    let mut req = client
+    let mut authz = client
         .authorize_url(
             CoreAuthenticationFlow::AuthorizationCode,
             move || CsrfToken::new(st),
@@ -161,10 +210,19 @@ pub async fn start(
         .set_pkce_challenge(challenge);
     for s in &p.scopes {
         if s != "openid" {
-            req = req.add_scope(Scope::new(s.clone()));
+            authz = authz.add_scope(Scope::new(s.clone()));
         }
     }
-    let (url, _, _) = req.url();
+    if req.reauth {
+        // Aurora never assumes an `acr`/`amr`: it forces a fresh login and checks `auth_time`.
+        authz = authz
+            .add_prompt(openidconnect::core::CoreAuthPrompt::Login)
+            .set_max_age(std::time::Duration::ZERO);
+    }
+    if let Some(h) = req.login_hint.filter(|h| !h.is_empty() && h.len() <= 254) {
+        authz = authz.set_login_hint(LoginHint::new(h.to_owned()));
+    }
+    let (url, _, _) = authz.url();
     Ok(Started {
         location: url.to_string(),
         cookie: sealed,
@@ -189,8 +247,10 @@ pub struct Params {
 }
 
 pub struct SignedIn {
-    pub session_token: String,
+    /// `None` for a re-authentication (the existing session is stamped, no new one is issued).
+    pub session_token: Option<String>,
     pub return_to: String,
+    pub reauth: bool,
 }
 
 fn open_state(
@@ -226,6 +286,8 @@ struct Verified {
     email: String,
     email_verified: bool,
     name: Option<String>,
+    /// The IdP's `auth_time` (unix seconds), when it returned one.
+    auth_time: Option<i64>,
 }
 
 async fn exchange(
@@ -275,6 +337,7 @@ async fn exchange(
             .name()
             .and_then(|n| n.get(None))
             .map(|n| n.as_str().to_owned()),
+        auth_time: claims.auth_time().map(|t| t.timestamp()),
     })
 }
 
@@ -318,13 +381,28 @@ pub async fn callback(
         .filter(|c| !c.is_empty())
         .ok_or(Fail("oidc_failed"))?;
     let v = exchange(state, p, &flow, code).await?;
-    if p.require_email_verified && !v.email_verified {
+    // Phase 1 (RFE-004): there is no local credential, so the provider's verification of the
+    // e-mail is the only proof of it. Always required (`require_email_verified` is gone).
+    if !v.email_verified {
         deny(state, client, &v.email, p, "email_unverified");
         return Err(Fail("email_unverified"));
     }
     if !domain_allowed(p, &v.email) {
         deny(state, client, &v.email, p, "email_domain_not_allowed");
         return Err(Fail("email_domain_not_allowed"));
+    }
+    if let Some((session, user)) = flow.ra {
+        return match reauthenticate(state, client, p, &v, session, user).await {
+            Ok(()) => Ok(SignedIn {
+                session_token: None,
+                return_to: flow.r,
+                reauth: true,
+            }),
+            Err(Fail(code)) => {
+                deny(state, client, &v.email, p, code);
+                Err(Fail(code))
+            }
+        };
     }
     let signed = sign_in(state, client, p, &v).await;
     match signed {
@@ -336,8 +414,9 @@ pub async fn callback(
                     .metadata(json!({"method": "oidc", "provider": p.id})),
             );
             Ok(SignedIn {
-                session_token,
+                session_token: Some(session_token),
                 return_to: flow.r,
+                reauth: false,
             })
         }
         Err(Fail(code)) => {
@@ -345,6 +424,42 @@ pub async fn callback(
             Err(Fail(code))
         }
     }
+}
+
+/// Re-authentication callback (docs/04 §OIDC): the same user, a fresh `auth_time` when the IdP
+/// returns one, then `sessions.reauth_at = now()`.
+async fn reauthenticate(
+    state: &AppState,
+    client: &Client,
+    p: &OidcProvider,
+    v: &Verified,
+    session: Uuid,
+    user_id: Uuid,
+) -> Result<(), Fail> {
+    let user = identities::find_user(&state.pool, &p.id, &v.sub)
+        .await?
+        .ok_or(Fail("reauth_user_mismatch"))?;
+    if user.id != user_id {
+        return Err(Fail("reauth_user_mismatch"));
+    }
+    if user.disabled_at.is_some() {
+        return Err(Fail("user_disabled"));
+    }
+    if let Some(t) = v.auth_time
+        && Utc::now().timestamp() - t > REAUTH_AUTH_TIME_MAX_AGE_SECS
+    {
+        return Err(Fail("reauth_stale"));
+    }
+    if !sessions::stamp_reauth(&state.pool, session, user_id).await? {
+        return Err(Fail("oidc_state_invalid"));
+    }
+    audit::record(
+        state,
+        AuditEvent::new(auth::actor(&user, client), "user.reauth", Outcome::Success)
+            .target("user", user.id)
+            .metadata(json!({"method": "oidc", "provider": p.id})),
+    );
+    Ok(())
 }
 
 fn deny(state: &AppState, client: &Client, email: &str, p: &OidcProvider, reason: &str) {
@@ -405,7 +520,7 @@ async fn sign_in(
         }
     };
     if user.disabled_at.is_some() {
-        return Err(Fail("oidc_failed"));
+        return Err(Fail("user_disabled"));
     }
 
     apply_jit(&mut tx, p, &mut user).await?;
@@ -443,10 +558,13 @@ async fn create_user(
         Some(j) => orgs::get_by_slug(&mut *tx, &j.org_slug).await?,
         None => None,
     };
+    // docs/04 §Sign-up semantics under OIDC-only. (A pre-provisioned `bootstrap-admin` user
+    // exists already and never reaches here.)
+    let invited = inv_repo::has_pending_for_email(&mut *tx, &v.email).await?;
     let allowed = match state.config.signup_mode {
         SignupMode::Open => true,
-        SignupMode::SsoJit => jit_org.is_some(),
-        SignupMode::InviteOnly => listed,
+        SignupMode::SsoJit => jit_org.is_some() || invited,
+        SignupMode::InviteOnly => listed || invited,
     };
     if !allowed {
         return Err(Fail("signup_closed"));
@@ -482,6 +600,14 @@ async fn create_user(
             Fail("oidc_failed")
         })?;
         users::set_default_org(&mut *tx, user.id, org.org.id).await?;
+    } else {
+        // `invite_only` / `sso_jit`: a pending invitation is accepted as part of the sign-in.
+        invitations::service::accept_pending_for_email(tx, &user)
+            .await
+            .map_err(|e| {
+                tracing::error!("oidc: accept invitations: {e:?}");
+                Fail("oidc_failed")
+            })?;
     }
     Ok(user)
 }

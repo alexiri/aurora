@@ -5,7 +5,7 @@ use crate::DbError;
 use sqlx::PgExecutor;
 use uuid::Uuid;
 
-const COLS: &str = "id, email::text AS email, email_verified_at, display_name, password_hash, \
+const COLS: &str = "id, email::text AS email, email_verified_at, display_name, \
     is_instance_admin, disabled_at, default_org_id, last_login_at, created_at, updated_at";
 
 /// The user linked to `(provider, subject)`, if any.

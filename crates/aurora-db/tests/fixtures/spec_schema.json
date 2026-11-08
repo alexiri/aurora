@@ -675,6 +675,7 @@
       "id",
       "ip",
       "last_seen_at",
+      "reauth_at",
       "revoked_at",
       "token_hash",
       "user_agent",

@@ -35,7 +35,7 @@ enum Command {
     },
     /// Apply database migrations (and gateway-role grants if configured).
     Migrate,
-    /// Create (or promote) a verified instance admin and print a one-time password-set link.
+    /// Pre-provision an instance admin (binds at their first OIDC sign-in) and print the sign-in URL.
     BootstrapAdmin {
         #[arg(long)]
         email: String,
@@ -142,11 +142,18 @@ async fn migrate(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
 
 async fn bootstrap_admin(cfg: ApiConfig, email: &str) -> Result<(), Box<dyn std::error::Error>> {
     let pool = aurora_db::connect(cfg.database_url.expose(), 2).await?;
-    let link =
-        aurora_api::domains::admin::service::bootstrap_admin(&pool, &cfg.external_url, email)
-            .await
-            .map_err(|e| e.message().to_owned())?;
-    println!("{link}");
+    let url = aurora_api::domains::admin::service::bootstrap_admin(
+        &pool,
+        &cfg.external_url,
+        !cfg.auth.oidc_providers.is_empty(),
+        email,
+    )
+    .await
+    .map_err(|e| format!("{}: {}", e.code(), e.message()))?;
+    println!("{url}");
+    eprintln!(
+        "Pre-provisioned {email} as instance admin. Sign in through your OIDC provider with that verified e-mail; the first sign-in binds the identity."
+    );
     Ok(())
 }
 
@@ -181,6 +188,12 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let ops = service::ops_router(metrics, vec![("database", db_check)]);
+    if cfg.auth.dev_idp.enabled {
+        tracing::warn!(
+            issuer = cfg.auth.dev_idp.issuer.as_deref().unwrap_or(""),
+            "DEVELOPMENT ONLY: the development identity provider `dev` is enabled (auth.dev_idp); it signs users in without a password and must never be exposed"
+        );
+    }
     let state = aurora_api::app::AppState::try_new(pool.clone(), cfg.clone())?;
     aurora_api::http::auth::spawn_revocation_listener(pool.clone(), state.session_cache.clone());
     if let Err(e) = aurora_api::domains::runners_admin::service::bootstrap_default(&state).await {

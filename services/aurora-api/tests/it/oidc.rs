@@ -208,14 +208,17 @@ async fn unverified_email_refused_when_required() {
     assert_eq!(count(&h, "SELECT count(*) FROM users").await, 0);
 }
 
+/// Phase 1 (RFE-004): there is no local credential, so an ID token without
+/// `email_verified = true` is refused in every case — also when the provider config still carries
+/// the removed `require_email_verified = true` — and never links to an existing user.
 #[tokio::test]
-async fn unverified_email_allowed_but_never_links() {
+async fn unverified_email_is_always_refused_and_never_links() {
     let idp = MockIdp::start().await;
     idp.identity("s3", "victim@example.com", false);
     let h = harness(
         &idp,
         SignupMode::Open,
-        |p| p.require_email_verified = false,
+        |p| p.require_email_verified = Some(true),
         &[],
     )
     .await;
@@ -228,8 +231,36 @@ async fn unverified_email_allowed_but_never_links() {
     idp.identity("s4", "fresh@example.com", false);
     let (path, cookie) = authorize(&h, None).await;
     let (_, hd) = callback(&h, &path, &cookie).await;
-    assert!(has_session(&hd));
-    assert_eq!(count(&h, "SELECT count(*) FROM users WHERE email = 'fresh@example.com' AND email_verified_at IS NULL").await, 1);
+    assert_eq!(location(&hd), "/auth/login?error=email_unverified");
+    assert!(!has_session(&hd));
+    assert_eq!(
+        count(
+            &h,
+            "SELECT count(*) FROM users WHERE email = 'fresh@example.com'"
+        )
+        .await,
+        0
+    );
+
+    // Missing claim is the same as false.
+    idp.set(|c| {
+        c.email = Some("fresh@example.com".into());
+        c.email_verified = None;
+    });
+    let (path, cookie) = authorize(&h, None).await;
+    let (_, hd) = callback(&h, &path, &cookie).await;
+    assert_eq!(location(&hd), "/auth/login?error=email_unverified");
+}
+
+#[tokio::test]
+async fn wrong_audience_rejected() {
+    let idp = MockIdp::start().await;
+    idp.set(|c| c.aud = Some("someone-else".into()));
+    let h = harness(&idp, SignupMode::Open, |_| {}, &[]).await;
+    let (path, cookie) = authorize(&h, None).await;
+    let (_, hd) = callback(&h, &path, &cookie).await;
+    assert_eq!(location(&hd), "/auth/login?error=oidc_failed");
+    assert!(!has_session(&hd));
 }
 
 #[tokio::test]
@@ -535,4 +566,140 @@ async fn instance_lists_providers() {
     assert_eq!(st, StatusCode::OK);
     assert_eq!(v["oidc_providers"][0]["id"], PID);
     assert_eq!(v["oidc_providers"][0]["display_name"], "Mock SSO");
+}
+
+#[tokio::test]
+async fn dev_provider_is_listed_and_start_forwards_login_hint() {
+    let h = Harness::with_config(|c| c.signup_mode = SignupMode::Open).await;
+    let (st, v) = h.get("/v1/instance", &[]).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(v["oidc_providers"][0]["id"], "dev");
+    assert_eq!(
+        v["oidc_providers"][0]["display_name"],
+        "Development sign-in"
+    );
+    let _ = h.sign_in("hint@example.com").await;
+    assert_eq!(h.idp.last_authorize()["login_hint"], "hint@example.com");
+    assert!(
+        !h.idp.last_authorize().contains_key("prompt"),
+        "plain sign-in has no prompt"
+    );
+}
+
+fn reauth_stamp_query() -> &'static str {
+    "SELECT reauth_at IS NOT NULL FROM sessions ORDER BY created_at DESC LIMIT 1"
+}
+
+/// Run a `reauth=1` flow for the session `cookie`; returns `(callback status, location, set-cookie)`.
+async fn reauth(h: &Harness, cookie: &str, hint: Option<&str>) -> (String, Vec<String>) {
+    let (path, flow) = h
+        .oidc_authorize_with(
+            "dev",
+            "&reauth=1&return_to=%2Faccount",
+            hint,
+            &[("cookie", cookie)],
+        )
+        .await;
+    let ck = format!("{flow}; {cookie}");
+    let (st, hd, _) = h.send(Method::GET, &path, &[("cookie", &ck)], None).await;
+    assert_eq!(st, StatusCode::FOUND);
+    (location(&hd), header(&hd, "set-cookie"))
+}
+
+/// docs/04 §OIDC "Re-authentication": `prompt=login&max_age=0`, same user, fresh `auth_time`,
+/// then `sessions.reauth_at` is stamped on the existing session (no new session).
+#[tokio::test]
+async fn reauth_stamps_the_session() {
+    let h = Harness::with_config(|c| c.signup_mode = SignupMode::Open).await;
+    let s = h.sign_in("ann@example.com").await;
+    assert!(!count_bool(&h, reauth_stamp_query()).await);
+    let sessions_before = count(&h, "SELECT count(*) FROM sessions").await;
+
+    let (loc, cookies) = reauth(&h, &s.cookie, Some("ann@example.com")).await;
+    let q = h.idp.last_authorize();
+    assert_eq!(
+        (q["prompt"].as_str(), q["max_age"].as_str()),
+        ("login", "0")
+    );
+    assert_eq!(loc, "/account");
+    assert!(
+        !cookies.iter().any(|c| c.starts_with("aurora_session=aus_")),
+        "re-authentication issues no new session"
+    );
+    assert_eq!(
+        count(&h, "SELECT count(*) FROM sessions").await,
+        sessions_before
+    );
+    assert!(count_bool(&h, reauth_stamp_query()).await);
+
+    // The stamp is what account deletion checks: it is accepted now.
+    let (st, _, v) = h
+        .send(
+            Method::DELETE,
+            "/v1/me",
+            &[("cookie", &s.cookie), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    // (sole owner of the auto-created org: the reauth gate passed, the last-owner rule answers)
+    assert_eq!(
+        (st, v["error"]["code"].as_str()),
+        (StatusCode::CONFLICT, Some("last_owner"))
+    );
+}
+
+async fn count_bool(h: &Harness, sql: &str) -> bool {
+    sqlx::query_scalar(sql).fetch_one(h.pool()).await.unwrap()
+}
+
+#[tokio::test]
+async fn reauth_refusals() {
+    let h = Harness::with_config(|c| c.signup_mode = SignupMode::Open).await;
+    let a = h.sign_in("ann@example.com").await;
+    let _b = h.sign_in("bob@example.com").await;
+
+    // Needs a live session.
+    let (st, _, v) = h
+        .send(Method::GET, "/v1/auth/oidc/dev/start?reauth=1", &[], None)
+        .await;
+    assert_eq!(
+        (st, v["error"]["code"].as_str()),
+        (StatusCode::UNAUTHORIZED, Some("unauthenticated"))
+    );
+
+    // A different user authenticating at the provider is refused; nothing is stamped.
+    let (loc, _) = reauth(&h, &a.cookie, Some("bob@example.com")).await;
+    assert_eq!(loc, "/auth/login?error=reauth_user_mismatch");
+    // A stale `auth_time` (older than 60 s) is refused.
+    h.idp.set(|c| c.auth_time_ago = Some(120));
+    let (loc, _) = reauth(&h, &a.cookie, Some("ann@example.com")).await;
+    assert_eq!(loc, "/auth/login?error=reauth_stale");
+    h.idp.set(|c| c.auth_time_ago = None);
+    // An unverified e-mail never re-authenticates.
+    h.idp
+        .identity("dev-ann@example.com", "ann@example.com", false);
+    let (path, flow) = h
+        .oidc_authorize_with("dev", "&reauth=1", None, &[("cookie", &a.cookie)])
+        .await;
+    let ck = format!("{flow}; {}", a.cookie);
+    let (_, hd, _) = h.send(Method::GET, &path, &[("cookie", &ck)], None).await;
+    assert_eq!(location(&hd), "/auth/login?error=email_unverified");
+    let stamped: i64 = count(
+        &h,
+        "SELECT count(*) FROM sessions WHERE reauth_at IS NOT NULL",
+    )
+    .await;
+    assert_eq!(stamped, 0);
+    let (st, _, v) = h
+        .send(
+            Method::DELETE,
+            "/v1/me",
+            &[("cookie", &a.cookie), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(
+        (st, v["error"]["code"].as_str()),
+        (StatusCode::PRECONDITION_FAILED, Some("reauth_required"))
+    );
 }

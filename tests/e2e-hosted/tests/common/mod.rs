@@ -45,6 +45,9 @@ pub struct Opts {
 }
 
 pub struct Stack {
+    /// Development IdP (phase 1, RFE-004): the in-process OIDC mock the API signs users in through.
+    #[allow(dead_code)]
+    idp: aurora_testkit::oidc::MockIdp,
     pub db: Option<TestDb>,
     pub dir: PathBuf,
     pub api_addr: String,
@@ -141,6 +144,8 @@ impl Stack {
     /// (TEST-017: `[llm]` endpoints).
     pub async fn start_with(o: Opts, extra_toml: &str) -> Stack {
         let db = TestDb::new().await;
+        let idp = aurora_testkit::oidc::MockIdp::start().await;
+        let idp_issuer = idp.issuer().to_owned();
         let dir = std::env::temp_dir().join(format!("aurora-e2e-hosted-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(dir.join("ca")).unwrap();
         let st = std::process::Command::new(bin("aurora-gateway"))
@@ -180,6 +185,10 @@ idle_stop_secs = {idle}
 signup_mode = "open"
 org_creation = "anyone"
 
+[auth.dev_idp]
+enabled = true
+issuer = "{idp_issuer}"
+
 [telemetry]
 log_level = "info"
 
@@ -206,6 +215,7 @@ hookhost_url = "http://127.0.0.1:9"
             ca = dir.join("ca").display(),
         ) + extra_toml;
         let mut stack = Stack {
+            idp,
             db: Some(db),
             api_addr: format!("{API_IP}:4101"),
             ca_pem,
@@ -333,25 +343,17 @@ hookhost_url = "http://127.0.0.1:9"
         self.db.as_ref().unwrap().pool()
     }
 
-    /// Sign up (open mode: org + workspace + Daneel), flip Daneel to the fake harness.
+    /// Sign in through the development IdP (open mode: the first sign-in creates the user, org +
+    /// workspace + Daneel), flip Daneel to the fake harness. Phase 1 (RFE-004): no password.
     pub async fn signup(&self, email: &str) -> Api {
         let http = reqwest::Client::new();
-        let r = http
-            .post(format!("http://{}/v1/auth/signup", self.api_addr))
-            .header("origin", ORIGIN)
-            .json(&json!({"email": email, "password": "correct horse battery staple 42", "display_name": "E2E"}))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(r.status(), 201, "signup: {}", r.text().await.unwrap());
-        let cookie = r
-            .headers()
-            .get_all("set-cookie")
-            .iter()
-            .filter_map(|v| v.to_str().ok())
-            .map(|s| s.split(';').next().unwrap().to_owned())
-            .collect::<Vec<_>>()
-            .join("; ");
+        let cookie = aurora_testkit::oidc::sign_in_over_http(
+            &format!("http://{}", self.api_addr),
+            "dev",
+            email,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("sign-in {email}: {e}"));
         let mut api = Api {
             http,
             base: format!("http://{}", self.api_addr),
@@ -405,27 +407,15 @@ pub struct Api {
 }
 
 impl Api {
-    /// Sign up over HTTP against a deployed API at `base` (kind e2e, OPS-011): no local database
+    /// Sign in over HTTP (development IdP) against a deployed API at `base` (kind e2e, OPS-011): no local database
     /// handle. `origin` must equal the deployment's `server.external_url`. Daneel is switched to
     /// the fake harness through the agents API.
     pub async fn connect(base: &str, origin: &str, email: &str) -> Api {
+        let _ = origin; // phase 1 (RFE-004): sign-in is a browser-style redirect flow, no Origin header
         let http = reqwest::Client::new();
-        let r = http
-            .post(format!("{base}/v1/auth/signup"))
-            .header("origin", origin)
-            .json(&json!({"email": email, "password": "correct horse battery staple 42", "display_name": "E2E"}))
-            .send()
+        let cookie = aurora_testkit::oidc::sign_in_over_http(base, "dev", email)
             .await
-            .unwrap();
-        assert_eq!(r.status(), 201, "signup: {}", r.text().await.unwrap());
-        let cookie = r
-            .headers()
-            .get_all("set-cookie")
-            .iter()
-            .filter_map(|v| v.to_str().ok())
-            .map(|s| s.split(';').next().unwrap().to_owned())
-            .collect::<Vec<_>>()
-            .join("; ");
+            .unwrap_or_else(|e| panic!("sign-in {email}: {e}"));
         let mut api = Api {
             http,
             base: base.to_owned(),
@@ -815,22 +805,9 @@ impl Api {
     /// A second session of the same user (fresh principal, e.g. after an SQL promotion).
     pub async fn relogin(&self, email: &str) -> Api {
         let http = reqwest::Client::new();
-        let r = http
-            .post(format!("{}/v1/auth/login", self.base))
-            .header("origin", ORIGIN)
-            .json(&json!({"email": email, "password": "correct horse battery staple 42"}))
-            .send()
+        let cookie = aurora_testkit::oidc::sign_in_over_http(&self.base, "dev", email)
             .await
-            .unwrap();
-        assert_eq!(r.status(), 200, "login: {}", r.text().await.unwrap());
-        let cookie = r
-            .headers()
-            .get_all("set-cookie")
-            .iter()
-            .filter_map(|v| v.to_str().ok())
-            .map(|s| s.split(';').next().unwrap().to_owned())
-            .collect::<Vec<_>>()
-            .join("; ");
+            .unwrap_or_else(|e| panic!("re-sign-in {email}: {e}"));
         Api {
             http,
             base: self.base.clone(),

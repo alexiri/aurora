@@ -1,0 +1,12 @@
+{{- if .Values.devIdp.enabled }}
+{{- $full := include "aurora.fullname" . -}}
+{{- $issuer := default (printf "%s%s" (trimSuffix "/" .Values.externalUrl) .Values.devIdp.pathPrefix) .Values.devIdp.issuer -}}
+{{- $env := list
+      (dict "name" "AURORA_DEV_IDP_LISTEN" "value" "0.0.0.0:4107")
+      (dict "name" "AURORA_DEV_IDP_ISSUER" "value" $issuer)
+      (dict "name" "AURORA_DEV_IDP_PREFIX" "value" .Values.devIdp.pathPrefix)
+      (dict "name" "AURORA_DEV_IDP_USERS_JSON" "value" (toJson .Values.devIdp.users))
+      (dict "name" "AURORA_DEV_IDP_ALLOW_ANY_HINT" "value" (ternary "1" "0" .Values.devIdp.allowAnyHint)) -}}
+# Development IdP (docs/04 §Development and end-to-end sign-in). NEVER for production.
+{{ include "aurora.workload" (dict "root" . "name" "dev-idp" "spec" (dict "replicas" 1 "resources" .Values.devIdp.resources "extraEnv" $env) "image" (include "aurora.image" (dict "root" . "name" "aurora-dev-idp" "override" .Values.devIdp.image)) "env" "" "ports" (list (dict "name" "http" "port" 4107))) }}
+{{- end }}

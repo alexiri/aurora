@@ -2,8 +2,9 @@
 # OPS-017: the one containerized dev/test setup: a kind cluster + the Helm chart (replaces podman compose).
 #
 #   deploy/dev/kind-dev.sh up [--llm-mock] [--connector-fake] [--no-sandbox]   cluster + ingress + images + helm release
-#   deploy/dev/kind-dev.sh dev [api|gateway|hookhost|runner|connector-fake|web|sandbox ...]
+#   deploy/dev/kind-dev.sh dev [api|gateway|hookhost|runner|connector-fake|dev-idp|web|sandbox ...]
 #                                          rebuild changed service images, load them, restart those Deployments
+#   deploy/dev/kind-dev.sh bootstrap-admin <email>   pre-provision the first instance admin (binds at their first sign-in)
 #   deploy/dev/kind-dev.sh status | down
 #
 # Cluster `aurora-dev` (rootless podman provider), release `aurora` in namespace `aurora`, one URL:
@@ -31,7 +32,7 @@ VOL_REGISTRY="$LANE-kind-dev-cargo-registry"
 VOL_RUSTUP="$LANE-kind-dev-rustup"   # `stable` is auto-installed once, then kept
 BUILDER_IMAGE="$REG/builder:1"
 WORK="$ROOT/target/kind-dev"
-RUST_SVCS=(api gateway hookhost runner connector-fake)
+RUST_SVCS=(api gateway hookhost runner connector-fake dev-idp)
 
 k() { kubectl --context "$CTX" "$@"; }
 log() { echo "==> $*" >&2; }
@@ -57,7 +58,8 @@ build_rust() {
   podman volume exists "$VOL_REGISTRY" || podman volume create --label "aurora.lane=$LANE" "$VOL_REGISTRY" >/dev/null
   # Always the same package set: a subset would unify cargo features differently and rebuild shared dependencies.
   local pkgs=() s
-  for s in "${RUST_SVCS[@]}"; do pkgs+=(-p "aurora-$s"); done
+  # `dev-idp` (P1-005, RFE-004) is the `aurora-dev-idp` binary of the aurora-testkit package.
+  for s in "${RUST_SVCS[@]}"; do case "$s" in dev-idp) pkgs+=(-p aurora-testkit) ;; *) pkgs+=(-p "aurora-$s") ;; esac; done
   log "cargo build ${pkgs[*]} (in container, target volume $VOL_TARGET)"
   # .cargo/config.toml is masked: it is for host builds (the image builds ignore it, too).
   podman run --rm --name "$LANE-kind-dev-build" --label "aurora.lane=$LANE" --security-opt label=disable \
@@ -147,7 +149,8 @@ cmd_up() {
   local free_kb; free_kb=$(df --output=avail -k . | tail -1)
   [ "$free_kb" -ge $((15 * 1024 * 1024)) ] || die "less than 15 GB free; stopping"
   ensure_cluster
-  local svcs=(api gateway hookhost runner web) vals=(-f deploy/kind/values-dev.yaml)
+  # dev-idp: the development IdP (P1-005, RFE-004; values-dev.yaml devIdp). All sign-in is OIDC.
+  local svcs=(api gateway hookhost runner web dev-idp) vals=(-f deploy/kind/values-dev.yaml)
   [ "$fake" = 1 ] && { svcs+=(connector-fake); vals+=(-f deploy/kind/values-connector-fake.yaml); }
   [ "$sandbox" = 1 ] && svcs+=(sandbox)
   build_and_load "${svcs[@]}" || die "image build/load failed"
@@ -169,7 +172,8 @@ cmd_up() {
       || k -n aurora-dev-mock rollout status deploy/litellm --timeout=300s >/dev/null || die "llm-mock not ready"
   fi
   k -n "$NS" get pods >&2
-  log "Aurora is up: http://localhost:4000  (sign up in the browser; kubectl --context $CTX -n $NS ...)"
+  log "Aurora is up: http://localhost:4000  (sign in with 'Development sign-in' and pick a user; kubectl --context $CTX -n $NS ...)"
+  log "first instance admin: deploy/dev/kind-dev.sh bootstrap-admin you@example.com  (then sign in with that e-mail)"
   [ "$mock" = 1 ] && log "LLM endpoint litellm-mock, key sk-aurora-mock-dev; hosted agents need a sandbox image with the harness (docs/operator/install-kind-dev.md)"
   return 0
 }
@@ -178,9 +182,9 @@ cmd_dev() {
   need kind kubectl podman
   cluster_exists || die "cluster $CLUSTER does not exist: run 'deploy/dev/kind-dev.sh up' first"
   local svcs=("$@")
-  [ "${#svcs[@]}" -gt 0 ] || svcs=(api gateway hookhost runner web)
+  [ "${#svcs[@]}" -gt 0 ] || svcs=(api gateway hookhost runner web dev-idp)
   local s; for s in "${svcs[@]}"; do
-    case "$s" in api|gateway|hookhost|runner|connector-fake|web|sandbox) ;; *) die "unknown service: $s" ;; esac
+    case "$s" in api|gateway|hookhost|runner|connector-fake|dev-idp|web|sandbox) ;; *) die "unknown service: $s" ;; esac
   done
   local t0=$SECONDS
   build_and_load "${svcs[@]}" || die "image build/load failed"
@@ -195,6 +199,14 @@ cmd_dev() {
   done
   for d in "${restarted[@]}"; do k -n "$NS" rollout status "deploy/$d" --timeout=180s >/dev/null || die "$d did not become ready"; done
   log "done in $((SECONDS - t0))s: rebuilt+restarted: ${CHANGED_SVCS[*]:-nothing (all images current)}"
+}
+
+# bootstrap-admin <email>: pre-provision an instance admin in the dev cluster. In the dev images the binary is
+# /usr/local/bin/aurora-service (deploy/dev/thin.Containerfile), not /usr/local/bin/aurora-api.
+cmd_bootstrap_admin() {
+  need kubectl
+  [ -n "${1:-}" ] || die "usage: kind-dev.sh bootstrap-admin <email>"
+  k -n "$NS" exec "deploy/$RELEASE-api" -- /usr/local/bin/aurora-service bootstrap-admin --email "$1"
 }
 
 cmd_status() {
@@ -216,6 +228,7 @@ if [ -z "${AURORA_DEV_SOURCED:-}" ]; then
 case "${1:-}" in
   up) shift; cmd_up "$@" ;;
   dev) shift; cmd_dev "$@" ;;
+  bootstrap-admin) shift; cmd_bootstrap_admin "$@" ;;
   status) cmd_status ;;
   down) cmd_down ;;
   *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;

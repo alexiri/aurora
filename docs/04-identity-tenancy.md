@@ -173,11 +173,15 @@ With OIDC-only there must be a way to sign in without a corporate IdP:
 - **Dev IdP** — the existing mock IdP of `aurora-testkit` (`aurora_testkit::oidc`:
   discovery, JWKS, PKCE, nonce, configurable claims) is packaged as a tiny
   binary/image `aurora-dev-idp` (development and tests only; never in the Helm
-  chart's default values). Compose profile `dev-idp` runs it; `just dev` starts it
-  as a host process. It serves a login page listing the users of a fixture file
-  (`deploy/compose/dev-idp/users.json`: `{ sub, email, name, email_verified }`)
-  and signs in non-interactively when the authorize request carries
-  `login_hint=<email>` of a listed user (used by Playwright and scripts).
+  chart's default values). The kind dev stack runs it as the chart component `devIdp`
+  (`deploy/kind/values-dev.yaml`, served through the Ingress at `/dev-idp`); `just dev`
+  starts it as a host process on `:4107`. It serves a login page listing the users of a
+  fixture file (`deploy/dev/dev-idp-users.json`, in the chart `devIdp.users`:
+  `{ sub, email, name, email_verified }`) and signs in non-interactively when the
+  authorize request carries `login_hint=<email>` of a listed user (used by Playwright and
+  scripts). The dev stacks also set `AURORA_DEV_IDP_ALLOW_ANY_HINT=1` / `devIdp.allowAnyHint`,
+  which accepts an unlisted hint (the e2e suites mint their own e-mails). `GET
+  /v1/auth/oidc/{provider}/start` forwards an optional `login_hint=<email>` to the provider.
 - **Wiring** — `auth.dev_idp.enabled = true` (default `false`) registers the extra
   provider `id = "dev"`, `display_name = "Development sign-in"`,
   `issuer = auth.dev_idp.issuer`, with a fixed development client. Startup logs a

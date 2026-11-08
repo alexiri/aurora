@@ -43,8 +43,8 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
   from the TOML file. Setup tooling generates missing secrets and never overwrites an
   existing one. See [docs/15 §Required secrets](../15-deployment-operations.md#required-secrets).
 - **Admin actions.** `/v1/admin/*` routes require an instance-administrator session.
-  The first administrator is created with `aurora-api bootstrap-admin` (see
-  [install-helm.md](install-helm.md#post-install-checks)).
+  The first administrator is pre-provisioned with `aurora-api bootstrap-admin` and binds their
+  identity at the first OIDC sign-in (see [install-helm.md](install-helm.md#post-install-checks)).
 - **Edge.** Only `server.external_url` is public. The edge routes `/v1/*` to the API and
   everything else to the web app. `/internal/*` and `/metrics` are never routed. See
   [docs/15 §Networking: one URL](../15-deployment-operations.md#networking-one-url).

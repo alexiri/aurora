@@ -33,6 +33,9 @@ pub struct Opts {
 }
 
 pub struct Stack {
+    /// Development IdP (phase 1, RFE-004): the in-process OIDC mock the API signs users in through.
+    #[allow(dead_code)]
+    idp: aurora_testkit::oidc::MockIdp,
     pub db: Option<TestDb>,
     pub dir: PathBuf,
     pub api_addr: String,
@@ -63,6 +66,8 @@ fn bin(name: &str) -> PathBuf {
 impl Stack {
     pub async fn start(o: Opts) -> Stack {
         let db = TestDb::new().await;
+        let idp = aurora_testkit::oidc::MockIdp::start().await;
+        let idp_issuer = idp.issuer().to_owned();
         let dir = std::env::temp_dir().join(format!("aurora-e2e-gw-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(dir.join("ca")).unwrap();
         let st = std::process::Command::new(bin("aurora-gateway"))
@@ -85,6 +90,10 @@ api_url = "http://{API_IP}:4101"
 [auth]
 signup_mode = "open"
 org_creation = "anyone"
+
+[auth.dev_idp]
+enabled = true
+issuer = "{idp_issuer}"
 
 [telemetry]
 log_level = "info"
@@ -127,6 +136,7 @@ api_internal_url = "http://{API_IP}:4111"
             ));
         }
         let mut stack = Stack {
+            idp,
             db: Some(db),
             dir,
             api_addr: format!("{API_IP}:4101"),
@@ -255,28 +265,17 @@ api_internal_url = "http://{API_IP}:4111"
         self.db.as_ref().unwrap().pool()
     }
 
-    /// Sign up a user (open mode: creates org + workspace + Daneel) and return a client.
+    /// Sign a user in through the development IdP (open mode: the first sign-in creates the user,
+    /// org + workspace + Daneel) and return a client. Phase 1 (RFE-004): there is no password.
     pub async fn signup(&self, email: &str) -> Api {
         let http = reqwest::Client::new();
-        let r = http
-            .post(format!("http://{}/v1/auth/signup", self.api_addr))
-            .header("origin", ORIGIN)
-            .json(&json!({"email": email, "password": "correct horse battery staple 42", "display_name": "E2E"}))
-            .send()
+        let base = format!("http://{}", self.api_addr);
+        let cookie = aurora_testkit::oidc::sign_in_over_http(&base, "dev", email)
             .await
-            .unwrap();
-        assert_eq!(r.status(), 201, "signup: {}", r.text().await.unwrap());
-        let cookie = r
-            .headers()
-            .get_all("set-cookie")
-            .iter()
-            .filter_map(|v| v.to_str().ok())
-            .map(|s| s.split(';').next().unwrap().to_owned())
-            .collect::<Vec<_>>()
-            .join("; ");
+            .unwrap_or_else(|e| panic!("sign-in {email}: {e}"));
         let mut api = Api {
             http,
-            base: format!("http://{}", self.api_addr),
+            base,
             cookie,
             org: String::new(),
             ws: String::new(),
@@ -342,23 +341,9 @@ impl Api {
 
     /// Fresh login (new session, so a changed `users` row is not served from the auth cache).
     pub async fn relogin(&mut self, email: &str) {
-        let r = self
-            .http
-            .post(format!("{}/v1/auth/login", self.base))
-            .header("origin", ORIGIN)
-            .json(&json!({"email": email, "password": "correct horse battery staple 42"}))
-            .send()
+        self.cookie = aurora_testkit::oidc::sign_in_over_http(&self.base, "dev", email)
             .await
-            .unwrap();
-        assert_eq!(r.status(), 200);
-        self.cookie = r
-            .headers()
-            .get_all("set-cookie")
-            .iter()
-            .filter_map(|v| v.to_str().ok())
-            .map(|s| s.split(';').next().unwrap().to_owned())
-            .collect::<Vec<_>>()
-            .join("; ");
+            .unwrap_or_else(|e| panic!("re-sign-in {email}: {e}"));
     }
 
     /// `POST /v1/admin/plugins` (multipart `package`).

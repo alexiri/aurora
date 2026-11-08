@@ -12,41 +12,26 @@ pub struct Quota {
     pub per: Duration,
 }
 
-/// The `04` quotas.
+/// The `04` quotas (phase 1, RFE-004: `OIDC_AUTH_RATE`, 20 / min / IP for each of OIDC `start`
+/// and `callback`; there is no password sign-in to limit).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bucket {
-    SignInIp,
-    SignInEmail,
-    SignUpIp,
-    ResetEmail,
+    OidcStartIp,
+    OidcCallbackIp,
 }
 
 impl Bucket {
     pub const fn name(self) -> &'static str {
         match self {
-            Self::SignInIp => "signin_ip",
-            Self::SignInEmail => "signin_email",
-            Self::SignUpIp => "signup_ip",
-            Self::ResetEmail => "reset_email",
+            Self::OidcStartIp => "oidc_start_ip",
+            Self::OidcCallbackIp => "oidc_callback_ip",
         }
     }
     pub const fn quota(self) -> Quota {
         match self {
-            Self::SignInIp => Quota {
-                capacity: 10,
+            Self::OidcStartIp | Self::OidcCallbackIp => Quota {
+                capacity: 20,
                 per: Duration::from_secs(60),
-            },
-            Self::SignInEmail => Quota {
-                capacity: 5,
-                per: Duration::from_secs(60),
-            },
-            Self::SignUpIp => Quota {
-                capacity: 5,
-                per: Duration::from_secs(3600),
-            },
-            Self::ResetEmail => Quota {
-                capacity: 3,
-                per: Duration::from_secs(3600),
             },
         }
     }

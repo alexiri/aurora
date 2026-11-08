@@ -4,6 +4,10 @@
 //! authorize endpoint (302 to `redirect_uri` with `code` + `state`) and a token
 //! endpoint that verifies the PKCE S256 verifier and returns an ID token whose
 //! claims are configurable through [`MockIdp::set_claims`] / [`MockIdp::set`].
+//!
+//! Phase 1 (RFE-004) the same code is the development IdP (`aurora-dev-idp`, `src/bin`): with
+//! [`Options::users`] it serves a login page listing fixture users and signs a user in
+//! non-interactively when the authorize request carries `login_hint=<email>`.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::collections::HashMap;
@@ -21,8 +25,10 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-pub const CLIENT_ID: &str = "aurora-test-client";
-pub const CLIENT_SECRET: &str = "aurora-test-secret";
+/// The fixed development client of the `dev` provider (`aurora_config::DEV_IDP_CLIENT_*`; the
+/// aurora-api suite asserts the two stay equal).
+pub const CLIENT_ID: &str = "aurora-dev-client";
+pub const CLIENT_SECRET: &str = "aurora-dev-secret";
 const KID: &str = "mock-key-1";
 
 /// Claims placed in the next ID tokens. `nonce: None` echoes the nonce sent to `/authorize`.
@@ -35,6 +41,11 @@ pub struct Claims {
     pub nonce: Option<String>,
     /// Seconds from now until `exp` (negative => already expired).
     pub exp_in: i64,
+    /// `aud` claim; `None` = the client id.
+    pub aud: Option<String>,
+    /// Seconds ago the user authenticated. `Some(n)` always emits `auth_time = now - n`; `None`
+    /// emits `auth_time = now` only when the authorize request carried `max_age`.
+    pub auth_time_ago: Option<i64>,
 }
 
 impl Default for Claims {
@@ -46,6 +57,8 @@ impl Default for Claims {
             name: Some("Test User".into()),
             nonce: None,
             exp_in: 300,
+            aud: None,
+            auth_time_ago: None,
         }
     }
 }
@@ -54,6 +67,52 @@ struct Pending {
     nonce: String,
     challenge: String,
     redirect_uri: String,
+    /// The fixture user chosen through `login_hint` (overrides the configured claims).
+    user: Option<DevUser>,
+    max_age_requested: bool,
+}
+
+/// A fixture user of the development IdP (`deploy/dev/dev-idp-users.json`).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct DevUser {
+    pub sub: String,
+    pub email: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default = "yes")]
+    pub email_verified: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Startup options. `Options::default()` is the in-process test mock.
+#[derive(Debug, Clone)]
+pub struct Options {
+    /// Listen address (default `127.0.0.1:0`).
+    pub bind: String,
+    /// Public issuer URL as the browser reaches it (default `http://<bound address>`).
+    pub issuer: Option<String>,
+    /// URL path the IdP is served under (e.g. `/dev-idp` behind an ingress); default none.
+    pub path_prefix: String,
+    /// Fixture users. `Some`: only listed users sign in and the authorize endpoint without a
+    /// `login_hint` shows a login page. `None`: the mock auto-approves with its configured claims.
+    pub users: Option<Vec<DevUser>>,
+    /// With `users`, also accept an unlisted `login_hint` (e2e harnesses mint their own e-mails).
+    pub allow_any_hint: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            bind: "127.0.0.1:0".into(),
+            issuer: None,
+            path_prefix: String::new(),
+            users: None,
+            allow_any_hint: false,
+        }
+    }
 }
 
 struct Inner {
@@ -61,6 +120,9 @@ struct Inner {
     key: EcdsaKeyPair,
     claims: Mutex<Claims>,
     codes: Mutex<HashMap<String, Pending>>,
+    users: Option<Vec<DevUser>>,
+    allow_any_hint: bool,
+    last_authorize: Mutex<HashMap<String, String>>,
 }
 
 pub struct MockIdp {
@@ -77,27 +139,44 @@ impl Drop for MockIdp {
 impl MockIdp {
     /// Start on `127.0.0.1:0`.
     pub async fn start() -> MockIdp {
+        Self::start_with(Options::default()).await
+    }
+
+    /// Start with explicit [`Options`].
+    pub async fn start_with(opts: Options) -> MockIdp {
         let rng = SystemRandom::new();
         let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
             .expect("generate ES256 key");
         let key = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref())
             .expect("load ES256 key");
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = tokio::net::TcpListener::bind(&opts.bind)
             .await
             .expect("bind mock idp");
-        let issuer = format!("http://{}", listener.local_addr().expect("addr"));
+        let prefix = opts.path_prefix.trim_end_matches('/').to_owned();
+        let issuer = opts.issuer.as_deref().map_or_else(
+            || format!("http://{}{prefix}", listener.local_addr().expect("addr")),
+            |i| i.trim_end_matches('/').to_owned(),
+        );
         let inner = Arc::new(Inner {
             issuer,
             key,
             claims: Mutex::new(Claims::default()),
             codes: Mutex::new(HashMap::new()),
+            users: opts.users,
+            allow_any_hint: opts.allow_any_hint,
+            last_authorize: Mutex::new(HashMap::new()),
         });
-        let app = Router::new()
+        let routes = Router::new()
             .route("/.well-known/openid-configuration", get(discovery))
             .route("/jwks", get(jwks))
             .route("/authorize", get(authorize))
             .route("/token", post(token))
             .with_state(inner.clone());
+        let app = if prefix.is_empty() {
+            routes
+        } else {
+            Router::new().nest(&prefix, routes)
+        };
         let task = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
@@ -115,6 +194,11 @@ impl MockIdp {
 
     pub fn client_secret(&self) -> &'static str {
         CLIENT_SECRET
+    }
+
+    /// The query of the most recent `/authorize` request (e.g. to assert `prompt=login&max_age=0`).
+    pub fn last_authorize(&self) -> HashMap<String, String> {
+        self.inner.last_authorize.lock().expect("authorize").clone()
     }
 
     /// Replace all claims.
@@ -150,7 +234,7 @@ async fn discovery(State(s): State<Arc<Inner>>) -> Json<Value> {
         "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
         "code_challenge_methods_supported": ["S256"],
         "scopes_supported": ["openid", "email", "profile"],
-        "claims_supported": ["sub", "email", "email_verified", "name", "nonce"],
+        "claims_supported": ["sub", "email", "email_verified", "name", "nonce", "auth_time"],
     }))
 }
 
@@ -172,6 +256,40 @@ fn enc(s: &str) -> String {
     percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string()
 }
 
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn login_page(users: &[DevUser], q: &HashMap<String, String>) -> Response {
+    let base = |email: &str| {
+        let mut pairs: Vec<String> = q
+            .iter()
+            .filter(|(k, _)| k.as_str() != "login_hint")
+            .map(|(k, v)| format!("{}={}", enc(k), enc(v)))
+            .collect();
+        pairs.push(format!("login_hint={}", enc(email)));
+        format!("authorize?{}", pairs.join("&"))
+    };
+    let mut items = String::new();
+    for u in users {
+        items.push_str(&format!(
+            "<li><a href=\"{}\">{} <small>{}</small></a></li>",
+            html_escape(&base(&u.email)),
+            html_escape(u.name.as_deref().unwrap_or(&u.email)),
+            html_escape(&u.email),
+        ));
+    }
+    let body = format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Aurora development sign-in</title>\
+         <style>body{{font:16px system-ui;max-width:28rem;margin:4rem auto;padding:0 1rem}}li{{margin:.5rem 0}}small{{color:#666}}</style></head>\
+         <body><h1>Development sign-in</h1><p>Development only. Pick a user:</p><ul>{items}</ul></body></html>"
+    );
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], body).into_response()
+}
+
 async fn authorize(
     State(s): State<Arc<Inner>>,
     Query(q): Query<HashMap<String, String>>,
@@ -185,6 +303,33 @@ async fn authorize(
     {
         return (StatusCode::BAD_REQUEST, "invalid authorization request").into_response();
     }
+    *s.last_authorize.lock().expect("authorize") = q.clone();
+    let hint = get("login_hint");
+    let user = if hint.is_empty() {
+        if let Some(users) = &s.users {
+            return login_page(users, &q);
+        }
+        None
+    } else {
+        let listed = s
+            .users
+            .as_ref()
+            .and_then(|us| us.iter().find(|u| u.email.eq_ignore_ascii_case(&hint)))
+            .cloned();
+        match (listed, &s.users) {
+            (Some(u), _) => Some(u),
+            (None, Some(_)) if !s.allow_any_hint => {
+                return (StatusCode::FORBIDDEN, "unknown development user").into_response();
+            }
+            // In-process mock (no fixture list) or `allow_any_hint`: mint a user from the hint.
+            (None, _) => Some(DevUser {
+                sub: format!("dev-{}", hint.to_ascii_lowercase()),
+                email: hint.clone(),
+                name: None,
+                email_verified: true,
+            }),
+        }
+    };
     let code = random_code();
     let redirect_uri = get("redirect_uri");
     s.codes.lock().expect("codes").insert(
@@ -193,6 +338,8 @@ async fn authorize(
             nonce: get("nonce"),
             challenge: get("code_challenge"),
             redirect_uri: redirect_uri.clone(),
+            user,
+            max_age_requested: q.contains_key("max_age"),
         },
     );
     let sep = if redirect_uri.contains('?') { '&' } else { '?' };
@@ -257,13 +404,24 @@ async fn token(
     {
         return oauth_error("invalid_grant");
     }
-    let c = s.claims.lock().expect("claims").clone();
+    let mut c = s.claims.lock().expect("claims").clone();
+    if let Some(u) = &pending.user {
+        c.sub = u.sub.clone();
+        c.email = Some(u.email.clone());
+        c.email_verified = Some(u.email_verified);
+        c.name = u.name.clone().or_else(|| Some(u.email.clone()));
+    }
     let now = chrono_now();
     let mut payload = json!({
-        "iss": s.issuer, "aud": CLIENT_ID, "sub": c.sub,
+        "iss": s.issuer, "aud": c.aud.clone().unwrap_or_else(|| CLIENT_ID.to_owned()), "sub": c.sub,
         "iat": now, "exp": now + c.exp_in,
         "nonce": c.nonce.clone().unwrap_or(pending.nonce),
     });
+    if let Some(ago) = c.auth_time_ago {
+        payload["auth_time"] = json!(now - ago);
+    } else if pending.max_age_requested {
+        payload["auth_time"] = json!(now);
+    }
     if let Some(v) = &c.email {
         payload["email"] = json!(v);
     }
@@ -297,4 +455,90 @@ fn chrono_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))
+}
+
+/// Sign in through a running Aurora API over HTTP using the development IdP's `login_hint`
+/// (phase 1, RFE-004; the e2e suites use this instead of the removed password sign-up).
+///
+/// Drives the real flow with redirects followed by hand: `GET {base}/v1/auth/oidc/{provider}/start`
+/// → the IdP's authorize URL (with `login_hint`) → the callback on `{base}` with the
+/// `__Host-aurora_oidc` flow cookie. Returns the `Cookie` header value (`aurora_session=aus_…`).
+///
+/// `base` is where the *test* reaches the API (it may differ from the API's `server.external_url`;
+/// the callback path is replayed against `base`). The IdP URL is used exactly as the API returned it.
+pub async fn sign_in_over_http(base: &str, provider: &str, email: &str) -> Result<String, String> {
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| e.to_string())?;
+    let base = base.trim_end_matches('/');
+    let start = format!(
+        "{base}/v1/auth/oidc/{provider}/start?login_hint={}",
+        enc(email)
+    );
+    let r = http.get(&start).send().await.map_err(|e| e.to_string())?;
+    if r.status().as_u16() != 302 {
+        return Err(format!(
+            "start: {} {}",
+            r.status(),
+            r.text().await.unwrap_or_default()
+        ));
+    }
+    let flow = r
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|c| c.starts_with("__Host-aurora_oidc="))
+        .and_then(|c| c.split(';').next())
+        .map(str::to_owned)
+        .ok_or("start: no __Host-aurora_oidc cookie")?;
+    let authorize = r
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("start: no location")?
+        .to_owned();
+    let r = http
+        .get(&authorize)
+        .send()
+        .await
+        .map_err(|e| format!("authorize {authorize}: {e}"))?;
+    if !r.status().is_redirection() {
+        return Err(format!(
+            "authorize: {} {}",
+            r.status(),
+            r.text().await.unwrap_or_default()
+        ));
+    }
+    let back = r
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("authorize: no location")?
+        .to_owned();
+    let path = back
+        .find("/v1/auth/oidc/")
+        .map(|i| &back[i..])
+        .ok_or_else(|| format!("authorize: unexpected redirect {back}"))?;
+    let r = http
+        .get(format!("{base}{path}"))
+        .header("cookie", &flow)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let loc = r
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    r.headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|c| c.starts_with("aurora_session=aus_"))
+        .and_then(|c| c.split(';').next())
+        .map(str::to_owned)
+        .ok_or_else(|| format!("callback refused: {loc}"))
 }

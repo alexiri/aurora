@@ -4,9 +4,10 @@ import { ApiError } from "./client";
 export const ERROR_MESSAGES: Record<string, string> = {
   invalid_request: "Some of the values are not valid. Please check the form.",
   unauthorized: "Your session has expired. Please sign in again.",
-  invalid_credentials: "The email or password is incorrect.",
   account_disabled: "This account has been disabled.",
-  signup_closed: "Sign-up is closed on this instance.",
+  user_disabled: "This account has been disabled.",
+  signup_closed:
+    "Sign-up is closed on this instance. Ask an administrator for an invitation, then sign in again.",
   email_taken: "An account with this email already exists.",
   rate_limited: "Too many requests. Please wait a moment and try again.",
   too_many_streams: "Too many open tabs or streams. Close some and reload.",
@@ -24,10 +25,12 @@ export const ERROR_MESSAGES: Record<string, string> = {
   implicit_access: "Organization owners and admins always have access.",
   invitation_expired: "This invitation has expired.",
   email_mismatch: "This invitation was sent to a different email address.",
-  email_unverified: "Verify your email address first.",
+  email_unverified:
+    "Your sign-in provider has not verified this email address, so Aurora cannot trust it. Verify it with the provider and sign in again.",
   invalid_token: "This link is invalid, has already been used, or has expired.",
-  already_verified: "Your email address is already verified.",
-  reauthentication_required: "Please confirm your password to continue.",
+  reauth_required: "Please confirm it is you by signing in again with your provider.",
+  reauth_user_mismatch: "You signed in as a different user. Sign in again as the account you are using.",
+  reauth_stale: "The sign-in was too old. Please try again.",
   authorization_pending: "Waiting for approval.",
   expired_token: "This code has expired. Start again from your terminal.",
   access_denied: "The request was denied.",

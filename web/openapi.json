@@ -1905,16 +1905,6 @@
               }
             }
           },
-          "403": {
-            "description": "byo_disabled",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
           "503": {
             "description": "gateway_ca_unavailable",
             "content": {
@@ -1973,16 +1963,6 @@
           },
           "401": {
             "description": "Unauthenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "byo_disabled",
             "content": {
               "application/json": {
                 "schema": {
@@ -2363,87 +2343,6 @@
         ]
       }
     },
-    "/v1/agents/{agent}/byo": {
-      "put": {
-        "tags": [
-          "agents"
-        ],
-        "summary": "Set a BYO agent's own source CIDR list and require-context flag (`can_own`; RFE-025).",
-        "operationId": "putAgentByo",
-        "parameters": [
-          {
-            "name": "agent",
-            "in": "path",
-            "description": "Agent id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PutByoRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Agent",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Agent"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "not_byo | byo_cidr_invalid | byo_cidr_outside_default",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "api_key": []
-          }
-        ]
-      }
-    },
     "/v1/agents/{agent}/container-config": {
       "get": {
         "tags": [
@@ -2539,15 +2438,6 @@
             "required": false,
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "name": "archived",
-            "in": "query",
-            "description": "(phase 2, RFE-010) `true` lists archived conversations; default `false` hides them.",
-            "required": false,
-            "schema": {
-              "type": "boolean"
             }
           },
           {
@@ -4671,7 +4561,7 @@
             }
           },
           "403": {
-            "description": "hosted_agent_token_hidden | byo_not_permitted | byo_disabled",
+            "description": "hosted_agent_token_hidden",
             "content": {
               "application/json": {
                 "schema": {
@@ -5650,67 +5540,6 @@
         }
       }
     },
-    "/v1/auth/login": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Sign in with email and password; sets the session cookie.",
-        "operationId": "login",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LoginRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/auth/logout": {
       "post": {
         "tags": [
@@ -5795,6 +5624,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -5824,65 +5663,29 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "reauth",
+            "in": "query",
+            "description": "`1` = re-authenticate the signed-in user (`prompt=login&max_age=0`); needs a session.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "login_hint",
+            "in": "query",
+            "description": "Passed to the provider as `login_hint` (the development IdP signs that user in).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "302": {
             "description": "Redirect to the provider"
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "502": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/auth/password/change": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Change the password (session only).",
-        "operationId": "changePassword",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ChangePasswordRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Password changed"
           },
           "400": {
             "description": "",
@@ -5904,7 +5707,7 @@
               }
             }
           },
-          "403": {
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -5913,35 +5716,6 @@
                 }
               }
             }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ]
-      }
-    },
-    "/v1/auth/password/forgot": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Request a password-reset email (always 202).",
-        "operationId": "forgotPassword",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ForgotRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "description": "Accepted"
           },
           "429": {
             "description": "",
@@ -5952,32 +5726,8 @@
                 }
               }
             }
-          }
-        }
-      }
-    },
-    "/v1/auth/password/reset": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Set a new password with a reset token; revokes all sessions.",
-        "operationId": "resetPassword",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ResetRequest"
-              }
-            }
           },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Password changed"
-          },
-          "400": {
+          "502": {
             "description": "",
             "content": {
               "application/json": {
@@ -6009,157 +5759,6 @@
             }
           },
           "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ]
-      }
-    },
-    "/v1/auth/signup": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Create an account (and, in `open` mode, its organization); sets the session cookie.",
-        "operationId": "signup",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SignupRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/auth/verify-email": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Consume an email-verification token.",
-        "operationId": "verifyEmail",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VerifyEmailRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/auth/verify-email/resend": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Send a fresh verification email to the signed-in user.",
-        "operationId": "resendVerification",
-        "responses": {
-          "202": {
-            "description": "Accepted"
-          },
-          "409": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "429": {
             "description": "",
             "content": {
               "application/json": {
@@ -7031,129 +6630,6 @@
             "api_key": []
           }
         ]
-      },
-      "delete": {
-        "tags": [
-          "conversations"
-        ],
-        "summary": "Permanently delete a conversation with its transcript, attachments and harness session files.",
-        "operationId": "deleteConversation",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Conversation id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Deleted"
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "conversation_active",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "api_key": []
-          }
-        ]
-      }
-    },
-    "/v1/conversations/{id}/archive": {
-      "post": {
-        "tags": [
-          "conversations"
-        ],
-        "summary": "Archive a conversation (hidden from default lists; a person message unarchives).",
-        "operationId": "archiveConversation",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Conversation id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Conversation"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "api_key": []
-          }
-        ]
       }
     },
     "/v1/conversations/{id}/attachments": {
@@ -7360,190 +6836,6 @@
         ]
       }
     },
-    "/v1/conversations/{id}/events/{seq}/redact": {
-      "post": {
-        "tags": [
-          "conversations"
-        ],
-        "summary": "Redact one transcript event in place (irreversible, audited).",
-        "operationId": "redactConversationEvent",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Conversation id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "seq",
-            "in": "path",
-            "description": "Event seq",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RedactRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RedactResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "api_key": []
-          }
-        ]
-      }
-    },
-    "/v1/conversations/{id}/export": {
-      "get": {
-        "tags": [
-          "conversations"
-        ],
-        "summary": "Export a conversation as `aurora.conversation.v1` JSON (or a zip with the attachment files).",
-        "operationId": "exportConversation",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Conversation id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "after_seq",
-            "in": "query",
-            "description": "Export events with `seq` greater than this (paging past `export_too_large`).",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          {
-            "name": "attachments",
-            "in": "query",
-            "description": "`none` (default) or `zip` (JSON plus the attachment files).",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "application/json, or application/zip with attachments=zip"
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "export_too_large",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "api_key": []
-          }
-        ]
-      }
-    },
     "/v1/conversations/{id}/messages": {
       "post": {
         "tags": [
@@ -7670,67 +6962,6 @@
               "text/event-stream": {
                 "schema": {
                   "$ref": "#/components/schemas/TranscriptEvent"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "api_key": []
-          }
-        ]
-      }
-    },
-    "/v1/conversations/{id}/unarchive": {
-      "post": {
-        "tags": [
-          "conversations"
-        ],
-        "summary": "Unarchive a conversation.",
-        "operationId": "unarchiveConversation",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Conversation id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Conversation"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -8232,18 +7463,8 @@
         "tags": [
           "me"
         ],
-        "summary": "Delete the caller's own account.",
+        "summary": "Delete the caller's own account (needs a recent OIDC re-authentication, else 412 `reauth_required`).",
         "operationId": "deleteMe",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DeleteMeRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "204": {
             "description": "Deleted"
@@ -8259,6 +7480,16 @@
             }
           },
           "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "412": {
             "description": "",
             "content": {
               "application/json": {
@@ -11079,156 +10310,6 @@
         ]
       }
     },
-    "/v1/orgs/{org}/retention": {
-      "get": {
-        "tags": [
-          "orgs"
-        ],
-        "summary": "The organization's conversation retention window (org `owner`/`admin`).",
-        "operationId": "getOrgRetention",
-        "parameters": [
-          {
-            "name": "org",
-            "in": "path",
-            "description": "Organization id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Retention"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "api_key": []
-          }
-        ]
-      },
-      "put": {
-        "tags": [
-          "orgs"
-        ],
-        "summary": "Set or clear the conversation retention window (org `owner`/`admin`, audited).",
-        "operationId": "putOrgRetention",
-        "parameters": [
-          {
-            "name": "org",
-            "in": "path",
-            "description": "Organization id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PutRetention"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Retention"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "retention_invalid | retention_above_instance_maximum",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "api_key": []
-          }
-        ]
-      }
-    },
     "/v1/orgs/{org}/secrets": {
       "get": {
         "tags": [
@@ -13594,87 +12675,6 @@
         ]
       }
     },
-    "/v1/turns/{id}/redact": {
-      "post": {
-        "tags": [
-          "conversations"
-        ],
-        "summary": "Redact every event of a turn (irreversible, audited).",
-        "operationId": "redactTurn",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Turn id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RedactRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RedactResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "api_key": []
-          }
-        ]
-      }
-    },
     "/v1/turns/{id}/send-now": {
       "post": {
         "tags": [
@@ -14935,16 +13935,6 @@
           },
           "400": {
             "description": "Invalid",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "byo_not_permitted | byo_disabled",
             "content": {
               "application/json": {
                 "schema": {
@@ -16783,17 +15773,6 @@
           "brief": {
             "type": "string"
           },
-          "byo": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ByoView",
-                "description": "(phase 2, RFE-025) BYO governance of a BYO agent; `null` for hosted agents and in\nresponses that do not load it."
-              }
-            ]
-          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -17308,13 +16287,6 @@
             ],
             "format": "uuid"
           },
-          "context_label": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "(phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`) that\nmade the request, if any."
-          },
           "conversation_id": {
             "type": [
               "string",
@@ -17805,109 +16777,6 @@
           "reassigned": {
             "type": "integer",
             "format": "int64"
-          }
-        }
-      },
-      "ByoPosture": {
-        "type": "string",
-        "description": "BYO posture, ordered by strictness (`enabled` < `owners_only` < `disabled`).",
-        "enum": [
-          "enabled",
-          "owners_only",
-          "disabled"
-        ]
-      },
-      "ByoPostureView": {
-        "type": "object",
-        "required": [
-          "value",
-          "level"
-        ],
-        "properties": {
-          "level": {
-            "type": "string",
-            "description": "`instance` | `org` | `workspace`."
-          },
-          "value": {
-            "type": "string",
-            "description": "`enabled` | `owners_only` | `disabled`."
-          }
-        }
-      },
-      "ByoView": {
-        "type": "object",
-        "description": "The `byo` object of an [`Agent`](super::dto::Agent) (BYO agents only).",
-        "required": [
-          "posture",
-          "posture_level",
-          "require_context",
-          "effective_require_context"
-        ],
-        "properties": {
-          "effective_require_context": {
-            "type": "boolean",
-            "description": "Instance ∨ org ∨ agent."
-          },
-          "effective_require_context_level": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Which layer switched it on: `instance` | `org` | `agent` (null = off)."
-          },
-          "effective_source_cidrs": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            },
-            "description": "The list the gateway enforces (agent, else org, else instance); `null` = unrestricted."
-          },
-          "effective_source_level": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Which layer the effective list comes from: `agent` | `org` | `instance` (null = none)."
-          },
-          "posture": {
-            "type": "string",
-            "description": "Effective BYO posture of the agent's workspace: `enabled` | `owners_only` | `disabled`."
-          },
-          "posture_level": {
-            "type": "string",
-            "description": "The layer that decided it: `instance` | `org` | `workspace`."
-          },
-          "require_context": {
-            "type": "boolean",
-            "description": "The agent's own require-context flag."
-          },
-          "source_cidrs": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            },
-            "description": "The agent's own source list (`null` = inherit)."
-          }
-        }
-      },
-      "ChangePasswordRequest": {
-        "type": "object",
-        "required": [
-          "current_password",
-          "new_password"
-        ],
-        "properties": {
-          "current_password": {
-            "type": "string"
-          },
-          "new_password": {
-            "type": "string"
           }
         }
       },
@@ -18660,33 +17529,6 @@
           }
         }
       },
-      "ContainerByo": {
-        "type": "object",
-        "required": [
-          "posture",
-          "require_context"
-        ],
-        "properties": {
-          "posture": {
-            "type": "string",
-            "description": "Effective posture: `enabled` | `owners_only` | `disabled`."
-          },
-          "require_context": {
-            "type": "boolean",
-            "description": "Effective require-context flag; when `true`, `proxy_url` carries `<CONTEXT_TOKEN>`."
-          },
-          "source_cidrs": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            },
-            "description": "Effective source CIDR list; `null` = unrestricted."
-          }
-        }
-      },
       "ContainerConfig": {
         "type": "object",
         "required": [
@@ -18696,21 +17538,9 @@
           "ca_path",
           "proxy_ca_path",
           "llm_env",
-          "stubs",
-          "notes"
+          "stubs"
         ],
         "properties": {
-          "byo": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ContainerByo",
-                "description": "(phase 2, RFE-025) Effective BYO controls, so the CLI can warn before the first request."
-              }
-            ]
-          },
           "ca_path": {
             "type": "string"
           },
@@ -18734,13 +17564,6 @@
             "propertyNames": {
               "type": "string"
             }
-          },
-          "notes": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "(phase 2, RFE-025) Human-readable notes, e.g. that a context credential is required."
           },
           "proxy_ca_path": {
             "type": "string",
@@ -18847,14 +17670,6 @@
             "type": "integer",
             "format": "int64",
             "description": "Consecutive bot/agent turns since the last person-authored turn or `continue` (C-27)."
-          },
-          "archived_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "(phase 2, RFE-010) set while the conversation is archived (hidden from default lists)."
           },
           "created_at": {
             "type": "string",
@@ -19543,18 +18358,6 @@
           "block"
         ]
       },
-      "DeleteMeRequest": {
-        "type": "object",
-        "properties": {
-          "password": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Required for accounts that have a password."
-          }
-        }
-      },
       "DirectUser": {
         "type": "object",
         "description": "The person a `direct` conversation belongs to (phase 1, RFE-009).",
@@ -19685,28 +18488,6 @@
           }
         }
       },
-      "EffectiveByo": {
-        "type": "object",
-        "description": "(phase 2, RFE-025) Effective org-level BYO controls (instance ∩ org); the workspace layer is\napplied per workspace/agent.",
-        "required": [
-          "posture",
-          "source_cidrs",
-          "require_context_credentials"
-        ],
-        "properties": {
-          "posture": {
-            "$ref": "#/components/schemas/Sourced_String",
-            "description": "`enabled` | `owners_only` | `disabled`."
-          },
-          "require_context_credentials": {
-            "$ref": "#/components/schemas/Sourced_bool"
-          },
-          "source_cidrs": {
-            "$ref": "#/components/schemas/Sourced_Option_Vec_String",
-            "description": "Default source CIDR list of BYO agents without their own; `null` = unrestricted."
-          }
-        }
-      },
       "EffectiveCredential": {
         "type": "object",
         "required": [
@@ -19822,13 +18603,9 @@
         "required": [
           "llm",
           "egress",
-          "byo",
           "non_compliant_secrets"
         ],
         "properties": {
-          "byo": {
-            "$ref": "#/components/schemas/EffectiveByo"
-          },
           "egress": {
             "$ref": "#/components/schemas/EffectiveEgress"
           },
@@ -20001,17 +18778,6 @@
             "description": "`joining` | `joined` | `promoted`"
           },
           "text": {
-            "type": "string"
-          }
-        }
-      },
-      "ForgotRequest": {
-        "type": "object",
-        "required": [
-          "email"
-        ],
-        "properties": {
-          "email": {
             "type": "string"
           }
         }
@@ -20455,34 +19221,6 @@
         ],
         "description": "Injection recipe (`08 §5`)."
       },
-      "InstanceByo": {
-        "type": "object",
-        "description": "(phase 2, RFE-025) The instance level of BYO governance (`[byo]`).",
-        "required": [
-          "enabled",
-          "minimum_posture",
-          "default_source_cidrs",
-          "require_context_credentials"
-        ],
-        "properties": {
-          "default_source_cidrs": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "minimum_posture": {
-            "type": "string",
-            "description": "`enabled` | `owners_only` | `disabled`."
-          },
-          "require_context_credentials": {
-            "type": "boolean"
-          }
-        }
-      },
       "InstanceEgress": {
         "type": "object",
         "required": [
@@ -20546,13 +19284,9 @@
         "type": "object",
         "required": [
           "llm",
-          "egress",
-          "byo"
+          "egress"
         ],
         "properties": {
-          "byo": {
-            "$ref": "#/components/schemas/InstanceByo"
-          },
           "egress": {
             "$ref": "#/components/schemas/InstanceEgress"
           },
@@ -21002,21 +19736,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "LoginRequest": {
-        "type": "object",
-        "required": [
-          "email",
-          "password"
-        ],
-        "properties": {
-          "email": {
-            "type": "string"
-          },
-          "password": {
-            "type": "string"
-          }
-        }
       },
       "Me": {
         "type": "object",
@@ -21662,36 +20381,6 @@
           }
         }
       },
-      "OrgByo": {
-        "type": "object",
-        "description": "`organizations.governance.byo` (no column: `governance` is `jsonb`).",
-        "properties": {
-          "posture": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ByoPosture",
-                "description": "Absent = inherit the instance floor."
-              }
-            ],
-            "default": null
-          },
-          "require_context_credentials": {
-            "type": "boolean",
-            "default": false
-          },
-          "source_cidrs": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Org default source list (≤32 CIDRs, each inside the instance default when that is set).",
-            "default": []
-          }
-        }
-      },
       "OrgEgress": {
         "type": "object",
         "properties": {
@@ -21762,15 +20451,6 @@
         "type": "object",
         "description": "Normalized organization governance document (`organizations.governance`).",
         "properties": {
-          "byo": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/OrgByo",
-                "description": "(RFE-025) BYO posture, default source list and require-context default."
-              }
-            ],
-            "default": {}
-          },
           "egress": {
             "oneOf": [
               {
@@ -22193,17 +20873,6 @@
                 "brief": {
                   "type": "string"
                 },
-                "byo": {
-                  "oneOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ByoView",
-                      "description": "(phase 2, RFE-025) BYO governance of a BYO agent; `null` for hosted agents and in\nresponses that do not load it."
-                    }
-                  ]
-                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
@@ -22423,13 +21092,6 @@
                     "null"
                   ],
                   "format": "uuid"
-                },
-                "context_label": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "description": "(phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`) that\nmade the request, if any."
                 },
                 "conversation_id": {
                   "type": [
@@ -22910,14 +21572,6 @@
                   "type": "integer",
                   "format": "int64",
                   "description": "Consecutive bot/agent turns since the last person-authored turn or `continue` (C-27)."
-                },
-                "archived_at": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "format": "date-time",
-                  "description": "(phase 2, RFE-010) set while the conversation is archived (hidden from default lists)."
                 },
                 "created_at": {
                   "type": "string",
@@ -23863,13 +22517,6 @@
                   ],
                   "format": "uuid"
                 },
-                "context_label": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "description": "(phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`), if any."
-                },
                 "conversation_id": {
                   "type": [
                     "string",
@@ -24684,27 +23331,9 @@
                 "updated_at"
               ],
               "properties": {
-                "byo_posture": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "description": "(phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit)."
-                },
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
-                },
-                "effective_byo_posture": {
-                  "oneOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ByoPostureView",
-                      "description": "(phase 2, RFE-025) The effective BYO posture and the layer that decided it; `null` in\nlist and create responses."
-                    }
-                  ]
                 },
                 "id": {
                   "type": "string",
@@ -25027,13 +23656,6 @@
       "PatchWorkspaceRequest": {
         "type": "object",
         "properties": {
-          "byo_posture": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "(phase 2, RFE-025) `enabled` | `owners_only` | `disabled`; absent = unchanged, `null` =\ninherit. Tighten-only."
-          },
           "memory_language": {
             "type": [
               "string",
@@ -25705,26 +24327,12 @@
           "code": {
             "$ref": "#/components/schemas/WarningCode"
           },
-          "details": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "description": "(phase 2, RFE-025) `{ rule_id, targets }` for `rule_applies_to_all_agents`."
-          },
           "message": {
             "type": "string"
           },
           "rule_logical_id": {
             "type": "string",
             "format": "uuid"
-          },
-          "severity": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "(phase 2, RFE-025) `warning`; present on `rule_applies_to_all_agents`."
           }
         }
       },
@@ -25907,29 +24515,6 @@
           }
         }
       },
-      "PutByoRequest": {
-        "type": "object",
-        "description": "`PUT /v1/agents/{agent}/byo`.",
-        "required": [
-          "require_context"
-        ],
-        "properties": {
-          "require_context": {
-            "type": "boolean"
-          },
-          "source_cidrs": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            },
-            "description": "The agent's own source CIDR list; `null` = inherit the org/instance default."
-          }
-        },
-        "additionalProperties": false
-      },
       "PutConnectionGrant": {
         "type": "object",
         "required": [
@@ -25991,19 +24576,6 @@
               "string",
               "null"
             ]
-          }
-        }
-      },
-      "PutRetention": {
-        "type": "object",
-        "properties": {
-          "conversations_days": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Absent = unchanged, `null` = none."
           }
         }
       },
@@ -26185,45 +24757,6 @@
           }
         }
       },
-      "RedactRequest": {
-        "type": "object",
-        "description": "(phase 2, RFE-010) `POST .../redact` body.",
-        "properties": {
-          "reason": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Why the content is removed (max 500 characters); recorded in the audit row."
-          },
-          "reset_session": {
-            "type": "boolean",
-            "description": "Also start a fresh harness session on the next turn (the agent forgets the conversation)."
-          }
-        }
-      },
-      "RedactResult": {
-        "type": "object",
-        "description": "(phase 2, RFE-010) Result of a redaction.",
-        "required": [
-          "redacted_seqs",
-          "session_reset"
-        ],
-        "properties": {
-          "redacted_seqs": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "description": "Sequence numbers whose payload was replaced by this call (empty when already redacted)."
-          },
-          "session_reset": {
-            "type": "boolean",
-            "description": "A session reset was queued."
-          }
-        }
-      },
       "Replica": {
         "type": "object",
         "required": [
@@ -26331,13 +24864,6 @@
             ],
             "format": "uuid"
           },
-          "context_label": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "(phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`), if any."
-          },
           "conversation_id": {
             "type": [
               "string",
@@ -26433,21 +24959,6 @@
           }
         }
       },
-      "ResetRequest": {
-        "type": "object",
-        "required": [
-          "token",
-          "password"
-        ],
-        "properties": {
-          "password": {
-            "type": "string"
-          },
-          "token": {
-            "type": "string"
-          }
-        }
-      },
       "ResolveResponse": {
         "type": "object",
         "required": [
@@ -26498,28 +25009,6 @@
           "revision": {
             "type": "integer",
             "format": "int32"
-          }
-        }
-      },
-      "Retention": {
-        "type": "object",
-        "description": "(phase 2, RFE-010) `GET/PUT /orgs/{org}/retention`.",
-        "properties": {
-          "conversations_days": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Delete conversations idle for this many days (7..=3650); null = keep forever."
-          },
-          "conversations_days_max": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "The instance maximum, when one is configured."
           }
         }
       },
@@ -27459,31 +25948,6 @@
           }
         }
       },
-      "SignupRequest": {
-        "type": "object",
-        "required": [
-          "email",
-          "password",
-          "display_name"
-        ],
-        "properties": {
-          "display_name": {
-            "type": "string"
-          },
-          "email": {
-            "type": "string"
-          },
-          "invitation_token": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "password": {
-            "type": "string"
-          }
-        }
-      },
       "SimCandidate": {
         "type": "object",
         "required": [
@@ -27729,32 +26193,6 @@
             "type": "integer",
             "description": "Characters for text, base64 length for binary content.",
             "minimum": 0
-          }
-        }
-      },
-      "Sourced_Option_Vec_String": {
-        "type": "object",
-        "required": [
-          "value",
-          "source"
-        ],
-        "properties": {
-          "source": {
-            "type": "string",
-            "description": "`instance` | `org`."
-          },
-          "value": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            ]
           }
         }
       },
@@ -28775,17 +27213,6 @@
           }
         }
       },
-      "UserResponse": {
-        "type": "object",
-        "required": [
-          "user"
-        ],
-        "properties": {
-          "user": {
-            "$ref": "#/components/schemas/User"
-          }
-        }
-      },
       "VerificationInput": {
         "type": "object",
         "description": "Write-only verification settings.",
@@ -28833,17 +27260,6 @@
           }
         }
       },
-      "VerifyEmailRequest": {
-        "type": "object",
-        "required": [
-          "token"
-        ],
-        "properties": {
-          "token": {
-            "type": "string"
-          }
-        }
-      },
       "VerifyResult": {
         "type": "object",
         "required": [
@@ -28860,8 +27276,7 @@
         "enum": [
           "shadowed",
           "inert",
-          "overridden_by_org",
-          "rule_applies_to_all_agents"
+          "overridden_by_org"
         ]
       },
       "Webhook": {
@@ -29043,27 +27458,9 @@
           "updated_at"
         ],
         "properties": {
-          "byo_posture": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "(phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit)."
-          },
           "created_at": {
             "type": "string",
             "format": "date-time"
-          },
-          "effective_byo_posture": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ByoPostureView",
-                "description": "(phase 2, RFE-025) The effective BYO posture and the layer that decided it; `null` in\nlist and create responses."
-              }
-            ]
           },
           "id": {
             "type": "string",

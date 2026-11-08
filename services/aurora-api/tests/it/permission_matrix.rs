@@ -180,32 +180,10 @@ const EXEMPT: &[(&str, &str, &str)] = &[
         "/v1/instance",
         "public: instance bootstrap info (login page), served to anonymous callers",
     ),
-    ("POST", "/v1/auth/login", "public: credentials sign-in"),
-    ("POST", "/v1/auth/signup", "public: sign-up"),
-    (
-        "POST",
-        "/v1/auth/verify-email",
-        "public: token-based email verification",
-    ),
-    (
-        "POST",
-        "/v1/auth/verify-email/resend",
-        "public: resend by email address",
-    ),
-    (
-        "POST",
-        "/v1/auth/password/forgot",
-        "public: reset request by email address",
-    ),
-    (
-        "POST",
-        "/v1/auth/password/reset",
-        "public: token-based password reset",
-    ),
     (
         "GET",
         "/v1/auth/oidc/{provider}/start",
-        "public: OIDC sign-in redirect",
+        "public: OIDC sign-in redirect (the only sign-in; `reauth=1` needs a live session)",
     ),
     (
         "GET",
@@ -298,7 +276,6 @@ const ROWS: &[Row] = &[
     r("DELETE", "/v1/me", G::Auth, true),
     r("GET", "/v1/me/api-keys", G::Auth, false),
     r("POST", "/v1/auth/logout", G::Auth, false),
-    r("POST", "/v1/auth/password/change", G::Auth, true),
     r("POST", "/v1/auth/sessions/revoke-others", G::Auth, true),
     r("POST", "/v1/auth/cli/approve", G::Auth, true),
     r("POST", "/v1/invitations/accept", G::Auth, true),

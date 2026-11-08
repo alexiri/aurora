@@ -63,6 +63,7 @@ External identities linked to a user (OIDC).
 | last_seen_at | timestamptz not null | churn column; updated at most once per minute |
 | expires_at | timestamptz not null | absolute expiry |
 | revoked_at | timestamptz null | |
+| reauth_at | timestamptz null | last successful OIDC re-authentication (`04 §OIDC`); account deletion needs it within 10 min (phase 1, RFE-004) |
 
 ### `email_tokens`
 | Column | Type | Notes |
@@ -1123,11 +1124,6 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | (whole table) | — | unused from phase 1 (no e-mail verification or password reset, RFE-004); existing rows are ignored and the table is dropped by the contract migration in a later release | 1 → drop later (RFE-004) |
-
-#### `sessions`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| reauth_at | timestamptz null | last successful OIDC re-authentication (`04 §OIDC`); account deletion needs it within 10 min | 1 (RFE-004) |
 
 #### `gateway_credentials` (speaker)
 | Planned column | Type | Notes | Phase |

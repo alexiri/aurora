@@ -35,9 +35,3 @@ pub struct PatchMeRequest {
     /// Must be an organization where the caller is an active member.
     pub default_org_id: Option<Uuid>,
 }
-
-#[derive(Deserialize, ToSchema)]
-pub struct DeleteMeRequest {
-    /// Required for accounts that have a password.
-    pub password: Option<String>,
-}

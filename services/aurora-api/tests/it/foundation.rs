@@ -513,6 +513,6 @@ fn openapi_matches_checked_in() {
     let b: Value = serde_json::from_str(&generated).unwrap();
     assert_eq!(
         a, b,
-        "web/openapi.json drifted; run UPDATE_OPENAPI=1 cargo test -p aurora-api --test foundation openapi"
+        "web/openapi.json drifted; run UPDATE_OPENAPI=1 cargo test -p aurora-api --test it openapi_matches_checked_in"
     );
 }
