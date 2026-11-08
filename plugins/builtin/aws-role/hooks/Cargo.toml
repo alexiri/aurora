@@ -1,0 +1,22 @@
+[package]
+name = "aws-role-hooks"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aurora-plugin-sdk = { path = "../../../../crates/aurora-plugin-sdk" }
+# SigV4 in the guest: HMAC-SHA256 over RustCrypto's pure-Rust SHA-256 (D-95). No RNG, no WASI imports
+# beyond what the hook host allows.
+sha2 = { version = "0.10", default-features = false }
+
+# Standalone project, not a member of the Aurora workspace: `aurora plugin build` compiles it for
+# wasm32-wasip2 (docs/09 §12) and ships the component as hooks.wasm.
+[workspace]
+
+[profile.release]
+opt-level = "s"
+panic = "abort"
