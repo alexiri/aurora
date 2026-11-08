@@ -1,6 +1,6 @@
 # Connect AWS through an IAM role
 
-This package lets agents use **S3, STS and EC2** through an **IAM role** instead of long-lived
+This package lets agents use **S3 and EC2** through an **IAM role** instead of long-lived
 keys. Aurora assumes the role (`sts:AssumeRole`) and signs each request with the short-lived
 session credentials it gets back (AWS Signature Version 4). Agents never see a key or a token.
 
@@ -73,8 +73,7 @@ name.
 ```
 
 Add `s3:PutObject` and `s3:DeleteObject` on the bucket's objects only if agents must change objects.
-`sts:GetCallerIdentity` needs no permission. The role's policies are the only thing that limits what
-agents can do: Aurora's approvals are a second layer, not a replacement.
+The role's policies are the only thing that limits what agents can do: Aurora's approvals are a second layer, not a replacement.
 
 ## 4. Connect it in Aurora
 
@@ -103,26 +102,29 @@ reconnect.
     and the first path segment of the key.
   - Not covered, so never allowed: creating or deleting buckets, multipart uploads, bulk delete,
     ACL and policy changes.
-- **STS** (`https://sts.<region>.amazonaws.com/`): `GetCallerIdentity` to see which assumed role
-  the session belongs to.
 - **EC2** (`https://ec2.<region>.amazonaws.com/`): read-only `Describe*` actions.
+- **STS is not available to agents.** Only Aurora's own hook calls STS (to assume the role).
+  Answers to `AssumeRole`, `GetSessionToken` and `GetFederationToken` carry usable AWS credentials,
+  and Aurora cannot yet limit a tool to a harmless action such as `GetCallerIdentity`, so requests
+  to `sts.<region>.amazonaws.com` are not signed (follow-up FU-P2-CAT-5a).
 
-STS and EC2 use the AWS Query API, where the action is a request parameter and a GET can run any
-action, so **every STS and EC2 call is held for approval** and the approval shows the `Action`.
-Approve `Describe*` and `GetCallerIdentity`; refuse anything else.
+EC2 uses the AWS Query API, where the action is a request parameter and a GET can run any action,
+so **every EC2 call is held for approval** and the approval shows the `Action`. Approve `Describe*`;
+refuse anything else.
 
 ## Limits
 
 - **One role and one region per connection.** A request to a host in another region is signed for
   the connection's region and AWS rejects it. Create another connection for another role or region.
-- Only the regional endpoints `s3.<region>`, `sts.<region>` and `ec2.<region>` of `amazonaws.com`
-  are covered, and Aurora's hook calls only `sts.<region>.amazonaws.com`. Virtual-hosted S3 URLs,
-  the global `sts.amazonaws.com` endpoint, the AWS China and isolated partitions, FIPS and
-  dual-stack endpoints are not covered.
+- Only the regional endpoints `s3.<region>` and `ec2.<region>` of `amazonaws.com` are covered for
+  agents, and Aurora's hook calls only `sts.<region>.amazonaws.com`. Virtual-hosted S3 URLs, the
+  global `sts.amazonaws.com` endpoint, the AWS China and isolated partitions, FIPS and dual-stack
+  endpoints are not covered.
 - The source key must be a long-term IAM user key. Temporary source credentials (role chaining) are
   not supported.
 - Aurora's `ExternalId` is the organization's, so one role can serve one organization; give other
   organizations their own role or add their external id to a list in the trust condition.
-- This package and *AWS (access keys)* serve the same hosts. An administrator decides which one
-  handles `s3.*`, `sts.*` and `ec2.*` requests when both are active.
+- **This package and *AWS (access keys)* (`aws-keys`) claim the same S3 and EC2 hosts** (`s3.*`,
+  `ec2.*` of `amazonaws.com`), so an instance enables one of them for those hosts: the
+  administrator's host-claim decision picks which.
 - Rotate the source key regularly; Aurora stores it encrypted and replaces it on reconnect.

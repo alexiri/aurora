@@ -28,26 +28,6 @@
   connection: *conn
   request: { method: DELETE, url: "https://s3.eu-west-1.amazonaws.com/example-bucket" }
   expect: { app: aws-role }
-- name: "sts_call: action from the query"
-  connection: *conn
-  request: { method: GET, url: "https://sts.eu-west-1.amazonaws.com/?Action=AssumeRole&Version=2011-06-15" }
-  expect:
-    tool: sts_call
-    summary: { title: "Call STS action", fields: { Action: AssumeRole } }
-- name: "sts_call: action from a form body"
-  connection: *conn
-  request:
-    method: POST
-    url: "https://sts.eu-west-1.amazonaws.com/"
-    headers: { content-type: application/x-www-form-urlencoded }
-    body: "Action=GetCallerIdentity&Version=2011-06-15"
-  expect:
-    tool: sts_call
-    summary: { title: "Call STS action", fields: { "Action in form": GetCallerIdentity } }
-- name: "negative sts_call: PUT selects no tool"
-  connection: *conn
-  request: { method: PUT, url: "https://sts.eu-west-1.amazonaws.com/" }
-  expect: { app: aws-role }
 - name: "ec2_call: action from the query"
   connection: *conn
   request: { method: GET, url: "https://ec2.eu-west-1.amazonaws.com/?Action=TerminateInstances&Version=2016-11-15" }
