@@ -1,0 +1,332 @@
+package:
+  id: sentry
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: Sentry
+  description: Organizations, projects, issues, events and releases on Sentry SaaS (sentry.io, US and DE regions) and self-hosted Sentry, connected with an auth token; resolving and updating issues is a separate, approved permission
+  homepage: https://sentry.io
+apps:
+  - about:
+      id: sentry
+      name: Sentry
+      description: Read organizations, projects, issues, events and releases on sentry.io, and update or resolve issues when you allow it
+      category: monitoring
+      api_docs: https://docs.sentry.io/api/
+      web_hosts: [sentry.io]
+      connect_note:
+        text: "For organizations on sentry.io (no region host). If your organization's data storage location is the US or the EU (DE) region, connect the Sentry (US region) or Sentry (DE region) app instead. For self-hosted Sentry use Sentry (self-hosted)."
+        url: https://docs.sentry.io/api/guides/create-auth-token/
+      label_hint: Sentry organization slug
+    credentials:
+      - { name: access_token, secret: true }
+    metadata:
+      - { name: org_slug }
+      - { name: project_slug }
+    connect:
+      - id: token
+        kind: fields
+        fields:
+          - name: access_token
+            label: Auth token
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "Internal integration or personal auth token"
+            help_url: https://docs.sentry.io/api/guides/create-auth-token/
+          - name: org_slug
+            label: Organization slug
+            type: text
+            store: metadata
+            required: true
+            placeholder: "my-org"
+          - name: project_slug
+            label: Default project slug (optional)
+            type: text
+            store: metadata
+            required: false
+            placeholder: "my-project"
+        probe:
+          method: GET
+          url: "https://sentry.io/api/0/organizations/{fields.org_slug}/projects/"
+          expect_status: [200]
+    hosts:
+      - match: { host: sentry.io, path_prefix: /api/0 }
+        inject:
+          - bearer: "{credentials.access_token}"
+    tools:
+      read:
+        items:
+          - { id: list_organizations, name: List the organizations the token can see, host: sentry.io, path: /api/0/organizations/, methods: [GET] }
+          - { id: get_organization, name: Get an organization, host: sentry.io, path: "/api/0/organizations/*/", methods: [GET] }
+          - { id: list_projects, name: List an organization's projects, host: sentry.io, path: "/api/0/organizations/*/projects/", methods: [GET] }
+          - { id: get_project, name: Get a project, host: sentry.io, path: "/api/0/projects/*/*/", methods: [GET] }
+          - { id: list_issues, name: List an organization's issues, host: sentry.io, path: "/api/0/organizations/*/issues/", methods: [GET] }
+          - { id: get_issue, name: Get an issue, host: sentry.io, path: "/api/0/organizations/*/issues/*/", methods: [GET] }
+          - { id: list_issue_events, name: List an issue's events, host: sentry.io, path: "/api/0/organizations/*/issues/*/events/", methods: [GET] }
+          - { id: get_issue_event, name: Get one event of an issue, host: sentry.io, path: "/api/0/organizations/*/issues/*/events/*/", methods: [GET] }
+          - { id: list_releases, name: List an organization's releases, host: sentry.io, path: "/api/0/organizations/*/releases/", methods: [GET] }
+          - { id: get_release, name: Get a release, host: sentry.io, path: "/api/0/organizations/*/releases/*/", methods: [GET] }
+      write:
+        items:
+          - { id: update_issue, name: "Update or resolve an issue (status, assignee, bookmarks)", host: sentry.io, path: "/api/0/organizations/*/issues/*/", methods: [PUT] }
+    approvals:
+      update_issue:
+        title: Update issue
+        fields:
+          - { label: Organization, source: path, segment: 4 }
+          - { label: Issue, source: path, segment: 6 }
+          - { label: Status, source: body, steps: [ { json: /status } ] }
+          - { label: Assigned to, source: body, steps: [ { json: /assignedTo } ] }
+        link: "https://sentry.io/organizations/{path.4}/issues/{path.6}/"
+    agent:
+      instructions: |
+        Sentry (sentry.io) is connected. Use the API at https://sentry.io/api/0/ (for example
+        https://sentry.io/api/0/organizations/<org>/issues/?query=is:unresolved); paths end with a slash.
+        Aurora adds the token; never ask for or write one. Page through results with the cursor in the
+        Link response header. This app is for organizations without a region host: if requests answer
+        404 for an organization that exists, its data lives in the US or DE region and the Sentry (US
+        region) or Sentry (DE region) connection is the right one. Send JSON bodies for changes so
+        approvals can show what changes; resolving an issue is PUT with {"status":"resolved"}.
+  - about:
+      id: sentry-us
+      name: Sentry (US region)
+      description: Read organizations, projects, issues, events and releases of an organization stored in the Sentry US region (us.sentry.io), and update or resolve issues when you allow it
+      category: monitoring
+      api_docs: https://docs.sentry.io/api/
+      web_hosts: [sentry.io]
+      connect_note:
+        text: "For organizations whose data storage location is the US region (Organization settings shows it). Others: Sentry (DE region), Sentry, or Sentry (self-hosted)."
+        url: https://docs.sentry.io/api/guides/create-auth-token/
+      label_hint: Sentry organization slug
+    credentials:
+      - { name: access_token, secret: true }
+    metadata:
+      - { name: org_slug }
+      - { name: project_slug }
+    connect:
+      - id: token
+        kind: fields
+        fields:
+          - name: access_token
+            label: Auth token
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "Internal integration or personal auth token"
+            help_url: https://docs.sentry.io/api/guides/create-auth-token/
+          - name: org_slug
+            label: Organization slug
+            type: text
+            store: metadata
+            required: true
+            placeholder: "my-org"
+          - name: project_slug
+            label: Default project slug (optional)
+            type: text
+            store: metadata
+            required: false
+            placeholder: "my-project"
+        probe:
+          method: GET
+          url: "https://us.sentry.io/api/0/organizations/{fields.org_slug}/projects/"
+          expect_status: [200]
+    hosts:
+      - match: { host: us.sentry.io, path_prefix: /api/0 }
+        inject:
+          - bearer: "{credentials.access_token}"
+    tools:
+      read:
+        items:
+          - { id: get_organization, name: Get an organization, host: us.sentry.io, path: "/api/0/organizations/*/", methods: [GET] }
+          - { id: list_projects, name: List an organization's projects, host: us.sentry.io, path: "/api/0/organizations/*/projects/", methods: [GET] }
+          - { id: get_project, name: Get a project, host: us.sentry.io, path: "/api/0/projects/*/*/", methods: [GET] }
+          - { id: list_issues, name: List an organization's issues, host: us.sentry.io, path: "/api/0/organizations/*/issues/", methods: [GET] }
+          - { id: get_issue, name: Get an issue, host: us.sentry.io, path: "/api/0/organizations/*/issues/*/", methods: [GET] }
+          - { id: list_issue_events, name: List an issue's events, host: us.sentry.io, path: "/api/0/organizations/*/issues/*/events/", methods: [GET] }
+          - { id: get_issue_event, name: Get one event of an issue, host: us.sentry.io, path: "/api/0/organizations/*/issues/*/events/*/", methods: [GET] }
+          - { id: list_releases, name: List an organization's releases, host: us.sentry.io, path: "/api/0/organizations/*/releases/", methods: [GET] }
+          - { id: get_release, name: Get a release, host: us.sentry.io, path: "/api/0/organizations/*/releases/*/", methods: [GET] }
+      write:
+        items:
+          - { id: update_issue, name: "Update or resolve an issue (status, assignee, bookmarks)", host: us.sentry.io, path: "/api/0/organizations/*/issues/*/", methods: [PUT] }
+    approvals:
+      update_issue:
+        title: Update issue
+        fields:
+          - { label: Organization, source: path, segment: 4 }
+          - { label: Issue, source: path, segment: 6 }
+          - { label: Status, source: body, steps: [ { json: /status } ] }
+          - { label: Assigned to, source: body, steps: [ { json: /assignedTo } ] }
+        link: "https://sentry.io/organizations/{path.4}/issues/{path.6}/"
+    agent:
+      instructions: |
+        Sentry in the US region is connected. Use the API at https://us.sentry.io/api/0/ (for example
+        https://us.sentry.io/api/0/organizations/<org>/issues/?query=is:unresolved); paths end with a
+        slash. Aurora adds the token; never ask for or write one, and never send this connection's
+        requests to another host. Page through results with the cursor in the Link response header.
+        Send JSON bodies for changes so approvals can show what changes; resolving an issue is PUT
+        with {"status":"resolved"}. Listing the organizations a token can see is not available on the
+        region host: the organization slug is in the connection's metadata.
+  - about:
+      id: sentry-de
+      name: Sentry (DE region)
+      description: Read organizations, projects, issues, events and releases of an organization stored in the Sentry DE (EU) region (de.sentry.io), and update or resolve issues when you allow it
+      category: monitoring
+      api_docs: https://docs.sentry.io/api/
+      web_hosts: [sentry.io]
+      connect_note:
+        text: "For organizations whose data storage location is the DE (EU) region (Organization settings shows it). Others: Sentry (US region), Sentry, or Sentry (self-hosted)."
+        url: https://docs.sentry.io/api/guides/create-auth-token/
+      label_hint: Sentry organization slug
+    credentials:
+      - { name: access_token, secret: true }
+    metadata:
+      - { name: org_slug }
+      - { name: project_slug }
+    connect:
+      - id: token
+        kind: fields
+        fields:
+          - name: access_token
+            label: Auth token
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "Internal integration or personal auth token"
+            help_url: https://docs.sentry.io/api/guides/create-auth-token/
+          - name: org_slug
+            label: Organization slug
+            type: text
+            store: metadata
+            required: true
+            placeholder: "my-org"
+          - name: project_slug
+            label: Default project slug (optional)
+            type: text
+            store: metadata
+            required: false
+            placeholder: "my-project"
+        probe:
+          method: GET
+          url: "https://de.sentry.io/api/0/organizations/{fields.org_slug}/projects/"
+          expect_status: [200]
+    hosts:
+      - match: { host: de.sentry.io, path_prefix: /api/0 }
+        inject:
+          - bearer: "{credentials.access_token}"
+    tools:
+      read:
+        items:
+          - { id: get_organization, name: Get an organization, host: de.sentry.io, path: "/api/0/organizations/*/", methods: [GET] }
+          - { id: list_projects, name: List an organization's projects, host: de.sentry.io, path: "/api/0/organizations/*/projects/", methods: [GET] }
+          - { id: get_project, name: Get a project, host: de.sentry.io, path: "/api/0/projects/*/*/", methods: [GET] }
+          - { id: list_issues, name: List an organization's issues, host: de.sentry.io, path: "/api/0/organizations/*/issues/", methods: [GET] }
+          - { id: get_issue, name: Get an issue, host: de.sentry.io, path: "/api/0/organizations/*/issues/*/", methods: [GET] }
+          - { id: list_issue_events, name: List an issue's events, host: de.sentry.io, path: "/api/0/organizations/*/issues/*/events/", methods: [GET] }
+          - { id: get_issue_event, name: Get one event of an issue, host: de.sentry.io, path: "/api/0/organizations/*/issues/*/events/*/", methods: [GET] }
+          - { id: list_releases, name: List an organization's releases, host: de.sentry.io, path: "/api/0/organizations/*/releases/", methods: [GET] }
+          - { id: get_release, name: Get a release, host: de.sentry.io, path: "/api/0/organizations/*/releases/*/", methods: [GET] }
+      write:
+        items:
+          - { id: update_issue, name: "Update or resolve an issue (status, assignee, bookmarks)", host: de.sentry.io, path: "/api/0/organizations/*/issues/*/", methods: [PUT] }
+    approvals:
+      update_issue:
+        title: Update issue
+        fields:
+          - { label: Organization, source: path, segment: 4 }
+          - { label: Issue, source: path, segment: 6 }
+          - { label: Status, source: body, steps: [ { json: /status } ] }
+          - { label: Assigned to, source: body, steps: [ { json: /assignedTo } ] }
+        link: "https://sentry.io/organizations/{path.4}/issues/{path.6}/"
+    agent:
+      instructions: |
+        Sentry in the DE (EU) region is connected. Use the API at https://de.sentry.io/api/0/ (for
+        example https://de.sentry.io/api/0/organizations/<org>/issues/?query=is:unresolved); paths end
+        with a slash. Aurora adds the token; never ask for or write one, and never send this
+        connection's requests to another host. Page through results with the cursor in the Link
+        response header. Send JSON bodies for changes so approvals can show what changes; resolving an
+        issue is PUT with {"status":"resolved"}. Listing the organizations a token can see is not
+        available on the region host: the organization slug is in the connection's metadata.
+  - about:
+      id: sentry-self-hosted
+      name: Sentry (self-hosted)
+      description: Read organizations, projects, issues, events and releases on a registered self-hosted Sentry, and update or resolve issues when you allow it
+      category: monitoring
+      api_docs: https://docs.sentry.io/api/
+      connect_note:
+        text: "An administrator registers the self-hosted Sentry host first (Instances); then choose it when connecting."
+        url: https://develop.sentry.dev/self-hosted/
+      label_hint: Sentry organization slug
+    instances:
+      label: Sentry host
+      probe: { method: GET, path: /api/0/, expect_status: [200] }
+    credentials:
+      - { name: access_token, secret: true }
+    metadata:
+      - { name: org_slug }
+      - { name: project_slug }
+    connect:
+      - id: token
+        kind: fields
+        fields:
+          - name: access_token
+            label: Auth token
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "Internal integration or personal auth token"
+          - name: org_slug
+            label: Organization slug
+            type: text
+            store: metadata
+            required: true
+            placeholder: "my-org"
+          - name: project_slug
+            label: Default project slug (optional)
+            type: text
+            store: metadata
+            required: false
+            placeholder: "my-project"
+        probe:
+          method: GET
+          url: "https://{instance}/api/0/organizations/{fields.org_slug}/projects/"
+          expect_status: [200]
+    hosts:
+      - match: { host: "{instance}", path_prefix: /api/0 }
+        inject:
+          - bearer: "{credentials.access_token}"
+    tools:
+      read:
+        items:
+          - { id: list_organizations, name: List the organizations the token can see, host: "{instance}", path: /api/0/organizations/, methods: [GET] }
+          - { id: get_organization, name: Get an organization, host: "{instance}", path: "/api/0/organizations/*/", methods: [GET] }
+          - { id: list_projects, name: List an organization's projects, host: "{instance}", path: "/api/0/organizations/*/projects/", methods: [GET] }
+          - { id: get_project, name: Get a project, host: "{instance}", path: "/api/0/projects/*/*/", methods: [GET] }
+          - { id: list_issues, name: List an organization's issues, host: "{instance}", path: "/api/0/organizations/*/issues/", methods: [GET] }
+          - { id: get_issue, name: Get an issue, host: "{instance}", path: "/api/0/organizations/*/issues/*/", methods: [GET] }
+          - { id: list_issue_events, name: List an issue's events, host: "{instance}", path: "/api/0/organizations/*/issues/*/events/", methods: [GET] }
+          - { id: get_issue_event, name: Get one event of an issue, host: "{instance}", path: "/api/0/organizations/*/issues/*/events/*/", methods: [GET] }
+          - { id: list_releases, name: List an organization's releases, host: "{instance}", path: "/api/0/organizations/*/releases/", methods: [GET] }
+          - { id: get_release, name: Get a release, host: "{instance}", path: "/api/0/organizations/*/releases/*/", methods: [GET] }
+      write:
+        items:
+          - { id: update_issue, name: "Update or resolve an issue (status, assignee, bookmarks)", host: "{instance}", path: "/api/0/organizations/*/issues/*/", methods: [PUT] }
+    approvals:
+      update_issue:
+        title: Update issue
+        fields:
+          - { label: Organization, source: path, segment: 4 }
+          - { label: Issue, source: path, segment: 6 }
+          - { label: Status, source: body, steps: [ { json: /status } ] }
+          - { label: Assigned to, source: body, steps: [ { json: /assignedTo } ] }
+        link: "https://{request.host}/organizations/{path.4}/issues/{path.6}/"
+    agent:
+      instructions: |
+        A self-hosted Sentry is connected. Use the API at https://<host>/api/0/ (for example
+        https://<host>/api/0/organizations/<org>/issues/?query=is:unresolved), where <host> is the host
+        of the Sentry connection; paths end with a slash. Aurora adds the token; never ask for or
+        write one, and never send this connection's requests to another host. Page through results
+        with the cursor in the Link response header. Send JSON bodies for changes so approvals can
+        show what changes; resolving an issue is PUT with {"status":"resolved"}.

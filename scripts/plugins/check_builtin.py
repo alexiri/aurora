@@ -239,7 +239,10 @@ def check_app(app, paired, err):
         for d in m.get("default_scopes", []):
             if by.get(d, {}).get("access") != "read":
                 err(f"app {aid}: default scope {d} is not a read scope (defaults must be the narrowest)")
-        if not m.get("default_scopes"):
+        # A provider without OAuth scopes (Notion) declares `scopes: []` explicitly: the key is
+        # present and empty. A missing key, or declared scopes with no default, still fails.
+        no_scopes_provider = "scopes" in m and m["scopes"] == []
+        if not m.get("default_scopes") and not no_scopes_provider:
             err(f"app {aid}: oauth2 method {m['id']} needs explicit default_scopes")
 
     # token lifecycle

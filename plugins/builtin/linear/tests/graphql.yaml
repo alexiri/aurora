@@ -1,0 +1,108 @@
+# Linear GraphQL (one endpoint, https://api.linear.app/graphql): a request is classified by the
+# operations in its body. Queries are the read tool, mutations the write tool, anything Aurora cannot
+# parse selects no tool (fail closed). All credentials are fake.
+- name: "graphql_query: a query selects the read tool and the bearer is injected"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.linear.app/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"query Issues { issues(first: 20) { nodes { id identifier title } } }","operationName":"Issues"}'
+  expect:
+    app: linear
+    tool: graphql_query
+    upstream: { url: "https://api.linear.app/graphql", headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "agent supplied authorization is overwritten"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.linear.app/graphql"
+    headers: { content-type: application/json, authorization: "lin-agent-guess" }
+    body: '{"query":"query Me { viewer { id name } }","operationName":"Me"}'
+  expect:
+    tool: graphql_query
+    upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative graphql_query: a mutation does not select the read tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.linear.app/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"mutation IssueCreate { issueCreate(input: {title: \"Broken build\", teamId: \"team-fixture\"}) { success } }","operationName":"IssueCreate"}'
+  expect: { app: linear, tool: graphql_mutation }
+- name: "negative graphql_query: GET selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.linear.app/graphql?query=%7Bviewer%7Bid%7D%7D" }
+  expect: { app: linear }
+- name: "graphql_mutation: creating an issue shows the operation and the field"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.linear.app/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"mutation IssueCreate { issueCreate(input: {title: \"Broken build\", teamId: \"team-fixture\"}) { success issue { id identifier } } }","operationName":"IssueCreate"}'
+  expect:
+    app: linear
+    tool: graphql_mutation
+    summary: { title: "Linear mutation", fields: { Operation: IssueCreate, Fields: issueCreate } }
+- name: "graphql_mutation: updating an issue"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.linear.app/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"mutation IssueUpdate($id: String!) { issueUpdate(id: $id, input: {stateId: \"state-fixture\"}) { success } }","operationName":"IssueUpdate","variables":{"id":"issue-fixture"}}'
+  expect:
+    tool: graphql_mutation
+    summary: { title: "Linear mutation", fields: { Operation: IssueUpdate, Fields: issueUpdate } }
+- name: "graphql_mutation: commenting on an issue"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.linear.app/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"mutation CommentCreate { commentCreate(input: {issueId: \"issue-fixture\", body: \"Looks good\"}) { success } }","operationName":"CommentCreate"}'
+  expect:
+    tool: graphql_mutation
+    summary: { title: "Linear mutation", fields: { Operation: CommentCreate, Fields: commentCreate } }
+- name: "negative graphql_mutation: a query does not select the write tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.linear.app/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"query Me { viewer { id } }","operationName":"Me"}'
+  expect: { app: linear, tool: graphql_query }
+- name: "negative graphql_mutation: GET selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.linear.app/graphql" }
+  expect: { app: linear }
+- name: "unparseable graphql body matches no tool (fail closed)"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.linear.app/graphql"
+    headers: { content-type: application/json }
+    body: 'not json'
+  expect: { app: linear }
+- name: "negative: the token is not injected on a lookalike host"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.linear.app.evil.example/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"query Me { viewer { id } }"}'
+  expect: { unmatched: true }
+- name: "negative: the token is not injected on linear.app"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://linear.app/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"query Me { viewer { id } }"}'
+  expect: { unmatched: true }
+- name: "negative: the token is not injected on the OAuth endpoints of the API host"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://api.linear.app/oauth/revoke" }
+  expect:
+    upstream: { headers_absent: [authorization] }

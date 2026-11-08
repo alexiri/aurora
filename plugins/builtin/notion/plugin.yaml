@@ -1,0 +1,136 @@
+package:
+  id: notion
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: Notion
+  description: Search and read Notion pages, databases (data sources), blocks, comments and users, and create or update pages, append blocks and comment when you allow it (Notion API 2026-03-11, public integration with OAuth)
+  homepage: https://www.notion.com
+oauth_clients:
+  - id: notion
+    authorize_url: https://api.notion.com/v1/oauth/authorize
+    token_url: https://api.notion.com/v1/oauth/token
+    pkce: false
+    client_auth: basic
+    body_format: json
+    fields:
+      - { name: client_id, label: OAuth client ID }
+      - { name: client_secret, label: OAuth client secret, secret: true }
+    setup_note: "In Notion open Settings, Connections, Develop or manage integrations (the Developer portal) and create a Public connection. Set the redirect URI to the Aurora redirect URI and enable only the content, comment and user capabilities you will offer. Notion has no OAuth scopes: capabilities are set on the connection, and each person chooses the pages to share when they connect."
+apps:
+  - about:
+      id: notion
+      name: Notion
+      description: Search and read pages, databases, blocks, comments and users in a Notion workspace, and create or update pages, append blocks and comment when you allow it
+      category: productivity
+      api_docs: https://developers.notion.com/reference/intro
+      web_hosts: [www.notion.so]
+      connect_note:
+        text: "During sign-in you choose the pages (and their sub-pages) Aurora may reach. Notion has no OAuth scopes: what the connection can do is set by the capabilities of the administrator's Notion connection."
+        url: https://developers.notion.com/docs/authorization
+      label_hint: Notion workspace
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: workspace_id }
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: notion
+        scopes: []
+        default_scopes: []
+        authorize_params: { owner: user }
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+        probe:
+          method: GET
+          url: "https://api.notion.com/v1/users/me"
+          expect_status: [200]
+          label: /name
+          metadata: { workspace_id: /bot/workspace_id }
+    hosts:
+      - match: { host: api.notion.com, path_prefix: /v1 }
+        inject:
+          - bearer: "{credentials.access_token}"
+          - header: { name: Notion-Version, value: "2026-03-11" }
+    token:
+      kind: oauth2_refresh
+      client: notion
+      refresh_field: refresh_token
+      rotate_refresh_token: true
+      max_lifetime_secs: 3600
+      stale_codes:
+        - { status: 401 }
+      reauth_codes: [invalid_grant]
+    tools:
+      read:
+        items:
+          - { id: get_bot_user, name: Get the connection's bot user, host: api.notion.com, path: /v1/users/me, methods: [GET] }
+          - { id: list_users, name: List workspace users, host: api.notion.com, path: /v1/users, methods: [GET] }
+          - { id: get_user, name: Get a user, host: api.notion.com, path: "/v1/users/*", methods: [GET] }
+          - { id: get_page, name: Get a page, host: api.notion.com, path: "/v1/pages/*", methods: [GET] }
+          - { id: get_page_property, name: Get a page property item, host: api.notion.com, path: "/v1/pages/*/properties/*", methods: [GET] }
+          - { id: get_database, name: Get a database and its data sources, host: api.notion.com, path: "/v1/databases/*", methods: [GET] }
+          - { id: get_data_source, name: Get a data source, host: api.notion.com, path: "/v1/data_sources/*", methods: [GET] }
+          - { id: get_block, name: Get a block, host: api.notion.com, path: "/v1/blocks/*", methods: [GET] }
+          - { id: list_block_children, name: List the child blocks of a block or page, host: api.notion.com, path: "/v1/blocks/*/children", methods: [GET] }
+          - { id: list_comments, name: List the comments of a page or block, host: api.notion.com, path: /v1/comments, methods: [GET] }
+          - { id: get_comment, name: Get a comment, host: api.notion.com, path: "/v1/comments/*", methods: [GET] }
+      write:
+        items:
+          - { id: search, name: "Search pages and data sources by title (a POST, so held for approval)", host: api.notion.com, path: /v1/search, methods: [POST] }
+          - { id: query_data_source, name: "Query a data source (a POST, so held for approval)", host: api.notion.com, path: "/v1/data_sources/*/query", methods: [POST] }
+          - { id: create_page, name: Create a page, host: api.notion.com, path: /v1/pages, methods: [POST] }
+          - { id: update_page, name: "Update or trash a page", host: api.notion.com, path: "/v1/pages/*", methods: [PATCH] }
+          - { id: append_block_children, name: Append blocks to a page or block, host: api.notion.com, path: "/v1/blocks/*/children", methods: [PATCH] }
+          - { id: create_comment, name: "Comment on a page, block or discussion", host: api.notion.com, path: /v1/comments, methods: [POST] }
+    approvals:
+      search:
+        title: Search Notion
+        fields:
+          - { label: Query, source: body, steps: [ { json: /query } ] }
+      query_data_source:
+        title: Query data source
+        fields:
+          - { label: Data source, source: path, segment: 3 }
+      create_page:
+        title: Create page
+        fields:
+          - { label: Parent page, source: body, steps: [ { json: /parent/page_id } ] }
+          - { label: Parent data source, source: body, steps: [ { json: /parent/data_source_id } ] }
+          - { label: Title, source: body, steps: [ { json: /properties/title/title/0/text/content } ] }
+      update_page:
+        title: Update page
+        fields:
+          - { label: Page, source: path, segment: 3 }
+          - { label: In trash, source: body, steps: [ { json: /in_trash } ] }
+        link: "https://www.notion.so/{path.3}"
+      append_block_children:
+        title: Append blocks
+        fields:
+          - { label: Parent block or page, source: path, segment: 3 }
+          - { label: First block type, source: body, steps: [ { json: /children/0/type } ] }
+        link: "https://www.notion.so/{path.3}"
+      create_comment:
+        title: Create comment
+        fields:
+          - { label: Page, source: body, steps: [ { json: /parent/page_id } ] }
+          - { label: Discussion, source: body, steps: [ { json: /discussion_id } ] }
+          - { label: Comment, source: body, steps: [ { json: /rich_text/0/text/content } ] }
+    agent:
+      instructions: |
+        Notion is connected. Use the REST API at https://api.notion.com/v1 (for example
+        https://api.notion.com/v1/pages/<page_id>, https://api.notion.com/v1/blocks/<block_id>/children
+        and https://api.notion.com/v1/comments?block_id=<id>). Aurora adds the credentials and the
+        Notion-Version header (2026-03-11); never ask for or write a token or send a version of your
+        own. The connection only sees pages the person shared during sign-in, and what it may do
+        depends on the capabilities of the Notion connection: a 404 object_not_found means the page is
+        not shared with it, a 403 means the capability is missing. Databases hold one or more data
+        sources: GET /v1/databases/<id> lists them, and rows are read and created through the data
+        source (POST /v1/data_sources/<id>/query, and parent.data_source_id when creating a page).
+        Search (POST /v1/search) and data source queries are POST requests and are held for approval.
+        Send JSON bodies so approvals can show what a change does.

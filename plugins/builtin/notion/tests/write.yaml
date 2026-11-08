@@ -1,0 +1,110 @@
+# Notion write tools (including the POST requests that only read, search and data source query):
+# each is a write tool with an approval summary and a `negative <tool>:` case. All credentials are fake.
+- name: "search: summary shows the query"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.notion.com/v1/search"
+    headers: { content-type: application/json }
+    body: '{"query":"Roadmap","filter":{"property":"object","value":"page"}}'
+  expect:
+    app: notion
+    tool: search
+    summary: { title: "Search Notion", fields: { Query: Roadmap } }
+    upstream: { headers: { authorization: "Bearer tok-fixture-1", notion-version: "2026-03-11" } }
+- name: "negative search: GET selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/v1/search" }
+  expect: { app: notion }
+- name: "query_data_source: summary shows the data source"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.notion.com/v1/data_sources/f336d0bc-b841-465b-8045-024475c079dd/query"
+    headers: { content-type: application/json }
+    body: '{"filter":{"property":"Status","status":{"equals":"Open"}}}'
+  expect:
+    tool: query_data_source
+    summary: { title: "Query data source", fields: { "Data source": "f336d0bc-b841-465b-8045-024475c079dd" } }
+- name: "negative query_data_source: GET selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/v1/data_sources/f336d0bc-b841-465b-8045-024475c079dd/query" }
+  expect: { app: notion }
+- name: "create_page: summary shows the parent and the title"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.notion.com/v1/pages"
+    headers: { content-type: application/json }
+    body: '{"parent":{"page_id":"59833787-2cf9-4fdf-8782-e53db20768a5"},"properties":{"title":{"title":[{"text":{"content":"Meeting notes"}}]}}}'
+  expect:
+    tool: create_page
+    summary: { title: "Create page", fields: { "Parent page": "59833787-2cf9-4fdf-8782-e53db20768a5", Title: "Meeting notes" } }
+- name: "create_page: a row in a data source shows the data source"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.notion.com/v1/pages"
+    headers: { content-type: application/json }
+    body: '{"parent":{"type":"data_source_id","data_source_id":"f336d0bc-b841-465b-8045-024475c079dd"},"properties":{"title":{"title":[{"text":{"content":"Task"}}]}}}'
+  expect:
+    tool: create_page
+    summary: { title: "Create page", fields: { "Parent data source": "f336d0bc-b841-465b-8045-024475c079dd", Title: Task } }
+- name: "negative create_page: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://api.notion.com/v1/pages" }
+  expect: { app: notion }
+- name: "update_page: summary shows the page and the trash flag"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PATCH
+    url: "https://api.notion.com/v1/pages/59833787-2cf9-4fdf-8782-e53db20768a5"
+    headers: { content-type: application/json }
+    body: '{"in_trash":true}'
+  expect:
+    tool: update_page
+    summary: { title: "Update page", fields: { Page: "59833787-2cf9-4fdf-8782-e53db20768a5", "In trash": "true" } }
+- name: "negative update_page: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.notion.com/v1/pages/59833787-2cf9-4fdf-8782-e53db20768a5" }
+  expect: { app: notion }
+- name: "append_block_children: summary shows the parent and the first block type"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PATCH
+    url: "https://api.notion.com/v1/blocks/b55c9c91-384d-452b-81db-d1ef79372b75/children"
+    headers: { content-type: application/json }
+    body: '{"children":[{"type":"paragraph","paragraph":{"rich_text":[{"text":{"content":"Hello"}}]}}]}'
+  expect:
+    tool: append_block_children
+    summary:
+      title: "Append blocks"
+      fields: { "Parent block or page": "b55c9c91-384d-452b-81db-d1ef79372b75", "First block type": paragraph }
+- name: "negative append_block_children: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://api.notion.com/v1/blocks/b55c9c91-384d-452b-81db-d1ef79372b75/children" }
+  expect: { app: notion }
+- name: "create_comment: summary shows the page and the text"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.notion.com/v1/comments"
+    headers: { content-type: application/json }
+    body: '{"parent":{"page_id":"59833787-2cf9-4fdf-8782-e53db20768a5"},"rich_text":[{"text":{"content":"Looks good"}}]}'
+  expect:
+    tool: create_comment
+    summary: { title: "Create comment", fields: { Page: "59833787-2cf9-4fdf-8782-e53db20768a5", Comment: "Looks good" } }
+- name: "create_comment: a reply shows the discussion"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.notion.com/v1/comments"
+    headers: { content-type: application/json }
+    body: '{"discussion_id":"f1407351-36f5-4c49-a4c4-8cee3b6d7a1b","rich_text":[{"text":{"content":"Thanks"}}]}'
+  expect:
+    tool: create_comment
+    summary: { title: "Create comment", fields: { Discussion: "f1407351-36f5-4c49-a4c4-8cee3b6d7a1b", Comment: Thanks } }
+- name: "negative create_comment: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://api.notion.com/v1/comments" }
+  expect: { app: notion }

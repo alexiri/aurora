@@ -1,0 +1,59 @@
+# Token lifecycle against recorded HTTP (docs/09 §12) for Notion. Notion's token endpoint is
+# https://api.notion.com/v1/oauth/token (HTTP Basic client authentication, JSON body); a refresh
+# exchanges the refresh token for a new access token AND a new refresh token. The response does not
+# carry expires_in, so the refresh happens after a 401. All values are fake.
+- name: "token: a refreshed token is injected on the API host"
+  connection:
+    credentials: { access_token: "tok-fixture-2", refresh_token: "refresh-fixture-2" }
+  request: { method: GET, url: "https://api.notion.com/v1/users/me" }
+  expect:
+    app: notion
+    tool: get_bot_user
+    upstream: { headers: { authorization: "Bearer tok-fixture-2", notion-version: "2026-03-11" } }
+- name: "token: refresh after a stale 401 retries with the new token"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://api.notion.com/v1/pages/59833787-2cf9-4fdf-8782-e53db20768a5" }
+  token:
+    upstream: { status: 401, body: '{"object":"error","status":401,"code":"unauthorized","message":"API token is invalid."}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://api.notion.com/v1/oauth/token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-1" }
+        response:
+          status: 200
+          body: '{"access_token":"tok-fixture-new","refresh_token":"refresh-fixture-2","bot_id":"bot-fixture","workspace_id":"ws-fixture-1","token_type":"bearer"}'
+    expect:
+      outcome: refreshed
+      request_url: "https://api.notion.com/v1/oauth/token"
+      credentials: { access_token: "tok-fixture-new", refresh_token: "refresh-fixture-2" }
+      retried:
+        url: "https://api.notion.com/v1/pages/59833787-2cf9-4fdf-8782-e53db20768a5"
+        headers: { authorization: "Bearer tok-fixture-new" }
+  expect: { app: notion, tool: get_page }
+- name: "token: a refused refresh token needs re-authorization and nothing is retried"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://api.notion.com/v1/users/me" }
+  token:
+    upstream: { status: 401, body: '{"object":"error","status":401,"code":"unauthorized","message":"API token is invalid."}' }
+    http_cassette:
+      - request: { method: POST, url: "https://api.notion.com/v1/oauth/token", form: { grant_type: refresh_token } }
+        response: { status: 400, body: '{"error":"invalid_grant","error_description":"The refresh token is invalid."}' }
+    expect: { outcome: reauth_required, request_url: "https://api.notion.com/v1/oauth/token" }
+  expect: { app: notion }
+- name: "token: a 503 from the token endpoint keeps the connection and retries nothing"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://api.notion.com/v1/users/me" }
+  token:
+    upstream: { status: 401, body: '{"object":"error","status":401,"code":"unauthorized"}' }
+    http_cassette:
+      - request: { method: POST, url: "https://api.notion.com/v1/oauth/token" }
+        response: { status: 503, body: "upstream unavailable" }
+    expect: { outcome: unavailable }
+  expect: { app: notion }
