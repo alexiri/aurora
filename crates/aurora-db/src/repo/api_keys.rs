@@ -1,7 +1,7 @@
 use super::notify_auth_revoked;
 use crate::DbError;
 use chrono::{DateTime, Utc};
-use sqlx::{PgExecutor, PgPool};
+use sqlx::{PgConnection, PgExecutor};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -53,17 +53,15 @@ pub async fn touch<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbE
 }
 
 /// Revoke a key and notify. Returns whether it was newly revoked.
-pub async fn revoke(pool: &PgPool, id: Uuid) -> Result<bool, DbError> {
-    let mut tx = pool.begin().await?;
+pub async fn revoke(conn: &mut PgConnection, id: Uuid) -> Result<bool, DbError> {
     let r = sqlx::query(
         "UPDATE api_keys SET revoked_at = now(), updated_at = now()
          WHERE id = $1 AND revoked_at IS NULL",
     )
     .bind(id)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
-    notify_auth_revoked(&mut *tx, "api_key", id).await?;
-    tx.commit().await?;
+    notify_auth_revoked(&mut *conn, "api_key", id).await?;
     Ok(r.rows_affected() > 0)
 }
 

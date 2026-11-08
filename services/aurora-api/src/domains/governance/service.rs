@@ -221,7 +221,12 @@ pub struct Applied {
     pub agents_cleared: Vec<Uuid>,
 }
 
-pub async fn put(state: &AppState, org: Uuid, req: PutGovernance) -> Result<Applied, ApiError> {
+pub async fn put(
+    state: &AppState,
+    org: Uuid,
+    req: PutGovernance,
+    actor: crate::audit::AuditActor,
+) -> Result<Applied, ApiError> {
     // Cheap pre-check so stale clients get 409 before validation noise; re-checked under lock.
     let (_, current) = repo::get(&state.pool, org).await?.ok_or_else(not_found)?;
     if current != req.revision {
@@ -286,7 +291,17 @@ pub async fn put(state: &AppState, org: Uuid, req: PutGovernance) -> Result<Appl
         repo::clear_agent_models(&mut tx, &agents_cleared).await?;
     }
     credentials::notify_gateway_invalidate(&mut *tx, "org", org).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    // RFE-008: `governance.update` commits with its audit row.
+    let ev =
+        crate::audit::AuditEvent::new(actor, "governance.update", crate::audit::Outcome::Success)
+            .org(org)
+            .target("organization", org)
+            .metadata(json!({
+                "revision": revision,
+                "secrets_marked_mismatch": secrets_marked,
+                "agent_overrides_cleared": agents_cleared,
+            }));
+    crate::audit::commit_critical(tx, &ev).await?;
     Ok(Applied {
         out: GovernanceDocument {
             document: stored,

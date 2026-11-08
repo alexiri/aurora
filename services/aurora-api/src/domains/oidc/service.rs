@@ -1,6 +1,6 @@
 //! OIDC flow: `start` builds the provider redirect, `callback` completes sign-in.
 use crate::app::AppState;
-use crate::audit::{self, AuditEvent, Outcome};
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::auth::service::{self as auth, Client, normalize_email};
 use crate::domains::{invitations, tenancy};
 use crate::http::ratelimit::Bucket;
@@ -628,6 +628,22 @@ async fn apply_jit(
     }
     let role = if j.role == "admin" { "admin" } else { "member" };
     members::insert(&mut *tx, org_id, user.id, role).await?;
+    // RFE-008: a membership created by JIT provisioning is audited in the sign-in transaction.
+    let actor = AuditActor {
+        kind: "user",
+        id: Some(user.id),
+        label: user.email.clone(),
+        source: "dashboard",
+        ip: None,
+    };
+    let ev = AuditEvent::new(actor, "member.add", Outcome::Success)
+        .org(org_id)
+        .target("user", user.id)
+        .metadata(serde_json::json!({"role": role, "via": "sso_jit"}));
+    audit::insert_tx(&mut *tx, &ev).await.map_err(|e| {
+        tracing::error!("oidc: jit audit: {e}");
+        Fail("oidc_failed")
+    })?;
     // Phase 2, RFE-012: JIT may bind as `approver`, never `owner`.
     let ws_role = if j.workspace_role == "approver" {
         "approver"

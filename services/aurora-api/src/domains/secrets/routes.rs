@@ -123,7 +123,6 @@ async fn create_ws_secret(
         req,
     )
     .await?;
-    record(&state, &caller, "secret.create", &row, json!(null));
     Ok((StatusCode::CREATED, Json(row.into())))
 }
 
@@ -149,7 +148,6 @@ async fn create_org_secret(
 ) -> Result<(StatusCode, Json<Secret>), ApiError> {
     caller.org(&state, org).await?.require_admin()?;
     let row = service::create(&state, &caller, CreateScope { org, ws: None }, req).await?;
-    record(&state, &caller, "secret.create", &row, json!(null));
     Ok((StatusCode::CREATED, Json(row.into())))
 }
 
@@ -193,8 +191,7 @@ async fn patch_secret(
     Json(req): Json<PatchSecretRequest>,
 ) -> Result<Json<Secret>, ApiError> {
     let row = service::load_authorized(&caller, &state, id).await?;
-    let out = service::patch(&state, &row, req).await?;
-    record(&state, &caller, "secret.update", &out, json!(null));
+    let out = service::patch(&state, &caller, &row, req).await?;
     Ok(Json(out.into()))
 }
 
@@ -213,8 +210,7 @@ async fn delete_secret(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
     let row = service::load_authorized(&caller, &state, id).await?;
-    service::delete(&state, &row).await?;
-    record(&state, &caller, "secret.delete", &row, json!(null));
+    service::delete(&state, &caller, &row).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -238,14 +234,7 @@ async fn set_secret_value(
     Json(req): Json<SetValueRequest>,
 ) -> Result<Json<Secret>, ApiError> {
     let row = service::load_authorized(&caller, &state, id).await?;
-    let out = service::set_value(&state, &row, req).await?;
-    record(
-        &state,
-        &caller,
-        "secret.value_update",
-        &out,
-        json!({"value_version": out.value_version, "value_source": out.value_source}),
-    );
+    let out = service::set_value(&state, &caller, &row, req).await?;
     Ok(Json(out.into()))
 }
 
@@ -268,13 +257,6 @@ async fn accept_secret(
 ) -> Result<Json<Secret>, ApiError> {
     let row = service::load_authorized(&caller, &state, id).await?;
     let out = service::accept(&state, &caller, &row, req.value).await?;
-    record(
-        &state,
-        &caller,
-        "secret.accept",
-        &out,
-        json!({"granted_agent_id": out.proposed_by_agent_id}),
-    );
     Ok(Json(out.into()))
 }
 

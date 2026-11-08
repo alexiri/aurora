@@ -244,18 +244,15 @@ async fn redact_revision(
     Path((agent, key, rev)): Path<(Uuid, String, i32)>,
 ) -> Result<StatusCode, ApiError> {
     let a = visible_agent(&c, &s, agent).await?;
-    service::redact(&s.pool, agent, &key, rev, c.user_id).await?;
-    audit::record(
-        &s,
-        AuditEvent::new(
-            AuditActor::from_caller(&c),
-            "memory.redact",
-            Outcome::Success,
-        )
-        .org(a.org_id)
-        .workspace(a.workspace_id)
-        .target("agent", a.id)
-        .metadata(json!({"key": key, "revision": rev})),
-    );
+    let ev = AuditEvent::new(
+        AuditActor::from_caller(&c),
+        "memory.redact",
+        Outcome::Success,
+    )
+    .org(a.org_id)
+    .workspace(a.workspace_id)
+    .target("agent", a.id)
+    .metadata(json!({"key": key, "revision": rev}));
+    service::redact(&s.pool, agent, &key, rev, c.user_id, &ev).await?;
     Ok(StatusCode::NO_CONTENT)
 }

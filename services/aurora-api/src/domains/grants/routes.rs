@@ -1,17 +1,14 @@
 use super::dto::*;
 use super::{effective, service};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::connections::service as conn_service;
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use aurora_core::{ApiError, FieldError};
-use aurora_db::repo::agents::AgentRow;
 use aurora_db::repo::{gateway, grants};
 use axum::extract::State;
 use axum::http::StatusCode;
-use serde_json::json;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
@@ -22,17 +19,6 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(put_connection_grant, delete_connection_grant))
         .routes(routes!(connection_grants))
         .routes(routes!(agent_effective))
-}
-
-fn record(state: &AppState, caller: &Caller, action: &str, agent: &AgentRow, secret: Uuid) {
-    audit::record(
-        state,
-        AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
-            .org(agent.org_id)
-            .workspace(agent.workspace_id)
-            .target("agent", agent.id)
-            .metadata(json!({"secret_id": secret, "agent_handle": agent.handle})),
-    );
 }
 
 /// Grants of an agent (`can_own`; I-27). Members see what they need via `/agents/{agent}/effective`.
@@ -76,7 +62,6 @@ async fn put_secret_grant(
     let (a, auth) = service::visible_agent(&caller, &state, agent).await?;
     require_own(&auth)?;
     let g = service::grant_secret(&state, &caller, &a, secret).await?;
-    record(&state, &caller, "grant.create", &a, secret);
     Ok(Json(g))
 }
 
@@ -96,8 +81,7 @@ async fn delete_secret_grant(
 ) -> Result<StatusCode, ApiError> {
     let (a, auth) = service::visible_agent(&caller, &state, agent).await?;
     require_own(&auth)?;
-    service::revoke_secret(&state, &a, secret).await?;
-    record(&state, &caller, "grant.delete", &a, secret);
+    service::revoke_secret(&state, &caller, &a, secret).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -147,26 +131,6 @@ async fn agent_effective(
     Ok(Json(effective::compute_for(&state, &a, speaker).await?))
 }
 
-fn record_conn(
-    state: &AppState,
-    caller: &Caller,
-    action: &str,
-    agent: &AgentRow,
-    connection: Uuid,
-    meta: serde_json::Value,
-) {
-    audit::record(
-        state,
-        AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
-            .org(agent.org_id)
-            .workspace(agent.workspace_id)
-            .target("agent", agent.id)
-            .metadata(
-                json!({"connection_id": connection, "agent_handle": agent.handle, "grant": meta}),
-            ),
-    );
-}
-
 /// Grant a connection to an agent, replacing any previous grant (`can_own`).
 #[utoipa::path(
     put, path = "/agents/{agent}/grants/connections/{conn}", operation_id = "grantConnection", tag = "grants",
@@ -187,15 +151,6 @@ async fn put_connection_grant(
     let (a, auth) = service::visible_agent(&caller, &state, agent).await?;
     require_own(&auth)?;
     let g = service::grant_connection(&state, &caller, &a, conn, req).await?;
-    record_conn(
-        &state,
-        &caller,
-        "grant.create",
-        &a,
-        conn,
-        json!({"mode": g.mode, "allow_tools": g.allow_tools, "ask_tools": g.ask_tools,
-               "ask_timeout_secs": g.ask_timeout_secs}),
-    );
     Ok(Json(g))
 }
 
@@ -215,8 +170,7 @@ async fn delete_connection_grant(
 ) -> Result<StatusCode, ApiError> {
     let (a, auth) = service::visible_agent(&caller, &state, agent).await?;
     require_own(&auth)?;
-    service::revoke_connection(&state, &a, conn).await?;
-    record_conn(&state, &caller, "grant.delete", &a, conn, json!(null));
+    service::revoke_connection(&state, &caller, &a, conn).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

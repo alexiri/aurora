@@ -88,10 +88,9 @@ pub async fn set_policy(
             ApiError::conflict("stale_revision", "The link changed since you loaded it.")
         })?;
     let out = view(&mut *tx, &row, b.agent_id).await?;
-    tx.commit().await.map_err(DbError::from)?;
-    audit::record(
-        s,
-        AuditEvent::new(
+    audit::commit_critical(
+        tx,
+        &AuditEvent::new(
             AuditActor::from_caller(c),
             "agent_link.policy",
             Outcome::Success,
@@ -103,6 +102,7 @@ pub async fn set_policy(
             json!({"agent_id": b.agent_id, "from": cur.policy_of(b.agent_id),
             "to": b.policy.as_str()}),
         ),
-    );
+    )
+    .await?;
     Ok(out)
 }

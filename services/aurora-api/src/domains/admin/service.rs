@@ -13,6 +13,7 @@ pub async fn patch_user(
     id: Uuid,
     is_instance_admin: Option<bool>,
     disabled: Option<bool>,
+    ev: &crate::audit::AuditEvent,
 ) -> Result<AdminUserRow, ApiError> {
     if actor == id {
         return Err(ApiError::unprocessable(
@@ -20,11 +21,17 @@ pub async fn patch_user(
             "Administrators cannot modify their own account here.",
         ));
     }
-    let row = account::update_admin_flags(&state.pool, id, is_instance_admin, disabled)
+    // RFE-008: `admin.user_update` (instance-admin grant/revoke, disable/enable) commits with its
+    // audit row.
+    let mut tx = crate::audit::begin(state).await?;
+    let row = account::update_admin_flags(&mut *tx, id, is_instance_admin, disabled)
         .await?
         .ok_or_else(|| ApiError::not_found("User not found."))?;
     if disabled == Some(true) {
-        sessions::revoke_all_for_user_except(&state.pool, id, None).await?;
+        sessions::revoke_all_for_user_except_tx(&mut tx, id, None).await?;
+    }
+    crate::audit::commit_critical(tx, ev).await?;
+    if disabled == Some(true) {
         state
             .session_cache
             .invalidate(&json!({"kind": "user", "id": id}));

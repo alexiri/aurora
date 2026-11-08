@@ -1,6 +1,7 @@
 use super::compile::{compile_connection_grant, compile_secret_grant};
 use super::dto::{ConnectionGrant, GrantMode, PutConnectionGrant, SecretGrant};
 use crate::app::AppState;
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::apps::service as apps;
 use crate::http::auth::Caller;
 use aurora_core::ApiError;
@@ -60,23 +61,45 @@ pub async fn grant_secret(
     )
     .await?;
     credentials::notify_gateway_invalidate(&mut *tx, "agent", agent.id).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    let ev = event(
+        caller,
+        "grant.create",
+        agent,
+        json!({"secret_id": secret.id, "agent_handle": agent.handle}),
+    );
+    audit::commit_critical(tx, &ev).await?;
     Ok(g.into())
+}
+
+/// Security-critical audit event of a grant change (RFE-008): committed with the change.
+fn event(caller: &Caller, action: &str, agent: &AgentRow, meta: serde_json::Value) -> AuditEvent {
+    AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
+        .org(agent.org_id)
+        .workspace(agent.workspace_id)
+        .target("agent", agent.id)
+        .metadata(meta)
 }
 
 /// Remove the grant and its derived rules; returns the grant id (404 when absent).
 pub async fn revoke_secret(
     state: &AppState,
+    caller: &Caller,
     agent: &AgentRow,
     secret_id: Uuid,
 ) -> Result<Uuid, ApiError> {
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let mut tx = audit::begin(state).await?;
     let id = grants::delete_secret_grant(&mut *tx, agent.id, secret_id)
         .await?
         .ok_or_else(|| ApiError::not_found("Grant not found."))?;
     derived_rules::delete_for_source(&mut *tx, "grant", id).await?;
     credentials::notify_gateway_invalidate(&mut *tx, "agent", agent.id).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    let ev = event(
+        caller,
+        "grant.delete",
+        agent,
+        json!({"secret_id": secret_id, "agent_handle": agent.handle}),
+    );
+    audit::commit_critical(tx, &ev).await?;
     Ok(id)
 }
 
@@ -186,22 +209,37 @@ pub async fn grant_connection(
     )
     .await?;
     credentials::notify_gateway_invalidate(&mut *tx, "agent", agent.id).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    let ev = event(
+        caller,
+        "grant.create",
+        agent,
+        json!({"connection_id": conn.id, "agent_handle": agent.handle,
+               "grant": {"mode": req.mode.as_str(), "allow_tools": allow, "ask_tools": ask,
+                         "ask_timeout_secs": ask_timeout}}),
+    );
+    audit::commit_critical(tx, &ev).await?;
     Ok(g.into())
 }
 
 /// Remove the connection grant and its derived rules (404 when absent).
 pub async fn revoke_connection(
     state: &AppState,
+    caller: &Caller,
     agent: &AgentRow,
     connection_id: Uuid,
 ) -> Result<Uuid, ApiError> {
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let mut tx = audit::begin(state).await?;
     let id = grants::delete_connection_grant(&mut *tx, agent.id, connection_id)
         .await?
         .ok_or_else(|| ApiError::not_found("Grant not found."))?;
     derived_rules::delete_for_source(&mut *tx, "grant", id).await?;
     credentials::notify_gateway_invalidate(&mut *tx, "agent", agent.id).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    let ev = event(
+        caller,
+        "grant.delete",
+        agent,
+        json!({"connection_id": connection_id, "agent_handle": agent.handle, "grant": null}),
+    );
+    audit::commit_critical(tx, &ev).await?;
     Ok(id)
 }

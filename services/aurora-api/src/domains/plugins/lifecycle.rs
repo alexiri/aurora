@@ -66,7 +66,7 @@ pub async fn act(
     reason: Option<String>,
 ) -> Result<PackageRow, ApiError> {
     let reason = clean_reason(reason)?;
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let mut tx = audit::begin(state).await?;
     plugins::lock_compile(&mut tx).await?;
     let row = plugins::get_for_update(&mut tx, id)
         .await?
@@ -162,18 +162,16 @@ pub async fn act(
             }
         }
     }
-    tx.commit().await.map_err(DbError::from)?;
-    audit::record(
-        state,
-        AuditEvent::new(
-            actor.clone(),
-            format!("plugin.{}", action.name()),
-            Outcome::Success,
-        )
-        .target("plugin_package", id)
-        .metadata(json!({"package_id": row.package_id, "version": row.version,
-                "reason": reason})),
-    );
+    // RFE-008: the decision commits with its audit row, or does not happen.
+    let ev = AuditEvent::new(
+        actor.clone(),
+        format!("plugin.{}", action.name()),
+        Outcome::Success,
+    )
+    .target("plugin_package", id)
+    .metadata(json!({"package_id": row.package_id, "version": row.version,
+            "reason": reason}));
+    audit::commit_critical(tx, &ev).await?;
     if activated {
         audit::record(
             state,
@@ -240,13 +238,10 @@ pub async fn delete(
                 CompileFail::Conflict(g) => unresolved(&g),
             })?;
     }
-    tx.commit().await.map_err(DbError::from)?;
-    audit::record(
-        state,
-        AuditEvent::new(actor.clone(), "plugin.delete", Outcome::Success)
-            .target("plugin_package", id)
-            .metadata(json!({"package_id": row.package_id, "version": row.version,
-                "force": force, "orphaned_connections": live.len()})),
-    );
+    let ev = AuditEvent::new(actor.clone(), "plugin.delete", Outcome::Success)
+        .target("plugin_package", id)
+        .metadata(json!({"package_id": row.package_id, "version": row.version,
+            "force": force, "orphaned_connections": live.len()}));
+    audit::commit_critical(tx, &ev).await?;
     Ok(())
 }

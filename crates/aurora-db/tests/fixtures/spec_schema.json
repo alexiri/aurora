@@ -179,6 +179,7 @@
       "actor_id",
       "actor_kind",
       "actor_label",
+      "critical",
       "id",
       "ip",
       "metadata",

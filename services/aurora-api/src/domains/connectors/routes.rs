@@ -3,7 +3,7 @@
 use super::admin;
 use super::dto::*;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::AuditActor;
 use crate::http::auth::{Caller, InstanceAdmin};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path};
@@ -21,14 +21,6 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(admin_delete))
         .routes(routes!(admin_approve))
         .routes(routes!(admin_rotate))
-}
-
-fn audit_admin(s: &AppState, c: &InstanceAdmin, action: &str, id: &str) {
-    audit::record(
-        s,
-        AuditEvent::new(AuditActor::instance_admin(c), action, Outcome::Success)
-            .target("connector", id),
-    );
 }
 
 /// Active connectors available for integrations.
@@ -86,8 +78,7 @@ async fn admin_create(
     State(s): State<AppState>,
     Json(req): Json<CreateConnectorRequest>,
 ) -> Result<(StatusCode, Json<ConnectorWithToken>), ApiError> {
-    let out = admin::create(&s, req).await?;
-    audit_admin(&s, &c, "admin.connector_create", &out.connector.id);
+    let out = admin::create(&s, req, &AuditActor::instance_admin(&c)).await?;
     Ok((StatusCode::CREATED, Json(out)))
 }
 
@@ -102,8 +93,7 @@ async fn admin_delete(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    admin::delete(&s, &id).await?;
-    audit_admin(&s, &c, "admin.connector_delete", &id);
+    admin::delete(&s, &id, &AuditActor::instance_admin(&c)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -120,17 +110,14 @@ async fn admin_approve(
     Path(id): Path<String>,
     Json(req): Json<ApproveConnectorRequest>,
 ) -> Result<Json<ConnectorAdmin>, ApiError> {
-    let out = admin::approve(&s, &id, &req.manifest_digest, c.user_id).await?;
-    audit::record(
+    let out = admin::approve(
         &s,
-        AuditEvent::new(
-            AuditActor::instance_admin(&c),
-            "admin.connector_approve",
-            Outcome::Success,
-        )
-        .target("connector", &id)
-        .metadata(serde_json::json!({"manifest_digest": req.manifest_digest})),
-    );
+        &id,
+        &req.manifest_digest,
+        c.user_id,
+        &AuditActor::instance_admin(&c),
+    )
+    .await?;
     Ok(Json(out))
 }
 
@@ -145,7 +132,6 @@ async fn admin_rotate(
     State(s): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<ConnectorToken>, ApiError> {
-    let out = admin::rotate(&s, &id).await?;
-    audit_admin(&s, &c, "admin.connector_rotate", &id);
+    let out = admin::rotate(&s, &id, &AuditActor::instance_admin(&c)).await?;
     Ok(Json(out))
 }

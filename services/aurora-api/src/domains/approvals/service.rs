@@ -38,26 +38,23 @@ pub fn validate_status(status: Option<&str>) -> Result<(), ApiError> {
     }
 }
 
-fn audit_decision(s: &AppState, c: &Caller, row: &ApprovalRow, decision: Decision, batch: bool) {
+fn decision_event(c: &Caller, row: &ApprovalRow, decision: Decision, batch: bool) -> AuditEvent {
     let verb = match decision {
         Decision::Approve => "approved",
         Decision::Deny => "denied",
     };
-    audit::record(
-        s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "approval.decide",
-            Outcome::Success,
-        )
-        .org(row.org_id)
-        .workspace(row.workspace_id)
-        .target("approval", row.id)
-        .metadata(serde_json::json!({
-            "decision": verb, "via": via(c), "batch": batch,
-            "agent_id": row.agent_id, "host": row.host, "method": row.method,
-        })),
-    );
+    AuditEvent::new(
+        AuditActor::from_caller(c),
+        "approval.decide",
+        Outcome::Success,
+    )
+    .org(row.org_id)
+    .workspace(row.workspace_id)
+    .target("approval", row.id)
+    .metadata(serde_json::json!({
+        "decision": verb, "via": via(c), "batch": batch,
+        "agent_id": row.agent_id, "host": row.host, "method": row.method,
+    }))
 }
 
 /// Seam for M4/M6: append `approval.decided` transcript events and update channel cards.
@@ -90,8 +87,9 @@ pub async fn decide(
     }
     // RFE-012 (D-55, SEC-28): only `can_approve` decides; a plain member gets 403.
     crate::http::auth::require_approve(&auth)?;
+    let mut tx = audit::begin(s).await?;
     let row = approvals::decide(
-        &s.pool,
+        &mut tx,
         id,
         decision == Decision::Approve,
         c.user_id,
@@ -104,7 +102,8 @@ pub async fn decide(
             "This approval has already been resolved.",
         )
     })?;
-    audit_decision(s, c, &row, decision, false);
+    // RFE-008: the decision commits with its audit row, or does not happen.
+    audit::commit_critical(tx, &decision_event(c, &row, decision, false)).await?;
     after_decision(s, &row);
     Ok(row.into())
 }
@@ -124,8 +123,9 @@ pub async fn decide_batch(
         }
         return Err(ApiError::not_found("Batch not found."));
     }
+    let mut tx = audit::begin(s).await?;
     let rows = approvals::decide_batch(
-        &s.pool,
+        &mut tx,
         c.user_id,
         org,
         ws,
@@ -135,9 +135,10 @@ pub async fn decide_batch(
         via(c),
     )
     .await?;
-    for (id, workspace_id, org_id) in &rows {
-        audit::record(
-            s,
+    // RFE-008: every decided row commits with its audit row (all or nothing).
+    let events: Vec<AuditEvent> = rows
+        .iter()
+        .map(|(id, workspace_id, org_id)| {
             AuditEvent::new(AuditActor::from_caller(c), "approval.decide", Outcome::Success)
                 .org(*org_id)
                 .workspace(*workspace_id)
@@ -145,9 +146,10 @@ pub async fn decide_batch(
                 .metadata(serde_json::json!({
                     "decision": match decision { Decision::Approve => "approved", Decision::Deny => "denied" },
                     "via": via(c), "batch": true, "batch_id": batch_id, "agent_id": agent_id,
-                })),
-        );
-    }
+                }))
+        })
+        .collect();
+    audit::commit_critical_many(tx, &events).await?;
     Ok(u32::try_from(rows.len()).unwrap_or(u32::MAX))
 }
 

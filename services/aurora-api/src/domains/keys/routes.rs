@@ -62,18 +62,17 @@ async fn create_org_key(
     Json(req): Json<CreateKeyRequest>,
 ) -> Result<(StatusCode, Json<CreatedKey>), ApiError> {
     c.org(&s, org).await?.require_admin()?;
-    let (row, key) = service::create(&s, &c, org, None, req).await?;
-    audit::record(
-        &s,
-        AuditEvent::new(
-            AuditActor::from_caller(&c),
-            "api_key.create",
-            Outcome::Success,
-        )
-        .org(org)
-        .target("api_key", row.id)
-        .metadata(json!({"name": row.name, "scope": "org"})),
-    );
+    let mut tx = audit::begin(&s).await?;
+    let (row, key) = service::create(&mut tx, &c, org, None, req).await?;
+    let ev = AuditEvent::new(
+        AuditActor::from_caller(&c),
+        "api_key.create",
+        Outcome::Success,
+    )
+    .org(org)
+    .target("api_key", row.id)
+    .metadata(json!({"name": row.name, "scope": "org"}));
+    audit::commit_critical(tx, &ev).await?;
     Ok((
         StatusCode::CREATED,
         Json(CreatedKey {
@@ -117,19 +116,18 @@ async fn create_workspace_key(
 ) -> Result<(StatusCode, Json<CreatedKey>), ApiError> {
     let a = c.workspace(&s, ws).await?;
     require_own(&a)?;
-    let (row, key) = service::create(&s, &c, a.org_id, Some(ws), req).await?;
-    audit::record(
-        &s,
-        AuditEvent::new(
-            AuditActor::from_caller(&c),
-            "api_key.create",
-            Outcome::Success,
-        )
-        .org(a.org_id)
-        .workspace(ws)
-        .target("api_key", row.id)
-        .metadata(json!({"name": row.name, "scope": "workspace"})),
-    );
+    let mut tx = audit::begin(&s).await?;
+    let (row, key) = service::create(&mut tx, &c, a.org_id, Some(ws), req).await?;
+    let ev = AuditEvent::new(
+        AuditActor::from_caller(&c),
+        "api_key.create",
+        Outcome::Success,
+    )
+    .org(a.org_id)
+    .workspace(ws)
+    .target("api_key", row.id)
+    .metadata(json!({"name": row.name, "scope": "workspace"}));
+    audit::commit_critical(tx, &ev).await?;
     Ok((
         StatusCode::CREATED,
         Json(CreatedKey {
@@ -171,7 +169,8 @@ async fn revoke_key(
         .await?
         .ok_or_else(|| ApiError::not_found("API key not found."))?;
     service::authorize_revoke(&s, &c, &k).await?;
-    if api_keys::revoke(&s.pool, id).await? {
+    let mut tx = audit::begin(&s).await?;
+    if api_keys::revoke(&mut tx, id).await? {
         let mut ev = AuditEvent::new(
             AuditActor::from_caller(&c),
             "api_key.revoke",
@@ -183,7 +182,7 @@ async fn revoke_key(
         if let Some(ws) = k.workspace_id {
             ev = ev.workspace(ws);
         }
-        audit::record(&s, ev);
+        audit::commit_critical(tx, &ev).await?;
     }
     Ok(StatusCode::NO_CONTENT)
 }

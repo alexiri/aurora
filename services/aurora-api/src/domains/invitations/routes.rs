@@ -70,14 +70,7 @@ async fn create_invitation(
     Json(req): Json<CreateInvitationRequest>,
 ) -> Result<(StatusCode, Json<Invitation>), ApiError> {
     c.org(&s, org).await?.require_admin()?;
-    let inv = service::create(&s, org, c.user_id, &req).await?;
-    audit::record(
-        &s,
-        event(&c, "invitation.create")
-            .org(org)
-            .target("invitation", inv.id)
-            .metadata(json!({"email": inv.email, "role": req.role.as_str()})),
-    );
+    let inv = service::create(&s, org, c.user_id, &req, AuditActor::from_caller(&c)).await?;
     Ok((StatusCode::CREATED, Json(inv)))
 }
 
@@ -95,16 +88,15 @@ async fn cancel_invitation(
     let nf = || ApiError::not_found("Invitation not found.");
     let inv = repo::get(&s.pool, id).await?.ok_or_else(nf)?;
     c.org(&s, inv.org_id).await?.require_admin()?;
-    if !repo::cancel(&s.pool, id).await? {
+    let mut tx = audit::begin(&s).await?;
+    if !repo::cancel(&mut *tx, id).await? {
         return Err(nf());
     }
-    audit::record(
-        &s,
-        event(&c, "invitation.cancel")
-            .org(inv.org_id)
-            .target("invitation", id)
-            .metadata(json!({"email": inv.email})),
-    );
+    let ev = event(&c, "invitation.cancel")
+        .org(inv.org_id)
+        .target("invitation", id)
+        .metadata(json!({"email": inv.email}));
+    audit::commit_critical(tx, &ev).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -131,13 +123,7 @@ async fn accept_invitation(
     State(s): State<AppState>,
     Json(req): Json<AcceptInvitationRequest>,
 ) -> Result<Json<AcceptInvitationResponse>, ApiError> {
-    let (org, workspace_ids, inv_id) = service::accept(&s, c.user_id, &req.token).await?;
-    audit::record(
-        &s,
-        event(&c, "invitation.accept")
-            .org(org.id)
-            .target("invitation", inv_id)
-            .metadata(json!({"role": org.my_role.as_str()})),
-    );
+    let (org, workspace_ids, _) =
+        service::accept(&s, c.user_id, &req.token, AuditActor::from_caller(&c)).await?;
     Ok(Json(AcceptInvitationResponse { org, workspace_ids }))
 }

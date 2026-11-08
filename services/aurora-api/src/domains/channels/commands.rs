@@ -249,13 +249,10 @@ impl Cmd<'_> {
         dm_defaults::delete(&mut *tx, l.integration_id, &l.platform_user_ref)
             .await
             .retry()?;
-        tx.commit()
-            .await
-            .map_err(aurora_db::DbError::from)
-            .retry()?;
-        audit::record(
-            self.state,
-            AuditEvent::new(
+        // RFE-008: `user_link.delete` is security-critical: it commits with the unlink.
+        audit::commit_critical(
+            tx,
+            &AuditEvent::new(
                 AuditActor::system(self.ctx.integ.connector_id.clone()).with_source("channel"),
                 "user_link.delete",
                 Outcome::Success,
@@ -265,7 +262,9 @@ impl Cmd<'_> {
             .metadata(
                 json!({"integration_id": l.integration_id, "user_id": l.user_id, "via": "command"}),
             ),
-        );
+        )
+        .await
+        .retry()?;
         self.reply("Unlinked. You'll be asked to link again next time you write to an agent.")
             .await?;
         Ok(outcome("unlinked"))
@@ -445,7 +444,8 @@ impl Cmd<'_> {
                 "approval_ambiguous"
             }));
         };
-        let done = approvals::decide(pool, a.id, approve, user, "channel")
+        let mut tx = audit::begin(self.state).await.retry()?;
+        let done = approvals::decide(&mut tx, a.id, approve, user, "channel")
             .await
             .retry()?;
         let Some(done) = done else {
@@ -453,9 +453,10 @@ impl Cmd<'_> {
                 .await?;
             return Ok(outcome("already_decided"));
         };
-        audit::record(
-            self.state,
-            AuditEvent::new(
+        // RFE-008: the decision commits with its audit row; an audit failure retries the event.
+        audit::commit_critical(
+            tx,
+            &AuditEvent::new(
                 AuditActor::system(self.ctx.integ.connector_id.clone()).with_source("channel"),
                 "approval.decide",
                 Outcome::Success,
@@ -464,7 +465,9 @@ impl Cmd<'_> {
             .workspace(done.workspace_id)
             .target("approval", done.id)
             .metadata(json!({"decision": if approve {"approved"} else {"denied"}, "via": "channel", "user_id": user})),
-        );
+        )
+        .await
+        .retry()?;
         self.reply(if approve { "Approved." } else { "Denied." })
             .await?;
         Ok(outcome(if approve { "approved" } else { "denied" }))

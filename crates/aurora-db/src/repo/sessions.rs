@@ -100,16 +100,26 @@ pub async fn revoke_all_for_user_except(
     except: Option<Uuid>,
 ) -> Result<u64, DbError> {
     let mut tx = pool.begin().await?;
+    let n = revoke_all_for_user_except_tx(&mut tx, user_id, except).await?;
+    tx.commit().await?;
+    Ok(n)
+}
+
+/// [`revoke_all_for_user_except`] inside the caller's transaction.
+pub async fn revoke_all_for_user_except_tx(
+    conn: &mut sqlx::PgConnection,
+    user_id: Uuid,
+    except: Option<Uuid>,
+) -> Result<u64, DbError> {
     let r = sqlx::query(
         "UPDATE sessions SET revoked_at = now(), updated_at = now()
          WHERE user_id = $1 AND revoked_at IS NULL AND ($2::uuid IS NULL OR id <> $2)",
     )
     .bind(user_id)
     .bind(except)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
-    notify_auth_revoked(&mut *tx, "user", user_id).await?;
-    tx.commit().await?;
+    notify_auth_revoked(&mut *conn, "user", user_id).await?;
     Ok(r.rows_affected())
 }
 

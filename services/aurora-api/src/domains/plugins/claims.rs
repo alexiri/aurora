@@ -91,7 +91,7 @@ pub async fn decide(
     winner_app_id: &str,
     fingerprint: &str,
 ) -> Result<HostClaimConflict, ApiError> {
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let mut tx = audit::begin(state).await?;
     plugins::lock_compile(&mut tx).await?;
     let gs = groups(&mut tx).await?;
     let g = gs
@@ -140,15 +140,12 @@ pub async fn decide(
         })?;
     let ds = plugins::decisions(&mut *tx).await?;
     let out = view(g, &ds);
-    tx.commit().await.map_err(DbError::from)?;
-    audit::record(
-        state,
-        AuditEvent::new(actor.clone(), "plugin.host_claim.decide", Outcome::Success)
-            .target("host_claim", group_key)
-            .metadata(
-                json!({"group_key": group_key, "winner_package_id": winner_package_id,
-                "winner_app_id": winner_app_id, "previous_winner": previous}),
-            ),
-    );
+    let ev = AuditEvent::new(actor.clone(), "plugin.host_claim.decide", Outcome::Success)
+        .target("host_claim", group_key)
+        .metadata(
+            json!({"group_key": group_key, "winner_package_id": winner_package_id,
+            "winner_app_id": winner_app_id, "previous_winner": previous}),
+        );
+    audit::commit_critical(tx, &ev).await?;
     Ok(out)
 }

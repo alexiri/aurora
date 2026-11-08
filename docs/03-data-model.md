@@ -187,7 +187,8 @@ Device-style CLI login.
 | source | text CHECK in (`dashboard`,`api`,`cli`,`channel`,`system`) | |
 | ip | inet null | |
 | metadata | jsonb not null default `{}` | never contains secret values |
-| index | (org_id, created_at desc), (workspace_id, created_at desc) | |
+| critical | boolean not null default false | (phase 2, RFE-008) true for `outcome = success` rows of the security-critical set (`04 §Audit`); derived from the action by the insert, never set by callers |
+| index | (org_id, created_at desc), (workspace_id, created_at desc), (org_id, critical, created_at desc) | |
 
 Audit writes are best-effort and never fail the action (logged on failure). (phase 2, RFE-008) Except for the **security-critical set** of `04 §Audit`, whose rows are written in the same transaction as the change and make the action fail if they cannot be written.
 
@@ -1188,11 +1189,6 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | (whole table) | — | unused from phase 1 (no e-mail verification or password reset, RFE-004); existing rows are ignored and the table is dropped by the contract migration in a later release | 1 → drop later (RFE-004) |
-
-#### `audit_log`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| critical | bool not null default false | true for rows of the security-critical set (`04 §Audit`); index (org_id, critical, created_at desc) so auditors can filter them | 2 (RFE-008) |
 
 #### `organizations` (jsonb key in `settings`)
 | Planned column | Type | Notes | Phase |

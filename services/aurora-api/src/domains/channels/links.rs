@@ -94,22 +94,19 @@ pub async fn admin_create(
             )],
         ));
     }
-    let id = repo::insert(&s.pool, integration, refl, req.user_id, "admin")
+    let mut tx = audit::begin(s).await?;
+    let id = repo::insert(&mut *tx, integration, refl, req.user_id, "admin")
         .await
         .map_err(|e| conflict_code(e, &[(LINK_CONSTRAINT, "already_linked")]))?;
-    audit::record(
-        s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "user_link.create",
-            Outcome::Success,
-        )
-        .org(integ.org_id)
-        .target("user_link", id)
-        .metadata(
-            json!({"integration_id": integration, "user_id": req.user_id, "method": "admin"}),
-        ),
-    );
+    let ev = AuditEvent::new(
+        AuditActor::from_caller(c),
+        "user_link.create",
+        Outcome::Success,
+    )
+    .org(integ.org_id)
+    .target("user_link", id)
+    .metadata(json!({"integration_id": integration, "user_id": req.user_id, "method": "admin"}));
+    audit::commit_critical(tx, &ev).await?;
     let row = repo::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::internal("Link vanished."))?;
@@ -120,26 +117,24 @@ pub async fn admin_delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiE
     let not_found = || ApiError::not_found("Link not found.");
     let row = repo::get(&s.pool, id).await?.ok_or_else(not_found)?;
     c.org(s, row.org_id).await?.require_admin()?;
-    remove(s, &row).await?;
-    audit::record(
-        s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "user_link.delete",
-            Outcome::Success,
-        )
-        .org(row.org_id)
-        .target("user_link", id)
-        .metadata(json!({"integration_id": row.integration_id, "user_id": row.user_id})),
-    );
+    let ev = AuditEvent::new(
+        AuditActor::from_caller(c),
+        "user_link.delete",
+        Outcome::Success,
+    )
+    .org(row.org_id)
+    .target("user_link", id)
+    .metadata(json!({"integration_id": row.integration_id, "user_id": row.user_id}));
+    remove(s, &row, &ev).await?;
     Ok(())
 }
 
-async fn remove(s: &AppState, row: &UserLinkRow) -> Result<(), ApiError> {
-    let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+/// Delete a link with its DM default and its (security-critical) audit row, atomically.
+async fn remove(s: &AppState, row: &UserLinkRow, ev: &AuditEvent) -> Result<(), ApiError> {
+    let mut tx = audit::begin(s).await?;
     repo::delete(&mut *tx, row.id).await?;
     dm_defaults::delete(&mut *tx, row.integration_id, &row.platform_user_ref).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    audit::commit_critical(tx, ev).await?;
     Ok(())
 }
 
@@ -158,18 +153,15 @@ pub async fn delete_mine(s: &AppState, c: &SessionCaller, id: Uuid) -> Result<()
         .await?
         .filter(|r| r.user_id == c.user_id)
         .ok_or_else(|| ApiError::not_found("Link not found."))?;
-    remove(s, &row).await?;
-    audit::record(
-        s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "user_link.delete",
-            Outcome::Success,
-        )
-        .org(row.org_id)
-        .target("user_link", id)
-        .metadata(json!({"integration_id": row.integration_id, "self": true})),
-    );
+    let ev = AuditEvent::new(
+        AuditActor::from_caller(c),
+        "user_link.delete",
+        Outcome::Success,
+    )
+    .org(row.org_id)
+    .target("user_link", id)
+    .metadata(json!({"integration_id": row.integration_id, "self": true}));
+    remove(s, &row, &ev).await?;
     Ok(())
 }
 
@@ -210,18 +202,15 @@ pub async fn confirm(
         .map_err(|e| conflict_code(e, &[(LINK_CONSTRAINT, "already_linked")]))?,
     };
     link_requests::mark_used(&mut *tx, lr.id, c.user_id).await?;
-    tx.commit().await.map_err(DbError::from)?;
-    audit::record(
-        s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "user_link.create",
-            Outcome::Success,
-        )
-        .org(integ.org_id)
-        .target("user_link", link_id)
-        .metadata(json!({"integration_id": integ.id, "method": "sign_in_link"})),
-    );
+    let ev = AuditEvent::new(
+        AuditActor::from_caller(c),
+        "user_link.create",
+        Outcome::Success,
+    )
+    .org(integ.org_id)
+    .target("user_link", link_id)
+    .metadata(json!({"integration_id": integ.id, "method": "sign_in_link"}));
+    audit::commit_critical(tx, &ev).await?;
     let row = repo::get(&s.pool, link_id)
         .await?
         .ok_or_else(|| ApiError::internal("Link vanished."))?;

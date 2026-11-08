@@ -305,6 +305,7 @@ pub async fn redact(
     key: &str,
     revision: i32,
     by: Uuid,
+    ev: &crate::audit::AuditEvent,
 ) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(DbError::from)?;
     repo::lock_agent(&mut tx, agent).await?;
@@ -321,7 +322,8 @@ pub async fn redact(
         ));
     }
     repo::redact(&mut tx, m.id, revision, by).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    // RFE-008: `memory.redact` is an erasure; it commits with its audit row.
+    crate::audit::commit_critical(tx, ev).await?;
     Ok(())
 }
 

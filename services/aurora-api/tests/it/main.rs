@@ -13,6 +13,7 @@ mod apps_tools;
 mod attachment_storage;
 mod attachments;
 mod audit;
+mod audit_atomic;
 mod auth;
 mod automation_continuity;
 mod avatars;

@@ -1,6 +1,7 @@
 use super::dto::*;
 use super::{gov, llm};
 use crate::app::AppState;
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::auth::{Caller, require_own};
 use crate::http::pagination::Pagination;
 use aurora_core::{ApiError, FieldError, Secret as Plain};
@@ -15,6 +16,23 @@ use uuid::Uuid;
 use repo::SecretRow;
 
 const MAX_VALUE: usize = 16 * 1024;
+
+/// Security-critical audit event of a secret change (RFE-008): committed with the change.
+/// Never carries a value, only names and versions.
+fn event(caller: &Caller, action: &str, row: &SecretRow, extra: Value) -> AuditEvent {
+    let mut ev = AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
+        .org(row.org_id)
+        .target("secret", row.id)
+        .metadata(serde_json::json!({
+            "name": row.name, "kind": row.kind, "llm_endpoint_id": row.llm_endpoint_id,
+            "scope": if row.workspace_id.is_some() { "workspace" } else { "organization" },
+            "extra": extra,
+        }));
+    if let Some(ws) = row.workspace_id {
+        ev = ev.workspace(ws);
+    }
+    ev
+}
 
 fn bad(path: &str, msg: &str) -> ApiError {
     ApiError::invalid_request("Invalid secret.", vec![FieldError::new(path, msg)])
@@ -430,6 +448,7 @@ pub async fn create(
     let col = prepared.vref.to_column();
     let res = insert_tx(
         state,
+        caller,
         &repo::NewSecret {
             id,
             org_id: scope.org,
@@ -458,14 +477,21 @@ pub async fn create(
     load(state, id).await
 }
 
-async fn insert_tx(state: &AppState, n: &repo::NewSecret<'_>) -> Result<(), ApiError> {
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+async fn insert_tx(
+    state: &AppState,
+    caller: &Caller,
+    n: &repo::NewSecret<'_>,
+) -> Result<(), ApiError> {
+    let mut tx = audit::begin(state).await?;
     repo::insert(&mut *tx, n)
         .await
         .map_err(|e| conflict_code(e, &[(repo::NAME_CONSTRAINT, "name_taken")]))?;
     let (s, i) = scope_invalidation(n.org_id, n.workspace_id);
     credentials::notify_gateway_invalidate(&mut *tx, s, i).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    let row = repo::get(&mut *tx, n.id)
+        .await?
+        .ok_or_else(|| ApiError::internal("Internal error."))?;
+    audit::commit_critical(tx, &event(caller, "secret.create", &row, Value::Null)).await?;
     Ok(())
 }
 
@@ -480,6 +506,7 @@ fn llm_injection(p: &dyn aurora_llm::LlmProvider) -> Value {
 
 pub async fn patch(
     state: &AppState,
+    caller: &Caller,
     row: &SecretRow,
     req: PatchSecretRequest,
 ) -> Result<SecretRow, ApiError> {
@@ -509,7 +536,7 @@ pub async fn patch(
             injection = Some(recipe_json(r)?);
         }
     }
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let mut tx = audit::begin(state).await?;
     repo::update_meta(
         &mut *tx,
         row.id,
@@ -522,17 +549,20 @@ pub async fn patch(
     .map_err(|e| conflict_code(e, &[(repo::NAME_CONSTRAINT, "name_taken")]))?;
     let (s, i) = scope_invalidation(row.org_id, row.workspace_id);
     credentials::notify_gateway_invalidate(&mut *tx, s, i).await?;
-    tx.commit().await.map_err(DbError::from)?;
-    load(state, row.id).await
+    let out = repo::get(&mut *tx, row.id)
+        .await?
+        .ok_or_else(|| ApiError::internal("Internal error."))?;
+    audit::commit_critical(tx, &event(caller, "secret.update", &out, Value::Null)).await?;
+    Ok(out)
 }
 
-pub async fn delete(state: &AppState, row: &SecretRow) -> Result<(), ApiError> {
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+pub async fn delete(state: &AppState, caller: &Caller, row: &SecretRow) -> Result<(), ApiError> {
+    let mut tx = audit::begin(state).await?;
     derived_rules::delete_for_secret_grants(&mut *tx, row.id).await?;
     repo::delete(&mut *tx, row.id).await?;
     let (s, i) = scope_invalidation(row.org_id, row.workspace_id);
     credentials::notify_gateway_invalidate(&mut *tx, s, i).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    audit::commit_critical(tx, &event(caller, "secret.delete", row, Value::Null)).await?;
     if let Ok(r) = row.value_ref.parse::<SecretRef>() {
         let src = if row.value_source == "reference" {
             ValueSource::Reference
@@ -546,6 +576,7 @@ pub async fn delete(state: &AppState, row: &SecretRow) -> Result<(), ApiError> {
 
 pub async fn set_value(
     state: &AppState,
+    caller: &Caller,
     row: &SecretRow,
     req: SetValueRequest,
 ) -> Result<SecretRow, ApiError> {
@@ -584,7 +615,7 @@ pub async fn set_value(
     let prepared = finalize(state, &c, staged).await?;
     let col = prepared.vref.to_column();
     let swap = async {
-        let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+        let mut tx = audit::begin(state).await?;
         let ok = repo::replace_value(
             &mut *tx,
             row.id,
@@ -600,7 +631,14 @@ pub async fn set_value(
         }
         let (s, i) = scope_invalidation(row.org_id, row.workspace_id);
         credentials::notify_gateway_invalidate(&mut *tx, s, i).await?;
-        tx.commit().await.map_err(DbError::from)?;
+        let ev = event(
+            caller,
+            "secret.value_update",
+            row,
+            serde_json::json!({"value_version": new_version,
+                "value_source": source_str(prepared.source)}),
+        );
+        audit::commit_critical(tx, &ev).await?;
         Ok(true)
     };
     match swap.await {
@@ -819,7 +857,7 @@ pub async fn accept(
     let prepared = finalize(state, &c, Staged::Managed(Plain::new(v))).await?;
     let col = prepared.vref.to_column();
     let run = async {
-        let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+        let mut tx = audit::begin(state).await?;
         if !repo::activate(&mut *tx, row.id, &col, source_str(prepared.source)).await? {
             return Ok::<bool, ApiError>(false);
         }
@@ -839,7 +877,13 @@ pub async fn accept(
             credentials::notify_gateway_invalidate(&mut *tx, "agent", agent).await?;
         }
         credentials::notify_gateway_invalidate(&mut *tx, "workspace", ws).await?;
-        tx.commit().await.map_err(DbError::from)?;
+        let ev = event(
+            caller,
+            "secret.accept",
+            row,
+            serde_json::json!({"granted_agent_id": row.proposed_by_agent_id}),
+        );
+        audit::commit_critical(tx, &ev).await?;
         Ok(true)
     };
     match run.await {

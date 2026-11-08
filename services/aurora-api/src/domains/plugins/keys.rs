@@ -2,9 +2,10 @@
 
 use super::registry;
 use crate::app::AppState;
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use aurora_core::{ApiError, FieldError, ids};
+use aurora_db::PgPool;
 use aurora_db::repo::plugins::{self, TrustedKeyRow};
-use aurora_db::{DbError, PgPool};
 use aurora_registry::signature::{PROJECT_PUBLISHER, TrustStore, TrustedKey};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -43,6 +44,7 @@ pub async fn trust_store(pool: &PgPool) -> Result<TrustStore, ApiError> {
 pub async fn create(
     state: &AppState,
     actor: Uuid,
+    admin: &AuditActor,
     publisher: &str,
     name: &str,
     public_key: &str,
@@ -73,29 +75,41 @@ pub async fn create(
         ));
     }
     if let (true, Ok(canonical)) = (errs.is_empty(), &canonical) {
-        return plugins::insert_trusted_key(
-            &state.pool,
-            ids::new_id(),
-            publisher,
-            name,
-            canonical,
-            actor,
-        )
-        .await
-        .map_err(|e| aurora_db::conflict_code(e, &[("trusted_keys_public_key_key", "conflict")]));
+        let mut tx = audit::begin(state).await?;
+        let row =
+            plugins::insert_trusted_key(&mut *tx, ids::new_id(), publisher, name, canonical, actor)
+                .await
+                .map_err(|e| {
+                    aurora_db::conflict_code(e, &[("trusted_keys_public_key_key", "conflict")])
+                })?;
+        // RFE-008: `trusted_key.create` commits with the key.
+        let ev = AuditEvent::new(admin.clone(), "trusted_key.create", Outcome::Success)
+            .target("trusted_key", row.id)
+            .metadata(serde_json::json!({"publisher": row.publisher, "name": row.name}));
+        audit::commit_critical(tx, &ev).await?;
+        return Ok(row);
     }
     Err(ApiError::invalid_request("Invalid trusted key.", errs))
 }
 
 /// Revoke `id` and disable every package it signed. Returns the key and the
 /// ids of the disabled packages. Idempotent.
-pub async fn revoke(state: &AppState, id: Uuid) -> Result<(TrustedKeyRow, Vec<Uuid>), ApiError> {
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+pub async fn revoke(
+    state: &AppState,
+    id: Uuid,
+    admin: &AuditActor,
+) -> Result<(TrustedKeyRow, Vec<Uuid>), ApiError> {
+    let mut tx = audit::begin(state).await?;
     let key = plugins::revoke_trusted_key(&mut tx, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Trusted key not found."))?;
     let disabled = plugins::disable_signed_by(&mut tx, &key.public_key, REVOKED_REASON).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    // RFE-008: `trusted_key.revoke` commits with the revocation and the disabled packages.
+    let ev = AuditEvent::new(admin.clone(), "trusted_key.revoke", Outcome::Success)
+        .target("trusted_key", key.id)
+        .metadata(serde_json::json!({"publisher": key.publisher,
+            "disabled_packages": disabled.iter().map(|(i, _)| *i).collect::<Vec<_>>()}));
+    audit::commit_critical(tx, &ev).await?;
     if disabled.iter().any(|(_, was_active)| *was_active) {
         registry::request_compile(state).await?;
     }

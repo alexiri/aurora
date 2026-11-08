@@ -133,20 +133,17 @@ async fn report_outcome(
     Ok(())
 }
 
-fn audit_decision(s: &AppState, c: &Caller, org: Uuid, row: &ActionApprovalRow, decision: &str) {
-    audit::record(
-        s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "action_approval.decide",
-            Outcome::Success,
-        )
-        .org(org)
-        .workspace(row.workspace_id)
-        .target("action_approval", row.id)
-        .metadata(json!({"decision": decision, "action_key": row.action_key,
-            "agent_id": row.agent_id, "status": row.status})),
-    );
+fn decision_event(c: &Caller, org: Uuid, row: &ActionApprovalRow, decision: &str) -> AuditEvent {
+    AuditEvent::new(
+        AuditActor::from_caller(c),
+        "action_approval.decide",
+        Outcome::Success,
+    )
+    .org(org)
+    .workspace(row.workspace_id)
+    .target("action_approval", row.id)
+    .metadata(json!({"decision": decision, "action_key": row.action_key,
+        "agent_id": row.agent_id, "status": row.status}))
 }
 
 pub async fn decide(
@@ -204,12 +201,11 @@ pub async fn decide(
     if !approve {
         let line = format!("The request \"{}\" was denied.", decided.summary);
         report_outcome(&mut tx, &decided, "action_approval_rejected", &line, true).await?;
-        tx.commit().await.map_err(DbError::from)?;
-        audit_decision(s, c, auth.org_id, &decided, "deny");
+        // RFE-008: the decision commits with its audit row, or does not happen.
+        audit::commit_critical(tx, &decision_event(c, auth.org_id, &decided, "deny")).await?;
         return Ok(decided.into());
     }
-    tx.commit().await.map_err(DbError::from)?;
-    audit_decision(s, c, auth.org_id, &decided, "approve");
+    audit::commit_critical(tx, &decision_event(c, auth.org_id, &decided, "approve")).await?;
 
     // Step 2: execute. The row is durably `approved`, so a crash here stays visible.
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;

@@ -10,10 +10,10 @@ use crate::domains::connectors::ops::{self, CORRELATED_WAIT, NewOp};
 use crate::http::auth::Caller;
 use crate::http::pagination::{Page, Pagination};
 use aurora_core::{ApiError, FieldError, Secret};
+use aurora_db::conflict_code;
 use aurora_db::repo::channel_integrations::{self as repo, IntegrationRow, NewIntegration};
 use aurora_db::repo::channel_ops;
 use aurora_db::repo::connectors;
-use aurora_db::{DbError, conflict_code};
 use aurora_protocol::connector::CredentialsValidateResult;
 use aurora_secrets::{SecretRef, ValueSource};
 use serde_json::{Value, json};
@@ -109,21 +109,22 @@ fn check_autolink(config: &Value, manifest: Option<&Value>) -> Result<(), ApiErr
     Ok(())
 }
 
-fn audit_autolink(s: &AppState, c: &Caller, org: Uuid, id: Uuid, was: bool, now: bool) {
+/// The `autolink_enable` / `autolink_disable` event when the flag changed (security-critical,
+/// RFE-008: committed with the change that flipped it).
+fn autolink_event(c: &Caller, org: Uuid, id: Uuid, was: bool, now: bool) -> Option<AuditEvent> {
     if was == now {
-        return;
+        return None;
     }
     let action = if now {
         "channel_integration.autolink_enable"
     } else {
         "channel_integration.autolink_disable"
     };
-    audit::record(
-        s,
+    Some(
         AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
             .org(org)
             .target("channel_integration", id),
-    );
+    )
 }
 
 /// `config` + the narrowing the connector reported (only capabilities the manifest enables
@@ -292,8 +293,17 @@ pub async fn create(
         return Err(e);
     }
     let shared = shared_bot_json(&res);
+    // RFE-008: activating the integration and its audit rows are one transaction; if they
+    // cannot be written the half-created integration is removed again.
+    let mut tx = match audit::begin(s).await {
+        Ok(tx) => tx,
+        Err(e) => {
+            remove_failed(s, &row).await;
+            return Err(e);
+        }
+    };
     if let Err(e) = repo::complete_validation(
-        &s.pool,
+        &mut *tx,
         id,
         &res.tenant_ref,
         &res.tenant_label,
@@ -308,11 +318,7 @@ pub async fn create(
             &[(TENANT_CONSTRAINT, "tenant_already_bound")],
         ));
     }
-    let row = repo::get(&s.pool, id)
-        .await?
-        .ok_or_else(|| ApiError::internal("Integration vanished."))?;
-    audit::record(
-        s,
+    let mut events = vec![
         AuditEvent::new(
             AuditActor::from_caller(c),
             "channel_integration.create",
@@ -320,9 +326,16 @@ pub async fn create(
         )
         .org(org)
         .target("channel_integration", id)
-        .metadata(json!({"connector_id": row.connector_id, "tenant_ref": row.tenant_ref})),
-    );
-    audit_autolink(s, c, org, id, false, autolink_on(&row.config));
+        .metadata(json!({"connector_id": row.connector_id, "tenant_ref": res.tenant_ref})),
+    ];
+    events.extend(autolink_event(c, org, id, false, autolink_on(&new_config)));
+    if let Err(e) = audit::commit_critical_many(tx, &events).await {
+        remove_failed(s, &row).await;
+        return Err(e);
+    }
+    let row = repo::get(&s.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::internal("Integration vanished."))?;
     Ok(view(&row))
 }
 
@@ -352,6 +365,10 @@ pub async fn patch(
         ));
     }
 
+    // The transaction opens after the (network) re-validation, never across it.
+    let mut open_tx: Option<audit::Tx> = None;
+    let mut autolink_now = autolink_on(&row.config);
+    let mut replaced: Option<(Option<String>, Option<String>)> = None;
     if new_config.is_some() || new_creds.is_some() {
         let connector = connectors::get(&s.pool, &row.connector_id)
             .await?
@@ -385,50 +402,83 @@ pub async fn patch(
             None => None,
         };
         let col = sealed.as_ref().map(SecretRef::to_column);
+        autolink_now = autolink_on(&config);
+        let mut t = match audit::begin(s).await {
+            Ok(t) => t,
+            Err(e) => {
+                if let Some(new) = &col {
+                    discard(s, row.org_id, row.id, false, new).await;
+                }
+                return Err(e);
+            }
+        };
         let old = repo::replace_settings(
-            &s.pool,
+            &mut *t,
             row.id,
             &res.tenant_label,
             &config,
             shared.as_ref(),
             col.as_deref(),
         )
-        .await?;
-        if let (Some(old), Some(_)) = (old, &col) {
-            discard(s, row.org_id, row.id, false, &old).await;
+        .await;
+        match old {
+            Ok(old) => {
+                replaced = Some((old, col));
+                open_tx = Some(t);
+            }
+            Err(e) => {
+                if let Some(new) = &col {
+                    discard(s, row.org_id, row.id, false, new).await;
+                }
+                return Err(e.into());
+            }
         }
     }
-    if let Some(st) = req.status {
-        repo::set_status(&s.pool, row.id, st.as_str(), None).await?;
+    let new_ref = replaced.as_ref().and_then(|(_, n)| n.clone());
+    let mut tx = match open_tx {
+        Some(t) => t,
+        None => audit::begin(s).await?,
+    };
+    let finish = async {
+        if let Some(st) = req.status {
+            repo::set_status(&mut *tx, row.id, st.as_str(), None).await?;
+        }
+        presences::bump_integration_agents(&mut tx, row.id).await?;
+        // RFE-008: the update and its audit rows commit together.
+        let mut events = vec![
+            AuditEvent::new(
+                AuditActor::from_caller(c),
+                "channel_integration.update",
+                Outcome::Success,
+            )
+            .org(row.org_id)
+            .target("channel_integration", row.id)
+            .metadata(json!({
+                "config": req.config.is_some(),
+                "credentials": req.credentials.is_some(),
+                "status": req.status.map(SettableStatus::as_str),
+            })),
+        ];
+        events.extend(autolink_event(
+            c,
+            row.org_id,
+            row.id,
+            autolink_on(&row.config),
+            autolink_now,
+        ));
+        audit::commit_critical_many(tx, &events).await
     }
-    let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
-    presences::bump_integration_agents(&mut conn, row.id).await?;
-    drop(conn);
-    audit::record(
-        s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "channel_integration.update",
-            Outcome::Success,
-        )
-        .org(row.org_id)
-        .target("channel_integration", row.id)
-        .metadata(json!({
-            "config": req.config.is_some(),
-            "credentials": req.credentials.is_some(),
-            "status": req.status.map(SettableStatus::as_str),
-        })),
-    );
-    let updated = get_row(s, row.id).await?;
-    audit_autolink(
-        s,
-        c,
-        row.org_id,
-        row.id,
-        autolink_on(&row.config),
-        autolink_on(&updated.config),
-    );
-    Ok(updated)
+    .await;
+    if let Err(e) = finish {
+        if let Some(new) = &new_ref {
+            discard(s, row.org_id, row.id, false, new).await;
+        }
+        return Err(e);
+    }
+    if let Some((Some(old), Some(_))) = &replaced {
+        discard(s, row.org_id, row.id, false, old).await;
+    }
+    get_row(s, row.id).await
 }
 
 async fn get_row(s: &AppState, id: Uuid) -> Result<ChannelIntegration, ApiError> {
@@ -443,7 +493,7 @@ async fn get_row(s: &AppState, id: Uuid) -> Result<ChannelIntegration, ApiError>
 pub async fn delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> {
     let row = load_admin(s, c, id).await?;
     let refs = repo::sealed_refs(&s.pool, id).await?;
-    let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+    let mut tx = audit::begin(s).await?;
     // Serialize with concurrent presence changes.
     repo::get_for_update(&mut tx, id)
         .await?
@@ -451,22 +501,19 @@ pub async fn delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> 
     presences::enqueue_deprovision_for_integration(&mut tx, id).await?;
     presences::bump_integration_agents(&mut tx, id).await?;
     repo::delete(&mut *tx, id).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    let ev = AuditEvent::new(
+        AuditActor::from_caller(c),
+        "channel_integration.delete",
+        Outcome::Success,
+    )
+    .org(row.org_id)
+    .target("channel_integration", id);
+    audit::commit_critical(tx, &ev).await?;
     for (presence, sealed) in refs {
         match presence {
             Some(p) => discard(s, row.org_id, p, true, &sealed).await,
             None => discard(s, row.org_id, id, false, &sealed).await,
         }
     }
-    audit::record(
-        s,
-        AuditEvent::new(
-            AuditActor::from_caller(c),
-            "channel_integration.delete",
-            Outcome::Success,
-        )
-        .org(row.org_id)
-        .target("channel_integration", id),
-    );
     Ok(())
 }

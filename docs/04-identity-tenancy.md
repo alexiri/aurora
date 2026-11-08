@@ -514,15 +514,29 @@ role change. From phase 2 actions are classified:
 - **Security-critical**: the audit row is written **in the same database
   transaction as the change** (same `Transaction`, committed or rolled back
   together). If the audit insert fails, the whole action fails and nothing is
-  changed (503 `audit_unavailable`, fail closed). The repository functions that
-  perform a critical mutation *require* the audit entry as an argument, so a
-  critical change without its row does not compile.
+  changed (503 `audit_unavailable`, fail closed). The service function that owns a
+  critical change commits it only through `audit::commit_critical` (which writes
+  the row with `insert_tx`); the audit coverage test scans the sources, so a
+  critical action written through the best-effort writer or outside a
+  transactional writer fails the build's tests (D-83).
 - **Best-effort** (everything else): written after the change, failures logged and
   counted (`aurora_audit_dropped_total`), never failing the action — as in phase 0.
 
 **The security-critical set** (defined once as `SECURITY_CRITICAL_ACTIONS` in
 `aurora-core` and listed here; `audit_log.critical` is set for these rows,
-`03 §Planned changes`):
+`03 §audit_log`). The table names the actions descriptively; the emitted action
+strings are the ones the API already used and are listed in `SECURITY_CRITICAL_ACTIONS`
+(D-83): `grant.put\|delete` is emitted as `grant.create\|delete`, `org_member.*` as
+`member.add\|update\|remove` (role changes and ownership hand-over are `member.update`),
+`workspace_access.put\|delete` as `workspace_access.set\|remove`, `runner.*` as
+`admin.runner_create\|rotate\|delete`, `connector.*` as `admin.connector_create\|rotate\|approve\|delete`,
+`secret.value_replace` as `secret.value_update`, `trusted_key.add\|remove` as `trusted_key.create\|revoke`,
+`reach.decide` as `reach_grant.decide`, `agent_link.decide` as `agent_link.policy`,
+`app_availability.update` as `org.app_availability.update`, `host_claim.decide` as
+`plugin.host_claim.decide`, `user.instance_admin_grant\|revoke` and `user.disable\|enable` as
+`admin.user_update`, `approval.batch_decide` as one `approval.decide` row per approval
+(`batch: true`); also critical: `invitation.accept` (including first sign-in),
+`connection.reconnect`, `cli_login.consume`, `member.add` (SSO provisioning):
 
 | Area | Actions |
 |------|---------|

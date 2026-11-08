@@ -1,8 +1,11 @@
-//! Best-effort audit trail (docs/04 §Audit). Never fails the action; `metadata`
-//! must never contain secrets, tokens or credential JSON.
+//! Audit trail (docs/04 §Audit). Two classes (RFE-008, D-52): the security-critical set is
+//! written in the change's transaction with [`commit_critical`] and fails the action when the row
+//! cannot be written; everything else uses [`record`] (best-effort). `metadata` must never
+//! contain secrets, tokens or credential JSON.
 
 use crate::app::AppState;
 use crate::http::auth::{Caller, KeyKind, Principal};
+use aurora_core::ApiError;
 use aurora_db::repo::audit::{self, NewAudit};
 use serde_json::{Value, json};
 use std::net::IpAddr;
@@ -159,12 +162,59 @@ fn new_audit(ev: &AuditEvent) -> NewAudit<'_> {
     }
 }
 
-/// Fire-and-forget audit write; failures are logged, never propagated.
+/// The 503 a critical action returns when its audit row cannot be written ("no audit, no
+/// change", docs/04 §Audit).
+pub fn unavailable() -> ApiError {
+    ApiError::unavailable("audit_unavailable", "The audit log is unavailable.")
+}
+
+/// A transaction that carries a security-critical change. Finish it with [`commit_critical`].
+pub type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
+/// Begin the transaction of a security-critical action.
+pub async fn begin(state: &AppState) -> Result<Tx, ApiError> {
+    Ok(state.pool.begin().await.map_err(aurora_db::DbError::from)?)
+}
+
+/// Write the critical audit row inside `tx` and commit both. A failed audit insert drops (rolls
+/// back) the transaction and returns 503 `audit_unavailable`: the change does not happen.
+/// This is the only way critical handlers commit; the coverage test (`tests/it/audit_atomic.rs`)
+/// proves each listed action goes through it.
+pub async fn commit_critical(tx: Tx, ev: &AuditEvent) -> Result<(), ApiError> {
+    commit_critical_many(tx, std::slice::from_ref(ev)).await
+}
+
+/// [`commit_critical`] for a change that is audited as several rows (e.g. a batch decision).
+pub async fn commit_critical_many(mut tx: Tx, evs: &[AuditEvent]) -> Result<(), ApiError> {
+    for ev in evs {
+        debug_assert!(
+            ev.outcome != Outcome::Success || aurora_core::audit::is_critical(&ev.action),
+            "{} is not in SECURITY_CRITICAL_ACTIONS",
+            ev.action
+        );
+        if let Err(e) = insert_tx(&mut tx, ev).await {
+            tracing::error!(error = %e, action = %ev.action, "critical audit write failed");
+            metrics::counter!("aurora_audit_critical_failed_total").increment(1);
+            return Err(unavailable());
+        }
+    }
+    tx.commit().await.map_err(aurora_db::DbError::from)?;
+    Ok(())
+}
+
+/// Fire-and-forget audit write for the best-effort class; failures are logged and counted,
+/// never propagated. Security-critical successes must use [`commit_critical`] instead.
 pub fn record(state: &AppState, ev: AuditEvent) {
+    debug_assert!(
+        ev.outcome != Outcome::Success || !aurora_core::audit::is_critical(&ev.action),
+        "{} is security-critical: write it with audit::commit_critical",
+        ev.action
+    );
     let state = state.clone();
     tokio::spawn(async move {
         if let Err(e) = insert(&state, &ev).await {
             tracing::error!(error = %e, action = %ev.action, "audit write failed");
+            metrics::counter!("aurora_audit_dropped_total").increment(1);
         }
     });
 }

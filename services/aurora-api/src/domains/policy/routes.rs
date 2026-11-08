@@ -47,7 +47,7 @@ async fn org_scope(caller: &Caller, state: &AppState, org: Uuid) -> Result<Scope
     Ok(Scope { org, ws: None })
 }
 
-fn record(state: &AppState, caller: &Caller, action: &str, s: Scope, meta: Value) {
+fn event(caller: &Caller, action: &str, s: Scope, meta: Value) -> AuditEvent {
     let (kind, id) = match s.ws {
         Some(w) => ("workspace", w),
         None => ("organization", s.org),
@@ -59,7 +59,11 @@ fn record(state: &AppState, caller: &Caller, action: &str, s: Scope, meta: Value
     if let Some(w) = s.ws {
         ev = ev.workspace(w);
     }
-    audit::record(state, ev);
+    ev
+}
+
+fn record(state: &AppState, caller: &Caller, action: &str, s: Scope, meta: Value) {
+    audit::record(state, event(caller, action, s, meta));
 }
 
 async fn do_put(
@@ -90,10 +94,8 @@ async fn do_publish(
         Source::Draft { revision } => ("policy.publish", json!({"revision": revision})),
         Source::Generation { number } => ("policy.rollback", json!({"from_generation": number})),
     };
-    let number = service::publish(state, s, caller.user_id, source).await?;
-    let mut meta = meta;
-    meta["generation"] = json!(number);
-    record(state, caller, action, s, meta);
+    let ev = event(caller, action, s, meta);
+    service::publish(state, s, caller.user_id, source, ev).await?;
     Ok(Json(service::document(state, s).await?))
 }
 

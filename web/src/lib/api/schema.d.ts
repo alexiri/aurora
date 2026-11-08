@@ -3849,6 +3849,8 @@ export interface components {
             actor_label: string;
             /** Format: date-time */
             created_at: string;
+            /** @description Row of the security-critical set (`04 §Audit`), written atomically with its change. */
+            critical: boolean;
             /** Format: uuid */
             id: string;
             ip?: string | null;
@@ -5382,6 +5384,8 @@ export interface components {
                 actor_label: string;
                 /** Format: date-time */
                 created_at: string;
+                /** @description Row of the security-critical set (`04 §Audit`), written atomically with its change. */
+                critical: boolean;
                 /** Format: uuid */
                 id: string;
                 ip?: string | null;
@@ -13773,6 +13777,8 @@ export interface operations {
                 /** @description Exact action, e.g. `org.create`. */
                 action?: string;
                 actor_id?: string;
+                /** @description `true` lists only the security-critical set; `false` or absent lists everything. */
+                critical?: boolean;
             };
             header?: never;
             path: {
@@ -17513,6 +17519,8 @@ export interface operations {
                 /** @description Exact action, e.g. `org.create`. */
                 action?: string;
                 actor_id?: string;
+                /** @description `true` lists only the security-critical set; `false` or absent lists everything. */
+                critical?: boolean;
             };
             header?: never;
             path: {
