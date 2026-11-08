@@ -41,6 +41,8 @@ export function uploadErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 413 || err.code === "payload_too_large") return "That file is too large to attach (limit 10 MiB).";
     if (err.code === "too_many_attachments") return ATTACH_MAX_PER_MESSAGE_HINT;
+    if (err.code === "attachment_quota_exceeded")
+      return "Your organization's attachment storage is full. Ask an organization admin to free up space (Storage page) or raise the limit.";
     return err.message || "Upload failed.";
   }
   return "Upload failed. Check your connection and try again.";

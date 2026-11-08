@@ -17,7 +17,7 @@ use super::auth::ConnectorCtx;
 use super::ops::require_active;
 use crate::app::AppState;
 use crate::domains::attachments::{
-    blob, service::sanitize_content_type, service::sanitize_filename,
+    blob, quota, service::sanitize_content_type, service::sanitize_filename,
 };
 use crate::http::json::{Json, Path};
 use aurora_core::ApiError;
@@ -121,6 +121,15 @@ async fn put_file(
     );
     let sha = format!("{:x}", Sha256::digest(&bytes));
 
+    // Org storage quota (RFE-015): cheap check before the bytes are written; `store_once`
+    // decides under the org's counter lock. The inbox marks the file `failed` /
+    // `quota_exceeded` and tells the person.
+    quota::precheck(
+        &s,
+        conv.workspace_id,
+        i64::try_from(bytes.len()).unwrap_or(i64::MAX),
+    )
+    .await?;
     let (backend, store) = blob::current(&s.pool);
     let key = blob::new_key();
     store.put(&key, &bytes).await?;
@@ -203,6 +212,7 @@ async fn store_once(
             ))
         }));
     }
+    quota::reserve(s, &mut tx, new.workspace_id, new.size_bytes).await?;
     match attachments::insert(&mut *tx, new).await {
         Ok(_) => {}
         Err(DbError::ForeignKeyViolation { .. }) => {

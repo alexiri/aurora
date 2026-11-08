@@ -315,6 +315,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Instance storage breakdown (phase 2, RFE-015; instance administrators). */
+        get: operations["adminStorage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/trusted-keys": {
         parameters: {
             query?: never;
@@ -1101,6 +1118,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/attachments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Purge the file's bytes now (phase 2, RFE-015). The row stays, so the transcript chip shows
+         *     "expired"; downloads then answer 410. The uploader or a workspace owner.
+         */
+        delete: operations["deleteAttachment"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/attachments/{id}/content": {
         parameters: {
             query?: never;
@@ -1172,6 +1209,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sign in with email and password; sets the session cookie. */
+        post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/logout": {
         parameters: {
             query?: never;
@@ -1226,6 +1280,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/password/change": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change the password (session only). */
+        post: operations["changePassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/password/forgot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request a password-reset email (always 202). */
+        post: operations["forgotPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/password/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set a new password with a reset token; revokes all sessions. */
+        post: operations["resetPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/sessions/revoke-others": {
         parameters: {
             query?: never;
@@ -1237,6 +1342,57 @@ export interface paths {
         put?: never;
         /** Revoke all other sessions of the caller (session only). */
         post: operations["revokeOtherSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create an account (and, in `open` mode, its organization); sets the session cookie. */
+        post: operations["signup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/verify-email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Consume an email-verification token. */
+        post: operations["verifyEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/verify-email/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send a fresh verification email to the signed-in user. */
+        post: operations["resendVerification"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1381,6 +1537,24 @@ export interface paths {
         get: operations["getConversation"];
         put?: never;
         post?: never;
+        /** Permanently delete a conversation with its transcript, attachments and harness session files. */
+        delete: operations["deleteConversation"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive a conversation (hidden from default lists; a person message unarchives). */
+        post: operations["archiveConversation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1441,6 +1615,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations/{id}/events/{seq}/redact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Redact one transcript event in place (irreversible, audited). */
+        post: operations["redactConversationEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export a conversation as `aurora.conversation.v1` JSON (or a zip with the attachment files). */
+        get: operations["exportConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/conversations/{id}/messages": {
         parameters: {
             query?: never;
@@ -1473,6 +1681,23 @@ export interface paths {
         get: operations["streamConversation"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}/unarchive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Unarchive a conversation. */
+        post: operations["unarchiveConversation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1626,7 +1851,7 @@ export interface paths {
         get: operations["getMe"];
         put?: never;
         post?: never;
-        /** Delete the caller's own account (needs a recent OIDC re-authentication, else 412 `reauth_required`). */
+        /** Delete the caller's own account. */
         delete: operations["deleteMe"];
         options?: never;
         head?: never;
@@ -2097,6 +2322,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{org}/retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The organization's conversation retention window (org `owner`/`admin`). */
+        get: operations["getOrgRetention"];
+        /** Set or clear the conversation retention window (org `owner`/`admin`, audited). */
+        put: operations["putOrgRetention"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/secrets": {
         parameters: {
             query?: never;
@@ -2130,6 +2373,26 @@ export interface paths {
         put?: never;
         /** Create an organization-tier skill (owner/admin); 409 `skill_exists`. */
         post: operations["createOrgSkill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Attachment storage of an organization: usage vs quota, retention and the breakdown by
+         *     workspace and direction (phase 2, RFE-015; org `owner`/`admin`).
+         */
+        get: operations["getOrgStorage"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2506,6 +2769,23 @@ export interface paths {
         put?: never;
         /** Abort a turn (queued turns end immediately). */
         post: operations["abortTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/turns/{id}/redact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Redact every event of a turn (irreversible, audited). */
+        post: operations["redactTurn"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3066,6 +3346,45 @@ export interface components {
         ActionDecisionBody: {
             decision: components["schemas"]["ActionDecision"];
         };
+        /** @description Attachment bytes of one org in the instance breakdown. */
+        AdminOrgStorage: {
+            /** Format: int64 */
+            attachment_bytes: number;
+            /** Format: int64 */
+            files: number;
+            name: string;
+            /** Format: uuid */
+            org_id: string;
+            /**
+             * Format: int64
+             * @description Quota in force; null = unlimited.
+             */
+            quota_bytes?: number | null;
+            slug: string;
+        };
+        /** @description `GET /admin/storage` (API_CONTRACTS C-172). */
+        AdminStorage: {
+            /**
+             * Format: int64
+             * @description Sum of the org counters.
+             */
+            attachment_bytes: number;
+            /** Format: int64 */
+            attachment_files: number;
+            /**
+             * Format: int64
+             * @description Bytes held by the blob backend (`blobs`).
+             */
+            blob_bytes: number;
+            /** Format: int64 */
+            blob_count: number;
+            /** @description Top 50 orgs by attachment bytes. */
+            orgs: components["schemas"]["AdminOrgStorage"][];
+            /** Format: int64 */
+            purged_files: number;
+            /** @description `blobs`, `attachments`, `transcript_events`, `request_log`, `audit_log`. */
+            tables: components["schemas"]["TableSize"][];
+        };
         AdminUser: components["schemas"]["User"] & {
             /** Format: date-time */
             disabled_at?: string | null;
@@ -3361,6 +3680,10 @@ export interface components {
             /** Format: int64 */
             reassigned: number;
         };
+        ChangePasswordRequest: {
+            current_password: string;
+            new_password: string;
+        };
         ChannelIntegration: {
             /**
              * @description Connector configuration without credentials; `_capabilities` holds the narrowing
@@ -3619,6 +3942,11 @@ export interface components {
              * @description Consecutive bot/agent turns since the last person-authored turn or `continue` (C-27).
              */
             app_turn_streak: number;
+            /**
+             * Format: date-time
+             * @description (phase 2, RFE-010) set while the conversation is archived (hidden from default lists).
+             */
+            archived_at?: string | null;
             /** Format: date-time */
             created_at: string;
             direct_user?: null | components["schemas"]["DirectUser"];
@@ -3799,6 +4127,10 @@ export interface components {
         };
         /** @enum {string} */
         DefaultAction: "none" | "allow" | "block";
+        DeleteMeRequest: {
+            /** @description Required for accounts that have a password. */
+            password?: string | null;
+        };
         /** @description The person a `direct` conversation belongs to (phase 1, RFE-009). */
         DirectUser: {
             display_name: string;
@@ -3917,6 +4249,9 @@ export interface components {
             /** @description `joining` | `joined` | `promoted` */
             status: string;
             text: string;
+        };
+        ForgotRequest: {
+            email: string;
         };
         FormField: {
             help_url?: string | null;
@@ -4153,6 +4488,10 @@ export interface components {
             /** @description Defaults to `api_key`. */
             auth_mode?: string | null;
             endpoint_id: string;
+        };
+        LoginRequest: {
+            email: string;
+            password: string;
         };
         Me: {
             /** Format: uuid */
@@ -4427,6 +4766,44 @@ export interface components {
             max_members?: number | null;
             members_can_create_workspaces?: boolean | null;
         };
+        /** @description `GET /orgs/{org}/storage` (API_CONTRACTS C-171). */
+        OrgStorage: {
+            /**
+             * Format: int64
+             * @description The org's attachment retention window; null = keep forever.
+             */
+            attachments_days?: number | null;
+            /**
+             * Format: int64
+             * @description The window in force (after the instance maximum).
+             */
+            attachments_days_effective?: number | null;
+            by_workspace: components["schemas"]["WorkspaceStorage"][];
+            /**
+             * Format: int64
+             * @description Files that hold bytes.
+             */
+            files: number;
+            /** @description `clear` (< 80 %) | `warning` (≥ 80 %) | `full` (≥ 100 %). */
+            notice: string;
+            /** Format: uuid */
+            org_id: string;
+            /**
+             * Format: int64
+             * @description Files whose bytes were purged (the rows remain).
+             */
+            purged_files: number;
+            /**
+             * Format: int64
+             * @description Quota in force; null = unlimited.
+             */
+            quota_bytes?: number | null;
+            /**
+             * Format: int64
+             * @description Counter of non-purged attachment bytes.
+             */
+            used_bytes: number;
+        };
         OrgSummary: {
             /** Format: uuid */
             id: string;
@@ -4695,6 +5072,11 @@ export interface components {
                  * @description Consecutive bot/agent turns since the last person-authored turn or `continue` (C-27).
                  */
                 app_turn_streak: number;
+                /**
+                 * Format: date-time
+                 * @description (phase 2, RFE-010) set while the conversation is archived (hidden from default lists).
+                 */
+                archived_at?: string | null;
                 /** Format: date-time */
                 created_at: string;
                 direct_user?: null | components["schemas"]["DirectUser"];
@@ -5524,6 +5906,23 @@ export interface components {
             description?: string | null;
             title?: string | null;
         };
+        PutRetention: {
+            /**
+             * Format: int64
+             * @description (phase 2, RFE-015) MiB, `0` = unlimited; absent = unchanged, `null` = the instance default.
+             */
+            attachment_quota_mib?: number | null;
+            /**
+             * Format: int64
+             * @description (phase 2, RFE-015) Absent = unchanged, `null` = keep forever.
+             */
+            attachments_days?: number | null;
+            /**
+             * Format: int64
+             * @description Absent = unchanged, `null` = none.
+             */
+            conversations_days?: number | null;
+        };
         RateLimit: {
             /** Format: int32 */
             count: number;
@@ -5576,6 +5975,20 @@ export interface components {
             fields?: {
                 [key: string]: string;
             } | null;
+        };
+        /** @description (phase 2, RFE-010) `POST .../redact` body. */
+        RedactRequest: {
+            /** @description Why the content is removed (max 500 characters); recorded in the audit row. */
+            reason?: string | null;
+            /** @description Also start a fresh harness session on the next turn (the agent forgets the conversation). */
+            reset_session?: boolean;
+        };
+        /** @description (phase 2, RFE-010) Result of a redaction. */
+        RedactResult: {
+            /** @description Sequence numbers whose payload was replaced by this call (empty when already redacted). */
+            redacted_seqs: number[];
+            /** @description A session reset was queued. */
+            session_reset: boolean;
         };
         Replica: {
             advertised_host: string;
@@ -5640,6 +6053,10 @@ export interface components {
             /** Format: int32 */
             upstream_status?: number | null;
         };
+        ResetRequest: {
+            password: string;
+            token: string;
+        };
         ResolveResponse: {
             org: components["schemas"]["OrgSummary"];
             workspace?: null | components["schemas"]["ResolvedWorkspace"];
@@ -5653,6 +6070,45 @@ export interface components {
         RestoreMemoryRequest: {
             /** Format: int32 */
             revision: number;
+        };
+        /** @description (phase 2, RFE-010) `GET/PUT /orgs/{org}/retention`. */
+        Retention: {
+            /**
+             * Format: int64
+             * @description The org's own attachment quota in MiB (`0` = unlimited); null = the instance default.
+             */
+            attachment_quota_mib?: number | null;
+            /**
+             * Format: int64
+             * @description The quota in force in MiB after the instance default and ceiling; null = unlimited.
+             */
+            attachment_quota_mib_effective?: number | null;
+            /**
+             * Format: int64
+             * @description The instance ceiling of the quota in MiB (`attachments.org_quota_mib_max`); null = none.
+             */
+            attachment_quota_mib_max?: number | null;
+            /**
+             * Format: int64
+             * @description (phase 2, RFE-015) Purge attachment bytes older than this many days (7..=3650); null =
+             *     keep forever.
+             */
+            attachments_days?: number | null;
+            /**
+             * Format: int64
+             * @description The instance maximum of `attachments_days` (`attachments.days_max`), when configured.
+             */
+            attachments_days_max?: number | null;
+            /**
+             * Format: int64
+             * @description Delete conversations idle for this many days (7..=3650); null = keep forever.
+             */
+            conversations_days?: number | null;
+            /**
+             * Format: int64
+             * @description The instance maximum, when one is configured.
+             */
+            conversations_days_max?: number | null;
         };
         RevokedResponse: {
             /** Format: int64 */
@@ -5924,6 +6380,12 @@ export interface components {
             equals: string;
             field: string;
         };
+        SignupRequest: {
+            display_name: string;
+            email: string;
+            invitation_token?: string | null;
+            password: string;
+        };
         SimCandidate: {
             /** Format: uuid */
             id: string;
@@ -6063,6 +6525,12 @@ export interface components {
         SummaryField: {
             label: string;
             value: string;
+        };
+        /** @description On-disk size of one big table (with indexes and TOAST). */
+        TableSize: {
+            /** Format: int64 */
+            bytes: number;
+            table: string;
         };
         /** @description Rule target (I-12: tagged with `type`). */
         Target: {
@@ -6261,6 +6729,9 @@ export interface components {
             /** Format: uuid */
             id: string;
         };
+        UserResponse: {
+            user: components["schemas"]["User"];
+        };
         /** @description Write-only verification settings. */
         VerificationInput: {
             /** @description Header carrying the signature/token (defaults: `X-Signature`, `Authorization`). */
@@ -6275,6 +6746,9 @@ export interface components {
             header?: string | null;
             /** @description `none` | `hmac_sha256` | `bearer`. */
             kind: string;
+        };
+        VerifyEmailRequest: {
+            token: string;
         };
         VerifyResult: {
             origin: components["schemas"]["StoredOrigin"];
@@ -6356,6 +6830,19 @@ export interface components {
         };
         /** @enum {string} */
         WorkspaceRole: "owner" | "approver" | "member";
+        /** @description Attachment bytes of one workspace in one direction. */
+        WorkspaceStorage: {
+            /** Format: int64 */
+            bytes: number;
+            /** @description `in` (people -> agent) | `out` (agent -> people) */
+            direction: string;
+            /** Format: int64 */
+            files: number;
+            /** Format: uuid */
+            workspace_id: string;
+            workspace_name: string;
+            workspace_slug: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -7369,6 +7856,33 @@ export interface operations {
             };
         };
     };
+    adminStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminStorage"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminListTrustedKeys: {
         parameters: {
             query?: {
@@ -7980,6 +8494,8 @@ export interface operations {
         parameters: {
             query?: {
                 kind?: string;
+                /** @description (phase 2, RFE-010) `true` lists archived conversations; default `false` hides them. */
+                archived?: boolean;
                 limit?: number;
                 cursor?: string;
             };
@@ -9759,6 +10275,43 @@ export interface operations {
             };
         };
     };
+    deleteAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Attachment id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted (idempotent) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     downloadAttachment: {
         parameters: {
             query?: never;
@@ -9781,6 +10334,15 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description attachment_purged */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9898,6 +10460,53 @@ export interface operations {
             };
         };
     };
+    login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     logout: {
         parameters: {
             query?: never;
@@ -9955,14 +10564,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
         };
     };
     oidcStart: {
@@ -9970,10 +10571,6 @@ export interface operations {
             query?: {
                 /** @description Same-origin path to return to after sign-in (default `/`). */
                 return_to?: string;
-                /** @description `1` = re-authenticate the signed-in user (`prompt=login&max_age=0`); needs a session. */
-                reauth?: string;
-                /** @description Passed to the provider as `login_hint` (the development IdP signs that user in). */
-                login_hint?: string;
             };
             header?: never;
             path: {
@@ -9999,6 +10596,52 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    changePassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangePasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Password changed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -10007,13 +10650,35 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            404: {
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
+            };
+        };
+    };
+    forgotPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForgotRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             429: {
                 headers: {
@@ -10023,7 +10688,29 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            502: {
+        };
+    };
+    resetPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Password changed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10051,6 +10738,126 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    signup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignupRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    verifyEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifyEmailRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    resendVerification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10620,6 +11427,90 @@ export interface operations {
             };
         };
     };
+    deleteConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description conversation_active */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    archiveConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     uploadAttachment: {
         parameters: {
             query?: never;
@@ -10661,6 +11552,15 @@ export interface operations {
                 };
             };
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description attachment_quota_exceeded */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10726,6 +11626,117 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    redactConversationEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+                /** @description Event seq */
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RedactRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedactResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    exportConversation: {
+        parameters: {
+            query?: {
+                /** @description Export events with `seq` greater than this (paging past `export_too_large`). */
+                after_seq?: number;
+                /** @description `none` (default) or `zip` (JSON plus the attachment files). */
+                attachments?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description application/json, or application/zip with attachments=zip */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description export_too_large */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10814,6 +11825,44 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": components["schemas"]["TranscriptEvent"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    unarchiveConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             404: {
@@ -11174,7 +12223,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteMeRequest"];
+            };
+        };
         responses: {
             /** @description Deleted */
             204: {
@@ -11192,14 +12245,6 @@ export interface operations {
                 };
             };
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            412: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12980,6 +14025,103 @@ export interface operations {
             };
         };
     };
+    getOrgRetention: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Retention"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    putOrgRetention: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutRetention"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Retention"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description retention_invalid | retention_above_instance_maximum */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listOrgSecrets: {
         parameters: {
             query?: {
@@ -13188,6 +14330,44 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getOrgStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgStorage"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14483,6 +15663,56 @@ export interface operations {
             };
             /** @description turn_finished */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    redactTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Turn id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RedactRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedactResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

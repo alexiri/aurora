@@ -4,6 +4,7 @@ use super::speaker::{self, Speaker};
 use super::{Retry, ignored, outcome, send};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::domains::attachments::quota;
 use crate::domains::channels::card_requests::{DmDefaultChoose, ReachDecide, card_requests};
 use crate::domains::connectors::inbox::InboxError;
 use crate::domains::connectors::ops::{self, CORRELATED_WAIT, CorrelatedError, NewOp};
@@ -234,6 +235,7 @@ pub(super) async fn handle(state: &AppState, row: &InboxRow) -> Result<Value, In
             &routed,
             &m,
             conversation.id,
+            agent.workspace_id,
             &mut attachment_ids,
             &mut failed_files,
         )
@@ -321,6 +323,24 @@ pub(super) async fn handle(state: &AppState, row: &InboxRow) -> Result<Value, In
         .retry()?;
     if capped {
         return Ok(outcome("app_turn_cap"));
+    }
+
+    // (phase 2, RFE-015) The person is told in platform voice when a file was refused for the
+    // org's storage quota; the turn still runs.
+    if !already && failed_files.iter().any(|f| f.3 == quota::FAILURE_REASON) {
+        send::say(
+            &mut conn,
+            &ctx,
+            &routed.sender,
+            &m.space.reference,
+            reply_thread,
+            "Your organization's attachment storage is full, so a file you sent could not be \
+             saved. The agent still received your message. Ask an organization admin to free \
+             up space or raise the limit.",
+            format!("attachment-quota:{}", row.event_id),
+        )
+        .await
+        .retry()?;
     }
 
     // 11. Receipt.
@@ -813,12 +833,14 @@ async fn fetch_context(
 
 type FailedFile = (String, String, i64, String);
 
+#[allow(clippy::too_many_arguments)]
 async fn fetch_files(
     state: &AppState,
     ctx: &send::Ctx,
     r: &Routed,
     m: &MessagePosted,
     conversation: Uuid,
+    workspace: Uuid,
     bound: &mut Vec<Uuid>,
     failed: &mut Vec<FailedFile>,
 ) -> Result<(), InboxError> {
@@ -849,6 +871,17 @@ async fn fetch_files(
             failed.push(fail("too_large"));
             continue;
         }
+        // Org attachment quota (RFE-015): the declared size is checked before the fetch; the
+        // upload route re-checks authoritatively and a refusal there is classified below.
+        let declared = i64::try_from(f.size).unwrap_or(i64::MAX);
+        if quota::would_exceed(state, workspace, declared)
+            .await
+            .retry()?
+        {
+            metrics::counter!("aurora_attachment_quota_rejections_total").increment(1);
+            failed.push(fail(quota::FAILURE_REASON));
+            continue;
+        }
         let res = ops::call_correlated(
             state,
             NewOp {
@@ -875,8 +908,14 @@ async fn fetch_files(
                 return Err(InboxError::Retry("connector_unavailable".into()));
             }
             Err(CorrelatedError::Failed { code, .. }) => {
+                // A refused upload (`attachment_quota_exceeded`, a race with other writers)
+                // reaches the connector as an ordinary failure: tell it apart by asking again.
+                let over = code != "too_large"
+                    && quota::would_exceed(state, workspace, 1).await.retry()?;
                 failed.push(fail(if code == "too_large" {
                     "too_large"
+                } else if over {
+                    quota::FAILURE_REASON
                 } else {
                     "fetch_failed"
                 }));

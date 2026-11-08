@@ -9,7 +9,7 @@ use super::service::{self, load_conversation_auth, speaker_label};
 use super::zip::{self, ZipWriter};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
-use crate::domains::attachments::blob;
+use crate::domains::attachments::{blob, quota};
 use crate::http::auth::Caller;
 use aurora_core::limits::{
     EXPORT_MAX_BYTES, EXPORT_MAX_EVENTS, RETENTION_MAX_DAYS, RETENTION_MIN_DAYS,
@@ -276,13 +276,67 @@ pub async fn redact(
 
 // ------------------------------------------------------------------ retention
 
+async fn retention_view(
+    state: &AppState,
+    conn: &mut sqlx::PgConnection,
+    org: Uuid,
+) -> Result<Retention, ApiError> {
+    let (quota, days) = aurora_db::repo::attachments::org_limits(&mut *conn, org).await?;
+    let a = &state.config.attachments;
+    Ok(Retention {
+        conversations_days: lifecycle::org_conversations_days(&mut *conn, org).await?,
+        conversations_days_max: state.config.retention.conversation_days_max.map(i64::from),
+        attachments_days: days,
+        attachments_days_max: a.days_max.map(i64::from),
+        attachment_quota_mib: quota,
+        attachment_quota_mib_effective: quota::effective_quota_bytes(
+            &state.config.attachments,
+            quota,
+        )
+        .map(|b| b / quota::MIB),
+        attachment_quota_mib_max: (a.org_quota_mib_max > 0)
+            .then(|| i64::try_from(a.org_quota_mib_max).unwrap_or(i64::MAX)),
+    })
+}
+
 pub async fn get_retention(state: &AppState, c: &Caller, org: Uuid) -> Result<Retention, ApiError> {
     c.org(state, org).await?.require_admin()?;
     let mut conn = state.pool.acquire().await.map_err(db)?;
-    Ok(Retention {
-        conversations_days: lifecycle::org_conversations_days(&mut conn, org).await?,
-        conversations_days_max: state.config.retention.conversation_days_max.map(i64::from),
-    })
+    retention_view(state, &mut conn, org).await
+}
+
+/// Validate a window in days against the bounds and the instance ceiling.
+fn check_days(d: i64, ceiling: Option<i64>) -> Result<i64, ApiError> {
+    if !(RETENTION_MIN_DAYS..=RETENTION_MAX_DAYS).contains(&d) {
+        return Err(ApiError::unprocessable(
+            "retention_invalid",
+            "The retention window must be between 7 and 3650 days.",
+        ));
+    }
+    if ceiling.is_some_and(|m| d > m) {
+        return Err(ApiError::unprocessable(
+            "retention_above_instance_maximum",
+            "The retention window exceeds the maximum set by the instance.",
+        ));
+    }
+    Ok(d)
+}
+
+/// Validate an org attachment quota (MiB; `0` = unlimited) against the instance ceiling.
+fn check_quota(v: i64, ceiling_mib: i64) -> Result<i64, ApiError> {
+    if !(0..=(1 << 30)).contains(&v) {
+        return Err(ApiError::unprocessable(
+            "attachment_quota_invalid",
+            "The attachment quota must be a number of MiB, 0 for unlimited.",
+        ));
+    }
+    if ceiling_mib > 0 && (v == 0 || v > ceiling_mib) {
+        return Err(ApiError::unprocessable(
+            "attachment_quota_above_instance_maximum",
+            "The attachment quota exceeds the maximum set by the instance.",
+        ));
+    }
+    Ok(v)
 }
 
 pub async fn put_retention(
@@ -293,29 +347,46 @@ pub async fn put_retention(
 ) -> Result<Retention, ApiError> {
     c.org(state, org).await?.require_admin()?;
     let ceiling = state.config.retention.conversation_days_max.map(i64::from);
+    let att_ceiling = state.config.attachments.days_max.map(i64::from);
+    let quota_ceiling = i64::try_from(state.config.attachments.org_quota_mib_max).unwrap_or(0);
     let mut tx = state.pool.begin().await.map_err(db)?;
     let old = lifecycle::org_conversations_days(&mut tx, org).await?;
+    let (old_quota, old_att_days) = aurora_db::repo::attachments::org_limits(&mut *tx, org).await?;
     let new = match req.conversations_days {
         None => old,
         Some(None) => None,
-        Some(Some(d)) => {
-            if !(RETENTION_MIN_DAYS..=RETENTION_MAX_DAYS).contains(&d) {
-                return Err(ApiError::unprocessable(
-                    "retention_invalid",
-                    "The retention window must be between 7 and 3650 days.",
-                ));
-            }
-            if ceiling.is_some_and(|m| d > m) {
-                return Err(ApiError::unprocessable(
-                    "retention_above_instance_maximum",
-                    "The retention window exceeds the maximum set by the instance.",
-                ));
-            }
-            Some(d)
-        }
+        Some(Some(d)) => Some(check_days(d, ceiling)?),
     };
+    let new_att_days = match req.attachments_days {
+        None => old_att_days,
+        Some(None) => None,
+        Some(Some(d)) => Some(check_days(d, att_ceiling)?),
+    };
+    let new_quota = match req.attachment_quota_mib {
+        None => old_quota,
+        Some(None) => None,
+        Some(Some(v)) => Some(check_quota(v, quota_ceiling)?),
+    };
+    let mut changed = serde_json::Map::new();
     if new != old {
         lifecycle::set_org_conversations_days(&mut tx, org, new).await?;
+        changed.insert("conversations_days".into(), json!({"from": old, "to": new}));
+    }
+    if new_att_days != old_att_days {
+        lifecycle::set_org_retention_key(&mut tx, org, "attachments_days", new_att_days).await?;
+        changed.insert(
+            "attachments_days".into(),
+            json!({"from": old_att_days, "to": new_att_days}),
+        );
+    }
+    if new_quota != old_quota {
+        lifecycle::set_org_retention_key(&mut tx, org, "attachment_quota_mib", new_quota).await?;
+        changed.insert(
+            "attachment_quota_mib".into(),
+            json!({"from": old_quota, "to": new_quota}),
+        );
+    }
+    if !changed.is_empty() {
         // Security-critical: the row commits or rolls back with the change.
         let ev = AuditEvent::new(
             AuditActor::from_caller(c),
@@ -324,14 +395,12 @@ pub async fn put_retention(
         )
         .org(org)
         .target("organization", org)
-        .metadata(json!({"conversations_days": {"from": old, "to": new}}));
+        .metadata(Value::Object(changed));
         audit::insert_tx(&mut tx, &ev).await?;
     }
+    let out = retention_view(state, &mut tx, org).await?;
     tx.commit().await.map_err(db)?;
-    Ok(Retention {
-        conversations_days: new,
-        conversations_days_max: ceiling,
-    })
+    Ok(out)
 }
 
 /// Daily conversation retention sweep (singleton, docs/05 §Background jobs): per org, delete the
@@ -454,7 +523,10 @@ pub async fn export(
     let (n_events, approx) = lifecycle::export_size(&mut conn, id, after).await?;
     let atts = lifecycle::export_attachments(&mut conn, id).await?;
     let att_bytes: i64 = if zip_files {
-        atts.iter().map(|a| a.size_bytes).sum()
+        atts.iter()
+            .filter(|a| !a.purged)
+            .map(|a| a.size_bytes)
+            .sum()
     } else {
         0
     };
@@ -485,7 +557,7 @@ pub async fn export(
         .iter()
         .map(|a| {
             json!({"id": a.id, "filename": a.filename, "size": a.size_bytes, "sha256": a.sha256,
-                   "content_type": a.content_type, "direction": a.direction, "purged": false})
+                   "content_type": a.content_type, "direction": a.direction, "purged": a.purged})
         })
         .collect();
     let doc = json!({
@@ -525,7 +597,7 @@ pub async fn export(
     let mut total = json_bytes.len() as u64;
     let _ = z.add("conversation.json", &json_bytes);
     drop(json_bytes);
-    for a in &atts {
+    for a in atts.iter().filter(|a| !a.purged) {
         let Some(store) = blob::for_backend(&a.blob_backend, &state.pool) else {
             continue;
         };

@@ -136,6 +136,8 @@
       "failure_reason",
       "filename",
       "id",
+      "purge_reason",
+      "purged_at",
       "sha256",
       "size_bytes",
       "status",
@@ -410,6 +412,10 @@
       "role",
       "status",
       "user_id"
+    ],
+    "org_storage_usage": [
+      "attachment_bytes",
+      "org_id"
     ],
     "organizations": [
       "app_posture",

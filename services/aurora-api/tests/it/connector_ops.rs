@@ -1238,3 +1238,71 @@ async fn credential_dead_on_a_presence_disables_only_the_presence() {
         .unwrap();
     assert_eq!(ist, "active");
 }
+
+#[tokio::test]
+async fn file_put_is_refused_at_the_org_storage_quota() {
+    // P2-015 (RFE-015, SEC-48): a connector's `file.fetch` upload obeys the org quota.
+    let w = world().await;
+    let r1 = w.replica().await;
+    let i1 = w.integration("T1", r1).await;
+    let conv = w.conversation().await;
+    sqlx::query("UPDATE organizations SET settings = jsonb_set(settings, '{retention}', '{\"attachment_quota_mib\": 1}')")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let mib = 1024 * 1024;
+    let mut ops = Vec::new();
+    for f in ["F1", "F2", "F3"] {
+        ops.push(
+            w.enqueue(
+                Some(i1),
+                "file.fetch",
+                json!({"file_ref": f, "max_bytes": 2 * mib, "conversation_id": conv}),
+            )
+            .await,
+        );
+    }
+    w.claim(r1, 5, 0).await;
+    let (s, body) = w
+        .raw(
+            r1,
+            Method::PUT,
+            &format!("/files/{}", ops[0]),
+            &[],
+            vec![1; 700 * 1024],
+        )
+        .await;
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&body));
+    // 700 KiB used of 1 MiB: another 700 KiB is 422 and stores nothing.
+    let (s, body) = w
+        .raw(
+            r1,
+            Method::PUT,
+            &format!("/files/{}", ops[1]),
+            &[],
+            vec![2; 700 * 1024],
+        )
+        .await;
+    assert_eq!(s, 422, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"],
+        "attachment_quota_exceeded"
+    );
+    let (n, blobs): (i64, i64) =
+        sqlx::query_as("SELECT (SELECT count(*) FROM attachments), (SELECT count(*) FROM blobs)")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!((n, blobs), (1, 1));
+    // A file that fits is still accepted.
+    let (s, _) = w
+        .raw(
+            r1,
+            Method::PUT,
+            &format!("/files/{}", ops[2]),
+            &[],
+            vec![3; 200 * 1024],
+        )
+        .await;
+    assert_eq!(s, 200);
+}

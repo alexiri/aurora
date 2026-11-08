@@ -173,6 +173,7 @@ pub struct ApiConfig {
     pub hookhost_url: String,
     pub plugins: PluginsSection,
     pub retention: RetentionSection,
+    pub attachments: AttachmentsSection,
     pub ratelimit: RatelimitSection,
     pub tls: TlsSection,
     pub telemetry: TelemetrySection,
@@ -337,6 +338,26 @@ impl RawConfig {
                 "must be between 7 and 3650 days",
             );
         }
+        if let Some(d) = self.attachments.days_max
+            && !(7..=3650).contains(&d)
+        {
+            c.err("attachments.days_max", "must be between 7 and 3650 days");
+        }
+        // Quotas are handled as bytes in an i64.
+        for (key, v) in [
+            (
+                "attachments.default_org_quota_mib",
+                self.attachments.default_org_quota_mib,
+            ),
+            (
+                "attachments.org_quota_mib_max",
+                self.attachments.org_quota_mib_max,
+            ),
+        ] {
+            if v > 1 << 30 {
+                c.err(key, "must be at most 1073741824 MiB");
+            }
+        }
         check_ratelimit(&mut c, &self.ratelimit.api);
         check_common(&mut c, &self.tls, &self.telemetry);
         let advertised_proxy_url = advertised_proxy_url(&self.gateway, external_url.as_deref());
@@ -386,6 +407,7 @@ impl RawConfig {
             hookhost_url: self.api.hookhost_url.clone(),
             plugins: self.plugins.clone(),
             retention: self.retention.clone(),
+            attachments: self.attachments.clone(),
             ratelimit: self.ratelimit.clone(),
             tls: self.tls.clone(),
             telemetry: self.telemetry.clone(),

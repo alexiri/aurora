@@ -1,6 +1,7 @@
 //! Background jobs run by every API replica (docs/05 §Background jobs).
 //! Idempotent jobs run everywhere; singleton jobs take an advisory lock per run.
 
+use aurora_config::AttachmentsSection;
 use aurora_db::PgPool;
 use aurora_db::repo::{approvals, request_log};
 use chrono::Utc;
@@ -19,6 +20,7 @@ pub const ACTION_SWEEP_EVERY: Duration = Duration::from_secs(60);
 /// Conversation retention sweep (phase 2, RFE-010, singleton).
 pub const RETENTION_SWEEP_EVERY: Duration = Duration::from_secs(24 * 3600);
 const RETENTION_JOB: &str = "conversation_retention";
+const ATTACHMENT_SWEEP_JOB: &str = "attachment_sweep";
 pub const PARTITION_EVERY: Duration = Duration::from_secs(24 * 3600);
 pub const PARTITIONS_AHEAD: u32 = 2;
 const PARTITION_JOB: &str = "request_log_partitions";
@@ -52,6 +54,20 @@ pub async fn sweep_conversation_retention(
     ran.transpose()
 }
 
+/// Daily attachment sweep (phase 2, RFE-015, singleton): purge bytes past the org windows, remove
+/// orphan blobs, reconcile the usage counters, raise quota notices. `Ok(None)` when another
+/// replica holds the lock.
+pub async fn sweep_attachment_storage(
+    pool: &PgPool,
+    cfg: &AttachmentsSection,
+) -> Result<Option<crate::domains::attachments::sweep::SweepReport>, aurora_core::ApiError> {
+    let ran = aurora_db::jobs::try_singleton(pool, ATTACHMENT_SWEEP_JOB, || {
+        crate::domains::attachments::sweep::run(pool, cfg)
+    })
+    .await?;
+    ran.transpose()
+}
+
 /// Create upcoming partitions and drop expired ones (singleton). `Ok(false)` when
 /// another replica holds the lock.
 pub async fn maintain_request_log(
@@ -72,7 +88,12 @@ pub async fn maintain_request_log(
 }
 
 /// Start all jobs on the current runtime. Tasks end with the runtime.
-pub fn spawn(pool: PgPool, retention_days: u32, conversation_days_max: Option<u32>) {
+pub fn spawn(
+    pool: PgPool,
+    retention_days: u32,
+    conversation_days_max: Option<u32>,
+    attachments: AttachmentsSection,
+) {
     let rp = pool.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(RETENTION_SWEEP_EVERY);
@@ -85,6 +106,14 @@ pub fn spawn(pool: PgPool, retention_days: u32, conversation_days_max: Option<u3
                 Err(e) => {
                     tracing::warn!(error = %e.message(), "conversation retention sweep failed")
                 }
+            }
+            // The attachment sweep shares this daily tick (docs/05 §Background jobs).
+            match sweep_attachment_storage(&rp, &attachments).await {
+                Ok(Some(r)) if r != Default::default() => {
+                    tracing::info!(report = ?r, "attachment storage sweep")
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e.message(), "attachment storage sweep failed"),
             }
         }
     });

@@ -54,7 +54,7 @@ pub async fn load_conversation(
     Ok(load_conversation_auth(state, c, id).await?.0)
 }
 
-pub(super) async fn load_conversation_auth(
+pub async fn load_conversation_auth(
     state: &AppState,
     c: &Caller,
     id: Uuid,

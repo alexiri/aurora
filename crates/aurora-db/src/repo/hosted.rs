@@ -233,7 +233,7 @@ pub async fn turn_attachments(
 ) -> Result<Vec<AttachmentMeta>, DbError> {
     Ok(sqlx::query_as(
         "SELECT id, filename, size_bytes FROM attachments
-         WHERE turn_id = $1 AND direction = 'in' ORDER BY created_at, id",
+         WHERE turn_id = $1 AND direction = 'in' AND purged_at IS NULL ORDER BY created_at, id",
     )
     .bind(turn)
     .fetch_all(conn)

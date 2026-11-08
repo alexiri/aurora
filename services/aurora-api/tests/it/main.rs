@@ -7,6 +7,7 @@ mod api_ratelimit;
 mod approvals;
 mod apps_connections;
 mod apps_tools;
+mod attachment_storage;
 mod attachments;
 mod audit;
 mod auth;
