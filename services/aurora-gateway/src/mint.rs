@@ -14,6 +14,8 @@ pub struct MintInput {
     pub credentials: Map<String, Value>,
     pub metadata: Value,
     pub tenant_host: Option<String>,
+    /// The connection's instance host (D-74): what `{instance}` in the hook's egress resolves to.
+    pub instance_host: Option<String>,
     /// Non-secret and secret OAuth client fields, when the app declares a client.
     pub client: Map<String, Value>,
     pub client_secret: Map<String, Value>,
@@ -119,6 +121,7 @@ impl Minter for HttpMinter {
             "package_id": i.package_id,
             "package_digest": i.package_digest,
             "app_id": i.app_id,
+            "instance_host": i.instance_host,
             "input": {
                 "app_id": i.app_id,
                 "credentials": kv(&i.credentials),

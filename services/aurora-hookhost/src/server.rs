@@ -170,10 +170,13 @@ async fn run(
     let inv: Invocation = parse_invocation(kind, &app.app_id, req.input, &pkg.context)?;
     let module = st.catalog.module(digest).await?;
     let egress = if kind.egress_allowed() {
-        pkg.egress
-            .get(&kind.registry())
-            .cloned()
-            .unwrap_or_default()
+        crate::wire::resolve_egress(
+            pkg.egress
+                .get(&kind.registry())
+                .cloned()
+                .unwrap_or_default(),
+            req.instance_host.as_deref(),
+        )
     } else {
         Vec::new()
     };

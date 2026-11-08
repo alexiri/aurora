@@ -96,7 +96,7 @@ export function CredentialsView({
         ) : null}
         {tab === "apps" && scope.kind === "workspace" ? <AppsTab workspaceId={scope.id} canOwn={canOwn} /> : null}
         {tab === "connections" ? <ConnectionsTab scope={scope} canOwn={canOwn} /> : null}
-        {tab === "oauth" ? <OAuthClientsPanel scope={scope} canOwn={canOwn} /> : null}
+        {tab === "oauth" ? <OAuthClientsPanel scope={scope} canOwn={canOwn} orgId={orgId} /> : null}
         {tab === "proposals" ? (
           secrets.isPending ? <Loading /> : secrets.isError ? <ErrorState error={secrets.error} /> : <ProposalsList scope={scope} items={items} canOwn={canOwn} />
         ) : null}

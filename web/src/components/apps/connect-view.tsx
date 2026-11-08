@@ -6,6 +6,7 @@ import { useState, type FormEvent } from "react";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import {
   buildConnectFields,
@@ -14,6 +15,7 @@ import {
   defaultValues,
   useApp,
   useAppGuide,
+  useAppInstances,
   useOAuthClients,
   validateFields,
   type AppDetail,
@@ -25,9 +27,16 @@ import { useResolve } from "@/lib/api/queries";
 import { DynamicForm } from "./dynamic-form";
 import { Markdown, safeHref } from "./markdown";
 
-function ConnectForm({ app, workspaceId }: { app: AppDetail; workspaceId: string }) {
+function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId: string; orgId: string }) {
   const search = useSearchParams();
   const reconnect = search.get("reconnect") ?? undefined;
+  // Instance-bound apps (D-74): the SaaS default host, or an instance an admin registered. A
+  // reconnect keeps the connection's instance, so the picker is not shown then.
+  const instanceBound = !!app.instances && !reconnect;
+  const instances = useAppInstances(instanceBound ? { kind: "organization", id: orgId } : undefined);
+  const [instanceId, setInstanceId] = useState("");
+  const choices = (instances.data?.items ?? []).filter((i) => i.app_id === app.app_id && i.status === "active");
+  const defaultHost = app.instances?.default_host ?? null;
   const [methodId, setMethodId] = useState(app.connect[0]?.id ?? "");
   const method: ConnectMethod | undefined = app.connect.find((m) => m.id === methodId);
   const [values, setValues] = useState<FieldValues>(() => defaultValues(app.connect[0]?.fields ?? []));
@@ -40,9 +49,15 @@ function ConnectForm({ app, workspaceId }: { app: AppDetail; workspaceId: string
   const [done, setDone] = useState<{ missing: string[] } | null>(null);
   const guide = useAppGuide(app.app_id);
   const clients = useOAuthClients({ kind: "workspace", id: workspaceId });
+  // An OAuth client bound to an instance serves only that instance; the default host uses unbound ones.
   const matching = (clients.data?.items ?? []).filter(
-    (c) => c.enabled && c.package_id === app.package_id && c.client_key === method?.client_key,
+    (c) =>
+      c.enabled &&
+      c.package_id === app.package_id &&
+      c.client_key === method?.client_key &&
+      (instanceBound ? (c.instance_id ?? "") === instanceId : !c.instance_id),
   );
+  const needsInstanceClient = instanceBound && !!instanceId && method?.kind === "oauth2" && matching.length === 0;
 
   function pick(id: string) {
     const m = app.connect.find((x) => x.id === id);
@@ -57,6 +72,7 @@ function ConnectForm({ app, workspaceId }: { app: AppDetail; workspaceId: string
     e.preventDefault();
     if (!method) return;
     const errs = validateFields(method.fields, values);
+    if (instanceBound && !defaultHost && !instanceId) errs.__instance = "Choose an instance.";
     setErrors(errs);
     if (Object.keys(errs).length) return;
     setBusy(true);
@@ -69,6 +85,7 @@ function ConnectForm({ app, workspaceId }: { app: AppDetail; workspaceId: string
         method_id: method.id,
         ...(Object.keys(fields).length ? { fields } : {}),
         ...(clientId ? { oauth_client_id: clientId } : {}),
+        ...(instanceBound && instanceId ? { instance_id: instanceId } : {}),
         ...(access ? { access_level: access } : {}),
         ...(reconnect ? { reconnect_connection_id: reconnect } : {}),
       });
@@ -128,6 +145,39 @@ function ConnectForm({ app, workspaceId }: { app: AppDetail; workspaceId: string
           <summary className="cursor-pointer text-sm font-medium">Setup guide</summary>
           <div className="mt-2"><Markdown source={guide.data} /></div>
         </details>
+      ) : null}
+      {instanceBound ? (
+        <Field
+          id="cm-instance"
+          label={app.instances?.label ?? "Instance"}
+          error={errors.__instance}
+          hint={
+            choices.length === 0 && !defaultHost
+              ? "No instance is registered yet. Ask an organization admin to register one (Instances)."
+              : "Credentials are only sent to the host you choose here."
+          }
+        >
+          <select
+            id="cm-instance"
+            className={inputClass}
+            value={instanceId}
+            onChange={(e) => {
+              setInstanceId(e.target.value);
+              setClientId("");
+            }}
+          >
+            {defaultHost ? <option value="">{`${defaultHost} (default)`}</option> : <option value="">Select…</option>}
+            {choices.map((i) => (
+              <option key={i.id} value={i.id}>{`${i.label} (${i.host})`}</option>
+            ))}
+          </select>
+        </Field>
+      ) : null}
+      {needsInstanceClient ? (
+        <Notice tone="pending" role="status">
+          No OAuth application is registered for this instance yet. Ask an organization admin to add one under
+          Credentials, OAuth clients, or connect with an access token instead.
+        </Notice>
       ) : null}
       {app.connect.length > 1 ? (
         <Field id="cm-method" label="Connection method">
@@ -200,7 +250,7 @@ export function ConnectView() {
     <div className="max-w-xl space-y-4">
       <h1 className="text-xl font-semibold">Connect {detail.data.name}</h1>
       {detail.data.available ? (
-        <ConnectForm app={detail.data} workspaceId={wsId} />
+        <ConnectForm app={detail.data} workspaceId={wsId} orgId={resolved.data!.org.id} />
       ) : (
         <ErrorState error={{ code: "app_unavailable" }} />
       )}

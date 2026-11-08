@@ -26,3 +26,7 @@ fixture-invalid-egress-private egress_private
 fixture-invalid-env-reserved env_name_reserved
 fixture-invalid-link-host-undeclared link_host_undeclared
 fixture-invalid-token-url-http token_url_not_https
+fixture-invalid-instance-host-part instance_placeholder_misuse
+fixture-invalid-instance-no-block instance_placeholder_misuse
+fixture-invalid-instance-in-path instance_placeholder_misuse
+fixture-invalid-instance-default-host instance_default_host_invalid

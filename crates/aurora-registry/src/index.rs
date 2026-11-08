@@ -9,8 +9,31 @@
 //! the gateway's job, not the index's.
 use aurora_policy::{HostPattern, PathPattern};
 
-use crate::manifest::ToolItem;
+use crate::manifest::{INSTANCE_HOST, ToolItem};
 pub use crate::snapshot::{AppEntry, ClaimStatus, HostEntry, Snapshot};
+
+/// Does the tool's host cover the request host? An `{instance}` tool covers the host of a
+/// registered instance (`instance`, decided by the caller from the exact-host instance match)
+/// and the app's `default_host` (D-74).
+#[must_use]
+pub fn tool_serves_host(
+    app: &AppEntry,
+    t: &ToolItem,
+    host: &str,
+    port: u16,
+    instance: bool,
+) -> bool {
+    if t.host == INSTANCE_HOST {
+        instance
+            || app
+                .instances
+                .as_ref()
+                .and_then(|i| i.default_host.as_deref())
+                .is_some_and(|d| d.eq_ignore_ascii_case(host))
+    } else {
+        HostPattern::lenient(&t.host).matches(host, port)
+    }
+}
 
 pub struct HostIndex<'a> {
     snap: &'a Snapshot,
@@ -74,7 +97,7 @@ impl<'a> HostIndex<'a> {
             .flatten()
             .flat_map(|g| &g.items)
             .find(|t| {
-                HostPattern::lenient(&t.host).matches(host, 443)
+                tool_serves_host(app, t, host, 443, false)
                     && PathPattern::lenient(&t.path).matches(path)
                     && (t.methods.is_empty()
                         || t.methods.iter().any(|m| m.eq_ignore_ascii_case(method)))

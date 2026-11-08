@@ -1,0 +1,58 @@
+# Self-managed GitLab (D-74): a connection bound to a registered app instance is served on that
+# exact host only. `connection.instance_host` registers the instance for the case. All credentials
+# are fake.
+- name: "instance: bearer is injected on the registered API host"
+  connection:
+    instance_host: gitlab.example.com
+    credentials: { access_token: "tok-fixture-1" }
+  request: { method: GET, url: "https://gitlab.example.com/api/v4/user" }
+  expect:
+    app: gitlab
+    tool: get_current_user
+    upstream:
+      url: "https://gitlab.example.com/api/v4/user"
+      headers: { authorization: "Bearer tok-fixture-1" }
+- name: "instance: git over HTTPS uses basic auth on the registered host"
+  connection:
+    instance_host: gitlab.example.com
+    credentials: { access_token: "tok-fixture-1" }
+  request: { method: GET, url: "https://gitlab.example.com/group/demo.git/info/refs?service=git-upload-pack" }
+  expect:
+    app: gitlab
+    tool: git_fetch
+    upstream: { headers: { authorization: "Basic b2F1dGgyOnRvay1maXh0dXJlLTE=" } }
+- name: "instance: a write tool is classified and summarised on the registered host"
+  connection:
+    instance_host: gitlab.example.com
+    credentials: { access_token: "tok-fixture-1" }
+  request:
+    method: POST
+    url: "https://gitlab.example.com/api/v4/projects/42/issues"
+    headers: { content-type: application/json }
+    body: '{"title":"Broken build"}'
+  expect:
+    tool: create_issue
+    summary: { title: "Create issue", fields: { Project: "42", Title: "Broken build" } }
+- name: "instance: the default host still works for a connection without an instance"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/user" }
+  expect:
+    app: gitlab
+    tool: get_current_user
+    upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative instance: a connection of the instance is refused on gitlab.com"
+  connection:
+    instance_host: gitlab.example.com
+    credentials: { access_token: "tok-fixture-1" }
+  request: { method: GET, url: "https://gitlab.com/api/v4/user" }
+  expect: { refused: host_mismatch, expected_host: gitlab.example.com }
+- name: "negative instance: a connection of the instance is not injected on another host"
+  connection:
+    instance_host: gitlab.example.com
+    credentials: { access_token: "tok-fixture-1" }
+  request: { method: GET, url: "https://gitlab.other.example/api/v4/user" }
+  expect: { unmatched: true }
+- name: "negative instance: an unregistered host injects nothing"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.example.com/api/v4/user" }
+  expect: { unmatched: true }

@@ -30,6 +30,9 @@ pub struct Opts {
     pub hookhost: bool,
     /// Overrides `gateway.hookhost_url` (default: the started hook host).
     pub hookhost_url: Option<String>,
+    /// `gateway.egress_proxy` (`host:port`): the gateway dials upstreams through this CONNECT
+    /// proxy, so tests can serve DNS names that do not resolve (D-74 instance hosts).
+    pub egress_proxy: Option<String>,
 }
 
 pub struct Stack {
@@ -100,7 +103,7 @@ log_level = "info"
 
 [gateway]
 allowed_private = ["127.0.0.1/32"]
-ca_dir = "{ca}"
+{egress}ca_dir = "{ca}"
 advertised_proxy_url = "https://{GW_A_IP}:4102"
 hookhost_url = "{hh_url}"
 
@@ -117,6 +120,11 @@ hookhost_url = "http://127.0.0.1:9"
 api_internal_url = "http://{API_IP}:4111"
 "#,
             ca = dir.join("ca").display(),
+            egress = o
+                .egress_proxy
+                .as_ref()
+                .map(|p| format!("egress_proxy = \"{p}\"\n"))
+                .unwrap_or_default(),
             hh_url = o
                 .hookhost_url
                 .clone()

@@ -17,6 +17,8 @@ pub struct OAuthClient {
     pub client_key: String,
     pub fields: BTreeMap<String, String>,
     pub enabled: bool,
+    /// The self-hosted app instance this client is bound to (D-74); `null` = unbound.
+    pub instance_id: Option<Uuid>,
     pub connection_count: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -46,6 +48,7 @@ impl From<ClientRow> for OAuthClient {
                 })
                 .unwrap_or_default(),
             enabled: r.enabled,
+            instance_id: r.instance_id,
             connection_count: r.connection_count,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -67,6 +70,9 @@ pub struct CreateOAuthClientRequest {
     pub client_key: String,
     /// Values for every field the manifest declares, secret ones included (sealed on write).
     pub fields: BTreeMap<String, String>,
+    /// Bind the client to a self-hosted instance of the client's package visible to the scope
+    /// (C-244, D-74).
+    pub instance_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

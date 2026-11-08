@@ -26,7 +26,7 @@ use aurora_policy::HostPattern;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::manifest::{HostRule, Manifest};
+use crate::manifest::{App, HostRule, INSTANCE_HOST, Manifest};
 use crate::snapshot::{canonical_bytes, hex};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -83,15 +83,26 @@ pub fn rule_fingerprint(key: &str, r: &HostRule) -> String {
     hex(&h.finalize())
 }
 
+/// The static host a rule claims: its own host, or for an `{instance}` rule the app's
+/// `instances.default_host` (none without one: instance hosts are registered, not claimed).
+pub fn static_host<'a>(app: &'a App, r: &'a HostRule) -> Option<&'a str> {
+    if r.matcher.host == INSTANCE_HOST {
+        app.instances.as_ref()?.default_host.as_deref()
+    } else {
+        Some(&r.matcher.host)
+    }
+}
+
 pub fn claims(m: &Manifest) -> Vec<Claim> {
     m.apps
         .iter()
         .flat_map(|a| {
-            a.hosts.iter().map(|r| {
-                let key = claim_key(&r.matcher.host, r.matcher.path_prefix.as_deref());
-                Claim {
+            a.hosts.iter().filter_map(|r| {
+                let host = static_host(a, r)?;
+                let key = claim_key(host, r.matcher.path_prefix.as_deref());
+                Some(Claim {
                     app_id: a.about.id.clone(),
-                    host_pattern: HostPattern::lenient(&r.matcher.host).as_str().to_owned(),
+                    host_pattern: HostPattern::lenient(host).as_str().to_owned(),
                     path_prefix: r
                         .matcher
                         .path_prefix
@@ -100,7 +111,7 @@ pub fn claims(m: &Manifest) -> Vec<Claim> {
                         .unwrap_or_else(|| "/".to_owned()),
                     fingerprint: rule_fingerprint(&key, r),
                     claim_key: key,
-                }
+                })
             })
         })
         .collect()

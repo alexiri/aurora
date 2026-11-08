@@ -165,6 +165,7 @@ fn conn(w: &World, n: usize) -> AppConnectionRow {
         credentials_expires_at: None,
         metadata: json!({"sub": "tenant1"}),
         tenant_host: None,
+        instance_id: None,
     }
 }
 

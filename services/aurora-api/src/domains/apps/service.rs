@@ -314,5 +314,9 @@ pub async fn detail(
             .collect(),
         metadata: a.metadata.iter().map(|m| m.name.clone()).collect(),
         oauth_clients: oauth_clients(state, snap, a, p),
+        instances: a.instances.as_ref().map(|i| AppInstances {
+            label: i.label.clone(),
+            default_host: i.default_host.clone(),
+        }),
     }
 }

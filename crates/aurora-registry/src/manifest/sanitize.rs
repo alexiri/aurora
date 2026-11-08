@@ -28,6 +28,9 @@ pub fn manifest(m: &mut Manifest) {
         lab(&mut a.about.name);
         text(&mut a.about.description);
         opt(&mut a.about.label_hint);
+        if let Some(i) = &mut a.instances {
+            lab(&mut i.label);
+        }
         if let Some(n) = &mut a.about.connect_note {
             text(&mut n.text);
         }

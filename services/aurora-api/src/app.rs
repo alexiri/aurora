@@ -130,6 +130,7 @@ impl AppState {
         let connect = Arc::new(crate::domains::connect::Env::new(
             &config.hookhost_url,
             &config.internal_ring,
+            &config.gateway_allowed_private,
         )?);
         let card_requests: Arc<dyn crate::domains::channels::card_requests::CardRequests> =
             Arc::new(crate::domains::channels::cards::requests::CardsImpl::new(
@@ -204,9 +205,11 @@ impl AppState {
     /// Redirect guarded connect-flow requests to a test server (tests only).
     #[must_use]
     pub fn with_connect_override(mut self, origin: &str) -> Self {
-        if let Ok(env) =
-            crate::domains::connect::Env::new(&self.config.hookhost_url, &self.config.internal_ring)
-        {
+        if let Ok(env) = crate::domains::connect::Env::new(
+            &self.config.hookhost_url,
+            &self.config.internal_ring,
+            &self.config.gateway_allowed_private,
+        ) {
             let mut env = env;
             env.override_origin = reqwest::Url::parse(origin).ok();
             self.connect = Arc::new(env);
@@ -255,6 +258,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::peer_tasks::router())
         .merge(domains::connect::router())
         .merge(domains::oauth_clients::router())
+        .merge(domains::app_instances::router())
         .merge(domains::availability::router())
         .merge(domains::audit::router())
         .merge(domains::keys::router())

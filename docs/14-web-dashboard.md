@@ -292,6 +292,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 - **Policy**: org rules editor (draft/publish). (phase 3, RFE-023) The **Default Rule** control carries the note "Does not affect LLM endpoints — see Governance" with a link to the governance page, and a tooltip explaining that explicit block rules naming an LLM host still apply.
 - **Credentials**: org secrets, org LLM keys, org app connections, OAuth clients.
 - **Apps**: app availability posture and allow-list.
+- **Instances** (`/o/<org>/instances`, phase 2, D-74): the org's registered self-hosted app instances plus the read-only instance-wide ones; owners/admins register (app, host, label), disable/enable and delete (the confirm says its connections are disabled and its OAuth clients removed). The connect dialog of an instance-bound app shows an instance picker (default host first), and OAuth clients can be bound to an instance.
 - **Governance** (`08 §11`; phase 3, RFE-013: a **BYO agent tokens** setting "maximum age (days)", empty = never expire, shown locked with "enforced by instance" when the instance value is lower, plus a stale/expiring token list with Regenerate shortcuts; phase 2, RFE-025: a **BYO agents** panel — posture selector limited to values not below the instance floor, default source CIDR list, org default "require context credentials"; shown locked with "enforced by instance" when `byo.enabled = false`):
   - *Model access*: per instance endpoint — permitted or not, key scopes
     (organization / workspace), origin narrowing (e.g. Anthropic organization
@@ -414,7 +415,7 @@ hook, context variables, host claims, and the diff against the previously
 approved version; reject/disable/uninstall with orphan warnings), **Host
 claims** (conflicts and winners), **Trusted keys**, **Connectors** (provision,
 token rotation, manifest approval with capability/setup-field diff), **Runners**
-(provision, token, replicas, capacity), **OAuth clients** (instance-level).
+(provision, token, replicas, capacity), **Instances** (instance-wide app instances, D-74), **OAuth clients** (instance-level).
 
 ## Key flows
 

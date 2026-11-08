@@ -141,6 +141,27 @@ pub async fn create(
 ) -> Result<ClientRow, ApiError> {
     let decl = manifest_client(state, &req.package_id, &req.client_key).await?;
     validate(&decl, &req.fields, false)?;
+    if let Some(iid) = req.instance_id {
+        // An instance of this client's package, visible to the scope: an organization or
+        // workspace client binds instance-wide instances and its org's own; an instance-level
+        // client only instance-wide ones.
+        let ok = aurora_db::repo::app_instances::get(&state.pool, iid)
+            .await?
+            .is_some_and(|i| {
+                i.package_id == req.package_id
+                    && match (i.org_id, scope.org) {
+                        (None, _) => true,
+                        (Some(a), Some(b)) => a == b,
+                        (Some(_), None) => false,
+                    }
+            });
+        if !ok {
+            return Err(bad(vec![FieldError::new(
+                "/instance_id",
+                "no such app instance of this package is visible here",
+            )]));
+        }
+    }
     let (public, secret) = split(&decl, &req.fields);
     let id = ids::new_id();
     let c = ctx(id, scope.org, scope.ws);
@@ -157,6 +178,7 @@ pub async fn create(
             client_key: &req.client_key,
             fields: &public,
             secret_ref: &col,
+            instance_id: req.instance_id,
         },
     )
     .await;

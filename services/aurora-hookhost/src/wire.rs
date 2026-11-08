@@ -67,7 +67,34 @@ pub struct Request {
     pub package_id: String,
     pub package_digest: String,
     pub app_id: String,
+    /// The connection's instance host (or the app's `default_host`): what `{instance}` in the
+    /// package's egress list resolves to (D-74). Absent: `{instance}` resolves to nothing.
+    #[serde(default)]
+    pub instance_host: Option<String>,
     pub input: Value,
+}
+
+/// Resolve `{instance}` entries of an egress list to the connection's instance host. The host
+/// must be a plain lower-case DNS name; anything else resolves to nothing (fail closed, SEC-04).
+pub fn resolve_egress(list: Vec<String>, instance_host: Option<&str>) -> Vec<String> {
+    let ok = instance_host.filter(|h| {
+        !h.is_empty()
+            && h.contains('.')
+            && h.parse::<std::net::IpAddr>().is_err()
+            && h.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
+            && !h.starts_with(['.', '-'])
+            && !h.contains("..")
+    });
+    list.into_iter()
+        .filter_map(|e| {
+            if e == "{instance}" {
+                ok.map(str::to_owned)
+            } else {
+                Some(e)
+            }
+        })
+        .collect()
 }
 
 fn bad(m: impl Into<String>) -> CallError {
@@ -150,6 +177,43 @@ pub fn output_json(o: &Outcome) -> Value {
         }
         Outcome::Exchange(crate::runtime::types::ExchangeOutput::Continue(c)) => {
             json!({ "continue": c })
+        }
+    }
+}
+
+#[cfg(test)]
+mod instance_egress_tests {
+    use super::resolve_egress;
+
+    fn l(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// SEC-04: `{instance}` in a package's egress list is the connection's instance host only.
+    #[test]
+    fn instance_placeholder_resolves_to_the_connection_host_or_nothing() {
+        assert_eq!(
+            resolve_egress(l(&["{instance}", "auth.acme.test"]), Some("desk.acme.test")),
+            l(&["desk.acme.test", "auth.acme.test"])
+        );
+        // Unknown instance: the placeholder resolves to nothing, static entries stay.
+        assert_eq!(
+            resolve_egress(l(&["{instance}", "auth.acme.test"]), None),
+            l(&["auth.acme.test"])
+        );
+        // A malformed host never becomes an egress entry (IP, port, userinfo, wildcard, caps).
+        for bad in [
+            "10.0.0.1",
+            "a.test:8443",
+            "a@evil.test",
+            "*.test",
+            "Desk.ACME.test",
+            "",
+        ] {
+            assert!(
+                resolve_egress(l(&["{instance}"]), Some(bad)).is_empty(),
+                "{bad}"
+            );
         }
     }
 }

@@ -229,6 +229,7 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | metadata | jsonb not null default `{}` | non-secret, plugin-declared keys only |
 | tenant_host | text null | for tenant-bound hosts |
 | oauth_client_id | uuid null FK→app_oauth_clients (restrict) | which client minted it |
+| instance_id | uuid null FK→app_instances (restrict) | (phase 2, D-74) set for a connection of a registered self-hosted instance; null for `default_host` and every other app. The gateway injects it only on that instance's exact host. Deleting an instance first disables its connections (`status_reason = instance_deleted`) and clears this column and `oauth_client_id` in the same transaction; such a connection cannot be re-enabled |
 | source_connection_id | uuid null FK→app_connections (cascade) | derived connections die with their source |
 | connected_by | uuid null FK→users (set null) | |
 | reauth_required_at | timestamptz null | set by gateway on `invalid_grant` |
@@ -246,7 +247,22 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | fields | jsonb not null | non-secret fields (client id, tenant…) |
 | secret_ref | text not null | SecretRef of secret fields JSON |
 | enabled | bool not null default true | |
-| unique | (org_id, workspace_id, package_id, client_key) nulls not distinct | |
+| instance_id | uuid null FK→app_instances (cascade) | (phase 2, D-74) a BYOC client bound to one self-hosted instance; its templated OAuth URLs resolve to that host |
+| unique | (org_id, workspace_id, package_id, client_key, instance_id) nulls not distinct | one client per scope, key and instance |
+
+### `app_instances` (self-hosted apps; phase 2, D-74)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| org_id | uuid null FK→organizations (cascade) | null ⇒ instance-wide (instance admins) |
+| package_id | text not null | |
+| app_id | text not null | an app that declares `instances` (`09 §3.4`) |
+| host | text not null | lower-case DNS name; no IP, port, path or userinfo (CHECK mirrors the API validation) |
+| label | text not null | 1–120 characters |
+| status | text CHECK in (`active`,`disabled`) default `active` | `disabled` stops injection without deleting |
+| created_by | uuid null FK→users (set null) | |
+| unique | (org_id, app_id, host) nulls not distinct | a host is additionally unique across scopes that can see each other (instance-wide vs any org); enforced by the API in the creating transaction |
+| index | (host); (org_id) | |
 
 ---
 
@@ -1102,7 +1118,7 @@ When `database.gateway_role` is configured, the migrations grant that role:
 `SELECT` on identity/tenancy tables it needs (`organizations`, `workspaces`,
 `workspace_access`, `org_members`, `users` (id, email, disabled_at only via a
 view `gateway_users`), `api_keys`), `agents`, `gateway_credentials`, `secrets`,
-`app_connections`, `app_oauth_clients`, `grants`, `derived_rules`,
+`app_connections`, `app_oauth_clients`, `app_instances`, `grants`, `derived_rules`,
 `policy_generations`, `policy_rules`, `registry_snapshots`, `plugin_packages`
 (status only via view), `host_claim_decisions`, `org_app_availability`;
 `INSERT, UPDATE` on `approvals`, `gateway_instances`; `INSERT` on
@@ -1122,26 +1138,6 @@ phase-0 schema: the tables above are machine-checked against the migrations
 headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
-
-#### `app_instances` (new table; self-hosted apps, D-74)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| id | uuid pk | | 2 (D-74) |
-| org_id | uuid null FK→organizations (cascade) | null ⇒ instance-wide (instance admins) | 2 (D-74) |
-| package_id | text not null | | 2 (D-74) |
-| app_id | text not null | an app that declares `instances` (`09 §3.4`) | 2 (D-74) |
-| host | text not null | lower-case DNS name; no IP, port, path or userinfo | 2 (D-74) |
-| label | text not null | | 2 (D-74) |
-| status | text not null CHECK in (`active`,`disabled`) | | 2 (D-74) |
-| created_by | uuid null FK→users (set null) | | 2 (D-74) |
-| created_at / updated_at | timestamptz not null | | 2 (D-74) |
-| unique | (org_id, app_id, host) nulls not distinct; and a host is unique across scopes that can see each other (instance-wide vs any org) | enforced by the API in the creating transaction | 2 (D-74) |
-
-#### `app_connections` / `app_oauth_clients` (instance binding, D-74)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| app_connections.instance_id | uuid null FK→app_instances (restrict) | set for a connection of a registered instance; null for `default_host` and every other app | 2 (D-74) |
-| app_oauth_clients.instance_id | uuid null FK→app_instances (cascade) | a BYOC client bound to one self-hosted instance; its templated OAuth URLs resolve to that host | 2 (D-74) |
 
 #### `channel_integrations` (jsonb key in `config`)
 | Planned column | Type | Notes | Phase |

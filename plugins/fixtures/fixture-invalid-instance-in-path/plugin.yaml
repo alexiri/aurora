@@ -1,0 +1,34 @@
+package:
+  id: fixture-invalid-instance-in-path
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Invalid fixture
+  description: "Expected rejection: instance_placeholder_misuse (`{instance}` in a path)"
+oauth_clients:
+  - id: selfhosted
+    authorize_url: "https://{instance}/oauth/{instance}/authorize"
+    token_url: "https://{instance}/oauth/token"
+    fields:
+      - { name: client_id, label: Client ID }
+apps:
+  - about: { id: invalid-app, name: Invalid app, web_hosts: [app.invalid.example.test] }
+    instances: { label: Invalid instance }
+    credentials: [ { name: access_token, secret: true } ]
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: selfhosted
+        scopes:
+          - { scope: read, name: Read, access: read }
+        default_scopes: [read]
+        token_response: { access_token: /access_token }
+    hosts:
+      - match: { host: "{instance}", path_prefix: "/api/{instance}" }
+        inject:
+          - bearer: "{credentials.access_token}"
+    tools:
+      read:
+        items:
+          - { id: list_things, name: List things, host: "{instance}", path: "/v1/{instance}", methods: [GET] }

@@ -101,6 +101,134 @@
         ]
       }
     },
+    "/v1/admin/app-instances": {
+      "get": {
+        "tags": [
+          "app-instances"
+        ],
+        "summary": "List instance-wide app instances (instance admin).",
+        "operationId": "listInstanceAppInstances",
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Instances",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AppInstance"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "app-instances"
+        ],
+        "summary": "Register an instance-wide app instance (instance admin).",
+        "operationId": "createInstanceAppInstance",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAppInstanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppInstance"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "app_not_instance_bound, instance_host_invalid, instance_host_conflict or instance_probe_failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/connectors": {
       "get": {
         "tags": [
@@ -4940,6 +5068,139 @@
         ]
       }
     },
+    "/v1/app-instances/{id}": {
+      "delete": {
+        "tags": [
+          "app-instances"
+        ],
+        "summary": "Delete an instance: its connections are disabled (`instance_deleted`) and its OAuth clients\nremoved in the same transaction; nothing is injected on its host again.",
+        "operationId": "deleteAppInstance",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "App instance id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "app-instances"
+        ],
+        "summary": "Rename an instance or enable/disable injection on it (the host is immutable).",
+        "operationId": "updateAppInstance",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "App instance id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchAppInstanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppInstance"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/approvals/batches/{batch_id}/decision": {
       "post": {
         "tags": [
@@ -9164,6 +9425,172 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/app-instances": {
+      "get": {
+        "tags": [
+          "app-instances"
+        ],
+        "summary": "List the app instances usable in an organization: the instance-wide ones and its own (any\nmember).",
+        "operationId": "listOrgAppInstances",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "app_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Instances",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AppInstance"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "app-instances"
+        ],
+        "summary": "Register a self-hosted instance of an app for an organization (owner/admin). The host is the\nonly place the app's credentials may be sent for connections bound to it (SEC-59).",
+        "operationId": "createOrgAppInstance",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAppInstanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppInstance"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "app_not_instance_bound, instance_host_invalid, instance_host_conflict or instance_probe_failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -17128,6 +17555,17 @@
               "$ref": "#/components/schemas/HostInfo"
             }
           },
+          "instances": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AppInstances",
+                "description": "`null` when the app is not instance-bound."
+              }
+            ]
+          },
           "label_hint": {
             "type": [
               "string",
@@ -17160,6 +17598,94 @@
             "items": {
               "$ref": "#/components/schemas/Tool"
             }
+          }
+        }
+      },
+      "AppInstance": {
+        "type": "object",
+        "description": "A self-hosted app instance: a host an admin registered for one app (C-240, D-74).",
+        "required": [
+          "id",
+          "package_id",
+          "app_id",
+          "host",
+          "label",
+          "status",
+          "created_at",
+          "updated_at",
+          "connections"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "connections": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Connections bound to this instance."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ConnectedBy"
+              }
+            ]
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "`null` = instance-wide."
+          },
+          "package_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "`active` | `disabled`."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AppInstances": {
+        "type": "object",
+        "description": "An instance-bound app's `instances` declaration (C-245, D-74).",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "default_host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The SaaS host (a normal static claim); `null` when the app has no hosted default."
+          },
+          "label": {
+            "type": "string",
+            "description": "Shown in the registration form and the connect picker."
           }
         }
       },
@@ -18140,6 +18666,14 @@
               "type": "string"
             }
           },
+          "instance_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A registered self-hosted instance of an instance-bound app (C-243). Absent = the app's\n`default_host`."
+          },
           "method_id": {
             "type": "string"
           },
@@ -18299,6 +18833,17 @@
             "items": {
               "$ref": "#/components/schemas/Injecting"
             }
+          },
+          "instance": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InstanceRef",
+                "description": "The registered instance of an instance-bound app; `null` for `default_host` and other apps."
+              }
+            ]
           },
           "label": {
             "type": "string"
@@ -18968,6 +19513,27 @@
           }
         }
       },
+      "CreateAppInstanceRequest": {
+        "type": "object",
+        "required": [
+          "app_id",
+          "host",
+          "label"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "description": "A lower-case DNS name: no port, path, userinfo or IP literal."
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateConnectorRequest": {
         "type": "object",
         "required": [
@@ -19103,6 +19669,14 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "instance_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Bind the client to a self-hosted instance of the client's package visible to the scope\n(C-244, D-74)."
           },
           "package_id": {
             "type": "string"
@@ -20608,6 +21182,27 @@
           }
         }
       },
+      "InstanceRef": {
+        "type": "object",
+        "description": "The registered self-hosted instance a connection is bound to (C-243).",
+        "required": [
+          "id",
+          "host",
+          "label"
+        ],
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
       "IntegrationStatus": {
         "type": "string",
         "enum": [
@@ -21395,6 +21990,14 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "instance_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The self-hosted app instance this client is bound to (D-74); `null` = unbound."
           },
           "org_id": {
             "type": [
@@ -22379,6 +22982,91 @@
           }
         }
       },
+      "Page_AppInstance": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A self-hosted app instance: a host an admin registered for one app (C-240, D-74).",
+              "required": [
+                "id",
+                "package_id",
+                "app_id",
+                "host",
+                "label",
+                "status",
+                "created_at",
+                "updated_at",
+                "connections"
+              ],
+              "properties": {
+                "app_id": {
+                  "type": "string"
+                },
+                "connections": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Connections bound to this instance."
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "created_by": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectedBy"
+                    }
+                  ]
+                },
+                "host": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "org_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "`null` = instance-wide."
+                },
+                "package_id": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "`active` | `disabled`."
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_Approval": {
         "type": "object",
         "required": [
@@ -22789,6 +23477,17 @@
                   "items": {
                     "$ref": "#/components/schemas/Injecting"
                   }
+                },
+                "instance": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InstanceRef",
+                      "description": "The registered instance of an instance-bound app; `null` for `default_host` and other apps."
+                    }
+                  ]
                 },
                 "label": {
                   "type": "string"
@@ -23304,6 +24003,14 @@
                 "id": {
                   "type": "string",
                   "format": "uuid"
+                },
+                "instance_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "The self-hosted app instance this client is bound to (D-74); `null` = unbound."
                 },
                 "org_id": {
                   "type": [
@@ -24824,6 +25531,26 @@
               "null"
             ],
             "description": "Instance admins only."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PatchAppInstanceRequest": {
+        "type": "object",
+        "description": "The host is immutable: register a new instance instead.",
+        "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`active` | `disabled`."
           }
         },
         "additionalProperties": false

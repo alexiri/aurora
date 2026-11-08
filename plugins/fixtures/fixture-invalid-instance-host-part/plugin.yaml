@@ -1,0 +1,27 @@
+package:
+  id: fixture-invalid-instance-host-part
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Invalid fixture
+  description: "Expected rejection: instance_placeholder_misuse (`{instance}` as part of a host)"
+apps:
+  - about: { id: invalid-app, name: Invalid app, web_hosts: [app.invalid.example.test] }
+    instances: { label: Invalid instance }
+    credentials: [ { name: api_token, secret: true } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: API token, type: secret, required: true } ]
+    hosts:
+      - match: { host: "{instance}" }
+        inject:
+          - bearer: "{credentials.api_token}"
+      - match: { host: "api.{instance}" }
+        inject:
+          - bearer: "{credentials.api_token}"
+    tools:
+      read:
+        items:
+          - { id: list_things, name: List things, host: "{instance}", path: /v1/things, methods: [GET] }

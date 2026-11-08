@@ -5,6 +5,7 @@ import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/api/errors";
 import {
@@ -46,6 +47,14 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
           >
             {STATUS_LABEL[c.status] ?? c.status}
           </span>
+          {c.instance ? (
+            <>
+              {" "}
+              <Badge className="font-mono normal-case tracking-normal" title={`Self-hosted instance: ${c.instance.label}`}>
+                {c.instance.host}
+              </Badge>
+            </>
+          ) : null}
         </div>
         {canOwn ? (
           <div className="flex gap-1">
@@ -54,7 +63,7 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
                 Reconnect
               </Button>
             ) : null}
-            {c.status === "active" || c.status === "disabled" ? (
+            {(c.status === "active" || c.status === "disabled") && c.status_reason !== "instance_deleted" ? (
               <Button
                 size="sm"
                 variant="outline"
@@ -68,7 +77,13 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
           </div>
         ) : null}
       </div>
-      {c.status_reason ? <p className="text-sm text-neutral-600">{c.status_reason}</p> : null}
+      {c.status_reason ? (
+        <p className="text-sm text-neutral-600">
+          {c.status_reason === "instance_deleted"
+            ? "The app instance of this connection was deleted. Connect again."
+            : c.status_reason}
+        </p>
+      ) : null}
       <p className="text-xs text-neutral-500">
         {c.scopes.length ? `Scopes: ${c.scopes.join(", ")} · ` : ""}
         {c.connected_by ? `Connected by ${c.connected_by.display_name} · ` : ""}

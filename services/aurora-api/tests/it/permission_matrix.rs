@@ -242,6 +242,8 @@ const ROWS: &[Row] = &[
     // ---- instance admin ----
     r("GET", "/v1/admin/host-claims", G::Inst, false),
     r("PUT", "/v1/admin/host-claims/{group_key}", G::Inst, false),
+    r("GET", "/v1/admin/app-instances", G::Inst, false),
+    r("POST", "/v1/admin/app-instances", G::Inst, false),
     r("GET", "/v1/admin/oauth-clients", G::Inst, false),
     r("POST", "/v1/admin/oauth-clients", G::Inst, false),
     r("GET", "/v1/admin/plugins", G::Inst, false),
@@ -326,6 +328,11 @@ const ROWS: &[Row] = &[
         G::Admin,
         false,
     ),
+    // (phase 2, D-74) self-hosted app instances: any member lists, owners/admins register
+    r("GET", "/v1/orgs/{org}/app-instances", G::Member, false),
+    r("POST", "/v1/orgs/{org}/app-instances", G::Admin, false),
+    r("PATCH", "/v1/app-instances/{id}", G::Admin, false),
+    r("DELETE", "/v1/app-instances/{id}", G::Admin, false),
     r("GET", "/v1/orgs/{org}/oauth-clients", G::Admin, false),
     r("POST", "/v1/orgs/{org}/oauth-clients", G::Admin, false),
     r("PATCH", "/v1/oauth-clients/{id}", G::Admin, false),
@@ -894,6 +901,9 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             | "/v1/orgs/{org}/oauth-clients"
             | "/v1/workspaces/{ws}/oauth-clients",
         ) => json!({"package_id": "x", "client_key": "x", "fields": {}}),
+        ("POST", "/v1/admin/app-instances" | "/v1/orgs/{org}/app-instances") => {
+            json!({"app_id": "x", "host": "x.example.test", "label": "x"})
+        }
         // wrong confirmation text: an authorized caller gets a validation error, nothing is deleted
         ("DELETE", "/v1/orgs/{org}" | "/v1/workspaces/{ws}") => json!({"confirm": "not-the-slug"}),
         ("POST", "/v1/orgs") => json!({"name": "Matrix second org"}),

@@ -561,6 +561,30 @@ pub struct AppConnectionRow {
     pub credentials_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     pub metadata: serde_json::Value,
     pub tenant_host: Option<String>,
+    /// The registered app instance (D-74): the connection is injected only on its host.
+    pub instance_id: Option<Uuid>,
+}
+
+/// An `active` app instance visible to an org, as the gateway needs it (D-74).
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct InstanceHostRow {
+    pub id: Uuid,
+    pub app_id: String,
+    pub host: String,
+}
+
+/// `active` instances visible to the organization (instance-wide and its own).
+pub async fn visible_instances(
+    pool: &sqlx::PgPool,
+    org_id: Uuid,
+) -> Result<Vec<InstanceHostRow>, DbError> {
+    Ok(sqlx::query_as::<_, InstanceHostRow>(
+        "SELECT id, app_id, host FROM app_instances \
+         WHERE status = 'active' AND (org_id IS NULL OR org_id = $1) ORDER BY host, id",
+    )
+    .bind(org_id)
+    .fetch_all(pool)
+    .await?)
 }
 
 /// `active`, `disabled` and `reauth_required` connections of the organization (workspace
@@ -574,7 +598,7 @@ pub async fn app_connections(
 ) -> Result<Vec<AppConnectionRow>, DbError> {
     Ok(sqlx::query_as::<_, AppConnectionRow>(
         "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
-                credentials_expires_at, metadata, tenant_host \
+                credentials_expires_at, metadata, tenant_host, instance_id \
          FROM app_connections \
          WHERE org_id = $1 AND (workspace_id IS NULL OR workspace_id = $2) \
            AND app_id = ANY($3) AND status IN ('active', 'disabled', 'reauth_required') \

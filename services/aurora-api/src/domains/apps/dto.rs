@@ -143,6 +143,15 @@ pub struct AppOauthClient {
     pub redirect_uri: String,
 }
 
+/// An instance-bound app's `instances` declaration (C-245, D-74).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AppInstances {
+    /// Shown in the registration form and the connect picker.
+    pub label: String,
+    /// The SaaS host (a normal static claim); `null` when the app has no hosted default.
+    pub default_host: Option<String>,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AppDetail {
     pub app_id: String,
@@ -164,4 +173,6 @@ pub struct AppDetail {
     pub credentials: Vec<CredentialInfo>,
     pub metadata: Vec<String>,
     pub oauth_clients: Vec<AppOauthClient>,
+    /// `null` when the app is not instance-bound.
+    pub instances: Option<AppInstances>,
 }

@@ -189,6 +189,7 @@ async fn start(pool: sqlx::PgPool) -> Env {
         credentials_expires_at: None,
         metadata: json!({}),
         tenant_host: None,
+        instance_id: None,
     };
     let mut ws = ScopePolicyRows {
         default_action: "block".into(),

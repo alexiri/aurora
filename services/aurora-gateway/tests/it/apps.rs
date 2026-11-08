@@ -3,7 +3,9 @@
 
 use async_trait::async_trait;
 use aurora_config::SecretsSection;
-use aurora_db::repo::gateway::{AppConnectionRow, PolicyRuleRow, ScopePolicyRows, SecretMetaRow};
+use aurora_db::repo::gateway::{
+    AppConnectionRow, InstanceHostRow, PolicyRuleRow, ScopePolicyRows, SecretMetaRow,
+};
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
 use aurora_gateway::ca;
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
@@ -73,6 +75,8 @@ struct Rows {
     conns: Vec<AppConnectionRow>,
     /// `(restricted, available)`
     availability: (bool, Vec<String>),
+    /// Active app instances visible to the org (D-74).
+    instances: Vec<InstanceHostRow>,
 }
 
 struct Src(Mutex<Rows>);
@@ -110,6 +114,9 @@ impl PolicySource for Src {
     }
     async fn app_availability(&self, _o: Uuid, _w: Uuid) -> Result<(bool, Vec<String>), String> {
         Ok(self.0.lock().unwrap().availability.clone())
+    }
+    async fn instances(&self, _o: Uuid) -> Result<Vec<InstanceHostRow>, String> {
+        Ok(self.0.lock().unwrap().instances.clone())
     }
 }
 
@@ -207,6 +214,7 @@ fn conn(w: &World, app: &str, path: &str, tenant: Option<&str>) -> AppConnection
         credentials_expires_at: None,
         metadata: json!({"sub": "tenant1", "region": "eu-west-1"}),
         tenant_host: tenant.map(str::to_owned),
+        instance_id: None,
     }
 }
 
@@ -926,4 +934,196 @@ async fn snapshot_loads_refuses_unknown_and_swaps_on_notify() {
     }
     assert_eq!(&*store.current().unwrap().hash, "h-b");
     let _ = tx.send(true);
+}
+
+// ---- D-74 / SEC-04 / SEC-59: self-hosted app instances -------------------------------------
+//
+// The test upstream listens on 127.0.0.1. The static (default) host of the instance-bound app is
+// `127.0.0.1`; the registered instance host is `localhost` (it resolves to the same listener, so
+// the same server answers both names and the injected headers show which entry served).
+
+/// GET `http://{host}:{port}{path}` through the proxy.
+async fn get_host(env: &Env, host: &str, path: &str) -> Reply {
+    let mut s = crate::common::connect(env.proxy).await;
+    let auth = base64::engine::general_purpose::STANDARD.encode(format!("agent:{TOKEN}"));
+    let req = format!(
+        "GET http://{host}:{port}{path} HTTP/1.1\r\nHost: {host}:{port}\r\nProxy-Authorization: Basic {auth}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        port = env.up.port()
+    );
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut out = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut out)).await;
+    let text = String::from_utf8_lossy(&out).into_owned();
+    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
+    Reply {
+        status: head
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0),
+        head: head.to_owned(),
+        body: dechunk(body),
+    }
+}
+
+fn inst_app() -> Value {
+    let mut a = app_json("inst", json!(null), false);
+    a["instances"] = json!({"label": "Inst", "default_host": "127.0.0.1"});
+    a
+}
+
+/// `inst` serves its default host `127.0.0.1` (static claim) and any registered instance host.
+fn inst_snapshot(extra_apps: Vec<Value>, extra_hosts: Vec<Value>) -> Value {
+    let inject = json!({"inject": [{"bearer": "{credentials.tok}"}]});
+    let mut apps = vec![inst_app()];
+    apps.extend(extra_apps);
+    let mut hosts = vec![host_json("inst", None, inject.clone())];
+    hosts.extend(extra_hosts);
+    let mut s = snapshot(apps, hosts);
+    let mut ih = host_json("inst", None, inject);
+    ih["host"] = json!("{instance}");
+    s["instance_hosts"] = json!([ih]);
+    s
+}
+
+fn instance_row(id: Uuid, host: &str) -> InstanceHostRow {
+    InstanceHostRow {
+        id,
+        app_id: "inst".into(),
+        host: host.into(),
+    }
+}
+
+fn bound(w: &World, path: &str, instance: Option<Uuid>) -> AppConnectionRow {
+    let mut c = conn(w, "inst", path, None);
+    c.instance_id = instance;
+    c
+}
+
+fn has_token(r: &Reply, token: &str) -> bool {
+    r.body.contains(&format!("authorization: Bearer {token}"))
+}
+
+#[tokio::test]
+async fn instance_connection_is_injected_on_its_exact_host_only() {
+    let inst = Uuid::now_v7();
+    let (env, ..) = start(
+        inst_snapshot(vec![], vec![]),
+        &[("c1", r#"{"tok":"INSTSECRET"}"#)],
+        move |w| {
+            let mut r = granted(bound(w, "c1", Some(inst)))(w);
+            r.instances.push(instance_row(inst, "localhost"));
+            r
+        },
+    )
+    .await;
+    // The registered instance host: injected.
+    let r = get_host(&env, "localhost", "/api/v4/user").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(has_token(&r, "INSTSECRET"), "{}", r.body);
+    // The app's static default host: the instance connection is refused like a tenant-bound one,
+    // naming the host it is bound to; nothing reaches the upstream.
+    let r = get_host(&env, "127.0.0.1", "/api/v4/user").await;
+    assert_eq!(r.status, 421, "{}", r.body);
+    assert_eq!(r.code(), "host_mismatch");
+    let v: Value = serde_json::from_str(&r.body).unwrap();
+    assert_eq!(v["error"]["details"]["expected_host"], "localhost");
+    assert!(!r.body.contains("INSTSECRET"));
+}
+
+#[tokio::test]
+async fn default_host_connection_is_never_injected_on_an_instance_host() {
+    let inst = Uuid::now_v7();
+    let (env, ..) = start(
+        inst_snapshot(vec![], vec![]),
+        &[("c1", r#"{"tok":"DEFAULTSECRET"}"#)],
+        move |w| {
+            let mut r = granted(bound(w, "c1", None))(w);
+            r.instances.push(instance_row(inst, "localhost"));
+            r
+        },
+    )
+    .await;
+    // Served on the default host it was made for ...
+    let r = get_host(&env, "127.0.0.1", "/api/v4/user").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(has_token(&r, "DEFAULTSECRET"), "{}", r.body);
+    // ... but never sent to a registered instance host.
+    let r = get_host(&env, "localhost", "/api/v4/user").await;
+    assert!(!r.body.contains("DEFAULTSECRET"), "{}", r.body);
+    assert!(!r.head.contains("DEFAULTSECRET"));
+}
+
+#[tokio::test]
+async fn unregistered_disabled_or_deleted_instance_injects_nothing() {
+    let inst = Uuid::now_v7();
+    // No instance row is active (never registered, disabled, or deleted): the host is an ordinary
+    // unknown host, and the connection that still names the instance is not a candidate anywhere.
+    let (env, ..) = start(
+        inst_snapshot(vec![], vec![]),
+        &[("c1", r#"{"tok":"GONESECRET"}"#)],
+        move |w| granted(bound(w, "c1", Some(inst)))(w),
+    )
+    .await;
+    for host in ["localhost", "127.0.0.1"] {
+        let r = get_host(&env, host, "/api/v4/user").await;
+        assert!(!r.body.contains("GONESECRET"), "{host}: {}", r.body);
+        assert_ne!(r.status, 421, "{host}: {}", r.body);
+    }
+    // The same without any connection: an instance host nobody registered is not served.
+    let (env, ..) = start(inst_snapshot(vec![], vec![]), &[], |_| Rows::default()).await;
+    let r = get_host(&env, "localhost", "/api/v4/user").await;
+    assert!(
+        !r.body
+            .to_ascii_lowercase()
+            .contains("authorization: bearer"),
+        "{}",
+        r.body
+    );
+}
+
+#[tokio::test]
+async fn another_apps_static_claim_shadows_a_registered_instance_host() {
+    let inst = Uuid::now_v7();
+    // A package later claims `localhost` statically: the instance never injects there.
+    let mut other_host = host_json("other", None, json!({}));
+    other_host["host"] = json!("localhost");
+    let (env, ..) = start(
+        inst_snapshot(
+            vec![app_json("other", json!(null), false)],
+            vec![other_host],
+        ),
+        &[("c1", r#"{"tok":"SHADOWSECRET"}"#)],
+        move |w| {
+            let mut r = granted(bound(w, "c1", Some(inst)))(w);
+            r.instances.push(instance_row(inst, "localhost"));
+            r
+        },
+    )
+    .await;
+    let r = get_host(&env, "localhost", "/api/v4/user").await;
+    assert!(!r.body.contains("SHADOWSECRET"), "{}", r.body);
+}
+
+#[tokio::test]
+async fn instance_connection_of_another_instance_is_refused_with_its_host() {
+    let (mine, other) = (Uuid::now_v7(), Uuid::now_v7());
+    let (env, ..) = start(
+        inst_snapshot(vec![], vec![]),
+        &[("c1", r#"{"tok":"OTHERSECRET"}"#)],
+        move |w| {
+            // The connection belongs to another instance of the same app; this org also has
+            // `localhost` registered. A request to `localhost` must not use it.
+            let mut r = granted(bound(w, "c1", Some(other)))(w);
+            r.instances.push(instance_row(mine, "localhost"));
+            r.instances.push(instance_row(other, "other.example.test"));
+            r
+        },
+    )
+    .await;
+    let r = get_host(&env, "localhost", "/api/v4/user").await;
+    assert_eq!(r.status, 421, "{}", r.body);
+    let v: Value = serde_json::from_str(&r.body).unwrap();
+    assert_eq!(v["error"]["details"]["expected_host"], "other.example.test");
+    assert!(!r.body.contains("OTHERSECRET"));
 }

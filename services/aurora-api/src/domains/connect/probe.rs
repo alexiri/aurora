@@ -31,6 +31,12 @@ pub struct Vars<'a> {
     pub metadata: &'a Map<String, Value>,
     pub tenant_host: Option<&'a str>,
     pub fields: &'a Map<String, Value>,
+    /// The host `{instance}` stands for: the connection's registered instance, or the app's
+    /// `default_host` (D-74).
+    pub instance_host: Option<&'a str>,
+    /// `instance_host` is a *registered* instance (not the static `default_host`): its
+    /// `{instance}` host entries apply to it.
+    pub instance_registered: bool,
 }
 
 fn dns_ok(s: &str) -> bool {
@@ -70,6 +76,14 @@ fn render(t: &Template, v: &Vars<'_>, encode: bool) -> Option<String> {
                         out.push_str(h);
                         continue;
                     }
+                    (Ns::Instance, _) => {
+                        let h = v.instance_host?;
+                        if !dns_ok(h) {
+                            return None;
+                        }
+                        out.push_str(h);
+                        continue;
+                    }
                     _ => return None,
                 };
                 if encode {
@@ -93,9 +107,31 @@ pub fn render_url(t: &Template, tenant_host: Option<&str>) -> Option<String> {
             metadata: &empty,
             tenant_host,
             fields: &empty,
+            instance_host: None,
+            instance_registered: false,
         },
         true,
     )
+}
+
+/// Substitute `{instance}` in a fixed OAuth URL string (`https://{instance}/oauth/token`) with
+/// the connection's instance host. The result must be https and its host exactly that host
+/// (SEC-04/SEC-59: a token exchange never leaves the instance host).
+pub fn instance_url(raw: &str, instance_host: &str) -> Option<String> {
+    if !raw.contains(aurora_registry::manifest::INSTANCE_HOST) {
+        return Some(raw.to_owned());
+    }
+    if !dns_ok(instance_host) {
+        return None;
+    }
+    let url = raw.replacen(aurora_registry::manifest::INSTANCE_HOST, instance_host, 1);
+    let u = reqwest::Url::parse(&url).ok()?;
+    (u.scheme() == "https"
+        && u.port().is_none()
+        && u.username().is_empty()
+        && u.host_str()
+            .is_some_and(|h| h.eq_ignore_ascii_case(instance_host)))
+    .then_some(url)
 }
 
 /// `https` URL whose host lies in `zone` (SEC-17 / I-20).
@@ -121,28 +157,38 @@ pub fn tenant_ok(snap: &Snapshot, app: &AppEntry, host: &str) -> bool {
             .any(|t| HostPattern::parse(&t.zone).is_ok_and(|p| p.matches(&h, 443)))
 }
 
+/// The app's host entry serving `host`/`path`: a static entry, or — only when `instance` is the
+/// registered instance host being connected and equals `host` exactly — an `{instance}` entry.
 fn host_entry<'a>(
     snap: &'a Snapshot,
     app: &AppEntry,
     host: &str,
     path: &str,
+    instance: Option<&str>,
 ) -> Option<&'a HostEntry> {
-    snap.hosts
+    let prefix_ok = |e: &&HostEntry| path.starts_with(e.path_prefix.as_deref().unwrap_or("/"));
+    let statics = snap
+        .hosts
         .iter()
         .filter(|e| e.app_id == app.app_id)
-        .filter(|e| {
-            HostPattern::lenient(&e.host).matches(host, 443)
-                && path.starts_with(e.path_prefix.as_deref().unwrap_or("/"))
-        })
+        .filter(|e| HostPattern::lenient(&e.host).matches(host, 443));
+    let instanced = instance
+        .filter(|i| i.eq_ignore_ascii_case(host))
+        .into_iter()
+        .flat_map(|_| snap.instance_entries(&app.app_id));
+    statics
+        .chain(instanced)
+        .filter(prefix_ok)
         .max_by_key(|e| e.path_prefix.as_deref().map_or(0, str::len))
 }
 
-/// Does `url` target https on one of the app's declared hosts?
-pub fn declared_host(snap: &Snapshot, app: &AppEntry, url: &str) -> bool {
+/// Does `url` target https on one of the app's declared hosts (or the registered `instance`)?
+pub fn declared_host(snap: &Snapshot, app: &AppEntry, url: &str, instance: Option<&str>) -> bool {
     reqwest::Url::parse(url).is_ok_and(|u| {
         u.scheme() == "https"
-            && u.host_str()
-                .is_some_and(|h| host_entry(snap, app, &h.to_ascii_lowercase(), u.path()).is_some())
+            && u.host_str().is_some_and(|h| {
+                host_entry(snap, app, &h.to_ascii_lowercase(), u.path(), instance).is_some()
+            })
     })
 }
 
@@ -166,7 +212,14 @@ pub async fn run(
     if parsed.scheme() != "https" {
         return Err(none);
     }
-    let entry = host_entry(snap, app, &host, parsed.path()).ok_or(ProbeFail { status: None })?;
+    let entry = host_entry(
+        snap,
+        app,
+        &host,
+        parsed.path(),
+        v.instance_host.filter(|_| v.instance_registered),
+    )
+    .ok_or(ProbeFail { status: None })?;
     if let Some(t) = &entry.tenant
         && t.field == "connection.tenant_host"
         && v.tenant_host.map(str::to_ascii_lowercase).as_deref() != Some(host.as_str())
@@ -210,8 +263,13 @@ pub async fn run(
             _ => {}
         }
     }
-    let mut req = env
-        .http
+    // A registered instance is dialled through the guard that honours `gateway.allowed_private`.
+    let client = if v.instance_registered {
+        &env.http_instance
+    } else {
+        &env.http
+    };
+    let mut req = client
         .request(method, url)
         .timeout(std::time::Duration::from_secs(10));
     for (k, val) in headers {

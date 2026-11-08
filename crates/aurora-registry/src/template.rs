@@ -38,6 +38,8 @@ pub enum Ns {
     Query,
     /// `field.Label`
     Field,
+    /// `{instance}`: the host of the connection's app instance (D-74); a whole host only.
+    Instance,
 }
 
 impl Ns {
@@ -188,7 +190,10 @@ impl Template {
                     | (Place::Transform, Ns::Context)
                     | (Place::TokenUrl, Ns::Connection)
                     | (Place::TokenParams, Ns::Credentials)
-                    | (Place::Probe { .. }, Ns::Metadata | Ns::Connection)
+                    | (
+                        Place::Probe { .. },
+                        Ns::Metadata | Ns::Connection | Ns::Instance
+                    )
                     | (
                         Place::Probe {
                             fields_connect: true,
@@ -245,6 +250,12 @@ impl Template {
 
 fn parse_token(t: &str) -> Result<Reference, TemplateError> {
     let bad = || TemplateError::BadToken(t.to_owned());
+    if t == "instance" {
+        return Ok(Reference {
+            ns: Ns::Instance,
+            name: "instance".to_owned(),
+        });
+    }
     let (ns_s, name) = t.split_once('.').ok_or_else(bad)?;
     let ns = Ns::from_str(ns_s).ok_or_else(|| TemplateError::UnknownNamespace(ns_s.to_owned()))?;
     let ident = |s: &str| {
@@ -258,6 +269,7 @@ fn parse_token(t: &str) -> Result<Reference, TemplateError> {
         Ns::Path => !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit()),
         Ns::Field => !name.trim().is_empty() && name.chars().all(|c| !c.is_control()),
         Ns::Credentials | Ns::Metadata | Ns::Context | Ns::Fields | Ns::Query => ident(name),
+        Ns::Instance => false,
     };
     if !ok {
         return Err(bad());

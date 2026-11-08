@@ -591,6 +591,17 @@ async fn https_upstream() -> (
     String,
     std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 ) {
+    https_upstream_for(&["127.0.0.1"]).await
+}
+
+/// As [`https_upstream`], with a leaf certificate valid for `names`.
+async fn https_upstream_for(
+    names: &[&str],
+) -> (
+    std::net::SocketAddr,
+    String,
+    std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+) {
     use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let ca_key = KeyPair::generate().unwrap();
@@ -598,7 +609,7 @@ async fn https_upstream() -> (
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     let ca = ca_params.self_signed(&ca_key).unwrap();
     let leaf_key = KeyPair::generate().unwrap();
-    let leaf = CertificateParams::new(vec!["127.0.0.1".to_owned()])
+    let leaf = CertificateParams::new(names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>())
         .unwrap()
         .signed_by(&leaf_key, &ca, &ca_key)
         .unwrap();
@@ -970,4 +981,316 @@ async fn s16_open_lane_capability_posture_and_connect_time_rules() {
     let (s, b) = raw_connect(&gw, &ca, "open", &browser, &target).await;
     assert_eq!(s, 200, "{b}");
     f.st.finish().await;
+}
+
+// ---- D-74 / SEC-04 / SEC-59: self-hosted app instances through the real stack -----------------
+
+const INST_HOST: &str = "desk.acme.example.test";
+const SAAS_HOST: &str = "saas.instance.example.test";
+const OTHER_HOST: &str = "elsewhere.example.test";
+
+/// A CONNECT proxy standing in for the network: every tunnel goes to `target` and the requested
+/// authority is recorded. The gateway dials upstreams through it (`gateway.egress_proxy`), so the
+/// DNS names above need no resolution.
+async fn connect_proxy(
+    target: std::net::SocketAddr,
+) -> (
+    std::net::SocketAddr,
+    std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
+    let seen2 = seen.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut c, _)) = l.accept().await else {
+                return;
+            };
+            let seen = seen2.clone();
+            tokio::spawn(async move {
+                let mut head = Vec::new();
+                let mut b = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    if head.len() > 8192 || c.read(&mut b).await.unwrap_or(0) == 0 {
+                        return;
+                    }
+                    head.push(b[0]);
+                }
+                let line = String::from_utf8_lossy(&head);
+                let authority = line
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_owned();
+                seen.lock().unwrap().push(authority);
+                let Ok(mut up) = tokio::net::TcpStream::connect(target).await else {
+                    return;
+                };
+                if c.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                let _ = tokio::io::copy_bidirectional(&mut c, &mut up).await;
+            });
+        }
+    });
+    (addr, seen)
+}
+
+/// Trust the fixture key, upload and approve `fixture-instance`.
+async fn install_instance_fixture(st: &Stack, api: &mut Api) {
+    sqlx::query("UPDATE users SET is_instance_admin = true")
+        .execute(st.pool())
+        .await
+        .unwrap();
+    api.relogin("owner@e2e.test").await;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/fixtures");
+    let pubkey = std::fs::read_to_string(root.join("test-key/test-signing-key.pub")).unwrap();
+    let (s, v) = api
+        .post(
+            "/v1/admin/trusted-keys",
+            json!({"publisher": "fixtures", "name": "fixture test key", "public_key": pubkey.trim()}),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let pkg = std::fs::read(root.join("dist/fixture-instance.aurora-plugin"))
+        .expect("run `bash scripts/fixtures/build.sh` first");
+    let (s, v) = api.upload_plugin(&pkg).await;
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    let (s, v) = api
+        .post(&format!("/v1/admin/plugins/{id}/approve"), json!({}))
+        .await;
+    assert_eq!((s, v["status"].as_str()), (200, Some("active")), "{v}");
+}
+
+/// A sealed `instance-desk` connection (optionally bound to an instance), granted to `agent`.
+async fn instance_connection(
+    st: &Stack,
+    api: &Api,
+    agent: &str,
+    instance: Option<uuid::Uuid>,
+    token: &str,
+) -> uuid::Uuid {
+    use aurora_secrets::{Purpose, SealContext, SecretVault, StoreRegistry};
+    let id = uuid::Uuid::now_v7();
+    let (org, ws): (uuid::Uuid, uuid::Uuid) = (api.org.parse().unwrap(), api.ws.parse().unwrap());
+    let keys = {
+        use base64::Engine;
+        format!(
+            "k1:{}",
+            base64::engine::general_purpose::STANDARD.encode([b'a'; 32])
+        )
+    };
+    let keyring = std::sync::Arc::new(aurora_crypto::Keyring::parse(&keys, "k1").unwrap());
+    let vault = SecretVault::new(
+        StoreRegistry::from_config(&aurora_config::SecretsSection::default(), keyring).unwrap(),
+    );
+    let r = vault
+        .seal(
+            &SealContext {
+                purpose: Purpose::ConnectionCredentials,
+                owner_id: id,
+                org_id: org,
+                workspace_id: Some(ws),
+            },
+            aurora_core::Secret::from(serde_json::to_vec(&json!({"api_token": token})).unwrap()),
+        )
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref, instance_id) VALUES ($1,$2,$3,'instance-desk','fixture-instance','1.0.0','desk','active',$4,$5)")
+        .bind(id)
+        .bind(org)
+        .bind(ws)
+        .bind(r.to_column())
+        .bind(instance)
+        .execute(st.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4,'full')")
+        .bind(uuid::Uuid::now_v7())
+        .bind(ws)
+        .bind(agent.parse::<uuid::Uuid>().unwrap())
+        .bind(id)
+        .execute(st.pool())
+        .await
+        .unwrap();
+    let rule = json!({"name": "Grant: fixture-instance", "enabled": true,
+        "identities": [{"kind": "agent", "id": agent}],
+        "targets": [{"type": "connection", "id": id}],
+        "action": "allow", "require_approval": false, "rate_limit": null, "conditions": []});
+    sqlx::query("INSERT INTO derived_rules (id, org_id, workspace_id, source_kind, source_id, ordinal, logical_id, rule) VALUES ($1,$2,$3,'grant',$4,0,$5,$6)")
+        .bind(uuid::Uuid::now_v7())
+        .bind(org)
+        .bind(ws)
+        .bind(id)
+        .bind(uuid::Uuid::now_v7())
+        .bind(rule)
+        .execute(st.pool())
+        .await
+        .unwrap();
+    // Rows written behind the API's back: tell the gateways (as the API would) so that no cached
+    // resolution of an earlier request hides them.
+    sqlx::query("SELECT pg_notify('aurora_gateway_invalidate', $1)")
+        .bind(json!({"scope": "org", "id": org}).to_string())
+        .execute(st.pool())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    id
+}
+
+#[tokio::test]
+async fn s18_instance_bound_connection_is_injected_on_its_instance_host_only() {
+    let (up, up_ca, seen) = https_upstream_for(&[INST_HOST, SAAS_HOST, OTHER_HOST]).await;
+    let (proxy, tunnels) = connect_proxy(up).await;
+    let st = Stack::start(Opts {
+        extra_ca_bundle: Some(up_ca),
+        egress_proxy: Some(format!("http://{proxy}")),
+        ..Opts::default()
+    })
+    .await;
+    let mut api = st.signup("owner@e2e.test").await;
+    let (agent, token) = api.byo_agent("inst-agent").await;
+    install_instance_fixture(&st, &mut api).await;
+    api.set_policy("allow", json!([])).await;
+    // A registered instance (the API probe cannot resolve the fake name, so the row is inserted
+    // directly; its registration rules are covered by the API suite).
+    let inst = uuid::Uuid::now_v7();
+    let org: uuid::Uuid = api.org.parse().unwrap();
+    sqlx::query("INSERT INTO app_instances (id, org_id, package_id, app_id, host, label) VALUES ($1,$2,'fixture-instance','instance-desk',$3,'Acme desk')")
+        .bind(inst)
+        .bind(org)
+        .bind(INST_HOST)
+        .execute(st.pool())
+        .await
+        .unwrap();
+    let conn = instance_connection(&st, &api, &agent, Some(inst), "inst-secret").await;
+    let client = via_proxy(&st.gw_a, &token, &st.ca_pem);
+    let get = |host: &str| {
+        client
+            .get(format!("https://{host}/api/v1/items"))
+            .header("authorization", "Bearer agent-forged")
+            .send()
+    };
+    let heads = || seen.lock().unwrap().clone();
+
+    // 1. The instance host: injected (and the agent's own header is gone).
+    let r = get(INST_HOST).await.unwrap();
+    assert_eq!(r.status(), 200, "{}", st.log_tails());
+    let h = heads().last().unwrap().to_ascii_lowercase();
+    assert!(h.contains("authorization: bearer inst-secret"), "{h}");
+    assert!(
+        h.contains("x-fixture: instance") && !h.contains("agent-forged"),
+        "{h}"
+    );
+
+    // 2. The app's SaaS default host: the instance connection is refused like a tenant-bound
+    //    one (421, expected_host), nothing reaches the upstream.
+    let before = (heads().len(), tunnels.lock().unwrap().len());
+    let r = get(SAAS_HOST).await.unwrap();
+    let (s, b) = (r.status().as_u16(), r.text().await.unwrap());
+    assert_eq!((s, err_code(&b).as_str()), (421, "host_mismatch"), "{b}");
+    let v: Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(v["error"]["details"]["expected_host"], INST_HOST);
+    assert_eq!((heads().len(), tunnels.lock().unwrap().len()), before);
+
+    // 3. An unrelated host: the credential is not injected there.
+    let r = get(OTHER_HOST).await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(!heads().last().unwrap().contains("inst-secret"));
+
+    // 4. A default-host connection is injected on the default host only, never on the instance.
+    instance_connection(&st, &api, &agent, None, "saas-secret").await;
+    let r = get(SAAS_HOST).await.unwrap();
+    assert_eq!(r.status(), 200, "{}", st.log_tails());
+    let h = heads().last().unwrap().to_ascii_lowercase();
+    assert!(h.contains("authorization: bearer saas-secret"), "{h}");
+    let r = get(INST_HOST).await.unwrap();
+    assert_eq!(r.status(), 200);
+    let h = heads().last().unwrap().to_ascii_lowercase();
+    assert!(
+        h.contains("bearer inst-secret") && !h.contains("saas-secret"),
+        "{h}"
+    );
+
+    // 5. Disabling the instance stops injection on its host at once (gateway invalidated).
+    let (s, v) = api
+        .call(
+            reqwest::Method::PATCH,
+            &format!("/v1/app-instances/{inst}"),
+            Some(json!({"status": "disabled"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // (a refused request never reaches the upstream, so only a *new* upstream head can carry a token)
+    let injects_on_instance = || async {
+        let n = heads().len();
+        let _ = get(INST_HOST).await.unwrap();
+        let hs = heads();
+        hs.len() > n && {
+            let h = hs.last().unwrap().to_ascii_lowercase();
+            h.contains("inst-secret") || h.contains("saas-secret")
+        }
+    };
+    let mut injected = true;
+    for _ in 0..40 {
+        injected = injects_on_instance().await;
+        if !injected {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert!(
+        !injected,
+        "still injecting on a disabled instance\n{}",
+        st.log_tails()
+    );
+    let (s, _) = api
+        .call(
+            reqwest::Method::PATCH,
+            &format!("/v1/app-instances/{inst}"),
+            Some(json!({"status": "active"})),
+        )
+        .await;
+    assert_eq!(s, 200);
+
+    // 6. Deleting the instance: the connection is disabled and nothing is injected on its host.
+    let (s, _) = api
+        .call(
+            reqwest::Method::DELETE,
+            &format!("/v1/app-instances/{inst}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204);
+    let (status, reason, bound): (String, Option<String>, Option<uuid::Uuid>) = sqlx::query_as(
+        "SELECT status, status_reason, instance_id FROM app_connections WHERE id = $1",
+    )
+    .bind(conn)
+    .fetch_one(st.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        (status.as_str(), reason.as_deref(), bound),
+        ("disabled", Some("instance_deleted"), None)
+    );
+    let mut injected = true;
+    for _ in 0..40 {
+        injected = injects_on_instance().await;
+        if !injected {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert!(
+        !injected,
+        "still injecting on a deleted instance\n{}",
+        st.log_tails()
+    );
+    st.finish().await;
 }

@@ -18,6 +18,9 @@ pub struct ConnectRequest {
     pub oauth_client_id: Option<Uuid>,
     pub access_level: Option<String>,
     pub reconnect_connection_id: Option<Uuid>,
+    /// A registered self-hosted instance of an instance-bound app (C-243). Absent = the app's
+    /// `default_host`.
+    pub instance_id: Option<Uuid>,
 }
 
 /// `redirect` (navigate the popup) or `connected`.

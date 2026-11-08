@@ -12,6 +12,7 @@ use crate::domains::secrets::service::secret_err;
 use crate::http::auth::{Caller, require_own};
 use aurora_core::{ApiError, ids};
 use aurora_db::DbError;
+use aurora_db::repo::app_instances::{self, InstanceRow};
 use aurora_db::repo::connections::{self as repo, ConnectionRow, NewConnection};
 use aurora_db::repo::{credentials, derived_rules, gateway};
 use aurora_registry::manifest::{BodyFormat, ClientAuth, Connect, Oauth2Connect, UrlOrTemplate};
@@ -162,19 +163,34 @@ fn client_required(msg: &str) -> ConnectErr {
     ))
 }
 
+/// OAuth methods of a self-hosted instance use only a BYOC client bound to that instance (C-243).
+fn instance_client_required() -> ConnectErr {
+    ConnectErr::Api(ApiError::unprocessable(
+        "instance_oauth_client_required",
+        "Register an OAuth application for this instance first.",
+    ))
+}
+
 async fn resolve_client(
     state: &AppState,
     pkg: &str,
     key: &str,
     t: &Target,
     requested: Option<Uuid>,
+    instance: Option<Uuid>,
 ) -> Result<ClientRow, ConnectErr> {
-    let all = repo::usable_clients(&state.pool, pkg, key, t.org, t.ws).await?;
+    let all = repo::usable_clients(&state.pool, pkg, key, t.org, t.ws, instance).await?;
     let found = match requested {
         Some(id) => all.into_iter().find(|c| c.id == id),
         None => all.into_iter().next(),
     };
-    found.ok_or_else(|| client_required("No usable OAuth client is configured."))
+    found.ok_or_else(|| {
+        if instance.is_some() {
+            instance_client_required()
+        } else {
+            client_required("No usable OAuth client is configured.")
+        }
+    })
 }
 
 async fn client_fields(
@@ -214,9 +230,16 @@ async fn context(
     Ok(m)
 }
 
-/// `https` and on a declared host or an authorize host of the package's clients.
-fn redirect_allowed(snap: &Snapshot, app: &AppEntry, pkg: &PackageEntry, url: &str) -> bool {
-    if probe::declared_host(snap, app, url) {
+/// `https` and on a declared host (the registered instance's host included) or an authorize host
+/// of the package's clients.
+fn redirect_allowed(
+    snap: &Snapshot,
+    app: &AppEntry,
+    pkg: &PackageEntry,
+    url: &str,
+    instance: Option<&str>,
+) -> bool {
+    if probe::declared_host(snap, app, url, instance) {
         return true;
     }
     let Ok(u) = reqwest::Url::parse(url) else {
@@ -243,6 +266,9 @@ struct Ctx<'a> {
     user: Uuid,
     t: Target,
     reconnect: Option<ConnectionRow>,
+    /// The registered self-hosted instance being connected (D-74); `None` = `default_host` or an
+    /// app without `instances`.
+    instance: Option<InstanceRow>,
 }
 
 #[derive(Default)]
@@ -266,6 +292,23 @@ enum Kind {
 }
 
 impl Ctx<'_> {
+    /// The host `{instance}` stands for: the registered instance's, else the app's `default_host`.
+    fn instance_host(&self) -> Option<&str> {
+        match &self.instance {
+            Some(i) => Some(i.host.as_str()),
+            None => self
+                .app
+                .instances
+                .as_ref()
+                .and_then(|i| i.default_host.as_deref()),
+        }
+    }
+
+    /// The registered instance's host (the host the `{instance}` host entries apply to).
+    fn registered_host(&self) -> Option<&str> {
+        self.instance.as_ref().map(|i| i.host.as_str())
+    }
+
     fn bad(&self, k: Kind) -> ConnectErr {
         match k {
             Kind::Fields => invalid("/fields", "values violate the app declaration"),
@@ -279,6 +322,7 @@ impl Ctx<'_> {
             package_id: &self.pkg.package_id,
             package_digest: &self.pkg.digest,
             app_id: &self.app.app_id,
+            instance_host: self.instance_host(),
         }
     }
 
@@ -297,6 +341,7 @@ impl Ctx<'_> {
             org_id: self.t.org,
             user_id: self.user,
             client_id: client,
+            instance_id: self.instance.as_ref().map(|i| i.id),
             access_level: level,
             pkce_verifier: None,
             reconnect: self.reconnect.as_ref().map(|r| r.id),
@@ -347,6 +392,8 @@ impl Ctx<'_> {
                     metadata: &g.metadata,
                     tenant_host: g.tenant_host.as_deref(),
                     fields: &g.fields,
+                    instance_host: self.instance_host(),
+                    instance_registered: self.instance.is_some(),
                 },
             )
             .await
@@ -412,6 +459,7 @@ impl Ctx<'_> {
             tenant_host: g.tenant_host.as_deref(),
             oauth_client_id: g.client,
             connected_by: self.user,
+            instance_id: self.instance.as_ref().map(|i| i.id),
         };
         let old = match self.write(&n).await {
             Ok(o) => o,
@@ -536,6 +584,56 @@ fn gathered_from_hook(c: Connected, client: Option<Uuid>) -> Gathered {
     }
 }
 
+/// The registered instance a connect request targets (C-243): absent = `default_host` (422
+/// `instance_required` when the app has none); present = an `active` instance of this app
+/// visible to the org (404 otherwise). A reconnect keeps the connection's instance.
+async fn resolve_instance(
+    state: &AppState,
+    app: &AppEntry,
+    t: &Target,
+    requested: Option<Uuid>,
+    reconnect: Option<&ConnectionRow>,
+) -> Result<Option<InstanceRow>, ConnectErr> {
+    let Some(ins) = &app.instances else {
+        return if requested.is_some() {
+            Err(invalid(
+                "/instance_id",
+                "this app has no self-hosted instances",
+            ))
+        } else {
+            Ok(None)
+        };
+    };
+    let id = match reconnect {
+        Some(r) => {
+            if requested.is_some() && requested != r.instance_id {
+                return Err(invalid(
+                    "/instance_id",
+                    "a reconnect keeps the connection's instance",
+                ));
+            }
+            r.instance_id
+        }
+        None => requested,
+    };
+    let Some(id) = id else {
+        if reconnect.is_none() && ins.default_host.is_none() {
+            return Err(ConnectErr::Api(ApiError::unprocessable(
+                "instance_required",
+                "Choose the instance to connect to.",
+            )));
+        }
+        return Ok(None);
+    };
+    app_instances::get(&state.pool, id)
+        .await?
+        .filter(|i| {
+            i.app_id == app.app_id && i.status == "active" && i.org_id.is_none_or(|o| o == t.org)
+        })
+        .map(Some)
+        .ok_or_else(|| ConnectErr::Api(ApiError::not_found("Instance not found.")))
+}
+
 pub async fn start(
     state: &AppState,
     caller: &Caller,
@@ -567,6 +665,7 @@ pub async fn start(
         .iter()
         .find(|c| c.id() == req.method_id)
         .ok_or_else(|| invalid("/method_id", "unknown connect method"))?;
+    let instance = resolve_instance(state, app, &t, req.instance_id, reconnect.as_ref()).await?;
     let ctx = Ctx {
         state,
         snap: &snap,
@@ -575,6 +674,7 @@ pub async fn start(
         user: caller.user_id,
         t,
         reconnect,
+        instance,
     };
     match method {
         Connect::Fields(f) => {
@@ -613,7 +713,7 @@ pub async fn start(
                     .authorize(&ctx.call(), input)
                     .await
                     .map_err(|e| ConnectErr::Hook(e.0))?;
-                if !redirect_allowed(&snap, app, pkg, &out.url) {
+                if !redirect_allowed(&snap, app, pkg, &out.url, ctx.registered_host()) {
                     return Err(ConnectErr::Hook("hook returned a disallowed URL".into()));
                 }
                 flow.continuation = out.continuation;
@@ -687,6 +787,7 @@ async fn find_ce_client(
     let c = aurora_db::repo::oauth_clients::get(&ctx.state.pool, id).await?;
     let usable = c.filter(|c| {
         c.enabled
+            && c.instance_id == ctx.instance.as_ref().map(|i| i.id)
             && c.package_id == ctx.pkg.package_id
             && c.org_id.is_none_or(|o| {
                 o == ctx.t.org && c.workspace_id.is_none_or(|w| Some(w) == ctx.t.ws)
@@ -703,7 +804,7 @@ fn continue_to(
     url: String,
     continuation: String,
 ) -> Result<(String, String), ConnectErr> {
-    if !redirect_allowed(ctx.snap, ctx.app, ctx.pkg, &url) {
+    if !redirect_allowed(ctx.snap, ctx.app, ctx.pkg, &url, ctx.registered_host()) {
         return Err(ConnectErr::Hook("hook returned a disallowed URL".into()));
     }
     flow.continuation = Some(continuation);
@@ -733,6 +834,7 @@ async fn start_oauth(
         &o.client,
         &ctx.t,
         req.oauth_client_id,
+        ctx.instance.as_ref().map(|i| i.id),
     )
     .await?;
     let level = match (&req.access_level, o.access_levels.is_empty()) {
@@ -769,15 +871,14 @@ async fn start_oauth(
             "tenant host is not allowed for this app",
         ));
     }
-    let authorize = oauth_url(&ce.authorize_url, tenant.as_deref()).ok_or_else(|| {
-        invalid(
-            "/fields",
-            "a tenant host is required for this connect method",
-        )
-    })?;
-    if matches!(ce.token_url, UrlOrTemplate::Templated(_))
-        && oauth_url(&ce.token_url, tenant.as_deref()).is_none()
-    {
+    let authorize = oauth_url(&ce.authorize_url, tenant.as_deref(), ctx.instance_host())
+        .ok_or_else(|| {
+            invalid(
+                "/fields",
+                "a tenant host is required for this connect method",
+            )
+        })?;
+    if oauth_url(&ce.token_url, tenant.as_deref(), ctx.instance_host()).is_none() {
         return Err(invalid(
             "/fields",
             "a tenant host is required for this connect method",
@@ -873,6 +974,20 @@ async fn run_callback(
         .iter()
         .find(|c| c.id() == flow.method_id)
         .ok_or(ConnectErr::Exchange)?;
+    // The instance must still be registered, active and visible: a flow cannot outlive a delete.
+    let instance = match flow.instance_id {
+        Some(id) => Some(
+            app_instances::get(&state.pool, id)
+                .await?
+                .filter(|i| {
+                    i.app_id == app.app_id
+                        && i.status == "active"
+                        && i.org_id.is_none_or(|o| o == t.org)
+                })
+                .ok_or(ConnectErr::Exchange)?,
+        ),
+        None => None,
+    };
     let ctx = Ctx {
         state,
         snap: &snap,
@@ -881,11 +996,20 @@ async fn run_callback(
         user: caller.user_id,
         t,
         reconnect,
+        instance,
     };
     let client_row = match flow.client_id {
         Some(id) => aurora_db::repo::oauth_clients::get(&state.pool, id).await?,
         None => None,
     };
+    // A client bound to an instance serves only that instance (and an unbound one never an
+    // instance): the OAuth application matches the host the code is exchanged on (SEC-59).
+    if client_row
+        .as_ref()
+        .is_some_and(|c| c.instance_id != flow.instance_id)
+    {
+        return Err(ConnectErr::Exchange);
+    }
     let cf = match &client_row {
         Some(c) => client_fields(state, c).await?,
         None => Default::default(),
@@ -941,8 +1065,15 @@ async fn run_callback(
 
 /// Resolve an OAuth endpoint: fixed URLs as-is; templates render with the tenant host and must
 /// stay `https` inside their zone (SEC-17 / I-20).
-fn oauth_url(u: &UrlOrTemplate, tenant: Option<&str>) -> Option<String> {
+fn oauth_url(
+    u: &UrlOrTemplate,
+    tenant: Option<&str>,
+    instance_host: Option<&str>,
+) -> Option<String> {
     match u {
+        UrlOrTemplate::Url(u) if u.contains(aurora_registry::manifest::INSTANCE_HOST) => {
+            probe::instance_url(u, instance_host?)
+        }
         UrlOrTemplate::Url(u) => Some(u.clone()),
         UrlOrTemplate::Templated(z) => {
             let url = probe::render_url(&z.template, tenant)?;
@@ -970,8 +1101,14 @@ async fn token_exchange(
     {
         return Err(ConnectErr::Exchange);
     }
-    let url = oauth_url(&ce.token_url, tenant).ok_or(ConnectErr::Exchange)?;
+    let url = oauth_url(&ce.token_url, tenant, ctx.instance_host()).ok_or(ConnectErr::Exchange)?;
     let url = env.prepare(&url).map_err(|_| ConnectErr::Exchange)?;
+    // A registered instance is dialled through the guard that honours `gateway.allowed_private`.
+    let http = if ctx.instance.is_some() {
+        &env.http_instance
+    } else {
+        &env.http
+    };
     let get = |k: &str| {
         cf.1.get(k)
             .or_else(|| cf.0.get(k))
@@ -986,7 +1123,7 @@ async fn token_exchange(
     if let Some(v) = &flow.pkce_verifier {
         params.insert("code_verifier".into(), v.clone());
     }
-    let mut req = env.http.post(url).header("accept", "application/json");
+    let mut req = http.post(url).header("accept", "application/json");
     match ce.client_auth {
         ClientAuth::Basic => {
             req = req.basic_auth(get("client_id").unwrap_or_default(), get("client_secret"));

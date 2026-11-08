@@ -526,7 +526,7 @@ role change. From phase 2 actions are classified:
 
 | Area | Actions |
 |------|---------|
-| Keys and credentials | `api_key.create`, `api_key.revoke` (personal, workspace, org), `agent.token_regenerate`, `agent.byo_settings.update` (source CIDRs, require-context; RFE-025), `workspace.byo_posture.update` (RFE-025), `cli_login.approve`, `secret.create`, `secret.update`, `secret.value_replace`, `secret.delete`, `secret.accept`, `connection.create`, `connection.update`, `connection.delete`, `oauth_client.create\|update\|delete`, `runner.provision\|token\|delete`, `connector.provision\|token\|approve\|delete` |
+| Keys and credentials | `api_key.create`, `api_key.revoke` (personal, workspace, org), `agent.token_regenerate`, `agent.byo_settings.update` (source CIDRs, require-context; RFE-025), `workspace.byo_posture.update` (RFE-025), `cli_login.approve`, `secret.create`, `secret.update`, `secret.value_replace`, `secret.delete`, `secret.accept`, `connection.create`, `connection.update`, `connection.delete`, `oauth_client.create\|update\|delete`, `app_instance.create\|update\|delete` (D-74), `runner.provision\|token\|delete`, `connector.provision\|token\|approve\|delete` |
 | Grants | `grant.put`, `grant.delete` (connection and secret grants) |
 | Policy | `policy.publish`, `policy.rollback` (org and workspace) |
 | Plugins and registry | `plugin.approve\|reject\|disable\|enable\|uninstall`, `trusted_key.add\|remove`, `host_claim.decide` |

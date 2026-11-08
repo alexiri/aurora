@@ -4,6 +4,7 @@ mod activity;
 mod admin;
 mod agents;
 mod api_ratelimit;
+mod app_instances;
 mod approvals;
 mod apps_connections;
 mod apps_tools;

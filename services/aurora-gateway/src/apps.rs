@@ -10,7 +10,7 @@ use aurora_core::limits::CONNECTION_CHOICE_MAX;
 use aurora_db::repo::gateway::AppConnectionRow;
 use aurora_policy::facts::{Level, ToolTags};
 use aurora_policy::graphql::{self, GraphqlKind as PolicyGql};
-use aurora_policy::{Credential, HostPattern, PathPattern};
+use aurora_policy::{Credential, PathPattern};
 use aurora_registry::manifest::{GitKind, GraphqlKind, ToolItem};
 use aurora_registry::snapshot::{AppEntry, HostEntry};
 use aurora_secrets::SecretRef;
@@ -34,6 +34,11 @@ pub struct ConnCand {
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
     pub metadata: serde_json::Value,
     pub tenant_host: Option<String>,
+    /// The registered app instance this connection is bound to (D-74): it is injected only on
+    /// that instance's exact host.
+    pub instance_id: Option<Uuid>,
+    /// Host of `instance_id` (set by the resolver from the org's active instances).
+    pub instance_host: Option<String>,
     /// `status = reauth_required`: refused with reconnect guidance after the decision.
     pub reauth_required: bool,
 }
@@ -59,6 +64,8 @@ impl ConnCand {
             expires_at: r.credentials_expires_at,
             metadata: r.metadata,
             tenant_host: r.tenant_host,
+            instance_id: r.instance_id,
+            instance_host: None,
             reauth_required: r.status == "reauth_required",
         })
     }
@@ -196,12 +203,36 @@ pub fn pick(mut sel: Vec<Cand>, named: Option<&str>) -> Pick {
 pub struct AppMatch<'a> {
     pub entry: &'a HostEntry,
     pub app: &'a AppEntry,
+    /// The match comes from a registered app instance (the `{instance}` host entries), not from
+    /// the static host index (D-74).
+    pub instance: bool,
 }
 
 pub fn identify_app<'a>(l: &'a Loaded, host: &str, port: u16, path: &str) -> Option<AppMatch<'a>> {
     let entry = l.lookup(host, port, path)?;
     let app = l.snapshot.app(&entry.app_id)?;
-    Some(AppMatch { entry, app })
+    Some(AppMatch {
+        entry,
+        app,
+        instance: false,
+    })
+}
+
+/// The app serving a request whose host exactly equals a registered instance's host: the app's
+/// `{instance}` host entry with the longest matching path prefix (D-74).
+pub fn identify_instance_app<'a>(l: &'a Loaded, app_id: &str, path: &str) -> Option<AppMatch<'a>> {
+    let app = l.snapshot.app(app_id)?;
+    app.instances.as_ref()?;
+    let entry = l
+        .snapshot
+        .instance_entries(app_id)
+        .filter(|e| path.starts_with(e.path_prefix.as_deref().unwrap_or("/")))
+        .max_by_key(|e| e.path_prefix.as_deref().map_or(0, str::len))?;
+    Some(AppMatch {
+        entry,
+        app,
+        instance: true,
+    })
 }
 
 fn tools(app: &AppEntry) -> impl Iterator<Item = &ToolItem> {
@@ -212,22 +243,31 @@ fn tools(app: &AppEntry) -> impl Iterator<Item = &ToolItem> {
         .flat_map(|g| &g.items)
 }
 
-fn serves(t: &ToolItem, host: &str, port: u16, path: &str, method: &str) -> bool {
-    HostPattern::lenient(&t.host).matches(host, port)
+fn serves(
+    app: &AppEntry,
+    instance: bool,
+    t: &ToolItem,
+    host: &str,
+    port: u16,
+    path: &str,
+    method: &str,
+) -> bool {
+    aurora_registry::index::tool_serves_host(app, t, host, port, instance)
         && PathPattern::lenient(&t.path).matches(path)
         && (t.methods.is_empty() || t.methods.iter().any(|m| m.eq_ignore_ascii_case(method)))
 }
 
 /// A GraphQL-tagged tool may match: the body prefix is needed to classify.
-pub fn needs_body(app: &AppEntry, host: &str, port: u16, path: &str, method: &str) -> bool {
-    tools(app).any(|t| t.graphql.is_some() && serves(t, host, port, path, method))
+pub fn needs_body(m: &AppMatch<'_>, host: &str, port: u16, path: &str, method: &str) -> bool {
+    tools(m.app)
+        .any(|t| t.graphql.is_some() && serves(m.app, m.instance, t, host, port, path, method))
 }
 
 /// The catalogue tool for the request; GraphQL tools match on the fail-closed operation
 /// kind, git tools on the smart-HTTP operation. Unmatched requests have `tool = None`.
 #[allow(clippy::too_many_arguments)]
 pub fn identify_tool<'a>(
-    app: &'a AppEntry,
+    m: &AppMatch<'a>,
     host: &str,
     port: u16,
     path: &str,
@@ -238,8 +278,8 @@ pub fn identify_tool<'a>(
 ) -> Option<&'a ToolItem> {
     let gql = graphql::classify(body_prefix, truncated);
     let git = aurora_policy::git::classify(path, query);
-    tools(app).find(|t| {
-        serves(t, host, port, path, method)
+    tools(m.app).find(|t| {
+        serves(m.app, m.instance, t, host, port, path, method)
             && t.graphql.is_none_or(|k| {
                 matches!(
                     (k, gql),

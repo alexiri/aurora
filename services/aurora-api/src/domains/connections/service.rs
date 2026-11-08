@@ -129,6 +129,14 @@ pub async fn patch(
     let status = match req.status.as_deref() {
         None => None,
         Some(s @ ("active" | "disabled")) => {
+            // The instance is gone and the binding with it: re-enabling would make this look like
+            // a `default_host` connection (D-74). Connect again instead.
+            if s == "active" && row.status_reason.as_deref() == Some("instance_deleted") {
+                return Err(ApiError::conflict(
+                    "instance_deleted",
+                    "The app instance of this connection was deleted. Connect again.",
+                ));
+            }
             if row.status != s && !matches!(row.status.as_str(), "active" | "disabled") {
                 return Err(ApiError::conflict(
                     "invalid_state",

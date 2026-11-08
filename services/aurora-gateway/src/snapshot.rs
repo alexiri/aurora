@@ -9,7 +9,7 @@ use aurora_db::PgPool;
 use aurora_db::bus::{BusEvent, Channel, Listener};
 use aurora_policy::HostPattern;
 use aurora_registry::index::{HostIndex, Snapshot};
-use aurora_registry::manifest::Inject;
+use aurora_registry::manifest::{INSTANCE_HOST, Inject};
 use aurora_registry::snapshot::{ClaimStatus, HostEntry, select_active};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -72,6 +72,22 @@ fn validate(s: &Snapshot) -> Result<(), String> {
                 && regex::Regex::new(pattern).is_err()
             {
                 return Err(format!("invalid path_regex on `{}`", h.host));
+            }
+        }
+    }
+    // `{instance}` entries belong to apps that declare `instances` (D-74).
+    for h in &s.instance_hosts {
+        if h.host != INSTANCE_HOST || s.app(&h.app_id).is_none_or(|a| a.instances.is_none()) {
+            return Err(format!("invalid instance host entry of `{}`", h.app_id));
+        }
+        for i in &h.inject {
+            if let Inject::PathRegex { pattern, .. } = i
+                && regex::Regex::new(pattern).is_err()
+            {
+                return Err(format!(
+                    "invalid path_regex on instance host of `{}`",
+                    h.app_id
+                ));
             }
         }
     }
