@@ -1,0 +1,72 @@
+# Read tools and host entries. Credentials are the documented example values / obviously fake.
+# The runner signs with the current clock, so the signature itself is checked by the gateway's
+# SigV4 tests; here we check routing, tool selection and that signing runs with the credentials.
+- name: "s3_list_buckets: signed on the S3 host"
+  connection:
+    credentials: { access_key_id: "AKIDEXAMPLE", secret_access_key: "fixture-secret-key-1" }
+    metadata: { region: eu-west-1 }
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  expect:
+    app: aws-keys
+    tool: s3_list_buckets
+    upstream: { url: "https://s3.eu-west-1.amazonaws.com/" }
+- name: "negative s3_list_buckets: POST selects no read tool"
+  connection:
+    credentials: { access_key_id: "AKIDEXAMPLE", secret_access_key: "fixture-secret-key-1" }
+    metadata: { region: eu-west-1 }
+  request: { method: POST, url: "https://s3.eu-west-1.amazonaws.com/" }
+  expect: { app: aws-keys }
+- name: "s3_list_objects: list a bucket"
+  connection:
+    credentials: { access_key_id: "AKIDEXAMPLE", secret_access_key: "fixture-secret-key-1" }
+    metadata: { region: eu-west-1 }
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/example-bucket?list-type=2&prefix=logs/" }
+  expect:
+    tool: s3_list_objects
+    upstream: { url: "https://s3.eu-west-1.amazonaws.com/example-bucket?list-type=2&prefix=logs/" }
+- name: "negative s3_list_objects: DELETE on the bucket selects no tool"
+  connection:
+    credentials: { access_key_id: "AKIDEXAMPLE", secret_access_key: "fixture-secret-key-1" }
+    metadata: { region: eu-west-1 }
+  request: { method: DELETE, url: "https://s3.eu-west-1.amazonaws.com/example-bucket" }
+  expect: { app: aws-keys }
+- name: "s3_get_object: GET with a session token"
+  connection:
+    credentials: { access_key_id: "AKIDEXAMPLE", secret_access_key: "fixture-secret-key-1", session_token: "tok-fixture-1" }
+    metadata: { region: eu-west-1 }
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/example-bucket/logs/2026/app.log" }
+  expect:
+    tool: s3_get_object
+    upstream:
+      url: "https://s3.eu-west-1.amazonaws.com/example-bucket/logs/2026/app.log"
+      headers: { x-amz-security-token: "tok-fixture-1" }
+- name: "s3_get_object: HEAD"
+  connection:
+    credentials: { access_key_id: "AKIDEXAMPLE", secret_access_key: "fixture-secret-key-1" }
+    metadata: { region: us-east-1 }
+  request: { method: HEAD, url: "https://s3.us-east-1.amazonaws.com/example-bucket/data.csv" }
+  expect: { tool: s3_get_object }
+- name: "negative s3_get_object: PATCH selects no tool"
+  connection:
+    credentials: { access_key_id: "AKIDEXAMPLE", secret_access_key: "fixture-secret-key-1" }
+    metadata: { region: eu-west-1 }
+  request: { method: PATCH, url: "https://s3.eu-west-1.amazonaws.com/example-bucket/data.csv" }
+  expect: { app: aws-keys }
+- name: "sts host is signed (STS calls are write tools, see write.yaml)"
+  connection:
+    credentials: { access_key_id: "AKIDEXAMPLE", secret_access_key: "fixture-secret-key-1" }
+    metadata: { region: eu-west-1 }
+  request: { method: GET, url: "https://sts.eu-west-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15" }
+  expect:
+    app: aws-keys
+    tool: sts_call
+    upstream: { url: "https://sts.eu-west-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15" }
+- name: "ec2 host is signed (EC2 calls are write tools, see write.yaml)"
+  connection:
+    credentials: { access_key_id: "AKIDEXAMPLE", secret_access_key: "fixture-secret-key-1" }
+    metadata: { region: eu-west-1 }
+  request: { method: GET, url: "https://ec2.eu-west-1.amazonaws.com/?Action=DescribeInstances&Version=2016-11-15" }
+  expect:
+    app: aws-keys
+    tool: ec2_call
+    upstream: { url: "https://ec2.eu-west-1.amazonaws.com/?Action=DescribeInstances&Version=2016-11-15" }
