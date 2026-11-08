@@ -49,6 +49,43 @@ pub fn invalid(fields: Vec<FieldError>) -> ApiError {
         .with_details(json!({ "fields": fields }))
 }
 
+/// (RFE-011a) The authoring error when a timeout is outside
+/// `[APPROVAL_TIMEOUT_MIN, approvals.max_timeout_secs]`: same `details.fields` as `policy_invalid`.
+pub fn timeout_out_of_range(fields: Vec<FieldError>) -> ApiError {
+    ApiError::unprocessable(
+        "approval_timeout_out_of_range",
+        "The approval timeout is outside the allowed range.",
+    )
+    .with_details(json!({ "fields": fields }))
+}
+
+/// (RFE-011a) `Some(secs)` must lie in `[APPROVAL_TIMEOUT_MIN, max]`; returns the message of a
+/// range violation.
+pub fn timeout_range_error(secs: i64, max_secs: u64) -> Option<String> {
+    let min = i64::try_from(aurora_core::limits::APPROVAL_TIMEOUT_MIN.as_secs()).unwrap_or(60);
+    let max = i64::try_from(max_secs).unwrap_or(i64::MAX);
+    (secs < min || secs > max).then(|| format!("must be between {min} and {max} seconds"))
+}
+
+/// (RFE-011a) Per-rule timeouts: only on `require_approval` rules, within bounds. Returns whether a
+/// range violation was recorded (it selects the error code).
+fn check_timeouts(req: &DraftRequest, max_secs: u64, e: &mut Errs) -> bool {
+    let mut range = false;
+    for (i, r) in req.rules.iter().enumerate() {
+        let Some(t) = r.approval_timeout_secs else {
+            continue;
+        };
+        let p = format!("/rules/{i}/approval_timeout_secs");
+        if !(r.require_approval && r.action == Action::Allow) {
+            e.add(p, "only allowed on rules that require approval");
+        } else if let Some(m) = timeout_range_error(t, max_secs) {
+            e.add(p, &m);
+            range = true;
+        }
+    }
+    range
+}
+
 struct Errs(Vec<FieldError>);
 
 impl Errs {
@@ -335,11 +372,16 @@ pub async fn check(
 ) -> Result<Checked, ApiError> {
     let mut e = Errs(Vec::new());
     check_shape(&mut req, scope, &mut e);
+    let range = check_timeouts(&req, state.config.approvals.max_timeout_secs, &mut e);
     if e.0.is_empty() {
         check_scope(state, &req, scope, &mut e).await?;
     }
     if !e.0.is_empty() {
-        return Err(invalid(e.0));
+        return Err(if range {
+            timeout_out_of_range(e.0)
+        } else {
+            invalid(e.0)
+        });
     }
     let mut rules = Vec::with_capacity(req.rules.len());
     for r in req.rules {
@@ -352,6 +394,8 @@ pub async fn check(
             targets: to_json(&r.targets)?,
             action: r.action.as_str().to_owned(),
             require_approval: r.require_approval,
+            // Range-checked above (60..=14400), so the conversion cannot fail.
+            approval_timeout_secs: r.approval_timeout_secs.and_then(|t| i32::try_from(t).ok()),
             rate_limit: r.rate_limit.as_ref().map(to_json).transpose()?,
             conditions: to_json(&r.conditions)?,
         });

@@ -7,6 +7,29 @@ const MIB: usize = 1024 * KIB;
 
 pub const GATEWAY_RESOLVE_CACHE_TTL: Duration = Duration::from_secs(60);
 pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(300);
+/// (RFE-011a) lower bound of a per-rule / per-grant `approval_timeout_secs`.
+pub const APPROVAL_TIMEOUT_MIN: Duration = Duration::from_secs(60);
+/// (RFE-011a) default `approvals.max_timeout_secs`.
+pub const APPROVAL_TIMEOUT_MAX: Duration = Duration::from_secs(3600);
+/// (RFE-011a) hard upper bound the instance maximum may be configured to.
+pub const APPROVAL_TIMEOUT_MAX_CONFIGURABLE: Duration = Duration::from_secs(14_400);
+/// (RFE-011a) lower bound of the instance maximum.
+pub const APPROVAL_TIMEOUT_MAX_FLOOR: Duration = Duration::from_secs(300);
+/// (RFE-011a) a pending approval with no live delivery surface is e-mailed after this.
+pub const APPROVAL_NOTIFY_DELAY: Duration = Duration::from_secs(20);
+/// (RFE-011a) an `approval_watchers` row is live when seen within this.
+pub const APPROVAL_WATCHER_TTL: Duration = Duration::from_secs(45);
+/// (RFE-011a) e-mails per user per hour; the rest fold into a digest.
+pub const APPROVAL_EMAIL_PER_USER_HOUR: u32 = 20;
+/// (RFE-011a) The effective hold timeout in seconds: the rule-level minimum clamped to
+/// `[min, max]`, else `default` (`approvals.timeout_secs`). One definition for the gateway hold
+/// and for the simulate / effective views, so they cannot disagree.
+pub fn effective_approval_timeout_secs(rule: Option<u32>, default: u64, min: u64, max: u64) -> u64 {
+    match rule {
+        Some(s) => u64::from(s).max(min).min(max.max(min)),
+        None => default,
+    }
+}
 pub const APPROVAL_BODY_PEEK: usize = 16 * KIB;
 /// default; allowed range is `_MIN..=_MAX`.
 pub const CONDITION_BODY_BUFFER: usize = 256 * KIB;

@@ -131,6 +131,9 @@ pub struct PolicyRule {
     pub targets: Vec<Target>,
     pub action: Action,
     pub require_approval: bool,
+    /// (phase 2, RFE-011a) hold deadline preference in seconds (60 … `approvals.max_timeout_secs`);
+    /// only on `require_approval` rules; `null` = no preference (`07 §Approval deadlines`).
+    pub approval_timeout_secs: Option<i32>,
     pub rate_limit: Option<RateLimit>,
     pub conditions: Vec<Condition>,
 }
@@ -152,6 +155,9 @@ pub struct RuleInput {
     pub action: Action,
     #[serde(default)]
     pub require_approval: bool,
+    /// (phase 2, RFE-011a) range-checked at authoring: 422 `approval_timeout_out_of_range`.
+    #[serde(default)]
+    pub approval_timeout_secs: Option<i64>,
     #[serde(default)]
     pub rate_limit: Option<RateLimit>,
     #[serde(default)]
@@ -429,6 +435,9 @@ pub struct SimTrace {
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Simulation {
+    /// (phase 2, RFE-011a) Only for `needs_approval`: the hold timeout in seconds the request
+    /// would get (minimum of the set rule timeouts, else `approvals.timeout_secs`).
+    pub approval_timeout_secs: Option<u64>,
     pub verdict: SimVerdict,
     pub reason: Option<SimReason>,
     pub guidance_code: Option<String>,
@@ -461,6 +470,7 @@ pub fn rule_dto(r: RuleRow) -> Result<PolicyRule, aurora_core::ApiError> {
         targets: parse(r.targets)?,
         action: parse_str(&r.action)?,
         require_approval: r.require_approval,
+        approval_timeout_secs: r.approval_timeout_secs,
         rate_limit: r.rate_limit.map(parse).transpose()?,
         conditions: parse(r.conditions)?,
     })

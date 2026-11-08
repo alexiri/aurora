@@ -18156,6 +18156,82 @@
           "event": {
             "type": "string",
             "description": "`created` | `decided` | `expired`"
+          },
+          "notice": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApprovalNotice",
+                "description": "(phase 2, RFE-011a) Only on `created`: what the dashboard needs for a browser\nnotification and nothing more."
+              }
+            ]
+          }
+        }
+      },
+      "ApprovalNotice": {
+        "type": "object",
+        "description": "(phase 2, RFE-011a) The sanitized facts of a new approval: `{ id, workspace, agent, title,\nkind, expires_at }`. No summary fields, no request body, no decision link.",
+        "required": [
+          "id",
+          "workspace",
+          "title",
+          "kind",
+          "expires_at"
+        ],
+        "properties": {
+          "agent": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApprovalAgent"
+              }
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`gateway` | `action`"
+          },
+          "title": {
+            "type": "string"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/ApprovalNoticeWorkspace"
+          }
+        }
+      },
+      "ApprovalNoticeWorkspace": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "org_slug"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_slug": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
           }
         }
       },
@@ -19080,6 +19156,14 @@
             "items": {
               "type": "string"
             }
+          },
+          "ask_timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "(phase 2, RFE-011a) hold deadline preference of the ask tools in seconds; `null` = none."
           },
           "ask_tools": {
             "type": "array",
@@ -20524,6 +20608,15 @@
           "app_id": {
             "type": "string"
           },
+          "approval_timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(phase 2, RFE-011a) Only for `needs_approval`: the hold timeout in seconds a call of this\ntool would get (minimum of the set rule timeouts, else `approvals.timeout_secs`).",
+            "minimum": 0
+          },
           "connection_id": {
             "type": "string",
             "format": "uuid",
@@ -21280,9 +21373,14 @@
           "default_agent_name",
           "external_url",
           "email_delivery",
+          "approval_email",
           "setup_errors"
         ],
         "properties": {
+          "approval_email": {
+            "type": "string",
+            "description": "(phase 2, RFE-011a) `smtp` (approval e-mails are sent), `log` (SMTP unset: they are only\nlogged; the admin overview warns \"approval e-mails disabled\") or `disabled`\n(`approvals.email_notifications = false`)."
+          },
           "default_agent_name": {
             "type": "string"
           },
@@ -21715,9 +21813,14 @@
         "type": "object",
         "required": [
           "user",
+          "approval_email",
           "memberships"
         ],
         "properties": {
+          "approval_email": {
+            "type": "boolean",
+            "description": "(phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`)."
+          },
           "default_org_id": {
             "type": [
               "string",
@@ -25751,6 +25854,13 @@
       "PatchMeRequest": {
         "type": "object",
         "properties": {
+          "approval_email": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "(phase 2, RFE-011a) Opt in or out of approval e-mails."
+          },
           "default_org_id": {
             "type": [
               "string",
@@ -26503,6 +26613,14 @@
           "action": {
             "$ref": "#/components/schemas/Action"
           },
+          "approval_timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "(phase 2, RFE-011a) hold deadline preference in seconds (60 … `approvals.max_timeout_secs`);\nonly on `require_approval` rules; `null` = no preference (`07 §Approval deadlines`)."
+          },
           "conditions": {
             "type": "array",
             "items": {
@@ -26803,6 +26921,14 @@
             "items": {
               "type": "string"
             }
+          },
+          "ask_timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(phase 2, RFE-011a) custom grants with `ask_tools` only; validated like a rule's timeout\n(422 `approval_timeout_out_of_range`)."
           },
           "ask_tools": {
             "type": "array",
@@ -27463,6 +27589,14 @@
         "properties": {
           "action": {
             "$ref": "#/components/schemas/Action"
+          },
+          "approval_timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(phase 2, RFE-011a) range-checked at authoring: 422 `approval_timeout_out_of_range`."
           },
           "conditions": {
             "type": "array",
@@ -28488,6 +28622,15 @@
           "trace"
         ],
         "properties": {
+          "approval_timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(phase 2, RFE-011a) Only for `needs_approval`: the hold timeout in seconds the request\nwould get (minimum of the set rule timeouts, else `approvals.timeout_secs`).",
+            "minimum": 0
+          },
           "candidates": {
             "type": "array",
             "items": {

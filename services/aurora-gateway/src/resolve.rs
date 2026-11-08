@@ -162,7 +162,8 @@ fn to_scope_policy(rows: ScopePolicyRows) -> Result<ScopePolicy, String> {
         let v = serde_json::json!({
             "logical_id": r.logical_id, "name": r.name, "enabled": r.enabled,
             "identities": r.identities, "targets": r.targets, "action": r.action,
-            "require_approval": r.require_approval, "rate_limit": r.rate_limit,
+            "require_approval": r.require_approval,
+            "approval_timeout_secs": r.approval_timeout_secs, "rate_limit": r.rate_limit,
             "conditions": r.conditions,
         });
         rules.push(serde_json::from_value::<Rule>(v).map_err(|e| format!("policy rule: {e}"))?);

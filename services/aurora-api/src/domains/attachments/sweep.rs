@@ -12,6 +12,7 @@ use aurora_core::limits::{
 use aurora_db::repo::attachments::{self, Purged};
 use aurora_db::{DbError, PgPool};
 use serde_json::json;
+use uuid::Uuid;
 
 /// What one sweep did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -23,6 +24,65 @@ pub struct SweepReport {
     pub reconciled: usize,
     /// Notices raised (`warning`, `full`, `clear` rows written).
     pub notices: usize,
+}
+
+/// (FU-P2-015b, RFE-011a) The e-mail channel for quota notices: the owners of an org that
+/// crosses 80 % / 100 % are mailed (platform voice, numbers and a dashboard link only) in
+/// addition to the audit row. `None` = e-mail off (`approvals.email_notifications = false`).
+#[derive(Clone)]
+pub struct QuotaMail {
+    pub mailer: std::sync::Arc<dyn crate::domains::auth::mail::Mailer>,
+    pub external_url: String,
+}
+
+async fn mail_quota_notice(
+    pool: &PgPool,
+    m: &QuotaMail,
+    org: Uuid,
+    level: &str,
+    used: i64,
+    quota: Option<i64>,
+) {
+    use crate::domains::auth::mail::Mail;
+    let Some(q) = quota else { return };
+    let Ok((name, slug, owners)) = attachments_owners(pool, org).await else {
+        return;
+    };
+    let mib = |b: i64| b / (1024 * 1024);
+    let (subject, lead) = if level == "full" {
+        (
+            format!("{name}: attachment storage is full"),
+            "Attachment storage has reached its limit, so new uploads are refused.",
+        )
+    } else {
+        (
+            format!("{name}: attachment storage is 80% full"),
+            "Attachment storage has passed 80% of its limit.",
+        )
+    };
+    let intro = format!(
+        "{lead}\n\nOrganization: {}\nUsed: {} MiB of {} MiB",
+        aurora_core::sanitize::one_line(&name, 80),
+        mib(used),
+        mib(q)
+    );
+    let link = format!("{}/o/{slug}", m.external_url.trim_end_matches('/'));
+    for (_, email) in owners {
+        if let Err(e) = m
+            .mailer
+            .send(Mail::new(&email, &subject, &intro, &link))
+            .await
+        {
+            tracing::error!(error = %e, "quota notice e-mail failed");
+        }
+    }
+}
+
+async fn attachments_owners(
+    pool: &PgPool,
+    org: Uuid,
+) -> Result<(String, String, Vec<(Uuid, String)>), DbError> {
+    aurora_db::repo::approval_notify::org_owners(pool, org).await
 }
 
 fn db(e: sqlx::Error) -> ApiError {
@@ -128,6 +188,7 @@ async fn notices(
     pool: &PgPool,
     cfg: &AttachmentsSection,
     r: &mut SweepReport,
+    mail: Option<&QuotaMail>,
 ) -> Result<(), ApiError> {
     for org in attachments::orgs_with_storage(pool).await? {
         let (mib, _) = attachments::org_limits(pool, org).await?;
@@ -154,6 +215,11 @@ async fn notices(
         audit::insert_tx(&mut tx, &ev).await?;
         tx.commit().await.map_err(db)?;
         r.notices += 1;
+        if let Some(m) = mail
+            && level != "clear"
+        {
+            mail_quota_notice(pool, m, org, level, used, quota).await;
+        }
     }
     Ok(())
 }
@@ -178,11 +244,20 @@ async fn gauges(pool: &PgPool) -> Result<(), ApiError> {
 
 /// One full sweep (no locking; [`crate::jobs`] wraps it in the singleton lock).
 pub async fn run(pool: &PgPool, cfg: &AttachmentsSection) -> Result<SweepReport, ApiError> {
+    run_with(pool, cfg, None).await
+}
+
+/// [`run`] with the quota e-mail channel (FU-P2-015b).
+pub async fn run_with(
+    pool: &PgPool,
+    cfg: &AttachmentsSection,
+    mail: Option<&QuotaMail>,
+) -> Result<SweepReport, ApiError> {
     let mut r = SweepReport::default();
     purge_by_retention(pool, cfg, &mut r).await?;
     r.orphans = service::sweep_orphan_blobs(pool).await?;
     reconcile(pool, &mut r).await?;
-    notices(pool, cfg, &mut r).await?;
+    notices(pool, cfg, &mut r, mail).await?;
     if let Err(e) = gauges(pool).await {
         tracing::warn!(error = %e.message(), "storage gauges not refreshed");
     }

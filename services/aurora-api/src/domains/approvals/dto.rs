@@ -174,4 +174,29 @@ pub struct ApprovalEvent {
     /// `created` | `decided` | `expired`
     pub event: String,
     pub approval: Approval,
+    /// (phase 2, RFE-011a) Only on `created`: what the dashboard needs for a browser
+    /// notification and nothing more.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<ApprovalNotice>,
+}
+
+/// (phase 2, RFE-011a) The sanitized facts of a new approval: `{ id, workspace, agent, title,
+/// kind, expires_at }`. No summary fields, no request body, no decision link.
+#[derive(Serialize, ToSchema)]
+pub struct ApprovalNotice {
+    pub id: Uuid,
+    pub workspace: ApprovalNoticeWorkspace,
+    pub agent: Option<ApprovalAgent>,
+    pub title: String,
+    /// `gateway` | `action`
+    pub kind: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ApprovalNoticeWorkspace {
+    pub id: Uuid,
+    pub name: String,
+    pub slug: String,
+    pub org_slug: String,
 }

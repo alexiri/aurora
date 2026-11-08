@@ -405,6 +405,7 @@ mod tests {
             }],
             action,
             require_approval: false,
+            approval_timeout_secs: None,
             rate_limit: None,
             conditions: vec![],
         }

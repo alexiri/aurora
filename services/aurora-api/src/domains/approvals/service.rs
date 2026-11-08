@@ -163,6 +163,12 @@ pub async fn pending(s: &AppState, c: &Caller, wait: u32) -> Result<Vec<Approval
     } else {
         Some(s.approval_bus.subscribe(&s.pool).await?)
     };
+    // (RFE-011a) A held-open long-poll is a live delivery surface for its user.
+    let _watch = if wait.is_zero() {
+        None
+    } else {
+        Some(super::notify::watch(s, c.user_id, org, ws).await)
+    };
     let read = || async { approvals::list_pending_for(&s.pool, c.user_id, org, ws, 200).await };
     let rows = read().await?;
     let Some(rx) = rx.as_mut() else {
@@ -186,6 +192,32 @@ pub async fn pending(s: &AppState, c: &Caller, wait: u32) -> Result<Vec<Approval
             }
         }
     }
+}
+
+/// (RFE-011a) The sanitized notification facts of a gateway approval: no summary fields, no body.
+pub async fn notice_for(s: &AppState, a: &Approval) -> Option<super::dto::ApprovalNotice> {
+    let (name, slug, org_slug) =
+        aurora_db::repo::approval_notify::workspace_labels(&s.pool, a.workspace_id)
+            .await
+            .ok()
+            .flatten()?;
+    Some(super::dto::ApprovalNotice {
+        id: a.id,
+        workspace: super::dto::ApprovalNoticeWorkspace {
+            id: a.workspace_id,
+            name,
+            slug,
+            org_slug,
+        },
+        agent: a.agent.as_ref().map(|g| super::dto::ApprovalAgent {
+            id: g.id,
+            name: g.name.clone(),
+            handle: g.handle.clone(),
+        }),
+        title: aurora_core::sanitize::one_line(&a.summary.title, 120),
+        kind: "gateway".to_owned(),
+        expires_at: a.deadline,
+    })
 }
 
 /// Resolve one bus event for an SSE subscriber: `None` when the user may not see it.

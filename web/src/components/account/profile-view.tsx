@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
+import { ApprovalNotifications } from "@/components/account/approval-notifications";
 import { ErrorState, Loading } from "@/components/states";
 import { ThemeSwitch } from "@/components/theme/theme-switch";
 import { Button } from "@/components/ui/button";
@@ -99,6 +100,14 @@ export function ProfileView() {
     <div className="space-y-8">
       <Section id="profile" title="Profile" description="How you appear to other people in your organizations." card>
         <ProfileForm key={me.dataUpdatedAt} me={me.data} />
+      </Section>
+      <Section
+        id="notifications"
+        title="Approval notifications"
+        description="How you hear about approvals that need a decision."
+        card
+      >
+        <ApprovalNotifications me={me.data} />
       </Section>
       <Section id="appearance" title="Appearance" description="Stored in this browser only." card>
         <ThemeSwitch />

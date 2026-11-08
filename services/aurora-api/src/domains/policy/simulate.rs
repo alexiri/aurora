@@ -32,7 +32,8 @@ pub fn to_scope_policy(rows: ScopePolicyRows) -> Result<ScopePolicy, ApiError> {
         let v = json!({
             "logical_id": r.logical_id, "name": r.name, "enabled": r.enabled,
             "identities": r.identities, "targets": r.targets, "action": r.action,
-            "require_approval": r.require_approval, "rate_limit": r.rate_limit,
+            "require_approval": r.require_approval,
+            "approval_timeout_secs": r.approval_timeout_secs, "rate_limit": r.rate_limit,
             "conditions": r.conditions,
         });
         rules.push(serde_json::from_value::<Rule>(v).map_err(|e| bad("rule", e))?);
@@ -51,6 +52,16 @@ pub fn to_scope_policy(rows: ScopePolicyRows) -> Result<ScopePolicy, ApiError> {
     let mut p: ScopePolicy = serde_json::from_value(v).map_err(|e| bad("scope", e))?;
     p.ordered_rules = rules;
     Ok(p)
+}
+
+/// (RFE-011a) The hold timeout a `needs_approval` verdict would get; same function as the gateway.
+pub fn effective_timeout_secs(a: &aurora_config::ApprovalsSection, rule: Option<u32>) -> u64 {
+    aurora_core::limits::effective_approval_timeout_secs(
+        rule,
+        a.timeout_secs,
+        aurora_core::limits::APPROVAL_TIMEOUT_MIN.as_secs(),
+        a.max_timeout_secs,
+    )
 }
 
 fn field(path: &str, msg: &str) -> ApiError {
@@ -329,6 +340,7 @@ pub async fn run(
 
     if granted.len() > 1 {
         return Ok(Simulation {
+            approval_timeout_secs: None,
             verdict: SimVerdict::Block,
             reason: None,
             guidance_code: Some("multiple_providers".into()),
@@ -356,7 +368,10 @@ pub async fn run(
             Some("blocked_by_egress_policy"),
         ),
     };
+    let approval_timeout_secs = (d.verdict == Verdict::NeedsApproval)
+        .then(|| effective_timeout_secs(&state.config.approvals, d.approval_timeout_secs));
     Ok(Simulation {
+        approval_timeout_secs,
         verdict: sim_verdict(d.verdict),
         reason,
         guidance_code: guidance.map(str::to_owned),
@@ -433,6 +448,7 @@ async fn open_lane(state: &AppState, i: OpenInput<'_>) -> Result<Simulation, Api
         workspace: scope_trace(&d.trace.workspace, i.derived),
     };
     let refused = |reason, code: &str| Simulation {
+        approval_timeout_secs: None,
         verdict: SimVerdict::Block,
         reason: Some(reason),
         guidance_code: Some(code.to_owned()),
@@ -484,6 +500,7 @@ async fn open_lane(state: &AppState, i: OpenInput<'_>) -> Result<Simulation, Api
         ),
     };
     Ok(Simulation {
+        approval_timeout_secs: None,
         verdict,
         reason,
         guidance_code: guidance.map(str::to_owned),

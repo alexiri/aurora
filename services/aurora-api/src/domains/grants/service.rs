@@ -110,6 +110,28 @@ pub async fn grant_connection(
         GrantMode::Full => (Vec::new(), Vec::new()),
         GrantMode::Custom => (dedupe(req.allow_tools), dedupe(req.ask_tools)),
     };
+    // (RFE-011a) The ask timeout belongs to custom grants that have ask tools, within bounds.
+    let ask_timeout = match req.ask_timeout_secs {
+        None => None,
+        Some(t) => {
+            if req.mode != GrantMode::Custom || ask.is_empty() {
+                return Err(invalid(
+                    "ask_timeout_without_ask_tools",
+                    "An ask timeout needs a custom grant with ask tools.",
+                ));
+            }
+            if let Some(m) = crate::domains::policy::validate::timeout_range_error(
+                t,
+                state.config.approvals.max_timeout_secs,
+            ) {
+                return Err(crate::domains::policy::validate::timeout_out_of_range(
+                    vec![aurora_core::FieldError::new("/ask_timeout_secs", m)],
+                ));
+            }
+            // Range-checked above (60..=14400): the conversion cannot fail.
+            i32::try_from(t).ok()
+        }
+    };
     if req.mode == GrantMode::Custom {
         if allow.is_empty() && ask.is_empty() {
             return Err(invalid(
@@ -145,6 +167,7 @@ pub async fn grant_connection(
         req.mode.as_str(),
         &allow,
         &ask,
+        ask_timeout,
         Some(caller.user_id),
     )
     .await?;
@@ -159,6 +182,7 @@ pub async fn grant_connection(
         req.mode,
         &allow,
         &ask,
+        ask_timeout,
     )
     .await?;
     credentials::notify_gateway_invalidate(&mut *tx, "agent", agent.id).await?;

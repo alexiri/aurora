@@ -164,6 +164,8 @@ pub struct ApiConfig {
     pub governance: Governance,
     pub agents: AgentsSection,
     pub hosted: HostedSection,
+    /// (RFE-011a) approval deadlines and the e-mail notifier switch.
+    pub approvals: ApprovalsSection,
     pub advertised_proxy_url: String,
     /// `gateway.ca_dir`: directory holding the gateway's `ca.pem`.
     pub gateway_ca_dir: String,
@@ -311,6 +313,7 @@ impl RawConfig {
         check_llm(&mut c, &self.llm, &self.governance);
         let governance = check_governance(&mut c, self);
         check_hosted(&mut c, &self.hosted);
+        check_approvals(&mut c, &self.approvals, &self.hosted);
         check_pos(
             &mut c,
             "database.max_connections",
@@ -404,6 +407,7 @@ impl RawConfig {
             governance: governance.unwrap_or_else(|| resolve_governance_lossy(self)),
             agents: self.agents.clone(),
             hosted: self.hosted.clone(),
+            approvals: self.approvals.clone(),
             advertised_proxy_url,
             gateway_ca_dir: self.gateway.ca_dir.clone(),
             gateway_proxy_operator_cert: self.gateway.proxy_tls.cert_file.is_some(),
@@ -475,11 +479,7 @@ impl RawConfig {
         if g.ca_dir.is_empty() {
             c.err("gateway.ca_dir", "must not be empty");
         }
-        check_pos(
-            &mut c,
-            "approvals.timeout_secs",
-            Some(self.approvals.timeout_secs),
-        );
+        check_approvals(&mut c, &self.approvals, &self.hosted);
         check_common(&mut c, &self.tls, &self.telemetry);
         let advertised_proxy_url = advertised_proxy_url(g, external_url.as_deref());
         c.finish()?;
@@ -1565,6 +1565,40 @@ fn check_host_pattern(c: &mut Ctx, key: &str, h: &str) {
         c.err(
             key,
             "must be a host name or wildcard pattern without scheme, port or path",
+        );
+    }
+}
+
+/// (RFE-011a, D-56) The instance maximum of approval timeouts: 300..=14400 s and strictly below
+/// `hosted.turn_ceiling_secs - TURN_CEILING_WARNING`, so a hold cannot outlive the turn ceiling.
+fn check_approvals(c: &mut Ctx, a: &ApprovalsSection, h: &HostedSection) {
+    use aurora_core::limits::{
+        APPROVAL_TIMEOUT_MAX_CONFIGURABLE, APPROVAL_TIMEOUT_MAX_FLOOR, TURN_CEILING_WARNING,
+    };
+    check_pos(c, "approvals.timeout_secs", Some(a.timeout_secs));
+    let (lo, hi) = (
+        APPROVAL_TIMEOUT_MAX_FLOOR.as_secs(),
+        APPROVAL_TIMEOUT_MAX_CONFIGURABLE.as_secs(),
+    );
+    if !(lo..=hi).contains(&a.max_timeout_secs) {
+        c.err(
+            "approvals.max_timeout_secs",
+            format!("must be between {lo} and {hi}"),
+        );
+    }
+    let limit = h
+        .turn_ceiling_secs
+        .saturating_sub(TURN_CEILING_WARNING.as_secs());
+    if a.max_timeout_secs >= limit {
+        c.err(
+            "approvals.max_timeout_secs",
+            "must be below hosted.turn_ceiling_secs minus 900 (a hold must not outlive the turn ceiling)",
+        );
+    }
+    if a.timeout_secs > a.max_timeout_secs {
+        c.err(
+            "approvals.timeout_secs",
+            "must not exceed approvals.max_timeout_secs",
         );
     }
 }

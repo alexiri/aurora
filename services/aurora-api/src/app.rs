@@ -63,6 +63,8 @@ pub struct AppState {
     pub llm_http: reqwest::Client,
     /// Shared `aurora_approval` fan-out (SSE, long-poll).
     pub approval_bus: Arc<crate::domains::approvals::bus::ApprovalBus>,
+    /// (phase 2, RFE-011a) Open approvals streams / long-polls of this replica (watchers).
+    pub approval_watch: Arc<crate::domains::approvals::notify::WatchRegistry>,
     /// Shared `aurora_conversation`/`aurora_delta` fan-out (transcript SSE) and delta coalescer.
     pub conversation_bus: Arc<crate::domains::conversations::bus::ConversationBus>,
     /// Shared `aurora_ops`/`aurora_op_result`/`aurora_inbox` fan-out (connector plane).
@@ -152,6 +154,7 @@ impl AppState {
             gov_instance,
             llm_http,
             approval_bus: Arc::default(),
+            approval_watch: Arc::default(),
             conversation_bus: Arc::default(),
             connector_bus: Arc::default(),
             derived,

@@ -506,7 +506,16 @@ pub async fn stale_turns(
             "t.status = 'dispatched' AND t.dispatched_at < now() - make_interval(secs => $3)"
         }
         Stale::Stalled => {
-            "t.status = 'running' AND coalesce(t.last_progress_at, t.started_at) < now() - make_interval(secs => $3)"
+            // (phase 2, RFE-011a, D-56) A turn blocked on a pending gateway hold makes no progress
+            // by design: exempt while any hold of the turn is `pending` and inside its deadline,
+            // and restart the clock at the latest resolution. `GREATEST` ignores NULLs; action
+            // approvals are not holds (the agent continued), so they never exempt.
+            "t.status = 'running' \
+             AND NOT EXISTS (SELECT 1 FROM approvals ap WHERE ap.turn_id = t.id \
+                 AND ap.status = 'pending' AND ap.deadline > now()) \
+             AND GREATEST(coalesce(t.last_progress_at, t.started_at), \
+                 (SELECT max(ap.resolved_at) FROM approvals ap WHERE ap.turn_id = t.id)) \
+                 < now() - make_interval(secs => $3)"
         }
         Stale::Ceiling => {
             "t.status IN ('dispatched','running') AND t.dispatched_at < now() - make_interval(secs => $3)"

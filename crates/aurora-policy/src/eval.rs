@@ -178,6 +178,10 @@ pub struct Trace {
 #[derive(Debug, Clone, Serialize)]
 pub struct Decision {
     pub verdict: Verdict,
+    /// (RFE-011a) Minimum of the set `approval_timeout_secs` of the matching requiring rules of
+    /// both scopes; `None` = no preference (the caller applies `approvals.timeout_secs`). Always
+    /// `None` unless the verdict is `NeedsApproval`.
+    pub approval_timeout_secs: Option<u32>,
     pub org_matched: Option<MatchedRule>,
     pub workspace_matched: Option<MatchedRule>,
     pub trace: Trace,
@@ -207,6 +211,8 @@ impl Decision {
 struct ScopeResult {
     trace: ScopeTrace,
     hit: Option<RateLimitHit>,
+    /// The matched requiring rule's `approval_timeout_secs` (only when it yielded `NeedsApproval`).
+    approval_timeout: Option<u32>,
 }
 
 fn allowlisted(p: &ScopePolicy, f: &RequestFacts) -> bool {
@@ -231,6 +237,7 @@ fn eval_scope(p: &ScopePolicy, f: &RequestFacts, counters: &dyn RateCounter) -> 
             verdict,
         },
         hit,
+        approval_timeout: None,
     };
     for r in &p.ordered_rules {
         let mut t = RuleTrace {
@@ -307,7 +314,11 @@ fn eval_scope(p: &ScopePolicy, f: &RequestFacts, counters: &dyn RateCounter) -> 
                 }
             },
         };
-        return finish(considered, matched, Via::Rule, Some(verdict), hit);
+        let mut res = finish(considered, matched, Via::Rule, Some(verdict), hit);
+        if verdict == Verdict::NeedsApproval {
+            res.approval_timeout = r.approval_timeout_secs;
+        }
+        return res;
     }
     if !f.injected() && p.uncredentialed_default == UncredentialedDefault::Block {
         return if allowlisted(p, f) {
@@ -375,8 +386,19 @@ pub fn evaluate(
     } else {
         Vec::new()
     };
+    // (RFE-011a) The effective hold timeout is the minimum of the timeouts *set* on the matching
+    // requiring rules of both scopes; a rule without one expresses no preference.
+    let approval_timeout_secs = if verdict == Verdict::NeedsApproval {
+        [o.approval_timeout, w.approval_timeout]
+            .into_iter()
+            .flatten()
+            .min()
+    } else {
+        None
+    };
     Decision {
         verdict,
+        approval_timeout_secs,
         org_matched: o.trace.matched.clone(),
         workspace_matched: w.trace.matched.clone(),
         trace: Trace {

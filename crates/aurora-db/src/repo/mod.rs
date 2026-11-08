@@ -5,6 +5,7 @@ pub mod action_approvals;
 pub mod agent_links;
 pub mod agents;
 pub mod api_keys;
+pub mod approval_notify;
 pub mod approvals;
 pub mod attachments;
 pub mod audit;

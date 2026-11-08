@@ -153,6 +153,8 @@ pub struct PolicyRuleRow {
     pub targets: serde_json::Value,
     pub action: String,
     pub require_approval: bool,
+    /// (RFE-011a) hold deadline preference in seconds; only with `require_approval`.
+    pub approval_timeout_secs: Option<i32>,
     pub rate_limit: Option<serde_json::Value>,
     pub conditions: serde_json::Value,
 }
@@ -208,7 +210,7 @@ pub async fn load_scope_policy(
         out.open_lane_posture = olp;
         out.rules = sqlx::query_as::<_, PolicyRuleRow>(
             "SELECT logical_id, name, enabled, identities, targets, action, require_approval, \
-                    rate_limit, conditions \
+                    approval_timeout_secs, rate_limit, conditions \
              FROM policy_rules WHERE generation_id = $1 ORDER BY priority",
         )
         .bind(id)
@@ -449,7 +451,8 @@ pub async fn get_approval_status<'e, E: PgExecutor<'e>>(
 /// `pending` -> `expired`; true when this call made the transition.
 pub async fn expire_approval<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbError> {
     Ok(sqlx::query(
-        "UPDATE approvals SET status = 'expired', decided_at = now(), updated_at = now() \
+        "UPDATE approvals SET status = 'expired', decided_at = now(), resolved_at = now(), \
+         updated_at = now() \
          WHERE id = $1 AND status = 'pending'",
     )
     .bind(id)
@@ -462,7 +465,7 @@ pub async fn expire_approval<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result
 /// `pending` -> `abandoned` (client gone / gateway stopping); true on transition.
 pub async fn abandon_approval<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bool, DbError> {
     Ok(sqlx::query(
-        "UPDATE approvals SET status = 'abandoned', updated_at = now() \
+        "UPDATE approvals SET status = 'abandoned', resolved_at = now(), updated_at = now() \
          WHERE id = $1 AND status = 'pending'",
     )
     .bind(id)
@@ -478,7 +481,7 @@ pub async fn abandon_approvals<'e, E: PgExecutor<'e>>(
     instance_id: Uuid,
 ) -> Result<u64, DbError> {
     Ok(sqlx::query(
-        "UPDATE approvals SET status = 'abandoned', updated_at = now() \
+        "UPDATE approvals SET status = 'abandoned', resolved_at = now(), updated_at = now() \
          WHERE gateway_instance_id = $1 AND status = 'pending'",
     )
     .bind(instance_id)

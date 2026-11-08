@@ -25,6 +25,8 @@ pub struct MeMembership {
 pub struct Me {
     pub user: User,
     pub default_org_id: Option<Uuid>,
+    /// (phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`).
+    pub approval_email: bool,
     pub memberships: Vec<MeMembership>,
 }
 
@@ -34,4 +36,7 @@ pub struct PatchMeRequest {
     pub display_name: Option<String>,
     /// Must be an organization where the caller is an active member.
     pub default_org_id: Option<Uuid>,
+    /// (phase 2, RFE-011a) Opt in or out of approval e-mails.
+    #[serde(default)]
+    pub approval_email: Option<bool>,
 }

@@ -154,6 +154,7 @@ fn rule(name: &str, action: &str, targets: Value, extra: Value) -> PolicyRuleRow
         targets,
         action: action.into(),
         require_approval: g("require_approval", json!(false)).as_bool().unwrap(),
+        approval_timeout_secs: None,
         rate_limit: extra.get("rate_limit").cloned(),
         conditions: g("conditions", json!([])),
     }

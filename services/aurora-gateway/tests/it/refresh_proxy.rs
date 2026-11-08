@@ -218,6 +218,7 @@ fn rule(name: &str, action: &str, targets: Value, approval: bool) -> PolicyRuleR
         targets,
         action: action.into(),
         require_approval: approval,
+        approval_timeout_secs: None,
         rate_limit: None,
         conditions: json!([]),
     }

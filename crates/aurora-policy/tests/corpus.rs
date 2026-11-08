@@ -52,6 +52,9 @@ struct Expect {
     workspace_rule: Option<String>,
     #[serde(default)]
     hits: Option<usize>,
+    /// (RFE-011a) the effective approval timeout the decision carries (`null` = no preference).
+    #[serde(default, deserialize_with = "some_opt")]
+    approval_timeout_secs: Option<Option<u32>>,
     #[serde(default)]
     graphql: Option<String>,
     #[serde(default)]
@@ -81,6 +84,11 @@ fn name_of(v: Verdict) -> (&'static str, Option<&'static str>) {
             }),
         ),
     }
+}
+
+/// Distinguishes an absent key (`None`) from an explicit `null` (`Some(None)`).
+fn some_opt<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<u32>>, D::Error> {
+    Option::<u32>::deserialize(d).map(Some)
 }
 
 fn run_case(label: &str, case: Case) {
@@ -138,6 +146,9 @@ fn run_case(label: &str, case: Case) {
         }
         if let Some(h) = e.hits {
             assert_eq!(d.rate_limit_hits().len(), h, "{label}: hits");
+        }
+        if let Some(t) = e.approval_timeout_secs {
+            assert_eq!(d.approval_timeout_secs, t, "{label}: approval timeout");
         }
         if let Some(g) = &e.graphql {
             let got = serde_json::to_value(facts.graphql_kind()).unwrap();

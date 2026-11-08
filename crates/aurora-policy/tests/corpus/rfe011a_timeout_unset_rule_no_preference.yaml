@@ -1,0 +1,5 @@
+description: a requiring rule without a timeout expresses no preference, the other scope's timeout still applies (RFE-011a)
+org: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: org-ask, action: allow, require_approval: true, targets: [{type: network, host: api.example.com}]}]}
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: ws-ask, action: allow, require_approval: true, approval_timeout_secs: 900, targets: [{type: network, host: api.example.com}]}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: needs_approval, approval_timeout_secs: 900}

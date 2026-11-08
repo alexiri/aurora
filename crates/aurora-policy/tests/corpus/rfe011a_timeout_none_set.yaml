@@ -1,0 +1,4 @@
+description: no requiring rule sets a timeout, so the decision carries none and the instance default applies (RFE-011a)
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: ws-ask, action: allow, require_approval: true, targets: [{type: network, host: api.example.com}]}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: needs_approval, approval_timeout_secs: null}

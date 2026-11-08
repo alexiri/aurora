@@ -720,6 +720,7 @@ impl RequestHandler for PolicyHandler {
                     rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
                     batch: &aurora_headers,
                     summary: &summary,
+                    rule_timeout_secs: d.approval_timeout_secs,
                 })
                 .await;
             match outcome {

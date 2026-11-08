@@ -84,7 +84,9 @@ async fn stream(
     let user = c.user_id;
     let keepalive = s.sse_keepalive;
     let gone = crate::http::auth::revoked(s.clone(), c.0.clone());
-    let events = futures::stream::unfold((rx, s), move |(mut rx, s)| async move {
+    // (RFE-011a) An open stream is a live delivery surface for its user until it closes.
+    let watch = super::notify::watch(&s, user, None, None).await;
+    let events = futures::stream::unfold((rx, s, watch), move |(mut rx, s, watch)| async move {
         loop {
             match rx.recv().await {
                 Ok(BusMsg::Event {
@@ -96,12 +98,21 @@ async fn stream(
                     else {
                         continue;
                     };
-                    let data = ApprovalEvent { event, approval };
+                    let notice = if event == "created" {
+                        service::notice_for(&s, &approval).await
+                    } else {
+                        None
+                    };
+                    let data = ApprovalEvent {
+                        event,
+                        approval,
+                        notice,
+                    };
                     let ev = Event::default()
                         .event("approval")
                         .json_data(&data)
                         .unwrap_or_else(|_| Event::default().comment("encode error"));
-                    return Some((Ok(ev), (rx, s)));
+                    return Some((Ok(ev), (rx, s, watch)));
                 }
                 Ok(BusMsg::Resync) | Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => return None,

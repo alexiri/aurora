@@ -151,13 +151,20 @@ pub struct HoldRequest<'a> {
     pub rule: Option<(Uuid, &'a str)>,
     pub batch: &'a AuroraHeaders,
     pub summary: &'a ApprovalSummary,
+    /// (RFE-011a) The decision's rule-level timeout (minimum of the set values of the matching
+    /// requiring rules of both scopes); `None` = no preference, the default timeout applies.
+    pub rule_timeout_secs: Option<u32>,
 }
 
 pub struct Holds {
     pool: PgPool,
     hub: Arc<Hub>,
     instance_id: Uuid,
+    /// `approvals.timeout_secs`: the timeout of holds whose rules set none.
     timeout: Duration,
+    /// (RFE-011a) bounds of a rule-level timeout: `APPROVAL_TIMEOUT_MIN ..= approvals.max_timeout_secs`.
+    min_timeout: Duration,
+    max_timeout: Duration,
     poll: Duration,
     shutdown: Option<tokio::sync::watch::Receiver<bool>>,
 }
@@ -204,8 +211,39 @@ impl Holds {
             hub,
             instance_id,
             timeout,
+            min_timeout: aurora_core::limits::APPROVAL_TIMEOUT_MIN,
+            max_timeout: aurora_core::limits::APPROVAL_TIMEOUT_MAX,
             poll: POLL_INTERVAL,
             shutdown,
+        }
+    }
+
+    /// (RFE-011a) Sets the instance maximum of rule-level timeouts (`approvals.max_timeout_secs`).
+    #[must_use]
+    pub fn with_max_timeout(mut self, max: Duration) -> Self {
+        self.max_timeout = max;
+        self
+    }
+
+    /// Overrides the lower bound of rule-level timeouts (tests).
+    #[must_use]
+    pub fn with_min_timeout(mut self, min: Duration) -> Self {
+        self.min_timeout = min;
+        self
+    }
+
+    /// (RFE-011a) The effective timeout of a hold: the rule-level minimum clamped to
+    /// `[APPROVAL_TIMEOUT_MIN, approvals.max_timeout_secs]`, else the default timeout.
+    pub fn effective_timeout(&self, rule_timeout_secs: Option<u32>) -> Duration {
+        // Sub-second default timeouts exist only in tests; keep them exact.
+        match rule_timeout_secs {
+            None => self.timeout,
+            Some(_) => Duration::from_secs(aurora_core::limits::effective_approval_timeout_secs(
+                rule_timeout_secs,
+                self.timeout.as_secs(),
+                self.min_timeout.as_secs(),
+                self.max_timeout.as_secs(),
+            )),
         }
     }
 
@@ -242,6 +280,7 @@ impl Holds {
     pub async fn hold(&self, r: HoldRequest<'_>) -> HoldOutcome {
         let id = Uuid::now_v7();
         let ws = r.identity.workspace_id;
+        let timeout = self.effective_timeout(r.rule_timeout_secs);
         // Register before inserting so a fast decision cannot be missed.
         let waiter = self.hub.approval_waiter(id);
         let summary = match serde_json::to_value(r.summary) {
@@ -267,7 +306,7 @@ impl Holds {
             batch_label: r.batch.batch_label.as_deref().map(clip),
             context_label: r.identity.context_label.as_deref().map(clip),
             batch_total: r.batch.batch_total.and_then(|n| i32::try_from(n).ok()),
-            timeout_secs: self.timeout.as_secs_f64(),
+            timeout_secs: timeout.as_secs_f64(),
         };
         if let Err(e) = repo::insert_approval(&self.pool, &row).await {
             tracing::error!(error = %e, "approval insert failed");
@@ -280,7 +319,7 @@ impl Holds {
         };
         self.emit(id, ws, "created").await;
 
-        let deadline = Instant::now() + self.timeout;
+        let deadline = Instant::now() + timeout;
         let mut sd = self.shutdown.clone();
         let stop = async {
             match sd.as_mut() {
