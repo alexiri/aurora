@@ -33,6 +33,7 @@ const iconButton =
  */
 function MessageToolbar({ convId, seq, text, shown, side }: { convId: string; seq: number; text: string; shown: boolean; side: "person" | "agent" }) {
   const [redact, setRedact] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   // The clipboard API is missing on insecure origins: hide the item rather than ship a broken one.
   const canCopy = useSyncExternalStore(
@@ -52,11 +53,13 @@ function MessageToolbar({ convId, seq, text, shown, side }: { convId: string; se
         role="toolbar"
         aria-label="Message actions"
         className={cn(
-          "absolute -top-4 z-10 flex rounded-control border border-line bg-surface text-ink shadow-card transition-opacity motion-reduce:transition-none dark:bg-canvas",
+          "absolute -top-4 z-10 flex rounded-control border border-line bg-surface text-ink shadow-card dark:bg-canvas",
           side === "person" ? "right-2" : "left-2",
-          shown
+          // No fade: a focused control must never be (even briefly) invisible. The menu keeps it shown while open,
+          // because focus then sits in the portalled menu.
+          shown || menuOpen
             ? "opacity-100"
-            : "pointer-events-none opacity-0 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 group-hover/msg:pointer-events-auto group-hover/msg:opacity-100",
+            : "pointer-events-none opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 group-hover/msg:pointer-events-auto group-hover/msg:opacity-100",
         )}
       >
         {canCopy ? (
@@ -69,7 +72,7 @@ function MessageToolbar({ convId, seq, text, shown, side }: { convId: string; se
             {copied ? <CheckIcon aria-hidden="true" /> : <CopyIcon aria-hidden="true" />}
           </button>
         ) : null}
-        <Menu modal={false}>
+        <Menu modal={false} onOpenChange={setMenuOpen}>
           <MenuTrigger asChild>
             <button type="button" className={iconButton} aria-label="More message actions">
               <MoreIcon aria-hidden="true" />

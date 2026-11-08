@@ -165,6 +165,34 @@ test.describe("layout, 1280 px", () => {
     await expect(page.getByRole("menuitem", { name: "Delete conversation…" })).toBeVisible();
   });
 
+  test("tabbing into a message reveals the toolbar with its first button focused; no focused control is ever invisible", async ({ page }) => {
+    await openChat(page, "light", DEFAULT);
+    const toolbar = page.getByRole("toolbar", { name: "Message actions" }).first();
+    await expect(toolbar).toHaveCSS("opacity", "0");
+    const invisibleFocus = () =>
+      page.evaluate(() => {
+        for (let el: Element | null = document.activeElement; el && el !== document.body; el = el.parentElement) {
+          const cs = getComputedStyle(el);
+          if (Number(cs.opacity) === 0 || cs.visibility === "hidden") return (document.activeElement as HTMLElement).outerHTML.slice(0, 80);
+        }
+        return null;
+      });
+    await page.getByLabel("Message", { exact: true }).focus();
+    const first = toolbar.getByRole("button").first();
+    let reached = false;
+    for (let i = 0; i < 60; i++) {
+      await page.keyboard.press("Shift+Tab"); // from the composer back through the transcript
+      expect(await invisibleFocus(), `Shift+Tab ${i + 1} landed on an invisible control`).toBeNull();
+      if (await toolbar.getByRole("button").first().evaluate((el) => el === document.activeElement)) {
+        reached = true;
+        break;
+      }
+    }
+    expect(reached, "the first message's first toolbar button was reached by keyboard").toBe(true);
+    await expect(toolbar).toHaveCSS("opacity", "1");
+    await expect(first).toBeFocused();
+  });
+
   test("Live turns into Reconnecting… and back from the stream state", async ({ page }) => {
     await openChat(page, "light", DEFAULT);
     await expect(page.getByText("Live", { exact: true })).toBeVisible();
