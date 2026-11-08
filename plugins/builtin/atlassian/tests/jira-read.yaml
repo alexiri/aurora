@@ -1,0 +1,97 @@
+# Jira Cloud read tools. REST API v3 is served by api.atlassian.com under /ex/jira/<cloudid>; the
+# token is injected on that prefix and on /oauth/token (the accessible-resources lookup) only.
+# All credentials and ids are fake.
+- name: "list_accessible_sites: bearer is injected on the accessible-resources lookup"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/oauth/token/accessible-resources" }
+  expect:
+    app: jira
+    tool: list_accessible_sites
+    upstream: { url: "https://api.atlassian.com/oauth/token/accessible-resources", headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative list_accessible_sites: POST selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://api.atlassian.com/oauth/token/accessible-resources" }
+  expect: { app: jira }
+- name: "get_myself: bearer is injected on the site API prefix"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/myself" }
+  expect:
+    app: jira
+    tool: get_myself
+    upstream: { url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/myself", headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative get_myself: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/myself" }
+  expect: { app: jira }
+- name: "list_projects"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/project/search?query=demo" }
+  expect: { app: jira, tool: list_projects }
+- name: "negative list_projects: the project search is not the single-project tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/project/search" }
+  expect: { app: jira }
+- name: "get_project"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/project/DEMO" }
+  expect: { app: jira, tool: get_project }
+- name: "negative get_project: DELETE (project removal) selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/project/DEMO" }
+  expect: { app: jira }
+- name: "search_issues: JQL in the query string"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/search/jql?jql=project%20%3D%20DEMO%20ORDER%20BY%20created&maxResults=20" }
+  expect: { app: jira, tool: search_issues }
+- name: "negative search_issues: the POST form of the search is not offered"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/search/jql"
+    headers: { content-type: application/json }
+    body: '{"jql":"project = DEMO"}'
+  expect: { app: jira }
+- name: "get_issue"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7?fields=summary,status" }
+  expect: { app: jira, tool: get_issue }
+- name: "negative get_issue: DELETE (issue removal) selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7" }
+  expect: { app: jira }
+- name: "list_issue_comments"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7/comment" }
+  expect: { app: jira, tool: list_issue_comments }
+- name: "negative list_issue_comments: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7/comment" }
+  expect: { app: jira }
+- name: "get_issue_comment"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7/comment/10001" }
+  expect: { app: jira, tool: get_issue_comment }
+- name: "negative get_issue_comment: DELETE (comment removal) selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7/comment/10001" }
+  expect: { app: jira }
+- name: "list_issue_transitions"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7/transitions" }
+  expect: { app: jira, tool: list_issue_transitions }
+- name: "negative list_issue_transitions: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7/transitions" }
+  expect: { app: jira }
+- name: "negative host: the token is not injected on a host the app does not declare"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://example.atlassian.net/rest/api/3/myself" }
+  expect: { unmatched: true }
+- name: "negative host: the token is not injected on another path of api.atlassian.com"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/admin/v1/orgs" }
+  expect: { unmatched: true }
+- name: "negative host: the Confluence prefix belongs to the Confluence app, not to Jira"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/spaces" }
+  expect: { app: confluence, tool: list_spaces }

@@ -1,0 +1,142 @@
+# Jira Data Center (D-74, D-91 pattern): a connection bound to a registered instance is served on
+# that exact host only, with a personal access token as bearer. REST API v2 under /rest.
+# `connection.instance_host` registers the instance for the case. All credentials are fake.
+- name: "dc get_myself: bearer is injected on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://jira.example.com/rest/api/2/myself" }
+  expect:
+    app: jira-dc
+    tool: get_myself
+    upstream: { url: "https://jira.example.com/rest/api/2/myself", headers: { authorization: "Bearer pat-fixture-1" } }
+- name: "negative get_myself: DELETE selects no tool on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: DELETE, url: "https://jira.example.com/rest/api/2/myself" }
+  expect: { app: jira-dc }
+- name: "dc list_projects"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://jira.example.com/rest/api/2/project" }
+  expect: { app: jira-dc, tool: list_projects }
+- name: "negative list_projects: POST (project creation) selects no tool on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: POST, url: "https://jira.example.com/rest/api/2/project" }
+  expect: { app: jira-dc }
+- name: "dc get_project"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://jira.example.com/rest/api/2/project/DEMO" }
+  expect: { app: jira-dc, tool: get_project }
+- name: "negative get_project: DELETE selects no tool on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: DELETE, url: "https://jira.example.com/rest/api/2/project/DEMO" }
+  expect: { app: jira-dc }
+- name: "dc search_issues: JQL in the query string"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://jira.example.com/rest/api/2/search?jql=project%20%3D%20DEMO&maxResults=20" }
+  expect: { app: jira-dc, tool: search_issues }
+- name: "negative search_issues: the POST form of the search is not offered on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: POST, url: "https://jira.example.com/rest/api/2/search", headers: { content-type: application/json }, body: '{"jql":"project = DEMO"}' }
+  expect: { app: jira-dc }
+- name: "dc get_issue"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://jira.example.com/rest/api/2/issue/DEMO-7" }
+  expect: { app: jira-dc, tool: get_issue }
+- name: "negative get_issue: DELETE selects no tool on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: DELETE, url: "https://jira.example.com/rest/api/2/issue/DEMO-7" }
+  expect: { app: jira-dc }
+- name: "dc list_issue_comments"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://jira.example.com/rest/api/2/issue/DEMO-7/comment" }
+  expect: { app: jira-dc, tool: list_issue_comments }
+- name: "negative list_issue_comments: PATCH selects no tool on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: PATCH, url: "https://jira.example.com/rest/api/2/issue/DEMO-7/comment" }
+  expect: { app: jira-dc }
+- name: "dc get_issue_comment"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://jira.example.com/rest/api/2/issue/DEMO-7/comment/10001" }
+  expect: { app: jira-dc, tool: get_issue_comment }
+- name: "negative get_issue_comment: DELETE selects no tool on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: DELETE, url: "https://jira.example.com/rest/api/2/issue/DEMO-7/comment/10001" }
+  expect: { app: jira-dc }
+- name: "dc list_issue_transitions"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://jira.example.com/rest/api/2/issue/DEMO-7/transitions" }
+  expect: { app: jira-dc, tool: list_issue_transitions }
+- name: "negative list_issue_transitions: PUT selects no tool on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: PUT, url: "https://jira.example.com/rest/api/2/issue/DEMO-7/transitions" }
+  expect: { app: jira-dc }
+- name: "dc create_issue: summary shows project, type and summary"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request:
+    method: POST
+    url: "https://jira.example.com/rest/api/2/issue"
+    headers: { content-type: application/json }
+    body: '{"fields":{"project":{"key":"DEMO"},"issuetype":{"name":"Bug"},"summary":"Crash on save"}}'
+  expect:
+    app: jira-dc
+    tool: create_issue
+    summary: { title: "Create Jira issue", fields: { Project: "DEMO", Type: "Bug", Summary: "Crash on save" } }
+- name: "negative create_issue: GET on the issue collection selects no tool on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://jira.example.com/rest/api/2/issue" }
+  expect: { app: jira-dc }
+- name: "dc edit_issue: summary shows the issue, the new summary and a link on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://jira.example.com/rest/api/2/issue/DEMO-7"
+    headers: { content-type: application/json }
+    body: '{"fields":{"summary":"Crash on save of large files"}}'
+  expect:
+    app: jira-dc
+    tool: edit_issue
+    summary: { title: "Edit Jira issue", fields: { Issue: "DEMO-7", Summary: "Crash on save of large files" } }
+- name: "negative edit_issue: PATCH selects no tool on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: PATCH, url: "https://jira.example.com/rest/api/2/issue/DEMO-7" }
+  expect: { app: jira-dc }
+- name: "dc add_issue_comment: summary shows the issue and the plain-text comment"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request:
+    method: POST
+    url: "https://jira.example.com/rest/api/2/issue/DEMO-7/comment"
+    headers: { content-type: application/json }
+    body: '{"body":"Reproduced on 9.12."}'
+  expect:
+    app: jira-dc
+    tool: add_issue_comment
+    summary: { title: "Comment on Jira issue", fields: { Issue: "DEMO-7", Comment: "Reproduced on 9.12." } }
+- name: "negative add_issue_comment: PUT selects no tool on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: PUT, url: "https://jira.example.com/rest/api/2/issue/DEMO-7/comment" }
+  expect: { app: jira-dc }
+- name: "dc transition_issue: summary shows the issue and the transition id"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request:
+    method: POST
+    url: "https://jira.example.com/rest/api/2/issue/DEMO-7/transitions"
+    headers: { content-type: application/json }
+    body: '{"transition":{"id":"41"}}'
+  expect:
+    app: jira-dc
+    tool: transition_issue
+    summary: { title: "Move Jira issue", fields: { Issue: "DEMO-7", Transition: "41" } }
+- name: "negative transition_issue: DELETE selects no tool on the registered host"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: DELETE, url: "https://jira.example.com/rest/api/2/issue/DEMO-7/transitions" }
+  expect: { app: jira-dc }
+- name: "negative dc host: a host that is not the registered instance gets no Jira app match and nothing is injected"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://other.example.com/rest/api/2/myself" }
+  expect: { unmatched: true }
+- name: "negative dc host: a Jira instance connection is not injected on Atlassian Cloud"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/myself" }
+  expect: { refused: host_mismatch, expected_host: jira.example.com }
+- name: "negative dc host: outside /rest on the registered host nothing is injected"
+  connection: { instance_host: jira.example.com, instance_app: jira-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://jira.example.com/secure/ViewProfile.jspa" }
+  expect: { unmatched: true }

@@ -1,0 +1,100 @@
+# Token lifecycle against recorded HTTP (docs/09 §12) for the two cloud apps, which share one
+# Atlassian OAuth client: an expired access token answers 401, the refresh goes to
+# auth.atlassian.com/oauth/token (JSON body, rotating refresh token), and a refused refresh token
+# (403 invalid_grant) needs re-authorization. All values are fake.
+- name: "jira token: a refreshed token is injected on the site API"
+  connection:
+    credentials: { access_token: "tok-fixture-2", refresh_token: "refresh-fixture-2" }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/myself" }
+  expect:
+    app: jira
+    tool: get_myself
+    upstream: { headers: { authorization: "Bearer tok-fixture-2" } }
+- name: "jira token: a 401 refreshes through auth.atlassian.com and retries with the rotated tokens"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7" }
+  token:
+    upstream: { status: 401, body: '{"code":401,"message":"Unauthorized"}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://auth.atlassian.com/oauth/token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-1", client_id: "client-fixture" }
+        response:
+          status: 200
+          body: '{"access_token":"tok-fixture-new","refresh_token":"refresh-fixture-2","expires_in":3600,"scope":"read:jira-work read:jira-user offline_access"}'
+    expect:
+      outcome: refreshed
+      request_url: "https://auth.atlassian.com/oauth/token"
+      credentials: { access_token: "tok-fixture-new", refresh_token: "refresh-fixture-2" }
+      retried:
+        url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7"
+        headers: { authorization: "Bearer tok-fixture-new" }
+  expect: { app: jira, tool: get_issue }
+- name: "jira token: a refused refresh token (403 invalid_grant) needs re-authorization"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7" }
+  token:
+    upstream: { status: 401, body: '{"code":401,"message":"Unauthorized"}' }
+    http_cassette:
+      - request: { method: POST, url: "https://auth.atlassian.com/oauth/token" }
+        response: { status: 403, body: '{"error":"invalid_grant","error_description":"Unknown or invalid refresh token."}' }
+    expect: { outcome: reauth_required, request_url: "https://auth.atlassian.com/oauth/token" }
+  expect: { app: jira }
+- name: "negative jira token: an unreachable token endpoint leaves the connection unavailable"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://api.atlassian.com/ex/jira/site-fixture-1/rest/api/3/issue/DEMO-7" }
+  token:
+    upstream: { status: 401, body: '{"code":401,"message":"Unauthorized"}' }
+    http_cassette: []
+    expect: { outcome: unavailable, request_url: "https://auth.atlassian.com/oauth/token" }
+  expect: { app: jira }
+- name: "confluence token: a refreshed token is injected on the site API"
+  connection:
+    credentials: { access_token: "tok-fixture-2", refresh_token: "refresh-fixture-2" }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/spaces" }
+  expect:
+    app: confluence
+    tool: list_spaces
+    upstream: { headers: { authorization: "Bearer tok-fixture-2" } }
+- name: "confluence token: a 401 refreshes through the shared client and retries with the rotated tokens"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages/98765" }
+  token:
+    upstream: { status: 401, body: '{"code":401,"message":"Unauthorized"}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://auth.atlassian.com/oauth/token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-1", client_id: "client-fixture" }
+        response:
+          status: 200
+          body: '{"access_token":"tok-fixture-new","refresh_token":"refresh-fixture-2","expires_in":3600,"scope":"read:page:confluence offline_access"}'
+    expect:
+      outcome: refreshed
+      request_url: "https://auth.atlassian.com/oauth/token"
+      credentials: { access_token: "tok-fixture-new", refresh_token: "refresh-fixture-2" }
+      retried:
+        url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages/98765"
+        headers: { authorization: "Bearer tok-fixture-new" }
+  expect: { app: confluence, tool: get_page }
+- name: "confluence token: a refused refresh token (403 invalid_grant) needs re-authorization"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages/98765" }
+  token:
+    upstream: { status: 401, body: '{"code":401,"message":"Unauthorized"}' }
+    http_cassette:
+      - request: { method: POST, url: "https://auth.atlassian.com/oauth/token" }
+        response: { status: 403, body: '{"error":"invalid_grant","error_description":"Unknown or invalid refresh token."}' }
+    expect: { outcome: reauth_required, request_url: "https://auth.atlassian.com/oauth/token" }
+  expect: { app: confluence }
