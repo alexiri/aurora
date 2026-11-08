@@ -818,6 +818,76 @@ fn advertised_proxy_url_must_be_https() {
     );
 }
 
+// FIX-010 (C-301, D-87): the sandbox proxy address defaults by runner backend, an explicit value
+// wins, and the advertised URL (BYO, container config) is never affected.
+#[test]
+fn sandbox_proxy_url_defaults_per_backend_and_override() {
+    let run = |extra: &str| {
+        load_with(&format!("{BASE}{extra}"), &[])
+            .unwrap()
+            .api_config()
+            .unwrap()
+    };
+    // kubernetes: the in-cluster host alias; advertised stays external.
+    let k = run("[runner]\nbackend = \"kubernetes\"\n");
+    assert_eq!(k.sandbox_proxy_url, "https://aurora-gateway:4102");
+    assert_eq!(k.advertised_proxy_url, "https://aurora.example.org:4102");
+    // podman / fake / unset: unchanged behaviour = the advertised URL.
+    for b in [
+        "[runner]\nbackend = \"podman\"\n",
+        "[runner]\nbackend = \"fake\"\n",
+        "",
+    ] {
+        let c = run(b);
+        assert_eq!(
+            c.sandbox_proxy_url, "https://aurora.example.org:4102",
+            "{b}"
+        );
+    }
+    // Explicit override wins on every backend; advertised untouched.
+    let o = run(
+        "[runner]\nbackend = \"kubernetes\"\n[gateway]\nsandbox_proxy_url = \"https://gw.internal:9443\"\n",
+    );
+    assert_eq!(o.sandbox_proxy_url, "https://gw.internal:9443");
+    assert_eq!(o.advertised_proxy_url, "https://aurora.example.org:4102");
+    // The gateway sees the same resolved values (its certificate SANs include the host).
+    let g = load_with(&format!("{BASE}[runner]\nbackend = \"kubernetes\"\n"), &[])
+        .unwrap()
+        .gateway_config()
+        .unwrap();
+    assert_eq!(g.sandbox_proxy_url, "https://aurora-gateway:4102");
+}
+
+#[test]
+fn sandbox_proxy_url_must_be_https_host_and_port_only() {
+    for bad in [
+        "http://aurora-gateway:4102",
+        "https://aurora-gateway:4102/path",
+        "https://aurora-gateway:4102?x=1",
+        "https://u:p@aurora-gateway:4102",
+        "aurora-gateway:4102",
+        "https://aurora-gateway:notaport",
+    ] {
+        let raw = load_with(
+            &format!("{BASE}[gateway]\nsandbox_proxy_url = \"{bad}\"\n"),
+            &[],
+        )
+        .unwrap();
+        for e in [
+            raw.api_config().unwrap_err().to_string(),
+            raw.gateway_config().unwrap_err().to_string(),
+        ] {
+            assert!(e.contains("gateway.sandbox_proxy_url"), "{bad}: {e}");
+        }
+    }
+    let ok = load_with(
+        &format!("{BASE}[gateway]\nsandbox_proxy_url = \"https://aurora-gateway:4102/\"\n"),
+        &[],
+    )
+    .unwrap();
+    assert!(ok.api_config().is_ok());
+}
+
 #[test]
 fn proxy_tls_cert_and_key_come_together() {
     let only_cert = load_with(

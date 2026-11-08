@@ -126,6 +126,18 @@ Chart defaults that you may set in `config`: `server.bind`, `server.trusted_prox
 `runner.ops_bind` (both `0.0.0.0`, acceptable only because the NetworkPolicies block
 sandbox ingress to 4103 and 4106), `hosted.enabled`, `telemetry.log_level`.
 
+### Gateway proxy addresses
+
+Two addresses reach the gateway proxy listener (port 4102), for two audiences:
+
+| Key | Audience | Default | Set it when |
+| --- | --- | --- | --- |
+| `gateway.advertised_proxy_url` | BYO agents, outside the cluster (`container_config.proxy_url`) | `https://<host of externalUrl>:4102` | the proxy is published under another name than the web host (a layer-4 load balancer or NodePort hostname). Add that name to `gateway.proxy.tls.externalHost` or `names` |
+| `gateway.sandbox_proxy_url` | hosted sandboxes, inside the cluster (the boot document) | `https://aurora-gateway:4102` (the chart runs the Kubernetes backend) | almost never: sandboxes have no DNS, the runner aliases `aurora-gateway` to the proxy Service, and the chart puts that name in the proxy certificate. Override only for a different in-cluster name, and make sure the name is on the certificate (`gateway.proxy.tls.names`; the gateway also adds its host itself) |
+
+Do not point `advertised_proxy_url` at an in-cluster name to make sandboxes work: BYO agents could not
+resolve it. Sandboxes always verify the proxy certificate against the host of the sandbox address.
+
 Add `auth`, `llm`, `governance`, `secrets`, `email` and the other sections the same way.
 The values file says so, and [llm-endpoints.md](llm-endpoints.md) shows an example.
 `plugins.dir` is set from the top-level `plugins.dir` value (default `/var/lib/aurora/plugins`),

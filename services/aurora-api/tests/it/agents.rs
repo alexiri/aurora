@@ -21,6 +21,8 @@ async fn world() -> World {
     let d = dir.to_string_lossy().into_owned();
     let h = Harness::with_config(move |c| {
         c.gateway_ca_dir = d;
+        c.advertised_proxy_url = "https://aurora.example.org:4102".into();
+        c.sandbox_proxy_url = "https://aurora-gateway:4102".into();
         // These tests exercise the BYO lifecycle as a plain member; the governed default is
         // covered in byo.rs (RFE-025).
         c.governance.byo.minimum_posture = aurora_config::ByoPosture::Enabled;
@@ -85,6 +87,10 @@ async fn byo_create_token_once_hash_only_and_gateway_resolves() {
             .unwrap()
             .contains(&tok)
     );
+    // FIX-010 (C-300): BYO agents get the advertised (external) address, never the sandbox one.
+    let pu = v["container_config"]["proxy_url"].as_str().unwrap();
+    assert!(pu.ends_with("@aurora.example.org:4102"), "{pu}");
+    assert!(!pu.contains("aurora-gateway"), "{pu}");
     // only the hash is stored
     let stored: Vec<u8> = sqlx::query_scalar("SELECT token_hash FROM gateway_credentials")
         .fetch_one(w.h.pool())

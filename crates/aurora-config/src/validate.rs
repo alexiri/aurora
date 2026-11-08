@@ -13,6 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Port of the gateway's proxy listener, used to derive `advertised_proxy_url`.
 const GATEWAY_PROXY_PORT: u16 = 4102;
+/// Host alias the Kubernetes runner backend writes into every sandbox Pod for the gateway Service.
+const KUBERNETES_GATEWAY_HOST: &str = "aurora-gateway";
 
 pub const BUILTIN_KNOWN_LLM_HOSTS: &[&str] = &[
     "api.openai.com",
@@ -167,6 +169,8 @@ pub struct ApiConfig {
     /// (RFE-011a) approval deadlines and the e-mail notifier switch.
     pub approvals: ApprovalsSection,
     pub advertised_proxy_url: String,
+    /// (FIX-010, D-87) Resolved `gateway.sandbox_proxy_url`: the proxy address in the boot document.
+    pub sandbox_proxy_url: String,
     /// `gateway.ca_dir`: directory holding the gateway's `ca.pem`.
     pub gateway_ca_dir: String,
     /// `gateway.allowed_private`: private destinations the operator opened. The API honours it
@@ -199,6 +203,8 @@ pub struct GatewayConfig {
     /// Resolved `gateway.internal_bind` (defaults to `server.bind`).
     pub internal_bind: String,
     pub advertised_proxy_url: String,
+    /// (FIX-010, D-87) Resolved `gateway.sandbox_proxy_url`; its host joins the proxy certificate SANs.
+    pub sandbox_proxy_url: String,
     pub approvals: ApprovalsSection,
     pub tls: TlsSection,
     pub telemetry: TelemetrySection,
@@ -327,6 +333,7 @@ impl RawConfig {
             "gateway.advertised_proxy_url",
             self.gateway.advertised_proxy_url.as_deref(),
         );
+        check_sandbox_proxy_url(&mut c, self.gateway.sandbox_proxy_url.as_deref());
         check_url(&mut c, "api.hookhost_url", Some(&self.api.hookhost_url));
         if self.plugins.dir.is_empty() {
             c.err("plugins.dir", "must not be empty");
@@ -370,6 +377,11 @@ impl RawConfig {
         check_ratelimit(&mut c, &self.ratelimit.api);
         check_common(&mut c, &self.tls, &self.telemetry);
         let advertised_proxy_url = advertised_proxy_url(&self.gateway, external_url.as_deref());
+        let sandbox_proxy_url = sandbox_proxy_url(
+            &self.gateway,
+            self.runner.backend.as_deref(),
+            &advertised_proxy_url,
+        );
         c.finish()?;
         // (phase 1, RFE-004) `auth.dev_idp.enabled` registers the extra provider `dev`.
         let mut auth = self.auth.clone();
@@ -412,6 +424,7 @@ impl RawConfig {
             hosted: self.hosted.clone(),
             approvals: self.approvals.clone(),
             advertised_proxy_url,
+            sandbox_proxy_url,
             gateway_ca_dir: self.gateway.ca_dir.clone(),
             gateway_allowed_private: self.gateway.allowed_private.clone(),
             gateway_proxy_operator_cert: self.gateway.proxy_tls.cert_file.is_some(),
@@ -475,6 +488,7 @@ impl RawConfig {
             "gateway.advertised_proxy_url",
             g.advertised_proxy_url.as_deref(),
         );
+        check_sandbox_proxy_url(&mut c, g.sandbox_proxy_url.as_deref());
         check_proxy_tls(&mut c, &g.proxy_tls);
         check_url(&mut c, "gateway.hookhost_url", Some(&g.hookhost_url));
         if let Some(p) = &g.egress_proxy {
@@ -486,6 +500,8 @@ impl RawConfig {
         check_approvals(&mut c, &self.approvals, &self.hosted);
         check_common(&mut c, &self.tls, &self.telemetry);
         let advertised_proxy_url = advertised_proxy_url(g, external_url.as_deref());
+        let sandbox_proxy_url =
+            sandbox_proxy_url(g, self.runner.backend.as_deref(), &advertised_proxy_url);
         c.finish()?;
         Ok(GatewayConfig {
             server: self.server.clone(),
@@ -500,6 +516,7 @@ impl RawConfig {
             gateway: g.clone(),
             internal_bind,
             advertised_proxy_url,
+            sandbox_proxy_url,
             approvals: self.approvals.clone(),
             tls: self.tls.clone(),
             telemetry: self.telemetry.clone(),
@@ -978,6 +995,36 @@ fn check_proxy_url(c: &mut Ctx, key: &str, v: Option<&str>) {
             "must be an https:// URL: the gateway proxy listener is TLS-only (docs/06 §Proxy listener TLS)",
         ),
         Ok(_) => {}
+    }
+}
+
+/// (FIX-010, D-87) `gateway.sandbox_proxy_url`: `https://host[:port]` only (no path, query,
+/// fragment or credentials); sandboxes dial it and verify the proxy certificate against its host.
+fn check_sandbox_proxy_url(c: &mut Ctx, v: Option<&str>) {
+    const KEY: &str = "gateway.sandbox_proxy_url";
+    let Some(v) = v else { return };
+    check_proxy_url(c, KEY, Some(v));
+    if let Ok(p) = parse_url(v, &["https"])
+        && (p.has_userinfo || p.has_query_or_fragment || !(p.path.is_empty() || p.path == "/"))
+    {
+        c.err(
+            KEY,
+            "must be https://host[:port] only (no path, query, fragment or credentials)",
+        );
+    }
+}
+
+/// Where hosted sandboxes dial the gateway proxy (FIX-010, D-87): the explicit key; else on the
+/// Kubernetes backend the host alias the runner writes into every sandbox Pod
+/// (`https://aurora-gateway:4102`); else the advertised proxy URL (podman: its sandbox network
+/// resolves the external host, unchanged behaviour; fake: unused).
+fn sandbox_proxy_url(g: &GatewaySection, backend: Option<&str>, advertised: &str) -> String {
+    if let Some(u) = &g.sandbox_proxy_url {
+        return u.clone();
+    }
+    match backend {
+        Some("kubernetes") => format!("https://{KUBERNETES_GATEWAY_HOST}:{GATEWAY_PROXY_PORT}"),
+        _ => advertised.to_owned(),
     }
 }
 

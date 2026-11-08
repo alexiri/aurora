@@ -213,6 +213,17 @@ pub async fn capabilities_for(
     Ok(vec!["browser".to_owned()])
 }
 
+/// The `gateway` object of the boot document: the supervisor dials `proxy` over TLS and verifies
+/// the proxy certificate against `server_name` (C-55).
+fn gateway_boot(sandbox_proxy_url: &str, boot_token: &str) -> Value {
+    json!({
+        "proxy": proxy_hostport(sandbox_proxy_url),
+        "tls": true,
+        "server_name": proxy_host(sandbox_proxy_url),
+        "boot_token": boot_token,
+    })
+}
+
 /// base64url(JSON) `AURORA_BOOT` document.
 pub fn boot_secret(s: &AppState, i: &BootInput<'_>) -> Result<SecretString, ApiError> {
     let host = if i.replica_host.contains(':') {
@@ -230,12 +241,9 @@ pub fn boot_secret(s: &AppState, i: &BootInput<'_>) -> Result<SecretString, ApiE
         // (phase 1, RFE-002) The supervisor always dials the gateway over TLS, verifying the
         // proxy certificate against `ca_pem` and `server_name` (the host of the proxy address,
         // which is in the certificate's SAN set, docs/06 §Proxy listener TLS).
-        "gateway": {
-            "proxy": proxy_hostport(&s.config.advertised_proxy_url),
-            "tls": true,
-            "server_name": proxy_host(&s.config.advertised_proxy_url),
-            "boot_token": i.boot_token,
-        },
+        // (FIX-010, D-87) The address is `gateway.sandbox_proxy_url` (the in-cluster alias on
+        // Kubernetes), not the advertised URL that BYO agents get.
+        "gateway": gateway_boot(&s.config.sandbox_proxy_url, i.boot_token),
         "ca_pem": i.ca_pem,
         "files": i.files,
         // (phase 1, RFE-003) The supervisor starts the open proxy only with `browser`.
@@ -288,6 +296,19 @@ pub async fn read_ca(state: &AppState) -> Result<String, ApiError> {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    // FIX-010 (C-300): the boot document's gateway object is built from the sandbox proxy address
+    // (config tests pin the per-backend defaults and that the advertised URL is untouched).
+    #[test]
+    fn boot_gateway_is_built_from_the_given_sandbox_address() {
+        let g = gateway_boot("https://aurora-gateway:4102", "t");
+        assert_eq!(g["proxy"], "aurora-gateway:4102");
+        assert_eq!(g["server_name"], "aurora-gateway");
+        assert_eq!(g["tls"], true);
+        let g = gateway_boot("https://[::1]:4102", "t");
+        assert_eq!(g["proxy"], "[::1]:4102");
+        assert_eq!(g["server_name"], "::1");
+    }
 
     fn app(id: &str, env: Value, stubs: Value) -> AppEntry {
         serde_json::from_value(json!({

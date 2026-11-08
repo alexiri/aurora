@@ -43,6 +43,8 @@ pub(crate) async fn rig() -> Rig {
     let d = dir.to_string_lossy().into_owned();
     let h = Harness::with_config(move |c| {
         c.gateway_ca_dir = d;
+        c.advertised_proxy_url = "https://aurora.example.org:4102".into();
+        c.sandbox_proxy_url = "https://aurora-gateway:4102".into();
         c.llm.endpoints.push(aurora_config::LlmEndpoint {
             id: "anthropic".into(),
             provider: "anthropic".into(),
@@ -231,6 +233,11 @@ impl Rig {
                 .unwrap(),
         )
         .unwrap();
+        // FIX-010 (C-300): the supervisor dials the sandbox address (`rig` sets one that differs
+        // from the advertised URL), and verifies the certificate against its host.
+        assert_eq!(doc["gateway"]["proxy"], "aurora-gateway:4102");
+        assert_eq!(doc["gateway"]["server_name"], "aurora-gateway");
+        assert_eq!(doc["gateway"]["tls"], true);
         let lv = Live {
             agent,
             conv,

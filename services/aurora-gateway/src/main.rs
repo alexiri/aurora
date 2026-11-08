@@ -335,6 +335,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             let namespace = detect_namespace();
             let names = san_set(&SanInputs {
                 advertised_proxy_url: &cfg.advertised_proxy_url,
+                sandbox_proxy_url: &cfg.sandbox_proxy_url,
                 extra_names: &cfg.gateway.proxy_tls.names,
                 namespace: namespace.as_deref(),
                 compose_addr_local: compose_addr_is_local(),

@@ -770,6 +770,12 @@ Rule: `04 §Freeze`, `05 §Conventions`, `06 §Credential authentication`, `10 �
 - C-292 **503 `audit_unavailable`** (`{ error: { code: "audit_unavailable", message: "The audit log is unavailable." } }`): every route that performs a security-critical action answers it when the audit row cannot be written, and **nothing is changed** (the row and the change share one database transaction). The status is added to the documented responses of those routes by the shared error envelope (no per-route schema change); clients may retry. Channel doors (button clicks, `approve <code>`) retry the inbound event instead of answering the user.
 - C-293 **Emitted action names**: the critical set uses the names the API already emitted (`grant.create|delete`, `member.add|update|remove`, `workspace_access.set|remove`, `admin.runner_*`, `admin.connector_*`, `secret.value_update`, `trusted_key.create|revoke`, `reach_grant.decide`, `agent_link.policy`, `org.app_availability.update`, `plugin.host_claim.decide`, …); no existing action was renamed. New critical rows: `member.add` (SSO just-in-time provisioning), `invitation.accept` (also on first sign-in), `connection.reconnect`, `cli_login.consume`. The full list is `04 §Audit`.
 
+### FIX-010 sandbox gateway address (C-300..C-302, D-87)
+
+- C-300 **Boot document**: `gateway.proxy` (`host:port`) and `gateway.server_name` (host) are derived from the resolved `gateway.sandbox_proxy_url`, never from `gateway.advertised_proxy_url`. `tls` stays `true`; the supervisor verifies the proxy certificate against `ca_pem` and `server_name`, unchanged.
+- C-301 **Config** `gateway.sandbox_proxy_url` (optional; api and gateway): `https://host[:port]` only (no path, query, fragment or credentials; startup names the key otherwise). Unset: `runner.backend = kubernetes` → `https://aurora-gateway:4102`; `podman` and `fake` → the resolved `gateway.advertised_proxy_url`. The gateway adds its host to the proxy certificate SANs.
+- C-302 **BYO**: `container_config.proxy_url` and every other BYO-facing proxy URL keep using `gateway.advertised_proxy_url` (external host); no API response exposes the sandbox address.
+
 ### W9 hook-host JSON encoding (C-18, C-19)
 
 - C-18 Internal snapshot route returns the exact canonical bytes so consumers verify `sha256(body) == x-snapshot-hash` without re-serialization.

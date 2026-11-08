@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# P2-E2E-1: in the kind dev profile the sandboxes must be told the IN-CLUSTER gateway proxy address.
-# The default (external host + :4102) is localhost:4102 there, which is the sandbox itself: a real harness
-# (claude-code) fails every model call with `API Error: 502` while the fake harness never notices.
-# Renders deploy/kind/values-dev.yaml (with and without the llm-mock profile) and checks
-# gateway.advertised_proxy_url is `https://aurora-gateway:4102`: the name the Kubernetes runner backend
-# aliases (hostAliases, sandboxes have no DNS) to the proxy Service, and which is on the proxy certificate.
+# FIX-010 (D-87, supersedes the P2-E2E-1 workaround): the kind dev profile must NOT override the gateway
+# addresses. Hosted sandboxes get `https://aurora-gateway:4102` from the Kubernetes backend default of
+# gateway.sandbox_proxy_url; BYO agents keep the external gateway.advertised_proxy_url. Overriding
+# advertised_proxy_url to the in-cluster name (the old workaround) hands BYO agents an address they
+# cannot resolve. Renders deploy/kind/values-dev.yaml (with and without the llm-mock profile) and checks:
+#   - config has no advertised_proxy_url and no sandbox_proxy_url;
+#   - runner.backend is kubernetes (the default that selects the sandbox address);
+#   - the proxy certificate names include `aurora-gateway` (the name sandboxes verify).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
@@ -16,11 +18,16 @@ fi
 
 check() {
   local label="$1"; shift
-  local out url
+  local out
   out=$(helm template aurora deploy/helm/aurora -n aurora "$@")
-  url=$(printf '%s\n' "$out" | grep -o 'advertised_proxy_url = "[^"]*"' | head -1 | cut -d'"' -f2)
-  [ "$url" = "https://aurora-gateway:4102" ] \
-    || { echo "dev-gateway-address: FAIL: $label: advertised_proxy_url is '${url:-<unset>}'" >&2; exit 1; }
+  if grep -Eq '^[[:space:]]*(advertised_proxy_url|sandbox_proxy_url)[[:space:]]*=' <<<"$out"; then
+    echo "dev-gateway-address: FAIL: $label: the dev profile overrides a gateway proxy address" >&2
+    exit 1
+  fi
+  grep -Eq '^[[:space:]]*backend[[:space:]]*=[[:space:]]*"kubernetes"' <<<"$out" \
+    || { echo "dev-gateway-address: FAIL: $label: runner.backend is not kubernetes" >&2; exit 1; }
+  grep -Eq '"aurora-gateway"' <<<"$out" \
+    || { echo "dev-gateway-address: FAIL: $label: proxy certificate names lack aurora-gateway" >&2; exit 1; }
 }
 check "values-dev" -f deploy/kind/values-dev.yaml
 check "values-dev + llm-mock" -f deploy/kind/values-dev.yaml -f deploy/kind/values-llm-mock.yaml
