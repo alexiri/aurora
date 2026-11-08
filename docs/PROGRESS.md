@@ -1,8 +1,8 @@
 # Implementation progress
 
-Last updated: 2026-11-06 (evening, orchestrator; reconciled with git through e65ec66d)
+Last updated: 2026-11-08 (planning review; reconciled with git through d24da6a5, P2-006 merged)
 
-Scope: **Phase 0 (M0–M7) is complete and merged to `master`.** Current: **phases 1 and 2 in parallel**; lanes branch from `master` in worktrees and merge back to `master` (owner, 2026-11-08: no phase branches). Phases 3 and 4 after 1 and 2.
+Scope: **Phase 0 (M0–M7) and phase 1 are complete and merged to `master`.** Current: **phase 2** (in progress); lanes branch from `master` in worktrees and merge back to `master` (owner, 2026-11-08: no phase branches). Phases 3 and 4 after 1 and 2; phase 5 = OPS-022. The plan for everything left is in §Remaining work plan (by feature).
 Ids per decision I-01. Task briefs live in `docs/tasks/<ID>.md`. Milestones
 beyond the active one are tracked as epics and decomposed into briefs when
 their dependencies near completion (adaptive planning).
@@ -12,7 +12,7 @@ their dependencies near completion (adaptive planning).
 - **Phase sequencing** (owner, 2026-11-06): phase 0 must land fully and be **merged to `master`** first. After that, phases **1 and 2 may overlap**. Phases **3 and 4** start once 1 and 2 are done.
 
 - **Concurrency**: owner set **3 concurrent implementation lanes** (2026-11-06 evening; was 4). Lanes already running finish; no new lane starts while 3 are active.
-- **Worktrees** (2026-11-06, owner): implementation lanes that touch a crate another lane is editing (esp. `services/aurora-api`) run in their own git worktree (Orca worker `--worktree new-top-level --repo id:706ffb9e-ae8b-4f11-a841-518970480f40`, or Agent `isolation: worktree`) with a per-worktree `target/` (never a shared `CARGO_TARGET_DIR`: e2e scripts run `target/debug/<bin>`). Orchestrator merges each branch into `phase0` after review. Disk budget: ~15 GB per worktree build, so at most 3 worktrees while free space is under 100 GB; check `df -h /home` before starting one.
+- **Worktrees** (2026-11-06, owner): implementation lanes that touch a crate another lane is editing (esp. `services/aurora-api`) run in their own git worktree (Orca worker `--worktree new-top-level --repo id:706ffb9e-ae8b-4f11-a841-518970480f40`, or Agent `isolation: worktree`) with a per-worktree `target/` (never a shared `CARGO_TARGET_DIR`: e2e scripts run `target/debug/<bin>`). Orchestrator merges each branch into `master` after review (was `phase0` during phase 0). Disk budget: ~15 GB per worktree build, so at most 3 worktrees while free space is under 100 GB; check `df -h /home` before starting one.
 
 - Rust 1.99 stable (system, no rustup); `wasm32-wasip2` installed (`rust-wasm`, I-02a).
 - Node 20.20, pnpm 10 (`~/.local/bin`), podman 5 (compose), psql client.
@@ -164,32 +164,32 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 
 | RFE | Decision (short) | Phase | Spec update | Implementation |
 |---|---|---|---|---|
-| RFE-001 | Verified-email auto-link opt-in per integration (default off); else sign-in-link flow | 1 | SPEC-RFE-P12 | spec done |
-| RFE-002 | TLS-only gateway proxy listener, internal and external | 1 | SPEC-RFE-P12 | spec done |
-| RFE-003 | Open-lane posture (enabled/allowlist_only/disabled), CONNECT-time rule semantics, 3129 only with browser capability | 1 | SPEC-RFE-P12 | spec done |
-| RFE-004 | OIDC-only sign-in (IdP enforces MFA) | 1 | SPEC-RFE-P12 | spec done |
-| RFE-009 | Direct conversations visible to their user + workspace owners | 1 | SPEC-RFE-P12 | spec done |
-| RFE-016 | `DeltaBus` seam (NOTIFY impl) + sizing note | 1 | SPEC-RFE-P12 | spec done |
-| RFE-005 | Policy `user` identities bind to the turn's speaker | 2 | SPEC-RFE-P12 | spec done |
-| RFE-006 | Freeze agent/workspace/org (reversible, audited) | 2 | SPEC-RFE-P12 | spec done |
-| RFE-007 | Keyring-style lists for signing key and internal secret | 2 | SPEC-RFE-P12 | implemented in P2-007 (see commit) |
-| RFE-008 | Security-critical audit rows written in the same transaction | 2 | SPEC-RFE-P12 | spec done |
-| RFE-010 | Conversation delete/archive, transcript redaction, retention, export | 2 | SPEC-RFE-P12 | spec done |
-| RFE-011a | Stall exemption, per-rule approval timeouts, email-to-owners when no surface is live, SSE browser notification | 2 | SPEC-RFE-P12 | spec done |
-| RFE-012 | Third workspace role `approver` | 2 | SPEC-RFE-P12 | spec done |
-| RFE-015 | Attachment retention + per-tenant quota + storage breakdown + sweep | 2 | SPEC-RFE-P12 | spec done |
-| RFE-017 | Management API per-principal rate limiting | 2 | SPEC-RFE-P12 | spec done |
-| RFE-021 | Creator reassignment, offboarding view, workspace-anchored automations | 2 | SPEC-RFE-P12 | spec done |
-| RFE-025 | BYO posture (enabled/owners_only/disabled, `byo.enabled`), source CIDR allow-lists, empty-identity rule warning, optional required context credentials | 2 | spec done (SPEC-RFE-P3) | todo |
-| RFE-013 | Optional per-instance/org agent-token max age (default none) | 3 | spec done (SPEC-RFE-P3) | todo |
-| RFE-014 | Gateway under Postgres outage: serve within TTL, reconnect-then-flush, degraded readyz | 3 | spec done (SPEC-RFE-P3) | todo |
-| RFE-018 | Idempotency keys for message creation | 3 | spec done (SPEC-RFE-P3) | todo |
-| RFE-019 | Neutral default brief (Daneel persona → instance config); public base image | 3 | spec done (SPEC-RFE-P3) | todo |
-| RFE-020 | Workspace-tier skills | 3 | spec done (SPEC-RFE-P3) | todo |
-| RFE-022 | Plugin major upgrade → `reauth_required` + approval warning | 3 | spec done (SPEC-RFE-P3) | todo |
-| RFE-023 | Document the LLM-host default-rule carve-out (+ UI note) | 3 | spec done (SPEC-RFE-P3) | todo |
-| RFE-024 | Self-contained deprovision ops, ordering guarantee | 3 | spec done (SPEC-RFE-P3) | todo |
-| RFE-011b | Approval park-and-resume, Web Push | 4 | later | todo |
+| RFE-001 | Verified-email auto-link opt-in per integration (default off); else sign-in-link flow | 1 | SPEC-RFE-P12 | done (P1-001, ef1578e6) |
+| RFE-002 | TLS-only gateway proxy listener, internal and external | 1 | SPEC-RFE-P12 | done (P1-004, df211a2c; SEC-40) |
+| RFE-003 | Open-lane posture (enabled/allowlist_only/disabled), CONNECT-time rule semantics, 3129 only with browser capability | 1 | SPEC-RFE-P12 | done (P1-003, 14532e24; SEC-41) |
+| RFE-004 | OIDC-only sign-in (IdP enforces MFA) | 1 | SPEC-RFE-P12 | done (P1-005, c7eaa86b; SEC-42) |
+| RFE-009 | Direct conversations visible to their user + workspace owners | 1 | SPEC-RFE-P12 | done (P1-002, fff11f50; SEC-43) |
+| RFE-016 | `DeltaBus` seam (NOTIFY impl) + sizing note | 1 | SPEC-RFE-P12 | done (P1-001, ef1578e6) |
+| RFE-005 | Policy `user` identities bind to the turn's speaker | 2 | SPEC-RFE-P12 | done (P2-005, 0ab13f10; SEC-44) |
+| RFE-006 | Freeze agent/workspace/org (reversible, audited) | 2 | SPEC-RFE-P12 | done (P2-006, d24da6a5; SEC-45, D-76) |
+| RFE-007 | Keyring-style lists for signing key and internal secret | 2 | SPEC-RFE-P12 | done (P2-007, 275ab06e; SEC-46) |
+| RFE-008 | Security-critical audit rows written in the same transaction | 2 | SPEC-RFE-P12 | todo: P2-008 briefed, not started |
+| RFE-010 | Conversation delete/archive, transcript redaction, retention, export | 2 | SPEC-RFE-P12 | done (P2-010, 751c4e5c; SEC-47) |
+| RFE-011a | Stall exemption, per-rule approval timeouts, email-to-owners when no surface is live, SSE browser notification | 2 | SPEC-RFE-P12 | in progress (P2-011A) |
+| RFE-012 | Third workspace role `approver` | 2 | SPEC-RFE-P12 | done (P2-012, 802c2db8; SEC-28) |
+| RFE-015 | Attachment retention + per-tenant quota + storage breakdown + sweep | 2 | SPEC-RFE-P12 | done (P2-015, 19fc7ecd; SEC-48); e-mail notice and "expired" chip → P2-FU-1 |
+| RFE-017 | Management API per-principal rate limiting | 2 | SPEC-RFE-P12 | done (P2-017, b2ce6405; SEC-50) |
+| RFE-021 | Creator reassignment, offboarding view, workspace-anchored automations | 2 | SPEC-RFE-P12 | done (P2-021, 5716ccdb; SEC-51) |
+| RFE-025 | BYO posture (enabled/owners_only/disabled, `byo.enabled`), source CIDR allow-lists, empty-identity rule warning, optional required context credentials | 2 | spec done (SPEC-RFE-P3) | done (P2-025, e30974f0; SEC-52); held-request 403 → P2-FU-2, caller-address hint → P2-FU-1 |
+| RFE-013 | Optional per-instance/org agent-token max age (default none) | 3 | spec done (SPEC-RFE-P3) | todo: P3-013 |
+| RFE-014 | Gateway under Postgres outage: serve within TTL, reconnect-then-flush, degraded readyz | 3 | spec done (SPEC-RFE-P3) | todo: P3-014 |
+| RFE-018 | Idempotency keys for message creation | 3 | spec done (SPEC-RFE-P3) | todo: P3-018 |
+| RFE-019 | Neutral default brief (Daneel persona → instance config); public base image | 3 | spec done (SPEC-RFE-P3) | todo: P3-019 |
+| RFE-020 | Workspace-tier skills | 3 | spec done (SPEC-RFE-P3) | todo: P3-020 |
+| RFE-022 | Plugin major upgrade → `reauth_required` + approval warning | 3 | spec done (SPEC-RFE-P3) | todo: P3-022 |
+| RFE-023 | Document the LLM-host default-rule carve-out (+ UI note) | 3 | spec done (SPEC-RFE-P3) | todo: P3-023 |
+| RFE-024 | Self-contained deprovision ops, ordering guarantee | 3 | spec done (SPEC-RFE-P3) | todo: P3-024 |
+| RFE-011b | Approval park-and-resume, Web Push | 4 | later (SPEC-P4) | todo: P4-011B |
 
 ### Phase 1 and 2 task graph
 
@@ -212,18 +212,280 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 | OPS-018 | Live reload | 1 | done (I-43): `just dev` watch→rebuild→restart (stdlib Python watcher) incl. runner (fake backend), `just kind-live`, dev-only read-only supervisor bind-mount (refused unless podman + loopback). Save-to-serving: hookhost/runner 3.7 s, api 15-17 s. Follow-ups: FU-OPS-018a api above the 5 s target; FU-OPS-018b gateway warm time, kind-live and the supervisor mount not exercised end to end; Fast Refresh not checked in a browser | OPS-016, OPS-017 |
 | OPS-023 | Faster image builds: sccache in the release builder (local cache mount, CI GHA backend via secrets); kind.sh e2e on the OPS-017 dev build path | 1 | done (I-44): sccache in the builder (local mount; CI GHA backend via BuildKit secrets), kind.sh on the dev build path by default (`--release-images` for release). Local release builder: cold 12m13s → 8m32s after a one-line api change (19/20 crates hit; the six thin-LTO links dominate and are never cacheable); kind.sh image prep 9-12 min → 60 s. CI: the GitHub Actions sccache backend got 0 hits on two consecutive runs and doubled `images-builder` (~15 → ~32 min; its entries compete with the BuildKit layer cache for the 10 GB Actions cache), so it was removed from CI after measuring (local sccache kept). Follow-ups: FU-OPS-023a sccache pinned at 0.10.0 (host has 0.19), bump it; FU-OPS-023b release link time (thin LTO × 6 binaries) is the remaining cost — consider one multi-call binary or lto=false for non-release CI images | — |
 | FIX-008 | Podman backend tolerates `stopped`/unknown container states (CI e2e-hosted on podman 4.9) | 1 | done; CI e2e-hosted 9/9 on ubuntu-24.04 (run 42382511618) | — |
-| P2-005..P2-025 | Phase-2 RFE tasks (briefs in docs/tasks/P2-*.md) | 2 | P2-007, P2-012, P2-017, P2-021 done (5716ccdb, SEC-51, D-69; FU-P2-021a: anchored automations must stop when their agent is frozen → P2-006), P2-010 done (SEC-47, D-70; 712 Rust tests on master; FU-P2-010a channels.sh and m1.sh not run on it; FU-P2-010b export `purged` flag stays false until RFE-015 adds purged_at → P2-015), P2-025 done (e30974f0, SEC-52, D-71; 776 Rust tests on master; FU-P2-025a a held request on a tunnel closed by tightening sees a reset, not 403; FU-P2-025b dashboard caller-address hint not implemented; FU-P2-025c hosted e2e not run on it), P2-015 done (19fc7ecd, SEC-48, D-73; FU-P2-015a transcript "expired by retention" chip not rendered; FU-P2-015b quota e-mail notice waits for RFE-011a), P2-005 done (0ab13f10, SEC-44; FU-P2-005a `request_log.speaker_user_id` not exposed in the activity DTO); P2-006 in-progress; P2-008, P2-011A briefed | — |
-| P2-CAT / P2-DBL | Built-in app catalogue; gateway database lane (`21`) | 2 | P2-CAT-0 done (D-75, C-210): fail-closed builtin dir (only project-key-signed archives), `scripts/plugins/check-builtin.sh` in CI, api image built in `images-api` (environment `release`, signs with the project key) / `images-api-pr` (unsigned), GitLab gitlab.com package. First CI run to confirm signing. Follow-ups: FU-P2-CAT-0a token lifecycle not replayable offline (no recorded token responses); FU-P2-CAT-0b GitLab icon is a placeholder; FU-P2-CAT-0c the api image now compiles the `aurora` CLI in release. P2-CAT-5 done (`aws-keys`: S3 read/write tools by path, STS/EC2 Query API calls as held write tools because tool matching cannot see `Action=`; region from connection metadata; FU-P2-CAT-5a parameter-level tool matching (manifest-contract extension) would let `Describe*`/`GetCallerIdentity` be read tools; FU-P2-CAT-5b endpoints/actions written from knowledge, links unchecked). P2-CAT-H (hook-capable built-ins) in-progress; then CAT-5b (`aws-role`), CAT-1 (`github-app`), CAT-3. Remaining: CAT-1..4, CAT-6, `P2-DBL.md` (DBL-1, then DBL-2) | CAT-1/3/5b after CAT-H; DBL-2 after DBL-1 |
+| P2-005..P2-025 | Phase-2 RFE tasks (briefs in docs/tasks/P2-*.md) | 2 | P2-007, P2-012, P2-017, P2-021 done (5716ccdb, SEC-51, D-69; FU-P2-021a: anchored automations must stop when their agent is frozen → P2-006), P2-010 done (SEC-47, D-70; 712 Rust tests on master; FU-P2-010a channels.sh and m1.sh not run on it; FU-P2-010b export `purged` flag stays false until RFE-015 adds purged_at → P2-015), P2-025 done (e30974f0, SEC-52, D-71; 776 Rust tests on master; FU-P2-025a a held request on a tunnel closed by tightening sees a reset, not 403; FU-P2-025b dashboard caller-address hint not implemented; FU-P2-025c hosted e2e not run on it), P2-015 done (19fc7ecd, SEC-48, D-73; FU-P2-015a transcript "expired by retention" chip not rendered; FU-P2-015b quota e-mail notice waits for RFE-011a), P2-005 done (0ab13f10, SEC-44; FU-P2-005a `request_log.speaker_user_id` not exposed in the activity DTO), P2-006 done (d24da6a5, SEC-45, D-76, C-200..C-209; closes FU-P2-021a via C-208); P2-011A in-progress; P2-008 briefed, not started | — |
+| P2-CAT / P2-DBL | Built-in app catalogue; gateway database lane (`21`) | 2 | P2-CAT-0 done (D-75, C-210): fail-closed builtin dir (only project-key-signed archives), `scripts/plugins/check-builtin.sh` in CI, api image built in `images-api` (environment `release`, signs with the project key) / `images-api-pr` (unsigned), GitLab gitlab.com package. First CI run to confirm signing. Follow-ups: FU-P2-CAT-0a token lifecycle not replayable offline (no recorded token responses); FU-P2-CAT-0b GitLab icon is a placeholder; FU-P2-CAT-0c the api image now compiles the `aurora` CLI in release. P2-CAT-5 done (`aws-keys`: S3 read/write tools by path, STS/EC2 Query API calls as held write tools because tool matching cannot see `Action=`; region from connection metadata; FU-P2-CAT-5a parameter-level tool matching (manifest-contract extension) would let `Describe*`/`GetCallerIdentity` be read tools; FU-P2-CAT-5b endpoints/actions written from knowledge, links unchecked). P2-CAT-H (hook-capable built-ins, D-77; branch `alexiri/p2-cat-h` 6665a77f still numbers it D-76, which P2-006 took: renumber at merge) approved, being merged; then CAT-5b (`aws-role`), CAT-1 (`github-app`), CAT-3. Remaining: CAT-1..4, CAT-6, `P2-DBL.md` (DBL-1, then DBL-2) | CAT-1/3/5b after CAT-H; DBL-2 after DBL-1 |
 | P2-INST | Self-hosted app instances (D-74, SEC-59, C-240..C-246): admin-registered instance hosts, `{instance}` in manifests, exact-host injection; GitLab built-in becomes instance-bound (owner runs its own GitLab; pulled forward from phase 3, 2026-11-08) | 2 | in-progress | after P2-CAT-0 (done) |
-| P2-UI | Dashboard visual design + brand (`14 §Visual design`, D-68, I-40, I-41): stage 1 light/dark tokens, theme switch, brand mark/icons, fonts, primitives, shell; stage 2 screens; stage 3 token sweep + guards | 2 | stage 1 done (merged after 883a3928: tokens, themes, brand, fonts, primitives, sidebar shell; screenshots reviewed by owner); stage 2 done (Overview, Approvals, agent + Chat, split auth layout; Tabs scroll within themselves at 390 px; shared page patterns Section/ItemList/DataTable/Form/Notice/Confirm+FormDialog documented in `14 §Page patterns`); stage 3a done (25 org/account/admin routes rebuilt from the patterns; CheckboxField, DangerZone added); 3b workspace and 3c agent pages after P2-006; stage 4 (enforcement, incl. removing CSP-blocked inline `style=` meters) after | stage 1 before other phase-2 dashboard work; auth screens coordinate with P1-005 |
+| P2-UI | Dashboard visual design + brand (`14 §Visual design`, D-68, I-40, I-41): stage 1 light/dark tokens, theme switch, brand mark/icons, fonts, primitives, shell; stage 2 screens; stage 3 token sweep + guards | 2 | stage 1 done (merged after 883a3928: tokens, themes, brand, fonts, primitives, sidebar shell; screenshots reviewed by owner); stage 2 done (Overview, Approvals, agent + Chat, split auth layout; Tabs scroll within themselves at 390 px; shared page patterns Section/ItemList/DataTable/Form/Notice/Confirm+FormDialog documented in `14 §Page patterns`); stage 3a done (25 org/account/admin routes rebuilt from the patterns; CheckboxField, DangerZone added); 3c agent pages in-progress; 3b workspace screens after P2-INST (not started); stage 4 (enforcement, incl. removing CSP-blocked inline `style=` meters) after | stage 1 before other phase-2 dashboard work; auth screens coordinate with P1-005 |
 
 ### Phase 1 developer tooling (owner, 2026-11-08)
 
 | Task | Summary | Status |
 |---|---|---|
-| OPS-016 | Faster builds/tests (lld, one test binary per crate, nextest, sccache, dev incremental), lane clean-up scripts | briefed (first task of phase 1) |
+| OPS-016 | Faster builds/tests (lld, one test binary per crate, nextest, sccache, dev incremental), lane clean-up scripts | done (2872c962) |
 | OPS-017 | kind + Helm replaces podman compose for dev/test (evaluate, migrate, remove compose) | done |
 | OPS-018 | Live reload: Next.js HMR, Rust watch→rebuild→restart with socket handover, Tilt for kind, dev-only supervisor bind mount | done |
+
+## Remaining work plan (by feature)
+
+Planning review, 2026-11-08, against `master` d24da6a5 (P2-006 merged) and the coordinator's snapshot (P2-CAT-H approved and being merged; P2-INST, P2-UI 3c, P2-011A running). Every task below maps to rows of `docs/FEATURES.md` (one row per feature, with its spec source). Nothing here adds a requirement: where the spec is silent the item is a question for the owner (below), not a task.
+
+Columns: **Size** S (≤ 1 day of one lane) / M (a few days) / L (a week or more, several crates or both stacks). **Lane** Rust / Next.js / both / docs / ops / package (`plugins/builtin/**` only) / tests / audit. **Owns** = the files or areas the lane edits, so collisions are visible. **Brief**: an existing `docs/tasks/…` file, or "needed" with what it must cover.
+
+Shared files that no lane owns (each lane appends or regenerates them, and the coordinator re-generates at merge): `docs/API_CONTRACTS.md` (one new section per lane), `web/openapi.json` + `web/src/lib/api/schema.d.ts` (regenerated), `crates/aurora-db/tests/fixtures/spec_schema.json` and the machine-checked tables of `docs/03` (each migration lane moves its own `§Planned changes` rows), `docs/tests/security-coverage.md` (append rows), `services/aurora-api/tests/it/permission_matrix.rs` (append rows), `Cargo.lock` (only lanes adding a dependency; serialize those merges).
+
+### Phase 2: remaining tasks
+
+| Task | Scope (one line) | Spec sources | Size | Lane | Depends on | Owns | Brief | Status |
+|---|---|---|---|---|---|---|---|---|
+| P2-INST | Self-hosted app instances end to end (manifest `instances`, registration, connect/BYOC binding, exact-host injection, dashboard), GitLab becomes instance-bound | D-74, `09 §3.4/§6/§7`, `06` MITM step 2, `05 §App instances`, C-240..C-246, SEC-59, SEC-04 (amended) | L | both | P2-CAT-0 (done) | `crates/aurora-registry` (manifest, snapshot), api `domains/{apps,connect,oauth_clients}` + new app-instances domain, gateway `resolver.rs`/`resolve.rs`/`inject.rs`/`apps.rs`, migration `app_instances` + `instance_id` columns, web `components/{apps,credentials,admin}` + org settings Instances, `plugins/builtin/gitlab/**`, a new `plugins/fixtures/` instance fixture, a `scripts/e2e/gateway.sh` scenario | `docs/tasks/P2-INST.md` | in-progress |
+| P2-011A | Stall exemption, per-rule/per-grant approval timeouts, e-mail when no live surface, SSE browser notification | `80 §RFE-011`, D-56, `07 §Approval deadlines`, `10`, `14 §Key flows`, `15`, `02` limits, `03 §Planned changes`, SEC-49 | L | both | — | gateway `hold.rs`; api `domains/{approvals,action_approvals,hosted (stall rule),policy,grants}` + the approval notifier/mailer; migrations (`policy_rules`, `grants`, `approvals.resolved_at`, `approval_watchers`, `approval_notifications`, `users.approval_email_enabled`); web approvals, account notifications, policy rule timeout field | `docs/tasks/P2-011A.md` | in-progress |
+| P2-UI-3c | Agent tabs other than Chat, conversation actions, agent list/create rebuilt on the patterns | `14 §Visual design`, D-68 | M | Next.js | stage 2, P2-006 (done) | web `components/{agents (non-Chat tabs),memory,skills,schedules,webhooks,peers,automations}` | `docs/tasks/P2-UI.md` stage 3 | in-progress |
+| P2-CAT-H | Hook-capable built-ins (hook source layout, build, hook fixtures against recorded HTTP, coverage) | `21 §Phase 2 — App catalogue`, `09 §8/§12`, D-77 | M | Rust/ops | P2-CAT-0 | `services/aurora-cli/src/plugin`, `services/aurora-hookhost/src/fetch.rs`, `scripts/plugins/*`, `images/services/Containerfile`, `plugins/fixtures/hook-example` | `docs/tasks/P2-CAT.md` §Prerequisite | approved, being merged (renumber D-76 → D-77) |
+| P2-UI-3b | Workspace screens (credentials and connections, apps, policy, activity, channels, settings and access, BYO controls) incl. phase-2 screens added by other lanes | `14 §Visual design`, D-68 | M | Next.js | stage 2; P2-INST merged (connect dialog, instances); P2-011A's policy timeout field (rebase onto it, keep its behaviour) | web `components/{credentials,apps,policy,approvals/activity-view,channels,settings}` | `docs/tasks/P2-UI.md` stage 3b | todo |
+| P2-CAT-T | Token lifecycle against recorded HTTP for declarative OAuth refresh and mint (not only hooks) in `aurora plugin test`, coverage rule in `check-builtin`; GitLab real icon + lifecycle fixtures; aws-keys endpoints reviewed against vendor docs and the link workflow run | `21 §Phase 2 — App catalogue` (first and third bullets), FU-P2-CAT-0a/0b, FU-P2-CAT-5b | M | Rust (CLI) + package | P2-CAT-H merged; GitLab part after P2-INST merged | `services/aurora-cli/src/plugin` (test runner), `scripts/plugins/check_builtin.py` (coverage rule), `plugins/builtin/gitlab/{assets,tests}`, `plugins/builtin/aws-keys/tests` | needed: how recorded token responses are declared in fixture cases (if it extends the `09 §12` fixture format, stop and ask), which packages need lifecycle cases (every OAuth / mint app), the coverage rule, no live calls | todo |
+| P2-008 | Atomic audit for the security-critical set: same-transaction rows, 503 `audit_unavailable`, `audit_log.critical`, coverage test over the enumerated set, audit-log filter | `80 §RFE-008`, D-52, `04 §Audit`, SEC-32 (amended), `18 §Identity`, `14 §Organization` Audit log, `03 §Planned changes` | M–L | both (mostly Rust) | P2-011A and P2-INST merged (both add critical actions: approval decisions, `app_instance.*`) | `services/aurora-api/src/audit.rs`, api `domains/audit`, the audit write in every critical action's service (keys, secrets, grants, policy, plugins, connectors, approvals, action approvals, tenancy/invitations, freeze, governance, channels, conversation erasure, automations, app instances), migration `audit_log.critical`, web org audit-log filter | `docs/tasks/P2-008.md` | todo |
+| P2-DBL-1 | Database lane: sniffing, TLS leaf, login, admission checks, `pg_query` classification, policy mapping, protocol state, cancel mapping, new SEC invariant | `21 §Database lane`, `06`, `09 §3` `database`, `02` Postgres wire | L | Rust | P2-INST and P2-011A merged (gateway resolution and hold paths) | gateway `proxy/` (sniffing only) + new `src/db/**`, a new classification module or crate, `Cargo.toml`/`Cargo.lock`/`deny.toml` (`pg_query`), `images/services/Containerfile` build deps, `docs/06` + `docs/17` additions, C-220..C-229, SEC-60 (next free), `scripts/e2e/gateway.sh` scenario | `docs/tasks/P2-DBL.md` | todo |
+| P2-CAT-1 | `github` (OAuth, REST + GraphQL, git over HTTPS; GHES via `instances`) and `github-app` (mint, webhook verification hook) | `19 §Phase 2`, `09 §5/§8`, CAT-1 | M | package | P2-CAT-H, P2-INST, P2-CAT-T | `plugins/builtin/github/**`, `plugins/builtin/github-app/**` | `docs/tasks/P2-CAT.md` | todo |
+| P2-DBL-2 | libpq service/password/root-cert files through home sync, `postgresql` package, database connection page, hosted `psql` e2e | `21 §Database lane`, `11`, `12`, `14 §Visual design` | M | both | P2-DBL-1; P2-UI-3b merged (web credentials) | api home-sync render inputs (`domains/hosted`), supervisor home projection, `plugins/builtin/postgresql/**`, web credentials connection page, `scripts/e2e/hosted.sh` scenario, C-230..C-239 | `docs/tasks/P2-DBL.md` | todo |
+| P2-CAT-2 | Jira + Confluence, one package, shared Atlassian 3LO client, Data Center via `instances` | `19 §Phase 2`, `09 §3.3`, CAT-2 | M | package | P2-INST, P2-CAT-T | `plugins/builtin/<atlassian package>/**` | `docs/tasks/P2-CAT.md` | todo |
+| P2-CAT-3 | Google Workspace (Gmail, Calendar, Drive; Drive MIME summaries via a hook) | `19 §Phase 2`, CAT-3 | M | package | P2-CAT-H, P2-CAT-T | `plugins/builtin/<google package>/**` | `docs/tasks/P2-CAT.md` | todo |
+| P2-FU-1 | Phase-2 spec gaps left by merged lanes: (a) quota notices by e-mail through the RFE-011a channel (FU-P2-015b); (b) "expired by retention" chip in the transcript (FU-P2-015a); (c) caller's current address as a hint on the Connect tab (FU-P2-025b, needs a contract, Q7); (d) missing indexes `agents.avatar_public_key`, `attachments.blob_key` (FUP-M7); (e) `presence.provision` payload must carry `agent.avatar_url` (`13 §4.2` op table; verified missing in `domains/channels/presences.rs::enqueue_provision`) | `10 §Attachments`, `02` `ATTACH_QUOTA_NOTICE`, `14 §Organization` Retention, `14 §Workspace` Connect tab, `13 §4.2 Outbound operations`, `03` | S–M | both | P2-011A (notifier), P2-UI-3c (agent components), Q7 | api attachments sweep, the route Q7 picks, migration (two indexes), api `domains/channels/presences.rs`, web chat attachment rendering, web agent Connect tab | needed: the five items, the C-numbers for (c), tests per item | todo |
+| P2-FU-2 | Gateway: when a BYO tightening (and a freeze) closes tunnels, requests held for approval are answered 403 `byo_disabled` / `frozen` and their approvals `abandoned`, not reset (FU-P2-025a) | `06 §BYO admission` 1, C-207 | S | Rust | P2-011A and P2-DBL-1 merged (`hold.rs`, `proxy/`) | gateway `hold.rs`, `byo.rs`, `proxy/connect.rs`, gateway tests | needed (short): the two refusal paths, a test per credential kind | todo |
+| P2-CAT-6 | `sentry` (self-hosted via `instances`), `notion`, `linear` | `19 §Phase 2`, CAT-6 | M | package | P2-INST, P2-CAT-T | `plugins/builtin/{sentry,notion,linear}/**` | `docs/tasks/P2-CAT.md` | todo |
+| P2-CAT-4 | Microsoft 365 over Graph | `19 §Phase 2`, CAT-4 | M | package | P2-CAT-T | `plugins/builtin/<m365 package>/**` | `docs/tasks/P2-CAT.md` | todo |
+| P2-CAT-5b | `aws-role` (assume-role through a `token.mint` hook) | `19 §Phase 2`, CAT-5b | S–M | package | P2-CAT-H, P2-CAT-T | `plugins/builtin/aws-role/**` | `docs/tasks/P2-CAT.md` | todo |
+| P2-TEST-1 | Test debt: SEC-34 `process_start` env probe in hosted e2e (§Open security findings), chromium wrapper on the full sandbox image (FU-P1-003b), remove the 3 s sleep in `h1_held_request_gets_hook_summary_without_egress` (FU-P1-003c), cross-crate checksum-trailer test, API render vs supervisor harvest (FUP-M5) | `17` SEC-34, SEC-41, `18` | S–M | tests | P2-DBL-2 merged (`hosted.sh`), P2-INST merged (`gateway.sh`) | `tests/e2e-hosted`, `tests/e2e-gateway`, `services/aurora-supervisor/tests`, `services/aurora-api/tests/it` (one test) | needed: the four tests and their gates | todo |
+| P2-OPS-1 | Ops verification and supply chain: real-cluster Helm install + kind.sh/kind-dev image builds (FU-P1-005a); hosted claude-code through llm-mock inside kind (FU-OPS-017a); pin the Helm hook image `docker.io/alpine/k8s:1.31.2` by digest or build an Aurora tools image (FUP-M7, verified unpinned in `deploy/helm/aurora/values.yaml`); evaluation Postgres rendered as hook resources (FUP-M7: document or subchart); bump the sccache pin (FU-OPS-023a); if Q3 = yes, a Mattermost conformance job and a nightly kind e2e job in CI | `15`, `18 §CI pipeline`, `19 §Phase 1` acceptance, `19` M7 scope | M | ops | P2-DBL-1 merged (it edits the Containerfile and CI build deps) | `deploy/helm/**`, `scripts/e2e/kind.sh`, `scripts/e2e/llm.Containerfile`, `images/services/Containerfile` (sccache ARG), `.github/workflows/ci.yml` (new jobs) | needed | todo |
+| P2-UI-4 | Stage 4 enforcement: token guard, axe in both themes, theme and narrow-shell tests on every route, `Meter` primitive, `style=` guard | `18 §Dashboard visual design`, `14 §Visual design`, D-68 | M | Next.js | every phase-2 dashboard lane merged (P2-INST, P2-011A, P2-UI-3b, P2-UI-3c, P2-008, P2-DBL-2, P2-FU-1) | `web/src/**` (sweep, guards, `components/ui` Meter), `web/package.json` + `pnpm-lock.yaml` (`@axe-core/playwright`), `web/e2e` | `docs/tasks/P2-UI.md` stage 4 | todo |
+| P2-DOCS | Spec housekeeping (coordinator): drop landed jsonb rows from `03 §Planned changes` (RFE-001 `config.verified_email_autolink`, RFE-010/015 `settings.retention`); compose wording in `04`/`06`/`11` and the `proxy_tls.rs` comment (FU-OPS-017b); `docs/tests/security-coverage.md` header still says SEC-01..SEC-41; operator-docs note for accepted k8s residuals (FUP-M7) if the owner accepts them | `03`, `17`, `18`, `15` | S | docs | P2-008, P2-011A, P2-INST merged (they move `03` rows) | `docs/03` (§Planned changes only), `docs/04`/`06`/`11` (compose wording), `docs/tests/security-coverage.md` header, one comment in `services/aurora-gateway/src/proxy_tls.rs`, `docs/operator/**` | needed (short) | todo |
+| AUDIT-002 | Phase 1 + 2 exit verification from scratch on one commit (shape of `docs/audit/phase0-exit.md`), incl. FU-P2-010a and FU-P2-025c reruns | `19 §Phase 1`/`§Phase 2`, exit criteria below | M | audit | every task above | `docs/audit/phase2-exit.md`; defects become fix tasks | needed: the command list of the exit criteria below, the install from scratch on kind and a real cluster | todo |
+
+### Phase 3 tasks
+
+Start after AUDIT-002 (owner: phases 3 and 4 start when 1 and 2 are done; they may overlap each other). Spec is written (SPEC-RFE-P3, D-59..D-67, SEC-53..SEC-58) except the Vault details noted under API-P3.
+
+| Task | Scope (one line) | Spec sources | Size | Lane | Depends on | Owns | Brief | Status |
+|---|---|---|---|---|---|---|---|---|
+| API-P3 | Phase-3 contracts before parallel work: RFE-013 agent-token routes and `agent_token_expired`, RFE-018 `Idempotency-Key`, RFE-020 workspace-skill and effective routes, RFE-022 `impact`, RFE-023 simulate code, RFE-024 op `credentials` on the connector wire; Vault configuration keys in `15` and the Q12 invariant | `05`, `13`, `16`, `21 §Phase 3`, `08 §2`, CLAUDE.md (contracts first) | S–M | docs (Opus) | AUDIT-002 | `docs/API_CONTRACTS.md` (phase-3 sections), `docs/15` (Vault keys), `docs/17` (if Q12 = yes) | needed | todo |
+| P3-014 | Gateway under a Postgres outage: TTL-bounded cache service, fail-closed refusals, reconnect-then-flush, `ready`/`degraded`/`down`, outage request-log buffer, metrics | `80 §RFE-014`, D-61, `06 §Operation during a Postgres outage`, `05 §Event bus`, `02` limits, `15 §Observability`, SEC-54, `18 §Gateway under a database outage` | L | Rust | API-P3 | gateway `invalidation.rs`, `resolver.rs`, `plaintext.rs`, `status.rs`, `reqlog.rs`, refusal paths in `hold.rs`/`guidance.rs`; the gateway's use of the `aurora-db` listener | needed | todo |
+| P3-020 | Workspace-tier skills: migration, routes, precedence and shadowing, read-only projection, tool effective set, dashboard | `80 §RFE-020`, D-64, `10 §Skills`, `05`, `12`, `16`, `14`, `03 §Planned changes`, SEC-56, `18 §Workspace-tier skills` | L | both | API-P3 | api `domains/skills` + home-sync render inputs, migration `skills.workspace_id`, supervisor `skill_list`/`skill_get`, web `components/skills` (agent tab, workspace page, org note) | needed | todo |
+| P3-VLT-1 | HashiCorp Vault store: KV v2, kubernetes/approle/token auth, renewal, managed and reference modes, `reference_scopes` | `21 §Phase 3 — HashiCorp Vault`, `08 §2`, D-12, SEC-11 | L | Rust | API-P3 (Q12) | `crates/aurora-secrets` (new store), `crates/aurora-config` (store config), `Cargo.lock` if a client crate is added | needed | todo |
+| P3-013 | BYO agent-token maximum age (mint, retrofit grace, gateway and API refusal) and token use tracking, stale/expiring lists, dashboard badges | `80 §RFE-013`, D-60, `08 §7`, `06`, `05`, `14`, `15`, `02` limits, `03 §Planned changes`, SEC-53, `18 §BYO token age` | M–L | both | P3-014 merged (gateway auth and caches), API-P3 | gateway `auth.rs`/`resolver.rs` (expiry, `last_used_at`), api `domains/{agents,governance}` + agent-token list routes, migration `gateway_credentials.last_used_at` + gateway role grant, web governance page, Connect tab, agent list badges | needed | todo |
+| P3-018 | `Idempotency-Key` on message creation, `api:` prefix refused at connector ingest, composer key per message | `80 §RFE-018`, D-62, `05 §Idempotency keys`, `10`, `13`, `16`, `14`, SEC-55, `18 §Message idempotency` | M | both | API-P3 | api `domains/conversations` (messages), api `domains/channels` inbox ingest, web chat composer | needed | todo |
+| P3-VLT-2 | Vault in CI (dev server), `secrets migrate` inline → Vault → inline, CAS race test, operator docs, Helm values | `21 §Phase 3`, `19 §Phase 3` | M | ops | P3-VLT-1 | `.github/workflows/ci.yml` (Vault job), `crates/aurora-secrets/tests`, `docs/operator/**`, `deploy/helm/**` values | needed | todo |
+| P3-022 | Plugin major upgrade: `credential_keys`, activation transaction sets `reauth_required`, `breaks_connections` hold, `impact`, dashboard warning and Reconnect | `80 §RFE-022`, D-65, `09 §10`, `08`, `14`, `03 §Planned changes`, SEC-57, `18 §Plugin major upgrades` | M–L | both | P3-013 merged (gateway credential paths), API-P3 | `crates/aurora-registry` (activation, impact), api `domains/{plugins,connect,connections}`, gateway `refresh.rs`/`mint.rs` (keys on reseal), hookhost mint path, migration `app_connections.credential_keys`, web admin plugin review + credentials Reconnect | needed | todo |
+| P3-024 | Self-contained `presence.deprovision` ops committed with the delete, sealed credentials bound to the op, 24 h retries, pruning, metrics and audit | `80 §RFE-024`, D-67, `13`, `20`, `04`, `10`, `03 §Planned changes`, SEC-58, `18 §Self-contained deprovision` | M | Rust | P3-018 merged (channels code), API-P3 | api delete paths (`domains/{agents,tenancy,channels}`), channel ops claim, `crates/aurora-connector-sdk`, the Mattermost connector's deprovision, `channel_ops` index migration, pruning job | needed | todo |
+| P3-019 | Neutral default brief; public AlmaLinux base pinned by digest with a build-time `SANDBOX_BASE_IMAGE` override (one lane with P3-023) | `80 §RFE-019`, D-63, `10 §Default agent: Daneel`, `11 §Sandbox image`, `15`, `18 §Deployment-neutral defaults` | S | ops/Rust | API-P3 | `crates/aurora-config` default brief, `images/sandbox/Containerfile`, `docs/operator` example | needed (shared with P3-023) | todo |
+| P3-023 | Simulate reports `default_rule_skipped_llm_host`; Default Rule note in the org and workspace policy editors; doc text check | `80 §RFE-023`, D-66, `07 §Why the Default Rule skips LLM hosts`, `08 §11.4`, `14`, `18 §Default Rule and LLM hosts` | S | both | API-P3 | `crates/aurora-policy` / api `domains/policy` simulate, web `components/policy` Default Rule control | needed (shared with P3-019) | todo |
+| CONTRACT-001 | Contract migration dropping `users.password_hash` and `email_tokens` (only if Q9 puts it in phase 3) | `03 §Planned changes`, `15 §Upgrades` | S | Rust | a release carrying the phase-1 migration; Q9 | one migration, `docs/03` rows | needed | todo (Q9) |
+| AUDIT-003 | Phase-3 exit verification | exit criteria below | M | audit | all phase-3 tasks | `docs/audit/phase3-exit.md` | needed | todo |
+
+### Phase 4 tasks
+
+`21` gives phase-4 designs at design level only: no `03` tables (the SSH tables are only named), no `05` routes beyond the SSH certificate route, no contracts and no SEC invariants; RFE-011b has no spec text yet. So phase 4 starts with a spec task, and the owner chooses scope and order (Q10, Q11). Rows marked "later" are in `21 §Other later items` but not in `19`'s phase lists.
+
+| Task | Scope (one line) | Spec sources | Size | Lane | Depends on | Owns | Brief | Status |
+|---|---|---|---|---|---|---|---|---|
+| SPEC-P4 | Normative spec for the owner-selected phase-4 items and RFE-011b: `03 §Planned changes`, routes, limits, config keys, SEC invariants, `18` tests (shape of SPEC-RFE-P3) | `21 §Phase 4`, `80 §RFE-011`, `19 §Phase 4+` | L | docs (Sonnet + Opus review) | AUDIT-002; Q10 | `docs/0*`, `docs/1*`, `docs/21`, `docs/90` (new decisions) | needed | todo |
+| OPS-021 | Dependabot, grouped, with ignore rules and a review policy | owner (`docs/tasks/OPS-021.md`) | S | ops | OPS-019, OPS-020 | `.github/dependabot.yml`, `docs/ops/dependencies.md` | `docs/tasks/OPS-021.md` | planned |
+| P4-011B | Approval park-and-resume and Web Push | `80 §RFE-011` Decision, `07`, `14` | L | both | SPEC-P4 | approvals/due-work park path, gateway hold, web push (service worker) | needed after SPEC-P4 | todo |
+| P4-CNT | Shared rate-limit counters (`CounterStore`; Postgres or Redis) | `21 §Other later items`, `19 §Phase 4+` | M | Rust | SPEC-P4 | gateway rate limiter, api `http/apilimit.rs` | needed | todo |
+| P4-S3 | S3-compatible `BlobStore` | `21 §Other later items`, D-54 | M | Rust | SPEC-P4 | api attachments `storage.rs` / BlobStore registry, config | needed | todo |
+| P4-LLM | Additional LLM providers (OpenAI, Azure OpenAI, Bedrock, Vertex, generic OpenAI-compatible) | `21 §Other later items`, `08` | L | Rust | SPEC-P4 | `crates/aurora-llm` (providers, governance origin checks) | needed | todo |
+| P4-HAR | Additional harness adapter (e.g. Codex) with `openai_*` dialects | `21 §Other later items`, `12` | M | Rust | P4-LLM | supervisor adapters, sandbox image | needed | todo |
+| P4-GRP-1 | Groups (manual), group → workspace bindings, group policy identities, group → org-role mappings | `21 §Phase 4 — Groups and SCIM` | L | both | SPEC-P4 | `crates/aurora-policy` principal set, api tenancy/access, migrations, web org members/groups | needed | todo |
+| P4-GRP-2 | SCIM 2.0 at `/scim/v2` | `21 §Phase 4 — Groups and SCIM` | M | Rust | P4-GRP-1 | new api `scim` domain, token storage | needed | todo |
+| P4-SSH-1 | User SSH keys, SSH CA, certificate mint route, mint counters | `21 §Phase 4 — SSH front door`, `00` `aut_`, `01` | M | both | SPEC-P4 | api ssh domain, migrations `ssh_keys`/`ssh_mint_counters`, web account SSH keys | needed | todo |
+| P4-SSH-2 | `aurora-terminator` (russh), session grant, wake, PTY/exec relay via podman/k8s exec, heartbeat/lease, Helm | `21 §Phase 4`, `11` keep-awake SSH arm | L | Rust/ops | P4-SSH-1 | new `services/aurora-terminator`, runner exec API, `ssh_sessions`, `deploy/helm` | needed | todo |
+| P4-PRV-1 | Port previews: shares, hostnames, visibility, wake relaunch | `21 §Phase 4 — Port previews` | M | both | SPEC-P4 | api previews domain, supervisor `ports.state` use, web agent previews | needed | todo |
+| P4-PRV-2 | `aurora-relay`, runner port-stream API multiplexed over the supervisor channel, credit-based flow control | `21 §Phase 4 — Port previews`, `16` | L | Rust | P4-PRV-1; after P4-SSH-2 (both edit the runner) | new `services/aurora-relay`, runner + supervisor channel, `aurora-protocol` | needed | todo |
+| P4-EVAL | Evals | `21 §Phase 4 — Evals` | L | both | SPEC-P4 | api evals domain, `eval` conversations, web agent evals | needed | todo |
+| P4-GSL | Git-backed skill library | `21 §Phase 4 — Git skill library` | M | both | SPEC-P4, a git-hosting package (GitLab or GitHub) | api skills (library source), background refresh job, web skills | needed | todo |
+| P4-NARR | Live narration cards | `21 §Other later items` | M | Rust | Q11 | channels cards, connector rate hint | needed | todo (Q11) |
+| P4-UTOK | User-token features (`user_tokens` capability) | `21 §Other later items` | M | Rust | Q11 | channels/connector contract | needed | todo (Q11) |
+| P4-SLACK | Slack connector | `21 §Other later items`, `19 §Phase 4+` | L | Rust | owner decision (pending since `19`) | new connector crate only (no core change per `21`) | needed | todo (decision pending) |
+| AUDIT-004 | Phase-4 exit verification | exit criteria below | M | audit | the selected phase-4 tasks | `docs/audit/phase4-exit.md` | needed | todo |
+
+### Phase 5 tasks
+
+| Task | Scope (one line) | Spec sources | Size | Lane | Depends on | Owns | Brief | Status |
+|---|---|---|---|---|---|---|---|---|
+| OPS-022 | Multi-arch images (amd64 + arm64) on native arm64 runners | `15 §Images`, `19 §Phase 5` | M | ops | OPS-020 | image jobs in `.github/workflows/ci.yml`, `images/**` | `docs/tasks/OPS-022.md` (its "Phase 1" line is stale: phase 5) | deferred (owner 2026-11-07) |
+
+### Execution order
+
+At most three implementation lanes at a time, disjoint ownership; a lane starts when a slot frees **and** its dependencies have merged. Docs-only work by the coordinator (P2-DOCS, API-P3) does not take a lane. Batches are the intended grouping, not a barrier: a lane of batch *n+1* may start as soon as a slot frees and its dependencies are met.
+
+**Phase 2**
+
+| Batch | Lanes | Starts when |
+|---|---|---|
+| B1 (running) | P2-INST, P2-011A, P2-UI-3c | now; the coordinator merges P2-CAT-H (renumbered D-77) |
+| B2 | P2-UI-3b, P2-CAT-T (+ P2-011A still running) | 3b: P2-INST merged; CAT-T: P2-CAT-H merged (its GitLab part waits for P2-INST) |
+| B3 | P2-008, P2-DBL-1, P2-CAT-1 | P2-011A and P2-INST merged; CAT-1 also after P2-CAT-T |
+| B4 | P2-DBL-2, P2-CAT-2, P2-CAT-3 | DBL-2: P2-DBL-1 and P2-UI-3b merged |
+| B5 | P2-FU-1, P2-FU-2, P2-CAT-6 | FU-1: P2-011A, P2-UI-3c merged and Q7 answered; FU-2: P2-DBL-1 merged |
+| B6 | P2-CAT-4, P2-CAT-5b, P2-TEST-1 | TEST-1: P2-DBL-2 merged |
+| B7 | P2-UI-4, P2-OPS-1 (+ P2-DOCS by the coordinator) | UI-4: every phase-2 dashboard lane merged; OPS-1: P2-DBL-1 merged |
+| B8 | AUDIT-002 | everything above merged, CI green |
+
+Critical path: P2-INST → P2-UI-3b → P2-DBL-2 (and P2-011A → P2-DBL-1 → P2-DBL-2) → P2-UI-4 → AUDIT-002. Catalogue lanes only touch `plugins/builtin/<package>/**`, so they fill free slots; if Q1 makes some packages non-blocking they move after AUDIT-002 and run alongside phase 3.
+
+Collisions serialized, with the reason:
+- **P2-008 after P2-011A and P2-INST**: P2-008 adds the same-transaction audit write to every critical action; P2-011A rewrites the approval decision paths and P2-INST adds `app_instance.*` critical actions. Running them together means three lanes editing the same service functions.
+- **P2-DBL-1 after P2-INST and P2-011A**: all three edit the gateway (`resolver`/`inject` for P2-INST, `hold.rs` for P2-011A, `proxy/` and the hold path for the DB lane); the DB lane reuses resolution and approval holds and should build on their final shape.
+- **P2-UI-3b after P2-INST**: P2-INST builds the connect dialog and Instances sections inside the area 3b restyles. 3b overlaps P2-011A's policy timeout field; 3b rebases onto it and keeps its behaviour (P2-UI brief rule) rather than waiting.
+- **P2-DBL-2 after P2-UI-3b**: both edit the web credentials/connection pages.
+- **P2-FU-1 after P2-UI-3c and P2-011A**: the Connect-tab hint and the transcript chip are in 3c's components; the quota e-mail uses P2-011A's notifier.
+- **P2-FU-2 after P2-DBL-1**: same gateway files (`hold.rs`, `proxy/`); it is small, so it waits rather than blocking the DB lane.
+- **P2-CAT-1/2/3/4/5b/6 after P2-CAT-T**: `21` requires token-lifecycle fixtures for every package; landing the runner first avoids back-filling each package. CAT-1, CAT-2 and CAT-6 also wait for P2-INST (GHES, Jira/Confluence Data Center, self-hosted Sentry use `instances`).
+- **P2-UI-4 last among web lanes**: its guards fail on any screen not yet on tokens or carrying `style=`.
+- **P2-OPS-1 after P2-DBL-1**: both edit `images/services/Containerfile` and CI build steps.
+- **P2-TEST-1 after P2-DBL-2 and P2-INST**: both add scenarios to `hosted.sh` / `gateway.sh`.
+
+**Phase 3** (after AUDIT-002; may interleave with phase-4 lanes within the three-lane cap)
+
+| Batch | Lanes | Starts when |
+|---|---|---|
+| P3-B0 | API-P3 (coordinator, docs) | AUDIT-002 done; Q12 answered |
+| P3-B1 | P3-014, P3-020, P3-VLT-1 | API-P3 merged |
+| P3-B2 | P3-013, P3-018, P3-VLT-2 | P3-013: P3-014 merged; P3-VLT-2: P3-VLT-1 merged |
+| P3-B3 | P3-022, P3-024, P3-019 + P3-023 (one lane) | P3-022: P3-013 merged; P3-024: P3-018 merged |
+| P3-B4 | CONTRACT-001 (if Q9), AUDIT-003 | all above merged |
+
+Collisions serialized: **P3-013 after P3-014** (both rewrite gateway credential authentication and the identity cache); **P3-022 after P3-013** (both touch gateway credential paths: refresh/mint reseal vs. expiry/`last_used_at`); **P3-024 after P3-018** (both edit the channels domain: inbox ingest vs. ops/claim). P3-020 and P3-018 both touch the web agent page (skills tab vs. composer) but different components.
+
+**Phase 4** (after AUDIT-002 and SPEC-P4; order proposed for Q10)
+
+| Batch | Lanes | Starts when |
+|---|---|---|
+| P4-B0 | SPEC-P4 (docs), OPS-021 | AUDIT-002; Q10 |
+| P4-B1 | P4-CNT, P4-S3, P4-LLM | SPEC-P4 merged |
+| P4-B2 | P4-GRP-1, P4-011B, P4-HAR | P4-HAR after P4-LLM |
+| P4-B3 | P4-SSH-1, P4-PRV-1, P4-GRP-2 | P4-GRP-2 after P4-GRP-1 |
+| P4-B4 | P4-SSH-2, P4-EVAL, P4-GSL | P4-SSH-2 after P4-SSH-1 |
+| P4-B5 | P4-PRV-2 (+ P4-NARR, P4-UTOK, P4-SLACK if Q11/decision) | P4-PRV-2 after P4-SSH-2 |
+| P4-B6 | AUDIT-004 | selected items merged |
+
+Collisions serialized: **P4-PRV-2 after P4-SSH-2** (both add a byte-stream API to the runner and the supervisor channel); **P4-HAR after P4-LLM** (dialects come from the providers); **P4-GRP-2 after P4-GRP-1** (SCIM writes the groups model).
+
+**Phase 5**: OPS-022 alone, when the owner lifts the deferral.
+
+### Number reservations (proposed; the coordinator confirms before a lane starts)
+
+Both the P2-008 and the P2-011A briefs say "next free C-numbers", so two lanes could pick the same block. Used or reserved: C-01..C-64, C-80..C-86, C-90..C-95, C-120..C-139, C-150..C-154, C-170..C-176, C-180..C-189 (RFE-005 block), C-200..C-209 (RFE-006), C-210..C-219 (P2-CAT-0), C-220..C-229 (P2-DBL-1), C-230..C-239 (P2-DBL-2), C-240..C-249 (P2-INST). Free below 250: C-65..C-79, C-96..C-119, C-140..C-149, C-155..C-169, C-177..C-179, C-190..C-199. Proposed: P2-011A C-250..C-259 (unless it already chose a block; its branch has no commits yet), P2-008 C-260..C-269, P2-FU-1 C-270..C-279; phase 3 C-300..C-309 RFE-013, C-310..C-319 RFE-018, C-320..C-329 RFE-020, C-330..C-339 RFE-022, C-340..C-349 RFE-023, C-350..C-359 RFE-024, C-360..C-369 Vault. SEC: SEC-60 is the next free id (P2-DBL-1); phase-3 Vault (Q12) would take the next one after it. Decisions: D-77 is P2-CAT-H; the next free is D-78.
+
+### Gaps found (a)
+
+Phase-tagged rules, planned schema and invariants without a task before this review, and where they now go:
+
+| Gap | Source | Disposition |
+|---|---|---|
+| Quota notices by e-mail | `10 §Attachments` (phase 2, RFE-015) | P2-FU-1 (a) |
+| "Expired by retention" rendering | `14 §Organization` Retention | P2-FU-1 (b) |
+| Caller-address hint on the Connect tab | `14 §Workspace` (phase 2, RFE-025) | P2-FU-1 (c), Q7 |
+| Held requests answered 403 when tunnels close on tightening | `06 §BYO admission` 1 | P2-FU-2 |
+| Token lifecycle against recorded HTTP for every package | `21 §Phase 2 — App catalogue` | P2-CAT-T |
+| `presence.provision` without `avatar_url` | `13 §4.2 Outbound operations` op table (phase 0) | P2-FU-1 (e) |
+| Phase-1 acceptance "conformance against a Mattermost container **in CI**" | `19 §Phase 1` | `.github/workflows/ci.yml` has no conformance or Mattermost step: P2-OPS-1 if Q3 = yes; otherwise AUDIT-002 runs it locally and the owner accepts the deviation |
+| "Nightly kind e2e" | `19` M7 scope | no scheduled kind job in CI: P2-OPS-1 if Q3 = yes |
+| `03 §Planned changes` rows that already landed (RFE-001 `config.verified_email_autolink`, RFE-010/015 `settings.retention`) | `03` (rows move when the change lands) | P2-DOCS |
+| `users.password_hash` / `email_tokens` "dropped by a later contract migration" | `03 §Planned changes`, `15 §Upgrades` | no phase: CONTRACT-001, Q9 |
+| Vault: no invariant for reference-scope enforcement; `15` lists only `secrets.stores[]` generically | `21 §Phase 3`, `08 §2`, `17` | API-P3, Q12 |
+| Phase-4 items have no data model, routes, contracts or invariants; RFE-011b has no spec text | `21 §Phase 4`, `80 §RFE-011` | SPEC-P4, Q10 |
+| Narration cards, user tokens, Slack: no phase | `21 §Other later items`, `19 §Phase 4+` | Q11, Slack decision pending |
+| No phase-1 exit audit was run | `docs/audit/` holds only phase 0 | AUDIT-002 covers phases 1 and 2 (Q2) |
+| Two lanes may pick the same C-numbers | P2-008 and P2-011A briefs | reservations above (Q5) |
+| D-76 used twice (P2-006 on `master`, P2-CAT-H on its branch) | `90-decisions.md` | coordinator renumbers P2-CAT-H to D-77 at merge |
+| `docs/tests/security-coverage.md` header says SEC-01..SEC-41 | rows run to SEC-52 | P2-DOCS |
+| `docs/tasks/OPS-022.md` says "Phase 1, after OPS-020" | owner moved it to phase 5 | note only (briefs are not edited here) |
+
+SEC invariants still to prove: SEC-49 (P2-011A), SEC-32 amended (P2-008), SEC-59 and amended SEC-04 (P2-INST), SEC-60 new (P2-DBL-1); phase 3: SEC-53 (P3-013), SEC-54 (P3-014), SEC-55 (P3-018), SEC-56 (P3-020), SEC-57 (P3-022), SEC-58 (P3-024). Every one has a task.
+
+Recorded follow-ups, each placed or deferred:
+
+| Follow-up | Disposition |
+|---|---|
+| FU-P1-003a k8s backend reports no image capabilities (no browser on k8s) | Q4 (fail closed today; mechanism is a decision) |
+| FU-P1-003b chromium wrapper untested on the full sandbox image | P2-TEST-1 |
+| FU-P1-003c e2e `h1_held_request_gets_hook_summary_without_egress` 3 s sleep | P2-TEST-1 |
+| FU-P1-005a kind.sh/kind-dev image builds and a real-cluster Helm install not run | P2-OPS-1, re-checked in AUDIT-002 |
+| FU-OPS-017a hosted claude-code through llm-mock inside kind | P2-OPS-1 |
+| FU-OPS-017b compose wording in docs 04/06/11 and `proxy_tls.rs` | P2-DOCS |
+| FU-OPS-018a/b api reload above 5 s; gateway warm time, kind-live and the supervisor mount not exercised | deferred: developer-loop performance, no spec rule; revisit if the dev loop hurts |
+| FU-OPS-023a sccache pinned at 0.10.0 | P2-OPS-1 |
+| FU-OPS-023b release link time (thin LTO × 6 binaries) | deferred: build cost only, no spec rule |
+| FU-P2-010a channels.sh and m1.sh not run on P2-010 | AUDIT-002 |
+| FU-P2-010b export `purged` flag | closed: export reads `purged_at` (`crates/aurora-db/src/repo/lifecycle.rs`, `purged_at IS NOT NULL AS purged`) since P2-015 |
+| FU-P2-021a anchored automations stop when the agent is frozen | closed by P2-006 (C-208) |
+| FU-P2-025a held request on a closed tunnel sees a reset | P2-FU-2 |
+| FU-P2-025b caller-address hint | P2-FU-1 (c), Q7 |
+| FU-P2-025c hosted e2e not run on P2-025 | AUDIT-002 |
+| FU-P2-015a "expired by retention" chip | P2-FU-1 (b) |
+| FU-P2-015b quota e-mail notice | P2-FU-1 (a), after P2-011A |
+| FU-P2-005a `request_log.speaker_user_id` not in the activity DTO | deferred: C-184 excludes it "in this phase"; Q6 |
+| FU-P2-CAT-0a token lifecycle not replayable offline | P2-CAT-T |
+| FU-P2-CAT-0b GitLab icon placeholder | P2-CAT-T (`21`: every package has icons) |
+| FU-P2-CAT-0c api image compiles the `aurora` CLI in release | deferred: build cost only |
+| FU-P2-CAT-5a parameter-level tool matching | Q8 (manifest-contract change, not in the spec) |
+| FU-P2-CAT-5b aws-keys endpoints written from knowledge, links unchecked | P2-CAT-T |
+| FUP-M2 configurable service ports | deferred: test convenience, no spec rule |
+| FUP-M3 pre-warm hook modules on snapshot load | deferred: performance, no spec rule |
+| FUP-M4 harness capabilities in `sandboxes.resource_profile`, `steer_delivered_at` reused as send-now marker | Q13 (needs a spec fix with a migration) |
+| FUP-M4 `aurora-api` dev-depends on `aurora-supervisor` for one wire test | deferred: tech debt, no behaviour impact |
+| FUP-M5 recall uses AND semantics | Q13 (`10 §Search and recall` prescribes `websearch_to_tsquery`; changing it is a spec change) |
+| FUP-M5 cross-crate checksum-trailer test | P2-TEST-1 |
+| FUP-M7 missing indexes `agents.avatar_public_key`, `attachments.blob_key` | P2-FU-1 (d) (verified: no index in the migrations) |
+| FUP-M7 `presence.provision` without `avatar_url` | P2-FU-1 (e) (verified) |
+| FUP-M7 `SandboxSpec.env` empty; kind e2e not run | closed by FIX-002 and OPS-011 |
+| FUP-M7 granted-but-disabled connection still contributes env/stubs | unverified; FIX-007 made render inputs respect availability: AUDIT-002 checks it |
+| FUP-M7 boots before FIX-002 never flag `restart_to_update`; stubs capped at 32 KiB | accepted (historical / documented limit) |
+| FUP-M7 k8s pod name falls back to sandbox id; no sandbox `imagePullSecrets` key; pids limit and `/run/aurora` noexec not enforceable on k8s | unverified whether still open; residuals to record in operator docs (P2-DOCS) unless the owner wants them fixed |
+| FUP-M7 Helm evaluation Postgres as hook resources; `alpine/k8s` third-party image | P2-OPS-1 |
+| §Open security findings: TEST-013 `process_start` env probe (SEC-34) | P2-TEST-1 |
+| §Open spec issues (PROTO-001 unspecified wire shapes, provisional constants) | deferred: no behaviour gap found; revisit with SPEC-P4 if phase-4 wire work (previews, SSH) touches them |
+
+### Phase exit criteria (b)
+
+In the spirit of `docs/audit/phase0-exit.md`: one commit, a fresh `target/`, every command's exit code and result recorded, defects fixed as separate tasks and re-run.
+
+**Phase 2 (with phase 1; AUDIT-002)**
+1. Every phase-1 and phase-2 row of `FEATURES.md` is `done` with evidence, or `deferred` by the owner (Q1 for catalogue packages).
+2. `grep -rn "(phase 1\|(phase 2" docs/*.md` (excluding `80`, PROGRESS, FEATURES): every rule implemented or explicitly deferred by the owner; `03 §Planned changes` holds no phase-1/2 rows except the owner-scheduled drop (Q9).
+3. `docs/tests/security-coverage.md`: SEC-40..SEC-52, SEC-59, SEC-60 and the amended SEC-04, SEC-28, SEC-32 rows are `proven`, and the audit executes each proving test (gated ones with their gate).
+4. Contracts: every phase-1/2 C-number implemented; OpenAPI drift test green; permission matrix 0 inconclusive.
+5. Rust: `cargo build --workspace --all-targets`, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo deny check`, `bash scripts/guards/run-all.sh`, `cargo test --workspace`.
+6. Web: `pnpm install --frozen-lockfile`, `typecheck`, `lint`, `test`, `build`; the P2-UI Playwright suites (axe 0 serious/critical in both themes, theme, narrow shell on every route, token and `style=` guards); production CSP header unchanged.
+7. Plugins: `scripts/fixtures/build.sh`; `scripts/plugins/check-builtin.sh` for every built-in, including hook and token-lifecycle coverage; the plugin link workflow green; the release image job signs the built-ins with the project key on CI (first signed run confirmed, CAT-0 note).
+8. e2e: `m1.sh`, `gateway.sh` (incl. instances and database lane), `AURORA_TEST_PODMAN=1 hosted.sh` (incl. freeze, `psql` scenario), `channels.sh`, `scripts/conformance.sh` (fake and `--mattermost`), `mattermost.sh` live scenario, `llm.sh`, `UPGRADE_STRICT=1 upgrade.sh` from the phase-0 release point to HEAD (many migrations since), `scripts/perf/gateway.sh` budgets, `kind.sh --fresh` and `deploy/dev/kind-dev.sh up`.
+9. Install from scratch: Helm on a fresh kind cluster and one real cluster (FU-P1-005a), following `docs/operator/`.
+10. CI on GitHub green on the audited commit, all jobs (and the Mattermost/nightly kind jobs if Q3 = yes).
+11. Docs: operator docs cover the phase-1/2 configuration (TLS proxy listener, OIDC-only and the dev IdP, open-lane and BYO postures, retention/quota, rate limits, keyring rotation, approval timeouts and e-mail, app instances, built-in catalogue, database lane); PROGRESS and FEATURES reconciled; every FU either closed or deferred by the owner.
+
+**Phase 3 (AUDIT-003)**: items 4–11 again on the phase-3 commit; SEC-53..SEC-58 (and the Q12 Vault invariant) proven; the `18` phase-3 suites pass (BYO token age, database outage incl. `readyz` states, message idempotency, deployment-neutral defaults, workspace-tier skills, Default Rule and LLM hosts, plugin major upgrades, self-contained deprovision); a CI job against a Vault dev server runs `secrets migrate` inline → Vault → inline and the CAS race test; `upgrade.sh` from the phase-2 exit commit; no phase-3 rows left in `03 §Planned changes`; operator docs for Vault, outage behaviour and alerts, deployment-specific settings.
+
+**Phase 4 (AUDIT-004)**: defined by SPEC-P4 for the selected items; at least: each item's new SEC invariants proven, new services (`aurora-terminator`, `aurora-relay`) in the Helm chart and in `kind.sh` e2e with NetworkPolicy, SCIM against a conformance client if built, Dependabot's first run produces the grouped PRs, items 4–11 again.
+
+**Phase 5**: every image on ghcr.io is a linux/amd64 + linux/arm64 manifest list, image jobs green, timings recorded (`docs/tasks/OPS-022.md`).
+
+### Decisions needed from the owner (c)
+
+| # | Question | Recommendation |
+|---|---|---|
+| Q1 | `19 §Phase 2` calls the package list a "suggested first set". Must all twelve packages (GitLab, GitHub, GitHub App, Jira+Confluence, Google Workspace, Microsoft 365, AWS keys, AWS role, Sentry, Notion, Linear, PostgreSQL) be done before phase 2 exits? | Require GitLab, GitHub + GitHub App, AWS keys + role and PostgreSQL (they cover every mechanism, incl. hooks and mint); let Atlassian, Google, Microsoft 365, Sentry, Notion and Linear finish alongside phase 3 (they only touch `plugins/builtin/**`). |
+| Q2 | No phase-1 exit audit was run. Fold it into one phase 1 + 2 exit audit? | Yes: AUDIT-002 covers both; phase 1 lanes have per-lane evidence already. |
+| Q3 | `19` asks for Mattermost conformance "in CI" (phase 1) and a "nightly kind e2e" (M7); CI has neither. Add them (runner minutes) or accept local runs? | Add both as scheduled (nightly) jobs, not per-PR, in P2-OPS-1. |
+| Q4 | FU-P1-003a: the k8s backend reports no image capabilities, so no browser on Kubernetes (fail closed). Keep, or have the k8s backend read the image's capability label? | Keep fail-closed for phase 2 and document it; specify the mechanism (e.g. capabilities from runner configuration for the configured image) as a phase-3 spec item if a browser on k8s is wanted. |
+| Q5 | Reserve contract blocks per lane (above) instead of "next free"? | Yes, and add the reservation line to every new brief. |
+| Q6 | FU-P2-005a: expose `request_log.speaker_user_id` in the activity DTO? C-184 keeps it out "in this phase". | Defer to phase 3 as a small contract addition with P3-018 or later; it helps audit but no spec rule needs it now. |
+| Q7 | FU-P2-025b: `14` wants "the caller's current address as a hint" but no route returns the address. Add a read-only field (e.g. on `GET /v1/me` or the agent's BYO settings) with the address as the API sees it behind `server.trusted_proxies`? | Yes: one field, as the API sees it; a new contract in P2-FU-1. Note in the UI that the gateway may see a different address (NAT, PROXY protocol). |
+| Q8 | FU-P2-CAT-5a: parameter-level tool matching (so STS/EC2 `Describe*` become read tools) changes the manifest contract. | Defer to phase 4 as a design-review item; keep them as held write tools (safe default). |
+| Q9 | When does the contract migration drop `users.password_hash` and `email_tokens` (`03`: "a later release")? | First release of phase 3 (CONTRACT-001), once a release with the phase-1 migration has shipped; `upgrade.sh` covers it. |
+| Q10 | Phase-4 scope and order: SSH, previews, evals, git skill library, groups/SCIM, shared counters, S3, LLM providers, harness adapters, RFE-011b. Which, and in what order? | SPEC-P4 for all, implementation in the order of the P4 batches above (seams first: counters, S3, providers; then groups and RFE-011b; then SSH and previews, which add services). |
+| Q11 | Narration cards and `user_tokens` are in `21 §Other later items` but in no phase of `19`. Phase 4, or unscheduled? | Leave unscheduled until a connector needs them. |
+| Q12 | Vault reference mode has no SEC invariant (reference scopes enforced, latest version only, no cross-org path). Add one before P3-VLT-1? | Yes: a SEC row in `17` written by API-P3, with a proving test in P3-VLT-1. |
+| Q13 | FUP-M4 (harness capabilities and send-now marker without proper homes) and FUP-M5 (recall AND vs OR) need spec changes. Schedule them? | Defer both; revisit at phase-3 start with a small spec item if they cause bugs. |
+| Q14 | Slack connector (decision pending since `19`). | Keep pending; nothing in the core depends on it (`21`). |
 
 ## Open spec issues (found by PROTO-001; S-06..S-11 resolved)
 
@@ -233,7 +495,8 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 
 ## Decisions requiring user input
 
-- none (resolved 2026-11-08: the owner generated the project signing key; private half = GitHub Actions secret `AURORA_PROJECT_SIGNING_KEY` in environment `release`, public half compiled in as `AURORA_PROJECT_PUBLIC_KEY`)
+- Open questions Q1..Q14 from the planning review: §Remaining work plan (by feature) → "Decisions needed from the owner".
+- (resolved 2026-11-08: the owner generated the project signing key; private half = GitHub Actions secret `AURORA_PROJECT_SIGNING_KEY` in environment `release`, public half compiled in as `AURORA_PROJECT_PUBLIC_KEY`)
 
 ## Open security findings
 
@@ -251,6 +514,7 @@ Scheduled by severity (High → 1, Medium → 2, Low → 3) unless the decision 
 
 ## Recently completed
 
+- 2026-11-08 (later): P2-006 freeze (SEC-45, D-76, C-200..C-209) merged (d24da6a5); P2-CAT-5 `aws-keys`, P2-CAT-0 catalogue framework, P2-UI stage 3a merged; planning review: FEATURES made granular (one row per feature, phases 1–5) and §Remaining work plan added.
 - 2026-11-08: **phase 1 complete** — P1-005 OIDC-only sign-in (SEC-42), OPS-018 live reload, OPS-023 image builds (CI sccache backend removed after measuring); phase 2: P2-010 conversation lifecycle (SEC-47), P2-025 governed BYO (SEC-52), P2-015 attachment quota/retention (SEC-48), P2-005 speaker-bound `user` rules (SEC-44); briefs P2-CAT-0, P2-CAT, P2-DBL; a stray committed conflict marker in API_CONTRACTS removed.
 - 2026-11-07 (evening): P2-012 approver role (SEC-28), P2-021 automation reassignment (SEC-51), P1-003 open lane (SEC-41), OPS-017 kind replaces compose, P2-UI stage 1, OPS-020 images on ghcr.io (all six); shared sccache for lanes fixed (per-worktree linker path and CARGO_TARGET_DIR kept out of cache keys); OPS-022 deferred to phase 5 (owner).
 - 2026-11-08: BE-067 avatars (SEC-30; 39/39 SEC proven), FIX-006 (apps/gateway follow-ups, S-14, I-33), FIX-007 (image restart flag, availability); code frozen for AUDIT-001.
