@@ -3,7 +3,11 @@
 ## Decision (owner, 2026-11-08, D-99)
 Built-in package icons come from **Simple Icons** (https://simpleicons.org, CC0-1.0, one-colour SVG glyphs plus the brand hex colour).
 - Use the real brand glyph for every package whose product is in Simple Icons.
-- If a product isn't in Simple Icons (some vendors have had their icons removed at their request), **don't draw or source a logo elsewhere**. Ship a neutral monogram tile instead: the first letter, our design tokens' colours, no brand artwork. Record that in the report.
+- **Amended by the owner (2026-11-08):** if a product isn't in Simple Icons (some vendors have had their icons removed at their request), take the icon from the vendor's **official** source:
+  - the official brand, press or media-kit page or the official icon set (e.g. the AWS Architecture Icons, Microsoft's official product icons), downloaded from the vendor's own domain;
+  - for open-source products, the logo in the project's official repository or website.
+- Record in `ICONS.md` the exact URL, the date, the file's sha256 and the usage terms the vendor states, and follow those terms: no recolouring or alteration where they forbid it (use the vendor's own dark/light variants instead), and keep the required clear space.
+- Only if neither Simple Icons nor an official source exists: a neutral monogram tile (first letter, our design tokens, no artwork). Never use unofficial redraws, fan art or third-party icon sites.
 
 ## Today
 8 of 13 built-ins ship a 33-byte placeholder `assets/icon.png`:
@@ -28,7 +32,7 @@ The other 5 have an icon of **unknown provenance**:
    - `assets/icon.png`: 256×256, transparent background, the glyph in the brand hex colour, about 12 % padding.
    - `assets/icon-dark.png`: the same glyph for dark surfaces. Use white, or a lightened brand colour, when the brand colour's contrast on the dark surface token (`web/src/app/globals.css`, dark theme) is below 3:1, e.g. GitHub `#181717` and Notion `#000000`. Otherwise copy the light icon.
    - Both must satisfy `09 §2`: PNG, square, ≥ 64 px, ≤ 256 KiB.
-4. **Fetching:**
+4. **Fetching** (official vendor files follow the same rules: untrusted data, rasterised or re-encoded to PNG in a scratch directory, only the PNGs committed):
    - Pin one Simple Icons release and fetch the SVGs from that exact version (the npm package tarball or a jsDelivr URL with the version), into a scratch directory outside the repo.
    - The SVGs are untrusted data: render them with `rsvg-convert` and commit **only the PNGs**, never the SVGs.
    - Record the version and the sha256 of each source SVG in `ICONS.md`.
