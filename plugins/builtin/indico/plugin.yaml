@@ -1,0 +1,247 @@
+package:
+  id: indico
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: Indico
+  description: Events, meetings, room booking and favorites on your organisation's own Indico server (documented HTTP API on Indico 3.0 and later; opt-in extended tier on Indico's internal endpoints, verified against 3.3.14)
+  homepage: https://getindico.io
+oauth_clients:
+  - id: indico
+    authorize_url: "https://{instance}/oauth/authorize"
+    token_url: "https://{instance}/oauth/token"
+    pkce: true
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: Client ID }
+      - { name: client_secret, label: Client secret, secret: true }
+    setup_note: "An Indico administrator adds an application on that Indico server (/admin/apps/), registers the Aurora redirect URI and allows only the scopes you will offer. Every Indico server has its own application."
+apps:
+  - about:
+      id: indico
+      name: Indico
+      description: Search and read events and meetings, book rooms and manage favorites on your Indico server
+      category: productivity
+      api_docs: https://docs.getindico.io/en/stable/http-api/
+      connect_note:
+        text: "An administrator registers your Indico server first (Instances). Bookings, favorites and room search by free time use Indico's internal endpoints and the broad 'Everything' scopes, which Indico does not keep compatible between versions; read the setup guide before choosing them."
+        url: https://docs.getindico.io/en/stable/http-api/access/
+      label_hint: Indico account email
+    instances:
+      label: Indico server
+      probe: { method: GET, path: /api/user/, expect_status: [200] }
+    credentials:
+      - { name: access_token, secret: true }
+    connect:
+      - id: token
+        kind: fields
+        fields:
+          - name: access_token
+            label: Personal API token
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "indp_…"
+            help_url: https://docs.getindico.io/en/stable/http-api/access/#api-token-authentication
+        probe:
+          method: GET
+          url: "https://{instance}/api/user/"
+          expect_status: [200]
+          label: /email
+      - id: oauth
+        kind: oauth2
+        client: indico
+        scopes:
+          - { scope: "read:user", name: Read your Indico profile, access: read }
+          - { scope: "read:legacy_api", name: "Read events, timetables, rooms and bookings (documented HTTP API)", access: read }
+          - { scope: "write:legacy_api", name: "Book rooms through the documented HTTP API", access: write }
+          - { scope: "read:everything", name: "Extended: read everything you can see in Indico (room search by free time, favorites, my bookings, search)", access: read }
+          - { scope: "full:everything", name: "Extended: do everything you can do in Indico (book and cancel rooms, change favorites, prepare events)", access: write }
+        default_scopes: ["read:user", "read:legacy_api"]
+        callback: query
+        token_response:
+          access_token: /access_token
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://{instance}/api/user/"
+          expect_status: [200]
+          label: /email
+    hosts:
+      - match: { host: "{instance}", path_prefix: /export/ }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: "{instance}", path_prefix: /api/ }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: "{instance}", path_prefix: /rooms/api/ }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: "{instance}", path_prefix: /user/api/favorites/ }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: "{instance}", path_prefix: /user/search/ }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: "{instance}", path_prefix: /search/api/search }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: "{instance}", path_prefix: /category/search }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: "{instance}", path_prefix: /event/create/prepare }
+        inject: []
+    tools:
+      read:
+        items:
+          - { id: get_current_user, name: Get the connected Indico user, host: "{instance}", path: /api/user/, methods: [GET] }
+          - { id: list_favorite_category_events, name: List events in my favorite categories, host: "{instance}", path: "/export/categ/favorites*", methods: [GET] }
+          - { id: list_category_events, name: List events in categories, host: "{instance}", path: "/export/categ/*", methods: [GET] }
+          - { id: search_events, name: Search events by title, host: "{instance}", path: "/export/event/search/*", methods: [GET] }
+          - { id: get_event, name: "Read an event (contributions, sessions, attachments, notes)", host: "{instance}", path: "/export/event/*", methods: [GET] }
+          - { id: get_event_file, name: Download an event file or read part of an event, host: "{instance}", path: "/export/event/*/*/**", methods: [GET] }
+          - { id: get_timetable, name: Read an event timetable, host: "{instance}", path: "/export/timetable/*", methods: [GET] }
+          - { id: get_rooms, name: Read rooms and their bookings, host: "{instance}", path: "/export/room/*/*", methods: [GET] }
+          - { id: find_room_by_name, name: Find a room by name, host: "{instance}", path: "/export/roomName/*/**", methods: [GET] }
+          - { id: list_reservations, name: List room bookings at a location, host: "{instance}", path: "/export/reservation/*", methods: [GET] }
+          - { id: search, name: "Search events, contributions, categories, notes and files (extended)", host: "{instance}", path: /search/api/search, methods: [GET] }
+          - { id: search_categories, name: Search categories (extended), host: "{instance}", path: /category/search, methods: [GET] }
+          - { id: list_favorite_users, name: List my favorite users (extended), host: "{instance}", path: /user/api/favorites/users, methods: [GET] }
+          - { id: list_favorite_categories, name: List my favorite categories (extended), host: "{instance}", path: "/user/api/favorites/categories/**", methods: [GET] }
+          - { id: list_favorite_events, name: List my favorite events (extended), host: "{instance}", path: "/user/api/favorites/events/**", methods: [GET] }
+          - { id: list_favorite_rooms, name: List my favorite rooms (extended), host: "{instance}", path: "/rooms/api/user/favorite-rooms/**", methods: [GET] }
+          - { id: list_room_locations, name: List room booking locations (extended), host: "{instance}", path: /rooms/api/locations, methods: [GET] }
+          - { id: list_equipment_types, name: List room equipment types (extended), host: "{instance}", path: /rooms/api/equipment, methods: [GET] }
+          - { id: list_all_rooms, name: List all rooms (extended), host: "{instance}", path: /rooms/api/rooms/, methods: [GET] }
+          - { id: search_rooms, name: "Search rooms, including rooms free in a time slot (extended)", host: "{instance}", path: /rooms/api/rooms/search, methods: [GET] }
+          - { id: get_room_availability, name: Check a room's availability (extended), host: "{instance}", path: "/rooms/api/rooms/*/availability/**", methods: [GET] }
+          - { id: get_room_details, name: Read a room's details (extended), host: "{instance}", path: "/rooms/api/rooms/*", methods: [GET] }
+          - { id: list_my_upcoming_bookings, name: List my next room bookings (extended), host: "{instance}", path: /rooms/api/bookings/mine, methods: [GET] }
+          - { id: get_booking_calendar, name: Read the booking calendar (extended), host: "{instance}", path: /rooms/api/calendar, methods: [GET] }
+          - { id: get_booking, name: Read a room booking (extended), host: "{instance}", path: "/rooms/api/bookings/*", methods: [GET] }
+          - { id: get_user_search_token, name: Start a user search (extended), host: "{instance}", path: /user/search/token, methods: [GET] }
+          - { id: search_users, name: Search Indico users (extended; returns personal data), host: "{instance}", path: /user/search/, methods: [GET] }
+      write:
+        items:
+          - { id: book_room, name: Book a room (HTTP API), host: "{instance}", path: "/api/roomBooking/bookRoom*", methods: [POST] }
+          - { id: create_booking, name: "Book a room (room booking, extended)", host: "{instance}", path: /rooms/api/booking/create, methods: [POST] }
+          - { id: cancel_booking, name: Cancel a room booking (extended), host: "{instance}", path: "/rooms/api/bookings/*/cancel", methods: [POST] }
+          - { id: cancel_booking_occurrence, name: Cancel one date of a room booking (extended), host: "{instance}", path: "/rooms/api/bookings/*/*/cancel", methods: [POST] }
+          - { id: add_favorite_user, name: Add a favorite user (extended), host: "{instance}", path: "/user/api/favorites/users/*", methods: [PUT] }
+          - { id: remove_favorite_user, name: Remove a favorite user (extended), host: "{instance}", path: "/user/api/favorites/users/*", methods: [DELETE] }
+          - { id: add_favorite_category, name: Add a favorite category (extended), host: "{instance}", path: "/user/api/favorites/categories/*", methods: [PUT] }
+          - { id: remove_favorite_category, name: Remove a favorite category (extended), host: "{instance}", path: "/user/api/favorites/categories/*", methods: [DELETE] }
+          - { id: add_favorite_event, name: Add a favorite event (extended), host: "{instance}", path: "/user/api/favorites/events/*", methods: [PUT] }
+          - { id: remove_favorite_event, name: Remove a favorite event (extended), host: "{instance}", path: "/user/api/favorites/events/*", methods: [DELETE] }
+          - { id: add_favorite_room, name: Add a favorite room (extended), host: "{instance}", path: "/rooms/api/user/favorite-rooms/*", methods: [PUT] }
+          - { id: remove_favorite_room, name: Remove a favorite room (extended), host: "{instance}", path: "/rooms/api/user/favorite-rooms/*", methods: [DELETE] }
+          - { id: prepare_event, name: Prepare an event for me to create (extended), host: "{instance}", path: /event/create/prepare, methods: [POST] }
+    approvals:
+      book_room:
+        title: Book room
+        fields:
+          - { label: Room ID, source: body, steps: [ { form: roomid } ] }
+          - { label: From, source: body, steps: [ { form: from } ] }
+          - { label: From (f), source: body, steps: [ { form: f } ] }
+          - { label: To, source: body, steps: [ { form: to } ] }
+          - { label: To (t), source: body, steps: [ { form: t } ] }
+          - { label: Time zone, source: body, steps: [ { form: tz } ] }
+          - { label: Booked for, source: body, steps: [ { form: username } ] }
+          - { label: Reason, source: body, steps: [ { form: reason } ] }
+        link: "https://{request.host}/rooms/"
+      create_booking:
+        title: Book room
+        fields:
+          - { label: Room ID, source: body, steps: [ { json: /room_id } ] }
+          - { label: Start, source: body, steps: [ { json: /start_dt } ] }
+          - { label: End, source: body, steps: [ { json: /end_dt } ] }
+          - { label: Repeats, source: body, steps: [ { json: /repeat_frequency } ] }
+          - { label: Repeat interval, source: body, steps: [ { json: /repeat_interval } ] }
+          - { label: Booked for, source: body, steps: [ { json: /user } ] }
+          - { label: Reason, source: body, steps: [ { json: /reason } ] }
+          - { label: Pre-booking, source: body, steps: [ { json: /is_prebooking } ] }
+          - { label: Admin override, source: body, steps: [ { json: /admin_override_enabled } ] }
+          - { label: Linked to, source: body, steps: [ { json: /link_type } ] }
+          - { label: Linked id, source: body, steps: [ { json: /link_id } ] }
+        link: "https://{request.host}/rooms/"
+      cancel_booking:
+        title: Cancel room booking
+        fields:
+          - { label: Booking, source: path, segment: 4 }
+        link: "https://{request.host}/rooms/"
+      cancel_booking_occurrence:
+        title: Cancel room booking date
+        fields:
+          - { label: Booking, source: path, segment: 4 }
+          - { label: Date, source: path, segment: 5 }
+        link: "https://{request.host}/rooms/"
+      add_favorite_user:
+        title: Add favorite user
+        fields:
+          - { label: User, source: path, segment: 5 }
+        link: "https://{request.host}/user/favorites/"
+      remove_favorite_user:
+        title: Remove favorite user
+        fields:
+          - { label: User, source: path, segment: 5 }
+        link: "https://{request.host}/user/favorites/"
+      add_favorite_category:
+        title: Add favorite category
+        fields:
+          - { label: Category, source: path, segment: 5 }
+        link: "https://{request.host}/user/favorites/"
+      remove_favorite_category:
+        title: Remove favorite category
+        fields:
+          - { label: Category, source: path, segment: 5 }
+        link: "https://{request.host}/user/favorites/"
+      add_favorite_event:
+        title: Add favorite event
+        fields:
+          - { label: Event, source: path, segment: 5 }
+        link: "https://{request.host}/user/favorites/"
+      remove_favorite_event:
+        title: Remove favorite event
+        fields:
+          - { label: Event, source: path, segment: 5 }
+        link: "https://{request.host}/user/favorites/"
+      add_favorite_room:
+        title: Add favorite room
+        fields:
+          - { label: Room, source: path, segment: 5 }
+        link: "https://{request.host}/rooms/"
+      remove_favorite_room:
+        title: Remove favorite room
+        fields:
+          - { label: Room, source: path, segment: 5 }
+        link: "https://{request.host}/rooms/"
+      prepare_event:
+        title: Prepare event
+        fields:
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: Start, source: body, steps: [ { json: /start_dt } ] }
+          - { label: Time zone, source: body, steps: [ { json: /tz } ] }
+          - { label: Duration, source: body, steps: [ { json: /duration } ] }
+          - { label: Type, source: body, steps: [ { json: /event_type } ] }
+    agent:
+      instructions: |
+        Indico is connected. Send requests to https://<host> of the Indico server this connection is
+        registered for; Aurora adds the token. Never ask for one, never add ak, apikey, signature,
+        timestamp or cookieauth, and never send this connection's requests to another host.
+        Prefer the HTTP API: /export/categ/<ids>.json (filters from, to, type, location, room,
+        detail), /export/categ/favorites.json, /export/event/<id>.json (detail=contributions,
+        sessions), /export/event/search/<term>.json, /export/timetable/<id>.json,
+        /export/room/<location>/<id>.json, /export/roomName/<location>/<name>.json,
+        /export/reservation/<location>.json; files: /export/event/<event>/material/<folder id>/<attachment id>.bin;
+        current user: /api/user/.
+        Book with POST /api/roomBooking/bookRoom.json, form-encoded: roomid, location, from, to
+        (YYYY-MM-DDTHH:MM, same day), tz, reason, username (login of the person booked for). Use the
+        long parameter names only.
+        If granted, /rooms/api/..., /user/api/favorites/..., /user/search/..., /search/api/search and
+        /event/create/prepare are internal to Indico and may change: on a 404 or an unexpected
+        shape, say so instead of guessing. Send JSON bodies to them.
+        Confirm room, time and person before booking, and never retry a booking automatically. To
+        create an event, prepare it and give the user the returned link: Indico has no API that
+        creates events.

@@ -232,6 +232,27 @@ def check_app(app, paired, err):
                    and "authorization" in ((c.get("expect", {}).get("upstream") or {}).get("headers") or {})
                    for c, r in mine):
             err(f"app {aid}: no fixture shows the refreshed token being injected (credentials incl. {tok['refresh_field']})")
+        # replayed lifecycle (P2-CAT-T): a stale answer, the refresh exchange against the
+        # recorded token endpoint and its outcome. Instance-bound apps: on the default host and on
+        # a registered instance host.
+        def replayed(outcome, want_default):
+            for c, r in mine:
+                t = (r.get("observed") or {}).get("token") or {}
+                if r["status"] != "pass" or t.get("outcome") != outcome or not (c.get("token") or {}).get("http_cassette"):
+                    continue
+                ih = (c.get("connection") or {}).get("instance_host")
+                # no registered instance = the default-host connection (D-86)
+                if want_default is None or (ih in (None, default_host)) == want_default:
+                    return True
+            return False
+
+        kinds = [None] if not default_host else [True, False]
+        for outcome in ("refreshed", "reauth_required"):
+            for dflt in kinds:
+                if not replayed(outcome, dflt):
+                    where = "" if dflt is None else (" on the default host" if dflt else " on a registered instance host")
+                    err(f"app {aid}: no replayed token case with expect.token.outcome {outcome}{where} "
+                        "(`token:` with `http_cassette`, docs/09 §12)")
 
 
 def check_docs(aurora, pdir, err):

@@ -1,0 +1,108 @@
+# Token lifecycle against recorded HTTP (P2-CAT-T, docs/09 §12): an upstream answer that matches
+# token.stale_codes, the refresh exchange against the recorded token endpoint, and what the gateway
+# does next. The token endpoint is the connection's own instance host (SEC-04, SEC-59): a refresh
+# token never goes anywhere else. `connection.instance_host` is the connection's registered
+# instance; a case without it is the default-host connection, whose `{instance}` is the app's
+# default_host (gitlab.com, D-86). All values are fake.
+- name: "token: gitlab.com refresh after a stale 401 retries with the new token"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://gitlab.com/api/v4/user" }
+  token:
+    upstream: { status: 401, body: '{"error":"invalid_token","error_description":"Token is expired. You can either do re-authorization or token refresh."}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://gitlab.com/oauth/token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-1", client_id: "client-fixture" }
+        response:
+          status: 200
+          body: '{"access_token":"tok-fixture-new","token_type":"Bearer","expires_in":7200,"refresh_token":"refresh-fixture-2","created_at":1700000000}'
+    expect:
+      outcome: refreshed
+      credentials: { access_token: "tok-fixture-new", refresh_token: "refresh-fixture-2" }
+      retried:
+        url: "https://gitlab.com/api/v4/user"
+        headers: { authorization: "Bearer tok-fixture-new" }
+  expect: { app: gitlab, tool: get_current_user }
+- name: "token: gitlab.com invalid_grant needs re-authorization and nothing is retried"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://gitlab.com/api/v4/user" }
+  token:
+    upstream: { status: 401, body: '{"error":"invalid_token"}' }
+    http_cassette:
+      - request: { method: POST, url: "https://gitlab.com/oauth/token", form: { grant_type: refresh_token } }
+        response:
+          status: 400
+          body: '{"error":"invalid_grant","error_description":"The provided authorization grant is invalid, expired, revoked, or does not match the redirection URI."}'
+    expect: { outcome: reauth_required }
+  expect: { app: gitlab }
+- name: "token: registered instance refresh goes to the instance host and retries there"
+  connection:
+    instance_host: gitlab.example.com
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://gitlab.example.com/api/v4/projects/42" }
+  token:
+    upstream: { status: 401, body: '{"error":"invalid_token"}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://gitlab.example.com/oauth/token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-1", client_id: "client-fixture" }
+        response:
+          status: 200
+          body: '{"access_token":"tok-fixture-new","token_type":"Bearer","expires_in":7200,"refresh_token":"refresh-fixture-2"}'
+    expect:
+      outcome: refreshed
+      request_url: "https://gitlab.example.com/oauth/token"
+      credentials: { access_token: "tok-fixture-new", refresh_token: "refresh-fixture-2" }
+      retried:
+        url: "https://gitlab.example.com/api/v4/projects/42"
+        headers: { authorization: "Bearer tok-fixture-new" }
+  expect: { app: gitlab, tool: get_project }
+- name: "token: registered instance invalid_grant needs re-authorization"
+  connection:
+    instance_host: gitlab.example.com
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://gitlab.example.com/api/v4/projects/42" }
+  token:
+    upstream: { status: 401, body: '{"error":"invalid_token"}' }
+    http_cassette:
+      - request: { method: POST, url: "https://gitlab.example.com/oauth/token" }
+        response: { status: 400, body: '{"error":"invalid_grant"}' }
+    expect: { outcome: reauth_required, request_url: "https://gitlab.example.com/oauth/token" }
+  expect: { app: gitlab }
+- name: "token: a 503 from the token endpoint keeps the connection and retries nothing"
+  connection:
+    instance_host: gitlab.example.com
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://gitlab.example.com/api/v4/projects/42" }
+  token:
+    upstream: { status: 401, body: '{"error":"invalid_token"}' }
+    http_cassette:
+      - request: { method: POST, url: "https://gitlab.example.com/oauth/token" }
+        response: { status: 503, body: "upstream unavailable" }
+    expect: { outcome: unavailable }
+  expect: { app: gitlab }
+# SEC-59 on the token path: the refresh request is built for the connection's instance host. A
+# cassette that only records gitlab.com's token endpoint does not answer it (nothing is sent to
+# gitlab.com), so the outcome is `unavailable` and the request URL is the instance's.
+- name: "negative token: an instance connection never sends its refresh token to gitlab.com"
+  connection:
+    instance_host: gitlab.example.com
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://gitlab.example.com/api/v4/projects/42" }
+  token:
+    upstream: { status: 401, body: '{"error":"invalid_token"}' }
+    http_cassette: []
+    expect:
+      outcome: unavailable
+      request_url: "https://gitlab.example.com/oauth/token"
+  expect: { app: gitlab }

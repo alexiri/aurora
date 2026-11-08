@@ -140,6 +140,7 @@ fn rule(name: &str, tools: &[&str], conn: Uuid, agent: Uuid, approval: bool) -> 
         require_approval: approval,
         rate_limit: None,
         conditions: json!([]),
+        approval_timeout_secs: None,
     }
 }
 
@@ -247,6 +248,7 @@ async fn start_with(
         credentials_expires_at: None,
         metadata: json!({}),
         tenant_host: None,
+        instance_id: None,
     };
     // A database app is default-deny: only the classes a rule allows run.
     let mut ws = ScopePolicyRows {

@@ -1,0 +1,67 @@
+# Security boundaries: the token is injected only under the eight path prefixes of the host entries.
+# Anything else on the registered host (token pages, administration, event management, OAuth) is
+# not an Indico app request at all (unmatched, nothing injected). Requests under a prefix that no
+# tool covers belong to the app (grants, approvals and the request log apply) but select no tool.
+- name: "boundary: the personal token page never gets the token"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/user/tokens/" }
+  expect: { unmatched: true }
+- name: "boundary: creating a personal token never gets the token"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/user/tokens/new" }
+  expect: { unmatched: true }
+- name: "boundary: the administration pages never get the token"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/admin/apps/" }
+  expect: { unmatched: true }
+- name: "boundary: the event creation form (not the prepare endpoint) never gets the token"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/event/create/meeting" }
+  expect: { unmatched: true }
+- name: "boundary: event management pages never get the token"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/event/1234/manage/" }
+  expect: { unmatched: true }
+- name: "boundary: acting on another user under /user/<id>/ never gets the token"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/user/101/api/favorites/users" }
+  expect: { unmatched: true }
+- name: "boundary: the OAuth authorize page never gets the token"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/oauth/authorize" }
+  expect: { unmatched: true }
+- name: "boundary: the OAuth revoke endpoint never gets the token"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/oauth/revoke" }
+  expect: { unmatched: true }
+- name: "boundary: approving a booking is an indico request but selects no tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/rooms/api/bookings/42/approve" }
+  expect: { app: indico }
+- name: "boundary: admin room endpoints are an indico request but select no tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/admin/locations" }
+  expect: { app: indico }
+- name: "boundary: the POST form of the calendar is an indico request but selects no tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/rooms/api/calendar" }
+  expect: { app: indico }
+- name: "boundary: an unlisted HTTP API hook is an indico request but selects no tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/api/other/x.json" }
+  expect: { app: indico }
+- name: "boundary: the legacy API key parameters are not special (still no tool for an unknown export)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/user/101.json" }
+  expect: { app: indico }
+- name: "boundary (H8): preparing an event is an indico request and sends no authorization header (the connection holds a token that must not be sent)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://indico.example.org/event/create/prepare"
+    headers: { content-type: application/json }
+    body: '{"title":"Planning meeting"}'
+  expect:
+    app: indico
+    tool: prepare_event
+    upstream: { url: "https://indico.example.org/event/create/prepare", headers_absent: [authorization] }

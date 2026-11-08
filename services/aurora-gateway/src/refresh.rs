@@ -361,104 +361,159 @@ impl TokenManager {
         current: &Map<String, Value>,
     ) -> Result<(Map<String, Value>, DateTime<Utc>), RefreshError> {
         let client = job.client.as_ref().ok_or(RefreshError::Unavailable)?;
-        let field = job
-            .token
-            .refresh_field
-            .as_deref()
-            .unwrap_or("refresh_token");
-        let refresh = current
-            .get(field)
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .ok_or(RefreshError::Unavailable)?;
         let (public, secret) = self.client_fields(st).await?;
-        let url = token_url(
+        let plan = build_exchange(
             client,
+            &job.token,
+            current,
+            &public,
+            &secret,
             job.conn.tenant_host.as_deref(),
             job.conn.instance_host.as_deref(),
         )?;
-        let mut params: Vec<(String, String)> = vec![
-            ("grant_type".into(), "refresh_token".into()),
-            ("refresh_token".into(), refresh.to_owned()),
-        ];
-        let optional = BTreeSet::new();
-        let metadata = Value::Null;
-        let ctxmap = HashMap::new();
-        let vars = Vars {
-            credentials: current,
-            optional: &optional,
-            metadata: &metadata,
-            tenant_host: job.conn.tenant_host.as_deref(),
-            allowed_context: &[],
-            context: &ctxmap,
-        };
-        for (k, t) in &job.token.extra_params {
-            let r = render(t, Dest::Raw, &vars).map_err(|_| RefreshError::Unavailable)?;
-            params.push((k.clone(), r.text));
+        let mut req = self
+            .http
+            .post(&plan.url)
+            .header("accept", "application/json");
+        if let Some(a) = &plan.authorization {
+            req = req.header("authorization", a);
         }
-        let get = |k: &str| {
-            secret
-                .get(k)
-                .or_else(|| public.get(k))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        };
-        let mut req = self.http.post(&url).header("accept", "application/json");
-        match client.client_auth {
-            ClientAuth::Basic => {
-                let creds = format!(
-                    "{}:{}",
-                    get("client_id").unwrap_or_default(),
-                    get("client_secret").unwrap_or_default()
-                );
-                req = req.header("authorization", format!("Basic {}", STANDARD.encode(creds)));
-            }
-            ClientAuth::Body => {
-                for k in ["client_id", "client_secret"] {
-                    if let Some(v) = get(k) {
-                        params.push((k.into(), v));
-                    }
-                }
-            }
-        }
-        req = match client.body_format {
-            BodyFormat::Form => req.form(&params),
-            BodyFormat::Json => req.json(&params.into_iter().collect::<BTreeMap<_, _>>()),
+        req = match plan.body_format {
+            BodyFormat::Form => req.form(&plan.params),
+            BodyFormat::Json => req.json(&plan.params.iter().cloned().collect::<BTreeMap<_, _>>()),
         };
         let resp = req.send().await.map_err(|_| RefreshError::Unavailable)?;
         let status = resp.status();
         let body: Value = resp.json().await.unwrap_or(Value::Null);
-        if !status.is_success() {
-            let code = body.get("error").and_then(Value::as_str).unwrap_or("");
-            if status.is_client_error()
-                && (code == "invalid_grant" || job.token.reauth_codes.iter().any(|c| c == code))
-            {
-                return Err(self.reauth(job.conn.id, "invalid_grant").await);
-            }
-            return Err(RefreshError::Unavailable);
+        match interpret_exchange(&job.token, current, status.as_u16(), &body) {
+            Ok((creds, secs)) => Ok((creds, Self::lifetime(job, secs))),
+            Err(RefreshError::Reauth) => Err(self.reauth(job.conn.id, "invalid_grant").await),
+            Err(e) => Err(e),
         }
-        let access = body
-            .get("access_token")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .ok_or(RefreshError::Unavailable)?;
-        let mut creds = current.clone();
-        creds.insert("access_token".into(), Value::String(access.to_owned()));
-        if job.token.rotate_refresh_token
-            && let Some(r) = body.get("refresh_token").and_then(Value::as_str)
-            && !r.is_empty()
-        {
-            creds.insert(field.to_owned(), Value::String(r.to_owned()));
-        }
-        let secs = body
-            .get("expires_in")
-            .and_then(|v| {
-                v.as_i64()
-                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-            })
-            .unwrap_or(DEFAULT_LIFETIME_SECS);
-        Ok((creds, Self::lifetime(job, secs)))
     }
+}
+
+/// One refresh-token request, built but not yet sent (shared by the live exchange and the
+/// offline fixture replay of `aurora plugin test`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExchangeRequest {
+    pub url: String,
+    /// `Authorization` header value (`client_auth: basic`).
+    pub authorization: Option<String>,
+    pub params: Vec<(String, String)>,
+    pub body_format: BodyFormat,
+}
+
+/// Builds the refresh request: token URL (tenant/instance-bound), grant parameters, extra
+/// parameters and client authentication. `public`/`secret` are the minting client's fields.
+pub fn build_exchange(
+    client: &OauthClientEntry,
+    token: &Token,
+    current: &Map<String, Value>,
+    public: &Map<String, Value>,
+    secret: &Map<String, Value>,
+    tenant_host: Option<&str>,
+    instance_host: Option<&str>,
+) -> Result<ExchangeRequest, RefreshError> {
+    let field = token.refresh_field.as_deref().unwrap_or("refresh_token");
+    let refresh = current
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or(RefreshError::Unavailable)?;
+    let url = token_url(client, tenant_host, instance_host)?;
+    let mut params: Vec<(String, String)> = vec![
+        ("grant_type".into(), "refresh_token".into()),
+        ("refresh_token".into(), refresh.to_owned()),
+    ];
+    let optional = BTreeSet::new();
+    let metadata = Value::Null;
+    let ctxmap = HashMap::new();
+    let vars = Vars {
+        credentials: current,
+        optional: &optional,
+        metadata: &metadata,
+        tenant_host,
+        allowed_context: &[],
+        context: &ctxmap,
+    };
+    for (k, t) in &token.extra_params {
+        let r = render(t, Dest::Raw, &vars).map_err(|_| RefreshError::Unavailable)?;
+        params.push((k.clone(), r.text));
+    }
+    let get = |k: &str| {
+        secret
+            .get(k)
+            .or_else(|| public.get(k))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let mut authorization = None;
+    match client.client_auth {
+        ClientAuth::Basic => {
+            let creds = format!(
+                "{}:{}",
+                get("client_id").unwrap_or_default(),
+                get("client_secret").unwrap_or_default()
+            );
+            authorization = Some(format!("Basic {}", STANDARD.encode(creds)));
+        }
+        ClientAuth::Body => {
+            for k in ["client_id", "client_secret"] {
+                if let Some(v) = get(k) {
+                    params.push((k.into(), v));
+                }
+            }
+        }
+    }
+    Ok(ExchangeRequest {
+        url,
+        authorization,
+        params,
+        body_format: client.body_format,
+    })
+}
+
+/// Interprets the token endpoint's answer: the new credentials and the lifetime in seconds
+/// (before the `max_lifetime_secs` cap), `Err(Reauth)` for `invalid_grant` or a declared
+/// `reauth_codes` error on a 4xx, `Err(Unavailable)` for anything else.
+pub fn interpret_exchange(
+    token: &Token,
+    current: &Map<String, Value>,
+    status: u16,
+    body: &Value,
+) -> Result<(Map<String, Value>, i64), RefreshError> {
+    let field = token.refresh_field.as_deref().unwrap_or("refresh_token");
+    if !(200..300).contains(&status) {
+        let code = body.get("error").and_then(Value::as_str).unwrap_or("");
+        if (400..500).contains(&status)
+            && (code == "invalid_grant" || token.reauth_codes.iter().any(|c| c == code))
+        {
+            return Err(RefreshError::Reauth);
+        }
+        return Err(RefreshError::Unavailable);
+    }
+    let access = body
+        .get("access_token")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or(RefreshError::Unavailable)?;
+    let mut creds = current.clone();
+    creds.insert("access_token".into(), Value::String(access.to_owned()));
+    if token.rotate_refresh_token
+        && let Some(r) = body.get("refresh_token").and_then(Value::as_str)
+        && !r.is_empty()
+    {
+        creds.insert(field.to_owned(), Value::String(r.to_owned()));
+    }
+    let secs = body
+        .get("expires_in")
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+        .unwrap_or(DEFAULT_LIFETIME_SECS);
+    Ok((creds, secs))
 }
 
 fn token_url(

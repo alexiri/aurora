@@ -1,0 +1,276 @@
+# Read tools. Every case registers the Indico server through connection.instance_host (the app has
+# no default host). Host: indico.example.org. All credentials are fake. Each read tool has a
+# positive case and a `negative <tool>:` case; the overlapping patterns have ordering cases
+# (R2/R3, R4/R5/R6, R20/R22, R23/R25).
+
+# --- official tier: /api/ (H2) and /export/ (H1) ---
+- name: "get_current_user: the connected user, bearer injected on /api/ (H2)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/api/user/" }
+  expect: { app: indico, tool: get_current_user, upstream: { url: "https://indico.example.org/api/user/", headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "negative get_current_user: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/api/user/" }
+  expect: { app: indico }
+
+- name: "list_favorite_category_events: ordering, favorites is not a category id"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/categ/favorites.json?detail=events" }
+  expect: { app: indico, tool: list_favorite_category_events, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "negative list_favorite_category_events: a category id selects list_category_events"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/categ/12.json" }
+  expect: { app: indico, tool: list_category_events }
+
+- name: "list_category_events: categories with filters, bearer on /export/ (H1)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/categ/12-13.json?detail=events&from=2026-11-10&to=2026-11-17&type=meeting&location=Main&room=40-*" }
+  expect: { app: indico, tool: list_category_events, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "negative list_category_events: a second path segment selects no tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/categ/12/extra.json" }
+  expect: { app: indico }
+
+- name: "search_events: ordering, event title search is not an event id"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/event/search/ichep.json" }
+  expect: { app: indico, tool: search_events, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "negative search_events: search.json is an event id and selects get_event"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/event/search.json" }
+  expect: { app: indico, tool: get_event }
+
+- name: "get_event: event with contributions"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/event/1234.json?detail=contributions" }
+  expect: { app: indico, tool: get_event, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "negative get_event: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/export/event/1234.json" }
+  expect: { app: indico }
+
+- name: "get_event_file: ordering, an attachment download is not get_event"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/event/1234/material/5/77.bin" }
+  expect: { app: indico, tool: get_event_file, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "get_event_file: a contribution attachment"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/event/1234/contrib/9/material/5/77.bin" }
+  expect: { app: indico, tool: get_event_file }
+- name: "negative get_event_file: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/export/event/1234/material/5/77.bin" }
+  expect: { app: indico }
+
+- name: "get_timetable: event timetable"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/timetable/1234.json" }
+  expect: { app: indico, tool: get_timetable }
+- name: "negative get_timetable: a second path segment selects no tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/timetable/1234/extra.json" }
+  expect: { app: indico }
+
+- name: "get_rooms: a room with its bookings"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/room/Main/57.json?detail=reservations&from=2026-11-10&to=2026-11-11" }
+  expect: { app: indico, tool: get_rooms }
+- name: "negative get_rooms: a location without a room id selects no tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/room/Main.json" }
+  expect: { app: indico }
+
+- name: "find_room_by_name: a plain room name"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/roomName/Main/40-S2-C01.json" }
+  expect: { app: indico, tool: find_room_by_name }
+- name: "find_room_by_name: a room name containing a slash is sent literally"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/roomName/Main/Building/Room-1.json" }
+  expect: { app: indico, tool: find_room_by_name }
+- name: "negative find_room_by_name: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/export/roomName/Main/40-S2-C01.json" }
+  expect: { app: indico }
+
+- name: "list_reservations: bookings at a location"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/reservation/Main.json?bookedfor=Doe*&occurs=2026-11-10" }
+  expect: { app: indico, tool: list_reservations }
+- name: "negative list_reservations: a second path segment selects no tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/reservation/Main/extra.json" }
+  expect: { app: indico }
+
+# --- extended tier: search and categories (H6, H7) ---
+- name: "search: instance-wide search, bearer on /search/api/search (H6)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/search/api/search?q=ichep&type=event" }
+  expect: { app: indico, tool: search, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "negative search: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/search/api/search" }
+  expect: { app: indico }
+
+- name: "search_categories: category search, bearer on /category/search (H7)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/category/search?q=physics" }
+  expect: { app: indico, tool: search_categories, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "negative search_categories: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/category/search" }
+  expect: { app: indico }
+
+# --- extended tier: favorites (H4, H3) ---
+- name: "list_favorite_users: bearer on /user/api/favorites/ (H4)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/user/api/favorites/users" }
+  expect: { app: indico, tool: list_favorite_users, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "negative list_favorite_users: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/user/api/favorites/users" }
+  expect: { app: indico }
+
+- name: "list_favorite_categories: the list"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/user/api/favorites/categories" }
+  expect: { app: indico, tool: list_favorite_categories }
+- name: "list_favorite_categories: is one category a favorite"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/user/api/favorites/categories/12" }
+  expect: { app: indico, tool: list_favorite_categories }
+- name: "negative list_favorite_categories: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/user/api/favorites/categories" }
+  expect: { app: indico }
+
+- name: "list_favorite_events: the list"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/user/api/favorites/events" }
+  expect: { app: indico, tool: list_favorite_events }
+- name: "list_favorite_events: is one event a favorite"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/user/api/favorites/events/1234" }
+  expect: { app: indico, tool: list_favorite_events }
+- name: "negative list_favorite_events: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/user/api/favorites/events" }
+  expect: { app: indico }
+
+- name: "list_favorite_rooms: the real path ends in a slash, bearer on /rooms/api/ (H3)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/user/favorite-rooms/" }
+  expect: { app: indico, tool: list_favorite_rooms, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "negative list_favorite_rooms: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/rooms/api/user/favorite-rooms/" }
+  expect: { app: indico }
+
+# --- extended tier: room booking reads (H3) ---
+- name: "list_room_locations"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/locations" }
+  expect: { app: indico, tool: list_room_locations }
+- name: "negative list_room_locations: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/rooms/api/locations" }
+  expect: { app: indico }
+
+- name: "list_equipment_types"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/equipment" }
+  expect: { app: indico, tool: list_equipment_types }
+- name: "negative list_equipment_types: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/rooms/api/equipment" }
+  expect: { app: indico }
+
+- name: "list_all_rooms: the trailing slash is part of the pattern"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/" }
+  expect: { app: indico, tool: list_all_rooms }
+- name: "negative list_all_rooms: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/rooms/api/rooms/" }
+  expect: { app: indico }
+
+- name: "search_rooms: ordering, search is not a room id; free in a time slot"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/search?start_dt=2026-11-10T09:00:00&end_dt=2026-11-10T10:00:00&repeat_frequency=NEVER&repeat_interval=1&capacity=8" }
+  expect: { app: indico, tool: search_rooms }
+- name: "negative search_rooms: a room id selects get_room_details"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/57" }
+  expect: { app: indico, tool: get_room_details }
+
+- name: "get_room_availability: next days"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/57/availability" }
+  expect: { app: indico, tool: get_room_availability }
+- name: "get_room_availability: is the room free in this slot"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/57/availability/simple?start_dt=2026-11-10T09:00:00&end_dt=2026-11-10T10:00:00" }
+  expect: { app: indico, tool: get_room_availability }
+- name: "negative get_room_availability: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/rooms/api/rooms/57/availability" }
+  expect: { app: indico }
+
+- name: "get_room_details: ordering, a room id is not search"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/57" }
+  expect: { app: indico, tool: get_room_details }
+- name: "get_room_details: the permissions document is a read too"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/permissions" }
+  expect: { app: indico, tool: get_room_details }
+- name: "negative get_room_details: a further path segment selects no tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/rooms/57/extra" }
+  expect: { app: indico }
+
+- name: "list_my_upcoming_bookings: ordering, mine is not a booking id"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/bookings/mine" }
+  expect: { app: indico, tool: list_my_upcoming_bookings }
+- name: "negative list_my_upcoming_bookings: a booking id selects get_booking"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/bookings/42" }
+  expect: { app: indico, tool: get_booking }
+
+- name: "get_booking_calendar: only my bookings"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/calendar?start_date=2026-11-10&end_date=2026-11-16&my_bookings=true" }
+  expect: { app: indico, tool: get_booking_calendar }
+- name: "negative get_booking_calendar: the POST form of the calendar is not a tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/rooms/api/calendar" }
+  expect: { app: indico }
+
+- name: "get_booking: ordering, a booking id"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/bookings/42" }
+  expect: { app: indico, tool: get_booking }
+- name: "negative get_booking: a GET on the cancel path selects no tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/rooms/api/bookings/42/cancel" }
+  expect: { app: indico }
+
+# --- extended tier: user search (H5) ---
+- name: "get_user_search_token: bearer on /user/search/ (H5)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/user/search/token" }
+  expect: { app: indico, tool: get_user_search_token, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "negative get_user_search_token: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/user/search/token" }
+  expect: { app: indico }
+
+- name: "search_users: users matching a name (returns personal data)"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/user/search/?token=search-fixture&q=doe" }
+  expect: { app: indico, tool: search_users, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "negative search_users: POST selects no read tool"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/user/search/" }
+  expect: { app: indico }

@@ -272,6 +272,10 @@ oauth_clients:
 - A connection of an instance-bound app records its `instance_id` (or none for
   `default_host`). The gateway injects it **only** on that instance's host,
   exactly as a tenant-bound connection only on its `tenant_host` (SEC-04, SEC-59).
+  A connection without an instance stands for `default_host`: `{instance}`
+  resolves to that host in every gateway path (token refresh/exchange, hook
+  egress, injection guard), it is injected only there, never on a registered
+  instance's host (D-86).
 - OAuth: each self-hosted instance has its own OAuth application, so the client
   is a BYOC client bound to the instance (`app_oauth_clients.instance_id`); the
   templated URLs resolve to that instance's host and MUST be https.
@@ -310,6 +314,14 @@ tools:
       - { id: push, name: Push code, host: github.com, path: "/*/*/**", methods: [GET, POST], git: push }
 ```
 `description` optional; tool ids are immutable; renaming = remove + add.
+
+**Which tool a request is.** A request is classified as the **first** catalogue tool that matches
+its host, method and path: `read` items are tried before `write` items, each in declaration order.
+There are no segment exclusions, so when two patterns overlap the order decides (for example
+`/export/categ/favorites*` must be declared before `/export/categ/*`, and `/rooms/api/rooms/search`
+before `/rooms/api/rooms/*`). Reordering `items` therefore changes which tool id a grant, an
+approval and the request log see; keep specific patterns first and cover each overlap with a
+fixture. Query strings never participate in matching.
 
 #### `approvals` — approval summaries (templates per tool)
 ```yaml
@@ -720,7 +732,47 @@ Fixture file format (`tests/*.yaml`):
 - name: close task summary
   request: { method: POST, url: "https://api.todoist.com/rest/v2/tasks/123/close" }
   expect: { tool: close_task, summary: { title: "Complete task", fields: { Task: "123" } } }
+- name: token is not sent outside its prefixes
+  connection: { credentials: { api_token: "tok" } }
+  request: { method: GET, url: "https://api.todoist.com/public/x" }
+  expect:
+    upstream: { headers_absent: [authorization, x-api-key] }   # fails if any listed header is on the upstream request
 ```
+`expect.upstream.headers_absent` (D-86) lists header names (case-insensitive) that the upstream
+request must not carry, whether injected by the package or sent by the client. In a case without a
+`connection.instance_host`, the connection of an instance-bound app is its default-host connection
+(`{instance}` is the app's `default_host`).
+
+**Token lifecycle cases** (D-82; `token.kind: oauth2_refresh`). A case replays a stale upstream
+answer, the refresh exchange against a recorded token endpoint and what the gateway does next. It
+drives the gateway's own refresh functions (`build_exchange`, `interpret_exchange`), so the request
+the gateway builds, the stale-code match, `reauth_codes` and rotation behave as in production; only
+the network and the database are replaced by the recording.
+```yaml
+- name: refresh after a stale 401
+  connection:
+    instance_host: gitlab.example.com        # the registered instance (omit for the default-host connection)
+    credentials: { access_token: "tok-old", refresh_token: "refresh-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }   # fake fields of the registered OAuth client
+  request: { method: GET, url: "https://gitlab.example.com/api/v4/user" }
+  token:
+    upstream: { status: 401, body: '{"error":"invalid_token"}' }   # must match token.stale_codes
+    http_cassette:                            # each refresh request consumes the first matching entry; an unused entry fails the case
+      - request: { method: POST, url: "https://gitlab.example.com/oauth/token",
+                   form: { grant_type: refresh_token, refresh_token: "refresh-1" } }   # `form`: subset match on the request parameters
+        response: { status: 200, body: '{"access_token":"tok-new","refresh_token":"refresh-2","expires_in":7200}' }
+    expect:
+      outcome: refreshed                      # | reauth_required | unavailable
+      request_url: "https://gitlab.example.com/oauth/token"   # optional: where the refresh was sent
+      credentials: { access_token: "tok-new", refresh_token: "refresh-2" }   # subset (rotation)
+      retried: { url: "https://gitlab.example.com/api/v4/user", headers: { authorization: "Bearer tok-new" } }
+  expect: { app: gitlab, tool: get_current_user }
+```
+`outcome` is `refreshed` (the retried request carries the new credentials), `reauth_required` (a 4xx
+`invalid_grant` or a declared `reauth_codes` error; nothing is retried) or `unavailable` (any other
+failure, a request that no cassette entry answers, or a refresh the gateway refuses to build, for
+example without a valid instance host: nothing is retried). `retried` is only allowed after
+`refreshed`. Refreshed credentials are never echoed into the report.
 
 ## 13. Phase 0 fixture packages (`plugins/fixtures/`)
 
