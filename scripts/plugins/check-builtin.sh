@@ -30,4 +30,16 @@ else
   for d in plugins/builtin/*/; do dirs+=("${d%/}"); done
   dirs+=("${EXTRA[@]}")
 fi
+# Host-target unit tests of hook guest crates (e.g. the github-app JWT claims and request headers,
+# which recorded HTTP cannot assert): `cargo test --locked` in every plugins/builtin/*/hooks crate
+# that has tests. A failure fails the check.
+for d in "${dirs[@]}"; do
+  case "$d" in plugins/builtin/*) ;; *) continue ;; esac
+  h="$d/hooks"
+  [ -f "$h/Cargo.toml" ] || continue
+  grep -rqE '#\[(cfg\(test\)|test)\]' "$h/src" "$h/tests" 2>/dev/null || continue
+  echo "cargo test --locked ($h)"
+  (cd "$h" && cargo test --locked -q) || { echo "FAIL hook unit tests: $h" >&2; exit 1; }
+done
+
 exec python3 -I scripts/plugins/check_builtin.py "$AURORA" "${dirs[@]}"

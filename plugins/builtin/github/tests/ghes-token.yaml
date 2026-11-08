@@ -1,0 +1,61 @@
+# GitHub Enterprise Server token lifecycle (D-74, SEC-04, SEC-59): the token endpoint is the
+# connection's own instance host; a refresh token never goes anywhere else. All values are fake.
+- name: "ghes token: a refreshed token is injected on the instance API host"
+  connection:
+    instance_host: github.example.com
+    credentials: { access_token: "tok-fixture-2", refresh_token: "refresh-fixture-2" }
+  request: { method: GET, url: "https://github.example.com/api/v3/user" }
+  expect:
+    app: github-ghes
+    tool: get_authenticated_user
+    upstream: { headers: { authorization: "Bearer tok-fixture-2" } }
+- name: "ghes token: refresh goes to the instance host and retries there"
+  connection:
+    instance_host: github.example.com
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://github.example.com/api/v3/repos/example/demo" }
+  token:
+    upstream: { status: 401, body: '{"message":"Bad credentials"}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://github.example.com/login/oauth/access_token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-1", client_id: "client-fixture" }
+        response:
+          status: 200
+          body: '{"access_token":"tok-fixture-new","expires_in":28800,"refresh_token":"refresh-fixture-2","refresh_token_expires_in":15897600,"token_type":"bearer"}'
+    expect:
+      outcome: refreshed
+      request_url: "https://github.example.com/login/oauth/access_token"
+      credentials: { access_token: "tok-fixture-new", refresh_token: "refresh-fixture-2" }
+      retried:
+        url: "https://github.example.com/api/v3/repos/example/demo"
+        headers: { authorization: "Bearer tok-fixture-new" }
+  expect: { app: github-ghes, tool: get_repo }
+- name: "ghes token: a refused refresh token needs re-authorization"
+  connection:
+    instance_host: github.example.com
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://github.example.com/api/v3/repos/example/demo" }
+  token:
+    upstream: { status: 401, body: '{"message":"Bad credentials"}' }
+    http_cassette:
+      - request: { method: POST, url: "https://github.example.com/login/oauth/access_token" }
+        response: { status: 400, body: '{"error":"bad_refresh_token"}' }
+    expect: { outcome: reauth_required, request_url: "https://github.example.com/login/oauth/access_token" }
+  expect: { app: github-ghes }
+- name: "negative ghes token: the refresh request is built for the instance host only"
+  connection:
+    instance_host: github.example.com
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://github.example.com/api/v3/repos/example/demo" }
+  token:
+    upstream: { status: 401, body: '{"message":"Bad credentials"}' }
+    http_cassette: []
+    expect:
+      outcome: unavailable
+      request_url: "https://github.example.com/login/oauth/access_token"
+  expect: { app: github-ghes }
