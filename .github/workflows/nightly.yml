@@ -1,0 +1,90 @@
+# P2-E2E-1 (decision D-78, owner Q3: nightly, not per PR). The phase-2 exit gate on the deployable stack:
+#   first-run  `just kind-up --llm-mock` (kind + the production Helm chart, images built from this checkout,
+#              the real claude-code harness image, LiteLLM in front of VidaiMock) and then the Playwright
+#              journey scripts/e2e/first-run.sh, twice (two new users on the same stack): a new user signs in,
+#              adds a LiteLLM key, grants it, says hello and gets the mock's answer back through the gateway.
+#   kind-e2e   the Kubernetes e2e scripts/e2e/kind.sh (its own cluster `aurora-e2e`, fake harness).
+# Both are slow (cold image builds, no layer cache on a fresh runner): they never gate a merge.
+# Trigger on demand: Actions -> nightly -> Run workflow, or `gh workflow run nightly.yml --ref <branch>`.
+name: nightly
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  KIND_EXPERIMENTAL_PROVIDER: podman
+
+jobs:
+  first-run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Free runner disk space (the stack needs about 15 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with: { tool: just }
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with: { version: 10 }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: web/pnpm-lock.yaml }
+      - name: Rootless kind needs the cpu and memory cgroup controllers delegated to the user
+        run: |
+          sudo mkdir -p /etc/systemd/system/user@.service.d
+          printf '[Service]\nDelegate=yes\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf >/dev/null
+          sudo systemctl daemon-reload
+          podman --version; kind version; kubectl version --client; helm version --short
+          podman info --format 'rootless={{.Host.Security.Rootless}} cgroups={{.Host.CgroupsVersion}} network={{.Host.NetworkBackend}}'
+      - name: Browser for Playwright
+        run: |
+          cd web
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+      - name: Bring the stack up (just kind-up --llm-mock)
+        run: just kind-up --llm-mock
+      - name: First-run journey
+        run: bash scripts/e2e/first-run.sh
+      - name: Second user on the same stack
+        run: bash scripts/e2e/first-run.sh
+      - name: Logs of a failed run
+        if: failure()
+        run: |
+          mkdir -p target/ci-logs
+          for ns in aurora aurora-sandboxes aurora-dev-mock; do
+            kubectl --context kind-aurora-dev -n "$ns" get pods -o wide >"target/ci-logs/$ns-pods.txt" 2>&1 || true
+            for p in $(kubectl --context kind-aurora-dev -n "$ns" get pods -o name 2>/dev/null); do
+              kubectl --context kind-aurora-dev -n "$ns" logs --all-containers --tail=300 "$p" >"target/ci-logs/$ns-${p#pod/}.log" 2>&1 || true
+            done
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: first-run-failure
+          path: |
+            web/test-results
+            target/ci-logs
+          if-no-files-found: ignore
+
+  kind-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Free runner disk space (the script needs 15 GB free)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: Rootless kind needs the cpu and memory cgroup controllers delegated to the user
+        run: |
+          sudo mkdir -p /etc/systemd/system/user@.service.d
+          printf '[Service]\nDelegate=yes\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf >/dev/null
+          sudo systemctl daemon-reload
+      - name: Kubernetes e2e (scripts/e2e/kind.sh, release images as CI publishes them)
+        run: bash scripts/e2e/kind.sh --release-images

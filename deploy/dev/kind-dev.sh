@@ -14,7 +14,10 @@
 # crates. Binaries are copied into thin distroless images (deploy/dev/thin.Containerfile). A service whose
 # binary is byte-identical to the last loaded one is neither re-imaged nor restarted.
 # Everything created is named after the worktree basename (lane) or `aurora-dev`; volumes carry label aurora.lane=<lane>.
-# Env: AURORA_DEV_CLUSTER (aurora-dev), AURORA_DEV_PORT (4000: change deploy/kind/kind-config-dev.yaml too).
+# Env: AURORA_DEV_CLUSTER (aurora-dev), AURORA_DEV_PORT (4000; the host port of the single URL. Another value is
+# written into a generated kind config and into `externalUrl`, so a second cluster can run beside the owner's).
+# With --llm-mock the hosted agents run the REAL claude-code harness (P2-E2E-1): the sandbox image is
+# scripts/e2e/llm.Containerfile on top of the dev sandbox image, loaded as aurora-sandbox-llm and set as runner.image.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
@@ -22,6 +25,7 @@ cd "$ROOT"
 export KIND_EXPERIMENTAL_PROVIDER=podman
 CLUSTER="${AURORA_DEV_CLUSTER:-aurora-dev}"
 CTX="kind-$CLUSTER"
+PORT="${AURORA_DEV_PORT:-4000}"
 NS=aurora
 RELEASE=aurora
 REG=localhost/aurora-dev
@@ -98,6 +102,31 @@ build_sandbox() {
   CHANGED_SVCS+=(sandbox)
 }
 
+# The --llm-mock profile's sandbox image: the dev sandbox plus the pinned Claude Code CLI (FU-OPS-017a).
+# Loaded only when its image id changed (the npm layer is cached by podman, so a rebuild is cheap).
+SANDBOX_LLM_IMAGE="$REG/aurora-sandbox-llm:$TAG"
+build_sandbox_llm() {
+  podman image exists "$REG/aurora-sandbox:$TAG" || { log "no $REG/aurora-sandbox:$TAG: build the sandbox first (kind-dev.sh dev sandbox)"; return 1; }
+  log "building aurora-sandbox-llm (scripts/e2e/llm.Containerfile: claude-code harness)"
+  podman build -q -f scripts/e2e/llm.Containerfile --build-arg "BASE=$REG/aurora-sandbox:$TAG" -t "$SANDBOX_LLM_IMAGE" . >/dev/null || return 1
+  mkdir -p "$WORK"
+  local id; id=$(podman image inspect --format '{{.Id}}' "$SANDBOX_LLM_IMAGE")
+  if [ "$id" = "$(cat "$WORK/sandbox-llm.sha" 2>/dev/null)" ]; then return 0; fi
+  log "loading aurora-sandbox-llm into $CLUSTER"
+  load_image "$SANDBOX_LLM_IMAGE" || return 1
+  echo "$id" >"$WORK/sandbox-llm.sha"
+}
+
+# kind config with the published host port (deploy/kind/kind-config-dev.yaml is the :4000 template).
+kind_config() {
+  mkdir -p "$WORK"
+  [ "$PORT" = 4000 ] && { echo "deploy/kind/kind-config-dev.yaml"; return 0; }
+  local out="$WORK/kind-config-dev-$PORT.yaml" body
+  body=$(<deploy/kind/kind-config-dev.yaml)
+  printf '%s\n' "${body//hostPort: 4000/hostPort: $PORT}" >"$out"
+  echo "$out"
+}
+
 # Build what changed among $@ (service names); load changed images into the cluster; mark them current.
 build_and_load() {
   CHANGED_SVCS=()
@@ -125,8 +154,8 @@ build_and_load() {
 ensure_cluster() {
   if ! cluster_exists; then
     log "creating kind cluster $CLUSTER"
-    kind create cluster --name "$CLUSTER" --config deploy/kind/kind-config-dev.yaml --wait 180s >&2 || die "kind create failed"
-    rm -f "$WORK"/bin/*.sha "$WORK/web.sha"   # a new cluster has none of the images loaded
+    kind create cluster --name "$CLUSTER" --config "$(kind_config)" --wait 180s >&2 || die "kind create failed"
+    rm -f "$WORK"/bin/*.sha "$WORK/web.sha" "$WORK/sandbox-llm.sha"   # a new cluster has none of the images loaded
   fi
   k wait --for=condition=Ready node --all --timeout=180s >/dev/null || die "node not ready"
   k -n kube-system rollout status ds/kindnet --timeout=120s >/dev/null || die "kindnet not ready"
@@ -156,6 +185,8 @@ cmd_up() {
   build_and_load "${svcs[@]}" || die "image build/load failed"
   if [ "$mock" = 1 ]; then
     vals+=(-f deploy/kind/values-llm-mock.yaml)
+    [ "$sandbox" = 1 ] || die "--llm-mock needs the sandbox image (the claude-code harness image is built on it): drop --no-sandbox"
+    build_sandbox_llm || die "aurora-sandbox-llm build/load failed"
     log "building and loading vidaimock (config baked in)"
     podman build -q -f deploy/dev/llm-mock/vidaimock.Containerfile -t "$REG/vidaimock:$TAG" deploy/dev/llm-mock >/dev/null || die "vidaimock build failed"
     load_image "$REG/vidaimock:$TAG" || die "vidaimock load failed"
@@ -166,15 +197,15 @@ cmd_up() {
   fi
   log "helm upgrade --install $RELEASE (${vals[*]})"
   helm --kube-context "$CTX" upgrade --install "$RELEASE" deploy/helm/aurora -n "$NS" --create-namespace \
-    "${vals[@]}" --wait --timeout 8m >&2 || die "helm install failed (kubectl --context $CTX -n $NS get pods)"
+    "${vals[@]}" --set "externalUrl=http://localhost:$PORT" --wait --timeout 8m >&2 || die "helm install failed (kubectl --context $CTX -n $NS get pods)"
   if [ "$mock" = 1 ]; then
     k -n aurora-dev-mock rollout status deploy/vidaimock deploy/litellm --timeout=300s >/dev/null 2>&1 \
       || k -n aurora-dev-mock rollout status deploy/litellm --timeout=300s >/dev/null || die "llm-mock not ready"
   fi
   k -n "$NS" get pods >&2
-  log "Aurora is up: http://localhost:4000  (sign in with 'Development sign-in' and pick a user; kubectl --context $CTX -n $NS ...)"
+  log "Aurora is up: http://localhost:$PORT  (sign in with 'Development sign-in' and pick a user; kubectl --context $CTX -n $NS ...)"
   log "first instance admin: deploy/dev/kind-dev.sh bootstrap-admin you@example.com  (then sign in with that e-mail)"
-  [ "$mock" = 1 ] && log "LLM endpoint litellm-mock, key sk-aurora-mock-dev; hosted agents need a sandbox image with the harness (docs/operator/install-kind-dev.md)"
+  [ "$mock" = 1 ] && log "LLM endpoint litellm-mock, key sk-aurora-mock-dev; hosted agents run the real claude-code harness (runner.image $SANDBOX_LLM_IMAGE)"
   return 0
 }
 
@@ -197,6 +228,10 @@ cmd_dev() {
     k -n "$NS" rollout restart "deploy/$dep" >/dev/null || die "restart $dep failed"
     restarted+=("$dep")
   done
+  # A cluster with the llm-mock profile runs the harness image, which is built on the sandbox image.
+  if [[ " ${CHANGED_SVCS[*]} " == *" sandbox "* ]] && k get ns aurora-dev-mock >/dev/null 2>&1; then
+    build_sandbox_llm || die "aurora-sandbox-llm build/load failed"
+  fi
   for d in "${restarted[@]}"; do k -n "$NS" rollout status "deploy/$d" --timeout=180s >/dev/null || die "$d did not become ready"; done
   log "done in $((SECONDS - t0))s: rebuilt+restarted: ${CHANGED_SVCS[*]:-nothing (all images current)}"
 }

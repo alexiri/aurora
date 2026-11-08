@@ -71,14 +71,26 @@ The mock's Service has the fixed ClusterIP `10.96.100.40`; the profile opens exa
 `gateway.allowed_private` and gives the gateway's NetworkPolicy one extra egress rule
 (`networkPolicy.gatewayExtraEgress`). Nothing else in the cluster is reachable by agents.
 
-Hosted agents: with the fake harness a chat is answered inside a sandbox Pod (this is what the
-`k8s.rs` scenarios drive). A real `claude-code` agent against the mock needs a sandbox image containing the CLI:
-build `scripts/e2e/llm.Containerfile` on top of the `aurora-sandbox` image and set `runner.image` to it.
+Hosted agents: without `--llm-mock` a chat is answered by the fake harness inside a sandbox Pod (this is what the
+`k8s.rs` scenarios drive). With `--llm-mock` (P2-E2E-1, decision D-80) the agents run the **real `claude-code`
+harness**: `kind-dev.sh` builds `scripts/e2e/llm.Containerfile` on top of the dev `aurora-sandbox` image as
+`localhost/aurora-dev/aurora-sandbox-llm:dev` (the Claude Code CLI at the pinned version, installed with npm), loads
+it, and `values-llm-mock.yaml` sets `config.runner.image` to it. `just kind-dev sandbox` rebuilds both images.
+The default agent needs nothing else: its harness is the default (`claude-code`) and its model is the endpoint's
+`default_model` (`scn-pong`, VidaiMock answers `pong`). `values-dev.yaml` sets `gateway.advertised_proxy_url:
+https://aurora-gateway:4102`, the name the runner aliases to the gateway proxy inside sandboxes (they have no DNS);
+the derived default, `localhost:4102`, makes every model call of a real harness fail with `API Error: 502`.
+
+A second cluster beside another one (or beside the owner's `aurora-dev`): `AURORA_DEV_CLUSTER=<name>
+AURORA_DEV_PORT=<free port>` for `kind-up`, `kind-dev`, `first-run.sh` and `m1.sh --kind` (the port is written into a
+generated kind config and into `externalUrl`).
 
 ## Tests against the dev stack
 
 ```sh
 bash scripts/e2e/m1.sh --kind        # Playwright M1 flow against http://localhost:4000 (default target: host processes)
+bash scripts/e2e/first-run.sh        # P2-E2E-1, needs `just kind-up --llm-mock`; `--up` brings the stack up first
+                                     # (sign in, add the LiteLLM key, grant it, say hello, "pong" back; nightly in CI)
 AURORA_TEST_KIND=1 AURORA_KIND_API=http://localhost:4000 AURORA_KIND_ORIGIN=http://localhost:4000 \
 AURORA_KIND_CONTEXT=kind-aurora-dev AURORA_KIND_NS=aurora AURORA_KIND_SBX_NS=aurora-sandboxes AURORA_KIND_FULL=aurora \
   cargo test -p aurora-e2e-hosted --test k8s -- --test-threads=1     # the Kubernetes scenarios (chat in a sandbox Pod, park/wake, …)

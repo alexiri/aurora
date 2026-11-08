@@ -23,4 +23,7 @@ bash scripts/guards/no-dev-idp-in-release.sh
 echo "== no-live-tokens (built-in plugin fixtures)"
 bash scripts/guards/no-live-tokens.sh
 
+echo "== dev-gateway-address (kind dev profile: in-cluster gateway proxy)"
+bash scripts/guards/dev-gateway-address.sh
+
 echo "== all guards passed"

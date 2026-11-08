@@ -47,10 +47,38 @@ kubectl --context kind-aurora-dev -n aurora exec deploy/aurora-api -- \
   /usr/local/bin/aurora-service bootstrap-admin --email you@example.test
 ```
 
-- Agents run a **fake harness**, and `--llm-mock` adds a mock LLM endpoint (it is not a real model). To use
-  a real model, see [LLM endpoints](docs/operator/llm-endpoints.md).
+- `--llm-mock` adds a mock LLM endpoint (LiteLLM in front of VidaiMock; it is not a real model) and makes
+  hosted agents run the **real claude-code harness** (see "Try it" below). Without it, hosted agents use a
+  fake harness. To use a real model, see [LLM endpoints](docs/operator/llm-endpoints.md).
 - `--connector-fake` adds a fake chat connector, to try the chat-channel features without a real chat
   platform.
+
+#### Try it: say hello to your agent
+
+With `just kind-up --llm-mock` running, this is the whole first-run path (it is exactly what the Playwright
+journey `web/e2e/first-run.spec.ts` does, run nightly and by `bash scripts/e2e/first-run.sh`):
+
+1. Open **http://localhost:4000**, click **Development sign-in** and pick a user (or any e-mail). Your first
+   sign-in creates your organization, a workspace and the default agent, **Daneel**.
+2. **Credentials → LLM keys**: name it, choose the endpoint **LiteLLM (VidaiMock, dev only)** and paste the
+   dev key `sk-aurora-mock-dev`. Click **Add LLM key**.
+3. **Agents → Daneel → Access**: tick **Grant** next to your key.
+4. **Chat**: send `hello`. The first message starts a sandbox and the Claude Code CLI (under a minute). The
+   answer is **pong**: the mock's scripted reply, which went chat → API → runner → sandbox → gateway →
+   LiteLLM → VidaiMock and back.
+5. **Activity** shows the model call as an allowed request to `litellm.aurora-dev-mock.svc.cluster.local`,
+   and the checklist on **Overview** shows all three steps done.
+
+To point the same stack at a real LiteLLM instead of the mock, skip `--llm-mock` and add your endpoint to
+the chart values (`config.llm.endpoints` with `provider: litellm` and your `base_url`; see
+[LLM endpoints](docs/operator/llm-endpoints.md)). A key's host must be reachable from the gateway: private
+addresses stay blocked unless listed in `gateway.allowed_private`, and the gateway's NetworkPolicy needs an
+egress rule (`networkPolicy.gatewayExtraEgress`), as `deploy/kind/values-llm-mock.yaml` does for the mock. The
+hosted claude-code harness needs a sandbox image that contains the CLI: build
+`scripts/e2e/llm.Containerfile` on your sandbox image and set `config.runner.image`.
+
+A second cluster beside another one: `AURORA_DEV_CLUSTER=mine AURORA_DEV_PORT=4010 just kind-up --llm-mock`
+(open http://localhost:4010).
 
 After changing code, rebuild and restart only what changed (about 40 s per service):
 
