@@ -158,6 +158,16 @@ describe("connection missing scopes", () => {
     await show(conn({ missing_scopes: ["write", "admin"] }));
     expect(screen.getByRole("status")).toHaveTextContent("not granted: write, admin");
   });
+  it("shows how to connect to a database connection", async () => {
+    await show(conn({ id: "0190a1b2-0000-7000-8000-000000000001", app_id: "postgresql", database: { engine: "postgres", service: "orders-prod" } }));
+    const note = screen.getByLabelText("How to connect to me@acme.io");
+    expect(note).toHaveTextContent("psql service=orders-prod -c 'select 1'");
+    expect(note).toHaveTextContent("0190a1b2");
+  });
+  it("shows no connection help for other apps", async () => {
+    await show(conn({ database: null }));
+    expect(screen.queryByLabelText("How to connect to me@acme.io")).toBeNull();
+  });
   it("shows no warning for a full grant", async () => {
     await show(conn({}));
     expect(screen.queryByRole("status")).toBeNull();

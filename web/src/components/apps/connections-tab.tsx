@@ -88,6 +88,19 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
           Some requested scopes were not granted: {c.missing_scopes.join(", ")}. Reconnect and approve them to restore full access.
         </p>
       ) : null}
+      {c.database ? (
+        <Notice tone="neutral" aria-label={`How to connect to ${c.label}`} className="space-y-1 text-xs">
+          <p>
+            Service name <code className="break-all font-mono text-ink">{c.database.service}</code>. In the agent&apos;s workspace run{" "}
+            <code className="break-all font-mono text-ink">psql service={c.database.service} -c &apos;select 1&apos;</code>.
+          </p>
+          <p>
+            The agent connects to the Aurora gateway with its gateway credential; the database password stays here. If you grant two
+            database connections with the same name to one agent, each name gets <code className="font-mono">-</code> and the first 8
+            characters of the connection id (<code className="font-mono">{c.id.replaceAll("-", "").slice(0, 8)}</code> here).
+          </p>
+        </Notice>
+      ) : null}
       {ok.length ? <p className="text-xs text-ink-2">Injecting credentials for: {ok.map((i) => i.host).join(", ")}</p> : null}
       {lost.length ? (
         <p className="text-xs text-pending-ink">

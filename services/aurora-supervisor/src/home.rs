@@ -27,6 +27,16 @@ use serde_json::{Map, Value};
 
 use crate::harvest::{INDEX_FILE, MEMORY_DIR, seal, verify};
 use crate::instructions::{RenderInputs, render};
+use crate::pg::PgDatabase;
+
+/// The `databases` of an installed `render_inputs.json`.
+pub fn installed_databases(raw: &[u8]) -> Vec<PgDatabase> {
+    serde_json::from_slice::<Value>(raw)
+        .ok()
+        .and_then(|v| v.get("databases").cloned())
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default()
+}
 
 const AURORA_DIR: &str = ".aurora";
 const SYNC_DIR: &str = ".aurora/sync";
@@ -48,6 +58,9 @@ pub struct HomeConfig {
     pub skills_dir: Option<String>,
     /// Instruction file names, relative to the root.
     pub instruction_files: Vec<String>,
+    /// Loopback port of the database relay; when set, the `databases` of the render inputs become
+    /// a libpq service file under `.aurora/pg` (`crate::pg`, P2-DBL-2).
+    pub pg: Option<u16>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -368,10 +381,17 @@ impl HomeProjector {
     /// Re-renders instruction files from the installed render inputs (boot and every sync).
     pub fn render_installed(&self) -> Result<(), HomeError> {
         let path = self.cfg.root.join(AURORA_DIR).join("render_inputs.json");
-        let inputs: RenderInputs = match fs::read(&path) {
-            Ok(b) => serde_json::from_slice(&b)?,
+        let raw = match fs::read(&path) {
+            Ok(b) => b,
             Err(_) => return Ok(()),
         };
+        let inputs: RenderInputs = serde_json::from_slice(&raw)?;
+        if let Some(port) = self.cfg.pg {
+            // A failure here must not block the sync: the agent only loses `psql service=`.
+            if let Err(e) = crate::pg::write(&self.cfg.root, port, &installed_databases(&raw)) {
+                tracing::warn!(error = %e, "libpq service file not written");
+            }
+        }
         let text = render(&inputs);
         for name in &self.cfg.instruction_files {
             let Some(rel) = clean_rel(name) else {

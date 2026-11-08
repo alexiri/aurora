@@ -4034,6 +4034,7 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             credentials_expires_at?: string | null;
+            database?: null | components["schemas"]["DatabaseRef"];
             /** Format: uuid */
             id: string;
             injecting: components["schemas"]["Injecting"][];
@@ -4391,6 +4392,17 @@ export interface components {
         };
         /** @enum {string} */
         CredentialKind: "secret" | "connection";
+        /** @description How an agent reaches a database connection (P2-DBL-2, C-230); `null` for other apps. */
+        DatabaseRef: {
+            /** @description `postgres`. */
+            engine: string;
+            /**
+             * @description The libpq service name in the agent's `pg_service.conf`: `psql service=<service>`. When two
+             *     database connections granted to one agent share it, each gets `-<first 8 characters of the
+             *     connection id>` appended (`aurora_core::pgservice`).
+             */
+            service: string;
+        };
         /** @enum {string} */
         Decision: "approve" | "deny";
         DecisionBody: {
@@ -5436,6 +5448,7 @@ export interface components {
                 created_at: string;
                 /** Format: date-time */
                 credentials_expires_at?: string | null;
+                database?: null | components["schemas"]["DatabaseRef"];
                 /** Format: uuid */
                 id: string;
                 injecting: components["schemas"]["Injecting"][];

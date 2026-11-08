@@ -71,6 +71,14 @@ fn bin(name: &str) -> PathBuf {
 }
 
 /// Run `podman` (inside the rootless netns this reaches the user's podman); returns stdout.
+/// `(host, port)` of the throw-away PostgreSQL started by `scripts/e2e/hosted.sh`
+/// (`AURORA_E2EH_DBTARGET=host:port`, user/password/db `aurora`/`aurora`/`postgres`).
+pub fn db_target() -> Option<(String, u16)> {
+    let t = std::env::var("AURORA_E2EH_DBTARGET").ok()?;
+    let (h, p) = t.rsplit_once(':')?;
+    Some((h.to_owned(), p.parse().ok()?))
+}
+
 pub fn podman(args: &[&str]) -> String {
     let o = std::process::Command::new("podman")
         .args(args)
@@ -194,7 +202,7 @@ log_level = "info"
 
 [gateway]
 internal_bind = "{OPS_IP}"
-allowed_private = ["127.0.0.1/32"]
+allowed_private = ["127.0.0.1/32"{db_target_allowed}]
 ca_dir = "{ca}"
 advertised_proxy_url = "https://aurora-gateway:4102"
 
@@ -213,6 +221,11 @@ hookhost_url = "http://127.0.0.1:9"
             image = std::env::var("AURORA_E2EH_IMAGE")
                 .unwrap_or_else(|_| "localhost/aurora-sandbox:0.1.0".into()),
             ca = dir.join("ca").display(),
+            // P2-DBL-2: the throw-away PostgreSQL that database connections point at is a private
+            // address; the guarded dial may reach exactly that one.
+            db_target_allowed = db_target()
+                .map(|(h, _)| format!(", \"{h}/32\""))
+                .unwrap_or_default(),
         ) + extra_toml;
         let mut stack = Stack {
             idp,

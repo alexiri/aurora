@@ -19603,6 +19603,17 @@
             ],
             "format": "date-time"
           },
+          "database": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DatabaseRef",
+                "description": "Present for a connection of an app with a `database` section (C-230)."
+              }
+            ]
+          },
           "id": {
             "type": "string",
             "format": "uuid"
@@ -20854,6 +20865,24 @@
           "secret",
           "connection"
         ]
+      },
+      "DatabaseRef": {
+        "type": "object",
+        "description": "How an agent reaches a database connection (P2-DBL-2, C-230); `null` for other apps.",
+        "required": [
+          "engine",
+          "service"
+        ],
+        "properties": {
+          "engine": {
+            "type": "string",
+            "description": "`postgres`."
+          },
+          "service": {
+            "type": "string",
+            "description": "The libpq service name in the agent's `pg_service.conf`: `psql service=<service>`. When two\ndatabase connections granted to one agent share it, each gets `-<first 8 characters of the\nconnection id>` appended (`aurora_core::pgservice`)."
+          }
+        }
       },
       "Decision": {
         "type": "string",
@@ -24427,6 +24456,17 @@
                     "null"
                   ],
                   "format": "date-time"
+                },
+                "database": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DatabaseRef",
+                      "description": "Present for a connection of an app with a `database` section (C-230)."
+                    }
+                  ]
                 },
                 "id": {
                   "type": "string",

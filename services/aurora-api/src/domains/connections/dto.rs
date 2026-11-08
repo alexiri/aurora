@@ -26,6 +26,17 @@ pub struct InstanceRef {
     pub label: String,
 }
 
+/// How an agent reaches a database connection (P2-DBL-2, C-230); `null` for other apps.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DatabaseRef {
+    /// `postgres`.
+    pub engine: String,
+    /// The libpq service name in the agent's `pg_service.conf`: `psql service=<service>`. When two
+    /// database connections granted to one agent share it, each gets `-<first 8 characters of the
+    /// connection id>` appended (`aurora_core::pgservice`).
+    pub service: String,
+}
+
 /// A connection. Credentials are never returned (SEC-12).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Connection {
@@ -55,6 +66,8 @@ pub struct Connection {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub injecting: Vec<Injecting>,
+    /// Present for a connection of an app with a `database` section (C-230).
+    pub database: Option<DatabaseRef>,
 }
 
 impl Connection {
@@ -91,6 +104,13 @@ impl Connection {
             .filter(|s| !r.scopes.contains(s))
             .cloned()
             .collect();
+        let database = snap
+            .and_then(|s| s.app(&r.app_id))
+            .and_then(|a| a.database.as_ref())
+            .map(|d| DatabaseRef {
+                engine: d.engine.clone(),
+                service: aurora_core::pgservice::service_base(&r.label),
+            });
         Self {
             id: r.id,
             org_id: r.org_id,
@@ -122,6 +142,7 @@ impl Connection {
             created_at: r.created_at,
             updated_at: r.updated_at,
             injecting,
+            database,
         }
     }
 }

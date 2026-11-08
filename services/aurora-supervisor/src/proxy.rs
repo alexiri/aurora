@@ -43,6 +43,16 @@ impl Credential {
         }
     }
 
+    /// The secret in force now: the turn context credential, else the boot token (database relay,
+    /// `crate::pgrelay`; never handed to anything the agent can read).
+    pub fn secret(&self) -> String {
+        self.context
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .unwrap_or_else(|| self.boot.clone())
+    }
+
     /// Value of the `Proxy-Authorization` header for the current state.
     pub fn header_value(&self) -> String {
         let secret = self
@@ -66,6 +76,8 @@ pub struct GatewayUpstream {
     /// `host:port` dialled.
     pub addr: String,
     connector: TlsConnector,
+    /// Same trust, no ALPN: the PostgreSQL lane (`connect_db`).
+    db_connector: TlsConnector,
     name: ServerName<'static>,
 }
 
@@ -98,14 +110,39 @@ impl GatewayUpstream {
         .map_err(|e| e.to_string())?
         .with_root_certificates(roots)
         .with_no_client_auth();
+        let db_cfg = cfg.clone();
         cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
         let name = ServerName::try_from(server_name.to_owned())
             .map_err(|e| format!("gateway server name {server_name:?}: {e}"))?;
         Ok(Self {
             addr: addr.into(),
             connector: TlsConnector::from(Arc::new(cfg)),
+            db_connector: TlsConnector::from(Arc::new(db_cfg)),
             name,
         })
+    }
+
+    /// PostgreSQL lane (`crate::pgrelay`): dial, `SSLRequest`, `S`, then TLS verified against the
+    /// CA and `name` (the connection's `<id>.db.aurora.internal`, else the gateway's server name).
+    /// Nothing but the `SSLRequest` is written before verification succeeded.
+    pub(crate) async fn connect_db(
+        &self,
+        name: Option<&str>,
+    ) -> Result<tokio_rustls::client::TlsStream<TcpStream>, std::io::Error> {
+        let name = match name {
+            Some(n) => ServerName::try_from(n.to_owned())
+                .map_err(|e| std::io::Error::other(format!("server name {n:?}: {e}")))?,
+            None => self.name.clone(),
+        };
+        let mut tcp = TcpStream::connect(&self.addr).await?;
+        let _ = tcp.set_nodelay(true);
+        tcp.write_all(&[0, 0, 0, 8, 4, 210, 22, 47]).await?;
+        let mut answer = [0u8; 1];
+        tcp.read_exact(&mut answer).await?;
+        if answer[0] != b'S' {
+            return Err(std::io::Error::other("gateway refused TLS for PostgreSQL"));
+        }
+        self.db_connector.connect(name, tcp).await
     }
 
     /// Dial + handshake. No credential is written until verification succeeded.
@@ -141,6 +178,10 @@ pub struct ProxyHandle {
 }
 
 impl ProxyHandle {
+    pub(crate) fn new(addr: SocketAddr, task: JoinHandle<()>) -> Self {
+        Self { addr, task }
+    }
+
     pub fn url(&self) -> String {
         format!("http://{}", self.addr)
     }

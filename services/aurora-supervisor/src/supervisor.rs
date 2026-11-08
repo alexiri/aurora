@@ -48,6 +48,10 @@ pub struct SupervisorConfig {
     pub harvest_interval: Duration,
     pub tools: ToolsConfig,
     pub process: ProcessConfig,
+    /// (P2-DBL-2, D-89) Loopback port of the database relay (`crate::pgrelay`); the libpq service
+    /// file points at it. `None`: no service file, no relay, no `PGSERVICEFILE`. Port 0 binds any
+    /// free port (tests that exercise the relay directly).
+    pub pg: Option<u16>,
 }
 
 impl SupervisorConfig {
@@ -64,6 +68,7 @@ impl SupervisorConfig {
             harvest_interval: Duration::from_secs(10),
             tools: ToolsConfig::default(),
             process: ProcessConfig::new(PathBuf::from("/workspace")),
+            pg: None,
         }
     }
 }
@@ -100,6 +105,10 @@ pub struct Supervisor {
     inbox: Inbox,
     /// (RFE-010) Session purges received in the home sync, executed before any turn is accepted.
     pending_purges: Vec<(Uuid, String)>,
+    /// (P2-DBL-2) The loopback PostgreSQL relay, running while the home sync carries databases.
+    db_relay: Option<ProxyHandle>,
+    /// The relay's credential: boot token, turn context credential during exactly one turn.
+    db_turns: Arc<crate::pgrelay::DbTurns>,
 }
 
 /// Home projection state: staged sync, plus the memory harvest bookkeeping.
@@ -144,10 +153,15 @@ impl Supervisor {
                 root: cfg.working_dir.clone(),
                 skills_dir: caps.skills_dir.clone(),
                 instruction_files: caps.instruction_files.clone(),
+                pg: cfg.pg,
             }),
             harvester: Harvester::new(&cfg.working_dir),
         }));
-        let procs = ProcessManager::new(cfg.process.clone(), out.clone());
+        let mut process = cfg.process.clone();
+        if cfg.pg.is_some() {
+            process.env.extend(crate::pg::env(&cfg.working_dir));
+        }
+        let procs = ProcessManager::new(process, out.clone());
         let mut tools = cfg.tools.clone();
         tools.home = cfg.working_dir.clone();
         let hub = ToolHub::new(
@@ -157,6 +171,8 @@ impl Supervisor {
             procs.clone(),
         );
         Self {
+            db_turns: crate::pgrelay::DbTurns::new(cfg.boot_token.clone()),
+            db_relay: None,
             inbox: Inbox::new(&cfg.working_dir),
             home,
             hub,
@@ -169,6 +185,31 @@ impl Supervisor {
             turns: HashMap::new(),
             ready: false,
             pending_purges: Vec::new(),
+        }
+    }
+
+    /// Starts the loopback database relay when the installed home carries databases and stops it
+    /// when none remain (boot and after every committed sync).
+    async fn sync_db_relay(&mut self) {
+        let Some(port) = self.cfg.pg else { return };
+        let path = self.cfg.working_dir.join(".aurora/render_inputs.json");
+        let any = std::fs::read(path)
+            .map(|b| !crate::home::installed_databases(&b).is_empty())
+            .unwrap_or(false);
+        if !any {
+            self.db_relay = None;
+        } else if self.db_relay.is_none() {
+            let bind = SocketAddr::new(self.cfg.proxy_ip, port);
+            match crate::pgrelay::spawn_db_relay(
+                bind,
+                self.cfg.gateway_proxy.clone(),
+                self.db_turns.clone(),
+            )
+            .await
+            {
+                Ok(h) => self.db_relay = Some(h),
+                Err(e) => tracing::warn!(error = %e, "database relay did not start"),
+            }
         }
     }
 
@@ -208,6 +249,7 @@ impl Supervisor {
             }
         })
         .await;
+        self.sync_db_relay().await;
         let mut harvest_tick = interval(self.cfg.harvest_interval);
         harvest_tick.tick().await;
         loop {
@@ -428,6 +470,7 @@ impl Supervisor {
             Ok(Ok(())) => {
                 // Deleted conversations' session files go before the sandbox can run any turn.
                 self.run_pending_purges().await;
+                self.sync_db_relay().await;
                 self.ready = true;
                 self.send(SupervisorToRunner::HomeSynced(HomeSynced { generation }))
                     .await;
@@ -533,6 +576,7 @@ impl Supervisor {
             progress: self.cfg.progress_interval,
             gate: d.gate,
             procs: self.procs.clone(),
+            db_turns: self.db_turns.clone(),
         };
         self.hub.set_turn(d.conversation_id, Some(d.turn_id));
         self.turns.insert(d.turn_id, handle);
@@ -567,6 +611,9 @@ impl Supervisor {
                 .map(|k| ((*k).to_owned(), url.clone()))
                 .collect();
         env.push(("NO_PROXY".into(), "localhost,127.0.0.1".into()));
+        if self.cfg.pg.is_some() {
+            env.extend(crate::pg::env(&self.cfg.working_dir));
+        }
         env.extend(d.model.client_env.iter().cloned());
         let session = self
             .adapter
@@ -663,6 +710,7 @@ struct TurnTask {
     progress: Duration,
     gate: Option<Gate>,
     procs: Arc<ProcessManager>,
+    db_turns: Arc<crate::pgrelay::DbTurns>,
 }
 
 impl TurnTask {
@@ -710,6 +758,7 @@ impl TurnTask {
         let turn_ref = TurnRef {
             turn_id: self.turn_id,
         };
+        self.db_turns.begin(self.turn_id, self.credential.clone());
         self.cred
             .set_context(Some(std::mem::take(&mut self.credential)));
         self.send(SupervisorToRunner::TurnStarted(turn_ref.clone()))
@@ -729,6 +778,7 @@ impl TurnTask {
             Ok(stream) => self.pump(stream, &turn_ref).await,
         };
         self.cred.set_context(None);
+        self.db_turns.end(self.turn_id);
 
         let current_ref = self.session.lock().await.session_ref();
         self.report_session(current_ref).await;

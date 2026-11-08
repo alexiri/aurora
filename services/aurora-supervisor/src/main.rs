@@ -120,6 +120,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         doc.bootstrap_token.clone(),
     ));
     let mut cfg = SupervisorConfig::new(upstream, boot_token);
+    cfg.pg = Some(aurora_supervisor::pgrelay::RELAY_PORT);
     cfg.tools.socket = Some(PathBuf::from(aurora_supervisor::tools::DEFAULT_SOCKET));
     if let Ok(exe) = std::env::current_exe() {
         cfg.mcp_bridge_command = vec![exe.display().to_string(), "mcp-bridge".to_owned()];

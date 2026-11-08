@@ -20,6 +20,7 @@ fn projector(root: &Path) -> HomeProjector {
         root: root.to_path_buf(),
         skills_dir: Some(".claude/skills".into()),
         instruction_files: vec!["AGENTS.md".into()],
+        pg: None,
     })
 }
 
@@ -398,4 +399,63 @@ async fn outbound_refuses_platform_dir() {
         .await;
         assert!(matches!(r, Err(OutboundError::Reserved)), "{r:?}");
     }
+}
+
+#[test]
+fn databases_in_render_inputs_become_libpq_files_and_disappear_with_the_grant() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let d = TempDir::new();
+    let mut p = HomeProjector::new(HomeConfig {
+        root: d.path().to_path_buf(),
+        skills_dir: Some(".claude/skills".into()),
+        instruction_files: vec!["AGENTS.md".into()],
+        pg: Some(3130),
+    });
+    let conn = Uuid::now_v7();
+    let with = |g: u64, dbs: Value| -> Vec<HomeSync> {
+        let mut parts = generation(g, &[], &[]);
+        parts[2] = part(
+            g,
+            2,
+            6,
+            "render_inputs",
+            json!([{"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}, "databases": dbs}]),
+        );
+        parts
+    };
+    apply_all(
+        &mut p,
+        &with(1, json!([{"service": "prod", "connection_id": conn}])),
+    );
+    p.commit(1).unwrap();
+    let dir = d.path().join(".aurora/pg");
+    let svc = fs::read_to_string(dir.join("pg_service.conf")).unwrap();
+    assert!(
+        svc.contains("[prod]") && svc.contains(&format!("user={conn}")),
+        "{svc}"
+    );
+    // Loopback relay, no TLS on that leg, no password or credential file at all.
+    assert!(svc.contains("host=127.0.0.1\nport=3130\n") && svc.contains("sslmode=disable"));
+    assert!(!dir.join("pgpass").exists() && !dir.join("root.crt").exists());
+    assert!(!svc.contains("password") && !svc.contains("aub_"));
+    assert_eq!(
+        fs::metadata(dir.join("pg_service.conf"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o644
+    );
+    // A pgpass left by an earlier version is removed on the next sync.
+    fs::write(dir.join("pgpass"), "h:1:*:u:aub_old\n").unwrap();
+    apply_all(
+        &mut p,
+        &with(3, json!([{"service": "prod", "connection_id": conn}])),
+    );
+    p.commit(3).unwrap();
+    assert!(!dir.join("pgpass").exists());
+
+    apply_all(&mut p, &with(4, json!([])));
+    p.commit(4).unwrap();
+    assert!(!dir.exists());
 }

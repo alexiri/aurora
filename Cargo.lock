@@ -527,6 +527,7 @@ dependencies = [
  "aurora-crypto",
  "aurora-protocol",
  "aurora-registry",
+ "aurora-secrets",
  "aurora-testkit",
  "base64 0.22.1",
  "chrono",

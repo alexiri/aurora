@@ -23,6 +23,8 @@ use crate::manifest::{
 use crate::template::{CONTEXT_VARS, Declared, Place, Template};
 
 const FORBIDDEN_HEADERS: [&str; 3] = ["authorization", "cookie", "x-api-key"];
+/// The tool host pattern of a database app (`docs/06 §Database lane`, C-222).
+const DATABASE_TOOL_HOST: &str = "*.db.aurora.internal";
 const RESERVED_ENV: [&str; 16] = [
     "PATH",
     "HOME",
@@ -522,12 +524,16 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                 match HostPattern::parse(&it.host) {
                     Err(e) => cx.v("host_pattern_invalid", &format!("{p}/host"), e.to_string()),
                     Ok(hp) => {
-                        let covered = app.hosts.iter().any(|h| {
-                            HostPattern::parse(&h.matcher.host).is_ok_and(|c| {
-                                c.as_str() == hp.as_str()
-                                    || (!hp.as_str().contains('*') && c.matches(hp.as_str(), 443))
-                            })
-                        });
+                        // (P2-DBL-2) The tools of a database app are matched on the synthetic
+                        // host of the database lane (docs/06), which no host entry can claim.
+                        let covered = (app.database.is_some() && hp.as_str() == DATABASE_TOOL_HOST)
+                            || app.hosts.iter().any(|h| {
+                                HostPattern::parse(&h.matcher.host).is_ok_and(|c| {
+                                    c.as_str() == hp.as_str()
+                                        || (!hp.as_str().contains('*')
+                                            && c.matches(hp.as_str(), 443))
+                                })
+                            });
                         if !covered {
                             cx.v(
                                 "tool_host_uncovered",

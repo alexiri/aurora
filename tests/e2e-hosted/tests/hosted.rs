@@ -950,3 +950,282 @@ async fn s9_deleted_conversation_session_files_are_purged_live_and_after_a_park(
     assert_eq!(pending, 0);
     st.finish().await;
 }
+
+/// The password of the database role the connection stores. It must never reach the sandbox.
+const DB_PASSWORD: &str = "db-secret-pw-e2e-4711";
+
+/// Registers a PostgreSQL app, a connection to `target` with sealed stored credentials, and
+/// returns the connection id. The snapshot is the shape of `plugins/builtin/postgresql`.
+async fn database_connection(
+    st: &Stack,
+    api: &Api,
+    target: (&str, u16),
+    label: &str,
+) -> uuid::Uuid {
+    use aurora_secrets::{Purpose, SealContext, SecretVault, StoreRegistry};
+    use std::sync::Arc;
+    let tool = |id: &str| json!({"id": id, "name": id, "host": "*.db.aurora.internal", "path": format!("/{id}"), "methods": ["POST"]});
+    let snapshot = json!({
+        "format": 1, "contract": 1,
+        "packages": [{"package_id": "postgresql", "version": "1.0.0", "digest": "d", "publisher": "aurora",
+                      "hooks_digest": null, "egress": {}, "context": []}],
+        "oauth_clients": [],
+        "apps": [{
+            "app_id": "postgresql", "package_id": "postgresql",
+            "about": {"id": "postgresql", "name": "PostgreSQL"},
+            "credentials": [], "metadata": [], "connect": [], "token": null,
+            "tools": {"read": {"items": [tool("read")]},
+                      "write": {"items": [tool("write"), tool("ddl"), tool("admin")]}},
+            "approvals": {}, "agent": null, "database": {"engine": "postgres"}
+        }],
+        "hosts": [], "reserved_hosts": []
+    });
+    let hash: String = {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(aurora_registry::snapshot::canonical_bytes(&snapshot))
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    sqlx::query(
+        "INSERT INTO registry_snapshots (id, contract, content_hash, snapshot, compiled_by, activated_at) \
+         VALUES ($1, 1, $2, $3, 'e2e-db', now())",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(&hash)
+    .bind(&snapshot)
+    .execute(st.pool())
+    .await
+    .unwrap();
+    sqlx::query("SELECT pg_notify('aurora_registry', '{}')")
+        .execute(st.pool())
+        .await
+        .unwrap();
+    let (org, ws): (uuid::Uuid, uuid::Uuid) = (api.org.parse().unwrap(), api.ws.parse().unwrap());
+    let conn = uuid::Uuid::now_v7();
+    let keys = {
+        use base64::Engine;
+        format!(
+            "k1:{}",
+            base64::engine::general_purpose::STANDARD.encode([b'a'; 32])
+        )
+    };
+    let keyring = Arc::new(aurora_crypto::Keyring::parse(&keys, "k1").unwrap());
+    let vault = SecretVault::new(
+        StoreRegistry::from_config(&aurora_config::SecretsSection::default(), keyring).unwrap(),
+    );
+    let sealed = vault
+        .seal(
+            &SealContext {
+                purpose: Purpose::ConnectionCredentials,
+                owner_id: conn,
+                org_id: org,
+                workspace_id: Some(ws),
+            },
+            aurora_core::Secret::from(
+                serde_json::to_vec(&json!({
+                    "host": target.0, "port": target.1, "dbname": "postgres", "user": "e2e_login",
+                    "password": DB_PASSWORD, "sslmode": "disable"
+                }))
+                .unwrap(),
+            ),
+        )
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'postgresql','postgresql','1.0.0',$4,'active',$5)")
+        .bind(conn).bind(org).bind(ws).bind(label).bind(sealed.to_column())
+        .execute(st.pool()).await.unwrap();
+    conn
+}
+
+/// P2-DBL-2: a hosted agent runs `psql service=<label> -c 'select 1'` with no secret on the
+/// command line; a write needs approval; the database password never reaches the sandbox.
+#[tokio::test]
+async fn s11_database_lane_psql_service_read_allowed_write_needs_approval() {
+    if !enabled() {
+        return;
+    }
+    let Some((dbhost, dbport)) = db_target() else {
+        eprintln!("SKIPPED: AURORA_E2EH_DBTARGET is not set; run scripts/e2e/hosted.sh");
+        return;
+    };
+    // The target database: a table, and the role the stored credentials log in as.
+    let tdb = sqlx::PgPool::connect(&format!(
+        "postgres://aurora:aurora@{dbhost}:{dbport}/postgres"
+    ))
+    .await
+    .unwrap();
+    for q in [
+        "DROP TABLE IF EXISTS e2e_t".to_owned(),
+        "CREATE TABLE e2e_t (id int PRIMARY KEY, v text)".to_owned(),
+        "DROP ROLE IF EXISTS e2e_login".to_owned(),
+        format!("CREATE ROLE e2e_login LOGIN PASSWORD '{DB_PASSWORD}'"),
+        "GRANT ALL ON e2e_t TO e2e_login".to_owned(),
+    ] {
+        sqlx::query(&q).execute(&tdb).await.unwrap();
+    }
+    let (st, api) = fx(Opts::default()).await;
+    let conn = database_connection(&st, &api, (&dbhost, dbport), "Orders DB").await;
+    // The dashboard's view of the connection: the service name it shows (C-230).
+    let mut service = String::new();
+    for _ in 0..60 {
+        let (s, v) = api
+            .get(&format!("/v1/workspaces/{}/connections", api.ws))
+            .await;
+        assert_eq!(s, 200, "{v}");
+        if let Some(sv) = v["items"][0]["database"]["service"].as_str() {
+            service = sv.to_owned();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    assert_eq!(
+        service, "orders-db",
+        "the connection lists its libpq service name"
+    );
+    // Policy: default block; the grant allows read and asks for everything that changes state.
+    api.set_policy("block", json!([])).await;
+    let (s, v) = api
+        .put(
+            &format!("/v1/agents/{}/grants/connections/{conn}", api.daneel),
+            json!({"mode": "custom", "allow_tools": ["read"], "ask_tools": ["write"]}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    // The agent runs psql through the process tool (the same environment as any agent command).
+    let c = api.direct().await;
+    // (The fake harness only simulates tool calls; `process_start` is called over the tools socket,
+    // which runs the command with the environment every agent process gets.)
+    run_turn(&st, &api, &c, "[[say: warm]]").await;
+    let cs = containers();
+    assert_eq!(cs.len(), 1);
+    let cn = cs[0].as_str();
+    let psql = |name: &str, sql: &str| {
+        let cmd = format!(
+            "psql service={service} -At -c \"{sql}\" > /workspace/{name}.out 2>&1; echo rc=$? >> /workspace/{name}.out"
+        );
+        let r = tools_sock(
+            cn,
+            &json!({"id": 1, "session": c, "method": "call", "tool": "process_start",
+                    "arguments": {"name": name, "command": cmd}}),
+        );
+        assert!(r.contains("\"result\""), "process_start: {r}");
+    };
+    psql("read", "select 40 + 2");
+    let read_out = {
+        let mut out = String::new();
+        for _ in 0..60 {
+            out = exec_in(cn, "cat /workspace/read.out 2>/dev/null").1;
+            if out.contains("rc=") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        out
+    };
+    assert!(
+        read_out.contains("42") && read_out.contains("rc=0"),
+        "psql read: {read_out}\n{}",
+        st.log_tails()
+    );
+
+    // The libpq service file points at the loopback relay; there is no password file.
+    let (_, files) = exec_in(cn, "cd /workspace/.aurora/pg && ls && cat pg_service.conf");
+    assert!(
+        files.contains(&format!("[{service}]"))
+            && files.contains("host=127.0.0.1")
+            && files.contains("sslmode=disable"),
+        "{files}"
+    );
+    assert!(files.contains(&format!("user={conn}")), "{files}");
+    assert!(
+        !files.contains("pgpass") && !files.contains("root.crt"),
+        "{files}"
+    );
+    // Neither the database password nor any gateway credential (the boot token `aub_`, a turn
+    // context credential `auc_`) is in a file or in the environment of any process an agent can
+    // read (everything below runs as the agent's uid).
+    let boot_token = boot_doc(cn)["gateway"]["boot_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(boot_token.starts_with("aub_"), "{boot_token}");
+    for needle in [
+        DB_PASSWORD,
+        boot_token.as_str(),
+        "au[bc]_[A-Za-z0-9_-]\\{8,\\}",
+    ] {
+        let (_, leak) = exec_in(
+            cn,
+            &format!(
+                "grep -rIl -e '{needle}' /workspace /tmp /run /etc /home 2>/dev/null | head; cat /proc/[0-9]*/environ 2>/dev/null | tr '\\0' '\\n' | grep -c -e '{needle}'; env | grep -c -e '{needle}'"
+            ),
+        );
+        assert!(
+            leak.lines().all(|l| l.trim() == "0"),
+            "a credential reached the sandbox ({needle}): {leak}"
+        );
+    }
+
+    // A write is held for approval; the row appears only after it.
+    psql(
+        "write",
+        "insert into e2e_t values (1, 'top-secret-literal')",
+    );
+    let a = api.wait_pending().await;
+    assert_eq!(a["path"], "/write", "{a}");
+    let summary = a["summary"].to_string();
+    assert!(
+        summary.contains("insert into e2e_t values (?, ?)"),
+        "{summary}"
+    );
+    assert!(!summary.contains("top-secret-literal"), "{summary}");
+    let n: i64 = sqlx::query_scalar("select count(*) from e2e_t")
+        .fetch_one(&tdb)
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "held before approval");
+    let (s, v) = api
+        .post(
+            &format!("/v1/approvals/{}/decision", a["id"].as_str().unwrap()),
+            json!({"decision": "approve"}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let mut write_out = String::new();
+    for _ in 0..60 {
+        write_out = exec_in(cn, "cat /workspace/write.out 2>/dev/null").1;
+        if write_out.contains("rc=") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    assert!(
+        write_out.contains("INSERT 0 1") && write_out.contains("rc=0"),
+        "psql write: {write_out}"
+    );
+    let n: i64 = sqlx::query_scalar("select count(*) from e2e_t")
+        .fetch_one(&tdb)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+
+    // A schema change has no grant: refused with 42501, nothing reaches the database.
+    psql("ddl", "drop table e2e_t");
+    let mut ddl_out = String::new();
+    for _ in 0..60 {
+        ddl_out = exec_in(cn, "cat /workspace/ddl.out 2>/dev/null").1;
+        if ddl_out.contains("rc=") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    assert!(ddl_out.contains("rc=1"), "psql ddl: {ddl_out}");
+    let n: i64 = sqlx::query_scalar("select count(*) from e2e_t")
+        .fetch_one(&tdb)
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "the table survived");
+    st.finish().await;
+}

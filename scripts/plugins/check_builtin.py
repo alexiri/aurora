@@ -207,7 +207,12 @@ def check_app(app, paired, err):
             for c, r in neg:
                 if (r.get("observed") or {}).get("tool") == tid:
                     err(f"app {aid}: `{c['name']}` selects {tid} but must not")
-            if group == "read":
+            if app.get("database"):
+                # Database lane (docs/06): every statement is the synthetic `POST /<class>`, and its
+                # approval summary is built by the gateway from the statement, not by a template.
+                if t["methods"] != ["POST"] or not str(t.get("host", "")).endswith(".db.aurora.internal"):
+                    err(f"app {aid}: database tool {tid} must be POST on *.db.aurora.internal")
+            elif group == "read":
                 ok = (t.get("git") == "fetch" or t.get("graphql") == "query"
                       or set(t["methods"]) <= {"GET", "HEAD"})
                 if not ok:

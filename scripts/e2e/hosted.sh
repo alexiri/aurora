@@ -19,6 +19,9 @@ if [ "${AURORA_TEST_PODMAN:-}" != "1" ]; then echo "skipped: set AURORA_TEST_POD
 SBX_NET=aurora-e2eh-sbx
 DB_NET=aurora-e2eh-db
 PG=aurora-e2eh-pg
+# P2-DBL-2: the PostgreSQL that database connections point at. It is not the platform database
+# (the guarded dial refuses that by address and port), so the database lane has a server to reach.
+DBTARGET=aurora-e2eh-dbtarget
 ANCHOR=aurora-e2eh-anchor
 TOKEN="aur_e2ehostedtoken"
 FP=$(printf '%s' "$TOKEN" | sha256sum | cut -c1-16)
@@ -29,7 +32,7 @@ IMAGE="${AURORA_E2EH_IMAGE:-localhost/aurora-sandbox:0.1.0}"
 cleanup() {
   podman ps -a -q --filter "label=aurora.installation=$FP" | xargs -r podman rm -f -t 1 >/dev/null 2>&1
   podman volume ls -q --filter "label=aurora.installation=$FP" | xargs -r podman volume rm -f >/dev/null 2>&1
-  podman rm -f -t 1 "$PG" "$ANCHOR" >/dev/null 2>&1
+  podman rm -f -t 1 "$PG" "$DBTARGET" "$ANCHOR" >/dev/null 2>&1
   podman network rm "$SBX_NET" "$DB_NET" >/dev/null 2>&1
 }
 trap cleanup EXIT
@@ -54,8 +57,12 @@ podman run -d --name "$ANCHOR" --network "$SBX_NET" --entrypoint sleep "$IMAGE" 
 podman run -d --name "$PG" --network "$DB_NET" --ip 10.89.252.5 \
   -e POSTGRES_USER=aurora -e POSTGRES_PASSWORD=aurora -e POSTGRES_DB=postgres \
   docker.io/library/postgres:16 -c max_connections=300 -c fsync=off >/dev/null || exit 1
+podman run -d --name "$DBTARGET" --network "$DB_NET" --ip 10.89.252.6 \
+  -e POSTGRES_USER=aurora -e POSTGRES_PASSWORD=aurora -e POSTGRES_DB=postgres \
+  docker.io/library/postgres:16 -c max_connections=50 -c fsync=off >/dev/null || exit 1
 for _ in $(seq 60); do
-  podman exec "$PG" pg_isready -U aurora >/dev/null 2>&1 && break
+  podman exec "$PG" pg_isready -U aurora >/dev/null 2>&1 \
+    && podman exec "$DBTARGET" pg_isready -U aurora >/dev/null 2>&1 && break
   sleep 1
 done
 
@@ -63,7 +70,7 @@ SOCK=$(podman info --format '{{.Host.RemoteSocket.Path}}')
 podman unshare --rootless-netns env \
   AURORA_TEST_DATABASE_URL="postgres://aurora:aurora@10.89.252.5:5432/postgres" \
   AURORA_E2EH_SOCK="$SOCK" AURORA_E2EH_NETWORK="$SBX_NET" AURORA_E2EH_TOKEN="$TOKEN" \
-  AURORA_E2EH_FP="$FP" AURORA_E2EH_IMAGE="$IMAGE" \
+  AURORA_E2EH_FP="$FP" AURORA_E2EH_IMAGE="$IMAGE" AURORA_E2EH_DBTARGET="10.89.252.6:5432" \
   cargo test -p aurora-e2e-hosted "${TARGETS[@]}" -- --test-threads=1 --nocapture "$@"
 rc=$?
 exit $rc
