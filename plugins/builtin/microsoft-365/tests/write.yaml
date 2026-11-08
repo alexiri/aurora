@@ -1,0 +1,100 @@
+# Write tools: each has a positive case with its approval summary and a `negative <tool>:` case.
+- name: "send_mail: summary shows recipient and subject"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://graph.microsoft.com/v1.0/me/sendMail"
+    headers: { content-type: application/json }
+    body: '{"message":{"subject":"Quarterly report","body":{"contentType":"Text","content":"Attached."},"toRecipients":[{"emailAddress":{"address":"bob@example.com"}}]},"saveToSentItems":true}'
+  expect:
+    app: microsoft-365
+    tool: send_mail
+    summary: { title: "Send mail", fields: { To: "bob@example.com", Subject: "Quarterly report" } }
+- name: "negative send_mail: GET selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/sendMail" }
+  expect: { app: microsoft-365 }
+- name: "create_event: summary shows subject and start"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://graph.microsoft.com/v1.0/me/events"
+    headers: { content-type: application/json }
+    body: '{"subject":"Design review","start":{"dateTime":"2026-03-02T10:00:00","timeZone":"UTC"},"end":{"dateTime":"2026-03-02T11:00:00","timeZone":"UTC"}}'
+  expect:
+    tool: create_event
+    summary: { title: "Create calendar event", fields: { Subject: "Design review", Starts: "2026-03-02T10:00:00" } }
+- name: "negative create_event: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/events" }
+  expect: { app: microsoft-365 }
+- name: "create_calendar_event: summary shows the calendar"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://graph.microsoft.com/v1.0/me/calendars/AAMkAGcal=/events"
+    headers: { content-type: application/json }
+    body: '{"subject":"Planning","start":{"dateTime":"2026-03-03T09:00:00","timeZone":"UTC"},"end":{"dateTime":"2026-03-03T09:30:00","timeZone":"UTC"}}'
+  expect:
+    tool: create_calendar_event
+    summary: { title: "Create calendar event", fields: { Calendar: "AAMkAGcal=", Subject: "Planning", Starts: "2026-03-03T09:00:00" } }
+- name: "negative create_calendar_event: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/calendars/AAMkAGcal=/events" }
+  expect: { app: microsoft-365 }
+- name: "upload_drive_item_content: summary shows the item"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/content?@microsoft.graph.conflictBehavior=replace"
+    headers: { content-type: text/plain }
+    body: "new content"
+  expect:
+    tool: upload_drive_item_content
+    summary: { title: "Upload file content", fields: { Item: "01EXAMPLEITEM", Conflict: "replace" } }
+- name: "negative upload_drive_item_content: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/content" }
+  expect: { app: microsoft-365 }
+- name: "create_drive_root_folder: summary shows the name"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://graph.microsoft.com/v1.0/me/drive/root/children"
+    headers: { content-type: application/json }
+    body: '{"name":"Reports","folder":{},"@microsoft.graph.conflictBehavior":"rename"}'
+  expect:
+    tool: create_drive_root_folder
+    summary: { title: "Create OneDrive folder", fields: { Name: "Reports" } }
+- name: "negative create_drive_root_folder: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/root/children" }
+  expect: { app: microsoft-365 }
+- name: "create_drive_item_folder: summary shows parent and name"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/children"
+    headers: { content-type: application/json }
+    body: '{"name":"2026","folder":{}}'
+  expect:
+    tool: create_drive_item_folder
+    summary: { title: "Create OneDrive folder", fields: { Parent: "01EXAMPLEITEM", Name: "2026" } }
+- name: "negative create_drive_item_folder: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/children" }
+  expect: { app: microsoft-365 }
+- name: "upload_shared_drive_item_content: summary shows drive and item"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/content?@microsoft.graph.conflictBehavior=fail"
+    headers: { content-type: text/plain }
+    body: "new content"
+  expect:
+    tool: upload_shared_drive_item_content
+    summary: { title: "Upload file to document library", fields: { Drive: "b!exampledrive", Item: "01EXAMPLEITEM", Conflict: "fail" } }
+- name: "negative upload_shared_drive_item_content: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/content" }
+  expect: { app: microsoft-365 }
