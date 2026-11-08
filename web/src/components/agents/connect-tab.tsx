@@ -22,7 +22,7 @@ function Snippet({ label, text }: { label: string; text: string }) {
   return (
     <div className="space-y-1">
       <p className="text-sm font-medium">{label}</p>
-      <pre className="overflow-auto rounded-md bg-neutral-100 p-3 text-xs">{text}</pre>
+      <pre className="overflow-auto rounded-control bg-subtle p-3 text-xs text-ink">{text}</pre>
       <Button
         variant="outline"
         size="sm"
@@ -31,7 +31,7 @@ function Snippet({ label, text }: { label: string; text: string }) {
         Copy {label}
       </Button>
       {copied ? (
-        <span role="status" className="ml-2 text-sm text-green-700">
+        <span role="status" className="ml-2 text-sm text-accent-ink">
           Copied
         </span>
       ) : null}
@@ -72,15 +72,15 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
         <h2 id="tok-h" className="text-lg font-medium">
           Agent token
         </h2>
-        <p className="text-sm text-neutral-600">
+        <p className="text-sm text-ink-2">
           Regenerating revokes the current token and any context credentials.
         </p>
         {regenBlocked ? (
-          <p role="status" className="text-sm text-neutral-600">
+          <p role="status" className="text-sm text-ink-2">
             {regenBlocked}
           </p>
         ) : confirming ? (
-          <div role="alertdialog" aria-label="Confirm token regeneration" className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+          <div role="alertdialog" aria-label="Confirm token regeneration" className="space-y-2 rounded-control border border-pending-line bg-pending-panel p-3 text-sm text-ink">
             <p>Regenerate the token for @{agent.handle}? The previous token stops working immediately.</p>
             <div className="flex gap-2">
               <Button onClick={() => void regenerate()} disabled={regen.isPending}>
@@ -97,7 +97,7 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
           </Button>
         )}
         {regen.error ? (
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-danger-ink">
             {errorMessage(regen.error)}
           </p>
         ) : null}
@@ -110,7 +110,7 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
         {config.isPending ? <Loading /> : null}
         {config.isError ? <ErrorState error={config.error} onRetry={() => config.refetch()} /> : null}
         {config.data ? (
-          <pre data-testid="container-config" className="max-h-64 overflow-auto rounded-md bg-neutral-100 p-3 text-xs">
+          <pre data-testid="container-config" className="max-h-64 overflow-auto rounded-control bg-subtle p-3 text-xs text-ink">
             {JSON.stringify(config.data, null, 2)}
           </pre>
         ) : null}
@@ -118,11 +118,11 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
         <Snippet label="aurora run" text={snippets.run} />
         {snippets.env ? <Snippet label="env exports" text={snippets.env} /> : null}
         {config.data?.notes?.map((n, i) => (
-          <p key={i} role="note" className="rounded-md bg-amber-50 p-3 text-sm text-amber-900">
+          <p key={i} role="note" className="rounded-control bg-pending-panel p-3 text-sm text-pending-ink">
             {n}
           </p>
         ))}
-        <p className="text-sm text-neutral-600">
+        <p className="text-sm text-ink-2">
           Replace <code>&lt;AGENT_TOKEN&gt;</code> with your agent token
           {agent.byo?.effective_require_context ? (
             <>
@@ -138,7 +138,7 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
           Gateway CA certificate
         </h2>
         {ca.isError ? (
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-danger-ink">
             {errorMessage(ca.error)}
           </p>
         ) : (

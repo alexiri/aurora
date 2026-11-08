@@ -46,7 +46,7 @@ export function LoginView() {
       {providers.length > 0 ? (
         <div className="space-y-2" aria-label="Sign-in providers">
           {providers.map((p) => (
-            <Button key={p.id} asChild variant="outline" className="w-full">
+            <Button key={p.id} asChild variant="outline" size="lg" className="w-full">
               {/* Full navigation to the API, which redirects to the provider. */}
               <a href={oidcStartUrl(p.id, { returnTo: next })}>
                 {p.id === DEV_PROVIDER ? p.display_name : `Continue with ${p.display_name}`}

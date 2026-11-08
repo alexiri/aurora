@@ -4,10 +4,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useMemo, useState, type FormEvent } from "react";
 
+import { Avatar } from "@/components/agent-avatar";
 import { Markdown } from "@/components/apps/markdown";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { inputClass } from "@/components/ui/field";
+import { PaperclipIcon, SendIcon } from "@/components/ui/icons";
+import { cn } from "@/lib/utils";
 import { useRetention } from "@/lib/api/org";
 import { useCanApprove, useDecide } from "@/lib/api/approvals";
 import { ApiError } from "@/lib/api/client";
@@ -37,12 +39,12 @@ export function AttachmentLink({ id, filename, contentType, size }: { id: string
     <span className="flex items-center gap-2 text-sm">
       {canThumbnail(contentType) ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt="" className="h-12 w-12 rounded border border-neutral-200 object-cover" />
+        <img src={url} alt="" className="h-12 w-12 rounded border border-line object-cover" />
       ) : null}
-      <a className="underline" href={url} download={filename || undefined}>
+      <a className="text-link underline" href={url} download={filename || undefined}>
         {filename || "Attachment"}
       </a>
-      {size !== undefined ? <span className="text-xs text-neutral-600">({formatBytes(size)})</span> : null}
+      {size !== undefined ? <span className="text-xs text-muted">({formatBytes(size)})</span> : null}
     </span>
   );
 }
@@ -51,7 +53,7 @@ function ContinueNotice({ text, convId }: { text: string; convId: string }) {
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   return (
-    <div className="space-y-1 rounded bg-blue-50 p-2 text-sm text-blue-900">
+    <div className="space-y-1 rounded-control bg-subtle p-3 text-sm text-ink-2">
       <p>{text || "The agent paused after reaching the automated turn limit."}</p>
       <Button
         size="sm"
@@ -70,7 +72,7 @@ function ContinueNotice({ text, convId }: { text: string; convId: string }) {
         Continue
       </Button>
       {err ? (
-        <p role="alert" className="text-red-700">
+        <p role="alert" className="text-danger-ink">
           {err instanceof ApiError ? err.message : "Could not continue."}
         </p>
       ) : null}
@@ -82,7 +84,7 @@ export function ErrorNotice({ code, message, base }: { code?: string | null; mes
   const copy = errorCopy(code, message);
   const href = copy.link ? (copy.link.path === "credentials" ? `${base}/credentials` : undefined) : undefined;
   return (
-    <p role="alert" className="text-sm text-red-700">
+    <p role="alert" className="text-sm text-danger-ink">
       {copy.message}{" "}
       {copy.link && href ? (
         <Link href={href} className="underline">
@@ -101,21 +103,21 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
   const canApprove = useCanApprove(wsId);
   const settled = st.status !== "pending";
   return (
-    <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
-      <p className="font-medium">Approval requested</p>
+    <div className="rounded-control border border-pending-line bg-pending-panel p-3 text-sm text-ink">
+      <p className="font-semibold text-pending-ink">Approval requested</p>
       <p>{s(ev.payload.summary)}</p>
       {settled ? (
-        <p role="status" className="mt-1 text-neutral-700">
+        <p role="status" className="mt-1 text-ink-2">
           {st.status === "expired" ? "Expired" : st.status === "approve" ? "Approved" : "Denied"}
           {st.by ? ` by ${st.by}` : ""}
         </p>
       ) : !canApprove ? (
-        <p role="status" className="mt-1 text-neutral-700">
+        <p role="status" className="mt-1 text-ink-2">
           Waiting for an approver
         </p>
       ) : (
         <div className="mt-2 flex gap-2">
-          <Button size="sm" disabled={decide.isPending} onClick={() => decide.mutate({ id, decision: "approve" })}>
+          <Button size="sm" variant="approve" disabled={decide.isPending} onClick={() => decide.mutate({ id, decision: "approve" })}>
             Approve
           </Button>
           <Button size="sm" variant="outline" disabled={decide.isPending} onClick={() => decide.mutate({ id, decision: "deny" })}>
@@ -124,7 +126,7 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
         </div>
       )}
       {decide.error ? (
-        <p role="alert" className="mt-1 text-red-700">
+        <p role="alert" className="mt-1 text-danger-ink">
           {decide.error instanceof ApiError && decide.error.status === 409 ? "Already decided." : "Could not record the decision."}
         </p>
       ) : null}
@@ -135,18 +137,42 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
 function ActionApprovalNote({ summary, wsId }: { summary: string; wsId: string }) {
   const canApprove = useCanApprove(wsId);
   return (
-    <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm">
+    <p className="rounded-control border border-pending-line bg-pending-panel p-3 text-sm text-pending-ink">
       Action approval: {summary} {canApprove ? "(decide in Approvals)" : "(waiting for an approver)"}
     </p>
   );
 }
 
-export function EventView({ ev, state, wsId, base, convId }: { ev: TranscriptEvent; state: TranscriptState; wsId: string; base: string; convId: string }) {
+/** Who the agent is, for the small avatar next to its text (display only). */
+export interface AgentIdent {
+  id: string;
+  name: string;
+  avatarUrl?: string | null;
+}
+
+export function EventView({
+  ev,
+  state,
+  wsId,
+  base,
+  convId,
+  agent,
+}: {
+  ev: TranscriptEvent;
+  state: TranscriptState;
+  wsId: string;
+  base: string;
+  convId: string;
+  agent?: AgentIdent;
+}) {
   const p = ev.payload;
+  const agentName = agent?.name;
+  const agentAvatarUrl = agent?.avatarUrl;
+  const agentKey = agent?.id;
   if (p.redacted === true) {
     // RFE-010: the content was replaced in place; only the marker remains.
     return (
-      <p className="text-xs italic text-neutral-600">
+      <p className="text-xs italic text-muted">
         Content redacted{s(p.redacted_by) ? ` by ${s(p.redacted_by)}` : ""}
         {s(p.reason) ? ` (${s(p.reason)})` : ""}.
       </p>
@@ -155,11 +181,11 @@ export function EventView({ ev, state, wsId, base, convId }: { ev: TranscriptEve
   switch (ev.type) {
     case "turn.queued":
       return (
-        <div className="ml-auto max-w-[80%] rounded-md bg-neutral-100 p-2 text-sm">
-          <p className="text-xs text-neutral-600">
+        <div className="ml-auto max-w-[80%] rounded-card rounded-br-sm bg-bubble px-4 py-2.5 text-sm text-bubble-ink">
+          <p className="text-xs opacity-80">
             {s(p.speaker_label) || "You"}
             {s(p.door) && s(p.door) !== "dashboard" ? (
-              <span className="ml-2 rounded-full border border-neutral-300 px-2 py-0.5">{s(p.door)}</span>
+              <span className="ml-2 rounded-full border border-current px-2 py-0.5">{s(p.door)}</span>
             ) : null}
           </p>
           <p className="whitespace-pre-wrap">{s(p.text)}</p>
@@ -170,16 +196,19 @@ export function EventView({ ev, state, wsId, base, convId }: { ev: TranscriptEve
       );
     case "text":
       return (
-        <div className="max-w-[90%] rounded-md border border-neutral-200 p-2">
-          <Markdown source={s(p.text)} />
+        <div className="flex max-w-[90%] items-start gap-2">
+          <Avatar name={agentName ?? "Agent"} url={agentAvatarUrl} tintKey={agentKey} size={24} className="mt-0.5" />
+          <div className="min-w-0 flex-1 text-ink">
+            <Markdown source={s(p.text)} />
+          </div>
         </div>
       );
     case "tool.started": {
       const fin = state.events.find((e) => e.type === "tool.finished" && s(e.payload.call_id) === s(p.call_id));
       return (
-        <div className="rounded-md border border-neutral-200 p-2 text-xs">
-          <span className="font-mono font-medium">{s(p.name)}</span> <span>{s(p.summary)}</span>{" "}
-          <span className="text-neutral-600">
+        <div className="rounded-control border border-line bg-surface px-3 py-2 font-mono text-xs text-ink-2">
+          <span className="font-medium text-ink">{s(p.name)}</span> <span>{s(p.summary)}</span>{" "}
+          <span className="text-muted">
             {fin ? (fin.payload.ok ? "done" : "failed") : "running…"}
             {fin && s(fin.payload.summary) ? `: ${s(fin.payload.summary)}` : ""}
           </span>
@@ -188,14 +217,14 @@ export function EventView({ ev, state, wsId, base, convId }: { ev: TranscriptEve
     }
     case "correction":
       return (
-        <p className="text-xs italic text-neutral-600">
+        <p className="text-xs italic text-muted">
           {p.action === "retract" ? "A previous message was retracted." : `A previous message was corrected: ${s(p.text)}`}
         </p>
       );
     case "message.joined":
-      return <p className="text-xs text-neutral-600">Follow-up joined the running turn.</p>;
+      return <p className="text-xs text-muted">Follow-up joined the running turn.</p>;
     case "message.sent_now":
-      return <p className="text-xs text-neutral-600">Follow-up sent now.</p>;
+      return <p className="text-xs text-muted">Follow-up sent now.</p>;
     case "approval.pending":
       return <ApprovalCard ev={ev} state={state} wsId={wsId} />;
     case "action_approval.pending":
@@ -215,7 +244,7 @@ export function EventView({ ev, state, wsId, base, convId }: { ev: TranscriptEve
         const reset = state.events.some((e) => (e.seq ?? 0) > (ev.seq ?? 0) && e.type === "notice" && s(e.payload.code) === "app_turn_cap_reset");
         if (!reset) return <ContinueNotice text={s(p.text)} convId={convId} />;
       }
-      return <p className="rounded bg-blue-50 p-2 text-sm text-blue-900">{s(p.text)}</p>;
+      return <p className="rounded-control bg-subtle p-3 text-sm text-ink-2">{s(p.text)}</p>;
     }
     case "error":
       return <ErrorNotice code={s(p.code)} message={s(p.message)} base={base} />;
@@ -226,14 +255,14 @@ export function EventView({ ev, state, wsId, base, convId }: { ev: TranscriptEve
   }
 }
 
-function Transcript({ state, wsId, base, convId }: { state: TranscriptState; wsId: string; base: string; convId: string }) {
+function Transcript({ state, wsId, base, convId, agent }: { state: TranscriptState; wsId: string; base: string; convId: string; agent?: AgentIdent }) {
   const turn = activeTurnId(state);
   const deltas = Object.values(state.deltas);
   return (
     <div className="space-y-2" aria-live="polite">
       {state.events.map((ev) => (
         <div key={ev.seq}>
-          <EventView ev={ev} state={state} wsId={wsId} base={base} convId={convId} />
+          <EventView ev={ev} state={state} wsId={wsId} base={base} convId={convId} agent={agent} />
           {(ev.type === "turn.queued" || ev.type === "text") && ev.payload.redacted !== true && ev.seq ? (
             <div className={ev.type === "turn.queued" ? "text-right" : ""}>
               <RedactButton convId={convId} seq={ev.seq} />
@@ -242,16 +271,19 @@ function Transcript({ state, wsId, base, convId }: { state: TranscriptState; wsI
         </div>
       ))}
       {deltas.map((d) => (
-        <div key={d.messageId} className="max-w-[90%] rounded-md border border-dashed border-neutral-300 p-2">
-          <Markdown source={d.text} />
+        <div key={d.messageId} className="flex max-w-[90%] items-start gap-2">
+          {agent ? <Avatar name={agent.name} url={agent.avatarUrl} tintKey={agent.id} size={24} className="mt-0.5" /> : null}
+          <div className="min-w-0 flex-1 text-ink">
+            <Markdown source={d.text} />
+          </div>
         </div>
       ))}
-      {turn && state.activity[turn] ? <p className="text-xs text-neutral-500">{state.activity[turn]}</p> : null}
+      {turn && state.activity[turn] ? <p className="text-xs text-muted">{state.activity[turn]}</p> : null}
     </div>
   );
 }
 
-export function ChatTab({ agentId, wsId, base, orgId }: { agentId: string; wsId: string; base: string; orgId?: string }) {
+export function ChatTab({ agentId, wsId, base, orgId, agent }: { agentId: string; wsId: string; base: string; orgId?: string; agent?: AgentIdent }) {
   const direct = useDirectConversation(agentId);
   const [showArchived, setShowArchived] = useState(false);
   const list = useConversations(agentId, showArchived);
@@ -268,15 +300,21 @@ export function ChatTab({ agentId, wsId, base, orgId }: { agentId: string; wsId:
   const archivedItems = showArchived ? convs : [];
   const days = retention.data?.conversations_days ?? null;
   const pickedDirect = memberDirects.find((c) => c.id === picked) ?? null;
+  const convBtn = (active: boolean) =>
+    cn(
+      "block min-h-9 w-full rounded-control px-2.5 py-1.5 text-left",
+      active ? "bg-subtle font-semibold text-ink" : "text-ink-2 hover:bg-subtle",
+    );
+  const kindChip = "mr-1 rounded-full border border-line-strong px-1.5 text-xs text-ink-2";
   return (
     <div className="space-y-3">
       {days ? (
-        <p role="note" className="rounded bg-neutral-100 p-2 text-xs text-neutral-700">
+        <p role="note" className="rounded-control bg-subtle p-2 text-xs text-ink-2">
           Your organization deletes conversations after {days} days without activity.
         </p>
       ) : null}
     <div className="grid gap-4 md:grid-cols-[14rem_1fr]">
-      <nav aria-label="Conversations" className="space-y-1 text-sm">
+      <nav aria-label="Conversations" className="min-w-0 space-y-1 text-sm">
         <button
           type="button"
           aria-pressed={showArchived}
@@ -284,58 +322,35 @@ export function ChatTab({ agentId, wsId, base, orgId }: { agentId: string; wsId:
             setShowArchived((v) => !v);
             setPicked(null);
           }}
-          className="block w-full rounded border border-neutral-300 px-2 py-1 text-left text-xs"
+          className="block min-h-9 w-full rounded-control border border-line-strong bg-surface px-2.5 py-1.5 text-left text-xs text-ink hover:bg-subtle"
         >
           {showArchived ? "Back to conversations" : "Archived"}
         </button>
-        {showArchived && archivedItems.length === 0 ? <p className="px-2 text-xs text-neutral-600">No archived conversations.</p> : null}
+        {showArchived && archivedItems.length === 0 ? <p className="px-2 text-xs text-muted">No archived conversations.</p> : null}
         {archivedItems.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            onClick={() => setPicked(c.id)}
-            aria-current={picked === c.id}
-            className={`block w-full rounded px-2 py-1 text-left ${picked === c.id ? "bg-neutral-100 font-medium" : ""}`}
-          >
-            <span className="mr-1 rounded-full border border-neutral-300 px-1.5 text-xs">{c.kind}</span>
+          <button key={c.id} type="button" onClick={() => setPicked(c.id)} aria-current={picked === c.id} className={convBtn(picked === c.id)}>
+            <span className={kindChip}>{c.kind}</span>
             {c.title ?? c.external_ref}
           </button>
         ))}
         {showArchived ? null : (
-          <button
-            type="button"
-            onClick={() => setPicked(null)}
-            aria-current={!picked}
-            className={`block w-full rounded px-2 py-1 text-left ${!picked ? "bg-neutral-100 font-medium" : ""}`}
-          >
+          <button type="button" onClick={() => setPicked(null)} aria-current={!picked} className={convBtn(!picked)}>
             Direct chat
           </button>
         )}
         {others.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            onClick={() => setPicked(c.id)}
-            aria-current={picked === c.id}
-            className={`block w-full rounded px-2 py-1 text-left ${picked === c.id ? "bg-neutral-100 font-medium" : ""}`}
-          >
-            <span className="mr-1 rounded-full border border-neutral-300 px-1.5 text-xs">{c.kind}</span>
+          <button key={c.id} type="button" onClick={() => setPicked(c.id)} aria-current={picked === c.id} className={convBtn(picked === c.id)}>
+            <span className={kindChip}>{c.kind}</span>
             {c.title ?? c.external_ref}
           </button>
         ))}
         {memberDirects.length > 0 ? (
           <div role="group" aria-label="Direct conversations of other members" className="space-y-1 pt-2">
-            <p className="px-2 text-xs font-medium text-neutral-600">Direct conversations of other members</p>
+            <p className="px-2 text-xs font-medium text-muted">Direct conversations of other members</p>
             {memberDirects.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => setPicked(c.id)}
-                aria-current={picked === c.id}
-                className={`block w-full rounded px-2 py-1 text-left ${picked === c.id ? "bg-neutral-100 font-medium" : ""}`}
-              >
+              <button key={c.id} type="button" onClick={() => setPicked(c.id)} aria-current={picked === c.id} className={convBtn(picked === c.id)}>
                 {c.direct_user?.display_name}
-                <span className="block text-xs text-neutral-600">visible to workspace owners</span>
+                <span className="block text-xs text-muted">visible to workspace owners</span>
               </button>
             ))}
           </div>
@@ -346,6 +361,7 @@ export function ChatTab({ agentId, wsId, base, orgId }: { agentId: string; wsId:
       ) : (
         <ChatPane
           key={convId}
+          agent={agent}
           agentId={agentId}
           wsId={wsId}
           base={base}
@@ -375,11 +391,13 @@ export function ChatPane({
   ownDirect = false,
   archived = false,
   onGone,
+  agent,
 }: {
   agentId: string;
   wsId: string;
   base: string;
   convId: string;
+  agent?: AgentIdent;
   direct: Conversation | null;
   /** Display name of the person whose direct conversation an owner is reading (read-only). */
   ownerView?: string | null;
@@ -448,12 +466,12 @@ export function ChatPane({
       <section aria-label="Chat" className="space-y-3">
         {onGone ? <ConversationActions agentId={agentId} convId={convId} archived={archived} onGone={onGone} /> : null}
         {ownDirect || direct ? (
-          <p role="note" className="rounded bg-neutral-100 p-2 text-xs text-neutral-700">
+          <p role="note" className="rounded-control bg-subtle p-2 text-xs text-ink-2">
             Only you and workspace owners can see this conversation.
           </p>
         ) : null}
         {ownerView !== null ? (
-          <p role="note" className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+          <p role="note" className="rounded-control border border-pending-line bg-pending-panel p-2 text-xs text-pending-ink">
             This is {ownerView || "another member"}&apos;s direct conversation. You can read it because you own this workspace; your
             access is recorded in the audit log. You can stop its turns but cannot write in it.
           </p>
@@ -463,18 +481,18 @@ export function ChatPane({
         {!loading && !error && state.events.length === 0 ? (
           <EmptyState title="No messages yet">Say hello to start the conversation.</EmptyState>
         ) : null}
-        <Transcript state={state} wsId={wsId} base={base} convId={convId} />
-        {!live && !loading && !error ? <p className="text-xs text-neutral-500">Reconnecting to live updates…</p> : null}
+        <Transcript state={state} wsId={wsId} base={base} convId={convId} agent={agent} />
+        {!live && !loading && !error ? <p className="text-xs text-muted">Reconnecting to live updates…</p> : null}
         {waiting.map((f) => (
-          <div key={f.id} className="flex items-center gap-2 text-sm">
-            <span className="text-neutral-600">Queued follow-up: {f.text}</span>
+          <div key={f.id} className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-ink-2">Queued follow-up: {f.text}</span>
             <Button size="sm" variant="outline" onClick={() => void act(() => chatApi.sendNow(f.parent_turn_id))}>
               Send now
             </Button>
           </div>
         ))}
         {sendErr instanceof ApiError && sendErr.code === "too_many_attachments" ? (
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-danger-ink">
             {uploadErrorMessage(sendErr)}
           </p>
         ) : sendErr ? (
@@ -487,20 +505,20 @@ export function ChatPane({
         {pending.length > 0 ? (
           <ul aria-label="Pending attachments" className="flex flex-wrap gap-2">
             {pending.map((a) => (
-              <li key={a.id} className="flex items-center gap-1 rounded-full border border-neutral-300 px-2 py-0.5 text-xs">
+              <li key={a.id} className="flex items-center gap-1 rounded-full border border-line-strong bg-surface px-2 py-0.5 text-xs text-ink-2">
                 <span>
                   {a.filename} ({formatBytes(a.size_bytes)})
                 </span>
-                <button type="button" aria-label={`Remove ${a.filename}`} onClick={() => setPending((p) => p.filter((x) => x.id !== a.id))}>
+                <button type="button" className="px-1 text-ink hover:text-danger-ink" aria-label={`Remove ${a.filename}`} onClick={() => setPending((p) => p.filter((x) => x.id !== a.id))}>
                   ×
                 </button>
               </li>
             ))}
           </ul>
         ) : null}
-        {uploading > 0 ? <p role="status" className="text-xs text-neutral-600">Uploading…</p> : null}
+        {uploading > 0 ? <p role="status" className="text-xs text-muted">Uploading…</p> : null}
         {uploadErr ? (
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-danger-ink">
             {uploadErr}
           </p>
         ) : null}
@@ -511,21 +529,25 @@ export function ChatPane({
             </Button>
           ) : null
         ) : (
-        <form onSubmit={(e) => void submit(e)} className="flex gap-2">
+        <form
+          onSubmit={(e) => void submit(e)}
+          className="rounded-card border border-line-strong bg-surface p-2 focus-within:border-accent dark:bg-canvas"
+        >
           <label htmlFor="chat-input" className="sr-only">
             Message
           </label>
           <textarea
             id="chat-input"
-            className={inputClass}
+            className="block max-h-48 min-h-14 w-full resize-y rounded-control bg-transparent px-2 py-1.5 text-sm text-ink placeholder:text-muted focus-visible:shadow-none focus-visible:outline-none"
             rows={2}
             value={text}
             placeholder={active ? "Add a follow-up…" : "Message the agent…"}
             onChange={(e) => setText(e.target.value)}
           />
-          <div className="flex flex-col gap-1">
-            <label className="inline-flex h-9 cursor-pointer items-center justify-center rounded-md border border-neutral-300 px-3 text-sm focus-within:ring-2">
-              Attach
+          <div className="mt-1 flex items-center gap-2">
+            <label className="inline-flex size-10 cursor-pointer items-center justify-center rounded-control text-ink-2 hover:bg-subtle hover:text-ink focus-within:outline focus-within:outline-2 focus-within:outline-accent">
+              <PaperclipIcon width={18} height={18} />
+              <span className="sr-only">Attach</span>
               <input
                 type="file"
                 multiple
@@ -537,14 +559,21 @@ export function ChatPane({
                 }}
               />
             </label>
-            <Button type="submit" disabled={busy || uploading > 0 || !text.trim()}>
-              {active ? "Follow up" : "Send"}
-            </Button>
+            <span className="flex-1" />
             {active ? (
-              <Button type="button" variant="outline" onClick={() => void act(() => chatApi.abort(active))}>
+              <Button type="button" variant="outline" size="sm" onClick={() => void act(() => chatApi.abort(active))}>
                 Stop
               </Button>
             ) : null}
+            <Button
+              type="submit"
+              size="lg"
+              className="size-11 min-h-11 px-0"
+              aria-label={active ? "Follow up" : "Send"}
+              disabled={busy || uploading > 0 || !text.trim()}
+            >
+              <SendIcon width={18} height={18} />
+            </Button>
           </div>
         </form>
         )}

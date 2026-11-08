@@ -44,6 +44,20 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
 Decision D-68. Reference mock-ups: `docs/design/ui-refresh/` (static HTML;
 where a mock-up and this section disagree, this section wins).
 
+**Scope: the whole dashboard.** This section is the dashboard's visual
+identity, not a restyle of individual screens. **Every** screen MUST follow
+it — the screens in the mock-ups and every other existing screen (org,
+workspace, agent tabs, account, admin, auth) as well as every screen added
+later: same tokens, typography, sidebar shell, `PageHeader`, the shared UI
+primitives (`web/src/components/ui`) and the page patterns derived from the
+mock-ups (sections and cards, lists and tables, forms and fields, empty /
+loading / error states, dialogs, status badges), in both themes and at 390 px
+without horizontal page scroll. The mock-up screens are the references from
+which those patterns are taken; a screen without a mock-up composes the same
+patterns. New UI MUST NOT introduce one-off styling where a primitive or
+pattern exists; when it needs a new one, the primitive or pattern is added to
+the shared set and documented here.
+
 **Tokens.** Colours are defined once, as CSS custom properties in
 `web/src/app/globals.css`, and exposed to Tailwind through `@theme`.
 Components use the token utilities only. Raw hex values and Tailwind palette
@@ -227,6 +241,27 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   the form below 768 px. The form
   column is at most 380 px wide. The form's contents follow the sign-in rules
   of each phase (from phase 1, RFE-004: provider buttons only).
+
+**Page patterns.** Screens compose these shared components (all in
+`web/src/components/ui`, except the state components in `components/states.tsx`).
+Use them instead of styling by hand; if a screen needs something that is not
+here, add it here and document it.
+
+| Pattern | Component | Use |
+|---|---|---|
+| Page header | `PageHeader` | Breadcrumb, title, one-line description, right-aligned actions. First element of every shell page. |
+| Section | `Section` | A titled block (`h2`, description, actions) with optional `card`; also the way to group an overview page. |
+| Card | `Card` | A bordered `surface` panel (borders replace shadows in dark). |
+| List | `ItemList` + `ListRow` | Divided rows with an actions slot; rows wrap on narrow screens. For few, rich rows (agents, members, keys). |
+| Data table | `DataTable`, `Th`, `Td` | For columns of comparable data. The wrapper scrolls inside itself at 390 px, so the page never scrolls horizontally. Always give `caption`. |
+| Form | `Form`, `FormSection`, `FormActions`, `Field`, `inputClass` | `Field` links label, hint and error to the control; `FormSection` is a fieldset with a heading; `FormActions` is the submit row. Frontend validation is UX only. |
+| States | `Loading`, `EmptyState`, `ErrorState` | Every list/query shows one of the three. |
+| Notice | `Notice` (`neutral`, `accent`, `pending`, `danger`) | Inline callout for conflicts, warnings, errors and info. Use `role="alert"` after an action, `role="status"` otherwise. |
+| Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. |
+| Badges and dots | `Badge`, `StatusDot` | Status pills and dots. They always carry text; tone is `neutral`, `accent`, `pending` or `danger`. |
+| Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The strip scrolls within itself at 390 px. |
+| Buttons | `Button` (`primary`, `outline`, `approve`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. |
+| Auth layout | `AuthCard` | Split layout with the dark brand panel, for every public auth view. |
 
 ## Information architecture
 

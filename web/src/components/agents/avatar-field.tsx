@@ -76,9 +76,9 @@ export function AvatarField({ agent, wsId }: { agent: Agent; wsId: string }) {
           ) : null}
         </div>
       </div>
-      <p className="text-xs text-neutral-600">PNG, JPEG or WebP, up to 512 KiB. It is cropped to a square and resized to 256×256.</p>
+      <p className="text-xs text-muted">PNG, JPEG or WebP, up to 512 KiB. It is cropped to a square and resized to 256×256.</p>
       {problem || serverError ? (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger-ink">
           {problem || avatarErrorMessage(serverError)}
         </p>
       ) : null}

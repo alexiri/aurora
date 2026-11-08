@@ -5,7 +5,9 @@ import { useState } from "react";
 
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { inputClass } from "@/components/ui/field";
 import { useActivity } from "@/lib/api/approvals";
 import { useAgents } from "@/lib/api/queries";
@@ -26,12 +28,11 @@ const DECISIONS = [
   "error",
 ];
 
-export function decisionClass(d: string): string {
-  if (d === "allow" || d === "approved") return "bg-green-100 text-green-800";
-  if (d === "approval_expired" || d === "error") return "bg-amber-100 text-amber-800";
-  if (d === "blocked" || d.endsWith("_denied") || d.endsWith("_refused") || d === "rate_limited")
-    return "bg-red-100 text-red-800";
-  return "bg-amber-100 text-amber-800";
+export function decisionTone(d: string): "accent" | "pending" | "danger" {
+  if (d === "allow" || d === "approved") return "accent";
+  if (d === "approval_expired" || d === "error") return "pending";
+  if (d === "blocked" || d.endsWith("_denied") || d.endsWith("_refused") || d === "rate_limited") return "danger";
+  return "pending";
 }
 
 export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
@@ -45,7 +46,7 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
   const byId = new Map(agents.data?.items.map((a) => [a.id, a]) ?? []);
   return (
     <div className="max-w-6xl space-y-4">
-      <h1 className="text-xl font-semibold">Activity</h1>
+      <PageHeader title="Activity" className="mb-2" />
       <form
         role="search"
         className="flex flex-wrap items-end gap-2"
@@ -94,7 +95,7 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
       {items.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
-            <thead className="text-neutral-500">
+            <thead className="text-muted">
               <tr>
                 <th className="py-2 pr-4 font-medium">When</th>
                 <th className="py-2 pr-4 font-medium">Agent</th>
@@ -109,11 +110,11 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
               {items.map((e) => {
                 const a = byId.get(e.agent_id);
                 return (
-                  <tr key={e.id} className="border-t border-neutral-200">
+                  <tr key={e.id} className="border-t border-line">
                     <td className="py-2 pr-4">{fmtDate(e.ts)}</td>
                     <td className="py-2 pr-4">
                       {a ? (
-                        <Link className="underline" href={`${base}/agents/${a.handle}`}>
+                        <Link className="text-link underline"href={`${base}/agents/${a.handle}`}>
                           {a.name}
                         </Link>
                       ) : (
@@ -124,13 +125,13 @@ export function ActivityView({ wsId, base }: { wsId: string; base: string }) {
                       {e.method} {e.host}
                       {e.path}
                       {e.context_label ? (
-                        <span className="mt-0.5 block font-sans text-xs text-neutral-500" data-testid="context-label">
+                        <span className="mt-0.5 block font-sans text-xs text-muted" data-testid="context-label">
                           {e.context_label}
                         </span>
                       ) : null}
                     </td>
                     <td className="py-2 pr-4">
-                      <span className={`rounded px-2 py-0.5 text-xs ${decisionClass(e.decision)}`}>{e.decision}</span>
+                      <Badge tone={decisionTone(e.decision)}>{e.decision}</Badge>
                     </td>
                     <td className="py-2 pr-4">{e.rule_name ?? "—"}</td>
                     <td className="py-2 pr-4">{e.app_id ? `${e.app_id}${e.tool_id ? ` / ${e.tool_id}` : ""}` : "—"}</td>

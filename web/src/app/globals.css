@@ -38,6 +38,11 @@
   --avatar-lavender-ink: #3b2a9e;
   --avatar-blue: #e8f0fe;
   --avatar-blue-ink: #1d4ed8;
+  /* Auth brand panel: the same dark panel in both themes. */
+  --brand-panel: #0e1525;
+  --brand-panel-ink: #e8ecf3;
+  --brand-panel-muted: #b4bdcc;
+  --brand-panel-line: #252e44;
   --scrim: rgb(14 21 37 / 0.45);
   --shadow-card: 0 1px 2px rgb(14 21 37 / 0.06);
   --shadow-pop: 0 8px 24px rgb(14 21 37 / 0.14);
@@ -108,6 +113,10 @@
   --color-avatar-lavender-ink: var(--avatar-lavender-ink);
   --color-avatar-blue: var(--avatar-blue);
   --color-avatar-blue-ink: var(--avatar-blue-ink);
+  --color-brand-panel: var(--brand-panel);
+  --color-brand-panel-ink: var(--brand-panel-ink);
+  --color-brand-panel-muted: var(--brand-panel-muted);
+  --color-brand-panel-line: var(--brand-panel-line);
   --color-scrim: var(--scrim);
   --shadow-card: var(--shadow-card);
   --shadow-pop: var(--shadow-pop);

@@ -103,7 +103,7 @@ export function ConversationActions({
           title="Delete this conversation?"
           description="This permanently deletes the messages, attachments and the agent's stored session for this conversation. It cannot be undone.">
           <form onSubmit={confirmDelete} className="space-y-3">
-            <p className="text-sm text-neutral-700">
+            <p className="text-sm text-ink-2">
               Messages already posted to a chat platform, memories or skills the agent derived from this conversation, and exports you already downloaded are
               not deleted.
             </p>
@@ -111,18 +111,18 @@ export function ConversationActions({
               <input id="delete-confirm" className={inputClass} autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
             </Field>
             {err ? (
-              <p role="alert" className="text-sm text-red-700">
+              <p role="alert" className="text-sm text-danger-ink">
                 {err}
               </p>
             ) : null}
-            <Button type="submit" disabled={busy || typed.trim().toLowerCase() !== CONFIRM_WORD} className="bg-red-700 text-white">
+            <Button type="submit" variant="danger" disabled={busy || typed.trim().toLowerCase() !== CONFIRM_WORD}>
               {busy ? "Deleting…" : "Delete conversation"}
             </Button>
           </form>
         </DialogContent>
       </Dialog>
       {err && !open ? (
-        <p role="alert" className="w-full text-red-700">
+        <p role="alert" className="w-full text-danger-ink">
           {err}
         </p>
       ) : null}
@@ -163,13 +163,13 @@ export function RedactButton({ convId, seq }: { convId: string; seq: number }) {
         setErr(null);
       }}>
       <DialogTrigger asChild>
-        <button type="button" className="text-xs text-neutral-600 underline" aria-label={`Redact message ${seq}`}>
+        <button type="button" className="text-xs text-muted underline" aria-label={`Redact message ${seq}`}>
           Redact
         </button>
       </DialogTrigger>
       <DialogContent title="Redact this message?" description="The content is replaced for everyone and cannot be restored.">
         <form onSubmit={(e) => void submit(e)} className="space-y-3">
-          <p role="note" className="rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">
+          <p role="note" className="rounded-control border border-pending-line bg-pending-panel p-2 text-sm text-pending-ink">
             This is irreversible. The agent may still remember what it read; tick the box below to start it with a fresh session.
           </p>
           <Field id={`redact-reason-${seq}`} label="Reason (optional)">
@@ -180,11 +180,11 @@ export function RedactButton({ convId, seq }: { convId: string; seq: number }) {
             Also reset the agent&apos;s session (it forgets this conversation)
           </label>
           {err ? (
-            <p role="alert" className="text-sm text-red-700">
+            <p role="alert" className="text-sm text-danger-ink">
               {err}
             </p>
           ) : null}
-          <Button type="submit" disabled={busy} className="bg-red-700 text-white">
+          <Button type="submit" variant="danger" disabled={busy}>
             {busy ? "Redacting…" : "Redact"}
           </Button>
         </form>

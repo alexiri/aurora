@@ -1,20 +1,64 @@
 import type { ReactNode } from "react";
 
+import { AuroraLogo, AuroraMark } from "@/components/ui/aurora-logo";
+import { Notice as NoticeBox } from "@/components/ui/notice";
+
+const POINTS = [
+  "Every agent has its own identity, credentials and apps.",
+  "A gateway checks policy on each request and can hold it for your approval.",
+  "Agents never hold real secrets.",
+];
+
+/**
+ * Split auth layout (docs/14 §Visual design): dark brand panel on the left (stacked above the
+ * form below 768 px), form column at most 380 px wide. Every /auth/*, /join, /link/channel and
+ * /setup-error view uses it.
+ */
 export function AuthCard({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <main className="mx-auto w-full max-w-sm p-8">
-      <p className="mb-1 text-sm font-semibold text-neutral-500">Aurora</p>
-      <h1 className="mb-6 text-2xl font-semibold">{title}</h1>
-      <div className="space-y-4">{children}</div>
-    </main>
+    <div className="grid min-h-dvh md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+      <aside className="relative overflow-hidden bg-brand-panel px-6 py-8 text-brand-panel-ink md:flex md:flex-col md:justify-between md:px-12 md:py-12">
+        <AuroraMark
+          variant="dark"
+          aria-hidden="true"
+          className="pointer-events-none absolute -bottom-16 -right-24 w-[28rem] max-w-none opacity-[0.06]"
+        />
+        <div className="relative">
+          <AuroraLogo variant="dark" className="h-12 w-auto" />
+          <p className="mt-2 font-display text-[11px] font-bold uppercase tracking-[0.22em] text-brand-panel-muted">
+            Build · Run · Collaborate
+          </p>
+        </div>
+        <div className="relative mt-8 max-w-md md:mt-0">
+          <p className="font-display text-2xl font-semibold leading-8 md:text-[28px] md:leading-9">
+            Run AI agents as a team, with exactly the access you grant.
+          </p>
+          <ul className="mt-5 hidden space-y-3 text-sm text-brand-panel-muted md:block">
+            {POINTS.map((p) => (
+              <li key={p} className="flex gap-3">
+                <span aria-hidden="true" className="mt-2 size-1.5 shrink-0 rounded-full bg-accent" />
+                {p}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <span className="hidden md:block" />
+      </aside>
+      <main className="flex items-start justify-center bg-surface px-6 py-10 md:items-center md:py-12">
+        <div className="w-full max-w-[380px]">
+          <h1 className="mb-6 font-display text-2xl font-semibold text-ink">{title}</h1>
+          <div className="space-y-4">{children}</div>
+        </div>
+      </main>
+    </div>
   );
 }
 
 export function Notice({ children }: { children: ReactNode }) {
   return (
-    <p role="status" className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm">
+    <NoticeBox role="status">
       {children}
-    </p>
+    </NoticeBox>
   );
 }
 

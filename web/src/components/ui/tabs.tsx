@@ -63,8 +63,8 @@ export function Tabs({
       onKeyDown={onKeyDown}
       className={cn(
         variant === "segmented"
-          ? "inline-flex gap-0.5 rounded-control bg-subtle p-0.5"
-          : "flex gap-1 overflow-x-auto border-b border-line",
+          ? "inline-flex max-w-full gap-0.5 overflow-x-auto rounded-control bg-subtle p-0.5"
+          : "flex w-full min-w-0 max-w-full gap-1 overflow-x-auto overscroll-x-contain border-b border-line",
         className,
       )}
     >

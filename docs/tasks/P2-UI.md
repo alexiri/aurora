@@ -65,26 +65,36 @@ Deliver this in three stages. Each stage is its own commit series and is mergeab
 - Remove the "coming soon" nav placeholders. Keep every existing link, its visibility rule (admin-only items) and `aria-current`.
 - Icons: add inline stroke SVG icons in one file, `components/ui/icons.tsx`. Add no icon library.
 
-### Stage 2: designed screens
+**Scope (owner, 2026-11-08):** the design is the dashboard's visual identity. **Every** existing screen and every future screen follows it (`14 §Visual design`, "Scope: the whole dashboard"). The mock-up screens are the references the shared patterns are taken from, not the limit of the work.
+
+### Stage 2: reference screens and the shared page patterns
 - Restyle these screens to the mock-ups and `14 §Visual design §Screens`, in both themes:
   - Workspace Overview, including the approvals callout, agents grid, checklist with progress and recent activity;
   - Approvals (gateway and action approval cards, batch header, conflict notice, segmented tabs, Live indicator);
   - the agent page header and tab strip, and the Chat tab (bubbles, tool rows, inline approval panel, composer);
   - the auth layout (`auth-card.tsx` becomes the split layout with the dark brand panel: the dark horizontal logo and the tagline; every `/auth/*`, `/join`, `/link/channel` and `/setup-error` view uses it).
 - Use `PageHeader` on every shell page.
+- **Extract the page patterns** these screens establish into reusable components under `web/src/components/ui` (or `web/src/components/patterns`), so every other screen composes them instead of re-styling by hand: page sections and cards, lists and data tables (incl. row actions and narrow-screen behaviour), forms and field groups (labels, help, errors, submit rows), empty / loading / error states, confirmation and form dialogs, status badges and dots, tab strips that scroll within themselves at 390 px. Document each pattern briefly in `14 §Visual design` (what it is for, which component) so later lanes and future screens use them.
 - **Auth forms:** change layout and styling only. Do not change form logic or which fields appear. P1-005 (RFE-004, OIDC-only) owns the form contents. If P1-005 is in flight, rebase onto it. Never reintroduce a password form that it removed.
 
-### Stage 3: token sweep and guard
-- Move every remaining component and page under `src/` from palette colours and hex literals to tokens and primitives: org pages, credentials, policy, governance, apps, channels, memory, skills, schedules, webhooks, peers, settings, account, admin.
-- Add the token-guard vitest and the Playwright accessibility (both themes), theme and narrow-shell tests from `18 §Dashboard visual design`. Add `@axe-core/playwright` as a dev dependency at an exact version.
-- Every page must work in dark, not only the four designed screens. Check the swept pages in both themes.
+### Stage 3: every other screen adopts the design (parallel lanes by area)
+Not a colour swap: each screen is rebuilt from the stage-1 primitives and the stage-2 page patterns, matches the reference screens' look (spacing, typography, cards, tables, forms, states), works in both themes and at 390 px with no horizontal page scroll. No behaviour, API or field changes. Lanes (disjoint directories, run in parallel after stage 2 merges):
+- **3a — org, account and admin:** org overview, members, invitations, workspaces, governance, storage, API keys, account pages, every `/admin/*` page.
+- **3b — workspace:** credentials and connections, apps, policy (editor, simulate, warnings, effective view), activity, channels, workspace settings and access, BYO controls.
+- **3c — agent pages:** every agent tab other than Chat (instructions, memory, skills, schedules, webhooks, peers, channels, access, computer/sandbox), conversation actions (archive, delete, redact, export), and the agent list/create flows.
+Each lane lists every route it restyled in its report, with a screenshot of each in light and dark at 1280 px and 390 px saved outside the repo (`/tmp/aurora-screens/p2-ui-s3<x>/`, never committed).
+
+### Stage 4: enforcement
+- Move anything stage 3 left on palette colours or hex literals to tokens (there should be little left).
+- Add the token-guard vitest and the Playwright accessibility (both themes), theme and narrow-shell tests from `18 §Dashboard visual design`. Add `@axe-core/playwright` as a dev dependency at an exact version. Extend the narrow-shell test to every route (no horizontal page scroll at 390 px).
+- The guard and these tests are what keep future screens on the design (`14 §Visual design`, "Scope: the whole dashboard").
 
 ### Out of scope
 - API, OpenAPI or schema changes, including an agent runtime-status field. If you think one is needed, report it as a follow-up.
 - A command palette or search ("Search or jump to… ⌘K" in the mock-ups).
 - A per-user, server-stored theme preference (I-41 keeps it in the browser).
 - New pages or behaviour.
-- The phase-2 RFE screens other lanes are adding: they adopt the stage-1 primitives themselves.
+- Nothing on this list exempts a screen from the design: phase-2 RFE screens added by other lanes are restyled by the stage-3 lane for their area if they don't already follow it.
 
 ## Constraints / file ownership
 - You own:
@@ -108,8 +118,9 @@ Deliver this in three stages. Each stage is its own commit series and is mergeab
   - the production CSP string is unchanged, and fonts and icons are served from the dashboard's origin;
   - the theme switch works: System follows the OS live, Light and Dark persist across reloads, and a reload never flashes the wrong theme;
   - the favicon and app icons are in place, and the sidebar shows the horizontal logo in both themes.
-- [ ] Stage 2: Overview, Approvals, the agent page + Chat, and the auth pages match the light and dark mock-ups, within the spec's corrections, at 1280 px and 390 px. There is no horizontal page scroll at 390 px.
-- [ ] Stage 3: the token-guard test passes, so no palette colours or hex literals remain in `src/` outside `globals.css`. The one exception is the brand colours inside `AuroraMark` and `AuroraLogo`.
+- [ ] Stage 2: Overview, Approvals, the agent page + Chat, and the auth pages match the light and dark mock-ups, within the spec's corrections, at 1280 px and 390 px. There is no horizontal page scroll at 390 px. The shared page patterns exist as components and are documented in `14 §Visual design`.
+- [ ] Stage 3 (per lane): every route of the lane's area is built from the primitives and page patterns, looks like the reference screens in light and dark, and has no horizontal page scroll at 390 px; the report lists every route with its screenshots.
+- [ ] Stage 4: the token-guard test passes, so no palette colours or hex literals remain in `src/` outside `globals.css` (the one exception is the brand colours inside `AuroraMark` and `AuroraLogo`), and the narrow-shell test covers every route.
 - [ ] The axe checks report 0 serious/critical violations on the pages listed in `18`, in both themes, and the theme tests pass.
 - [ ] `pnpm typecheck`, `pnpm lint`, `pnpm test` and `pnpm build` pass.
 - [ ] The existing vitest suites and `e2e/` Playwright specs pass. Selectors are updated only where markup changed by design, and no assertion is removed.

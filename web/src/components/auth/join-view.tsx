@@ -61,7 +61,7 @@ export function JoinView() {
               This invitation is no longer pending. If you just signed in with the invited
               address, you have already joined.
             </Notice>
-            <Button asChild className="w-full">
+            <Button asChild size="lg" className="w-full">
               <Link href="/">Open Aurora</Link>
             </Button>
           </>
@@ -104,12 +104,12 @@ export function JoinView() {
             </Notice>
           ) : null}
           <FormError error={err} />
-          <Button className="w-full" disabled={accept.isPending} onClick={() => accept.mutate()}>
+          <Button size="lg" className="w-full" disabled={accept.isPending} onClick={() => accept.mutate()}>
             {accept.isPending ? "Joining…" : "Accept invitation"}
           </Button>
         </>
       ) : signedOut ? (
-        <Button asChild className="w-full">
+        <Button asChild size="lg" className="w-full">
           <Link href={`/auth/login?next=${encodeURIComponent(joinPath)}`}>
             Sign in to accept
           </Link>
