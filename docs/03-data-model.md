@@ -444,6 +444,7 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 | latency_ms | int not null | |
 | bytes_up, bytes_down | bigint not null default 0 | |
 | context_label | text null | (phase 2, RFE-025) label of the BYO context credential (a labelled `aurora run`), ≤128, sanitized (`08 §11.9`) |
+| speaker_user_id | uuid null | (phase 2, RFE-005) the request identity's speaker (no FK, ledger table); lets operators see which person's turn caused a request |
 
 Partitions are created ahead by the API (next 2 months) and dropped after
 `REQUEST_LOG_RETENTION`.
@@ -537,6 +538,7 @@ All tokens the gateway accepts.
 | conversation_id | uuid null FK→conversations (cascade) | kind=context |
 | turn_id | uuid null | kind=context (hosted) |
 | context_label | text null | kind=context (BYO), ≤128, sanitized |
+| speaker_user_id | uuid null | (phase 2, RFE-005) kind=`context` hosted only: the person who authored the turn (`turns.speaker_user_id` when `speaker_kind = person`); null for every other credential. No FK (the resolver also requires the speaker to still hold `can_use`). Policy `user` identities match only this (`07`) |
 | capabilities | text[] not null default `{}` | (phase 1, RFE-003) credential capabilities; phase 1 value `browser` (open-lane use), settable on `boot` credentials only (`08 §7`) |
 | expires_at | timestamptz null | agent: null; boot: null until stop; context: turn end + grace |
 | revoked_at | timestamptz null | |
@@ -1135,16 +1137,6 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | (whole table) | — | unused from phase 1 (no e-mail verification or password reset, RFE-004); existing rows are ignored and the table is dropped by the contract migration in a later release | 1 → drop later (RFE-004) |
-
-#### `gateway_credentials` (speaker)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| speaker_user_id | uuid null (no FK; set null semantics by revocation on user delete) | kind=`context` hosted only: the person who authored the turn (`turns.speaker_user_id` when `speaker_kind = person`); null for every other credential. Policy `user` identities match only this (`07`) | 2 (RFE-005) |
-
-#### `request_log`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| speaker_user_id | uuid null | the request identity's speaker (no FK, ledger table); lets operators see which person's turn caused a request | 2 (RFE-005) |
 
 #### `agents`, `workspaces`, `organizations` (freeze)
 | Planned column | Type | Notes | Phase |

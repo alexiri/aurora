@@ -15,6 +15,8 @@ pub struct CredentialIdentityRow {
     pub conversation_id: Option<Uuid>,
     pub turn_id: Option<Uuid>,
     pub context_label: Option<String>,
+    /// `gateway_credentials.speaker_user_id` (RFE-005): hosted context credentials only.
+    pub speaker_user_id: Option<Uuid>,
     /// `gateway_credentials.capabilities` (RFE-003).
     pub capabilities: Vec<String>,
     /// Seconds until `expires_at` (None = no expiry).
@@ -33,7 +35,7 @@ pub struct CredentialIdentityRow {
 }
 
 const IDENTITY_SELECT: &str = "SELECT c.id AS credential_id, c.kind, c.agent_id, a.workspace_id, w.org_id, \
-                c.conversation_id, c.turn_id, c.context_label, c.capabilities, \
+                c.conversation_id, c.turn_id, c.context_label, c.speaker_user_id, c.capabilities, \
                 EXTRACT(EPOCH FROM (c.expires_at - now()))::float8 AS expires_in_secs, \
                 a.kind AS agent_kind, o.slug AS org_slug, w.slug AS ws_slug, \
                 w.byo_posture AS ws_byo_posture, o.governance -> 'byo' AS org_byo, \
@@ -75,23 +77,25 @@ pub async fn find_credential_identity_by_id<'e, E: PgExecutor<'e>>(
     )
 }
 
-/// Users with `can_use` on the workspace: active org members who are
-/// owner/admin or hold `workspace_access`. Suspended members are excluded.
-pub async fn principals<'e, E: PgExecutor<'e>>(
+/// Whether the user holds `can_use` on the workspace: an active org member who is owner/admin
+/// or holds `workspace_access`. Suspended members do not. The speaker of a turn is bound to
+/// policy `user` identities only while this holds (RFE-005, 06 §Credential authentication).
+pub async fn can_use<'e, E: PgExecutor<'e>>(
     exec: E,
     workspace_id: Uuid,
-) -> Result<Vec<Uuid>, DbError> {
-    Ok(sqlx::query_scalar::<_, Uuid>(
-        "SELECT m.user_id FROM workspaces w \
+    user_id: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM workspaces w \
          JOIN org_members m ON m.org_id = w.org_id AND m.status = 'active' \
-         WHERE w.id = $1 \
+         WHERE w.id = $1 AND m.user_id = $2 \
            AND (m.role IN ('owner', 'admin') \
                 OR EXISTS (SELECT 1 FROM workspace_access x \
-                           WHERE x.workspace_id = w.id AND x.user_id = m.user_id)) \
-         ORDER BY m.user_id",
+                           WHERE x.workspace_id = w.id AND x.user_id = m.user_id)))",
     )
     .bind(workspace_id)
-    .fetch_all(exec)
+    .bind(user_id)
+    .fetch_one(exec)
     .await?)
 }
 
@@ -310,6 +314,8 @@ pub struct RequestLogRow {
     pub bytes_down: i64,
     /// (RFE-025) label of the BYO context credential that made the request.
     pub context_label: Option<String>,
+    /// (RFE-005) the person whose turn made the request, when attributed.
+    pub speaker_user_id: Option<Uuid>,
 }
 
 /// Multi-row insert of a batch (callers keep batches <= 1000 rows).
@@ -324,7 +330,7 @@ pub async fn insert_request_log(
         "INSERT INTO request_log (id, ts, org_id, workspace_id, agent_id, conversation_id, turn_id, \
          credential_kind, lane, method, host, path, app_id, tool_id, connection_id, secret_id, \
          decision, rule_logical_id, rule_name, upstream_status, status, error_code, injected, \
-         latency_ms, bytes_up, bytes_down, context_label) ",
+         latency_ms, bytes_up, bytes_down, context_label, speaker_user_id) ",
     );
     qb.push_values(rows, |mut b, r| {
         b.push_bind(r.id)
@@ -353,7 +359,8 @@ pub async fn insert_request_log(
             .push_bind(r.latency_ms)
             .push_bind(r.bytes_up)
             .push_bind(r.bytes_down)
-            .push_bind(&r.context_label);
+            .push_bind(&r.context_label)
+            .push_bind(r.speaker_user_id);
     });
     qb.build().execute(pool).await?;
     Ok(())

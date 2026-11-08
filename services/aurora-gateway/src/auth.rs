@@ -31,8 +31,11 @@ pub struct RequestIdentity {
     pub conversation_id: Option<Uuid>,
     pub turn_id: Option<Uuid>,
     pub context_label: Option<String>,
-    /// `{agent_id} + users with can_use on the workspace`.
-    pub principals: Vec<Uuid>,
+    /// (phase 2, RFE-005, D-49) The person who authored the turn this credential is bound to.
+    /// Set only for hosted `context` credentials of person-authored turns, and only while that
+    /// user still holds `can_use` on the workspace; `None` for every other credential (boot,
+    /// BYO agent, BYO context, non-person turns). Policy `user` identities match only this.
+    pub speaker_user_id: Option<Uuid>,
     /// Credential capabilities (`gateway_credentials.capabilities`, 08 §7); only `boot`
     /// credentials can hold any. Phase 1: `browser` (open-lane use, RFE-003).
     pub capabilities: Vec<String>,

@@ -370,7 +370,11 @@ pub async fn patch_member(
         req.status.map(MemberStatus::as_str),
     )
     .await?;
-    if req.status.is_some_and(|s| s.as_str() != cur.status) {
+    // A role change (owner/admin → member) can also end `can_use`, which ends speaker binding
+    // (RFE-005).
+    if req.status.is_some_and(|s| s.as_str() != cur.status)
+        || req.role.is_some_and(|r| r.as_str() != cur.role)
+    {
         notify_auth_revoked(&mut *tx, "user", target).await?;
     }
     let out = members::get(&mut *tx, org_id, target)

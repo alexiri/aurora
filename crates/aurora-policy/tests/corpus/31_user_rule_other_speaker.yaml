@@ -1,0 +1,6 @@
+description: RFE-005 - a user block rule naming Alice does not match Bob's turn (same agent)
+workspace:
+  ordered_rules:
+    - {logical_id: 00000000-0000-0000-0000-0000000000a2, name: for-alice, action: block, identities: [{kind: user, id: 00000000-0000-0000-0000-000000000002}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001, speaker_user_id: 00000000-0000-0000-0000-000000000003}}
+expect: {verdict: allow}

@@ -265,6 +265,65 @@ pub fn applies_to_all_agents(rules: &[PolicyRule], byo_enabled: bool) -> Vec<Pol
         .collect()
 }
 
+/// (phase 2, RFE-005) `user_rule_needs_speaker` for every enabled rule naming a `user`, and
+/// `user_rule_no_agent_fallback` for allow rules that grant credentials and name only users
+/// (07 §Authoring). `name_of` resolves a user id to a display name.
+pub fn user_rules(rules: &[PolicyRule], name_of: &HashMap<Uuid, String>) -> Vec<PolicyWarning> {
+    let mut out = Vec::new();
+    for r in rules.iter().filter(|r| r.enabled) {
+        let users: Vec<Uuid> = r
+            .identities
+            .iter()
+            .filter_map(|i| match i {
+                Identity::User { id } => Some(*id),
+                Identity::Agent { .. } => None,
+            })
+            .collect();
+        if users.is_empty() {
+            continue;
+        }
+        let who = users
+            .iter()
+            .map(|u| name_of.get(u).map_or("a removed user", String::as_str))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push(PolicyWarning {
+            code: WarningCode::UserRuleNeedsSpeaker,
+            rule_logical_id: r.logical_id,
+            message: format!(
+                "\"{}\" matches only turns spoken by {who}; never schedules, webhooks, BYO or boot traffic.",
+                r.name
+            ),
+            severity: None,
+            details: None,
+        });
+        let grants_credentials = r.action == Action::Allow
+            && r.targets.iter().any(|t| {
+                matches!(
+                    t,
+                    Target::Connection { .. }
+                        | Target::AppConnections { .. }
+                        | Target::Secret { .. }
+                        | Target::Secrets { .. }
+                )
+            });
+        let only_users = r.identities.len() == users.len();
+        if grants_credentials && only_users {
+            out.push(PolicyWarning {
+                code: WarningCode::UserRuleNoAgentFallback,
+                rule_logical_id: r.logical_id,
+                message: format!(
+                    "\"{}\" grants credentials only while {who} is speaking; schedules, webhooks, BYO and boot traffic get none from it. Add an agent-level rule if they need access.",
+                    r.name
+                ),
+                severity: Some("warning".into()),
+                details: None,
+            });
+        }
+    }
+    out
+}
+
 /// Whether the scope's effective BYO posture is `enabled` (members may create BYO agents).
 async fn byo_enabled(state: &AppState, s: Scope) -> Result<bool, ApiError> {
     use aurora_llm::governance::ByoPosture;
@@ -295,6 +354,23 @@ pub async fn compute(state: &AppState, s: Scope) -> Result<PolicyWarnings, ApiEr
     let mut items = shadowed(&rules);
     items.extend(inert(state, s, &rules).await?);
     items.extend(applies_to_all_agents(&rules, byo_enabled(state, s).await?));
+    let user_ids: Vec<Uuid> = rules
+        .iter()
+        .flat_map(|r| &r.identities)
+        .filter_map(|i| match i {
+            Identity::User { id } => Some(*id),
+            Identity::Agent { .. } => None,
+        })
+        .collect();
+    let mut names = HashMap::new();
+    for id in user_ids {
+        if let std::collections::hash_map::Entry::Vacant(e) = names.entry(id)
+            && let Some(u) = aurora_db::repo::users::find_by_id(&state.pool, id).await?
+        {
+            e.insert(u.display_name);
+        }
+    }
+    items.extend(user_rules(&rules, &names));
     if s.ws.is_some() {
         let org = rules_for(
             state,

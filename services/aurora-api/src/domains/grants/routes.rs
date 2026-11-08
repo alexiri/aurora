@@ -5,10 +5,10 @@ use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::connections::service as conn_service;
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
-use crate::http::json::{Json, Path};
-use aurora_core::ApiError;
+use crate::http::json::{Json, Path, Query};
+use aurora_core::{ApiError, FieldError};
 use aurora_db::repo::agents::AgentRow;
-use aurora_db::repo::grants;
+use aurora_db::repo::{gateway, grants};
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde_json::json;
@@ -104,18 +104,47 @@ async fn delete_secret_grant(
 /// Effective credentials of an agent (`can_use`).
 #[utoipa::path(
     get, path = "/agents/{agent}/effective", operation_id = "getAgentEffective", tag = "grants",
-    params(("agent" = Uuid, Path, description = "Agent id")),
+    params(("agent" = Uuid, Path, description = "Agent id"), EffectiveQuery),
     responses((status = 200, description = "Effective view", body = Effective),
-              (status = 404, description = "Not found", body = ErrorEnvelope)),
+              (status = 404, description = "Not found", body = ErrorEnvelope),
+              (status = 400, description = "Invalid speaker", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = []))
 )]
 async fn agent_effective(
     caller: Caller,
     State(state): State<AppState>,
     Path(agent): Path<Uuid>,
+    Query(q): Query<EffectiveQuery>,
 ) -> Result<Json<Effective>, ApiError> {
     let (a, _) = service::visible_agent(&caller, &state, agent).await?;
-    Ok(Json(effective::compute(&state, &a).await?))
+    // RFE-005: `?speaker=<user_id>|none`, default the caller. A speaker who does not hold
+    // `can_use` never binds in the gateway, so naming one is a 400 field error; the default caller who
+    // holds no `can_use` (e.g. an instance admin) simply sees speakerless traffic.
+    let speaker = match q.speaker.as_deref() {
+        None => gateway::can_use(&state.pool, a.workspace_id, caller.user_id)
+            .await?
+            .then_some(caller.user_id),
+        Some("none") => None,
+        Some(v) => {
+            let id = Uuid::parse_str(v).map_err(|_| {
+                ApiError::invalid_request(
+                    "Invalid request.",
+                    vec![FieldError::new("/speaker", "must be a user id or \"none\"")],
+                )
+            })?;
+            if !gateway::can_use(&state.pool, a.workspace_id, id).await? {
+                return Err(ApiError::invalid_request(
+                    "Invalid request.",
+                    vec![FieldError::new(
+                        "/speaker",
+                        "not a member with access to this workspace",
+                    )],
+                ));
+            }
+            Some(id)
+        }
+    };
+    Ok(Json(effective::compute_for(&state, &a, speaker).await?))
 }
 
 fn record_conn(

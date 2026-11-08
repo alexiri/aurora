@@ -12,6 +12,10 @@ struct W {
     agent: Uuid,
     owner: String,
     member: String,
+    owner_id: Uuid,
+    member_id: Uuid,
+    /// An org member with no access to the workspace (no `can_use`).
+    outsider_id: Uuid,
 }
 
 async fn world() -> W {
@@ -19,8 +23,10 @@ async fn world() -> W {
     let org = h.org().await;
     let o = h.user("o@x.io", false).await;
     let m = h.user("m@x.io", false).await;
+    let x = h.user("x@x.io", false).await;
     h.member(org, o, "owner", "active").await;
     h.member(org, m, "member", "active").await;
+    h.member(org, x, "member", "active").await;
     let ws = h.workspace(org).await;
     h.bind_ws(ws, m, "member").await;
     let agent = Uuid::now_v7();
@@ -35,6 +41,9 @@ async fn world() -> W {
         agent,
         owner,
         member,
+        owner_id: o,
+        member_id: m,
+        outsider_id: x,
     }
 }
 
@@ -667,4 +676,196 @@ async fn simulate_open_lane_applies_posture_and_connect_time_rules() {
         )
         .await;
     assert_eq!(s, 403);
+}
+
+// ---- (phase 2, RFE-005, SEC-44) speaker binding in simulate, effective and warnings ----------
+
+impl W {
+    async fn sim_as(&self, speaker: Option<Uuid>, lane: Option<&str>) -> (u16, Value) {
+        let mut body = json!({"agent_id": self.agent, "method": "GET",
+                              "url": "https://api.example.com/x", "use_draft": true});
+        if let Some(s) = speaker {
+            body["speaker_user_id"] = json!(s);
+        }
+        if let Some(l) = lane {
+            body["lane"] = json!(l);
+            body["method"] = json!("CONNECT");
+            body["url"] = json!("https://api.example.com");
+        }
+        self.call(
+            Method::POST,
+            &self.wsu("/simulate"),
+            &self.owner,
+            Some(body),
+        )
+        .await
+    }
+
+    async fn effective(&self, tok: &str, query: &str) -> (u16, Value) {
+        self.call(
+            Method::GET,
+            &format!("/v1/agents/{}/effective{query}", self.agent),
+            tok,
+            None,
+        )
+        .await
+    }
+
+    /// Publishes a workspace policy of `rules`.
+    async fn publish(&self, rules: Value) {
+        let (s, v) = self.put(&self.wsu("/draft"), 0, "none", rules).await;
+        assert_eq!(s, 200, "{v}");
+        let (s, v) = self
+            .call(
+                Method::POST,
+                &self.wsu("/publish"),
+                &self.owner,
+                Some(json!({"revision": 1})),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+    }
+}
+
+#[tokio::test]
+async fn rfe005_simulate_binds_user_rules_to_the_speaker() {
+    let w = world().await;
+    let (s, v) = w
+        .put(
+            &w.wsu("/draft"),
+            0,
+            "none",
+            json!([{"name": "no-member", "action": "block",
+                    "identities": [{"kind": "user", "id": w.member_id}],
+                    "targets": net("api.example.com")}]),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, v) = w.sim_as(Some(w.member_id), None).await;
+    assert_eq!(v["verdict"], "block", "the named speaker is blocked: {v}");
+    let (_, v) = w.sim_as(Some(w.owner_id), None).await;
+    assert_eq!(v["verdict"], "allow", "another speaker: {v}");
+    let (_, v) = w.sim_as(None, None).await;
+    assert_eq!(
+        v["verdict"], "allow",
+        "no speaker never matches a user rule: {v}"
+    );
+    // Tunnels carry no speaker, so a user rule never matches them either.
+    let (_, v) = w.sim_as(Some(w.member_id), Some("open")).await;
+    assert_eq!(v["verdict"], "allow", "open lane: {v}");
+    // A speaker without `can_use` cannot occur in the gateway: refused with a field error.
+    let (s, v) = w.sim_as(Some(w.outsider_id), None).await;
+    assert_eq!(s, 400, "{v}");
+    assert_eq!(
+        v["error"]["details"]["fields"][0]["path"],
+        "/speaker_user_id"
+    );
+}
+
+#[tokio::test]
+async fn rfe005_simulate_user_allow_rule_selects_credential_only_for_its_speaker() {
+    let w = world().await;
+    let sec = w.secret("api-key", false).await;
+    w.put(
+        &w.wsu("/draft"),
+        0,
+        "none",
+        json!([{"name": "member-key", "action": "allow",
+                "identities": [{"kind": "user", "id": w.member_id}],
+                "targets": [{"type": "secret", "id": sec}]}]),
+    )
+    .await;
+    let (_, v) = w.sim_as(Some(w.member_id), None).await;
+    assert_eq!(v["winning_credential"]["id"], sec.to_string(), "{v}");
+    for speaker in [None, Some(w.owner_id)] {
+        let (_, v) = w.sim_as(speaker, None).await;
+        assert_eq!(v["winning_credential"], Value::Null, "{speaker:?}: {v}");
+    }
+}
+
+#[tokio::test]
+async fn rfe005_effective_view_takes_a_speaker() {
+    let w = world().await;
+    let sec = w.secret("api-key", false).await;
+    w.publish(json!([{"name": "member-key", "action": "allow",
+                      "identities": [{"kind": "user", "id": w.member_id}],
+                      "targets": [{"type": "secret", "id": sec}]}]))
+        .await;
+    let selected = |v: &Value| v["credentials"][0]["selected"].as_bool().unwrap();
+    // Default: the caller.
+    let (s, v) = w.effective(&w.member, "").await;
+    assert_eq!(s, 200, "{v}");
+    assert!(selected(&v), "the member's own view: {v}");
+    assert_eq!(v["credentials"][0]["depends_on_speaker"], true);
+    let (_, v) = w.effective(&w.owner, "").await;
+    assert!(!selected(&v), "the owner is not the named person: {v}");
+    assert_eq!(v["credentials"][0]["depends_on_speaker"], true);
+    // Explicit speakers.
+    let (_, v) = w
+        .effective(&w.owner, &format!("?speaker={}", w.member_id))
+        .await;
+    assert!(selected(&v), "{v}");
+    let (_, v) = w.effective(&w.member, "?speaker=none").await;
+    assert!(!selected(&v), "speakerless traffic: {v}");
+    // Invalid speakers: not a uuid, or no `can_use`.
+    for bad in ["garbage".to_owned(), w.outsider_id.to_string()] {
+        let (s, v) = w.effective(&w.owner, &format!("?speaker={bad}")).await;
+        assert_eq!(s, 400, "{bad}: {v}");
+        assert_eq!(v["error"]["details"]["fields"][0]["path"], "/speaker");
+    }
+}
+
+#[tokio::test]
+async fn rfe005_warnings_flag_user_rules() {
+    let w = world().await;
+    let sec = w.secret("api-key", false).await;
+    let (s, v) = w
+        .put(
+            &w.wsu("/draft"),
+            0,
+            "none",
+            json!([
+                {"name": "only-user", "action": "allow",
+                 "identities": [{"kind": "user", "id": w.member_id}],
+                 "targets": [{"type": "secret", "id": sec}]},
+                {"name": "user-or-agent", "action": "allow",
+                 "identities": [{"kind": "user", "id": w.member_id},
+                                {"kind": "agent", "id": w.agent}],
+                 "targets": [{"type": "secret", "id": sec}]},
+                {"name": "user-block", "action": "block",
+                 "identities": [{"kind": "user", "id": w.member_id}],
+                 "targets": net("api.example.com")}]),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let id_of = |i: usize| v["rules"][i]["logical_id"].clone();
+    let (s, warn) = w
+        .call(Method::GET, &w.wsu("/warnings"), &w.owner, None)
+        .await;
+    assert_eq!(s, 200, "{warn}");
+    let items = warn["items"].as_array().unwrap();
+    let codes = |code: &str| -> Vec<Value> {
+        items
+            .iter()
+            .filter(|i| i["code"] == code)
+            .map(|i| i["rule_logical_id"].clone())
+            .collect()
+    };
+    assert_eq!(
+        codes("user_rule_needs_speaker"),
+        vec![id_of(0), id_of(1), id_of(2)],
+        "{warn}"
+    );
+    assert_eq!(
+        codes("user_rule_no_agent_fallback"),
+        vec![id_of(0)],
+        "only the user-only allow rule that grants credentials: {warn}"
+    );
+    let msg = items
+        .iter()
+        .find(|i| i["code"] == "user_rule_needs_speaker")
+        .unwrap()["message"]
+        .as_str()
+        .unwrap();
+    assert!(msg.contains("only turns spoken by"), "{msg}");
 }

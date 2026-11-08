@@ -57,8 +57,25 @@ export function SimulationResult({ sim }: { sim: Simulation }) {
   );
 }
 
-export function SimulatePanel({ wsId, agents }: { wsId: string; agents: Agent[] }) {
+const NO_SPEAKER = "none";
+
+export function SimulatePanel({
+  wsId,
+  agents,
+  users = [],
+  currentUserId,
+}: {
+  wsId: string;
+  agents: Agent[];
+  users?: { id: string; label: string }[];
+  currentUserId?: string;
+}) {
   const sim = useSimulate(wsId);
+  // RFE-005: the speaker whose turn is simulated; default you, or "no speaker" (schedules,
+  // webhooks, BYO and boot traffic), for which `user` rules never match.
+  const [speaker, setSpeaker] = useState<string | null>(null);
+  const speakerValue = speaker ?? (currentUserId && users.some((u) => u.id === currentUserId) ? currentUserId : NO_SPEAKER);
+  const speakerId = speakerValue === NO_SPEAKER ? null : speakerValue;
   const [agentId, setAgentId] = useState("");
   const [method, setMethod] = useState("GET");
   const [url, setUrl] = useState("https://");
@@ -72,7 +89,15 @@ export function SimulatePanel({ wsId, agents }: { wsId: string; agents: Agent[] 
     sim.mutate(
       tunnel
         ? { agent_id: agentId, method: "CONNECT", url: url.trim(), use_draft: useDraft, lane: "open" }
-        : { agent_id: agentId, method, url: url.trim(), body: body || null, use_draft: useDraft, lane: "request" },
+        : {
+            agent_id: agentId,
+            method,
+            url: url.trim(),
+            body: body || null,
+            use_draft: useDraft,
+            lane: "request",
+            speaker_user_id: speakerId,
+          },
     );
   }
 
@@ -90,6 +115,24 @@ export function SimulatePanel({ wsId, agents }: { wsId: string; agents: Agent[] 
             ))}
           </select>
         </Field>
+        {tunnel ? (
+          <p className="text-xs text-neutral-600">Tunnels carry no speaker, so rules naming a person never match them.</p>
+        ) : (
+          <Field
+            id="sim-speaker"
+            label="Speaker"
+            hint="Rules naming a person match only turns that person speaks. “No speaker” covers schedules, webhooks, BYO and boot traffic."
+          >
+            <select id="sim-speaker" className={inputClass} value={speakerValue} onChange={(e) => setSpeaker(e.target.value)}>
+              <option value={NO_SPEAKER}>No speaker</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.id === currentUserId ? `${u.label} — you` : u.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
         <fieldset className="flex gap-4 text-sm">
           <legend className="sr-only">Lane</legend>
           <label className="flex items-center gap-1">

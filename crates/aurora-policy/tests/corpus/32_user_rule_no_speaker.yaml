@@ -1,0 +1,8 @@
+description: RFE-005 - speakerless traffic never matches a user rule (block, require-approval or rate-limit alike)
+workspace:
+  ordered_rules:
+    - {logical_id: 00000000-0000-0000-0000-0000000000a2, name: alice-block, action: block, identities: [{kind: user, id: 00000000-0000-0000-0000-000000000002}]}
+    - {logical_id: 00000000-0000-0000-0000-0000000000a3, name: alice-approval, action: allow, require_approval: true, identities: [{kind: user, id: 00000000-0000-0000-0000-000000000002}]}
+    - {logical_id: 00000000-0000-0000-0000-0000000000a4, name: alice-limit, action: allow, rate_limit: {count: 1, per: minute}, identities: [{kind: user, id: 00000000-0000-0000-0000-000000000002}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: allow}

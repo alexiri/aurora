@@ -316,6 +316,7 @@
       "id",
       "kind",
       "revoked_at",
+      "speaker_user_id",
       "token_hash",
       "turn_id"
     ],
@@ -552,6 +553,7 @@
       "rule_logical_id",
       "rule_name",
       "secret_id",
+      "speaker_user_id",
       "status",
       "tool_id",
       "ts",

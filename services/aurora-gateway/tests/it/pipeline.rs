@@ -53,9 +53,15 @@ struct Static(Arc<World>);
 impl CredentialResolver for Static {
     async fn resolve(&self, token: &str) -> Result<Option<RequestIdentity>, ResolveError> {
         // `BOOT` is a boot credential minted with the `browser` capability (RFE-003).
-        if ![TOKEN, BOOT, BYO_CTX_REQ, BYO_CONTEXT].contains(&token) {
+        if ![TOKEN, BOOT, BYO_CTX_REQ, BYO_CONTEXT, SPK_ALICE, SPK_BOB].contains(&token) {
             return Ok(None);
         }
+        // (RFE-005) hosted context credentials of a turn spoken by Alice / by Bob.
+        let speaker = match token {
+            SPK_ALICE => Some(ALICE),
+            SPK_BOB => Some(BOB),
+            _ => None,
+        };
         let boot = token == BOOT;
         let w = &self.0;
         // (RFE-025) BYO credentials of an agent that requires context credentials.
@@ -76,7 +82,7 @@ impl CredentialResolver for Static {
             credential_id: Uuid::nil(),
             kind: if boot {
                 CredentialKind::Boot
-            } else if token == BYO_CONTEXT {
+            } else if token == BYO_CONTEXT || speaker.is_some() {
                 CredentialKind::Context
             } else {
                 CredentialKind::Agent
@@ -87,7 +93,7 @@ impl CredentialResolver for Static {
             conversation_id: None,
             turn_id: None,
             context_label: (token == BYO_CONTEXT).then(|| "aurora run: make test".to_owned()),
-            principals: vec![w.agent],
+            speaker_user_id: speaker,
             capabilities: if boot { vec!["browser".into()] } else { vec![] },
             byo,
         }))
@@ -97,6 +103,11 @@ impl CredentialResolver for Static {
 /// `aug_` of a BYO agent with `byo_require_context`, and one of its `auc_` credentials.
 const BYO_CTX_REQ: &str = "aug_ctxreq";
 const BYO_CONTEXT: &str = "auc_ctxreq";
+/// (RFE-005) hosted context credentials of turns spoken by two different people.
+const SPK_ALICE: &str = "auc_alice";
+const SPK_BOB: &str = "auc_bob";
+const ALICE: Uuid = Uuid::from_u128(0xa11ce);
+const BOB: Uuid = Uuid::from_u128(0xb0b);
 
 #[derive(Default)]
 struct Rows {
@@ -996,4 +1007,100 @@ async fn byo_require_context_leaves_uncredentialed_traffic_alone() {
     let r = get_as(&env, BYO_CTX_REQ, "/x", "").await;
     assert_eq!(r.status, 200, "{}", r.body);
     assert!(!r.body.contains("s3cr3t"));
+}
+
+// ---- (phase 2, RFE-005, SEC-44) policy `user` identities bind to the speaker -----------
+
+/// An allow rule naming Alice injects the credential only on turns Alice spoke: same agent,
+/// another speaker, an agent credential, boot-like and BYO-context traffic get nothing.
+#[tokio::test]
+async fn sec44_user_allow_rule_injects_only_for_its_speaker() {
+    let env = start(
+        |w, v| {
+            let s = secret(w, "s", json!({"kind":"bearer"}), v);
+            let mut grant = allow_secret(&s);
+            grant.identities = json!([{"kind":"user","id":ALICE}]);
+            let mut rows = Rows::default();
+            rows.ws.rules.push(grant);
+            rows.secrets.push(s);
+            rows
+        },
+        no_llm(),
+    )
+    .await;
+    let r = get_as(&env, SPK_ALICE, "/x", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        r.body.contains("authorization: Bearer s3cr3t"),
+        "alice's turn gets the credential: {}",
+        r.body
+    );
+    let fetched = env.gets.load(Ordering::SeqCst);
+    for (who, token) in [
+        ("another speaker", SPK_BOB),
+        ("agent credential", TOKEN),
+        ("BYO context", BYO_CONTEXT),
+    ] {
+        let r = get_as(&env, token, "/x", "").await;
+        assert!(
+            !r.body.contains("s3cr3t"),
+            "{who} must not receive alice's credential: {}",
+            r.body
+        );
+    }
+    assert_eq!(
+        env.gets.load(Ordering::SeqCst),
+        fetched,
+        "the value is never even fetched for non-matching traffic"
+    );
+    env.log.flush().await;
+    let rows = env.captured.0.lock().unwrap().clone();
+    // The speaker is recorded on the request-log row (03 `request_log.speaker_user_id`).
+    assert!(
+        rows.iter()
+            .any(|x| x.credential_kind == "context" && x.speaker_user_id == Some(ALICE)),
+        "speaker in the request log: {rows:?}"
+    );
+    // Each row is attributed to its own turn's speaker; speakerless traffic carries none.
+    assert!(
+        rows.iter().all(|x| match x.credential_kind {
+            "agent" => x.speaker_user_id.is_none(),
+            _ => matches!(x.speaker_user_id, Some(ALICE | BOB) | None),
+        }),
+        "attribution: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|x| x.speaker_user_id == Some(BOB)),
+        "bob's request is attributed to bob, not alice"
+    );
+}
+
+/// A block rule naming Alice hits only Alice's turns; speakerless traffic is not hers
+/// (07 §Rule anatomy: to restrict it, write an agent or empty identity).
+#[tokio::test]
+async fn sec44_user_block_rule_does_not_match_speakerless_traffic() {
+    let env = start(
+        |w, v| {
+            let s = secret(w, "s", json!({"kind":"bearer"}), v);
+            let mut block = rule(
+                "no-alice",
+                "block",
+                json!([{"type":"network","host":"127.0.0.1"}]),
+                json!({}),
+            );
+            block.identities = json!([{"kind":"user","id":ALICE}]);
+            let mut rows = Rows::default();
+            rows.ws.rules.push(block);
+            rows.ws.rules.push(allow_secret(&s));
+            rows.secrets.push(s);
+            rows
+        },
+        no_llm(),
+    )
+    .await;
+    assert_eq!(get_as(&env, SPK_ALICE, "/x", "").await.status, 403);
+    for token in [SPK_BOB, TOKEN, BYO_CONTEXT] {
+        let r = get_as(&env, token, "/x", "").await;
+        assert_eq!(r.status, 200, "{token}: {}", r.body);
+    }
 }

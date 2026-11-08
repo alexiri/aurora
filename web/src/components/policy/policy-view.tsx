@@ -78,11 +78,13 @@ export interface PolicyViewProps {
   /** Workspace policy only: agents for the identity picker and simulate panel. */
   agents?: Agent[];
   users?: Option[];
+  /** The signed-in user: the simulate panel's default speaker (RFE-005). */
+  currentUserId?: string;
   /** Org id used to list org-scope secrets in the target picker. */
   orgId: string;
 }
 
-export function PolicyView({ title, scope, canEdit, agents = [], users = [], orgId }: PolicyViewProps) {
+export function PolicyView({ title, scope, canEdit, agents = [], users = [], currentUserId, orgId }: PolicyViewProps) {
   const policy = usePolicy(scope);
   const warnings = usePolicyWarnings(scope);
   const wsSecrets = useSecrets(scope.kind === "workspace" ? { kind: "workspace", id: scope.id } : { kind: "organization", id: orgId });
@@ -407,7 +409,7 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], org
         </ul>
       </section>
 
-      {workspace ? <SimulatePanel wsId={scope.id} agents={agents} /> : null}
+      {workspace ? <SimulatePanel wsId={scope.id} agents={agents} users={users} currentUserId={currentUserId} /> : null}
 
       {editing ? (
         <RuleEditorDialog

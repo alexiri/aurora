@@ -68,7 +68,7 @@ impl CredentialResolver for Static {
             conversation_id: None,
             turn_id: None,
             context_label: None,
-            principals: vec![w.agent],
+            speaker_user_id: None,
             capabilities: if boot { vec!["browser".into()] } else { vec![] },
             byo: None,
         }))

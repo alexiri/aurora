@@ -57,8 +57,8 @@ impl Inner {
         unindex(&mut self.by_workspace, i.workspace_id, h);
         unindex(&mut self.by_agent, i.agent_id, h);
         unindex(&mut self.by_credential, i.credential_id, h);
-        for p in &i.principals {
-            unindex(&mut self.by_user, *p, h);
+        if let Some(u) = i.speaker_user_id {
+            unindex(&mut self.by_user, u, h);
         }
     }
 
@@ -80,8 +80,8 @@ impl Inner {
             .entry(identity.credential_id)
             .or_default()
             .insert(h);
-        for p in &identity.principals {
-            self.by_user.entry(*p).or_default().insert(h);
+        if let Some(u) = identity.speaker_user_id {
+            self.by_user.entry(u).or_default().insert(h);
         }
         self.entries.insert(
             h,
@@ -282,10 +282,19 @@ impl DbCredentialResolver {
                 return Ok(None);
             }
         };
-        let mut principals = repo::principals(&self.pool, row.workspace_id)
-            .await
-            .map_err(unavailable)?;
-        principals.push(row.agent_id);
+        // RFE-005 (D-49): only a hosted context credential carries a speaker, and only while the
+        // person still holds `can_use` (checked here, re-checked after a `user`/`workspace`/`org`
+        // invalidation drops the cached identity). A BYO agent mints its own context credentials,
+        // so the column is never trusted there.
+        let speaker_user_id = match row.speaker_user_id {
+            Some(u) if kind == CredentialKind::Context && row.agent_kind != "byo" => {
+                repo::can_use(&self.pool, row.workspace_id, u)
+                    .await
+                    .map_err(unavailable)?
+                    .then_some(u)
+            }
+            _ => None,
+        };
         let expires_in = row.expires_in_secs;
         let byo = (row.agent_kind == "byo" && kind != CredentialKind::Boot).then(|| {
             // Unparsable stored values fail closed inside the governance library.
@@ -314,7 +323,7 @@ impl DbCredentialResolver {
                 conversation_id: row.conversation_id,
                 turn_id: row.turn_id,
                 context_label: row.context_label,
-                principals,
+                speaker_user_id,
                 capabilities: row.capabilities,
                 byo,
             },

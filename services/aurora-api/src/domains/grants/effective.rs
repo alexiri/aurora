@@ -12,15 +12,30 @@ use aurora_policy::facts::{Level, SecretKind};
 use aurora_policy::rule::Action;
 use aurora_policy::{Credential, RequestIdentity};
 use std::collections::{BTreeSet, HashSet};
+use uuid::Uuid;
 
-pub async fn compute(state: &AppState, agent: &AgentRow) -> Result<Effective, ApiError> {
-    Ok(compute_with_apps(state, agent).await?.0)
+/// (phase 2, RFE-005) The effective view for a given speaker (`None` = speakerless traffic).
+pub async fn compute_for(
+    state: &AppState,
+    agent: &AgentRow,
+    speaker: Option<Uuid>,
+) -> Result<Effective, ApiError> {
+    Ok(compute_inner(state, agent, speaker).await?.0)
 }
 
 /// The effective view plus the ids of the apps with at least one selected (granted) connection.
+/// Speakerless: this is what the boot token gets, so `user` rules never select here (RFE-005).
 pub async fn compute_with_apps(
     state: &AppState,
     agent: &AgentRow,
+) -> Result<(Effective, BTreeSet<String>), ApiError> {
+    compute_inner(state, agent, None).await
+}
+
+async fn compute_inner(
+    state: &AppState,
+    agent: &AgentRow,
+    speaker: Option<Uuid>,
 ) -> Result<(Effective, BTreeSet<String>), ApiError> {
     let mut granted_apps = BTreeSet::new();
     let org: ScopePolicy =
@@ -30,13 +45,28 @@ pub async fn compute_with_apps(
     )?;
     let identity = RequestIdentity {
         agent_id: agent.id,
-        principals: gateway::principals(&state.pool, agent.workspace_id).await?,
+        speaker_user_id: speaker,
     };
-    let rules: Vec<_> = org
+    let allow: Vec<_> = org
         .ordered_rules
         .iter()
         .chain(&ws.ordered_rules)
-        .filter(|r| r.enabled && r.action == Action::Allow && r.identity_matches(&identity))
+        .filter(|r| r.enabled && r.action == Action::Allow)
+        .collect();
+    let rules: Vec<_> = allow
+        .iter()
+        .copied()
+        .filter(|r| r.identity_matches(&identity))
+        .collect();
+    // Rules whose identities name a person: they make a credential's selection speaker-dependent.
+    let user_rules: Vec<_> = allow
+        .iter()
+        .copied()
+        .filter(|r| {
+            r.identities
+                .iter()
+                .any(|i| matches!(i, aurora_policy::rule::Identity::User { .. }))
+        })
         .collect();
     let secrets = gateway::active_secrets(&state.pool, agent.org_id, agent.workspace_id).await?;
     let mut credentials: Vec<EffectiveCredential> = secrets
@@ -72,6 +102,9 @@ pub async fn compute_with_apps(
                 .into(),
                 selected: !selected_by.is_empty(),
                 selected_by,
+                depends_on_speaker: user_rules
+                    .iter()
+                    .any(|r| r.targets.iter().any(|t| t.selects(&cred))),
             }
         })
         .collect();
@@ -118,6 +151,9 @@ pub async fn compute_with_apps(
                 .into(),
                 selected,
                 selected_by,
+                depends_on_speaker: user_rules
+                    .iter()
+                    .any(|r| r.targets.iter().any(|t| t.selects(&cred))),
             });
             let Some(app) = snap.app(&c.app_id) else {
                 continue;

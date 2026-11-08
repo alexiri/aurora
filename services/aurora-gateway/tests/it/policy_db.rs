@@ -100,7 +100,7 @@ async fn loads_view_and_invalidates_on_notify() {
         conversation_id: None,
         turn_id: None,
         context_label: None,
-        principals: vec![agent],
+        speaker_user_id: None,
         capabilities: vec![],
         byo: None,
     };
@@ -193,6 +193,7 @@ async fn loads_view_and_invalidates_on_notify() {
         bytes_up: 0,
         bytes_down: 0,
         context_label: None,
+        speaker_user_id: None,
     };
     repo::insert_request_log(p, &[row]).await.unwrap();
     let (cnt,): (i64,) = sqlx::query_as(

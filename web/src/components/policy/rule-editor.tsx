@@ -40,7 +40,7 @@ function IdentityRow({
 }) {
   const options = value.kind === "agent" ? data.agents : data.users;
   return (
-    <li className="flex gap-2">
+    <li className="flex flex-wrap gap-2">
       <select
         aria-label="Identity kind"
         className={inputClass}
@@ -48,7 +48,7 @@ function IdentityRow({
         onChange={(e) => onChange({ kind: e.target.value as Identity["kind"], id: "" })}
       >
         <option value="agent">Agent</option>
-        <option value="user">User</option>
+        <option value="user">When a person is speaking</option>
       </select>
       {options.length > 0 ? (
         <select aria-label="Identity" className={inputClass} value={value.id} onChange={(e) => onChange({ ...value, id: e.target.value })}>
@@ -65,6 +65,11 @@ function IdentityRow({
       <Button type="button" variant="ghost" size="sm" onClick={onRemove} aria-label="Remove identity">
         Remove
       </Button>
+      {value.kind === "user" ? (
+        <p className="basis-full text-xs text-neutral-600">
+          Matches only turns this person is speaking in — never schedules, webhooks, BYO or boot traffic. For “anyone with access”, leave who empty.
+        </p>
+      ) : null}
     </li>
   );
 }
@@ -225,7 +230,7 @@ export function RuleEditorDialog({
           </label>
 
           <section aria-label="Identities" className="space-y-2">
-            <h3 className="text-sm font-medium">Who (empty = everyone)</h3>
+            <h3 className="text-sm font-medium">Who (empty = anyone with access)</h3>
             <ul className="space-y-2">
               {identities.map((v, i) => (
                 <IdentityRow key={i} value={v} data={data} onChange={(n) => patch({ identities: replaceAt(identities, i, n) })} onRemove={() => patch({ identities: identities.filter((_, j) => j !== i) })} />

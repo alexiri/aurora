@@ -69,6 +69,7 @@ export function AccessTab({ agentId, wsId, orgId, canOwn }: { agentId: string; w
               <span className="font-medium">{c.name}</span> <span className="text-xs text-neutral-600">({c.kind}, {c.scope})</span>{" "}
               {c.selected ? <strong>selected</strong> : <span className="text-neutral-500">not selected</span>}
               {c.selected_by.length ? <span className="text-xs text-neutral-600"> · selected by {c.selected_by.length} rule(s): {c.selected_by.join(", ")}</span> : null}
+              {c.depends_on_speaker ? <span className="text-xs text-amber-700"> · depends on who is speaking (shown for you)</span> : null}
             </li>
           ))}
         </ul>

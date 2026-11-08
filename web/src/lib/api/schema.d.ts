@@ -315,23 +315,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/admin/storage": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Instance storage breakdown (phase 2, RFE-015; instance administrators). */
-        get: operations["adminStorage"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/admin/trusted-keys": {
         parameters: {
             query?: never;
@@ -488,6 +471,23 @@ export interface paths {
         post?: never;
         /** Remove the agent's avatar (`can_use`). */
         delete: operations["deleteAgentAvatar"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/byo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set a BYO agent's own source CIDR list and require-context flag (`can_own`; RFE-025). */
+        put: operations["putAgentByo"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1113,26 +1113,6 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/attachments/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Purge the file's bytes now (phase 2, RFE-015). The row stays, so the transcript chip shows
-         *     "expired"; downloads then answer 410. The uploader or a workspace owner.
-         */
-        delete: operations["deleteAttachment"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2379,26 +2359,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/orgs/{org}/storage": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Attachment storage of an organization: usage vs quota, retention and the breakdown by
-         *     workspace and direction (phase 2, RFE-015; org `owner`/`admin`).
-         */
-        get: operations["getOrgStorage"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/orgs/{org}/workspaces": {
         parameters: {
             query?: never;
@@ -3346,45 +3306,6 @@ export interface components {
         ActionDecisionBody: {
             decision: components["schemas"]["ActionDecision"];
         };
-        /** @description Attachment bytes of one org in the instance breakdown. */
-        AdminOrgStorage: {
-            /** Format: int64 */
-            attachment_bytes: number;
-            /** Format: int64 */
-            files: number;
-            name: string;
-            /** Format: uuid */
-            org_id: string;
-            /**
-             * Format: int64
-             * @description Quota in force; null = unlimited.
-             */
-            quota_bytes?: number | null;
-            slug: string;
-        };
-        /** @description `GET /admin/storage` (API_CONTRACTS C-172). */
-        AdminStorage: {
-            /**
-             * Format: int64
-             * @description Sum of the org counters.
-             */
-            attachment_bytes: number;
-            /** Format: int64 */
-            attachment_files: number;
-            /**
-             * Format: int64
-             * @description Bytes held by the blob backend (`blobs`).
-             */
-            blob_bytes: number;
-            /** Format: int64 */
-            blob_count: number;
-            /** @description Top 50 orgs by attachment bytes. */
-            orgs: components["schemas"]["AdminOrgStorage"][];
-            /** Format: int64 */
-            purged_files: number;
-            /** @description `blobs`, `attachments`, `transcript_events`, `request_log`, `audit_log`. */
-            tables: components["schemas"]["TableSize"][];
-        };
         AdminUser: components["schemas"]["User"] & {
             /** Format: date-time */
             disabled_at?: string | null;
@@ -3395,6 +3316,7 @@ export interface components {
             /** @description Root-relative public path of the avatar (`/v1/public/avatars/{key}`), or null. */
             avatar_url?: string | null;
             brief: string;
+            byo?: null | components["schemas"]["ByoView"];
             /** Format: date-time */
             created_at: string;
             /** @description `low` | `medium` | `high` | `max`. */
@@ -3528,6 +3450,11 @@ export interface components {
             batch?: null | components["schemas"]["ApprovalBatch"];
             /** Format: uuid */
             connection_id?: string | null;
+            /**
+             * @description (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`) that
+             *     made the request, if any.
+             */
+            context_label?: string | null;
             /** Format: uuid */
             conversation_id?: string | null;
             /** Format: date-time */
@@ -3679,6 +3606,36 @@ export interface components {
         BulkReassignResponse: {
             /** Format: int64 */
             reassigned: number;
+        };
+        /**
+         * @description BYO posture, ordered by strictness (`enabled` < `owners_only` < `disabled`).
+         * @enum {string}
+         */
+        ByoPosture: "enabled" | "owners_only" | "disabled";
+        ByoPostureView: {
+            /** @description `instance` | `org` | `workspace`. */
+            level: string;
+            /** @description `enabled` | `owners_only` | `disabled`. */
+            value: string;
+        };
+        /** @description The `byo` object of an [`Agent`](super::dto::Agent) (BYO agents only). */
+        ByoView: {
+            /** @description Instance ∨ org ∨ agent. */
+            effective_require_context: boolean;
+            /** @description Which layer switched it on: `instance` | `org` | `agent` (null = off). */
+            effective_require_context_level?: string | null;
+            /** @description The list the gateway enforces (agent, else org, else instance); `null` = unrestricted. */
+            effective_source_cidrs?: string[] | null;
+            /** @description Which layer the effective list comes from: `agent` | `org` | `instance` (null = none). */
+            effective_source_level?: string | null;
+            /** @description Effective BYO posture of the agent's workspace: `enabled` | `owners_only` | `disabled`. */
+            posture: string;
+            /** @description The layer that decided it: `instance` | `org` | `workspace`. */
+            posture_level: string;
+            /** @description The agent's own require-context flag. */
+            require_context: boolean;
+            /** @description The agent's own source list (`null` = inherit). */
+            source_cidrs?: string[] | null;
         };
         ChangePasswordRequest: {
             current_password: string;
@@ -3891,7 +3848,16 @@ export interface components {
             /** @description `aun_…`, shown once. */
             token: string;
         };
+        ContainerByo: {
+            /** @description Effective posture: `enabled` | `owners_only` | `disabled`. */
+            posture: string;
+            /** @description Effective require-context flag; when `true`, `proxy_url` carries `<CONTEXT_TOKEN>`. */
+            require_context: boolean;
+            /** @description Effective source CIDR list; `null` = unrestricted. */
+            source_cidrs?: string[] | null;
+        };
         ContainerConfig: {
+            byo?: null | components["schemas"]["ContainerByo"];
             ca_path: string;
             ca_pem: string;
             env: {
@@ -3900,6 +3866,8 @@ export interface components {
             llm_env: {
                 [key: string]: string;
             };
+            /** @description (phase 2, RFE-025) Human-readable notes, e.g. that a context credential is required. */
+            notes: string[];
             /**
              * @description (phase 1, RFE-002) File holding the trust anchor for the HTTPS proxy leg (curl
              *     `--proxy-cacert`, git `http.proxySSLCAInfo`); same file as `ca_path`.
@@ -4161,7 +4129,23 @@ export interface components {
             /** @description Per tool of every granted connection. */
             tools: components["schemas"]["EffectiveTool"][];
         };
+        /**
+         * @description (phase 2, RFE-025) Effective org-level BYO controls (instance ∩ org); the workspace layer is
+         *     applied per workspace/agent.
+         */
+        EffectiveByo: {
+            /** @description `enabled` | `owners_only` | `disabled`. */
+            posture: components["schemas"]["Sourced_String"];
+            require_context_credentials: components["schemas"]["Sourced_bool"];
+            /** @description Default source CIDR list of BYO agents without their own; `null` = unrestricted. */
+            source_cidrs: components["schemas"]["Sourced_Option_Vec_String"];
+        };
         EffectiveCredential: {
+            /**
+             * @description (phase 2, RFE-005) An enabled allow rule with a `user` identity targets this credential,
+             *     so whether it is selected changes with the speaker (compare `?speaker=none`).
+             */
+            depends_on_speaker: boolean;
             /** Format: uuid */
             id: string;
             /** @description `secret` | `connection`. */
@@ -4190,6 +4174,7 @@ export interface components {
             provider: string;
         };
         EffectiveGovernance: {
+            byo: components["schemas"]["EffectiveByo"];
             egress: components["schemas"]["EffectiveEgress"];
             llm: components["schemas"]["EffectiveLlm"];
             non_compliant_secrets: components["schemas"]["NonCompliantSecret"][];
@@ -4358,6 +4343,14 @@ export interface components {
             pattern: string;
             replacement: string;
         };
+        /** @description (phase 2, RFE-025) The instance level of BYO governance (`[byo]`). */
+        InstanceByo: {
+            default_source_cidrs: string[];
+            enabled: boolean;
+            /** @description `enabled` | `owners_only` | `disabled`. */
+            minimum_posture: string;
+            require_context_credentials: boolean;
+        };
         InstanceEgress: {
             baseline_allowlist: components["schemas"]["AllowlistEntry"][];
             minimum_posture: string;
@@ -4372,6 +4365,7 @@ export interface components {
             provider: string;
         };
         InstanceGovernance: {
+            byo: components["schemas"]["InstanceByo"];
             egress: components["schemas"]["InstanceEgress"];
             llm: components["schemas"]["InstanceLlm"];
         };
@@ -4680,6 +4674,18 @@ export interface components {
             host: string;
             path?: string | null;
         };
+        /** @description `organizations.governance.byo` (no column: `governance` is `jsonb`). */
+        OrgByo: {
+            /** @default null */
+            posture: null | components["schemas"]["ByoPosture"];
+            /** @default false */
+            require_context_credentials: boolean;
+            /**
+             * @description Org default source list (≤32 CIDRs, each inside the instance default when that is set).
+             * @default []
+             */
+            source_cidrs: string[];
+        };
         OrgEgress: {
             /** @default [] */
             allowlist: components["schemas"]["OrgAllowEntry"][];
@@ -4712,6 +4718,8 @@ export interface components {
         };
         /** @description Normalized organization governance document (`organizations.governance`). */
         OrgGovernance: {
+            /** @default {} */
+            byo: components["schemas"]["OrgByo"];
             /**
              * @default {
              *       "allowlist": [],
@@ -4765,44 +4773,6 @@ export interface components {
              */
             max_members?: number | null;
             members_can_create_workspaces?: boolean | null;
-        };
-        /** @description `GET /orgs/{org}/storage` (API_CONTRACTS C-171). */
-        OrgStorage: {
-            /**
-             * Format: int64
-             * @description The org's attachment retention window; null = keep forever.
-             */
-            attachments_days?: number | null;
-            /**
-             * Format: int64
-             * @description The window in force (after the instance maximum).
-             */
-            attachments_days_effective?: number | null;
-            by_workspace: components["schemas"]["WorkspaceStorage"][];
-            /**
-             * Format: int64
-             * @description Files that hold bytes.
-             */
-            files: number;
-            /** @description `clear` (< 80 %) | `warning` (≥ 80 %) | `full` (≥ 100 %). */
-            notice: string;
-            /** Format: uuid */
-            org_id: string;
-            /**
-             * Format: int64
-             * @description Files whose bytes were purged (the rows remain).
-             */
-            purged_files: number;
-            /**
-             * Format: int64
-             * @description Quota in force; null = unlimited.
-             */
-            quota_bytes?: number | null;
-            /**
-             * Format: int64
-             * @description Counter of non-purged attachment bytes.
-             */
-            used_bytes: number;
         };
         OrgSummary: {
             /** Format: uuid */
@@ -4878,6 +4848,7 @@ export interface components {
                 /** @description Root-relative public path of the avatar (`/v1/public/avatars/{key}`), or null. */
                 avatar_url?: string | null;
                 brief: string;
+                byo?: null | components["schemas"]["ByoView"];
                 /** Format: date-time */
                 created_at: string;
                 /** @description `low` | `medium` | `high` | `max`. */
@@ -4938,6 +4909,11 @@ export interface components {
                 batch?: null | components["schemas"]["ApprovalBatch"];
                 /** Format: uuid */
                 connection_id?: string | null;
+                /**
+                 * @description (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`) that
+                 *     made the request, if any.
+                 */
+                context_label?: string | null;
                 /** Format: uuid */
                 conversation_id?: string | null;
                 /** Format: date-time */
@@ -5331,6 +5307,8 @@ export interface components {
                 bytes_up: number;
                 /** Format: uuid */
                 connection_id?: string | null;
+                /** @description (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`), if any. */
+                context_label?: string | null;
                 /** Format: uuid */
                 conversation_id?: string | null;
                 /** @description `agent` | `boot` | `context` */
@@ -5568,8 +5546,11 @@ export interface components {
         };
         Page_Workspace: {
             items: {
+                /** @description (phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit). */
+                byo_posture?: string | null;
                 /** Format: date-time */
                 created_at: string;
+                effective_byo_posture?: null | components["schemas"]["ByoPostureView"];
                 /** Format: uuid */
                 id: string;
                 memory_language: string;
@@ -5654,6 +5635,11 @@ export interface components {
             path_pattern?: string | null;
         };
         PatchWorkspaceRequest: {
+            /**
+             * @description (phase 2, RFE-025) `enabled` | `owners_only` | `disabled`; absent = unchanged, `null` =
+             *     inherit. Tighten-only.
+             */
+            byo_posture?: string | null;
             memory_language?: string | null;
             name?: string | null;
             timezone?: string | null;
@@ -5837,9 +5823,13 @@ export interface components {
         };
         PolicyWarning: {
             code: components["schemas"]["WarningCode"];
+            /** @description (phase 2, RFE-025) `{ rule_id, targets }` for `rule_applies_to_all_agents`. */
+            details?: Record<string, never> | null;
             message: string;
             /** Format: uuid */
             rule_logical_id: string;
+            /** @description (phase 2, RFE-025) `warning`; present on `rule_applies_to_all_agents`. */
+            severity?: string | null;
         };
         PolicyWarnings: {
             items: components["schemas"]["PolicyWarning"][];
@@ -5890,6 +5880,12 @@ export interface components {
         PutAccessRequest: {
             role: components["schemas"]["WorkspaceRole"];
         };
+        /** @description `PUT /v1/agents/{agent}/byo`. */
+        PutByoRequest: {
+            require_context: boolean;
+            /** @description The agent's own source CIDR list; `null` = inherit the org/instance default. */
+            source_cidrs?: string[] | null;
+        };
         PutConnectionGrant: {
             allow_tools?: string[];
             ask_tools?: string[];
@@ -5907,16 +5903,6 @@ export interface components {
             title?: string | null;
         };
         PutRetention: {
-            /**
-             * Format: int64
-             * @description (phase 2, RFE-015) MiB, `0` = unlimited; absent = unchanged, `null` = the instance default.
-             */
-            attachment_quota_mib?: number | null;
-            /**
-             * Format: int64
-             * @description (phase 2, RFE-015) Absent = unchanged, `null` = keep forever.
-             */
-            attachments_days?: number | null;
             /**
              * Format: int64
              * @description Absent = unchanged, `null` = none.
@@ -6021,6 +6007,8 @@ export interface components {
             bytes_up: number;
             /** Format: uuid */
             connection_id?: string | null;
+            /** @description (phase 2, RFE-025) Label of the BYO context credential (a labelled `aurora run`), if any. */
+            context_label?: string | null;
             /** Format: uuid */
             conversation_id?: string | null;
             /** @description `agent` | `boot` | `context` */
@@ -6073,32 +6061,6 @@ export interface components {
         };
         /** @description (phase 2, RFE-010) `GET/PUT /orgs/{org}/retention`. */
         Retention: {
-            /**
-             * Format: int64
-             * @description The org's own attachment quota in MiB (`0` = unlimited); null = the instance default.
-             */
-            attachment_quota_mib?: number | null;
-            /**
-             * Format: int64
-             * @description The quota in force in MiB after the instance default and ceiling; null = unlimited.
-             */
-            attachment_quota_mib_effective?: number | null;
-            /**
-             * Format: int64
-             * @description The instance ceiling of the quota in MiB (`attachments.org_quota_mib_max`); null = none.
-             */
-            attachment_quota_mib_max?: number | null;
-            /**
-             * Format: int64
-             * @description (phase 2, RFE-015) Purge attachment bytes older than this many days (7..=3650); null =
-             *     keep forever.
-             */
-            attachments_days?: number | null;
-            /**
-             * Format: int64
-             * @description The instance maximum of `attachments_days` (`attachments.days_max`), when configured.
-             */
-            attachments_days_max?: number | null;
             /**
              * Format: int64
              * @description Delete conversations idle for this many days (7..=3650); null = keep forever.
@@ -6410,6 +6372,13 @@ export interface components {
             body?: string | null;
             lane?: null | components["schemas"]["SimLane"];
             method: string;
+            /**
+             * Format: uuid
+             * @description (phase 2, RFE-005) The person whose turn is simulated; omitted or null = no speaker, so
+             *     `user` identities never match. Must hold `can_use` on the workspace (400 field error
+             *     otherwise). Ignored for `lane: "open"` (tunnels carry no speaker).
+             */
+            speaker_user_id?: string | null;
             url: string;
             use_draft?: boolean | null;
         };
@@ -6448,6 +6417,11 @@ export interface components {
             path: string;
             /** @description Characters for text, base64 length for binary content. */
             size: number;
+        };
+        Sourced_Option_Vec_String: {
+            /** @description `instance` | `org`. */
+            source: string;
+            value: null | string[];
         };
         Sourced_String: {
             /** @description `instance` | `org`. */
@@ -6525,12 +6499,6 @@ export interface components {
         SummaryField: {
             label: string;
             value: string;
-        };
-        /** @description On-disk size of one big table (with indexes and TOAST). */
-        TableSize: {
-            /** Format: int64 */
-            bytes: number;
-            table: string;
         };
         /** @description Rule target (I-12: tagged with `type`). */
         Target: {
@@ -6754,7 +6722,7 @@ export interface components {
             origin: components["schemas"]["StoredOrigin"];
         };
         /** @enum {string} */
-        WarningCode: "shadowed" | "inert" | "overridden_by_org";
+        WarningCode: "shadowed" | "inert" | "overridden_by_org" | "rule_applies_to_all_agents" | "user_rule_needs_speaker" | "user_rule_no_agent_fallback";
         Webhook: {
             /** Format: uuid */
             agent_id: string;
@@ -6813,8 +6781,11 @@ export interface components {
             name: string;
         };
         Workspace: {
+            /** @description (phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit). */
+            byo_posture?: string | null;
             /** Format: date-time */
             created_at: string;
+            effective_byo_posture?: null | components["schemas"]["ByoPostureView"];
             /** Format: uuid */
             id: string;
             memory_language: string;
@@ -6830,19 +6801,6 @@ export interface components {
         };
         /** @enum {string} */
         WorkspaceRole: "owner" | "approver" | "member";
-        /** @description Attachment bytes of one workspace in one direction. */
-        WorkspaceStorage: {
-            /** Format: int64 */
-            bytes: number;
-            /** @description `in` (people -> agent) | `out` (agent -> people) */
-            direction: string;
-            /** Format: int64 */
-            files: number;
-            /** Format: uuid */
-            workspace_id: string;
-            workspace_name: string;
-            workspace_slug: string;
-        };
     };
     responses: never;
     parameters: never;
@@ -7856,33 +7814,6 @@ export interface operations {
             };
         };
     };
-    adminStorage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AdminStorage"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     adminListTrustedKeys: {
         parameters: {
             query?: {
@@ -8150,6 +8081,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description byo_disabled */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description gateway_ca_unavailable */
             503: {
                 headers: {
@@ -8194,6 +8134,15 @@ export interface operations {
             };
             /** @description Unauthenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description byo_disabled */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8440,6 +8389,60 @@ export interface operations {
             };
         };
     };
+    putAgentByo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutByoRequest"];
+            };
+        };
+        responses: {
+            /** @description Agent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Agent"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description not_byo | byo_cidr_invalid | byo_cidr_outside_default */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getAgentContainerConfig: {
         parameters: {
             query?: never;
@@ -8618,7 +8621,13 @@ export interface operations {
     };
     getAgentEffective: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description A user id (the person whose turns are evaluated) or `none` (speakerless traffic).
+                 *     Default: the caller.
+                 */
+                speaker?: string | null;
+            };
             header?: never;
             path: {
                 /** @description Agent id */
@@ -8635,6 +8644,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Effective"];
+                };
+            };
+            /** @description Invalid speaker */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Not found */
@@ -9774,7 +9792,7 @@ export interface operations {
                     "application/json": components["schemas"]["AgentToken"];
                 };
             };
-            /** @description hosted_agent_token_hidden */
+            /** @description hosted_agent_token_hidden | byo_not_permitted | byo_disabled */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -10275,43 +10293,6 @@ export interface operations {
             };
         };
     };
-    deleteAttachment: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Attachment id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deleted (idempotent) */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     downloadAttachment: {
         parameters: {
             query?: never;
@@ -10334,15 +10315,6 @@ export interface operations {
                 };
             };
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description attachment_purged */
-            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11552,15 +11524,6 @@ export interface operations {
                 };
             };
             413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description attachment_quota_exceeded */
-            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14339,44 +14302,6 @@ export interface operations {
             };
         };
     };
-    getOrgStorage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Organization id */
-                org: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OrgStorage"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     listWorkspaces: {
         parameters: {
             query?: {
@@ -16442,6 +16367,15 @@ export interface operations {
             };
             /** @description Invalid */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description byo_not_permitted | byo_disabled */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -142,7 +142,7 @@ fn identity(s: &Scope) -> RequestIdentity {
         conversation_id: None,
         turn_id: None,
         context_label: None,
-        principals: vec![s.agent],
+        speaker_user_id: None,
         capabilities: vec![],
         byo: None,
     }

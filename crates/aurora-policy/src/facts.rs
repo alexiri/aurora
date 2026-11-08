@@ -53,9 +53,12 @@ impl Credential {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestIdentity {
     pub agent_id: Uuid,
-    /// Users with `can_use` on the agent's workspace.
+    /// (phase 2, RFE-005, D-49) The person whose turn made the request: set only for hosted
+    /// context credentials of person-authored turns whose speaker still holds `can_use`.
+    /// `None` (boot, agent, BYO context, schedule/webhook/…, tunnels) means `user` identities
+    /// never match (07 §Rule anatomy).
     #[serde(default)]
-    pub principals: Vec<Uuid>,
+    pub speaker_user_id: Option<Uuid>,
 }
 
 /// Classification tags declared by the matched tool (inputs only).

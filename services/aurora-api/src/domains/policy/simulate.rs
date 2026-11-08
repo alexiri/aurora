@@ -161,6 +161,17 @@ pub async fn run(
         return Err(field("/url", "the open lane takes https://host[:port]"));
     }
     let use_draft = req.use_draft.unwrap_or(false);
+    // RFE-005: a speaker who does not hold `can_use` never binds in the gateway, so refuse it
+    // rather than simulate a situation that cannot occur.
+    if let Some(u) = req.speaker_user_id
+        && !gateway::can_use(&state.pool, ws, u).await?
+    {
+        return Err(field(
+            "/speaker_user_id",
+            "not a member with access to this workspace",
+        ));
+    }
+    let speaker = req.speaker_user_id;
 
     let org_rows = repo::load_scope_rows(&state.pool, org, None, use_draft).await?;
     let ws_rows = repo::load_scope_rows(&state.pool, org, Some(ws), use_draft).await?;
@@ -205,9 +216,10 @@ pub async fn run(
                 host,
                 port,
                 is_llm_host,
+                // Tunnels (open lane) carry no speaker (RFE-005).
                 identity: RequestIdentity {
                     agent_id,
-                    principals: gateway::principals(&state.pool, ws).await?,
+                    speaker_user_id: None,
                 },
             },
         )
@@ -249,7 +261,7 @@ pub async fn run(
 
     let identity = RequestIdentity {
         agent_id,
-        principals: gateway::principals(&state.pool, ws).await?,
+        speaker_user_id: speaker,
     };
     let creds: Vec<Credential> = cands.iter().map(Cand::credential).collect();
     let selected = selected_candidates(
