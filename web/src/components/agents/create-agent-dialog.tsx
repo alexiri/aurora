@@ -118,7 +118,7 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
               <textarea id="agent-brief" className={inputClass} rows={3} value={brief} onChange={(e) => setBrief(e.target.value)} />
             </Field>
             {create.error && Object.keys(fe).length === 0 ? (
-              <p role="alert" className="text-sm text-red-700">
+              <p role="alert" className="text-sm text-danger-ink">
                 {errorMessage(create.error)}
               </p>
             ) : null}

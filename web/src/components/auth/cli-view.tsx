@@ -102,7 +102,7 @@ export function CliView() {
               ))}
             </select>
           </Field>
-          <Button type="submit" className="w-full" disabled={m.isPending || !code.trim()}>
+          <Button type="submit" size="lg" className="w-full" disabled={m.isPending || !code.trim()}>
             {m.isPending ? "Authorizing…" : "Authorize"}
           </Button>
         </form>

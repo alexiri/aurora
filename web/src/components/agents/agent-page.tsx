@@ -4,8 +4,13 @@ import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
+import { Avatar } from "@/components/agent-avatar";
+import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusDot } from "@/components/ui/status-dot";
+import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
+import { useSandbox } from "@/lib/api/conversations";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
-import { cn } from "@/lib/utils";
 
 import { AccessTab } from "./access-tab";
 import { ChatTab } from "./chat-tab";
@@ -20,6 +25,15 @@ import { SchedulesTab } from "@/components/schedules/schedules-tab";
 import { WebhooksTab } from "@/components/webhooks/webhooks-tab";
 
 import { InstructionsTab } from "./instructions-tab";
+
+/** Sandbox state of a hosted agent (existing sandbox endpoint); hidden while unknown or on error. */
+function SandboxPill({ agentId }: { agentId: string }) {
+  const q = useSandbox(agentId);
+  if (!q.data) return null;
+  const s = q.data.state;
+  const tone = s === "running" ? "accent" : s === "failed" ? "danger" : s === "starting" || s === "stopping" ? "pending" : "neutral";
+  return <StatusDot tone={tone}>Sandbox {s}</StatusDot>;
+}
 
 export function AgentPage() {
   const { org, ws, handle } = useParams<{ org: string; ws: string; handle: string }>();
@@ -58,30 +72,34 @@ export function AgentPage() {
 
   return (
     <div className="max-w-4xl space-y-4">
-      <h1 className="text-xl font-semibold">
-        {agent.name} <span className="font-mono text-sm text-neutral-600">@{agent.handle}</span>
-      </h1>
-      <div role="tablist" aria-label="Agent" className="flex gap-1 border-b border-neutral-200">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            role="tab"
-            type="button"
-            id={`tab-${t.id}`}
-            aria-selected={tab === t.id}
-            aria-controls="agent-panel"
-            onClick={() => setTab(t.id)}
-            className={cn(
-              "-mb-px border-b-2 px-3 py-2 text-sm",
-              tab === t.id ? "border-neutral-900 font-medium" : "border-transparent",
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <div role="tabpanel" id="agent-panel" aria-labelledby={`tab-${tab}`} className="pt-2">
-        {tab === "chat" && !byo ? <ChatTab agentId={agent.id} wsId={wsId!} base={`/o/${org}/w/${ws}`} orgId={workspace.data?.org_id} /> : null}
+      <PageHeader
+        breadcrumb={[{ label: "Agents", href: `/o/${org}/w/${ws}/agents` }, { label: agent.name }]}
+        title={
+          <span className="flex min-w-0 items-center gap-3">
+            <Avatar name={agent.name} url={agent.avatar_url} tintKey={agent.id} size={48} />
+            <span className="min-w-0 truncate">{agent.name}</span>
+          </span>
+        }
+        description={
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-muted">@{agent.handle}</span>
+            <Badge>{agent.kind}</Badge>
+            {agent.is_default ? <Badge tone="accent">Default</Badge> : null}
+            {byo ? null : <SandboxPill agentId={agent.id} />}
+          </span>
+        }
+        className="mb-2"
+      />
+      <Tabs
+        items={tabs.map((t) => ({ value: t.id, label: t.label }))}
+        value={tab}
+        onValueChange={(v) => setTab(v as typeof tab)}
+        variant="underline"
+        label="Agent"
+        idBase="agent"
+      />
+      <div role="tabpanel" id={tabPanelId("agent", tab)} aria-labelledby={tabId("agent", tab)} className="pt-2">
+        {tab === "chat" && !byo ? <ChatTab agentId={agent.id} wsId={wsId!} base={`/o/${org}/w/${ws}`} orgId={workspace.data?.org_id} agent={{ id: agent.id, name: agent.name, avatarUrl: agent.avatar_url }} /> : null}
         {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} memoryLanguage={workspace.data?.memory_language} /> : null}
         {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} /> : null}
         {tab === "schedules" && !byo ? <SchedulesTab agentId={agent.id} defaultTimezone={workspace.data?.timezone} wsId={workspace.data?.id} canOwn={workspace.data?.my_role === "owner"} /> : null}

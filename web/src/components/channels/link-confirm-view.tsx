@@ -69,7 +69,7 @@ export function LinkConfirmView() {
         <Notice>
           <code>{l.platform_user_ref}</code> on {l.tenant_label} is now linked to {l.user.display_name}.
         </Notice>
-        <Link href="/account/channels" className="text-sm underline">
+        <Link href="/account/channels" className="text-sm text-link underline">
           Manage chat links
         </Link>
       </AuthCard>
@@ -89,6 +89,8 @@ export function LinkConfirmView() {
       <FormError message={confirm.isError ? channelError(confirm.error) : undefined} />
       {!terminal ? (
         <Button
+          size="lg"
+          className="w-full"
           disabled={confirm.isPending}
           onClick={() =>
             confirm.mutate(token, {

@@ -98,7 +98,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
         </select>
       </Field>
       {patch.error && Object.keys(fe).length === 0 ? (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger-ink">
           {errorMessage(patch.error)}
         </p>
       ) : null}
@@ -107,7 +107,7 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
           {patch.isPending ? "Saving…" : "Save"}
         </Button>
         {saved ? (
-          <span role="status" className="text-sm text-green-700">
+          <span role="status" className="text-sm text-accent-ink">
             Saved
           </span>
         ) : null}

@@ -242,6 +242,27 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   column is at most 380 px wide. The form's contents follow the sign-in rules
   of each phase (from phase 1, RFE-004: provider buttons only).
 
+**Page patterns.** Screens compose these shared components (all in
+`web/src/components/ui`, except the state components in `components/states.tsx`).
+Use them instead of styling by hand; if a screen needs something that is not
+here, add it here and document it.
+
+| Pattern | Component | Use |
+|---|---|---|
+| Page header | `PageHeader` | Breadcrumb, title, one-line description, right-aligned actions. First element of every shell page. |
+| Section | `Section` | A titled block (`h2`, description, actions) with optional `card`; also the way to group an overview page. |
+| Card | `Card` | A bordered `surface` panel (borders replace shadows in dark). |
+| List | `ItemList` + `ListRow` | Divided rows with an actions slot; rows wrap on narrow screens. For few, rich rows (agents, members, keys). |
+| Data table | `DataTable`, `Th`, `Td` | For columns of comparable data. The wrapper scrolls inside itself at 390 px, so the page never scrolls horizontally. Always give `caption`. |
+| Form | `Form`, `FormSection`, `FormActions`, `Field`, `inputClass` | `Field` links label, hint and error to the control; `FormSection` is a fieldset with a heading; `FormActions` is the submit row. Frontend validation is UX only. |
+| States | `Loading`, `EmptyState`, `ErrorState` | Every list/query shows one of the three. |
+| Notice | `Notice` (`neutral`, `accent`, `pending`, `danger`) | Inline callout for conflicts, warnings, errors and info. Use `role="alert"` after an action, `role="status"` otherwise. |
+| Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. |
+| Badges and dots | `Badge`, `StatusDot` | Status pills and dots. They always carry text; tone is `neutral`, `accent`, `pending` or `danger`. |
+| Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The strip scrolls within itself at 390 px. |
+| Buttons | `Button` (`primary`, `outline`, `approve`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. |
+| Auth layout | `AuthCard` | Split layout with the dark brand panel, for every public auth view. |
+
 ## Information architecture
 
 ### Public / auth (outside the shell)

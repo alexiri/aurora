@@ -24,14 +24,14 @@ function inline(text: string, key: string): ReactNode[] {
       out.push(
         href ? (
           <a key={k} href={href} target="_blank" rel="noopener noreferrer nofollow" className="underline">
-            {m[2]} <span className="text-xs text-neutral-500">({href})</span>
+            {m[2]} <span className="text-xs text-muted">({href})</span>
           </a>
         ) : (
           <span key={k}>{m[2]}</span>
         ),
       );
     } else if (m[4] !== undefined) out.push(<strong key={k}>{m[4]}</strong>);
-    else out.push(<code key={k} className="rounded bg-neutral-100 px-1">{m[5]}</code>);
+    else out.push(<code key={k} className="rounded bg-subtle px-1">{m[5]}</code>);
     last = m.index + m[0].length;
   }
   if (last < text.length) out.push(text.slice(last));
@@ -54,7 +54,7 @@ export function Markdown({ source }: { source: string }) {
       i++;
       while (i < lines.length && !lines[i].startsWith("```")) code.push(lines[i++]);
       i++;
-      blocks.push(<pre key={key} className="overflow-x-auto rounded bg-neutral-100 p-2 text-xs"><code>{code.join("\n")}</code></pre>);
+      blocks.push(<pre key={key} className="overflow-x-auto rounded bg-subtle p-2 text-xs"><code>{code.join("\n")}</code></pre>);
     } else if (/^#{1,6}\s/.test(line)) {
       const level = line.match(/^#+/)![0].length;
       const text = line.replace(/^#+\s+/, "");

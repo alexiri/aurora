@@ -29,7 +29,7 @@ export function AgentRevealDialog({
           <p className="text-sm font-medium">Container config</p>
           <pre
             data-testid="revealed-config"
-            className="max-h-48 overflow-auto rounded-md bg-neutral-100 p-3 text-xs"
+            className="max-h-48 overflow-auto rounded-control bg-subtle p-3 text-xs text-ink"
           >
             {JSON.stringify(
               {
@@ -42,7 +42,7 @@ export function AgentRevealDialog({
               2,
             )}
           </pre>
-          <p data-testid="proxy-tls-note" className="text-xs text-neutral-600">
+          <p data-testid="proxy-tls-note" className="text-xs text-muted">
             The gateway proxy is TLS-only (<code>https://</code>). Clients that treat the proxy leg separately need the CA
             for it too: curl <code>--proxy-cacert</code>, git <code>http.proxySSLCAInfo</code>; Node needs an HTTPS proxy
             agent (<code>undici</code> ProxyAgent), Python needs <code>urllib3</code> 2 or newer. A tool that cannot use an

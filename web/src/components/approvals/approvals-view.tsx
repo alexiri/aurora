@@ -3,9 +3,15 @@
 import { useState } from "react";
 
 import { fmtDate } from "@/components/account/key-table";
+import { Avatar } from "@/components/agent-avatar";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusDot } from "@/components/ui/status-dot";
+import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import {
   countdown,
   isAlreadyDecided,
@@ -42,45 +48,49 @@ export function ApprovalCard({
   message?: string;
 }) {
   return (
-    <li className="space-y-2 rounded-md border border-neutral-200 p-4">
-      <div className="flex flex-wrap items-baseline gap-2 text-sm">
-        <span className="font-medium">{a.agent ? a.agent.name : "Unknown agent"}</span>
-        {a.agent ? <span className="text-neutral-500">@{a.agent.handle}</span> : null}
-        <span className="font-mono text-neutral-700">
-          {a.method} {a.host}
+    <li className="space-y-3 rounded-card border border-line bg-surface p-4 text-ink shadow-card sm:p-5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+        {a.agent ? <Avatar name={a.agent.name} tintKey={a.agent.id} size={24} /> : null}
+        <span className="font-semibold">{a.agent ? a.agent.name : "Unknown agent"}</span>
+        {a.agent ? <span className="font-mono text-muted">@{a.agent.handle}</span> : null}
+        <span className="ml-auto font-medium tabular-nums text-pending-ink">Expires in {countdown(a.deadline, now)}</span>
+      </div>
+      <p className="font-display text-base font-semibold">{a.summary.title}</p>
+      {a.summary.text ? <p className="whitespace-pre-wrap text-sm text-ink-2">{a.summary.text}</p> : null}
+      <p className="flex min-w-0 flex-wrap items-center gap-2 rounded-control bg-canvas px-3 py-2 font-mono text-xs text-ink-2">
+        <span className="rounded bg-subtle px-1.5 py-0.5 font-semibold text-ink">{a.method}</span>
+        <span className="min-w-0 break-all">
+          {a.host}
           {a.path}
         </span>
-        <span className="ml-auto text-neutral-500">Expires in {countdown(a.deadline, now)}</span>
-      </div>
-      <p className="font-medium">{a.summary.title}</p>
-      {a.summary.text ? <p className="whitespace-pre-wrap text-sm">{a.summary.text}</p> : null}
+      </p>
       {a.summary.fields.length > 0 ? (
         <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
           {a.summary.fields.map((f, i) => (
             <div key={i} className="contents">
-              <dt className="text-neutral-500">{f.label}</dt>
+              <dt className="text-muted">{f.label}</dt>
               <dd className="break-words">{f.value}</dd>
             </div>
           ))}
         </dl>
       ) : null}
-      {a.rule_name ? <p className="text-xs text-neutral-500">Rule: {a.rule_name}</p> : null}
+      {a.rule_name ? <p className="text-xs text-muted">Rule: {a.rule_name}</p> : null}
       {a.context_label ? (
-        <p className="text-xs text-neutral-500" data-testid="context-label">
+        <p className="text-xs text-muted" data-testid="context-label">
           Run: {a.context_label}
         </p>
       ) : null}
       {message ? (
-        <p role="alert" className="text-sm text-amber-800">
+        <p role="alert" className="rounded-control border border-pending-line bg-pending-panel p-3 text-sm text-pending-ink">
           {message}
         </p>
       ) : null}
-      <div className="flex gap-2">
-        <Button size="sm" disabled={pending} onClick={() => onDecide("approve")}>
-          Approve
-        </Button>
-        <Button size="sm" variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button size="lg" variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
           Deny
+        </Button>
+        <Button size="lg" variant="approve" disabled={pending} onClick={() => onDecide("approve")}>
+          Approve
         </Button>
       </div>
     </li>
@@ -144,11 +154,11 @@ function PendingTab({ wsId }: { wsId: string }) {
   const groups = groupApprovals(q.data.items);
   return (
     <div className="space-y-4">
-      <p className="text-xs text-neutral-500" role="status">
-        {live ? "Live" : "Reconnecting…"}
+      <p role="status">
+        <StatusDot tone={live ? "accent" : "pending"}>{live ? "Live" : "Reconnecting…"}</StatusDot>
       </p>
       {batchError ? (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger-ink">
           {batchError}
         </p>
       ) : null}
@@ -156,8 +166,8 @@ function PendingTab({ wsId }: { wsId: string }) {
       {groups.map((g) => (
         <section key={g.key} aria-label={g.label ?? undefined} className="space-y-2">
           {g.batchId && g.agentId ? (
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-medium">{g.label ?? "Batch"}</h2>
+            <div className="flex flex-wrap items-center gap-2 rounded-control bg-subtle px-3 py-2">
+              <h2 className="mr-auto text-sm font-semibold text-ink">{g.label ?? "Batch"}</h2>
               {(["approve", "deny"] as const).map((d) => (
                 <Button
                   key={d}
@@ -208,22 +218,22 @@ export function ActionApprovalCard({
   onDecide: (d: Decision) => void;
 }) {
   return (
-    <li className="space-y-2 rounded-md border border-neutral-200 p-4">
-      <p className="whitespace-pre-wrap font-medium">{a.summary}</p>
-      <p className="text-xs text-neutral-500">
+    <li className="space-y-3 rounded-card border border-line bg-surface p-4 text-ink shadow-card sm:p-5">
+      <p className="whitespace-pre-wrap font-display text-base font-semibold">{a.summary}</p>
+      <p className="text-xs text-muted">
         <span className="font-mono">{a.action_key}</span> · expires {fmtDate(a.expires_at)}
       </p>
       {message ? (
-        <p role="alert" className="text-sm text-amber-800">
+        <p role="alert" className="rounded-control border border-pending-line bg-pending-panel p-3 text-sm text-pending-ink">
           {message}
         </p>
       ) : null}
-      <div className="flex gap-2">
-        <Button size="sm" disabled={pending} onClick={() => onDecide("approve")}>
-          Approve
-        </Button>
-        <Button size="sm" variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button size="lg" variant="outline" disabled={pending} onClick={() => onDecide("deny")}>
           Deny
+        </Button>
+        <Button size="lg" variant="approve" disabled={pending} onClick={() => onDecide("approve")}>
+          Approve
         </Button>
       </div>
     </li>
@@ -284,30 +294,33 @@ function ActionHistory({ wsId }: { wsId: string }) {
       {q.isError ? <ErrorState error={q.error} onRetry={() => void q.refetch()} /> : null}
       {q.data && items.length === 0 ? <EmptyState title="No action approvals yet" /> : null}
       {items.length > 0 ? (
-        <table className="w-full text-left text-sm">
-          <caption className="sr-only">Action approval history</caption>
-          <thead className="text-neutral-500">
+        <DataTable caption="Action approval history">
+          <thead>
             <tr>
-              <th className="py-2 pr-4 font-medium">When</th>
-              <th className="py-2 pr-4 font-medium">Summary</th>
-              <th className="py-2 pr-4 font-medium">Status</th>
-              <th className="py-2 font-medium">Decided by</th>
+              <Th>When</Th>
+              <Th>Summary</Th>
+              <Th>Status</Th>
+              <Th>Decided by</Th>
             </tr>
           </thead>
           <tbody>
             {items.map((a) => (
-              <tr key={a.id} className="border-t border-neutral-200">
-                <td className="py-2 pr-4">{fmtDate(a.decided_at ?? a.created_at)}</td>
-                <td className="py-2 pr-4">
+              <tr key={a.id}>
+                <Td>{fmtDate(a.decided_at ?? a.created_at)}</Td>
+                <Td>
                   {a.summary}
-                  {a.error ? <span className="block text-xs text-red-700">{a.error}</span> : null}
-                </td>
-                <td className="py-2 pr-4">{a.status}</td>
-                <td className="py-2">{a.decided_by?.display_name ?? "—"}</td>
+                  {a.error ? <span className="block text-xs text-danger-ink">{a.error}</span> : null}
+                </Td>
+                <Td>
+                  <Badge tone={a.status === "failed" || a.status === "rejected" ? "danger" : a.status === "expired" ? "pending" : "accent"}>
+                    {a.status}
+                  </Badge>
+                </Td>
+                <Td>{a.decided_by?.display_name ?? "—"}</Td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       ) : null}
       {q.hasNextPage ? (
         <Button variant="outline" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
@@ -340,33 +353,35 @@ function HistoryTab({ wsId }: { wsId: string }) {
       {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}
       {q.data && items.length === 0 ? <EmptyState title="No approvals yet" /> : null}
       {items.length > 0 ? (
-        <table className="w-full text-left text-sm">
-          <thead className="text-neutral-500">
+        <DataTable caption="Approval history">
+          <thead>
             <tr>
-              <th className="py-2 pr-4 font-medium">When</th>
-              <th className="py-2 pr-4 font-medium">Agent</th>
-              <th className="py-2 pr-4 font-medium">Request</th>
-              <th className="py-2 pr-4 font-medium">Summary</th>
-              <th className="py-2 pr-4 font-medium">Status</th>
-              <th className="py-2 font-medium">Decided by</th>
+              <Th>When</Th>
+              <Th>Agent</Th>
+              <Th>Request</Th>
+              <Th>Summary</Th>
+              <Th>Status</Th>
+              <Th>Decided by</Th>
             </tr>
           </thead>
           <tbody>
             {items.map((a) => (
-              <tr key={a.id} className="border-t border-neutral-200">
-                <td className="py-2 pr-4">{fmtDate(a.decided_at ?? a.created_at)}</td>
-                <td className="py-2 pr-4">{a.agent?.name ?? "—"}</td>
-                <td className="py-2 pr-4 font-mono">
+              <tr key={a.id}>
+                <Td>{fmtDate(a.decided_at ?? a.created_at)}</Td>
+                <Td>{a.agent?.name ?? "—"}</Td>
+                <Td className="font-mono">
                   {a.method} {a.host}
                   {a.path}
-                </td>
-                <td className="py-2 pr-4">{a.summary.title}</td>
-                <td className="py-2 pr-4">{a.status}</td>
-                <td className="py-2">{a.decided_by?.display_name ?? "—"}</td>
+                </Td>
+                <Td>{a.summary.title}</Td>
+                <Td>
+                  <Badge tone={a.status === "approved" ? "accent" : a.status === "denied" ? "danger" : "neutral"}>{a.status}</Badge>
+                </Td>
+                <Td>{a.decided_by?.display_name ?? "—"}</Td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       ) : null}
       {q.hasNextPage ? (
         <Button variant="outline" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
@@ -380,26 +395,23 @@ function HistoryTab({ wsId }: { wsId: string }) {
 export function ApprovalsView({ wsId }: { wsId: string }) {
   const [tab, setTab] = useState<"pending" | "history">("pending");
   return (
-    <div className="max-w-5xl space-y-4">
-      <h1 className="text-xl font-semibold">Approvals</h1>
-      <div role="tablist" aria-label="Approvals" className="flex gap-2 border-b border-neutral-200">
-        {(["pending", "history"] as const).map((t) => (
-          <button
-            key={t}
-            role="tab"
-            type="button"
-            aria-selected={tab === t}
-            onClick={() => setTab(t)}
-            className={`px-3 py-1.5 text-sm ${tab === t ? "border-b-2 border-neutral-900 font-medium" : "text-neutral-500"}`}
-          >
-            {t === "pending" ? "Pending" : "History"}
-          </button>
-        ))}
-      </div>
-      <div role="tabpanel" className="space-y-8">
+    <div className="max-w-5xl">
+      <PageHeader title="Approvals" description="Requests that wait for a person to allow or deny them." />
+      <Tabs
+        items={[
+          { value: "pending", label: "Pending" },
+          { value: "history", label: "History" },
+        ]}
+        value={tab}
+        onValueChange={(v) => setTab(v as "pending" | "history")}
+        label="Approvals"
+        idBase="approvals"
+        className="mb-4"
+      />
+      <div role="tabpanel" id={tabPanelId("approvals", tab)} aria-labelledby={tabId("approvals", tab)} className="space-y-8">
         {tab === "pending" ? <PendingTab wsId={wsId} /> : <HistoryTab wsId={wsId} />}
         <section aria-label="Action approvals" className="space-y-3">
-          <h2 className="text-lg font-semibold">Action approvals</h2>
+          <h2 className="text-lg font-semibold text-ink">Action approvals</h2>
           {tab === "pending" ? <ActionPending wsId={wsId} /> : <ActionHistory wsId={wsId} />}
         </section>
       </div>

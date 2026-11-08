@@ -54,21 +54,21 @@ export function ComputerTab({ agentId }: { agentId: string }) {
         </Dialog>
       </div>
       {restart.error ? (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger-ink">
           {errorMessage(restart.error)}
         </p>
       ) : null}
       {v.restart_to_update ? (
-        <p role="status" className="rounded bg-blue-50 p-2 text-sm text-blue-900">
+        <p role="status" className="rounded-control bg-subtle p-3 text-sm text-ink-2">
           Configuration changed. Restart to update this computer.
         </p>
       ) : null}
       {v.state === "failed" ? (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger-ink">
           {errorCopy(v.failure_code).message} {v.failure_message ?? ""}
         </p>
       ) : null}
-      {v.image ? <p className="text-sm text-neutral-600">Image: {v.image}</p> : null}
+      {v.image ? <p className="text-sm text-muted">Image: {v.image}</p> : null}
       <section aria-label="Awake reasons">
         <h2 className="text-sm font-semibold">Awake because</h2>
         {v.keep_awake_reasons.length ? (
@@ -78,7 +78,7 @@ export function ComputerTab({ agentId }: { agentId: string }) {
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-neutral-600">Nothing is keeping this computer awake.</p>
+          <p className="text-sm text-muted">Nothing is keeping this computer awake.</p>
         )}
       </section>
       <section aria-label="Processes">
@@ -105,7 +105,7 @@ export function ComputerTab({ agentId }: { agentId: string }) {
             </tbody>
           </table>
         ) : (
-          <p className="text-sm text-neutral-600">No processes.</p>
+          <p className="text-sm text-muted">No processes.</p>
         )}
       </section>
     </div>

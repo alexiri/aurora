@@ -31,20 +31,20 @@ export function DeleteZone({
     }
   }
   return (
-    <form onSubmit={(e) => void submit(e)} className="max-w-md space-y-3 rounded-md border border-red-200 p-4">
-      <h2 className="text-lg font-medium text-red-800">Delete this agent</h2>
-      <p className="text-sm text-neutral-600">
+    <form onSubmit={(e) => void submit(e)} className="max-w-md space-y-3 rounded-card border border-danger-ink/30 bg-surface p-4">
+      <h2 className="text-lg font-semibold text-danger-ink">Delete this agent</h2>
+      <p className="text-sm text-ink-2">
         Revokes all of its credentials. Type <code className="font-mono">{handle}</code> to confirm.
       </p>
       <Field id="del-agent" label="Agent handle">
         <input id="del-agent" className={inputClass} value={confirm} autoComplete="off" onChange={(e) => setConfirm(e.target.value)} />
       </Field>
       {del.error ? (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger-ink">
           {errorMessage(del.error)}
         </p>
       ) : null}
-      <Button type="submit" disabled={del.isPending || confirm !== handle} className="bg-red-700 text-white">
+      <Button type="submit" variant="danger" disabled={del.isPending || confirm !== handle}>
         {del.isPending ? "Deleting…" : "Delete agent"}
       </Button>
     </form>
