@@ -2,7 +2,8 @@
 
 Five small, independent gaps. Each has its own tests. Contract numbers: **C-195..C-199**. Decision: **D-96**.
 
-## (a) Attachment quota notices by e-mail (FU-P2-015b)
+## (a) Attachment quota notices by e-mail (FU-P2-015b): verify and test
+**P2-011A already sends these** (6329871b; FEATURES `RFE-015§notice-email`: "done, no dedicated test yet"). Don't build them again. Read the existing path, check it against the rules below, add the missing tests, and fix only what deviates; report what you found.
 `02` limit `ATTACH_QUOTA_NOTICE` (phase 2, RFE-015): notices at **80 %** and **100 %** of the org attachment quota (`10 §Attachments`).
 - Send them through the RFE-011a e-mail channel that P2-011A built (the approval notifier/mailer: reuse its transport, templates and dev mail sink; don't build a second mailer).
 - Recipients: the org's owners and admins.
