@@ -1,17 +1,17 @@
 package:
   id: aws-keys
-  version: 1.0.0
+  version: 1.0.1
   contract: 1
   min_core: 0.1.0
   publisher: aurora
   name: AWS (access keys)
-  description: Amazon S3 objects, STS and EC2 API calls signed with an IAM access key pair (AWS Signature Version 4)
+  description: Amazon S3 objects and EC2 API calls signed with an IAM access key pair (AWS Signature Version 4)
   homepage: https://aws.amazon.com
 apps:
   - about:
       id: aws-keys
       name: AWS (access keys)
-      description: Work with S3 buckets and objects, check the caller identity with STS and query EC2, signed with an IAM access key pair
+      description: Work with S3 buckets and objects and query EC2, signed with an IAM access key pair
       category: cloud
       api_docs: https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html
       web_hosts: [console.aws.amazon.com]
@@ -61,15 +61,8 @@ apps:
             access_key: "{credentials.access_key_id}"
             secret_key: "{credentials.secret_access_key}"
             session_token: "{credentials.session_token}"
-      - match: { host: "sts.*.amazonaws.com" }
-        inject: []
-        finalize:
-          aws_sigv4:
-            region: "{metadata.region}"
-            service: sts
-            access_key: "{credentials.access_key_id}"
-            secret_key: "{credentials.secret_access_key}"
-            session_token: "{credentials.session_token}"
+      # No sts.*.amazonaws.com entry (D-95): AssumeRole, GetSessionToken and GetFederationToken
+      # answers carry usable credentials, so agents get no STS access.
       - match: { host: "ec2.*.amazonaws.com" }
         inject: []
         finalize:
@@ -89,7 +82,6 @@ apps:
         items:
           - { id: s3_put_object, name: Upload or copy an object, host: "s3.*.amazonaws.com", path: "/*/*/**", methods: [PUT] }
           - { id: s3_delete_object, name: Delete an object, host: "s3.*.amazonaws.com", path: "/*/*/**", methods: [DELETE] }
-          - { id: sts_call, name: Call an STS action (for example GetCallerIdentity), host: "sts.*.amazonaws.com", path: /, methods: [GET, POST] }
           - { id: ec2_call, name: Call an EC2 action (for example DescribeInstances), host: "ec2.*.amazonaws.com", path: /, methods: [GET, POST] }
     approvals:
       s3_put_object:
@@ -104,11 +96,6 @@ apps:
           - { label: Bucket, source: path, segment: 1 }
           - { label: Key, source: path, segment: 2 }
         link: "https://console.aws.amazon.com/s3/"
-      sts_call:
-        title: Call STS action
-        fields:
-          - { label: Action, source: query, name: Action }
-          - { label: Action in form, source: body, steps: [ { form: Action } ] }
       ec2_call:
         title: Call EC2 action
         fields:
@@ -121,9 +108,9 @@ apps:
         Send requests straight to the regional endpoints; Aurora signs them (Signature Version 4)
         and never shows you a key, so do not use `aws configure` or an SDK credential chain.
         S3: use path-style URLs, https://s3.<region>.amazonaws.com/<bucket>/<key>; virtual-hosted
-        bucket URLs are not covered. STS and EC2 use the Query API on
-        https://sts.<region>.amazonaws.com/ and https://ec2.<region>.amazonaws.com/ with the
-        Action and Version parameters (for example Action=GetCallerIdentity&Version=2011-06-15,
-        Action=DescribeInstances&Version=2016-11-15). Every STS and EC2 call is held for approval
-        because the action is chosen by a request parameter. A request to a region other than the
+        bucket URLs are not covered. EC2 uses the Query API on https://ec2.<region>.amazonaws.com/
+        with the Action and Version parameters (for example
+        Action=DescribeInstances&Version=2016-11-15); every EC2 call is held for approval because
+        the action is chosen by a request parameter. STS is not available to you: requests to
+        sts.<region>.amazonaws.com are not signed. A request to a region other than the
         connection's will be signed for the wrong region and AWS will refuse it.

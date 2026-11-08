@@ -1,0 +1,325 @@
+# Hook cases run `hooks.wasm` in the embedded hook host with `fetch` answered from recorded HTTP
+# (docs/09 §12). The cassette matches the method and URL, so every positive case proves the call
+# goes to the regional STS endpoint (POST https://sts.<region>.amazonaws.com/). The signed request
+# itself (SigV4 canonical request and signature against AWS's published vectors, `ExternalId`,
+# `RoleSessionName`, `DurationSeconds`, `RoleArn`, no secret on the wire) is asserted by the guest's
+# unit tests (hooks/, `cargo test`, run by check-builtin.sh).
+#
+# Responses are the documented AssumeRole shapes with obviously fake values (docs: STS API
+# reference, AssumeRole "Response Elements" / "Errors"). The context carries the organization's
+# external id and id exactly as the gateway supplies them (`permissions.context`).
+- name: token.mint assumes the role and returns the session credentials
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: token.mint
+    app_id: aws-role
+    http_cassette:
+      - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
+        response:
+          status: 200
+          headers: { content-type: text/xml }
+          body: &ok '<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleResult><SourceIdentity>aurora</SourceIdentity><AssumedRoleUser><AssumedRoleId>AROAFIXTUREROLE01:aurora-org-1</AssumedRoleId><Arn>arn:aws:sts::123456789012:assumed-role/aurora-agent/aurora-org-1</Arn></AssumedRoleUser><Credentials><AccessKeyId>ASIDFIXTURE00001</AccessKeyId><SecretAccessKey>fixture-session-secret-1</SecretAccessKey><SessionToken>fixture-session-token-1</SessionToken><Expiration>2099-01-01T00:00:00Z</Expiration></Credentials><PackedPolicySize>6</PackedPolicySize></AssumeRoleResult><ResponseMetadata><RequestId>00000000-0000-0000-0000-000000000001</RequestId></ResponseMetadata></AssumeRoleResponse>'
+    input:
+      credentials: &src
+        source_access_key_id: "AKIDFIXTURESRC0001"
+        source_secret_access_key: "fixture-source-secret-1"
+      metadata: &md { role_arn: "arn:aws:iam::123456789012:role/aurora-agent", region: eu-west-1, session_duration: "3600" }
+      context: &ctx { org_external_id: "0123456789abcdef0123456789abcdef", org_id: "org-fixture-1" }
+    expect:
+      credentials:
+        access_key_id: "ASIDFIXTURE00001"
+        secret_access_key: "fixture-session-secret-1"
+        session_token: "fixture-session-token-1"
+- name: token.mint calls the regional endpoint of the connection's region
+  request: { method: GET, url: "https://s3.us-east-1.amazonaws.com/" }
+  hook:
+    point: token.mint
+    app_id: aws-role
+    http_cassette:
+      - request: { method: POST, url: "https://sts.us-east-1.amazonaws.com/" }
+        response: { status: 200, body: *ok }
+    input:
+      credentials: *src
+      metadata: { role_arn: "arn:aws:iam::123456789012:role/team/aurora-agent", region: us-east-1 }
+      context: *ctx
+    expect: { credentials: { session_token: "fixture-session-token-1" } }
+- name: token.mint maps AccessDenied (trust policy or external id mismatch) to reauth-required
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: token.mint
+    app_id: aws-role
+    http_cassette:
+      - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
+        response:
+          status: 403
+          body: '<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><Error><Type>Sender</Type><Code>AccessDenied</Code><Message>User: arn:aws:iam::123456789012:user/aurora-source is not authorized to perform: sts:AssumeRole on resource: arn:aws:iam::123456789012:role/aurora-agent</Message></Error><RequestId>00000000-0000-0000-0000-000000000002</RequestId></ErrorResponse>'
+    input: { credentials: *src, metadata: *md, context: *ctx }
+    expect: { error: reauth-required, message_contains: "AccessDenied" }
+- name: token.mint maps a rejected source key to reauth-required without echoing the key
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: token.mint
+    app_id: aws-role
+    http_cassette:
+      - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
+        response:
+          status: 403
+          body: '<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><Error><Type>Sender</Type><Code>InvalidClientTokenId</Code><Message>The security token included in the request is invalid.</Message></Error><RequestId>00000000-0000-0000-0000-000000000003</RequestId></ErrorResponse>'
+    input: { credentials: *src, metadata: *md, context: *ctx }
+    expect: { error: reauth-required, message_contains: "rejected the source access key" }
+- name: token.mint maps other STS errors to upstream with the code only
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: token.mint
+    app_id: aws-role
+    http_cassette:
+      - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
+        response:
+          status: 400
+          body: '<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><Error><Type>Sender</Type><Code>ValidationError</Code><Message>1 validation error detected: Value at roleArn failed</Message></Error><RequestId>00000000-0000-0000-0000-000000000004</RequestId></ErrorResponse>'
+    input: { credentials: *src, metadata: *md, context: *ctx }
+    expect: { error: upstream, message_contains: "ValidationError" }
+- name: token.mint rejects a malformed answer
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: token.mint
+    app_id: aws-role
+    http_cassette:
+      - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
+        response: { status: 200, body: "<html>not an STS answer</html>" }
+    input: { credentials: *src, metadata: *md, context: *ctx }
+    expect: { error: upstream, message_contains: "no credentials" }
+- name: token.mint rejects an answer with an incomplete credentials block
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: token.mint
+    app_id: aws-role
+    http_cassette:
+      - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
+        response: { status: 200, body: "<AssumeRoleResponse><AssumeRoleResult><Credentials><AccessKeyId>ASIDFIXTURE00001</AccessKeyId><Expiration>2099-01-01T00:00:00Z</Expiration></Credentials></AssumeRoleResult></AssumeRoleResponse>" }
+    input: { credentials: *src, metadata: *md, context: *ctx }
+    expect: { error: upstream, message_contains: "incomplete credentials" }
+- name: token.mint reports an STS outage as upstream
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: token.mint
+    app_id: aws-role
+    http_cassette:
+      - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
+        response: { status: 503, body: "Service Unavailable" }
+    input: { credentials: *src, metadata: *md, context: *ctx }
+    expect: { error: upstream, message_contains: "503" }
+- name: token.mint outside its egress list is denied
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: token.mint
+    app_id: aws-role
+    egress_override: [other.example.test]
+    input: { credentials: *src, metadata: *md, context: *ctx }
+    expect: { error: egress-denied, message_contains: "egress denied" }
+- name: token.mint refuses to assume the role without the organization's external id
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: token.mint
+    app_id: aws-role
+    input: { credentials: *src, metadata: *md, context: {} }
+    expect: { error: internal, message_contains: "external id" }
+- name: token.mint without the source key asks to reconnect
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: token.mint
+    app_id: aws-role
+    steps:
+      - input: { credentials: {}, metadata: *md, context: *ctx }
+        expect: { error: reauth-required, message_contains: "source access key" }
+      - input: { credentials: { source_access_key_id: "AKIDFIXTURESRC0001" }, metadata: *md, context: *ctx }
+        expect: { error: reauth-required, message_contains: "source secret access key" }
+- name: token.mint with broken stored metadata asks to reconnect
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: token.mint
+    app_id: aws-role
+    steps:
+      - input: { credentials: *src, metadata: { region: eu-west-1 }, context: *ctx }
+        expect: { error: reauth-required, message_contains: "role ARN" }
+      - input: { credentials: *src, metadata: { role_arn: "arn:aws:iam::123456789012:role/aurora-agent", region: "eu-west-1.evil.example.test" }, context: *ctx }
+        expect: { error: reauth-required, message_contains: "region" }
+- name: connect.exchange validates the form by assuming the role once
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: connect.exchange
+    app_id: aws-role
+    http_cassette:
+      - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
+        response: { status: 200, body: *ok }
+    input:
+      method_id: role
+      source:
+        form:
+          role_arn: "arn:aws:iam::123456789012:role/aurora-agent"
+          region: eu-west-1
+          source_access_key_id: "AKIDFIXTURESRC0001"
+          source_secret_access_key: "fixture-source-secret-1"
+          session_duration: "7200"
+      context: *ctx
+    expect:
+      connected:
+        credentials:
+          access_key_id: "ASIDFIXTURE00001"
+          secret_access_key: "fixture-session-secret-1"
+          session_token: "fixture-session-token-1"
+          source_access_key_id: "AKIDFIXTURESRC0001"
+          source_secret_access_key: "fixture-source-secret-1"
+        metadata: { role_arn: "arn:aws:iam::123456789012:role/aurora-agent", region: eu-west-1, session_duration: "7200" }
+        label: "AWS role aurora-agent (123456789012)"
+- name: connect.exchange without a duration records the default
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: connect.exchange
+    app_id: aws-role
+    http_cassette:
+      - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
+        response: { status: 200, body: *ok }
+    input:
+      method_id: role
+      source:
+        form:
+          role_arn: "arn:aws:iam::123456789012:role/team/aurora-agent"
+          region: eu-west-1
+          source_access_key_id: "AKIDFIXTURESRC0001"
+          source_secret_access_key: "fixture-source-secret-1"
+      context: *ctx
+    expect:
+      connected:
+        metadata: { session_duration: "3600" }
+        label: "AWS role aurora-agent (123456789012)"
+- name: connect.exchange reports AccessDenied as a form error without echoing the keys
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: connect.exchange
+    app_id: aws-role
+    http_cassette:
+      - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
+        response:
+          status: 403
+          body: '<ErrorResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><Error><Type>Sender</Type><Code>AccessDenied</Code><Message>User: arn:aws:iam::123456789012:user/aurora-source is not authorized to perform: sts:AssumeRole on resource: arn:aws:iam::123456789012:role/aurora-agent</Message></Error></ErrorResponse>'
+    input:
+      method_id: role
+      source:
+        form:
+          role_arn: "arn:aws:iam::123456789012:role/aurora-agent"
+          region: eu-west-1
+          source_access_key_id: "AKIDFIXTURESRC0001"
+          source_secret_access_key: "fixture-source-secret-1"
+      context: *ctx
+    expect: { error: invalid-input, message_contains: "trust policy" }
+- name: connect.exchange reports a rejected source key as a form error
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: connect.exchange
+    app_id: aws-role
+    http_cassette:
+      - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
+        response:
+          status: 403
+          body: '<ErrorResponse><Error><Type>Sender</Type><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match</Message></Error></ErrorResponse>'
+    input:
+      method_id: role
+      source:
+        form:
+          role_arn: "arn:aws:iam::123456789012:role/aurora-agent"
+          region: eu-west-1
+          source_access_key_id: "AKIDFIXTURESRC0001"
+          source_secret_access_key: "fixture-source-secret-1"
+      context: *ctx
+    expect: { error: invalid-input, message_contains: "rejected the source access key" }
+- name: connect.exchange rejects a malformed answer
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: connect.exchange
+    app_id: aws-role
+    http_cassette:
+      - request: { method: POST, url: "https://sts.eu-west-1.amazonaws.com/" }
+        response: { status: 200, body: "{}" }
+    input:
+      method_id: role
+      source:
+        form:
+          role_arn: "arn:aws:iam::123456789012:role/aurora-agent"
+          region: eu-west-1
+          source_access_key_id: "AKIDFIXTURESRC0001"
+          source_secret_access_key: "fixture-source-secret-1"
+      context: *ctx
+    expect: { error: upstream, message_contains: "no credentials" }
+- name: connect.exchange validates the role ARN, region, keys and duration
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: connect.exchange
+    app_id: aws-role
+    steps:
+      - input:
+          method_id: role
+          source: { form: { role_arn: "arn:aws:iam::12345:role/x", region: eu-west-1, source_access_key_id: "AKIDFIXTURESRC0001", source_secret_access_key: "fixture-source-secret-1" } }
+          context: *ctx
+        expect: { error: invalid-input, message_contains: "role ARN" }
+      - input:
+          method_id: role
+          source: { form: { role_arn: "arn:aws:iam::123456789012:user/x", region: eu-west-1, source_access_key_id: "AKIDFIXTURESRC0001", source_secret_access_key: "fixture-source-secret-1" } }
+          context: *ctx
+        expect: { error: invalid-input, message_contains: "role ARN" }
+      - input:
+          method_id: role
+          source: { form: { role_arn: "arn:aws-cn:iam::123456789012:role/x", region: cn-north-1, source_access_key_id: "AKIDFIXTURESRC0001", source_secret_access_key: "fixture-source-secret-1" } }
+          context: *ctx
+        expect: { error: invalid-input, message_contains: "partition" }
+      - input:
+          method_id: role
+          source: { form: { role_arn: "arn:aws:iam::123456789012:role/x", region: "evil.example.test", source_access_key_id: "AKIDFIXTURESRC0001", source_secret_access_key: "fixture-source-secret-1" } }
+          context: *ctx
+        expect: { error: invalid-input, message_contains: "region" }
+      - input:
+          method_id: role
+          source: { form: { role_arn: "arn:aws:iam::123456789012:role/x", region: eu-west-1, source_access_key_id: "AKIDFIXTURESRC0001", source_secret_access_key: "fixture-source-secret-1", session_duration: "60" } }
+          context: *ctx
+        expect: { error: invalid-input, message_contains: "session duration" }
+      - input:
+          method_id: role
+          source: { form: { role_arn: "arn:aws:iam::123456789012:role/x", region: eu-west-1, source_secret_access_key: "fixture-source-secret-1" } }
+          context: *ctx
+        expect: { error: invalid-input, message_contains: "source access key id" }
+      - input:
+          method_id: role
+          source: { form: { role_arn: "arn:aws:iam::123456789012:role/x", region: eu-west-1, source_access_key_id: "AKIDFIXTURESRC0001", source_secret_access_key: "short" } }
+          context: *ctx
+        expect: { error: invalid-input, message_contains: "source secret access key" }
+- name: connect.exchange refuses to assume the role without the organization's external id
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: connect.exchange
+    app_id: aws-role
+    input:
+      method_id: role
+      source:
+        form:
+          role_arn: "arn:aws:iam::123456789012:role/aurora-agent"
+          region: eu-west-1
+          source_access_key_id: "AKIDFIXTURESRC0001"
+          source_secret_access_key: "fixture-source-secret-1"
+      context: {}
+    expect: { error: internal, message_contains: "external id" }
+- name: connect.exchange outside its egress list is denied
+  request: { method: GET, url: "https://s3.eu-west-1.amazonaws.com/" }
+  hook:
+    point: connect.exchange
+    app_id: aws-role
+    egress_override: [other.example.test]
+    input:
+      method_id: role
+      source:
+        form:
+          role_arn: "arn:aws:iam::123456789012:role/aurora-agent"
+          region: eu-west-1
+          source_access_key_id: "AKIDFIXTURESRC0001"
+          source_secret_access_key: "fixture-source-secret-1"
+      context: *ctx
+    expect: { error: egress-denied, message_contains: "egress denied" }

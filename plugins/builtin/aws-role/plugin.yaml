@@ -1,0 +1,147 @@
+package:
+  id: aws-role
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: AWS (assume role)
+  description: Amazon S3 objects and EC2 API calls signed with short-lived credentials from an assumed IAM role (sts:AssumeRole with an external id, AWS Signature Version 4)
+  homepage: https://aws.amazon.com
+permissions:
+  hooks: [connect.exchange, token.mint]
+  # Only the regional STS endpoint of the connection's region is ever called (sts.<region>.amazonaws.com,
+  # https://docs.aws.amazon.com/general/latest/gr/sts.html). The global sts.amazonaws.com endpoint and
+  # the China / isolated partitions are not used.
+  egress:
+    connect.exchange: ["sts.*.amazonaws.com"]
+    token.mint: ["sts.*.amazonaws.com"]
+  # The org external id is sent as the AssumeRole ExternalId; the org id names the role session.
+  context: [org_external_id, org_id]
+apps:
+  - about:
+      id: aws-role
+      name: AWS (assume role)
+      description: Work with S3 buckets and objects and query EC2 through an IAM role that Aurora assumes with a per-organization external id
+      category: cloud
+      api_docs: https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html
+      web_hosts: [console.aws.amazon.com]
+      connect_note:
+        text: "Create an IAM role whose trust policy allows a source IAM user and requires the external id shown in the setup guide, then enter the user's access key, the role ARN and the region. Aurora assumes the role for short-lived credentials; the source key is only used to assume it."
+        url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_common-scenarios_third-party.html
+      label_hint: A name for this role, such as the role's purpose
+    credentials:
+      - { name: source_access_key_id, secret: true }
+      - { name: source_secret_access_key, secret: true }
+      - { name: access_key_id, secret: true }
+      - { name: secret_access_key, secret: true }
+      - { name: session_token, secret: true }
+    metadata:
+      - { name: role_arn }
+      - { name: region }
+      - { name: session_duration }
+    connect:
+      - id: role
+        kind: hook
+        authorize: false
+        fields:
+          - name: role_arn
+            label: Role ARN
+            type: text
+            store: metadata
+            required: true
+            placeholder: "arn:aws:iam::123456789012:role/aurora-agent"
+            help_url: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html#identifiers-arns
+          - name: region
+            label: Region
+            type: text
+            store: metadata
+            required: true
+            placeholder: "eu-west-1"
+            help_url: https://docs.aws.amazon.com/general/latest/gr/rande.html
+          - name: source_access_key_id
+            label: Source access key ID
+            type: secret
+            store: credentials
+            required: true
+            help_url: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html
+          - name: source_secret_access_key
+            label: Source secret access key
+            type: secret
+            store: credentials
+            required: true
+          - name: session_duration
+            label: Session duration cap in seconds (optional)
+            type: text
+            store: metadata
+            placeholder: "3600"
+            help_url: https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html
+    hosts:
+      # Only the session credentials minted by the hook are used here; the source key is never injected.
+      - match: { host: "s3.*.amazonaws.com" }
+        inject: []
+        finalize:
+          aws_sigv4:
+            region: "{metadata.region}"
+            service: s3
+            access_key: "{credentials.access_key_id}"
+            secret_key: "{credentials.secret_access_key}"
+            session_token: "{credentials.session_token}"
+      # No sts.*.amazonaws.com entry (D-95): AssumeRole, GetSessionToken and GetFederationToken answers
+      # carry usable credentials, so agents get no STS access. The hook host calls STS (egress above).
+      - match: { host: "ec2.*.amazonaws.com" }
+        inject: []
+        finalize:
+          aws_sigv4:
+            region: "{metadata.region}"
+            service: ec2
+            access_key: "{credentials.access_key_id}"
+            secret_key: "{credentials.secret_access_key}"
+            session_token: "{credentials.session_token}"
+    token:
+      kind: hook
+      # AssumeRole sessions last at most 12 hours (DurationSeconds 900..43200).
+      max_lifetime_secs: 43200
+    tools:
+      read:
+        items:
+          - { id: s3_list_buckets, name: List buckets, host: "s3.*.amazonaws.com", path: /, methods: [GET] }
+          - { id: s3_list_objects, name: List objects in a bucket, host: "s3.*.amazonaws.com", path: "/*", methods: [GET] }
+          - { id: s3_get_object, name: Get or inspect an object, host: "s3.*.amazonaws.com", path: "/*/*/**", methods: [GET, HEAD] }
+      write:
+        items:
+          - { id: s3_put_object, name: Upload or copy an object, host: "s3.*.amazonaws.com", path: "/*/*/**", methods: [PUT] }
+          - { id: s3_delete_object, name: Delete an object, host: "s3.*.amazonaws.com", path: "/*/*/**", methods: [DELETE] }
+          - { id: ec2_call, name: Call an EC2 action (for example DescribeInstances), host: "ec2.*.amazonaws.com", path: /, methods: [GET, POST] }
+    approvals:
+      s3_put_object:
+        title: Upload S3 object
+        fields:
+          - { label: Bucket, source: path, segment: 1 }
+          - { label: Key, source: path, segment: 2 }
+        link: "https://console.aws.amazon.com/s3/"
+      s3_delete_object:
+        title: Delete S3 object
+        fields:
+          - { label: Bucket, source: path, segment: 1 }
+          - { label: Key, source: path, segment: 2 }
+        link: "https://console.aws.amazon.com/s3/"
+      ec2_call:
+        title: Call EC2 action
+        fields:
+          - { label: Action, source: query, name: Action }
+          - { label: Action in form, source: body, steps: [ { form: Action } ] }
+        link: "https://console.aws.amazon.com/ec2/"
+    agent:
+      instructions: |
+        AWS is connected through an IAM role for ONE region (the connection's region). Aurora assumes
+        the role itself and signs every request (Signature Version 4) with short-lived session
+        credentials; you never see a key or a token, so do not use `aws configure`, `aws sts
+        assume-role` or an SDK credential chain, and do not call AssumeRole yourself.
+        Send requests straight to the regional endpoints. S3: use path-style URLs,
+        https://s3.<region>.amazonaws.com/<bucket>/<key>; virtual-hosted bucket URLs are not covered.
+        EC2 uses the Query API on https://ec2.<region>.amazonaws.com/ with the Action and Version
+        parameters (for example Action=DescribeInstances&Version=2016-11-15); every EC2 call is held
+        for approval because the action is chosen by a request parameter. STS is not available to
+        you: requests to sts.<region>.amazonaws.com are not signed. What you can do is limited by
+        the role's permissions policy. A request to a region
+        other than the connection's will be signed for the wrong region and AWS will refuse it.

@@ -1,0 +1,50 @@
+# Write tools: a positive case with the approval summary and a `negative <tool>:` case each.
+- name: "s3_put_object: summary shows bucket and key"
+  connection: &conn
+    credentials:
+      source_access_key_id: "AKIDFIXTURESRC0001"
+      source_secret_access_key: "fixture-source-secret-1"
+      access_key_id: "ASIDFIXTURE00001"
+      secret_access_key: "fixture-session-secret-1"
+      session_token: "fixture-session-token-1"
+    metadata: { role_arn: "arn:aws:iam::123456789012:role/aurora-agent", region: eu-west-1, session_duration: "3600" }
+  request: { method: PUT, url: "https://s3.eu-west-1.amazonaws.com/example-bucket/reports/q1.txt", body: "hello" }
+  expect:
+    app: aws-role
+    tool: s3_put_object
+    summary: { title: "Upload S3 object", fields: { Bucket: example-bucket, Key: reports } }
+    upstream: { headers: { x-amz-security-token: "fixture-session-token-1" } }
+- name: "negative s3_put_object: PUT on the bucket (CreateBucket) selects no tool"
+  connection: *conn
+  request: { method: PUT, url: "https://s3.eu-west-1.amazonaws.com/example-bucket" }
+  expect: { app: aws-role }
+- name: "s3_delete_object: summary shows bucket and key"
+  connection: *conn
+  request: { method: DELETE, url: "https://s3.eu-west-1.amazonaws.com/example-bucket/old.txt" }
+  expect:
+    tool: s3_delete_object
+    summary: { title: "Delete S3 object", fields: { Bucket: example-bucket, Key: old.txt } }
+- name: "negative s3_delete_object: DELETE on the bucket selects no tool"
+  connection: *conn
+  request: { method: DELETE, url: "https://s3.eu-west-1.amazonaws.com/example-bucket" }
+  expect: { app: aws-role }
+- name: "ec2_call: action from the query"
+  connection: *conn
+  request: { method: GET, url: "https://ec2.eu-west-1.amazonaws.com/?Action=TerminateInstances&Version=2016-11-15" }
+  expect:
+    tool: ec2_call
+    summary: { title: "Call EC2 action", fields: { Action: TerminateInstances } }
+- name: "ec2_call: action from a form body"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=DescribeInstances&Version=2016-11-15"
+  expect:
+    tool: ec2_call
+    summary: { title: "Call EC2 action", fields: { "Action in form": DescribeInstances } }
+- name: "negative ec2_call: DELETE selects no tool"
+  connection: *conn
+  request: { method: DELETE, url: "https://ec2.eu-west-1.amazonaws.com/" }
+  expect: { app: aws-role }
