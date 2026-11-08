@@ -1490,6 +1490,42 @@
         ]
       }
     },
+    "/v1/admin/storage": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Instance storage breakdown (phase 2, RFE-015; instance administrators).",
+        "operationId": "adminStorage",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStorage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/trusted-keys": {
       "get": {
         "tags": [
@@ -5475,6 +5511,60 @@
         ]
       }
     },
+    "/v1/attachments/{id}": {
+      "delete": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Purge the file's bytes now (phase 2, RFE-015). The row stays, so the transcript chip shows\n\"expired\"; downloads then answer 410. The uploader or a workspace owner.",
+        "operationId": "deleteAttachment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Attachment id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted (idempotent)"
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/attachments/{id}/content": {
       "get": {
         "tags": [
@@ -5512,6 +5602,16 @@
           },
           "404": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "attachment_purged",
             "content": {
               "application/json": {
                 "schema": {
@@ -5672,67 +5772,6 @@
         }
       }
     },
-    "/v1/auth/login": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Sign in with email and password; sets the session cookie.",
-        "operationId": "login",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LoginRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/auth/logout": {
       "post": {
         "tags": [
@@ -5817,6 +5856,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -5846,65 +5895,29 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "reauth",
+            "in": "query",
+            "description": "`1` = re-authenticate the signed-in user (`prompt=login&max_age=0`); needs a session.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "login_hint",
+            "in": "query",
+            "description": "Passed to the provider as `login_hint` (the development IdP signs that user in).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "302": {
             "description": "Redirect to the provider"
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "502": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/auth/password/change": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Change the password (session only).",
-        "operationId": "changePassword",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ChangePasswordRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Password changed"
           },
           "400": {
             "description": "",
@@ -5926,7 +5939,7 @@
               }
             }
           },
-          "403": {
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -5935,35 +5948,6 @@
                 }
               }
             }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ]
-      }
-    },
-    "/v1/auth/password/forgot": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Request a password-reset email (always 202).",
-        "operationId": "forgotPassword",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ForgotRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "description": "Accepted"
           },
           "429": {
             "description": "",
@@ -5974,32 +5958,8 @@
                 }
               }
             }
-          }
-        }
-      }
-    },
-    "/v1/auth/password/reset": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Set a new password with a reset token; revokes all sessions.",
-        "operationId": "resetPassword",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ResetRequest"
-              }
-            }
           },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Password changed"
-          },
-          "400": {
+          "502": {
             "description": "",
             "content": {
               "application/json": {
@@ -6031,157 +5991,6 @@
             }
           },
           "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": []
-          }
-        ]
-      }
-    },
-    "/v1/auth/signup": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Create an account (and, in `open` mode, its organization); sets the session cookie.",
-        "operationId": "signup",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SignupRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/auth/verify-email": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Consume an email-verification token.",
-        "operationId": "verifyEmail",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VerifyEmailRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/auth/verify-email/resend": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Send a fresh verification email to the signed-in user.",
-        "operationId": "resendVerification",
-        "responses": {
-          "202": {
-            "description": "Accepted"
-          },
-          "409": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "429": {
             "description": "",
             "content": {
               "application/json": {
@@ -7247,6 +7056,16 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "attachment_quota_exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -8254,18 +8073,8 @@
         "tags": [
           "me"
         ],
-        "summary": "Delete the caller's own account.",
+        "summary": "Delete the caller's own account (needs a recent OIDC re-authentication, else 412 `reauth_required`).",
         "operationId": "deleteMe",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DeleteMeRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "204": {
             "description": "Deleted"
@@ -8281,6 +8090,16 @@
             }
           },
           "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "412": {
             "description": "",
             "content": {
               "application/json": {
@@ -11577,6 +11396,67 @@
             }
           },
           "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/storage": {
+      "get": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "Attachment storage of an organization: usage vs quota, retention and the breakdown by\nworkspace and direction (phase 2, RFE-015; org `owner`/`admin`).",
+        "operationId": "getOrgStorage",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgStorage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -16753,6 +16633,96 @@
           }
         }
       },
+      "AdminOrgStorage": {
+        "type": "object",
+        "description": "Attachment bytes of one org in the instance breakdown.",
+        "required": [
+          "org_id",
+          "slug",
+          "name",
+          "attachment_bytes",
+          "files"
+        ],
+        "properties": {
+          "attachment_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "files": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "quota_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Quota in force; null = unlimited."
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminStorage": {
+        "type": "object",
+        "description": "`GET /admin/storage` (API_CONTRACTS C-172).",
+        "required": [
+          "blob_bytes",
+          "blob_count",
+          "attachment_bytes",
+          "attachment_files",
+          "purged_files",
+          "orgs",
+          "tables"
+        ],
+        "properties": {
+          "attachment_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sum of the org counters."
+          },
+          "attachment_files": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "blob_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes held by the blob backend (`blobs`)."
+          },
+          "blob_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "orgs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminOrgStorage"
+            },
+            "description": "Top 50 orgs by attachment bytes."
+          },
+          "purged_files": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TableSize"
+            },
+            "description": "`blobs`, `attachments`, `transcript_events`, `request_log`, `audit_log`."
+          }
+        }
+      },
       "AdminUser": {
         "allOf": [
           {
@@ -17915,21 +17885,6 @@
               "type": "string"
             },
             "description": "The agent's own source list (`null` = inherit)."
-          }
-        }
-      },
-      "ChangePasswordRequest": {
-        "type": "object",
-        "required": [
-          "current_password",
-          "new_password"
-        ],
-        "properties": {
-          "current_password": {
-            "type": "string"
-          },
-          "new_password": {
-            "type": "string"
           }
         }
       },
@@ -19565,18 +19520,6 @@
           "block"
         ]
       },
-      "DeleteMeRequest": {
-        "type": "object",
-        "properties": {
-          "password": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Required for accounts that have a password."
-          }
-        }
-      },
       "DirectUser": {
         "type": "object",
         "description": "The person a `direct` conversation belongs to (phase 1, RFE-009).",
@@ -20028,17 +19971,6 @@
             "description": "`joining` | `joined` | `promoted`"
           },
           "text": {
-            "type": "string"
-          }
-        }
-      },
-      "ForgotRequest": {
-        "type": "object",
-        "required": [
-          "email"
-        ],
-        "properties": {
-          "email": {
             "type": "string"
           }
         }
@@ -21030,21 +20962,6 @@
         },
         "additionalProperties": false
       },
-      "LoginRequest": {
-        "type": "object",
-        "required": [
-          "email",
-          "password"
-        ],
-        "properties": {
-          "email": {
-            "type": "string"
-          },
-          "password": {
-            "type": "string"
-          }
-        }
-      },
       "Me": {
         "type": "object",
         "required": [
@@ -21929,6 +21846,73 @@
               "boolean",
               "null"
             ]
+          }
+        }
+      },
+      "OrgStorage": {
+        "type": "object",
+        "description": "`GET /orgs/{org}/storage` (API_CONTRACTS C-171).",
+        "required": [
+          "org_id",
+          "used_bytes",
+          "notice",
+          "files",
+          "purged_files",
+          "by_workspace"
+        ],
+        "properties": {
+          "attachments_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The org's attachment retention window; null = keep forever."
+          },
+          "attachments_days_effective": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The window in force (after the instance maximum)."
+          },
+          "by_workspace": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceStorage"
+            }
+          },
+          "files": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files that hold bytes."
+          },
+          "notice": {
+            "type": "string",
+            "description": "`clear` (< 80 %) | `warning` (≥ 80 %) | `full` (≥ 100 %)."
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "purged_files": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files whose bytes were purged (the rows remain)."
+          },
+          "quota_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Quota in force; null = unlimited."
+          },
+          "used_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Counter of non-purged attachment bytes."
           }
         }
       },
@@ -26024,6 +26008,22 @@
       "PutRetention": {
         "type": "object",
         "properties": {
+          "attachment_quota_mib": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(phase 2, RFE-015) MiB, `0` = unlimited; absent = unchanged, `null` = the instance default."
+          },
+          "attachments_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(phase 2, RFE-015) Absent = unchanged, `null` = keep forever."
+          },
           "conversations_days": {
             "type": [
               "integer",
@@ -26460,21 +26460,6 @@
           }
         }
       },
-      "ResetRequest": {
-        "type": "object",
-        "required": [
-          "token",
-          "password"
-        ],
-        "properties": {
-          "password": {
-            "type": "string"
-          },
-          "token": {
-            "type": "string"
-          }
-        }
-      },
       "ResolveResponse": {
         "type": "object",
         "required": [
@@ -26532,6 +26517,46 @@
         "type": "object",
         "description": "(phase 2, RFE-010) `GET/PUT /orgs/{org}/retention`.",
         "properties": {
+          "attachment_quota_mib": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The org's own attachment quota in MiB (`0` = unlimited); null = the instance default."
+          },
+          "attachment_quota_mib_effective": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The quota in force in MiB after the instance default and ceiling; null = unlimited."
+          },
+          "attachment_quota_mib_max": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The instance ceiling of the quota in MiB (`attachments.org_quota_mib_max`); null = none."
+          },
+          "attachments_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(phase 2, RFE-015) Purge attachment bytes older than this many days (7..=3650); null =\nkeep forever."
+          },
+          "attachments_days_max": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The instance maximum of `attachments_days` (`attachments.days_max`), when configured."
+          },
           "conversations_days": {
             "type": [
               "integer",
@@ -27486,31 +27511,6 @@
           }
         }
       },
-      "SignupRequest": {
-        "type": "object",
-        "required": [
-          "email",
-          "password",
-          "display_name"
-        ],
-        "properties": {
-          "display_name": {
-            "type": "string"
-          },
-          "email": {
-            "type": "string"
-          },
-          "invitation_token": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "password": {
-            "type": "string"
-          }
-        }
-      },
       "SimCandidate": {
         "type": "object",
         "required": [
@@ -28066,6 +28066,23 @@
             "type": "string"
           },
           "value": {
+            "type": "string"
+          }
+        }
+      },
+      "TableSize": {
+        "type": "object",
+        "description": "On-disk size of one big table (with indexes and TOAST).",
+        "required": [
+          "table",
+          "bytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "table": {
             "type": "string"
           }
         }
@@ -28810,17 +28827,6 @@
           }
         }
       },
-      "UserResponse": {
-        "type": "object",
-        "required": [
-          "user"
-        ],
-        "properties": {
-          "user": {
-            "$ref": "#/components/schemas/User"
-          }
-        }
-      },
       "VerificationInput": {
         "type": "object",
         "description": "Write-only verification settings.",
@@ -28865,17 +28871,6 @@
           "kind": {
             "type": "string",
             "description": "`none` | `hmac_sha256` | `bearer`."
-          }
-        }
-      },
-      "VerifyEmailRequest": {
-        "type": "object",
-        "required": [
-          "token"
-        ],
-        "properties": {
-          "token": {
-            "type": "string"
           }
         }
       },
@@ -29139,6 +29134,42 @@
           "approver",
           "member"
         ]
+      },
+      "WorkspaceStorage": {
+        "type": "object",
+        "description": "Attachment bytes of one workspace in one direction.",
+        "required": [
+          "workspace_id",
+          "workspace_slug",
+          "workspace_name",
+          "direction",
+          "files",
+          "bytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "direction": {
+            "type": "string",
+            "description": "`in` (people -> agent) | `out` (agent -> people)"
+          },
+          "files": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workspace_name": {
+            "type": "string"
+          },
+          "workspace_slug": {
+            "type": "string"
+          }
+        }
       }
     },
     "securitySchemes": {
