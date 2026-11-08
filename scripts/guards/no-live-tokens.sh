@@ -18,7 +18,10 @@ patterns=(
   'xox[abprs]-[A-Za-z0-9-]{10,}'                     # Slack
   'ind[po]_[A-Za-z0-9]{40,}'                         # Indico personal (indp_) and OAuth (indo_) tokens
   'ATATT[A-Za-z0-9_=-]{20,}'                         # Atlassian API token
-  'sk-[A-Za-z0-9_-]{32,}'                        # API secret keys
+  'sntry[su]_[A-Za-z0-9+/_=-]{20,}'                  # Sentry organization (sntrys_) and user (sntryu_) auth tokens
+  '(ntn_|secret_|nrt_)[A-Za-z0-9]{20,}'              # Notion integration tokens, legacy secrets, refresh tokens
+  'lin_(api|oauth)_[A-Za-z0-9]{20,}'                 # Linear personal API keys and OAuth tokens
+  'sk-[A-Za-z0-9_-]{32,}'                      # API secret keys
   'eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}' # JWT
   '-----BEGIN [A-Z ]*PRIVATE KEY-----'
   '(Bearer|Basic) [A-Za-z0-9+/_=.-]{40,}'            # a long literal credential in a header

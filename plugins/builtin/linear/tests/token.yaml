@@ -1,0 +1,74 @@
+# Token lifecycle against recorded HTTP (docs/09 §12) for Linear. Access tokens last 24 hours; a
+# refresh is a form POST to https://api.linear.app/oauth/token and returns a new access token and a
+# new refresh token (each valid for 30 days from issue). All values are fake.
+- name: "token: a refreshed token is injected on the GraphQL endpoint"
+  connection:
+    credentials: { access_token: "tok-fixture-2", refresh_token: "refresh-fixture-2" }
+  request:
+    method: POST
+    url: "https://api.linear.app/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"query Me { viewer { id } }","operationName":"Me"}'
+  expect:
+    app: linear
+    tool: graphql_query
+    upstream: { headers: { authorization: "Bearer tok-fixture-2" } }
+- name: "token: refresh after a stale 401 retries with the new token"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request:
+    method: POST
+    url: "https://api.linear.app/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"query Me { viewer { id } }","operationName":"Me"}'
+  token:
+    upstream: { status: 401, body: '{"errors":[{"message":"Authentication required, not authenticated","extensions":{"type":"authentication error"}}]}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://api.linear.app/oauth/token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-1", client_id: "client-fixture" }
+        response:
+          status: 200
+          body: '{"access_token":"tok-fixture-new","token_type":"Bearer","expires_in":86399,"scope":"read","refresh_token":"refresh-fixture-2"}'
+    expect:
+      outcome: refreshed
+      request_url: "https://api.linear.app/oauth/token"
+      credentials: { access_token: "tok-fixture-new", refresh_token: "refresh-fixture-2" }
+      retried:
+        url: "https://api.linear.app/graphql"
+        headers: { authorization: "Bearer tok-fixture-new" }
+  expect: { app: linear, tool: graphql_query }
+- name: "token: a refused refresh token needs re-authorization and nothing is retried"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request:
+    method: POST
+    url: "https://api.linear.app/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"query Me { viewer { id } }","operationName":"Me"}'
+  token:
+    upstream: { status: 401, body: '{"errors":[{"message":"Authentication required, not authenticated"}]}' }
+    http_cassette:
+      - request: { method: POST, url: "https://api.linear.app/oauth/token", form: { grant_type: refresh_token } }
+        response: { status: 400, body: '{"error":"invalid_grant","error_description":"The refresh token is expired or was revoked."}' }
+    expect: { outcome: reauth_required, request_url: "https://api.linear.app/oauth/token" }
+  expect: { app: linear }
+- name: "token: a 503 from the token endpoint keeps the connection and retries nothing"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request:
+    method: POST
+    url: "https://api.linear.app/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"query Me { viewer { id } }","operationName":"Me"}'
+  token:
+    upstream: { status: 401, body: '{"errors":[{"message":"Authentication required"}]}' }
+    http_cassette:
+      - request: { method: POST, url: "https://api.linear.app/oauth/token" }
+        response: { status: 503, body: "upstream unavailable" }
+    expect: { outcome: unavailable }
+  expect: { app: linear }

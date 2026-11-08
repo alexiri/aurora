@@ -1,0 +1,117 @@
+# Notion read tools: each has a positive case and a `negative <tool>:` case. The bearer token and the
+# pinned Notion-Version header (2026-03-11) are injected on api.notion.com only. All credentials are fake.
+- name: "get_bot_user: bearer and Notion-Version are injected on the API host"
+  connection: { credentials: { access_token: "tok-fixture-1" }, metadata: { workspace_id: "ws-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/v1/users/me" }
+  expect:
+    app: notion
+    tool: get_bot_user
+    upstream:
+      url: "https://api.notion.com/v1/users/me"
+      headers: { authorization: "Bearer tok-fixture-1", notion-version: "2026-03-11" }
+- name: "negative get_bot_user: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.notion.com/v1/users/me" }
+  expect: { app: notion }
+- name: "agent supplied authorization and Notion-Version are overwritten"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: GET
+    url: "https://api.notion.com/v1/users/me"
+    headers: { authorization: "Bearer agent-guess", notion-version: "2022-06-28" }
+  expect:
+    tool: get_bot_user
+    upstream: { headers: { authorization: "Bearer tok-fixture-1", notion-version: "2026-03-11" } }
+- name: "list_users"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/v1/users?page_size=50" }
+  expect: { app: notion, tool: list_users, upstream: { headers: { notion-version: "2026-03-11" } } }
+- name: "negative list_users: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.notion.com/v1/users" }
+  expect: { app: notion }
+- name: "get_user"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/v1/users/d40e767c-d7af-4b18-a86d-55c61f1e39a4" }
+  expect: { app: notion, tool: get_user }
+- name: "negative get_user: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.notion.com/v1/users/d40e767c-d7af-4b18-a86d-55c61f1e39a4" }
+  expect: { app: notion }
+- name: "get_page"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/v1/pages/59833787-2cf9-4fdf-8782-e53db20768a5" }
+  expect: { app: notion, tool: get_page }
+- name: "negative get_page: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.notion.com/v1/pages/59833787-2cf9-4fdf-8782-e53db20768a5" }
+  expect: { app: notion }
+- name: "get_page_property"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/v1/pages/59833787-2cf9-4fdf-8782-e53db20768a5/properties/title" }
+  expect: { app: notion, tool: get_page_property }
+- name: "negative get_page_property: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.notion.com/v1/pages/59833787-2cf9-4fdf-8782-e53db20768a5/properties/title" }
+  expect: { app: notion }
+- name: "get_database"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/v1/databases/a1d8501e-1ac1-43e9-a6bd-ea9fe6c8822b" }
+  expect: { app: notion, tool: get_database }
+- name: "negative get_database: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.notion.com/v1/databases/a1d8501e-1ac1-43e9-a6bd-ea9fe6c8822b" }
+  expect: { app: notion }
+- name: "get_data_source"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/v1/data_sources/f336d0bc-b841-465b-8045-024475c079dd" }
+  expect: { app: notion, tool: get_data_source }
+- name: "negative get_data_source: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.notion.com/v1/data_sources/f336d0bc-b841-465b-8045-024475c079dd" }
+  expect: { app: notion }
+- name: "get_block"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/v1/blocks/c02fc1d3-db8b-45c5-a222-27595b15aea7" }
+  expect: { app: notion, tool: get_block }
+- name: "negative get_block: DELETE selects no tool (deleting a block is not offered)"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.notion.com/v1/blocks/c02fc1d3-db8b-45c5-a222-27595b15aea7" }
+  expect: { app: notion }
+- name: "list_block_children"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/v1/blocks/b55c9c91-384d-452b-81db-d1ef79372b75/children?page_size=100" }
+  expect: { app: notion, tool: list_block_children }
+- name: "negative list_block_children: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.notion.com/v1/blocks/b55c9c91-384d-452b-81db-d1ef79372b75/children" }
+  expect: { app: notion }
+- name: "list_comments"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/v1/comments?block_id=5c6a2821-6bb1-4a7e-b6e1-c50111515c3d" }
+  expect: { app: notion, tool: list_comments }
+- name: "negative list_comments: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.notion.com/v1/comments" }
+  expect: { app: notion }
+- name: "get_comment"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/v1/comments/249911a6-3a4a-4d2a-9d2e-5b0f3f1e4c1b" }
+  expect: { app: notion, tool: get_comment }
+- name: "negative get_comment: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.notion.com/v1/comments/249911a6-3a4a-4d2a-9d2e-5b0f3f1e4c1b" }
+  expect: { app: notion }
+- name: "negative: the token is not injected on a lookalike host"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com.evil.example/v1/users/me" }
+  expect: { unmatched: true }
+- name: "negative: the token is not injected on www.notion.so"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.notion.so/v1/users/me" }
+  expect: { unmatched: true }
+- name: "negative: the token is not injected outside /v1 on the API host"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.notion.com/other/users/me" }
+  expect:
+    upstream: { headers_absent: [authorization, notion-version] }

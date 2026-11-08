@@ -1,0 +1,88 @@
+package:
+  id: linear
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: Linear
+  description: Issues, projects, teams and comments in Linear through its GraphQL API, connected with OAuth; queries are read tools and every mutation (create or update an issue, comment) is a separate, approved write tool
+  homepage: https://linear.app
+oauth_clients:
+  - id: linear
+    authorize_url: https://linear.app/oauth/authorize
+    token_url: https://api.linear.app/oauth/token
+    pkce: true
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: Client ID }
+      - { name: client_secret, label: Client secret, secret: true }
+    setup_note: "In Linear open Settings, API, OAuth applications and create an application. Add the Aurora redirect URI as a callback URL and keep the application's actor as the authorizing user. Linear issues a refresh token with every sign-in; refresh tokens last 30 days and renew on every use."
+apps:
+  - about:
+      id: linear
+      name: Linear
+      description: Read issues, projects, teams and comments in Linear with GraphQL queries, and create or update issues and comment when you allow it
+      category: productivity
+      api_docs: https://linear.app/developers/graphql
+      web_hosts: [linear.app]
+      connect_note:
+        text: "Reading uses Linear's read scope. Changes need the write scope (or the narrower issues:create and comments:create) and are held for approval. Linear documents scopes as a comma separated list while Aurora sends them space separated, so choose one scope: write covers everything this app can change."
+        url: https://linear.app/developers/oauth-2-0-authentication
+      label_hint: Linear workspace
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: linear
+        scopes:
+          - { scope: read, name: "Read your issues, projects, teams, comments and profile", access: read }
+          - { scope: write, name: "Read and change everything your Linear account can (issues, comments, projects)", access: write }
+          - { scope: "issues:create", name: "Create and update issues and their attachments", access: write }
+          - { scope: "comments:create", name: "Create comments on issues", access: write }
+        default_scopes: [read]
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+    hosts:
+      - match: { host: api.linear.app, path_prefix: /graphql }
+        inject:
+          - bearer: "{credentials.access_token}"
+    token:
+      kind: oauth2_refresh
+      client: linear
+      refresh_field: refresh_token
+      rotate_refresh_token: true
+      max_lifetime_secs: 86400
+      stale_codes:
+        - { status: 401 }
+      reauth_codes: [invalid_grant]
+    tools:
+      read:
+        items:
+          - { id: graphql_query, name: GraphQL query, host: api.linear.app, path: /graphql, methods: [POST], graphql: query }
+      write:
+        items:
+          - { id: graphql_mutation, name: "GraphQL mutation (create or update an issue, comment, ...)", host: api.linear.app, path: /graphql, methods: [POST], graphql: mutation }
+    approvals:
+      graphql_mutation:
+        title: Linear mutation
+        fields:
+          - { label: Operation, source: body, steps: [ { graphql: operation_name } ] }
+          - { label: Fields, source: body, steps: [ { graphql: field_names } ] }
+        link: "https://linear.app/"
+    agent:
+      instructions: |
+        Linear is connected. Send GraphQL requests as POST https://api.linear.app/graphql with a JSON
+        body {"query": "...", "variables": {...}, "operationName": "..."}. Aurora adds the
+        credentials; never ask for or write a token. A request with only queries (for example
+        query Issues { issues(first: 20) { nodes { id identifier title state { name } } } }) is a
+        read; any mutation (issueCreate, issueUpdate, commentCreate, ...) is a change that is held for
+        approval. Send one operation per request and name it with operationName so approvals show
+        what changes. Page with first/after and pageInfo.endCursor. Mutations fail with a permission
+        error when the connection was made with the read scope only.
