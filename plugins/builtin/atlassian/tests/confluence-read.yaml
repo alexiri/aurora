@@ -1,0 +1,102 @@
+# Confluence Cloud read tools. REST API v2 is /ex/confluence/<cloudid>/wiki/api/v2; the search
+# endpoint is the v1 /wiki/rest/api/search (v2 has none). All credentials and ids are fake.
+# The connect probe (accessible-resources) needs a host entry of each cloud app. The gateway serves
+# that exact path through the Jira Cloud app (longest prefix wins; see jira-read.yaml); the
+# Confluence entry is the broader /oauth/token prefix, which no tool uses.
+- name: "boundary: the broader /oauth/token prefix of the Confluence entry injects the bearer and selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/oauth/token/other" }
+  expect:
+    app: confluence
+    upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "list_spaces: bearer is injected on the site API prefix"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/spaces?limit=25" }
+  expect:
+    app: confluence
+    tool: list_spaces
+    upstream: { url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/spaces?limit=25", headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative list_spaces: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/spaces" }
+  expect: { app: confluence }
+- name: "get_space"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/spaces/65537" }
+  expect: { app: confluence, tool: get_space }
+- name: "negative get_space: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/spaces/65537" }
+  expect: { app: confluence }
+- name: "list_space_pages"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/spaces/65537/pages" }
+  expect: { app: confluence, tool: list_space_pages }
+- name: "negative list_space_pages: POST selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/spaces/65537/pages" }
+  expect: { app: confluence }
+- name: "list_pages"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages?title=Runbook" }
+  expect: { app: confluence, tool: list_pages }
+- name: "negative list_pages: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages" }
+  expect: { app: confluence }
+- name: "get_page"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages/98765?body-format=storage" }
+  expect: { app: confluence, tool: get_page }
+- name: "negative get_page: DELETE (page removal) selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages/98765" }
+  expect: { app: confluence }
+- name: "list_page_children"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages/98765/children" }
+  expect: { app: confluence, tool: list_page_children }
+- name: "negative list_page_children: POST selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages/98765/children" }
+  expect: { app: confluence }
+- name: "list_page_footer_comments"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages/98765/footer-comments?body-format=storage" }
+  expect: { app: confluence, tool: list_page_footer_comments }
+- name: "negative list_page_footer_comments: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages/98765/footer-comments" }
+  expect: { app: confluence }
+- name: "list_page_inline_comments"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages/98765/inline-comments" }
+  expect: { app: confluence, tool: list_page_inline_comments }
+- name: "negative list_page_inline_comments: POST selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/pages/98765/inline-comments" }
+  expect: { app: confluence }
+- name: "get_footer_comment"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/footer-comments/55001" }
+  expect: { app: confluence, tool: get_footer_comment }
+- name: "negative get_footer_comment: DELETE (comment removal) selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/footer-comments/55001" }
+  expect: { app: confluence }
+- name: "search_content: the v1 CQL search under /wiki/rest/api"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/rest/api/search?cql=type%3Dpage%20AND%20text~%22runbook%22" }
+  expect: { app: confluence, tool: search_content }
+- name: "negative search_content: POST selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/rest/api/search" }
+  expect: { app: confluence }
+- name: "negative host: the token is not injected on a host the app does not declare"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://example.atlassian.net/wiki/api/v2/spaces" }
+  expect: { unmatched: true }
+- name: "negative host: the token is not injected on another path of api.atlassian.com"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/admin/v1/orgs" }
+  expect: { unmatched: true }

@@ -1,0 +1,112 @@
+# Confluence Data Center (D-74, D-91 pattern): a connection bound to a registered instance is served
+# on that exact host only, with a personal access token as bearer. REST resources under /rest/api.
+# All credentials are fake.
+- name: "dc get_current_user: bearer is injected on the registered host"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://wiki.example.com/rest/api/user/current" }
+  expect:
+    app: confluence-dc
+    tool: get_current_user
+    upstream: { url: "https://wiki.example.com/rest/api/user/current", headers: { authorization: "Bearer pat-fixture-1" } }
+- name: "negative get_current_user: DELETE selects no tool on the registered host"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: DELETE, url: "https://wiki.example.com/rest/api/user/current" }
+  expect: { app: confluence-dc }
+- name: "dc list_spaces"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://wiki.example.com/rest/api/space?limit=25" }
+  expect: { app: confluence-dc, tool: list_spaces }
+- name: "negative list_spaces: POST (space creation) selects no tool on the registered host"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: POST, url: "https://wiki.example.com/rest/api/space" }
+  expect: { app: confluence-dc }
+- name: "dc get_space"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://wiki.example.com/rest/api/space/DOC" }
+  expect: { app: confluence-dc, tool: get_space }
+- name: "negative get_space: DELETE selects no tool on the registered host"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: DELETE, url: "https://wiki.example.com/rest/api/space/DOC" }
+  expect: { app: confluence-dc }
+- name: "dc list_content"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://wiki.example.com/rest/api/content?spaceKey=DOC&type=page" }
+  expect: { app: confluence-dc, tool: list_content }
+- name: "negative list_content: PATCH selects no tool on the registered host"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: PATCH, url: "https://wiki.example.com/rest/api/content" }
+  expect: { app: confluence-dc }
+- name: "dc search_content_cql: declared before get_content so /content/search is not a content id"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://wiki.example.com/rest/api/content/search?cql=type%3Dpage" }
+  expect: { app: confluence-dc, tool: search_content_cql }
+- name: "negative search_content_cql: POST selects no tool on the registered host"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: POST, url: "https://wiki.example.com/rest/api/content/search" }
+  expect: { app: confluence-dc }
+- name: "dc get_content"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://wiki.example.com/rest/api/content/98765?expand=body.storage" }
+  expect: { app: confluence-dc, tool: get_content }
+- name: "negative get_content: DELETE (page removal) selects no tool on the registered host"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: DELETE, url: "https://wiki.example.com/rest/api/content/98765" }
+  expect: { app: confluence-dc }
+- name: "dc list_content_comments"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://wiki.example.com/rest/api/content/98765/child/comment?expand=body.storage" }
+  expect: { app: confluence-dc, tool: list_content_comments }
+- name: "negative list_content_comments: POST selects no tool on the registered host"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: POST, url: "https://wiki.example.com/rest/api/content/98765/child/comment" }
+  expect: { app: confluence-dc }
+- name: "dc search"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://wiki.example.com/rest/api/search?cql=text~%22runbook%22" }
+  expect: { app: confluence-dc, tool: search }
+- name: "negative search: POST selects no tool on the registered host"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: POST, url: "https://wiki.example.com/rest/api/search" }
+  expect: { app: confluence-dc }
+- name: "dc create_content: summary shows type, space and title"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request:
+    method: POST
+    url: "https://wiki.example.com/rest/api/content"
+    headers: { content-type: application/json }
+    body: '{"type":"page","title":"Release runbook","space":{"key":"DOC"},"body":{"storage":{"value":"<p>Steps</p>","representation":"storage"}}}'
+  expect:
+    app: confluence-dc
+    tool: create_content
+    summary: { title: "Create Confluence content", fields: { Type: "page", Space: "DOC", Title: "Release runbook" } }
+- name: "negative create_content: DELETE selects no tool on the registered host"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: DELETE, url: "https://wiki.example.com/rest/api/content" }
+  expect: { app: confluence-dc }
+- name: "dc update_content: summary shows the page, title and next version"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://wiki.example.com/rest/api/content/98765"
+    headers: { content-type: application/json }
+    body: '{"id":"98765","type":"page","title":"Release runbook v2","version":{"number":3},"body":{"storage":{"value":"<p>New</p>","representation":"storage"}}}'
+  expect:
+    app: confluence-dc
+    tool: update_content
+    summary: { title: "Update Confluence page", fields: { Page: "98765", Title: "Release runbook v2", Version: "3" } }
+- name: "negative update_content: PATCH selects no tool on the registered host"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: PATCH, url: "https://wiki.example.com/rest/api/content/98765" }
+  expect: { app: confluence-dc }
+- name: "negative dc host: a host that is not the registered instance gets no Confluence app match and nothing is injected"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://other.example.com/rest/api/space" }
+  expect: { unmatched: true }
+- name: "negative dc host: a Confluence instance connection is not injected on Atlassian Cloud"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://api.atlassian.com/ex/confluence/site-fixture-1/wiki/api/v2/spaces" }
+  expect: { refused: host_mismatch, expected_host: wiki.example.com }
+- name: "negative dc host: outside /rest on the registered host nothing is injected"
+  connection: { instance_host: wiki.example.com, instance_app: confluence-dc, credentials: { access_token: "pat-fixture-1" } }
+  request: { method: GET, url: "https://wiki.example.com/login.action" }
+  expect: { unmatched: true }

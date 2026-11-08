@@ -1,0 +1,403 @@
+package:
+  id: atlassian
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: Atlassian
+  description: Jira and Confluence on Atlassian Cloud (OAuth 2.0 3LO, one shared client) and on self-hosted Data Center (personal access token)
+  homepage: https://www.atlassian.com
+oauth_clients:
+  - id: atlassian
+    authorize_url: https://auth.atlassian.com/authorize
+    token_url: https://auth.atlassian.com/oauth/token
+    pkce: false
+    client_auth: body
+    body_format: json
+    fields:
+      - { name: client_id, label: Client ID }
+      - { name: client_secret, label: Secret, secret: true }
+    setup_note: "In the Atlassian developer console create an OAuth 2.0 (3LO) app, set the callback URL to the Aurora redirect URI, and add only the Jira and Confluence permissions (scopes) you will offer. One app serves both Jira and Confluence."
+apps:
+  - about:
+      id: jira
+      name: Jira Cloud
+      description: Read Jira Cloud issues, projects and comments and search with JQL, and create or change issues, comment and move issues through transitions when you allow it
+      category: productivity
+      api_docs: https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/
+      api_spec: https://dac-static.atlassian.com/cloud/jira/platform/swagger-v3.v3.json
+      web_hosts: [api.atlassian.com]
+      connect_note:
+        text: "Connects to Atlassian Cloud sites (*.atlassian.net). The connection records the first site the sign-in can reach. For Jira Data Center or Server use the Jira Data Center app."
+        url: https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/
+      label_hint: Atlassian site name
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: cloud_id }
+      - { name: site_url }
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: atlassian
+        scopes:
+          - { scope: offline_access, name: Stay connected (refresh the sign-in without asking again), access: read }
+          - { scope: "read:jira-user", name: Read user profiles, access: read }
+          - { scope: "read:jira-work", name: "Read projects, issues, comments and search results", access: read }
+          - { scope: "write:jira-work", name: "Create and edit issues, comment and move issues through their workflow", access: write }
+        default_scopes: [offline_access, "read:jira-user", "read:jira-work"]
+        authorize_params: { audience: api.atlassian.com, prompt: consent }
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://api.atlassian.com/oauth/token/accessible-resources"
+          expect_status: [200]
+          label: /0/name
+          metadata: { cloud_id: /0/id, site_url: /0/url }
+    hosts:
+      - match: { host: api.atlassian.com, path_prefix: /ex/jira }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: api.atlassian.com, path_prefix: /oauth/token/accessible-resources }
+        inject:
+          - bearer: "{credentials.access_token}"
+    token:
+      kind: oauth2_refresh
+      client: atlassian
+      refresh_field: refresh_token
+      rotate_refresh_token: true
+      max_lifetime_secs: 3600
+      stale_codes:
+        - { status: 401 }
+      reauth_codes: [invalid_grant]
+    tools:
+      read:
+        items:
+          - { id: list_accessible_sites, name: List the Atlassian sites this sign-in can reach (cloud ids), host: api.atlassian.com, path: /oauth/token/accessible-resources, methods: [GET] }
+          - { id: get_myself, name: Get the connected user, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/myself", methods: [GET] }
+          - { id: list_projects, name: Search projects, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/project/search", methods: [GET] }
+          - { id: get_project, name: Get a project, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/project/*", methods: [GET] }
+          - { id: search_issues, name: Search issues with JQL, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/search/jql", methods: [GET] }
+          - { id: get_issue, name: Get an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*", methods: [GET] }
+          - { id: list_issue_comments, name: List issue comments, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/comment", methods: [GET] }
+          - { id: get_issue_comment, name: Get an issue comment, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/comment/*", methods: [GET] }
+          - { id: list_issue_transitions, name: List the transitions available for an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/transitions", methods: [GET] }
+      write:
+        items:
+          - { id: create_issue, name: Create an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue", methods: [POST] }
+          - { id: edit_issue, name: Edit an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*", methods: [PUT] }
+          - { id: add_issue_comment, name: Comment on an issue, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/comment", methods: [POST] }
+          - { id: transition_issue, name: Move an issue through a workflow transition, host: api.atlassian.com, path: "/ex/jira/*/rest/api/3/issue/*/transitions", methods: [POST] }
+    approvals:
+      create_issue:
+        title: Create Jira issue
+        fields:
+          - { label: Project, source: body, steps: [ { json: /fields/project/key } ] }
+          - { label: Type, source: body, steps: [ { json: /fields/issuetype/name } ] }
+          - { label: Summary, source: body, steps: [ { json: /fields/summary } ] }
+      edit_issue:
+        title: Edit Jira issue
+        fields:
+          - { label: Issue, source: path, segment: 8 }
+          - { label: Summary, source: body, steps: [ { json: /fields/summary } ] }
+      add_issue_comment:
+        title: Comment on Jira issue
+        fields:
+          - { label: Issue, source: path, segment: 8 }
+          - { label: Comment, source: body, steps: [ { json: /body/content/0/content/0/text } ] }
+      transition_issue:
+        title: Move Jira issue
+        fields:
+          - { label: Issue, source: path, segment: 8 }
+          - { label: Transition, source: body, steps: [ { json: /transition/id } ] }
+    agent:
+      instructions: |
+        Jira Cloud is connected through the Atlassian API gateway. Aurora adds the credentials; never
+        ask for or write a token. First call GET https://api.atlassian.com/oauth/token/accessible-resources
+        and use the `id` of the site you need as <cloudid>; then use the REST API v3 at
+        https://api.atlassian.com/ex/jira/<cloudid>/rest/api/3 (for example .../issue/PROJ-1 or
+        .../search/jql?jql=...). Descriptions and comments are Atlassian Document Format (ADF) JSON,
+        not plain text. Send JSON bodies with content-type application/json so approvals can show
+        what a change does. Jira permissions still apply: a 403 or 404 means the connected user
+        cannot see that item.
+  - about:
+      id: confluence
+      name: Confluence Cloud
+      description: Read Confluence Cloud spaces, pages and comments and search with CQL, and create or update pages and add comments when you allow it
+      category: productivity
+      api_docs: https://developer.atlassian.com/cloud/confluence/rest/v2/intro/
+      api_spec: https://dac-static.atlassian.com/cloud/confluence/openapi-v2.v3.json
+      web_hosts: [api.atlassian.com]
+      connect_note:
+        text: "Connects to Atlassian Cloud sites (*.atlassian.net). The connection records the first site the sign-in can reach. For Confluence Data Center or Server use the Confluence Data Center app."
+        url: https://developer.atlassian.com/cloud/confluence/oauth-2-3lo-apps/
+      label_hint: Atlassian site name
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: cloud_id }
+      - { name: site_url }
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: atlassian
+        scopes:
+          - { scope: offline_access, name: Stay connected (refresh the sign-in without asking again), access: read }
+          - { scope: "read:space:confluence", name: View spaces, access: read }
+          - { scope: "read:page:confluence", name: View pages, access: read }
+          - { scope: "read:comment:confluence", name: View comments, access: read }
+          - { scope: "search:confluence", name: Search Confluence content and spaces, access: read }
+          - { scope: "write:page:confluence", name: Create and update pages, access: write }
+          - { scope: "write:comment:confluence", name: Create and update comments, access: write }
+        default_scopes: [offline_access, "read:space:confluence", "read:page:confluence", "read:comment:confluence", "search:confluence"]
+        authorize_params: { audience: api.atlassian.com, prompt: consent }
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://api.atlassian.com/oauth/token/accessible-resources"
+          expect_status: [200]
+          label: /0/name
+          metadata: { cloud_id: /0/id, site_url: /0/url }
+    hosts:
+      - match: { host: api.atlassian.com, path_prefix: /ex/confluence }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: api.atlassian.com, path_prefix: /oauth/token }
+        inject:
+          - bearer: "{credentials.access_token}"
+    token:
+      kind: oauth2_refresh
+      client: atlassian
+      refresh_field: refresh_token
+      rotate_refresh_token: true
+      max_lifetime_secs: 3600
+      stale_codes:
+        - { status: 401 }
+      reauth_codes: [invalid_grant]
+    tools:
+      read:
+        items:
+          - { id: list_spaces, name: List spaces, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/spaces", methods: [GET] }
+          - { id: get_space, name: Get a space, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/spaces/*", methods: [GET] }
+          - { id: list_space_pages, name: List pages in a space, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/spaces/*/pages", methods: [GET] }
+          - { id: list_pages, name: List pages, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages", methods: [GET] }
+          - { id: get_page, name: Get a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*", methods: [GET] }
+          - { id: list_page_children, name: List the child pages of a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*/children", methods: [GET] }
+          - { id: list_page_footer_comments, name: List page comments, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*/footer-comments", methods: [GET] }
+          - { id: list_page_inline_comments, name: List inline comments on a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*/inline-comments", methods: [GET] }
+          - { id: get_footer_comment, name: Get a page comment, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/footer-comments/*", methods: [GET] }
+          - { id: search_content, name: Search content with CQL, host: api.atlassian.com, path: "/ex/confluence/*/wiki/rest/api/search", methods: [GET] }
+      write:
+        items:
+          - { id: create_page, name: Create a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages", methods: [POST] }
+          - { id: update_page, name: Update a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/pages/*", methods: [PUT] }
+          - { id: create_footer_comment, name: Comment on a page, host: api.atlassian.com, path: "/ex/confluence/*/wiki/api/v2/footer-comments", methods: [POST] }
+    approvals:
+      create_page:
+        title: Create Confluence page
+        fields:
+          - { label: Space, source: body, steps: [ { json: /spaceId } ] }
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: Status, source: body, steps: [ { json: /status } ] }
+      update_page:
+        title: Update Confluence page
+        fields:
+          - { label: Page, source: path, segment: 8 }
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: Version, source: body, steps: [ { json: /version/number } ] }
+      create_footer_comment:
+        title: Comment on Confluence page
+        fields:
+          - { label: Page, source: body, steps: [ { json: /pageId } ] }
+          - { label: Comment, source: body, steps: [ { json: /body/value } ] }
+    agent:
+      instructions: |
+        Confluence Cloud is connected through the Atlassian API gateway. Aurora adds the credentials;
+        never ask for or write a token. You need the site's <cloudid>: GET
+        https://api.atlassian.com/oauth/token/accessible-resources lists the sites (`id`), but that
+        lookup is served through the Jira Cloud connection, so if only Confluence is connected ask the
+        user for the cloud id. Then use the REST API v2 at
+        https://api.atlassian.com/ex/confluence/<cloudid>/wiki/api/v2 (pages, spaces, comments) and
+        the search endpoint at https://api.atlassian.com/ex/confluence/<cloudid>/wiki/rest/api/search?cql=...
+        (v2 has no search). Ask for page bodies with ?body-format=storage. Send JSON bodies with
+        content-type application/json so approvals can show what a change does. Updating a page needs
+        the next version number. Confluence permissions still apply: a 403 or 404 means the connected
+        user cannot see that item.
+  - about:
+      id: jira-dc
+      name: Jira Data Center
+      description: Read issues, projects and comments and search with JQL on a registered self-hosted Jira (Data Center or Server), and create or change issues, comment and transition when you allow it
+      category: productivity
+      api_docs: https://developer.atlassian.com/server/jira/platform/rest/
+      connect_note:
+        text: "An administrator registers the Jira host first (Instances); then choose it when connecting with a personal access token."
+        url: https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html
+      label_hint: Jira display name
+    instances:
+      label: Jira Data Center host
+      probe: { method: GET, path: /rest/api/2/serverInfo, expect_status: [200, 401] }
+    credentials:
+      - { name: access_token, secret: true }
+    metadata:
+      - { name: account }
+    connect:
+      - id: token
+        kind: fields
+        fields:
+          - name: access_token
+            label: Personal access token
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "Personal access token from your Jira profile"
+            help_url: https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html
+        probe:
+          method: GET
+          url: "https://{instance}/rest/api/2/myself"
+          expect_status: [200]
+          label: /displayName
+          metadata: { account: /name }
+    hosts:
+      - match: { host: "{instance}", path_prefix: /rest }
+        inject:
+          - bearer: "{credentials.access_token}"
+    tools:
+      read:
+        items:
+          - { id: get_myself, name: Get the connected user, host: "{instance}", path: /rest/api/2/myself, methods: [GET] }
+          - { id: list_projects, name: List projects, host: "{instance}", path: /rest/api/2/project, methods: [GET] }
+          - { id: get_project, name: Get a project, host: "{instance}", path: "/rest/api/2/project/*", methods: [GET] }
+          - { id: search_issues, name: Search issues with JQL, host: "{instance}", path: /rest/api/2/search, methods: [GET] }
+          - { id: get_issue, name: Get an issue, host: "{instance}", path: "/rest/api/2/issue/*", methods: [GET] }
+          - { id: list_issue_comments, name: List issue comments, host: "{instance}", path: "/rest/api/2/issue/*/comment", methods: [GET] }
+          - { id: get_issue_comment, name: Get an issue comment, host: "{instance}", path: "/rest/api/2/issue/*/comment/*", methods: [GET] }
+          - { id: list_issue_transitions, name: List the transitions available for an issue, host: "{instance}", path: "/rest/api/2/issue/*/transitions", methods: [GET] }
+      write:
+        items:
+          - { id: create_issue, name: Create an issue, host: "{instance}", path: /rest/api/2/issue, methods: [POST] }
+          - { id: edit_issue, name: Edit an issue, host: "{instance}", path: "/rest/api/2/issue/*", methods: [PUT] }
+          - { id: add_issue_comment, name: Comment on an issue, host: "{instance}", path: "/rest/api/2/issue/*/comment", methods: [POST] }
+          - { id: transition_issue, name: Move an issue through a workflow transition, host: "{instance}", path: "/rest/api/2/issue/*/transitions", methods: [POST] }
+    approvals:
+      create_issue:
+        title: Create Jira issue
+        fields:
+          - { label: Project, source: body, steps: [ { json: /fields/project/key } ] }
+          - { label: Type, source: body, steps: [ { json: /fields/issuetype/name } ] }
+          - { label: Summary, source: body, steps: [ { json: /fields/summary } ] }
+      edit_issue:
+        title: Edit Jira issue
+        fields:
+          - { label: Issue, source: path, segment: 5 }
+          - { label: Summary, source: body, steps: [ { json: /fields/summary } ] }
+        link: "https://{request.host}/browse/{path.5}"
+      add_issue_comment:
+        title: Comment on Jira issue
+        fields:
+          - { label: Issue, source: path, segment: 5 }
+          - { label: Comment, source: body, steps: [ { json: /body } ] }
+        link: "https://{request.host}/browse/{path.5}"
+      transition_issue:
+        title: Move Jira issue
+        fields:
+          - { label: Issue, source: path, segment: 5 }
+          - { label: Transition, source: body, steps: [ { json: /transition/id } ] }
+        link: "https://{request.host}/browse/{path.5}"
+    agent:
+      instructions: |
+        Jira Data Center is connected. Use the REST API v2 at https://<host>/rest/api/2 (for example
+        https://<host>/rest/api/2/issue/PROJ-1 or https://<host>/rest/api/2/search?jql=...), where
+        <host> is the host of the Jira connection. Aurora adds the credentials; never ask for or write
+        a token, and never send a request for this connection to another host. Descriptions and comments
+        are plain text (wiki markup) in API v2. Send JSON bodies with content-type application/json so
+        approvals can show what a change does. Jira permissions still apply: a 403 or 404 means the
+        token's user cannot see that item.
+  - about:
+      id: confluence-dc
+      name: Confluence Data Center
+      description: Read spaces, pages and comments and search with CQL on a registered self-hosted Confluence (Data Center or Server), and create or update content when you allow it
+      category: productivity
+      api_docs: https://developer.atlassian.com/server/confluence/rest/
+      connect_note:
+        text: "An administrator registers the Confluence host first (Instances); then choose it when connecting with a personal access token."
+        url: https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html
+      label_hint: Confluence display name
+    instances:
+      label: Confluence Data Center host
+      probe: { method: GET, path: /rest/api/server-information, expect_status: [200, 401] }
+    credentials:
+      - { name: access_token, secret: true }
+    metadata:
+      - { name: account }
+    connect:
+      - id: token
+        kind: fields
+        fields:
+          - name: access_token
+            label: Personal access token
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "Personal access token from your Confluence profile"
+            help_url: https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html
+        probe:
+          method: GET
+          url: "https://{instance}/rest/api/user/current"
+          expect_status: [200]
+          label: /displayName
+          metadata: { account: /username }
+    hosts:
+      - match: { host: "{instance}", path_prefix: /rest }
+        inject:
+          - bearer: "{credentials.access_token}"
+    tools:
+      read:
+        items:
+          - { id: get_current_user, name: Get the connected user, host: "{instance}", path: /rest/api/user/current, methods: [GET] }
+          - { id: list_spaces, name: List spaces, host: "{instance}", path: /rest/api/space, methods: [GET] }
+          - { id: get_space, name: Get a space, host: "{instance}", path: "/rest/api/space/*", methods: [GET] }
+          - { id: list_content, name: List pages and blog posts, host: "{instance}", path: /rest/api/content, methods: [GET] }
+          - { id: search_content_cql, name: Search content with CQL (content results), host: "{instance}", path: /rest/api/content/search, methods: [GET] }
+          - { id: get_content, name: Get a page or blog post, host: "{instance}", path: "/rest/api/content/*", methods: [GET] }
+          - { id: list_content_comments, name: List the comments of a page, host: "{instance}", path: "/rest/api/content/*/child/comment", methods: [GET] }
+          - { id: search, name: Search with CQL, host: "{instance}", path: /rest/api/search, methods: [GET] }
+      write:
+        items:
+          - { id: create_content, name: Create a page or comment, host: "{instance}", path: /rest/api/content, methods: [POST] }
+          - { id: update_content, name: Update a page, host: "{instance}", path: "/rest/api/content/*", methods: [PUT] }
+    approvals:
+      create_content:
+        title: Create Confluence content
+        fields:
+          - { label: Type, source: body, steps: [ { json: /type } ] }
+          - { label: Space, source: body, steps: [ { json: /space/key } ] }
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+      update_content:
+        title: Update Confluence page
+        fields:
+          - { label: Page, source: path, segment: 4 }
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: Version, source: body, steps: [ { json: /version/number } ] }
+        link: "https://{request.host}/pages/viewpage.action?pageId={path.4}"
+    agent:
+      instructions: |
+        Confluence Data Center is connected. Use the REST API at https://<host>/rest/api (for example
+        https://<host>/rest/api/content?spaceKey=DOC&expand=body.storage or
+        https://<host>/rest/api/search?cql=...), where <host> is the host of the Confluence connection.
+        Aurora adds the credentials; never ask for or write a token, and never send a request for this
+        connection to another host. A new comment is POST /rest/api/content with type "comment" and a
+        container; updating a page needs the next version number. Send JSON bodies with content-type
+        application/json so approvals can show what a change does. Confluence permissions still apply:
+        a 403 or 404 means the token's user cannot see that item.
