@@ -1,0 +1,153 @@
+# Gmail: every tool has a positive case and a `negative <tool>:` case. All credentials are fake.
+# Request bodies are shaped like Gmail API requests; addresses are example.com.
+- name: "get_profile: bearer is injected on the Gmail host"
+  connection: { credentials: { access_token: "tok-fixture-1" }, metadata: { account: "alice@example.com" } }
+  request: { method: GET, url: "https://gmail.googleapis.com/gmail/v1/users/me/profile" }
+  expect:
+    app: gmail
+    tool: get_profile
+    upstream: { url: "https://gmail.googleapis.com/gmail/v1/users/me/profile", headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative get_profile: POST selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://gmail.googleapis.com/gmail/v1/users/me/profile" }
+  expect: { app: gmail }
+- name: "agent supplied authorization is overwritten"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: GET
+    url: "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+    headers: { authorization: "Bearer agent-guess" }
+  expect:
+    tool: get_profile
+    upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative get_profile: the Calendar path on the Gmail host is not claimed"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gmail.googleapis.com/calendar/v3/users/me/calendarList" }
+  expect: { unmatched: true }
+- name: "negative get_profile: another API version is not claimed"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gmail.googleapis.com/gmail/v2/users/me/profile" }
+  expect: { unmatched: true }
+- name: "negative get_profile: the Gmail API path on the shared Google host is not claimed"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/gmail/v1/users/me/profile" }
+  expect: { unmatched: true }
+- name: "negative get_profile: the Google token endpoint is not claimed"
+  request: { method: GET, url: "https://oauth2.googleapis.com/token" }
+  expect: { unmatched: true }
+- name: "negative get_profile: the upload variant of Gmail is not claimed"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send" }
+  expect: { unmatched: true }
+- name: "list_messages: search query is passed through"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=from%3Abob%40example.com&maxResults=10" }
+  expect:
+    tool: list_messages
+    upstream: { url: "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=from%3Abob%40example.com&maxResults=10" }
+- name: "negative list_messages: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://gmail.googleapis.com/gmail/v1/users/me/messages" }
+  expect: { app: gmail }
+- name: "get_message: format and metadata headers"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/18c0ffee00000001?format=metadata&metadataHeaders=Subject" }
+  expect: { tool: get_message }
+- name: "negative get_message: DELETE (permanent delete) selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/18c0ffee00000001" }
+  expect: { app: gmail }
+- name: "negative get_message: trash is not offered"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/18c0ffee00000001/trash" }
+  expect: { app: gmail }
+- name: "list_threads"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gmail.googleapis.com/gmail/v1/users/me/threads?labelIds=INBOX" }
+  expect: { tool: list_threads }
+- name: "negative list_threads: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://gmail.googleapis.com/gmail/v1/users/me/threads" }
+  expect: { app: gmail }
+- name: "get_thread"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gmail.googleapis.com/gmail/v1/users/me/threads/18c0ffee00000002" }
+  expect: { tool: get_thread }
+- name: "negative get_thread: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://gmail.googleapis.com/gmail/v1/users/me/threads/18c0ffee00000002" }
+  expect: { app: gmail }
+- name: "list_labels"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gmail.googleapis.com/gmail/v1/users/me/labels" }
+  expect: { tool: list_labels }
+- name: "negative list_labels: POST (create label) selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://gmail.googleapis.com/gmail/v1/users/me/labels" }
+  expect: { app: gmail }
+- name: "get_label"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gmail.googleapis.com/gmail/v1/users/me/labels/Label_1" }
+  expect: { tool: get_label }
+- name: "negative get_label: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://gmail.googleapis.com/gmail/v1/users/me/labels/Label_1" }
+  expect: { app: gmail }
+# Write tools: each has a positive case with its approval summary and a negative case.
+- name: "send_message: summary shows recipient and subject read from the raw message"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+    headers: { content-type: application/json }
+    body: '{"raw":"VG86IGJvYkBleGFtcGxlLmNvbQ0KU3ViamVjdDogUXVhcnRlcmx5IHJlcG9ydA0KDQpIZWxsbw"}'
+  expect:
+    app: gmail
+    tool: send_message
+    summary: { title: "Send mail", fields: { To: "bob@example.com", Subject: "Quarterly report" } }
+- name: "negative send_message: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send" }
+  expect: { app: gmail }
+- name: "create_draft: summary shows recipient and subject"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://gmail.googleapis.com/gmail/v1/users/me/drafts"
+    headers: { content-type: application/json }
+    body: '{"message":{"raw":"VG86IGNhcm9sQGV4YW1wbGUuY29tDQpTdWJqZWN0OiBEcmFmdCBub3Rlcw0KDQpCb2R5"}}'
+  expect:
+    tool: create_draft
+    summary: { title: "Create a mail draft", fields: { To: "carol@example.com", Subject: "Draft notes" } }
+- name: "negative create_draft: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://gmail.googleapis.com/gmail/v1/users/me/drafts" }
+  expect: { app: gmail }
+- name: "send_draft: summary shows the draft id"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send"
+    headers: { content-type: application/json }
+    body: '{"id":"r-1234567890"}'
+  expect:
+    tool: send_draft
+    summary: { title: "Send a draft", fields: { Draft: "r-1234567890" } }
+- name: "negative send_draft: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send" }
+  expect: { app: gmail }
+- name: "modify_message: summary shows the message and the label changes"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/18c0ffee00000001/modify"
+    headers: { content-type: application/json }
+    body: '{"addLabelIds":["STARRED"],"removeLabelIds":["UNREAD"]}'
+  expect:
+    tool: modify_message
+    summary: { title: "Change labels on a message", fields: { Message: "18c0ffee00000001", "Add label": "STARRED", "Remove label": "UNREAD" } }
+- name: "negative modify_message: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/18c0ffee00000001/modify" }
+  expect: { app: gmail }

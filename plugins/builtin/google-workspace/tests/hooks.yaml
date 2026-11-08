@@ -1,0 +1,259 @@
+# approval.summarize of the Drive app, run in the embedded hook host (docs/09 §8, §12). The hook has no
+# egress and makes no `fetch` calls, so there is no cassette. `body_prefix` is the beginning of the
+# held request's body, as the gateway passes it; `truncated: true` says it was cut. Summaries show
+# names, types, ids, sizes and roles, never file content (the unit tests of the hook crate assert that
+# the media part of an upload never appears).
+- name: approval.summarize create_file shows name, MIME type and parent folder
+  request: { method: POST, url: "https://www.googleapis.com/drive/v3/files" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: create_file
+      method: POST
+      host: www.googleapis.com
+      path: /drive/v3/files
+      headers: { content-type: application/json }
+      body_prefix: '{"name":"Reports","mimeType":"application/vnd.google-apps.folder","parents":["1ParentFixture"]}'
+    expect:
+      title: "Create Drive file or folder"
+      fields: { Name: "Reports", "Target MIME type": "application/vnd.google-apps.folder", "Parent folder ids": "1ParentFixture" }
+- name: approval.summarize multipart upload reads only the metadata part and shows the size
+  request: { method: POST, url: "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: upload_file
+      method: POST
+      host: www.googleapis.com
+      path: /upload/drive/v3/files
+      query: { uploadType: multipart }
+      headers: { content-type: "multipart/related; boundary=fixture_boundary", content-length: "2048" }
+      body_prefix: "--fixture_boundary\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n{\"name\":\"notes.txt\",\"mimeType\":\"text/plain\",\"parents\":[\"1ParentFixture\",\"1OtherFixture\"]}\r\n--fixture_boundary\r\ncontent-type: text/plain\r\n\r\nFILE CONTENT MUST NOT APPEAR\r\n--fixture_boundary--"
+    expect:
+      title: "Upload Drive file"
+      fields: { Name: "notes.txt", "Target MIME type": "text/plain", "Parent folder ids": "1ParentFixture, 1OtherFixture", "Request size": "2048 bytes", "Upload type": multipart }
+- name: approval.summarize multipart upload whose body prefix ends inside the media part
+  request: { method: POST, url: "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: upload_file
+      method: POST
+      host: www.googleapis.com
+      path: /upload/drive/v3/files
+      query: { uploadType: multipart }
+      headers: { content-type: 'multipart/related; boundary="fixture_boundary"', content-length: "5242880" }
+      truncated: true
+      body_prefix: "--fixture_boundary\r\ncontent-type: application/json\r\n\r\n{\"name\":\"big.bin\",\"mimeType\":\"application/octet-stream\"}\r\n--fixture_boundary\r\ncontent-type: application/octet-stream\r\n\r\nAAAA"
+    expect:
+      title: "Upload Drive file"
+      fields: { Name: "big.bin", "Target MIME type": "application/octet-stream", "Request size": "5242880 bytes" }
+      text: "Only the beginning of the request body was read."
+- name: approval.summarize truncated JSON prefix shows only the complete values
+  request: { method: POST, url: "https://www.googleapis.com/drive/v3/files" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: create_file
+      method: POST
+      host: www.googleapis.com
+      path: /drive/v3/files
+      truncated: true
+      body_prefix: '{"name":"quarterly.xlsx","mimeType":"application/vnd.openxmlformats-officedocument.spreads'
+    expect:
+      title: "Create Drive file or folder"
+      fields: { Name: "quarterly.xlsx" }
+      text: "Only the beginning of the request body was read."
+- name: approval.summarize media upload shows the file id, content type and size, never the body
+  request: { method: PATCH, url: "https://www.googleapis.com/upload/drive/v3/files/1FileIdFixture?uploadType=media" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: upload_file_content
+      method: PATCH
+      host: www.googleapis.com
+      path: /upload/drive/v3/files/1FileIdFixture
+      query: { uploadType: media }
+      headers: { content-type: application/pdf, content-length: "30" }
+      body_prefix: '{"name":"this is file content that looks like JSON"}'
+    expect:
+      title: "Replace Drive file content"
+      fields: { "File id": "1FileIdFixture", "Content type": "application/pdf", Size: "30 bytes", "Upload type": media }
+- name: approval.summarize resumable upload start shows the announced size and content type
+  request: { method: POST, url: "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: upload_file
+      method: POST
+      host: www.googleapis.com
+      path: /upload/drive/v3/files
+      query: { uploadType: resumable }
+      headers: { content-type: "application/json; charset=UTF-8", x-upload-content-length: "1048576", x-upload-content-type: video/mp4 }
+      body_prefix: '{"name":"clip.mp4"}'
+    expect:
+      title: "Upload Drive file"
+      fields: { Name: "clip.mp4", Size: "1048576 bytes", "Content type": "video/mp4", "Upload type": resumable }
+- name: approval.summarize update_file move shows the folders to add and remove
+  request: { method: PATCH, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: update_file
+      method: PATCH
+      host: www.googleapis.com
+      path: /drive/v3/files/1FileIdFixture
+      query: { addParents: 1DestFixture, removeParents: 1SrcFixture }
+      body_prefix: ""
+    expect:
+      title: "Change Drive file"
+      fields: { "File id": "1FileIdFixture", "Add to folder ids": "1DestFixture", "Remove from folder ids": "1SrcFixture" }
+- name: approval.summarize update_file rename and trash
+  request: { method: PATCH, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: update_file
+      method: PATCH
+      host: www.googleapis.com
+      path: /drive/v3/files/1FileIdFixture
+      body_prefix: '{"name":"Old notes","trashed":true}'
+    expect:
+      title: "Change Drive file"
+      fields: { "File id": "1FileIdFixture", Name: "Old notes", Trashed: "yes" }
+- name: approval.summarize copy_file shows the copy's name and folder
+  request: { method: POST, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture/copy" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: copy_file
+      method: POST
+      host: www.googleapis.com
+      path: /drive/v3/files/1FileIdFixture/copy
+      body_prefix: '{"name":"Copy of notes","parents":["1ParentFixture"]}'
+    expect:
+      title: "Copy Drive file"
+      fields: { "File id": "1FileIdFixture", Name: "Copy of notes", "Parent folder ids": "1ParentFixture" }
+- name: approval.summarize alt=media download shows the file id
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture?alt=media" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: get_file
+      method: GET
+      host: www.googleapis.com
+      path: /drive/v3/files/1FileIdFixture
+      query: { alt: media }
+    expect:
+      title: "Download Drive file"
+      fields: { "File id": "1FileIdFixture", Action: "download the file content" }
+- name: approval.summarize export shows the file id and the export MIME type
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/files/1DocIdFixture/export?mimeType=application%2Fpdf" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: export_file
+      method: GET
+      host: www.googleapis.com
+      path: /drive/v3/files/1DocIdFixture/export
+      query: { mimeType: application/pdf }
+    expect:
+      title: "Export Drive file"
+      fields: { "File id": "1DocIdFixture", "Export MIME type": "application/pdf" }
+- name: approval.summarize permission for a user shows role, type and email but not the message
+  request: { method: POST, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture/permissions" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: create_permission
+      method: POST
+      host: www.googleapis.com
+      path: /drive/v3/files/1FileIdFixture/permissions
+      query: { sendNotificationEmail: "false" }
+      body_prefix: '{"role":"writer","type":"user","emailAddress":"bob@example.com","emailMessage":"PRIVATE NOTE"}'
+    expect:
+      title: "Share Drive file"
+      fields: { "File id": "1FileIdFixture", Role: writer, Type: user, Email: "bob@example.com", "Notify by email": "false" }
+- name: approval.summarize permission for a domain with ownership transfer
+  request: { method: POST, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture/permissions" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: create_permission
+      method: POST
+      host: www.googleapis.com
+      path: /drive/v3/files/1FileIdFixture/permissions
+      query: { transferOwnership: "true" }
+      body_prefix: '{"role":"owner","type":"domain","domain":"example.com"}'
+    expect:
+      title: "Share Drive file"
+      fields: { Role: owner, Type: domain, Domain: "example.com", Ownership: "transferred to the grantee" }
+- name: approval.summarize fails with invalid-input when the body is not JSON
+  request: { method: POST, url: "https://www.googleapis.com/drive/v3/files" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: create_file
+      method: POST
+      host: www.googleapis.com
+      path: /drive/v3/files
+      body_prefix: "name=Reports&mimeType=folder"
+    expect: { error: invalid-input, message_contains: "not JSON" }
+- name: approval.summarize fails with invalid-input for a multipart body without a JSON metadata part
+  request: { method: POST, url: "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: upload_file
+      method: POST
+      host: www.googleapis.com
+      path: /upload/drive/v3/files
+      query: { uploadType: multipart }
+      headers: { content-type: "multipart/related; boundary=fixture_boundary" }
+      body_prefix: "--fixture_boundary\r\ncontent-type: text/plain\r\n\r\nplain text part\r\n--fixture_boundary--"
+    expect: { error: invalid-input, message_contains: "metadata" }
+- name: approval.summarize fails with invalid-input for an empty permission body
+  request: { method: POST, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture/permissions" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: create_permission
+      method: POST
+      host: www.googleapis.com
+      path: /drive/v3/files/1FileIdFixture/permissions
+      body_prefix: ""
+    expect: { error: invalid-input }
+- name: approval.summarize is unsupported for a metadata read
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input:
+      tool_id: get_file
+      method: GET
+      host: www.googleapis.com
+      path: /drive/v3/files/1FileIdFixture
+    expect: { error: unsupported }
+- name: approval.summarize is unsupported for a tool of another app
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/files" }
+  hook:
+    point: approval.summarize
+    app_id: drive
+    input: { tool_id: list_files, method: GET, host: www.googleapis.com, path: /drive/v3/files }
+    expect: { error: unsupported }

@@ -1,0 +1,102 @@
+# Google Calendar: every tool has a positive case and a `negative <tool>:` case. All credentials are fake.
+- name: "list_calendars: bearer is injected on www.googleapis.com under /calendar/v3"
+  connection: { credentials: { access_token: "tok-fixture-1" }, metadata: { account: "alice@example.com" } }
+  request: { method: GET, url: "https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader" }
+  expect:
+    app: calendar
+    tool: list_calendars
+    upstream: { url: "https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader", headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative list_calendars: POST selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://www.googleapis.com/calendar/v3/users/me/calendarList" }
+  expect: { app: calendar }
+- name: "negative list_calendars: another host is not claimed"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://calendar.googleapis.com/calendar/v3/users/me/calendarList" }
+  expect: { unmatched: true }
+- name: "negative list_calendars: an unclaimed path on the shared Google host is not claimed"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/oauth2/v2/userinfo" }
+  expect: { unmatched: true }
+- name: "negative list_calendars: another API version is not claimed"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/calendar/v4/users/me/calendarList" }
+  expect: { unmatched: true }
+- name: "get_calendar"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/calendar/v3/calendars/primary" }
+  expect: { tool: get_calendar }
+- name: "negative get_calendar: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://www.googleapis.com/calendar/v3/calendars/primary" }
+  expect: { app: calendar }
+- name: "list_events: time range with a percent-encoded calendar id"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/calendar/v3/calendars/team%40example.com/events?timeMin=2026-03-02T00%3A00%3A00Z&singleEvents=true" }
+  expect: { tool: list_events }
+- name: "negative list_events: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events" }
+  expect: { app: calendar }
+- name: "get_event"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/evt0fixture1" }
+  expect: { tool: get_event }
+- name: "negative get_event: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/evt0fixture1" }
+  expect: { app: calendar }
+# Write tools: each has a positive case with its approval summary and a negative case.
+- name: "query_freebusy: a read over POST is held for approval"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://www.googleapis.com/calendar/v3/freeBusy"
+    headers: { content-type: application/json }
+    body: '{"timeMin":"2026-03-02T00:00:00Z","timeMax":"2026-03-03T00:00:00Z","items":[{"id":"primary"}]}'
+  expect:
+    app: calendar
+    tool: query_freebusy
+    summary: { title: "Query free and busy times", fields: { From: "2026-03-02T00:00:00Z", Until: "2026-03-03T00:00:00Z" } }
+- name: "negative query_freebusy: GET selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/calendar/v3/freeBusy" }
+  expect: { app: calendar }
+- name: "create_event: summary shows calendar, title and start"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+    headers: { content-type: application/json }
+    body: '{"summary":"Design review","start":{"dateTime":"2026-03-02T10:00:00Z"},"end":{"dateTime":"2026-03-02T11:00:00Z"},"attendees":[{"email":"bob@example.com"}]}'
+  expect:
+    tool: create_event
+    summary: { title: "Create calendar event", fields: { Calendar: "primary", Title: "Design review", Starts: "2026-03-02T10:00:00Z" } }
+- name: "negative create_event: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events" }
+  expect: { app: calendar }
+- name: "update_event: summary shows calendar, event and new title"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PATCH
+    url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/evt0fixture1"
+    headers: { content-type: application/json }
+    body: '{"summary":"Design review (moved)"}'
+  expect:
+    tool: update_event
+    summary: { title: "Change calendar event", fields: { Calendar: "primary", Event: "evt0fixture1", Title: "Design review (moved)" } }
+- name: "negative update_event: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/evt0fixture1" }
+  expect: { app: calendar }
+- name: "delete_event: summary shows calendar and event"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/evt0fixture1" }
+  expect:
+    tool: delete_event
+    summary: { title: "Delete calendar event", fields: { Calendar: "primary", Event: "evt0fixture1" } }
+- name: "negative delete_event: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/evt0fixture1" }
+  expect: { app: calendar }

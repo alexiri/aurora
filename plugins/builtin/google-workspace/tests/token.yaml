@@ -1,0 +1,146 @@
+# Token lifecycle against recorded HTTP (docs/09 §12) for the three apps, which share one Google OAuth
+# client: a 401 from the API, the refresh at oauth2.googleapis.com/token (form body; Google does not
+# rotate the refresh token, the answer carries no new one), and what the gateway does next. A
+# refused refresh token answers 400 invalid_grant and needs re-authorization. All values are fake.
+- name: "gmail token: a stored access token and refresh token inject the bearer"
+  connection: { credentials: { access_token: "tok-fixture-2", refresh_token: "refresh-fixture-1" } }
+  request: { method: GET, url: "https://gmail.googleapis.com/gmail/v1/users/me/messages" }
+  expect:
+    app: gmail
+    tool: list_messages
+    upstream: { headers: { authorization: "Bearer tok-fixture-2" } }
+- name: "calendar token: a stored access token and refresh token inject the bearer"
+  connection: { credentials: { access_token: "tok-fixture-2", refresh_token: "refresh-fixture-2" } }
+  request: { method: GET, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events" }
+  expect:
+    app: calendar
+    tool: list_events
+    upstream: { headers: { authorization: "Bearer tok-fixture-2" } }
+- name: "drive token: a stored access token and refresh token inject the bearer"
+  connection: { credentials: { access_token: "tok-fixture-2", refresh_token: "refresh-fixture-3" } }
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/files?pageSize=5" }
+  expect:
+    app: drive
+    tool: list_files
+    upstream: { headers: { authorization: "Bearer tok-fixture-2" } }
+- name: "gmail token: a 401 refreshes at the Google token endpoint and retries with the new token"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://gmail.googleapis.com/gmail/v1/users/me/messages" }
+  token:
+    upstream: { status: 401, body: '{"error":{"code":401,"message":"Invalid Credentials","status":"UNAUTHENTICATED"}}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://oauth2.googleapis.com/token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-1", client_id: "client-fixture" }
+        response:
+          status: 200
+          body: '{"access_token":"tok-fixture-new","expires_in":3599,"scope":"https://www.googleapis.com/auth/gmail.readonly","token_type":"Bearer"}'
+    expect:
+      outcome: refreshed
+      request_url: "https://oauth2.googleapis.com/token"
+      credentials: { access_token: "tok-fixture-new" }
+      retried:
+        url: "https://gmail.googleapis.com/gmail/v1/users/me/messages"
+        headers: { authorization: "Bearer tok-fixture-new" }
+  expect: { app: gmail, tool: list_messages }
+- name: "gmail token: invalid_grant (expired or revoked refresh token) needs re-authorization"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://gmail.googleapis.com/gmail/v1/users/me/messages" }
+  token:
+    upstream: { status: 401, body: '{"error":{"code":401,"status":"UNAUTHENTICATED"}}' }
+    http_cassette:
+      - request: { method: POST, url: "https://oauth2.googleapis.com/token" }
+        response:
+          status: 400
+          body: '{"error":"invalid_grant","error_description":"Token has been expired or revoked."}'
+    expect: { outcome: reauth_required }
+  expect: { app: gmail }
+- name: "gmail token: a 503 from the token endpoint keeps the connection and retries nothing"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://gmail.googleapis.com/gmail/v1/users/me/messages" }
+  token:
+    upstream: { status: 401, body: '{"error":{"code":401,"status":"UNAUTHENTICATED"}}' }
+    http_cassette:
+      - request: { method: POST, url: "https://oauth2.googleapis.com/token" }
+        response: { status: 503, body: "service unavailable" }
+    expect: { outcome: unavailable }
+  expect: { app: gmail }
+- name: "calendar token: a 401 refreshes and retries on the calendar path"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-2" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events" }
+  token:
+    upstream: { status: 401, body: '{"error":{"code":401,"status":"UNAUTHENTICATED"}}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://oauth2.googleapis.com/token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-2", client_id: "client-fixture" }
+        response:
+          status: 200
+          body: '{"access_token":"tok-fixture-new","expires_in":3599,"scope":"https://www.googleapis.com/auth/calendar.readonly","token_type":"Bearer"}'
+    expect:
+      outcome: refreshed
+      credentials: { access_token: "tok-fixture-new" }
+      retried:
+        url: "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+        headers: { authorization: "Bearer tok-fixture-new" }
+  expect: { app: calendar, tool: list_events }
+- name: "calendar token: invalid_grant needs re-authorization"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-2" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://www.googleapis.com/calendar/v3/calendars/primary/events" }
+  token:
+    upstream: { status: 401, body: '{"error":{"code":401,"status":"UNAUTHENTICATED"}}' }
+    http_cassette:
+      - request: { method: POST, url: "https://oauth2.googleapis.com/token" }
+        response:
+          status: 400
+          body: '{"error":"invalid_grant","error_description":"Token has been expired or revoked."}'
+    expect: { outcome: reauth_required }
+  expect: { app: calendar }
+- name: "drive token: a 401 refreshes and retries on the Drive path"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-3" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/files?pageSize=5" }
+  token:
+    upstream: { status: 401, body: '{"error":{"code":401,"status":"UNAUTHENTICATED"}}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://oauth2.googleapis.com/token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-3", client_id: "client-fixture" }
+        response:
+          status: 200
+          body: '{"access_token":"tok-fixture-new","expires_in":3599,"scope":"https://www.googleapis.com/auth/drive.readonly","token_type":"Bearer"}'
+    expect:
+      outcome: refreshed
+      credentials: { access_token: "tok-fixture-new" }
+      retried:
+        url: "https://www.googleapis.com/drive/v3/files?pageSize=5"
+        headers: { authorization: "Bearer tok-fixture-new" }
+  expect: { app: drive, tool: list_files }
+- name: "drive token: invalid_grant needs re-authorization"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-3" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/files?pageSize=5" }
+  token:
+    upstream: { status: 401, body: '{"error":{"code":401,"status":"UNAUTHENTICATED"}}' }
+    http_cassette:
+      - request: { method: POST, url: "https://oauth2.googleapis.com/token" }
+        response:
+          status: 400
+          body: '{"error":"invalid_grant","error_description":"Token has been expired or revoked."}'
+    expect: { outcome: reauth_required }
+  expect: { app: drive }
