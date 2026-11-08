@@ -41,9 +41,9 @@ describe("direct conversation visibility (RFE-009)", () => {
   it("shows the privacy banner on the member's own direct chat and no owner group", async () => {
     mock([conv("mine", "direct", { direct_user_id: "me" }), conv("g1", "group", { title: "Team room" })]);
     wrap(<ChatTab agentId="a1" wsId="w" base="/o/x/w/y" />);
-    expect(await screen.findByText("Only you and workspace owners can see this conversation.")).toBeTruthy();
+    expect(await screen.findByText(/Only you and workspace owners can see this conversation/)).toBeTruthy();
     expect(await screen.findByText("Team room")).toBeTruthy();
-    expect(screen.queryByText("Direct conversations of other members")).toBeNull();
+    expect(screen.queryByText("Other members' direct chats")).toBeNull();
   });
 
   it("gives owners a read-only group for other members' direct conversations", async () => {
@@ -52,8 +52,8 @@ describe("direct conversation visibility (RFE-009)", () => {
       conv("theirs", "direct", { direct_user_id: "u2", direct_user: { id: "u2", display_name: "Ann" } }),
     ]);
     wrap(<ChatTab agentId="a1" wsId="w" base="/o/x/w/y" />);
-    expect(await screen.findByText("Direct conversations of other members")).toBeTruthy();
-    expect(screen.getByText("visible to workspace owners")).toBeTruthy();
+    expect(await screen.findByText("Other members' direct chats")).toBeTruthy();
+    expect(screen.getByText("Read-only")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Ann/ }));
     expect(await screen.findByText(/recorded in the audit log/)).toBeTruthy();
     expect(screen.queryByLabelText("Message")).toBeNull();

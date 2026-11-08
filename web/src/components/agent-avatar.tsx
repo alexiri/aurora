@@ -14,6 +14,7 @@ const SIZES: Record<number, string> = {
   32: "size-8 text-sm",
   36: "size-9 text-base",
   40: "size-10 text-lg",
+  44: "size-11 text-lg",
   48: "size-12 text-xl",
   56: "size-14 text-2xl",
   64: "size-16 text-3xl",
