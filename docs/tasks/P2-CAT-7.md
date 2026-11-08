@@ -442,7 +442,7 @@ CommonMark, no raw HTML, ≤ 64 KiB; `aurora plugin docs` appends the generated 
 - Edit files with the file tools only (owner rule).
 
 ### Dependencies
-- Blocked by: owner answers to Q-A (tier) and Q-B (event creation); P2-INST (merged).
+- Blocked by: nothing (Q-A and Q-B answered, D-84; P2-INST merged).
 - P2-CAT-T: start after it has merged so `check_builtin.py`'s lifecycle rule is final; this
   package is static, so the rule is expected not to apply (§7.7).
 - Not needed: P2-CAT-H (no hook).
@@ -466,6 +466,9 @@ Sonnet, own worktree. One manifest, ~100 fixture cases with order-sensitive matc
 coverage; Haiku is likely to miss ordering and boundary cases. Effort M.
 
 ## 11. Decisions needed from the owner
+
+**Answered 2026-11-08 (D-84):** the owner accepted every recommendation: Q-A yes (extended tier, opt-in, with the compatibility warning), Q-B yes (prepare and hand off), Q-C yes (mitigations now; phase-4 item P4-GRANTS for an app-level "custom grants only" option), Q-G include (named in the guide). Q-D, Q-E, Q-F and Q-H take their recommendations. Q-I is approved by the coordinator: **this lane may make both shared changes** (the `ind[po]_` pattern in `scripts/guards/no-live-tokens.sh`, and the first-match tool-order note in `09 §3.4`), as an exception to the file-ownership rule above.
+
 - **Q-A Extended tier.** Ship the undocumented-endpoint tier (favorites, room search by free time,
   my bookings, cancel, room-booking-app booking, search, prepare event) in phase 2, behind the
   opt-in scopes `read:everything` / `full:everything`, with the compatibility warning?
