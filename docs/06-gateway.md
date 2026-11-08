@@ -42,8 +42,8 @@ unencrypted.
   when < 10 days remain (no restart, no stored key). Rationale: every hosted
   sandbox and every BYO container config already trusts this CA, so no new trust
   distribution is needed. The SAN set is the union of: the host of
-  `gateway.advertised_proxy_url`; the sandbox-facing proxy address in the boot
-  document (`11`); the in-cluster service names (`aurora-gateway`,
+  `gateway.advertised_proxy_url`; the host of `gateway.sandbox_proxy_url`, the
+  sandbox-facing proxy address in the boot document (`11`, FIX-010); the in-cluster service names (`aurora-gateway`,
   `aurora-gateway.<ns>`, `aurora-gateway.<ns>.svc`,
   `aurora-gateway.<ns>.svc.cluster.local`) and the fixed compose address
   (`10.89.250.2`) when running there; and `gateway.proxy_tls.names` (extra DNS

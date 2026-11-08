@@ -77,9 +77,10 @@ harness**: `kind-dev.sh` builds `scripts/e2e/llm.Containerfile` on top of the de
 `localhost/aurora-dev/aurora-sandbox-llm:dev` (the Claude Code CLI at the pinned version, installed with npm), loads
 it, and `values-llm-mock.yaml` sets `config.runner.image` to it. `just kind-dev sandbox` rebuilds both images.
 The default agent needs nothing else: its harness is the default (`claude-code`) and its model is the endpoint's
-`default_model` (`scn-pong`, VidaiMock answers `pong`). `values-dev.yaml` sets `gateway.advertised_proxy_url:
-https://aurora-gateway:4102`, the name the runner aliases to the gateway proxy inside sandboxes (they have no DNS);
-the derived default, `localhost:4102`, makes every model call of a real harness fail with `API Error: 502`.
+`default_model` (`scn-pong`, VidaiMock answers `pong`). `values-dev.yaml` sets no gateway address (FIX-010, D-87): sandboxes
+dial `gateway.sandbox_proxy_url`, which defaults on the Kubernetes backend to `https://aurora-gateway:4102`, the
+name the runner aliases to the gateway proxy inside sandboxes (they have no DNS), while BYO agents keep the external
+`gateway.advertised_proxy_url` derived from `externalUrl`.
 
 A second cluster beside another one (or beside the owner's `aurora-dev`): `AURORA_DEV_CLUSTER=<name>
 AURORA_DEV_PORT=<free port>` for `kind-up`, `kind-dev`, `first-run.sh` and `m1.sh --kind` (the port is written into a

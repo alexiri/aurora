@@ -181,6 +181,12 @@ environment or memory), removes it from its environment and never passes it on.
 }
 ```
 
+(FIX-010, D-87) `gateway.proxy` and `server_name` come from `gateway.sandbox_proxy_url`, not from the
+advertised proxy URL BYO agents get (`06`): on the Kubernetes backend the default is `aurora-gateway:4102`, the
+host alias the runner writes into every sandbox Pod (sandboxes have no DNS) and a name on the proxy
+certificate; on podman it is the advertised URL. The supervisor still verifies the certificate against
+`ca_pem` and `server_name`.
+
 Non-secret environment set on the container by the runner: `TZ`, `HOME=/workspace`,
 `LANG=C.UTF-8`, `AURORA_SANDBOX_ID`, `AURORA_AGENT_HANDLE`,
 `HTTPS_PROXY=HTTP_PROXY=http://127.0.0.1:3128` (+ lowercase),

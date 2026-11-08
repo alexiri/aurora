@@ -361,6 +361,9 @@ pub struct SanInputs<'a> {
     /// `gateway.advertised_proxy_url`; its host is also the sandbox-facing address in the boot
     /// document (docs/11).
     pub advertised_proxy_url: &'a str,
+    /// Resolved `gateway.sandbox_proxy_url` (FIX-010, D-87): sandboxes verify the certificate
+    /// against its host, so it is always a SAN.
+    pub sandbox_proxy_url: &'a str,
     /// `gateway.proxy_tls.names`.
     pub extra_names: &'a [String],
     /// Kubernetes namespace when running in a cluster.
@@ -379,6 +382,9 @@ pub fn san_set(i: &SanInputs<'_>) -> Vec<String> {
         }
     };
     if let Some(h) = url_host(i.advertised_proxy_url) {
+        add(h);
+    }
+    if let Some(h) = url_host(i.sandbox_proxy_url) {
         add(h);
     }
     add(SERVICE_NAME.to_owned());
@@ -440,6 +446,7 @@ mod tests {
     fn san_set_is_the_union_of_every_source() {
         let sans = san_set(&SanInputs {
             advertised_proxy_url: "https://lb.example.org:4102",
+            sandbox_proxy_url: "https://sandbox-gw.example.org:4102",
             extra_names: &["Extra.Example.org".into(), "lb.example.org".into()],
             namespace: Some("aurora"),
             compose_addr_local: true,
@@ -448,6 +455,7 @@ mod tests {
             sans,
             [
                 "lb.example.org",
+                "sandbox-gw.example.org",
                 "aurora-gateway",
                 "aurora-gateway.aurora",
                 "aurora-gateway.aurora.svc",
@@ -458,6 +466,7 @@ mod tests {
         );
         let bare = san_set(&SanInputs {
             advertised_proxy_url: "https://aurora-gateway:4102",
+            sandbox_proxy_url: "https://aurora-gateway:4102",
             extra_names: &[],
             namespace: None,
             compose_addr_local: false,

@@ -37,13 +37,10 @@ config:
   auth:
     signup_mode: open
     org_creation: anyone
-  gateway:
-    # P2-E2E-1: sandboxes dial the gateway proxy at the address in their boot document, which defaults to
-    # external host + :4102 = localhost:4102, i.e. the sandbox itself. Real harnesses (claude-code) then get
-    # `API Error: 502` (the fake harness never uses the proxy). Sandbox Pods have no DNS (default-deny
-    # NetworkPolicy, dns_policy None); the Kubernetes runner backend gives them a hostAlias `aurora-gateway`
-    # -> the proxy Service's ClusterIP, and `aurora-gateway` is on the proxy certificate (docs/11).
-    advertised_proxy_url: https://aurora-gateway:4102
+  # FIX-010 (D-87): no gateway address override. Hosted sandboxes default to
+  # gateway.sandbox_proxy_url = https://aurora-gateway:4102 on the Kubernetes backend (the host alias the
+  # runner writes into each Pod; the name is on the proxy certificate), while BYO agents keep the
+  # advertised URL derived from externalUrl.
   hosted:
     enabled: true
     allow_fake_harness: true

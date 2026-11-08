@@ -104,6 +104,7 @@ one new entry without activating it.
 | `hosted.default_timezone` | `UTC` | api | for new workspaces |
 | `hosted.idle_stop_secs`, `hosted.background_cap_secs`, `hosted.turn_ceiling_secs`, `hosted.turn_stall_secs` | `02 §Limits` | api | |
 | `gateway.advertised_proxy_url` | derived from external host + `:4102` | api, gateway | what BYO agents are told; (phase 1, RFE-002) always `https://host:port` — startup refuses an `http://` value |
+| `gateway.sandbox_proxy_url` | `runner.backend = kubernetes`: `https://aurora-gateway:4102`; otherwise the advertised proxy URL | api, gateway | (FIX-010, D-87) the proxy address hosted sandboxes dial (the boot document's `gateway.proxy` / `server_name`, `11`); `https://host[:port]` only; its host is added to the proxy certificate; set it only when the in-cluster Service is reached by another name (a mesh, a different DNS name), never for BYO agents |
 | `gateway.proxy_tls.names` | `[]` | gateway | (phase 1, RFE-002) extra DNS names/IPs for the CA-issued proxy certificate (LoadBalancer hostname, extra service names) |
 | `gateway.proxy_tls.cert_file`, `gateway.proxy_tls.key_file` | — | gateway | (phase 1, RFE-002) optional operator-supplied proxy certificate chain + key (both or neither); replaces the CA-issued leaf for the outer leg |
 | `governance.agent_tokens.max_age_days` | unset (never expire) | api | (phase 3, RFE-013) optional maximum age of BYO agent tokens (1…3 650 days); orgs may set a smaller value; applied at mint and, with a 7-day grace, to existing tokens when introduced or tightened (`08 §7`) |

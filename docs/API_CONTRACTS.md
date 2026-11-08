@@ -763,6 +763,12 @@ Rule: `04 §Freeze`, `05 §Conventions`, `06 §Credential authentication`, `10 �
 - C-267 **Config**: `approvals.max_timeout_secs` (default 3600, 300–14400, must be < `hosted.turn_ceiling_secs − 900`) and `approvals.email_notifications` (default true); invalid values fail startup of the API and the gateway.
 - C-268 **Stall rule** (due-work arm 8, no route): a running turn with a `pending` gateway approval inside its deadline is never `turn_stalled`; otherwise stalled means `now − GREATEST(last_progress_at, latest approvals.resolved_at of the turn) ≥ TURN_STALL`. `resolved_at` is set on approve, deny, expire and abandon (including freeze). `TURN_CEILING` and the frozen-agent turn end are unaffected; action approvals never exempt.
 
+### FIX-010 sandbox gateway address (C-300..C-302, D-87)
+
+- C-300 **Boot document**: `gateway.proxy` (`host:port`) and `gateway.server_name` (host) are derived from the resolved `gateway.sandbox_proxy_url`, never from `gateway.advertised_proxy_url`. `tls` stays `true`; the supervisor verifies the proxy certificate against `ca_pem` and `server_name`, unchanged.
+- C-301 **Config** `gateway.sandbox_proxy_url` (optional; api and gateway): `https://host[:port]` only (no path, query, fragment or credentials; startup names the key otherwise). Unset: `runner.backend = kubernetes` → `https://aurora-gateway:4102`; `podman` and `fake` → the resolved `gateway.advertised_proxy_url`. The gateway adds its host to the proxy certificate SANs.
+- C-302 **BYO**: `container_config.proxy_url` and every other BYO-facing proxy URL keep using `gateway.advertised_proxy_url` (external host); no API response exposes the sandbox address.
+
 ### W9 hook-host JSON encoding (C-18, C-19)
 
 - C-18 Internal snapshot route returns the exact canonical bytes so consumers verify `sha256(body) == x-snapshot-hash` without re-serialization.

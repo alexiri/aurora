@@ -379,6 +379,10 @@ impl Default for ApiSection {
 pub struct GatewaySection {
     /// Default: derived from the external host plus `:4102`.
     pub advertised_proxy_url: Option<String>,
+    /// (FIX-010, D-87) The proxy address hosted sandboxes dial (the boot document's
+    /// `gateway.proxy` / `server_name`), `https://host[:port]` only. Default by `runner.backend`:
+    /// `kubernetes` → `https://aurora-gateway:4102`; otherwise the advertised proxy URL.
+    pub sandbox_proxy_url: Option<String>,
     /// Address for the internal listener (4103: health, metrics, status).
     /// Must NOT be reachable from sandboxes (SEC-09). Default: `server.bind`
     /// (startup logs a warning when it overlaps the proxy listener).
@@ -434,6 +438,7 @@ impl Default for GatewaySection {
     fn default() -> Self {
         Self {
             advertised_proxy_url: None,
+            sandbox_proxy_url: None,
             internal_bind: None,
             allowed_private: vec![],
             egress_proxy: None,
