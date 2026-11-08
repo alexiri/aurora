@@ -210,6 +210,7 @@ async fn s4_idle_park_keeps_home_and_next_message_wakes() {
     }
     let (st, api) = fx(Opts {
         idle_stop_secs: Some(10),
+        ..Opts::default()
     })
     .await;
     let conv = api.direct().await;
@@ -540,12 +541,12 @@ async fn s8_security_probes() {
     );
     check(
         "SEC-02 postgres",
-        !can_connect(c, "10.89.252.5", 5432),
+        !can_connect(c, &pg_ip(), 5432),
         "reachable".into(),
     );
     check(
         "SEC-02 anchor/other",
-        !can_connect(c, "10.89.251.2", 22),
+        !can_connect(c, &sbx_other_ip(), 22),
         "reachable".into(),
     );
     check(
@@ -567,7 +568,7 @@ async fn s8_security_probes() {
     ] {
         check(
             &format!("SEC-09 {n}"),
-            !can_connect(c, BRIDGE, port),
+            !can_connect(c, &bridge(), port),
             "reachable".into(),
         );
     }
@@ -612,7 +613,7 @@ async fn s8_security_probes() {
         used.is_some(),
         "null".into(),
     );
-    let url = format!("ws://{BRIDGE}:4105/v1/supervisor");
+    let url = format!("ws://{}:4105/v1/supervisor", bridge());
     let welcomed = match tokio_tungstenite::connect_async(&url).await {
         Err(e) => format!("connect error {e}"),
         Ok((mut ws, _)) => {
@@ -642,7 +643,7 @@ async fn s8_security_probes() {
         .await;
     assert_eq!(s, 202);
     st.wait_sandbox(&api, "stopped", 90).await;
-    let proxy = reqwest::Proxy::all(format!("https://{BRIDGE}:4102"))
+    let proxy = reqwest::Proxy::all(format!("https://{}:4102", bridge()))
         .unwrap()
         .basic_auth("agent", &boot_token);
     let cl = reqwest::Client::builder()
@@ -679,8 +680,8 @@ async fn s8b_gateway_and_runner_ops_ports_unreachable_from_sandbox() {
     st.wait_turn(&turn_id(&v), &["running"], 120).await;
     let cs = containers();
     let c = cs[0].as_str();
-    let g = can_connect(c, BRIDGE, 4103);
-    let r = can_connect(c, BRIDGE, 4106);
+    let g = can_connect(c, &bridge(), 4103);
+    let r = can_connect(c, &bridge(), 4106);
     st.finish().await;
     assert!(
         !g,
@@ -690,6 +691,331 @@ async fn s8b_gateway_and_runner_ops_ports_unreachable_from_sandbox() {
         !r,
         "SEC-09: runner ops port :4106 reachable from the sandbox"
     );
+}
+
+/// Runs `command` as a background process through the supervisor's `process_start` tool (over the
+/// tools socket, as the agent would) and returns what it wrote to `/workspace/<name>.out` once it
+/// printed the `done` marker. Fails after `secs`.
+async fn process_output(c: &str, conv: &str, name: &str, command: &str, secs: u64) -> String {
+    let cmd = format!(
+        "{{ {command}; }} > /workspace/{name}.out 2>&1; echo done-marker >> /workspace/{name}.out"
+    );
+    let r = tools_sock(
+        c,
+        &json!({"id": 1, "session": conv, "method": "call", "tool": "process_start",
+                "arguments": {"name": name, "command": cmd}}),
+    );
+    assert!(r.contains("\"result\""), "process_start: {r}");
+    let mut out = String::new();
+    let end = std::time::Instant::now() + Duration::from_secs(secs);
+    while std::time::Instant::now() < end {
+        out = exec_in(c, &format!("cat /workspace/{name}.out 2>/dev/null")).1;
+        if out.contains("done-marker") {
+            return out;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    panic!("process {name} did not finish within {secs}s: {out}");
+}
+
+/// Lines of an environment dump (`KEY=value` per line) that carry boot material: an `AURORA_BOOT*`
+/// variable, the bootstrap token, the gateway boot token, or any `aub_`/`aup_`/`auc_` credential
+/// value (the prefix at a word start followed by a token-like run of 8 or more characters).
+fn boot_material_in(dump: &str, bootstrap: &str, boot_token: &str) -> Vec<String> {
+    let mut found = vec![];
+    for line in dump.lines() {
+        let key = line.split('=').next().unwrap_or("");
+        if key.starts_with("AURORA_BOOT") {
+            found.push(format!("AURORA_BOOT variable: {key}"));
+        }
+        if line.contains(bootstrap) {
+            found.push("the bootstrap token".into());
+        }
+        if line.contains(boot_token) {
+            found.push("the gateway boot token".into());
+        }
+        for prefix in ["aub_", "aup_", "auc_"] {
+            let mut rest = line;
+            while let Some(i) = rest.find(prefix) {
+                let after = &rest[i + prefix.len()..];
+                let run = after
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '-')
+                    .count();
+                let before_ok = rest[..i]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !ch.is_ascii_alphanumeric());
+                if before_ok && run >= 8 {
+                    found.push(format!("a `{prefix}` credential value in `{key}`"));
+                }
+                rest = after;
+            }
+        }
+    }
+    found
+}
+
+/// Shell snippet: sets `pid` to the PID of the `sleep` process (the image has no `pgrep`).
+const FIND_SLEEP: &str = "pid=; for d in /proc/[0-9]*; do [ \"$(cat $d/comm 2>/dev/null)\" = sleep ] && pid=${d#/proc/}; done";
+
+/// SEC-34 / I-23 (TEST-013 follow-up, P2-TEST-1): a process started through `process_start` (the
+/// supervisor's own child, the same path every agent command takes) must not carry boot material in
+/// its environment: no `AURORA_BOOT`, no `aub_`/`aup_`/`auc_` credential, not the bootstrap token.
+#[tokio::test]
+async fn s8c_process_start_children_have_no_boot_material_in_their_environment() {
+    if !enabled() {
+        return;
+    }
+    let (st, api) = fx(Opts::default()).await;
+    let conv = api.direct().await;
+    run_turn(&st, &api, &conv, "[[say: warm]]").await;
+    let cs = containers();
+    assert_eq!(cs.len(), 1, "{cs:?}");
+    let c = cs[0].as_str();
+    // What the operator view holds, so the probe knows the values it must not find.
+    let doc = boot_doc(c);
+    let bootstrap = doc["bootstrap_token"].as_str().unwrap().to_owned();
+    let boot_token = doc["gateway"]["boot_token"].as_str().unwrap().to_owned();
+    assert!(boot_token.starts_with("aub_"), "{boot_token}");
+
+    // The child's own environment (`/proc/self/environ` of the shell the supervisor spawned),
+    // plus its parent's (the shell's parent is the supervisor on some layouts; PID 1 must stay
+    // unreadable, as s8 checks).
+    let out = process_output(
+        c,
+        &conv,
+        "envprobe",
+        "echo pid=$$; echo '--- environ'; tr '\\0' '\\n' < /proc/$$/environ; echo '--- env'; env",
+        60,
+    )
+    .await;
+    // The probe ran with a real environment (otherwise an empty file would pass vacuously).
+    assert!(
+        out.contains("pid=") && out.contains("--- environ") && out.contains("PATH="),
+        "the probe did not capture an environment: {out}"
+    );
+    // Negative control: the same matcher must flag an environment that does carry boot material.
+    // A process started by `podman exec` gets the container's configured environment (which holds
+    // `AURORA_BOOT`), so its `env` is such an environment; if the matcher missed it, the probe
+    // could not fail.
+    let (_, exec_env) = exec_in(c, "env");
+    assert!(
+        !boot_material_in(&exec_env, &bootstrap, &boot_token).is_empty(),
+        "negative control: the matcher found no boot material in the `podman exec` environment"
+    );
+    let mut fails: Vec<String> = boot_material_in(&out, &bootstrap, &boot_token);
+    // The same from outside: a long-running process the supervisor started, whose
+    // `/proc/<pid>/environ` another agent-uid process reads. (Not a sweep over every PID: processes
+    // started by `podman exec` get the container's configured environment, `AURORA_BOOT` included,
+    // by podman's design; only supervisor-spawned processes are the agent-visible ones.)
+    let r = tools_sock(
+        c,
+        &json!({"id": 2, "session": conv, "method": "call", "tool": "process_start",
+                "arguments": {"name": "sleeper", "command": "exec sleep 301"}}),
+    );
+    assert!(r.contains("\"result\""), "process_start: {r}");
+    let cn = c.to_owned();
+    let found = eventually(30, move || {
+        exec_in(&cn, &format!("{FIND_SLEEP}; test -n \"$pid\"")).0 == 0
+    })
+    .await;
+    assert!(found, "the started process is not running");
+    let (rc, env2) = exec_in(
+        c,
+        &format!("{FIND_SLEEP}; tr '\\0' '\\n' < /proc/$pid/environ"),
+    );
+    assert!(
+        rc == 0 && env2.contains("PATH="),
+        "could not read the started process's environment: {env2}"
+    );
+    fails.extend(boot_material_in(&env2, &bootstrap, &boot_token));
+    st.finish().await;
+    assert!(
+        fails.is_empty(),
+        "SEC-34 probe failures:\n{}",
+        fails.join("\n")
+    );
+}
+
+/// A TLS page server on `127.0.0.1` (self-signed; the browser runs with `--ignore-certificate-errors`
+/// because the open lane is a blind tunnel). Returns its port and the request heads it has seen.
+async fn https_page_server(
+    body: &'static str,
+) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use rcgen::{CertificateParams, KeyPair};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let key = KeyPair::generate().unwrap();
+    let cert = CertificateParams::new(vec!["127.0.0.1".to_owned(), "localhost".to_owned()])
+        .unwrap()
+        .self_signed(&key)
+        .unwrap();
+    let cfg = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(
+        vec![cert.der().clone()],
+        rustls::pki_types::PrivateKeyDer::try_from(key.serialize_der()).unwrap(),
+    )
+    .unwrap();
+    let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(cfg));
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
+    let seen2 = seen.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((tcp, _)) = l.accept().await else {
+                return;
+            };
+            let (acceptor, seen) = (acceptor.clone(), seen2.clone());
+            tokio::spawn(async move {
+                let Ok(mut tls) = acceptor.accept(tcp).await else {
+                    return;
+                };
+                let mut buf = vec![0u8; 8192];
+                let mut n = 0;
+                while !buf[..n].windows(4).any(|w| w == b"\r\n\r\n") {
+                    match tls.read(&mut buf[n..]).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(k) => n += k,
+                    }
+                }
+                seen.lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&buf[..n]).into_owned());
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = tls.write_all(resp.as_bytes()).await;
+                let _ = tls.shutdown().await;
+            });
+        }
+    });
+    (port, seen)
+}
+
+/// SEC-41 / FU-P1-003b (P2-TEST-1): the Chromium wrapper on the full sandbox image (the one whose
+/// `org.aurora.capabilities` label carries `browser`). The sandbox boots with the capability, the
+/// open proxy listens on 3129, the wrapper starts Chromium behind it, and a page fetch goes through
+/// the gateway's open lane: a host on the open-lane allow-list is fetched, another is refused.
+///
+/// Needs the full image: run `AURORA_E2EH_FULL_IMAGE=1 scripts/e2e/hosted.sh` (otherwise SKIPPED).
+// Multi-threaded runtime: `exec_in` blocks its thread while Chromium runs, and the in-process page
+// server must keep answering meanwhile.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s8d_chromium_wrapper_on_the_full_image_fetches_through_the_open_proxy() {
+    if !enabled() {
+        return;
+    }
+    let Ok(image) = std::env::var("AURORA_E2EH_FULL_IMAGE_TAG") else {
+        eprintln!(
+            "SKIPPED: AURORA_E2EH_FULL_IMAGE_TAG is not set; run AURORA_E2EH_FULL_IMAGE=1 scripts/e2e/hosted.sh"
+        );
+        return;
+    };
+    const MARKER: &str = "aurora-open-lane-page-9f3c1e";
+    let (port, seen) =
+        https_page_server("<html><body><p id=\"m\">aurora-open-lane-page-9f3c1e</p></body></html>")
+            .await;
+    let (st, api) = fx(Opts {
+        image: Some(image),
+        ..Opts::default()
+    })
+    .await;
+    // Open lane under `allowlist_only`: the page server is admitted by its IP literal; the same
+    // server under another name (`localhost`) is not on the list.
+    api.set_policy_with(
+        "none",
+        json!([]),
+        json!({"open_lane_posture": "allowlist_only", "uncredentialed_allowlist": [{"host": "127.0.0.1"}]}),
+    )
+    .await;
+    let conv = api.direct().await;
+    run_turn(&st, &api, &conv, "[[say: warm]]").await;
+    let cs = containers();
+    assert_eq!(cs.len(), 1, "{cs:?}");
+    let c = cs[0].as_str();
+
+    // The sandbox booted with the `browser` capability and the supervisor opened the open proxy.
+    let doc = boot_doc(c);
+    assert_eq!(
+        doc["capabilities"],
+        json!(["browser"]),
+        "boot capabilities\n{}",
+        st.log_tails()
+    );
+    assert!(
+        eventually(30, || can_connect(c, "127.0.0.1", 3129)).await,
+        "the open proxy is not listening on 3129"
+    );
+    assert!(can_connect(c, "127.0.0.1", 3128), "machine proxy");
+
+    let chromium = |url: &str| {
+        exec_in(
+            c,
+            &format!(
+                "HOME=/workspace timeout 120 chromium-browser --headless --no-sandbox --disable-gpu \
+                 --disable-dev-shm-usage --ignore-certificate-errors --user-data-dir=/workspace/.chromium-profile \
+                 --virtual-time-budget=10000 --dump-dom {url} 2>&1; echo rc=$?"
+            ),
+        )
+    };
+    // Allowed host: the page is fetched through the gateway and rendered.
+    let (_, out) = chromium(&format!("https://127.0.0.1:{port}/allowed"));
+    assert!(
+        !out.contains("browsing is disabled") && !out.contains("not installed"),
+        "the wrapper did not start Chromium behind the open proxy: {out}"
+    );
+    assert!(
+        out.contains(MARKER),
+        "allowed host: the page was not fetched: {out}\n{}",
+        st.log_tails()
+    );
+    let got = seen.lock().unwrap().clone();
+    assert!(
+        got.iter().any(|r| r.starts_with("GET /allowed")),
+        "the page server never saw the allowed request: {got:?}"
+    );
+
+    // Denied host: the gateway refuses the tunnel; the server sees nothing and no page is rendered.
+    let before = seen.lock().unwrap().len();
+    let (_, out) = chromium(&format!("https://localhost:{port}/denied"));
+    assert!(
+        !out.contains(MARKER),
+        "denied host: the page was fetched: {out}"
+    );
+    assert!(
+        out.contains("ERR_TUNNEL_CONNECTION_FAILED") || out.contains("ERR_"),
+        "denied host: Chromium reported no network error: {out}"
+    );
+    // What the open proxy answers for the denied host: the gateway's egress-policy refusal (the same
+    // CONNECT Chromium sent; `--noproxy ''` because the sandbox's `no_proxy` lists loopback names).
+    let (_, tunnel) = exec_in(
+        c,
+        &format!(
+            "exec 3<>/dev/tcp/127.0.0.1/3129; printf 'CONNECT localhost:{port} HTTP/1.1\\r\\nHost: localhost:{port}\\r\\n\\r\\n' >&3; timeout 10 cat <&3"
+        ),
+    );
+    assert!(
+        tunnel.contains("403") && tunnel.contains("blocked_by_egress_policy"),
+        "denied host: the gateway did not refuse the tunnel by egress policy: {tunnel}"
+    );
+    let after = seen.lock().unwrap().clone();
+    assert_eq!(
+        after.len(),
+        before,
+        "the denied request reached the page server: {after:?}"
+    );
+    assert!(
+        !after.iter().any(|r| r.contains("/denied")),
+        "the denied request reached the page server: {after:?}"
+    );
+    st.finish().await;
 }
 
 /// Poll until `check` holds or `secs` pass.
@@ -866,10 +1192,15 @@ async fn s9_deleted_conversation_session_files_are_purged_live_and_after_a_park(
     if !enabled() {
         return;
     }
-    let (st, api) = fx(Opts {
-        idle_stop_secs: Some(10),
-    })
-    .await;
+    // Timing (P2-TEST-1, FU-P2-TEST-hosted): this scenario used a 10 s idle stop. A `podman exec`
+    // into the container right after a turn raced that stop (rc 125 once the idle stop had removed
+    // the container; the idle clock can already be old after a slow boot). The default idle window
+    // (30 min) means the sandbox stays up for every live probe, and the "parked" phase below is
+    // reached deterministically through the restart endpoint (which stops the sandbox and leaves
+    // it stopped, as s8 relies on) instead of waiting for the idle timer. The purge-at-next-boot
+    // behaviour under test is the same for any stopped sandbox; the idle stop itself is covered by
+    // s4.
+    let (st, api) = fx(Opts::default()).await;
     // The fake harness stores a marker file per session: `/workspace/.fake-sessions/<session ref>`.
     let conv = api.direct().await;
     run_turn(&st, &api, &conv, "[[say: remember the codeword]]").await;
@@ -907,6 +1238,10 @@ async fn s9_deleted_conversation_session_files_are_purged_live_and_after_a_park(
     assert_ne!(conv, conv2, "a new direct conversation is created");
     run_turn(&st, &api, &conv2, "[[say: second secret]]").await;
     let marker2 = format!("/workspace/.fake-sessions/fake-{conv2}");
+    let (s, b) = api
+        .post(&format!("/v1/agents/{}/restart", api.daneel), json!({}))
+        .await;
+    assert_eq!(s, 202, "{b}");
     st.wait_sandbox(&api, "stopped", 120).await;
     assert!(containers().is_empty(), "parked");
     let (s, b) = api

@@ -262,14 +262,27 @@ async fn h1_held_request_gets_hook_summary_without_egress() {
     st.wait_hookhost_ready().await;
     hold_policy(&api).await;
     // The first call pays the cold component compile (> 1 s budget in debug builds) and
-    // falls back; the compile finishes in the background, so the next hold gets the hook.
-    let h = post_item(&st, &token);
-    let a = api.wait_pending().await;
-    deny(&api, &a).await;
-    h.await.unwrap();
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    let h = post_item(&st, &token);
-    let a = api.wait_pending().await;
+    // falls back; the compile finishes in the background, after which a hold gets the hook.
+    // (P2-TEST-1: no fixed sleep. The condition is the approval's summary `source`: hold, look at
+    // the row, and if it is still the fallback deny it and hold again, until the hook summary
+    // shows up or the deadline passes. How long the compile takes depends on the machine's load.)
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let (h, a) = loop {
+        let h = post_item(&st, &token);
+        let a = api.wait_pending().await;
+        if a["summary"]["source"] == "hook" {
+            break (h, a);
+        }
+        deny(&api, &a).await;
+        h.await.unwrap();
+        assert!(
+            Instant::now() < deadline,
+            "the hook summary never replaced the fallback within 120 s; last: {}\n{}",
+            a["summary"],
+            st.log_tails()
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    };
     let sum = &a["summary"];
     assert_eq!(sum["source"], "hook", "{sum}\n{}", st.log_tails());
     assert_eq!(sum["title"], "Create item");

@@ -34,6 +34,7 @@ mod foundation;
 mod freeze;
 mod governance;
 mod grants_connections;
+mod home_checksum;
 mod home_render_inputs;
 mod hosted;
 mod invitations;
