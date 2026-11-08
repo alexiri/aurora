@@ -143,7 +143,10 @@ pub async fn conversation_visible(
     }
 }
 
-pub async fn get(pool: &PgPool, id: Uuid) -> Result<Option<ApprovalRow>, DbError> {
+pub async fn get<'e, E: sqlx::PgExecutor<'e>>(
+    pool: E,
+    id: Uuid,
+) -> Result<Option<ApprovalRow>, DbError> {
     Ok(sqlx::query_as(&format!("{SELECT} WHERE a.id = $1"))
         .bind(id)
         .fetch_optional(pool)
@@ -201,13 +204,13 @@ pub async fn list_pending_for(
 }
 
 async fn notify_tx(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx::PgConnection,
     id: Uuid,
     ws: Uuid,
     event: &str,
 ) -> Result<(), DbError> {
     bus::notify(
-        &mut **tx,
+        &mut *tx,
         Channel::Approval,
         &serde_json::json!({"id": id, "workspace_id": ws, "event": event}),
     )
@@ -216,14 +219,16 @@ async fn notify_tx(
 }
 
 /// First decision wins: `pending` -> `approved`/`denied`. `None` = already resolved.
+///
+/// Runs inside the caller's transaction (RFE-008): the `approval.decide` audit row commits with
+/// the decision, or the decision does not happen.
 pub async fn decide(
-    pool: &PgPool,
+    tx: &mut sqlx::PgConnection,
     id: Uuid,
     approve: bool,
     user: Uuid,
     via: &str,
 ) -> Result<Option<ApprovalRow>, DbError> {
-    let mut tx = pool.begin().await?;
     let won: Option<Uuid> = sqlx::query_scalar(
         "UPDATE approvals SET status = $2, decided_by_user_id = $3, decided_via = $4, \
          decided_at = now(), resolved_at = now(), updated_at = now() \
@@ -239,9 +244,8 @@ pub async fn decide(
     let Some(ws) = won else {
         return Ok(None);
     };
-    notify_tx(&mut tx, id, ws, "decided").await?;
-    tx.commit().await?;
-    get(pool, id).await
+    notify_tx(&mut *tx, id, ws, "decided").await?;
+    get(&mut *tx, id).await
 }
 
 /// Whether any approval of this batch/agent exists that the user may decide
@@ -273,7 +277,7 @@ pub async fn batch_visible(
 /// Returns `(id, workspace_id)` of the rows this call resolved.
 #[allow(clippy::too_many_arguments)]
 pub async fn decide_batch(
-    pool: &PgPool,
+    tx: &mut sqlx::PgConnection,
     user: Uuid,
     org: Option<Uuid>,
     ws: Option<Uuid>,
@@ -282,7 +286,6 @@ pub async fn decide_batch(
     approve: bool,
     via: &str,
 ) -> Result<Vec<(Uuid, Uuid, Uuid)>, DbError> {
-    let mut tx = pool.begin().await?;
     let rows: Vec<(Uuid, Uuid, Uuid)> = sqlx::query_as(&format!(
         "UPDATE approvals a SET status = $6, decided_by_user_id = $1, decided_via = $7, \
          decided_at = now(), resolved_at = now(), updated_at = now() \
@@ -301,9 +304,8 @@ pub async fn decide_batch(
     .fetch_all(&mut *tx)
     .await?;
     for (id, w, _) in &rows {
-        notify_tx(&mut tx, *id, *w, "decided").await?;
+        notify_tx(&mut *tx, *id, *w, "decided").await?;
     }
-    tx.commit().await?;
     Ok(rows)
 }
 

@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::service;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::{AuditActor, AuditEvent, Outcome};
 use crate::http::auth::InstanceAdmin;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -53,16 +53,14 @@ async fn patch_user(
     Path(id): Path<Uuid>,
     Json(req): Json<PatchAdminUserRequest>,
 ) -> Result<Json<AdminUser>, ApiError> {
-    let row = service::patch_user(&s, c.user_id, id, req.is_instance_admin, req.disabled).await?;
-    audit::record(
-        &s,
-        AuditEvent::new(
-            AuditActor::instance_admin(&c),
-            "admin.user_update",
-            Outcome::Success,
-        )
-        .target("user", id)
-        .metadata(json!({"is_instance_admin": req.is_instance_admin, "disabled": req.disabled})),
-    );
+    let ev = AuditEvent::new(
+        AuditActor::instance_admin(&c),
+        "admin.user_update",
+        Outcome::Success,
+    )
+    .target("user", id)
+    .metadata(json!({"is_instance_admin": req.is_instance_admin, "disabled": req.disabled}));
+    let row =
+        service::patch_user(&s, c.user_id, id, req.is_instance_admin, req.disabled, &ev).await?;
     Ok(Json(row.into()))
 }

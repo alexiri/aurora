@@ -411,7 +411,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET/POST `/v1/orgs/{org}/invitations`; DELETE `/v1/invitations/{id}` | S/K | (phase 2, RFE-012) body may carry `approver_workspace_ids` besides `workspace_ids` |
 | GET `/v1/invitations/preview?token=`; POST `/v1/invitations/accept` | none / SO | |
 | GET/POST `/v1/orgs/{org}/api-keys`; DELETE `/v1/api-keys/{id}` | S (POST: SO) | org keys |
-| GET `/v1/orgs/{org}/audit` | S/K | (phase 2, RFE-008) filters `actor`, `action`, `target`, `critical=true` |
+| GET `/v1/orgs/{org}/audit` | S/K | (phase 2, RFE-008) filters `actor_id`, `action`, `critical=true` (C-290); rows carry `critical` (C-291) |
 | POST `/v1/orgs/{org}/freeze` `{ reason }`; POST `/v1/orgs/{org}/unfreeze` | S/K | (phase 2, RFE-006) org `owner` |
 | GET/PUT `/v1/orgs/{org}/app-availability` | S/K | posture + allow-list |
 | GET/PUT `/v1/orgs/{org}/governance` | S/K | org governance document (`08 §11.2`) with `revision`; PUT validates against the instance ceiling (422 `governance_invalid` / `governance_below_instance_minimum`) |

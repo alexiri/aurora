@@ -1,5 +1,6 @@
 use super::dto::*;
 use crate::app::AppState;
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::auth::mail::{self, Mail};
 use crate::domains::tenancy::dto::{Org, OrgSettings, OrgSummary};
 use aurora_core::token::{self, TokenPrefix};
@@ -47,6 +48,7 @@ pub async fn create(
     org: Uuid,
     inviter: Uuid,
     req: &CreateInvitationRequest,
+    actor: AuditActor,
 ) -> Result<Invitation, ApiError> {
     let email = req.email.trim().to_lowercase();
     if !valid_email(&email) {
@@ -116,7 +118,12 @@ pub async fn create(
     let row = repo::get(&mut *tx, id)
         .await?
         .ok_or_else(|| ApiError::internal("Invitation vanished."))?;
-    tx.commit().await.map_err(DbError::from)?;
+    // RFE-008: `invitation.create` commits with the invitation.
+    let ev = AuditEvent::new(actor, "invitation.create", Outcome::Success)
+        .org(org)
+        .target("invitation", row.id)
+        .metadata(serde_json::json!({"email": row.email, "role": req.role.as_str()}));
+    audit::commit_critical(tx, &ev).await?;
 
     let link = format!(
         "{}/join?token={tok}",
@@ -173,6 +180,7 @@ pub async fn accept(
     state: &AppState,
     user_id: Uuid,
     tok: &str,
+    actor: AuditActor,
 ) -> Result<(Org, Vec<Uuid>, Uuid), ApiError> {
     let nf = || ApiError::not_found("Invitation not found.");
     if !tok.starts_with(TokenPrefix::Invitation.as_str()) {
@@ -207,8 +215,13 @@ pub async fn accept(
     let org_row = orgs::get(&mut *tx, inv.org_id, user_id)
         .await?
         .ok_or_else(|| ApiError::internal("Organization missing."))?;
-    tx.commit().await.map_err(DbError::from)?;
-    Ok((org_row.into(), bound, inv.id))
+    let org: Org = org_row.into();
+    let ev = AuditEvent::new(actor, "invitation.accept", Outcome::Success)
+        .org(org.id)
+        .target("invitation", inv.id)
+        .metadata(serde_json::json!({"role": org.my_role.as_str()}));
+    audit::commit_critical(tx, &ev).await?;
+    Ok((org, bound, inv.id))
 }
 
 /// Accept every pending invitation addressed to the new user's verified e-mail as part of their
@@ -228,6 +241,25 @@ pub async fn accept_pending_for_email(
             .map_err(DbError::from)?;
         match accept_in_tx(&mut *tx, user, inv).await {
             Ok(_) => {
+                // RFE-008: the JIT acceptance is audited in the sign-in transaction; a failed
+                // audit write fails the sign-in (nothing is accepted).
+                let ev = AuditEvent::new(
+                    AuditActor {
+                        kind: "user",
+                        id: Some(user.id),
+                        label: user.email.clone(),
+                        source: "dashboard",
+                        ip: None,
+                    },
+                    "invitation.accept",
+                    Outcome::Success,
+                )
+                .org(inv.org_id)
+                .target("invitation", inv.id)
+                .metadata(serde_json::json!({"role": inv.role, "via": "sign_in"}));
+                audit::insert_tx(&mut *tx, &ev)
+                    .await
+                    .map_err(|_| audit::unavailable())?;
                 accepted += 1;
                 sqlx::query("RELEASE SAVEPOINT accept_inv")
                     .execute(&mut *tx)

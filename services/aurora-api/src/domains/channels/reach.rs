@@ -97,10 +97,10 @@ pub async fn decide(
     repo::decide(&mut *tx, id, req.revision, state, &listen, c.user_id)
         .await?
         .ok_or_else(stale)?;
-    tx.commit().await.map_err(DbError::from)?;
-    audit::record(
-        s,
-        AuditEvent::new(
+    // RFE-008: the decision commits with its audit row, or does not happen.
+    audit::commit_critical(
+        tx,
+        &AuditEvent::new(
             AuditActor::from_caller(c),
             "reach_grant.decide",
             Outcome::Success,
@@ -109,7 +109,8 @@ pub async fn decide(
         .workspace(agent.workspace_id)
         .target("reach_grant", id)
         .metadata(json!({"decision": state, "listen": listen, "subject_kind": cur.subject_kind})),
-    );
+    )
+    .await?;
     let row = repo::get(&s.pool, id).await?.ok_or_else(not_found)?;
     Ok(view(&row))
 }

@@ -1,13 +1,11 @@
 use super::dto::*;
 use super::service;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::auth::{Caller, SessionCaller};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path};
 use aurora_core::ApiError;
 use axum::extract::State;
-use serde_json::json;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
@@ -56,22 +54,13 @@ async fn put_governance(
     Json(req): Json<PutGovernance>,
 ) -> Result<Json<GovernanceDocument>, ApiError> {
     caller.org(&state, org).await?.require_admin()?;
-    let a = service::put(&state, org, req).await?;
-    audit::record(
+    let a = service::put(
         &state,
-        AuditEvent::new(
-            AuditActor::from_caller(&caller),
-            "governance.update",
-            Outcome::Success,
-        )
-        .org(org)
-        .target("organization", org)
-        .metadata(json!({
-            "revision": a.out.revision,
-            "secrets_marked_mismatch": a.secrets_marked,
-            "agent_overrides_cleared": a.agents_cleared,
-        })),
-    );
+        org,
+        req,
+        crate::audit::AuditActor::from_caller(&caller),
+    )
+    .await?;
     Ok(Json(a.out))
 }
 

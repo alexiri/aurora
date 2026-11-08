@@ -102,8 +102,9 @@ pub async fn publish(
     s: Scope,
     by: Uuid,
     source: Source,
+    mut ev: crate::audit::AuditEvent,
 ) -> Result<i32, ApiError> {
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let mut tx = crate::audit::begin(state).await?;
     let draft = locked_draft(&mut tx, s).await?;
     match source {
         Source::Draft { revision } => {
@@ -122,7 +123,9 @@ pub async fn publish(
     repo::promote_draft(&mut tx, &draft, by).await?;
     let (scope, id) = invalidation(s);
     credentials::notify_gateway_invalidate(&mut *tx, scope, id).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    // RFE-008: `policy.publish` / `policy.rollback` commit with their audit row.
+    ev.metadata["generation"] = serde_json::json!(draft.number);
+    crate::audit::commit_critical(tx, &ev).await?;
     Ok(draft.number)
 }
 

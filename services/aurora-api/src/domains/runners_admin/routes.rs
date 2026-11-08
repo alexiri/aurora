@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::service;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::AuditActor;
 use crate::http::auth::InstanceAdmin;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path};
@@ -40,16 +40,7 @@ async fn create_runner(
     State(s): State<AppState>,
     Json(req): Json<CreateRunnerRequest>,
 ) -> Result<(StatusCode, Json<RunnerWithToken>), ApiError> {
-    let out = service::create(&s, &req.name).await?;
-    audit::record(
-        &s,
-        AuditEvent::new(
-            AuditActor::instance_admin(&c),
-            "admin.runner_create",
-            Outcome::Success,
-        )
-        .target("runner", out.runner.id),
-    );
+    let out = service::create(&s, &req.name, &AuditActor::instance_admin(&c)).await?;
     Ok((StatusCode::CREATED, Json(out)))
 }
 
@@ -64,16 +55,7 @@ async fn delete_runner(
     State(s): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    service::delete(&s, id).await?;
-    audit::record(
-        &s,
-        AuditEvent::new(
-            AuditActor::instance_admin(&c),
-            "admin.runner_delete",
-            Outcome::Success,
-        )
-        .target("runner", id),
-    );
+    service::delete(&s, id, &AuditActor::instance_admin(&c)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -88,15 +70,6 @@ async fn rotate_runner_token(
     State(s): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<RunnerWithToken>, ApiError> {
-    let out = service::rotate(&s, id).await?;
-    audit::record(
-        &s,
-        AuditEvent::new(
-            AuditActor::instance_admin(&c),
-            "admin.runner_rotate",
-            Outcome::Success,
-        )
-        .target("runner", id),
-    );
+    let out = service::rotate(&s, id, &AuditActor::instance_admin(&c)).await?;
     Ok(Json(out))
 }

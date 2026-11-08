@@ -112,11 +112,10 @@ pub async fn set_status<'e, E: PgExecutor<'e>>(
 
 /// Atomically approved -> consumed and mint the key. `None` when another poll won.
 pub async fn consume(
-    pool: &PgPool,
+    tx: &mut sqlx::PgConnection,
     id: Uuid,
     key: &NewKey<'_>,
 ) -> Result<Option<ApiKeyRow>, DbError> {
-    let mut tx = pool.begin().await?;
     let r = sqlx::query(
         "UPDATE cli_logins SET status='consumed', updated_at=now()
          WHERE id=$1 AND status='approved' AND expires_at > now()",
@@ -133,7 +132,6 @@ pub async fn consume(
         .bind(row.id)
         .execute(&mut *tx)
         .await?;
-    tx.commit().await?;
     Ok(Some(row))
 }
 

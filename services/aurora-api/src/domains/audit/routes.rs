@@ -36,6 +36,8 @@ pub struct AuditEntry {
     pub source: String,
     pub ip: Option<String>,
     pub metadata: serde_json::Value,
+    /// Row of the security-critical set (`04 §Audit`), written atomically with its change.
+    pub critical: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -55,6 +57,7 @@ impl From<AuditRow> for AuditEntry {
             source: r.source,
             ip: r.ip,
             metadata: r.metadata,
+            critical: r.critical,
             created_at: r.created_at,
         }
     }
@@ -68,6 +71,8 @@ pub struct AuditQuery {
     /// Exact action, e.g. `org.create`.
     pub action: Option<String>,
     pub actor_id: Option<Uuid>,
+    /// `true` lists only the security-critical set; `false` or absent lists everything.
+    pub critical: Option<bool>,
 }
 
 async fn list(
@@ -81,6 +86,7 @@ async fn list(
         scope,
         q.action.as_deref(),
         q.actor_id,
+        q.critical.unwrap_or(false),
         p.after.map(|c| (c.t, c.id)),
         p.fetch(),
     )

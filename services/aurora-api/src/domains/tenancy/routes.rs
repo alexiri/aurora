@@ -180,14 +180,11 @@ async fn patch_org(
     let meta = json!({
         "name": req.name.is_some(), "slug": req.slug.is_some(), "settings": req.settings.is_some()
     });
-    let row = service::patch_org(&s.pool, org, c.user_id, req).await?;
-    audit::record(
-        &s,
-        event(&c, "org.update")
-            .org(org)
-            .target("organization", org)
-            .metadata(meta),
-    );
+    let ev = event(&c, "org.update")
+        .org(org)
+        .target("organization", org)
+        .metadata(meta);
+    let row = service::patch_org(&s.pool, org, c.user_id, req, &ev).await?;
     Ok(Json(row.into()))
 }
 
@@ -209,14 +206,11 @@ async fn delete_org(
     if req.confirm != current.slug {
         return Err(service::confirmation_mismatch());
     }
-    service::delete_org(&s.pool, org).await?;
-    audit::record(
-        &s,
-        event(&c, "org.delete")
-            .org(org)
-            .target("organization", org)
-            .metadata(json!({"slug": current.slug})),
-    );
+    let ev = event(&c, "org.delete")
+        .org(org)
+        .target("organization", org)
+        .metadata(json!({"slug": current.slug}));
+    service::delete_org(&s.pool, org, &ev).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -280,13 +274,13 @@ async fn patch_member(
     auth.require_admin()?;
     let actor_role = parse_org_role(auth.role.as_str());
     let actor = AuditActor::from_caller(&c);
-    let row = service::patch_member(&s, org, actor_role, user, &req, &actor).await?;
-    audit::record(
-        &s,
-        event(&c, "member.update").org(org).target("user", user).metadata(json!({
+    let ev = event(&c, "member.update")
+        .org(org)
+        .target("user", user)
+        .metadata(json!({
             "role": req.role.map(OrgRole::as_str), "status": req.status.map(MemberStatus::as_str)
-        })),
-    );
+        }));
+    let row = service::patch_member(&s, org, actor_role, user, &req, &actor, ev).await?;
     Ok(Json(member(row)))
 }
 
@@ -310,6 +304,7 @@ async fn remove_member(
         .map(|v| To::parse("/reassign_to", v))
         .transpose()?;
     let actor = AuditActor::from_caller(&c);
+    let ev = event(&c, "member.remove").org(org).target("user", user);
     service::remove_member(
         &s,
         org,
@@ -317,9 +312,9 @@ async fn remove_member(
         user,
         reassign,
         &actor,
+        &ev,
     )
     .await?;
-    audit::record(&s, event(&c, "member.remove").org(org).target("user", user));
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -533,15 +528,12 @@ async fn delete_workspace(
     let mut tx = s.pool.begin().await.map_err(aurora_db::DbError::from)?;
     crate::domains::channels::presences::enqueue_deprovision_for_workspace(&mut tx, ws).await?;
     workspaces::delete(&mut *tx, ws).await?;
-    tx.commit().await.map_err(aurora_db::DbError::from)?;
-    audit::record(
-        &s,
-        event(&c, "workspace.delete")
-            .org(a.org_id)
-            .workspace(ws)
-            .target("workspace", ws)
-            .metadata(json!({"slug": w.slug})),
-    );
+    let ev = event(&c, "workspace.delete")
+        .org(a.org_id)
+        .workspace(ws)
+        .target("workspace", ws)
+        .metadata(json!({"slug": w.slug}));
+    audit::commit_critical(tx, &ev).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -594,15 +586,14 @@ async fn put_access(
             "The user is not an active member of this organization.",
         ));
     }
-    workspaces::bind_user(&s.pool, ws, user, req.role.as_str()).await?;
-    audit::record(
-        &s,
-        event(&c, "workspace_access.set")
-            .org(a.org_id)
-            .workspace(ws)
-            .target("user", user)
-            .metadata(json!({"role": req.role.as_str()})),
-    );
+    let mut tx = audit::begin(&s).await?;
+    workspaces::bind_user(&mut *tx, ws, user, req.role.as_str()).await?;
+    let ev = event(&c, "workspace_access.set")
+        .org(a.org_id)
+        .workspace(ws)
+        .target("user", user)
+        .metadata(json!({"role": req.role.as_str()}));
+    audit::commit_critical(tx, &ev).await?;
     let row = workspaces::get_access(&s.pool, ws, user)
         .await?
         .ok_or_else(|| ApiError::internal("Internal error."))?;
@@ -662,14 +653,11 @@ async fn delete_access(
     }
     // RFE-005: a speaker who loses `can_use` stops binding to `user` rules immediately.
     aurora_db::repo::notify_auth_revoked(&mut *tx, "user", user).await?;
-    tx.commit().await.map_err(aurora_db::DbError::from)?;
-    audit::record(
-        &s,
-        event(&c, "workspace_access.remove")
-            .org(a.org_id)
-            .workspace(ws)
-            .target("user", user),
-    );
+    let ev = event(&c, "workspace_access.remove")
+        .org(a.org_id)
+        .workspace(ws)
+        .target("user", user);
+    audit::commit_critical(tx, &ev).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

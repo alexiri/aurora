@@ -1,5 +1,6 @@
 use super::dto::*;
 use crate::app::AppState;
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::plugins::registry;
 use crate::domains::secrets::service::secret_err;
 use aurora_core::{ApiError, FieldError, ids};
@@ -134,10 +135,25 @@ pub async fn list(
     })
 }
 
+/// Security-critical audit event of an OAuth client change (RFE-008), committed with it.
+fn event(actor: &AuditActor, action: &str, row: &ClientRow) -> AuditEvent {
+    let mut ev = AuditEvent::new(actor.clone(), action, Outcome::Success)
+        .target("oauth_client", row.id)
+        .metadata(serde_json::json!({"package_id": row.package_id, "client_key": row.client_key}));
+    if let Some(o) = row.org_id {
+        ev = ev.org(o);
+    }
+    if let Some(w) = row.workspace_id {
+        ev = ev.workspace(w);
+    }
+    ev
+}
+
 pub async fn create(
     state: &AppState,
     scope: Scope,
     req: CreateOAuthClientRequest,
+    actor: &AuditActor,
 ) -> Result<ClientRow, ApiError> {
     let decl = manifest_client(state, &req.package_id, &req.client_key).await?;
     validate(&decl, &req.fields, false)?;
@@ -168,8 +184,9 @@ pub async fn create(
     let sref = seal(state, &c, &secret).await?;
     let public = Value::Object(public);
     let col = sref.to_column();
+    let mut tx = audit::begin(state).await?;
     let res = repo::insert(
-        &state.pool,
+        &mut *tx,
         &NewClient {
             id,
             org_id: scope.org,
@@ -186,9 +203,14 @@ pub async fn create(
         discard(state, &c, &sref).await;
         return Err(conflict_code(e, &[(repo::SCOPE_CONSTRAINT, "conflict")]));
     }
-    repo::get(&state.pool, id)
+    let row = repo::get(&mut *tx, id)
         .await?
-        .ok_or_else(|| ApiError::internal("Internal error."))
+        .ok_or_else(|| ApiError::internal("Internal error."))?;
+    if let Err(e) = audit::commit_critical(tx, &event(actor, "oauth_client.create", &row)).await {
+        discard(state, &c, &sref).await;
+        return Err(e);
+    }
+    Ok(row)
 }
 
 async fn discard(state: &AppState, c: &SealContext, r: &SecretRef) {
@@ -201,6 +223,7 @@ pub async fn patch(
     state: &AppState,
     row: &ClientRow,
     req: PatchOAuthClientRequest,
+    actor: &AuditActor,
 ) -> Result<ClientRow, ApiError> {
     let mut new_public = None;
     let mut new_ref: Option<(SecretRef, String)> = None;
@@ -228,26 +251,36 @@ pub async fn patch(
             new_ref = Some((r, col));
         }
     }
-    let res = repo::update(
-        &state.pool,
-        row.id,
-        new_public.as_ref(),
-        new_ref.as_ref().map(|(_, c)| c.as_str()),
-        req.enabled,
-    )
-    .await;
-    if let Err(e) = res {
-        if let Some((r, _)) = &new_ref {
-            discard(state, &c, r).await;
-        }
-        return Err(e.into());
+    let applied = async {
+        let mut tx = audit::begin(state).await?;
+        repo::update(
+            &mut *tx,
+            row.id,
+            new_public.as_ref(),
+            new_ref.as_ref().map(|(_, c)| c.as_str()),
+            req.enabled,
+        )
+        .await?;
+        let updated = repo::get(&mut *tx, row.id)
+            .await?
+            .ok_or_else(|| ApiError::not_found("OAuth client not found."))?;
+        audit::commit_critical(tx, &event(actor, "oauth_client.update", &updated)).await?;
+        Ok::<ClientRow, ApiError>(updated)
     }
+    .await;
+    let updated = match applied {
+        Ok(u) => u,
+        Err(e) => {
+            if let Some((r, _)) = &new_ref {
+                discard(state, &c, r).await;
+            }
+            return Err(e);
+        }
+    };
     if new_ref.is_some() {
         discard(state, &c, &old_ref).await;
     }
-    repo::get(&state.pool, row.id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("OAuth client not found."))
+    Ok(updated)
 }
 
 fn in_use(count: i64) -> ApiError {
@@ -255,15 +288,17 @@ fn in_use(count: i64) -> ApiError {
         .with_details(serde_json::json!({"count": count}))
 }
 
-pub async fn delete(state: &AppState, row: &ClientRow) -> Result<(), ApiError> {
+pub async fn delete(state: &AppState, row: &ClientRow, actor: &AuditActor) -> Result<(), ApiError> {
     if row.connection_count > 0 {
         return Err(in_use(row.connection_count));
     }
-    match repo::delete(&state.pool, row.id).await {
+    let mut tx = audit::begin(state).await?;
+    match repo::delete(&mut *tx, row.id).await {
         Ok(_) => {}
         Err(DbError::ForeignKeyViolation { .. }) => return Err(in_use(1)),
         Err(e) => return Err(e.into()),
     }
+    audit::commit_critical(tx, &event(actor, "oauth_client.delete", row)).await?;
     if let Ok(r) = row.secret_ref.parse::<SecretRef>() {
         discard(state, &ctx(row.id, row.org_id, row.workspace_id), &r).await;
     }

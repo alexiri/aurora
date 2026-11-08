@@ -4,6 +4,7 @@
 //! identifiers and tokens, untrusted text, limits registry).
 #![forbid(unsafe_code)]
 
+pub mod audit;
 pub mod cidr;
 pub mod error;
 pub mod ids;

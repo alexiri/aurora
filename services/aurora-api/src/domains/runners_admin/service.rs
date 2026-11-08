@@ -60,7 +60,17 @@ pub async fn list(s: &AppState) -> Result<RunnerList, ApiError> {
     Ok(RunnerList { items })
 }
 
-pub async fn create(s: &AppState, name: &str) -> Result<RunnerWithToken, ApiError> {
+/// Security-critical audit event of a runner change (RFE-008): committed with the change.
+fn event(actor: &crate::audit::AuditActor, action: &str, id: Uuid) -> crate::audit::AuditEvent {
+    crate::audit::AuditEvent::new(actor.clone(), action, crate::audit::Outcome::Success)
+        .target("runner", id)
+}
+
+pub async fn create(
+    s: &AppState,
+    name: &str,
+    actor: &crate::audit::AuditActor,
+) -> Result<RunnerWithToken, ApiError> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > 64 {
         return Err(ApiError::invalid_request(
@@ -69,8 +79,9 @@ pub async fn create(s: &AppState, name: &str) -> Result<RunnerWithToken, ApiErro
         ));
     }
     let tok = token::generate(TokenPrefix::Runner);
+    let mut tx = crate::audit::begin(s).await?;
     let row = runners::insert(
-        &s.pool,
+        &mut *tx,
         Uuid::now_v7(),
         name,
         &token::hash(tok.expose()),
@@ -78,16 +89,22 @@ pub async fn create(s: &AppState, name: &str) -> Result<RunnerWithToken, ApiErro
     )
     .await
     .map_err(|e| conflict_code(e, &[("runners_name_key", "runner_name_taken")]))?;
+    crate::audit::commit_critical(tx, &event(actor, "admin.runner_create", row.id)).await?;
     Ok(RunnerWithToken {
         runner: summary(s, row).await?,
         token: tok.expose().clone(),
     })
 }
 
-pub async fn rotate(s: &AppState, id: Uuid) -> Result<RunnerWithToken, ApiError> {
+pub async fn rotate(
+    s: &AppState,
+    id: Uuid,
+    actor: &crate::audit::AuditActor,
+) -> Result<RunnerWithToken, ApiError> {
     let tok = token::generate(TokenPrefix::Runner);
+    let mut tx = crate::audit::begin(s).await?;
     if !runners::set_token(
-        &s.pool,
+        &mut *tx,
         id,
         &token::hash(tok.expose()),
         &fingerprint(tok.expose()),
@@ -96,6 +113,7 @@ pub async fn rotate(s: &AppState, id: Uuid) -> Result<RunnerWithToken, ApiError>
     {
         return Err(ApiError::not_found("Runner not found."));
     }
+    crate::audit::commit_critical(tx, &event(actor, "admin.runner_rotate", id)).await?;
     let row = runners::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Runner not found."))?;
@@ -105,14 +123,20 @@ pub async fn rotate(s: &AppState, id: Uuid) -> Result<RunnerWithToken, ApiError>
     })
 }
 
-pub async fn delete(s: &AppState, id: Uuid) -> Result<(), ApiError> {
+pub async fn delete(
+    s: &AppState,
+    id: Uuid,
+    actor: &crate::audit::AuditActor,
+) -> Result<(), ApiError> {
     if runners::occupied_sandboxes(&s.pool, id).await? > 0 {
         return Err(ApiError::conflict(
             "runner_in_use",
             "The runner still has running sandboxes.",
         ));
     }
-    if runners::delete(&s.pool, id).await? {
+    let mut tx = crate::audit::begin(s).await?;
+    if runners::delete(&mut *tx, id).await? {
+        crate::audit::commit_critical(tx, &event(actor, "admin.runner_delete", id)).await?;
         Ok(())
     } else {
         Err(ApiError::not_found("Runner not found."))

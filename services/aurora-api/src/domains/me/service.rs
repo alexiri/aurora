@@ -97,7 +97,12 @@ fn reauth_required() -> ApiError {
 /// Delete the caller's account (phase 1, RFE-004): needs an OIDC re-authentication of this
 /// session within [`REAUTH_WINDOW_SECS`] (412 `reauth_required` otherwise; the dashboard starts
 /// `GET /v1/auth/oidc/{provider}/start?reauth=1`).
-pub async fn delete_me(state: &AppState, user_id: Uuid, session_id: Uuid) -> Result<(), ApiError> {
+pub async fn delete_me(
+    state: &AppState,
+    user_id: Uuid,
+    session_id: Uuid,
+    ev: &crate::audit::AuditEvent,
+) -> Result<(), ApiError> {
     users::find_by_id(&state.pool, user_id)
         .await?
         .ok_or_else(|| ApiError::unauthenticated("Authentication required."))?;
@@ -115,7 +120,7 @@ pub async fn delete_me(state: &AppState, user_id: Uuid, session_id: Uuid) -> Res
     }
     notify_auth_revoked(&mut *tx, "user", user_id).await?;
     account::delete_user(&mut tx, user_id).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    crate::audit::commit_critical(tx, ev).await?;
     state
         .session_cache
         .invalidate(&serde_json::json!({"kind": "user", "id": user_id}));

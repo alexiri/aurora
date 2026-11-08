@@ -21,7 +21,8 @@ export const orgKeys = {
   members: (org: string) => ["orgs", org, "members", "all"] as const,
   invitations: (org: string) => ["orgs", org, "invitations"] as const,
   keys: (org: string) => ["orgs", org, "api-keys"] as const,
-  audit: (org: string, action: string) => ["orgs", org, "audit", action] as const,
+  audit: (org: string, action: string, critical: boolean) =>
+    ["orgs", org, "audit", action, critical] as const,
 };
 
 /**
@@ -154,16 +155,21 @@ export function useCreateOrgKey(orgId: string) {
   });
 }
 
-export function useOrgAudit(orgId: string, action: string) {
+export function useOrgAudit(orgId: string, action: string, critical = false) {
   return useInfiniteQuery({
-    queryKey: orgKeys.audit(orgId, action),
+    queryKey: orgKeys.audit(orgId, action, critical),
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       unwrap(
         api.GET("/v1/orgs/{org}/audit", {
           params: {
             path: { org: orgId },
-            query: { limit: 50, cursor: pageParam, action: action || undefined },
+            query: {
+              limit: 50,
+              cursor: pageParam,
+              action: action || undefined,
+              critical: critical || undefined,
+            },
           },
         }),
       ),

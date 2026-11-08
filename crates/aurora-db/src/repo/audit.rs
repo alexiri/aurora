@@ -22,10 +22,12 @@ pub struct NewAudit<'a> {
 
 pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, a: &NewAudit<'_>) -> Result<Uuid, DbError> {
     let id = aurora_core::ids::new_id();
+    // RFE-008: the flag is derived from the action, so it can never disagree with the set.
+    let critical = a.outcome == "success" && aurora_core::audit::is_critical(a.action);
     sqlx::query(
         "INSERT INTO audit_log (id, org_id, workspace_id, actor_kind, actor_id, actor_label,
-            action, target_kind, target_id, outcome, source, ip, metadata)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::text::inet,$13)",
+            action, target_kind, target_id, outcome, source, ip, metadata, critical)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::text::inet,$13,$14)",
     )
     .bind(id)
     .bind(a.org_id)
@@ -40,6 +42,7 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, a: &NewAudit<'_>) -> Result<
     .bind(a.source)
     .bind(a.ip.map(|i| i.to_string()))
     .bind(a.metadata)
+    .bind(critical)
     .execute(exec)
     .await?;
     Ok(id)
@@ -60,6 +63,7 @@ pub struct AuditRow {
     pub source: String,
     pub ip: Option<String>,
     pub metadata: serde_json::Value,
+    pub critical: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -76,6 +80,7 @@ pub async fn list<'e, E: PgExecutor<'e>>(
     scope: Scope,
     action: Option<&str>,
     actor_id: Option<Uuid>,
+    critical_only: bool,
     after: After,
     fetch: i64,
 ) -> Result<Vec<AuditRow>, DbError> {
@@ -86,10 +91,11 @@ pub async fn list<'e, E: PgExecutor<'e>>(
     };
     Ok(sqlx::query_as(
         "SELECT id, org_id, workspace_id, actor_kind, actor_id, actor_label, action, target_kind,
-                target_id, outcome, source, host(ip) AS ip, metadata, created_at
+                target_id, outcome, source, host(ip) AS ip, metadata, critical, created_at
          FROM audit_log
          WHERE ($1::uuid IS NULL OR org_id = $1) AND ($2::uuid IS NULL OR workspace_id = $2)
            AND ($3::text IS NULL OR action = $3) AND ($4::uuid IS NULL OR actor_id = $4)
+           AND (NOT $8 OR critical)
            AND ($5::timestamptz IS NULL OR (created_at, id) < ($5, $6))
          ORDER BY created_at DESC, id DESC LIMIT $7",
     )
@@ -100,6 +106,7 @@ pub async fn list<'e, E: PgExecutor<'e>>(
     .bind(t)
     .bind(id)
     .bind(fetch)
+    .bind(critical_only)
     .fetch_all(exec)
     .await?)
 }

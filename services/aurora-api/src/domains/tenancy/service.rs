@@ -243,6 +243,7 @@ pub async fn patch_org(
     org_id: Uuid,
     user: Uuid,
     req: PatchOrgRequest,
+    ev: &crate::audit::AuditEvent,
 ) -> Result<OrgRow, ApiError> {
     let name = req
         .name
@@ -293,7 +294,7 @@ pub async fn patch_org(
     let out = orgs::get(&mut *tx, org_id, user)
         .await?
         .ok_or_else(|| ApiError::internal("Internal error."))?;
-    tx.commit().await.map_err(aurora_db::DbError::from)?;
+    crate::audit::commit_critical(tx, ev).await?;
     Ok(out)
 }
 
@@ -305,11 +306,15 @@ pub fn confirmation_mismatch() -> ApiError {
     )
 }
 
-pub async fn delete_org(pool: &PgPool, org_id: Uuid) -> Result<(), ApiError> {
+pub async fn delete_org(
+    pool: &PgPool,
+    org_id: Uuid,
+    ev: &crate::audit::AuditEvent,
+) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
     crate::domains::channels::presences::enqueue_deprovision_for_org(&mut tx, org_id).await?;
     orgs::delete_cascade(&mut tx, org_id).await?;
-    tx.commit().await.map_err(aurora_db::DbError::from)?;
+    crate::audit::commit_critical(tx, ev).await?;
     Ok(())
 }
 
@@ -331,6 +336,7 @@ pub async fn patch_member(
     target: Uuid,
     req: &PatchMemberRequest,
     actor: &crate::audit::AuditActor,
+    mut ev: crate::audit::AuditEvent,
 ) -> Result<MemberRow, ApiError> {
     // RFE-021: validate `reassign_to` before touching anything.
     let reassign = match req.reassign_to.as_deref() {
@@ -380,7 +386,22 @@ pub async fn patch_member(
     let out = members::get(&mut *tx, org_id, target)
         .await?
         .ok_or_else(|| ApiError::internal("Internal error."))?;
-    tx.commit().await.map_err(aurora_db::DbError::from)?;
+    // `metadata.change`: the changed fields as old → new (04 §Audit).
+    let mut change = serde_json::Map::new();
+    if let Some(r) = req.role {
+        change.insert(
+            "role".into(),
+            format!("{} → {}", cur.role, r.as_str()).into(),
+        );
+    }
+    if let Some(st) = req.status {
+        change.insert(
+            "status".into(),
+            format!("{} → {}", cur.status, st.as_str()).into(),
+        );
+    }
+    ev.metadata["change"] = change.into();
+    crate::audit::commit_critical(tx, &ev).await?;
     Ok(out)
 }
 
@@ -391,6 +412,7 @@ pub async fn remove_member(
     target: Uuid,
     reassign: Option<To>,
     actor: &crate::audit::AuditActor,
+    ev: &crate::audit::AuditEvent,
 ) -> Result<(), ApiError> {
     let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
     let owners = members::lock_active_owners(&mut tx, org_id).await?;
@@ -408,7 +430,7 @@ pub async fn remove_member(
     }
     members::remove(&mut tx, org_id, target).await?;
     notify_auth_revoked(&mut *tx, "user", target).await?;
-    tx.commit().await.map_err(aurora_db::DbError::from)?;
+    crate::audit::commit_critical(tx, ev).await?;
     Ok(())
 }
 

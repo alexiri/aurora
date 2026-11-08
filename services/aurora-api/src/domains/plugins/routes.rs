@@ -3,7 +3,7 @@ use super::ingest::{self, Source};
 use super::lifecycle::{self, Action};
 use super::{claims, keys, registry, service};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::AuditActor;
 use crate::http::auth::InstanceAdmin;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -13,7 +13,6 @@ use aurora_core::{ApiError, FieldError};
 use aurora_db::repo::plugins;
 use axum::extract::{DefaultBodyLimit, Multipart, State, multipart::MultipartRejection};
 use http::StatusCode;
-use serde_json::json;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
@@ -170,17 +169,15 @@ async fn create_trusted_key(
     State(s): State<AppState>,
     Json(req): Json<CreateTrustedKeyRequest>,
 ) -> Result<(StatusCode, Json<TrustedKey>), ApiError> {
-    let row = keys::create(&s, c.user_id, &req.publisher, &req.name, &req.public_key).await?;
-    audit::record(
+    let row = keys::create(
         &s,
-        AuditEvent::new(
-            AuditActor::instance_admin(&c),
-            "trusted_key.create",
-            Outcome::Success,
-        )
-        .target("trusted_key", row.id)
-        .metadata(json!({"publisher": row.publisher, "name": row.name})),
-    );
+        c.user_id,
+        &AuditActor::instance_admin(&c),
+        &req.publisher,
+        &req.name,
+        &req.public_key,
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(row.into())))
 }
 
@@ -194,17 +191,7 @@ async fn revoke_trusted_key(
     State(s): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let (key, disabled) = keys::revoke(&s, id).await?;
-    audit::record(
-        &s,
-        AuditEvent::new(
-            AuditActor::instance_admin(&c),
-            "trusted_key.revoke",
-            Outcome::Success,
-        )
-        .target("trusted_key", key.id)
-        .metadata(json!({"publisher": key.publisher, "disabled_packages": disabled})),
-    );
+    keys::revoke(&s, id, &AuditActor::instance_admin(&c)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -1,7 +1,7 @@
 use super::dto::*;
 use super::service::{self, Scope};
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::audit::AuditActor;
 use crate::http::auth::{Caller, InstanceAdmin, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -10,7 +10,6 @@ use aurora_core::ApiError;
 use aurora_db::repo::oauth_clients::{self as repo, ClientRow};
 use axum::extract::State;
 use axum::http::StatusCode;
-use serde_json::json;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
@@ -20,19 +19,6 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_org_clients, create_org_client))
         .routes(routes!(list_instance_clients, create_instance_client))
         .routes(routes!(patch_client, delete_client))
-}
-
-fn record(state: &AppState, actor: AuditActor, action: &str, row: &ClientRow) {
-    let mut ev = AuditEvent::new(actor, action, Outcome::Success)
-        .target("oauth_client", row.id)
-        .metadata(json!({"package_id": row.package_id, "client_key": row.client_key}));
-    if let Some(o) = row.org_id {
-        ev = ev.org(o);
-    }
-    if let Some(w) = row.workspace_id {
-        ev = ev.workspace(w);
-    }
-    audit::record(state, ev);
 }
 
 /// List workspace OAuth clients (`can_own`; I-27).
@@ -83,13 +69,7 @@ async fn create_ws_client(
         org: Some(a.org_id),
         ws: Some(ws),
     };
-    let row = service::create(&state, scope, req).await?;
-    record(
-        &state,
-        AuditActor::from_caller(&caller),
-        "oauth_client.create",
-        &row,
-    );
+    let row = service::create(&state, scope, req, &AuditActor::from_caller(&caller)).await?;
     Ok((StatusCode::CREATED, Json(row.into())))
 }
 
@@ -139,13 +119,7 @@ async fn create_org_client(
         org: Some(org),
         ws: None,
     };
-    let row = service::create(&state, scope, req).await?;
-    record(
-        &state,
-        AuditActor::from_caller(&caller),
-        "oauth_client.create",
-        &row,
-    );
+    let row = service::create(&state, scope, req, &AuditActor::from_caller(&caller)).await?;
     Ok((StatusCode::CREATED, Json(row.into())))
 }
 
@@ -188,13 +162,7 @@ async fn create_instance_client(
         org: None,
         ws: None,
     };
-    let row = service::create(&state, scope, req).await?;
-    record(
-        &state,
-        AuditActor::instance_admin(&caller),
-        "oauth_client.create",
-        &row,
-    );
+    let row = service::create(&state, scope, req, &AuditActor::instance_admin(&caller)).await?;
     Ok((StatusCode::CREATED, Json(row.into())))
 }
 
@@ -241,13 +209,7 @@ async fn patch_client(
     Json(req): Json<PatchOAuthClientRequest>,
 ) -> Result<Json<OAuthClient>, ApiError> {
     let row = writable(&caller, &state, id).await?;
-    let updated = service::patch(&state, &row, req).await?;
-    record(
-        &state,
-        actor(&caller, &row),
-        "oauth_client.update",
-        &updated,
-    );
+    let updated = service::patch(&state, &row, req, &actor(&caller, &row)).await?;
     Ok(Json(updated.into()))
 }
 
@@ -267,7 +229,6 @@ async fn delete_client(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
     let row = writable(&caller, &state, id).await?;
-    service::delete(&state, &row).await?;
-    record(&state, actor(&caller, &row), "oauth_client.delete", &row);
+    service::delete(&state, &row, &actor(&caller, &row)).await?;
     Ok(StatusCode::NO_CONTENT)
 }

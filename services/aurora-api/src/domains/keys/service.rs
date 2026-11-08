@@ -28,9 +28,10 @@ pub fn validate(req: CreateKeyRequest) -> Result<(String, Option<DateTime<Utc>>)
     }
 }
 
-/// Create a `user` key for `c` (org key when `workspace` is `None`). Returns the row and token.
+/// Create a `user` key for `c` (org key when `workspace` is `None`) inside the caller's
+/// transaction (its `api_key.create` audit row commits with it). Returns the row and token.
 pub async fn create(
-    s: &AppState,
+    conn: &mut sqlx::PgConnection,
     c: &Caller,
     org_id: Uuid,
     workspace: Option<Uuid>,
@@ -45,7 +46,7 @@ pub async fn create(
     let tok = token::generate(prefix);
     let tok = tok.expose();
     let row = api_keys::insert(
-        &s.pool,
+        conn,
         &NewKey {
             id: Uuid::now_v7(),
             org_id,

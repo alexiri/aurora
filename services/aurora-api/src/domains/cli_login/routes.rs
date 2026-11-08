@@ -1,7 +1,6 @@
 use super::dto::*;
 use super::service;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::auth::SessionCaller;
 use crate::http::client_ip::ClientIp;
 use crate::http::error::ErrorEnvelope;
@@ -11,7 +10,6 @@ use aurora_core::ApiError;
 use axum::Extension;
 use axum::extract::State;
 use axum::http::StatusCode;
-use serde_json::json;
 use std::time::Duration;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
@@ -52,24 +50,6 @@ async fn token(
     Json(req): Json<TokenRequest>,
 ) -> Result<Json<TokenResponse>, ApiError> {
     let c = service::token(&s, &req.device_code).await?;
-    audit::record(
-        &s,
-        AuditEvent::new(
-            AuditActor {
-                kind: "user",
-                id: Some(c.user_id),
-                label: c.email,
-                source: "cli",
-                ip: None,
-            },
-            "cli_login.consume",
-            Outcome::Success,
-        )
-        .org(c.org_id)
-        .workspace(c.workspace_id)
-        .target("api_key", c.key_id)
-        .metadata(json!({})),
-    );
     Ok(Json(c.response))
 }
 
@@ -84,18 +64,6 @@ async fn approve(
     State(s): State<AppState>,
     Json(req): Json<ApproveRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let ws = req.workspace_id;
-    let (login_id, org_id) = service::approve(&s, &c, req).await?;
-    audit::record(
-        &s,
-        AuditEvent::new(
-            AuditActor::from_caller(&c),
-            "cli_login.approve",
-            Outcome::Success,
-        )
-        .org(org_id)
-        .workspace(ws)
-        .target("cli_login", login_id),
-    );
+    service::approve(&s, &c, req).await?;
     Ok(StatusCode::NO_CONTENT)
 }

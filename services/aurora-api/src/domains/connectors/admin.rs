@@ -3,6 +3,7 @@
 use super::dto::*;
 use super::manifest;
 use crate::app::AppState;
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use aurora_core::token::{self, TokenPrefix};
 use aurora_core::{ApiError, FieldError, limits, sanitize};
 use aurora_db::repo::channel_integrations as integrations;
@@ -72,9 +73,15 @@ fn valid_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
 }
 
+/// Security-critical audit event of a connector change (RFE-008): committed with the change.
+fn event(actor: &AuditActor, action: &str, id: &str) -> AuditEvent {
+    AuditEvent::new(actor.clone(), action, Outcome::Success).target("connector", id)
+}
+
 pub async fn create(
     s: &AppState,
     req: CreateConnectorRequest,
+    actor: &AuditActor,
 ) -> Result<ConnectorWithToken, ApiError> {
     let mut errs = Vec::new();
     if !valid_id(&req.id) {
@@ -88,9 +95,11 @@ pub async fn create(
         return Err(ApiError::invalid_request("Invalid connector.", errs));
     }
     let tok = token::generate(TokenPrefix::Connector);
-    let row = connectors::insert(&s.pool, &req.id, &token::hash(tok.expose()), &name)
+    let mut tx = audit::begin(s).await?;
+    let row = connectors::insert(&mut *tx, &req.id, &token::hash(tok.expose()), &name)
         .await
         .map_err(|e| conflict_code(e, &[("connectors_pkey", "conflict")]))?;
+    audit::commit_critical(tx, &event(actor, "admin.connector_create", &req.id)).await?;
     Ok(ConnectorWithToken {
         connector: view_one(s, row).await?,
         token: tok.expose().clone(),
@@ -107,11 +116,17 @@ pub async fn bootstrap_tokens(s: &AppState) -> Result<(), DbError> {
     Ok(())
 }
 
-pub async fn rotate(s: &AppState, id: &str) -> Result<ConnectorToken, ApiError> {
+pub async fn rotate(
+    s: &AppState,
+    id: &str,
+    actor: &AuditActor,
+) -> Result<ConnectorToken, ApiError> {
     let tok = token::generate(TokenPrefix::Connector);
-    if !connectors::set_token(&s.pool, id, &token::hash(tok.expose())).await? {
+    let mut tx = audit::begin(s).await?;
+    if !connectors::set_token(&mut *tx, id, &token::hash(tok.expose())).await? {
         return Err(ApiError::not_found("Connector not found."));
     }
+    audit::commit_critical(tx, &event(actor, "admin.connector_rotate", id)).await?;
     Ok(ConnectorToken {
         token: tok.expose().clone(),
     })
@@ -123,8 +138,9 @@ pub async fn approve(
     id: &str,
     digest: &str,
     by: Uuid,
+    actor: &AuditActor,
 ) -> Result<ConnectorAdmin, ApiError> {
-    let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+    let mut tx = audit::begin(s).await?;
     let row = connectors::get_for_update(&mut *tx, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Connector not found."))?;
@@ -154,20 +170,23 @@ pub async fn approve(
             ));
         }
     }
-    tx.commit().await.map_err(DbError::from)?;
+    let ev =
+        event(actor, "admin.connector_approve", id).metadata(json!({"manifest_digest": digest}));
+    audit::commit_critical(tx, &ev).await?;
     let row = connectors::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Connector not found."))?;
     view_one(s, row).await
 }
 
-pub async fn delete(s: &AppState, id: &str) -> Result<(), ApiError> {
+pub async fn delete(s: &AppState, id: &str, actor: &AuditActor) -> Result<(), ApiError> {
     let in_use = || ApiError::conflict("connector_in_use", "The connector still has integrations.");
     if integrations::count_for_connector(&s.pool, id).await? > 0 {
         return Err(in_use());
     }
-    match connectors::delete(&s.pool, id).await {
-        Ok(true) => Ok(()),
+    let mut tx = audit::begin(s).await?;
+    match connectors::delete(&mut *tx, id).await {
+        Ok(true) => audit::commit_critical(tx, &event(actor, "admin.connector_delete", id)).await,
         Ok(false) => Err(ApiError::not_found("Connector not found.")),
         Err(DbError::ForeignKeyViolation { .. }) => Err(in_use()),
         Err(e) => Err(e.into()),

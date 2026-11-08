@@ -1,7 +1,6 @@
 use super::dto::*;
 use crate::app::AppState;
 use aurora_core::{ApiError, FieldError};
-use aurora_db::DbError;
 use aurora_db::repo::{availability as repo, credentials};
 use uuid::Uuid;
 
@@ -33,6 +32,7 @@ pub async fn put(
     state: &AppState,
     org: Uuid,
     req: AppAvailability,
+    actor: crate::audit::AuditActor,
 ) -> Result<AppAvailability, ApiError> {
     if !matches!(req.posture.as_str(), "open" | "restricted") {
         return Err(bad("/posture", "must be open or restricted"));
@@ -59,9 +59,18 @@ pub async fn put(
         .into_iter()
         .map(|a| (a.app_id, a.workspace_id))
         .collect();
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let mut tx = crate::audit::begin(state).await?;
     repo::replace(&mut tx, org, &req.posture, &rows).await?;
     credentials::notify_gateway_invalidate(&mut *tx, "org", org).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    // RFE-008: `org.app_availability.update` commits with its audit row.
+    let ev = crate::audit::AuditEvent::new(
+        actor,
+        "org.app_availability.update",
+        crate::audit::Outcome::Success,
+    )
+    .org(org)
+    .target("organization", org)
+    .metadata(serde_json::json!({"posture": req.posture, "entries": rows.len()}));
+    crate::audit::commit_critical(tx, &ev).await?;
     get(state, org).await
 }

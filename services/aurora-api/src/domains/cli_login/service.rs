@@ -1,5 +1,6 @@
 use super::dto::*;
 use crate::app::AppState;
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::ratelimit::Quota;
 use aurora_core::token::{self, TokenPrefix};
 use aurora_core::{ApiError, FieldError, sanitize};
@@ -9,6 +10,7 @@ use aurora_db::repo::cli_logins;
 use aws_lc_rs::rand;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use http::StatusCode;
+use serde_json::json;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -120,9 +122,20 @@ pub async fn approve(
     let login = cli_logins::find_pending_by_user_code(&s.pool, &code)
         .await?
         .ok_or_else(nf)?;
-    if !cli_logins::approve(&s.pool, login.id, c.user_id, req.workspace_id).await? {
+    // RFE-008: the approval (which authorises minting a key) commits with its audit row.
+    let mut tx = audit::begin(s).await?;
+    if !cli_logins::approve(&mut *tx, login.id, c.user_id, req.workspace_id).await? {
         return Err(nf());
     }
+    let ev = AuditEvent::new(
+        AuditActor::from_caller(c),
+        "cli_login.approve",
+        Outcome::Success,
+    )
+    .org(a.org_id)
+    .workspace(req.workspace_id)
+    .target("cli_login", login.id);
+    audit::commit_critical(tx, &ev).await?;
     Ok((login.id, a.org_id))
 }
 
@@ -189,8 +202,13 @@ pub async fn token(s: &AppState, device_code: &str) -> Result<Consumed, ApiError
         "CLI on {}",
         login.hostname.as_deref().unwrap_or("unknown host")
     );
+    let email = cli_logins::user_email(&s.pool, user)
+        .await?
+        .unwrap_or_default();
+    // RFE-008: minting the key and its `cli_login.consume` audit row are one transaction.
+    let mut tx = audit::begin(s).await?;
     let Some(row) = cli_logins::consume(
-        &s.pool,
+        &mut tx,
         login.id,
         &NewKey {
             id: Uuid::now_v7(),
@@ -207,9 +225,22 @@ pub async fn token(s: &AppState, device_code: &str) -> Result<Consumed, ApiError
     else {
         return Err(oauth_err("invalid_token", "Device code already used."));
     };
-    let email = cli_logins::user_email(&s.pool, user)
-        .await?
-        .unwrap_or_default();
+    let ev = AuditEvent::new(
+        AuditActor {
+            kind: "user",
+            id: Some(user),
+            label: email.clone(),
+            source: "cli",
+            ip: None,
+        },
+        "cli_login.consume",
+        Outcome::Success,
+    )
+    .org(access.org_id)
+    .workspace(ws)
+    .target("api_key", row.id)
+    .metadata(json!({}));
+    audit::commit_critical(tx, &ev).await?;
     Ok(Consumed {
         response: TokenResponse {
             api_key: tok.clone(),

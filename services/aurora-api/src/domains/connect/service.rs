@@ -461,7 +461,7 @@ impl Ctx<'_> {
             connected_by: self.user,
             instance_id: self.instance.as_ref().map(|i| i.id),
         };
-        let old = match self.write(&n).await {
+        let old = match self.write(caller, &n).await {
             Ok(o) => o,
             Err(e) => {
                 discard(state, &sctx, &sref).await;
@@ -474,27 +474,17 @@ impl Ctx<'_> {
         let row = repo::get(&state.pool, id)
             .await?
             .ok_or_else(|| ApiError::internal("Internal error."))?;
-        let action = if self.reconnect.is_some() {
-            "connection.reconnect"
-        } else {
-            "connection.create"
-        };
-        let mut ev = AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
-            .org(row.org_id)
-            .target("connection", row.id)
-            .metadata(
-                json!({"app_id": row.app_id, "package_id": row.package_id, "label": row.label}),
-            );
-        if let Some(ws) = row.workspace_id {
-            ev = ev.workspace(ws);
-        }
-        audit::record(state, ev);
         Ok(row)
     }
 
-    /// Insert or CAS-update inside one transaction; returns the replaced credentials ref.
-    async fn write(&self, n: &NewConnection<'_>) -> Result<Option<String>, ConnectErr> {
-        let mut tx = self.state.pool.begin().await.map_err(DbError::from)?;
+    /// Insert or CAS-update inside one transaction (with its `connection.create` /
+    /// `connection.reconnect` audit row, RFE-008); returns the replaced credentials ref.
+    async fn write(
+        &self,
+        caller: &Caller,
+        n: &NewConnection<'_>,
+    ) -> Result<Option<String>, ConnectErr> {
+        let mut tx = audit::begin(self.state).await?;
         let mut old = None;
         if self.reconnect.is_some() {
             let (r, ver) = repo::credentials_state(&mut *tx, n.id)
@@ -541,7 +531,19 @@ impl Ctx<'_> {
             }
         }
         credentials::notify_gateway_invalidate(&mut *tx, "connection", n.id).await?;
-        tx.commit().await.map_err(DbError::from)?;
+        let action = if self.reconnect.is_some() {
+            "connection.reconnect"
+        } else {
+            "connection.create"
+        };
+        let mut ev = AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
+            .org(n.org_id)
+            .target("connection", n.id)
+            .metadata(json!({"app_id": n.app_id, "package_id": n.package_id, "label": n.label}));
+        if let Some(ws) = n.workspace_id {
+            ev = ev.workspace(ws);
+        }
+        audit::commit_critical(tx, &ev).await?;
         Ok(old)
     }
 }

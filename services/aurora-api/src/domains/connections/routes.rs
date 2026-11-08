@@ -1,16 +1,13 @@
 use super::dto::*;
 use super::service;
 use crate::app::AppState;
-use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::Page;
 use aurora_core::ApiError;
-use aurora_db::repo::connections::ConnectionRow;
 use axum::extract::State;
 use axum::http::StatusCode;
-use serde_json::json;
 use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
@@ -19,27 +16,6 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_ws_connections))
         .routes(routes!(list_org_connections))
         .routes(routes!(get_connection, patch_connection, delete_connection))
-}
-
-fn record(
-    state: &AppState,
-    caller: &Caller,
-    action: &str,
-    row: &ConnectionRow,
-    extra: serde_json::Value,
-) {
-    let mut ev = AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
-        .org(row.org_id)
-        .target("connection", row.id)
-        .metadata(json!({
-            "app_id": row.app_id, "package_id": row.package_id, "label": row.label,
-            "scope": if row.workspace_id.is_some() { "workspace" } else { "organization" },
-            "extra": extra,
-        }));
-    if let Some(ws) = row.workspace_id {
-        ev = ev.workspace(ws);
-    }
-    audit::record(state, ev);
 }
 
 /// List workspace-scoped connections (`can_own`; I-27).
@@ -122,19 +98,7 @@ async fn patch_connection(
 ) -> Result<Json<Connection>, ApiError> {
     let (row, access) = service::visible(&caller, &state, id).await?;
     access.require_write()?;
-    let updated = service::patch(&state, &row, &req).await?;
-    let action = match req.status.as_deref() {
-        Some("disabled") if row.status != "disabled" => "connection.disable",
-        Some("active") if row.status != "active" => "connection.enable",
-        _ => "connection.update",
-    };
-    record(
-        &state,
-        &caller,
-        action,
-        &updated,
-        json!({"from_status": row.status}),
-    );
+    let updated = service::patch(&state, &caller, &row, &req).await?;
     Ok(Json(service::view(&state, updated).await?))
 }
 
@@ -154,13 +118,6 @@ async fn delete_connection(
 ) -> Result<StatusCode, ApiError> {
     let (row, access) = service::visible(&caller, &state, id).await?;
     access.require_write()?;
-    let agents = service::delete(&state, &row).await?;
-    record(
-        &state,
-        &caller,
-        "connection.delete",
-        &row,
-        json!({"agents_affected": agents}),
-    );
+    service::delete(&state, &caller, &row).await?;
     Ok(StatusCode::NO_CONTENT)
 }

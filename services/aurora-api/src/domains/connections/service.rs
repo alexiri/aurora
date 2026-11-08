@@ -4,7 +4,6 @@ use crate::domains::plugins::registry;
 use crate::http::auth::{Caller, require_own};
 use crate::http::pagination::{Page, Pagination};
 use aurora_core::{ApiError, FieldError};
-use aurora_db::DbError;
 use aurora_db::repo::connections::{self as repo, ConnectionRow};
 use aurora_db::repo::credentials;
 use aurora_secrets::{Purpose, SealContext, SecretRef, ValueSource};
@@ -112,8 +111,31 @@ pub async fn view(state: &AppState, row: ConnectionRow) -> Result<Connection, Ap
     Ok(Connection::new(row, snap.as_ref()))
 }
 
+/// Security-critical audit event of a connection change (RFE-008), committed with the change.
+fn event(
+    caller: &Caller,
+    action: &str,
+    row: &ConnectionRow,
+    extra: serde_json::Value,
+) -> crate::audit::AuditEvent {
+    use crate::audit::{AuditActor, AuditEvent, Outcome};
+    let mut ev = AuditEvent::new(AuditActor::from_caller(caller), action, Outcome::Success)
+        .org(row.org_id)
+        .target("connection", row.id)
+        .metadata(serde_json::json!({
+            "app_id": row.app_id, "package_id": row.package_id, "label": row.label,
+            "scope": if row.workspace_id.is_some() { "workspace" } else { "organization" },
+            "extra": extra,
+        }));
+    if let Some(ws) = row.workspace_id {
+        ev = ev.workspace(ws);
+    }
+    ev
+}
+
 pub async fn patch(
     state: &AppState,
+    caller: &Caller,
     row: &ConnectionRow,
     req: &PatchConnectionRequest,
 ) -> Result<ConnectionRow, ApiError> {
@@ -153,19 +175,35 @@ pub async fn patch(
         }
     };
     let label = req.label.as_deref().map(str::trim);
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let action = match req.status.as_deref() {
+        Some("disabled") if row.status != "disabled" => "connection.disable",
+        Some("active") if row.status != "active" => "connection.enable",
+        _ => "connection.update",
+    };
+    let mut tx = crate::audit::begin(state).await?;
     repo::update(&mut *tx, row.id, label, status).await?;
     credentials::notify_gateway_invalidate(&mut *tx, "connection", row.id).await?;
-    tx.commit().await.map_err(DbError::from)?;
-    repo::get(&state.pool, row.id)
+    let updated = repo::get(&mut *tx, row.id)
         .await?
-        .ok_or_else(|| ApiError::not_found("Connection not found."))
+        .ok_or_else(|| ApiError::not_found("Connection not found."))?;
+    let ev = event(
+        caller,
+        action,
+        &updated,
+        serde_json::json!({"from_status": row.status}),
+    );
+    crate::audit::commit_critical(tx, &ev).await?;
+    Ok(updated)
 }
 
 /// Delete the connection (and connections derived from it) with its blocklist and grant
 /// derived rules, then invalidate gateways. Returns the number of agents affected.
-pub async fn delete(state: &AppState, row: &ConnectionRow) -> Result<usize, ApiError> {
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+pub async fn delete(
+    state: &AppState,
+    caller: &Caller,
+    row: &ConnectionRow,
+) -> Result<usize, ApiError> {
+    let mut tx = crate::audit::begin(state).await?;
     let ids = repo::with_children(&mut tx, row.id).await?;
     let agents = repo::granted_agents(&mut tx, &ids).await?;
     repo::delete_derived_rules(&mut tx, &ids).await?;
@@ -177,7 +215,13 @@ pub async fn delete(state: &AppState, row: &ConnectionRow) -> Result<usize, ApiE
     for a in &agents {
         credentials::notify_gateway_invalidate(&mut *tx, "agent", *a).await?;
     }
-    tx.commit().await.map_err(DbError::from)?;
+    let ev = event(
+        caller,
+        "connection.delete",
+        row,
+        serde_json::json!({"agents_affected": agents.len()}),
+    );
+    crate::audit::commit_critical(tx, &ev).await?;
     for (id, org, ws, r) in refs {
         if let Ok(sref) = r.parse::<SecretRef>() {
             let ctx = SealContext {

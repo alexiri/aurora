@@ -51,11 +51,8 @@ async fn delete_me(c: SessionCaller, State(s): State<AppState>) -> Result<Status
     let Principal::Session { id } = c.principal else {
         return Err(ApiError::forbidden("Session required."));
     };
-    service::delete_me(&s, c.user_id, id).await?;
-    audit::record(
-        &s,
-        AuditEvent::new(AuditActor::from_caller(&c), "user.delete", Outcome::Success)
-            .target("user", c.user_id),
-    );
+    let ev = AuditEvent::new(AuditActor::from_caller(&c), "user.delete", Outcome::Success)
+        .target("user", c.user_id);
+    service::delete_me(&s, c.user_id, id, &ev).await?;
     Ok(StatusCode::NO_CONTENT)
 }

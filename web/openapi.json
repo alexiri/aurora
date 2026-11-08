@@ -10007,6 +10007,15 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "critical",
+            "in": "query",
+            "description": "`true` lists only the security-critical set; `false` or absent lists everything.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -16107,6 +16116,15 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "critical",
+            "in": "query",
+            "description": "`true` lists only the security-critical set; `false` or absent lists everything.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -18930,6 +18948,7 @@
           "outcome",
           "source",
           "metadata",
+          "critical",
           "created_at"
         ],
         "properties": {
@@ -18953,6 +18972,10 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "critical": {
+            "type": "boolean",
+            "description": "Row of the security-critical set (`04 §Audit`), written atomically with its change."
           },
           "id": {
             "type": "string",
@@ -24184,6 +24207,7 @@
                 "outcome",
                 "source",
                 "metadata",
+                "critical",
                 "created_at"
               ],
               "properties": {
@@ -24207,6 +24231,10 @@
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
+                },
+                "critical": {
+                  "type": "boolean",
+                  "description": "Row of the security-critical set (`04 §Audit`), written atomically with its change."
                 },
                 "id": {
                   "type": "string",
