@@ -704,6 +704,161 @@ async fn eventually(secs: u64, mut check: impl FnMut() -> bool) -> bool {
     check()
 }
 
+/// RFE-006 / SEC-45: freeze an agent whose turn is running a request the gateway holds for
+/// approval. The turn ends aborted/frozen and the held request is dropped (never forwarded), the
+/// approval is abandoned, the sandbox is parked (`stop_reason = frozen`, container removed, home
+/// volume kept), every door answers 423/410, schedules are skipped without being disabled, and
+/// unfreezing restores service without any credential being redistributed.
+#[tokio::test]
+async fn s10_freeze_aborts_the_turn_drops_the_held_request_parks_the_sandbox_and_resumes() {
+    if !enabled() {
+        return;
+    }
+    let (st, api) = fx(Opts::default()).await;
+    let up = upstream().await;
+    grant_secret(&api, &up).await;
+    let host = up.address().to_string();
+    api.set_policy(
+        "block",
+        json!([{"name": "ask", "action": "allow", "targets": [{"type": "network", "host": host}],
+                "require_approval": true}]),
+    )
+    .await;
+    let conv = api.direct().await;
+    // A schedule and a webhook of the agent.
+    let (s, sched) = api
+        .post(
+            &format!("/v1/agents/{}/schedules", api.daneel),
+            json!({"name": "tick", "prompt": "p", "cron": "0 9 * * *", "timezone": "UTC"}),
+        )
+        .await;
+    assert_eq!(s, 201, "{sched}");
+    let (s, hook) = api
+        .post(
+            &format!("/v1/agents/{}/webhooks", api.daneel),
+            json!({"name": "hook", "instructions": "i"}),
+        )
+        .await;
+    assert_eq!(s, 201, "{hook}");
+    let hook_path = hook["url"]
+        .as_str()
+        .and_then(|u| u.split_once("/v1/"))
+        .map(|(_, p)| format!("/v1/{p}"))
+        .unwrap();
+
+    // The turn's request is held for approval: a live, in-flight gateway request.
+    let v = api
+        .say(&conv, &format!("[[http: GET http://{host}/held]]"))
+        .await;
+    let turn = turn_id(&v);
+    let pending = api.wait_pending().await;
+    assert_eq!(pending["path"], "/held");
+    let approval = pending["id"].as_str().unwrap().to_owned();
+    let volumes_before = volumes();
+    assert_eq!(volumes_before.len(), 1);
+
+    let (s, b) = api
+        .post(
+            &format!("/v1/agents/{}/freeze", api.daneel),
+            json!({"reason": "e2e drill"}),
+        )
+        .await;
+    assert_eq!(s, 200, "{b}");
+    assert_eq!(b["effective_frozen"], true);
+
+    // The turn ends aborted / frozen; the held request is never forwarded; the approval dies.
+    let (status, err) = st
+        .wait_turn(&turn, &["aborted", "failed", "done"], 60)
+        .await;
+    assert_eq!(
+        (status.as_str(), err.as_deref()),
+        ("aborted", Some("frozen")),
+        "{}",
+        st.log_tails()
+    );
+    let a_status: String = sqlx::query_scalar("SELECT status FROM approvals WHERE id = $1::uuid")
+        .bind(&approval)
+        .fetch_one(st.pool())
+        .await
+        .unwrap();
+    assert_eq!(a_status, "abandoned");
+    assert_eq!(up.received_requests().await.unwrap().len(), 0);
+
+    // The sandbox is parked with its home kept.
+    st.wait_sandbox(&api, "stopped", 120).await;
+    let reason: Option<String> = sqlx::query_scalar("SELECT stop_reason FROM sandboxes")
+        .fetch_one(st.pool())
+        .await
+        .unwrap();
+    assert_eq!(reason.as_deref(), Some("frozen"));
+    assert!(containers().is_empty(), "container removed on park");
+    assert_eq!(volumes(), volumes_before, "home volume kept for forensics");
+
+    // Doors: messages 423, webhook 410 + paused delivery (still enabled), schedule skipped.
+    let (s, b) = api
+        .post(
+            &format!("/v1/conversations/{conv}/messages"),
+            json!({"text": "hello?"}),
+        )
+        .await;
+    assert_eq!(
+        (s, b["error"]["code"].as_str()),
+        (423, Some("frozen")),
+        "{b}"
+    );
+    let (s, b) = api.post(&hook_path, json!({})).await;
+    assert_eq!(
+        (s, b["error"]["code"].as_str()),
+        (410, Some("frozen")),
+        "{b}"
+    );
+    let (delivery, enabled): (String, bool) = sqlx::query_as(
+        "SELECT d.status || ':' || coalesce(d.reason, ''), w.enabled
+         FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id
+         ORDER BY d.created_at DESC LIMIT 1",
+    )
+    .fetch_one(st.pool())
+    .await
+    .unwrap();
+    assert_eq!((delivery.as_str(), enabled), ("paused:frozen", true));
+    sqlx::query("UPDATE schedules SET next_fire_at = now() - interval '1 minute'")
+        .execute(st.pool())
+        .await
+        .unwrap();
+    let mut skipped = false;
+    for _ in 0..60 {
+        let o: Option<String> = sqlx::query_scalar("SELECT last_outcome FROM schedules")
+            .fetch_one(st.pool())
+            .await
+            .unwrap();
+        if o.as_deref() == Some("skipped_frozen") {
+            skipped = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    assert!(skipped, "{}", st.log_tails());
+    let still_enabled: bool = sqlx::query_scalar("SELECT enabled FROM schedules")
+        .fetch_one(st.pool())
+        .await
+        .unwrap();
+    assert!(still_enabled, "a freeze never disables a schedule");
+    assert!(
+        containers().is_empty(),
+        "no sandbox start for a frozen agent"
+    );
+
+    // Unfreeze: service resumes at once, with the same credentials and the same home.
+    let (s, b) = api
+        .post(&format!("/v1/agents/{}/unfreeze", api.daneel), json!({}))
+        .await;
+    assert_eq!(s, 200, "{b}");
+    run_turn(&st, &api, &conv, "[[say: back again]]").await;
+    assert_eq!(containers().len(), 1);
+    assert_eq!(volumes(), volumes_before);
+    st.finish().await;
+}
+
 /// RFE-010 / SEC-47: deleting a conversation also deletes the harness session files in the agent's
 /// home: live while the sandbox runs, and (when it is parked) before the next turn after it boots.
 #[tokio::test]

@@ -327,6 +327,8 @@ pub async fn create_turn_capped(
     if !convs::lock(&mut *conn, conv.id).await? {
         return Err(conv_404());
     }
+    // (phase 2, RFE-006) Every door: an effectively frozen agent starts no work (423 `frozen`).
+    crate::domains::freeze::service::ensure_agent_active(&mut *conn, conv.agent_id).await?;
     match m.speaker_kind {
         "person" => {
             convs::reset_app_turn_streak(&mut *conn, conv.id).await?;
@@ -644,6 +646,8 @@ pub async fn send_now(state: &AppState, c: &Caller, id: Uuid) -> Result<Turn, Ap
     let t = load_turn(state, c, id).await?;
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     convs::lock(&mut tx, t.conversation_id).await?;
+    // (phase 2, RFE-006) 423 `frozen` for a frozen agent, ahead of the finished-turn 409.
+    crate::domains::freeze::service::ensure_agent_active(&mut tx, t.agent_id).await?;
     let Some(row) = turns::request_send_now(&mut tx, id).await? else {
         return Err(finished());
     };

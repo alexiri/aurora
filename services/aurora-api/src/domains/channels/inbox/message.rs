@@ -182,6 +182,40 @@ pub(super) async fn handle(state: &AppState, row: &InboxRow) -> Result<Value, In
         .await;
     }
 
+    // 5a. (phase 2, RFE-006) Frozen: no turn, no sandbox; one platform-voice reply per
+    // (space/thread, person) per `FREEZE_REPLY_INTERVAL`, to people who may reach the agent.
+    {
+        let mut conn = pool.acquire().await.retry()?;
+        if aurora_db::repo::freeze::is_agent_frozen(&mut conn, agent.id)
+            .await
+            .retry()?
+        {
+            if crate::domains::freeze::service::should_reply_paused(
+                iid,
+                &m.space.reference,
+                &thread_key,
+                &m.author.reference,
+            ) {
+                send::say(
+                    &mut conn,
+                    &ctx,
+                    &routed.sender,
+                    &m.space.reference,
+                    reply_thread,
+                    &format!(
+                        "{} is paused by an administrator.",
+                        sanitize::label(&agent.name)
+                    ),
+                    format!("frozen:{}", row.event_id),
+                )
+                .await
+                .retry()?;
+                return Ok(outcome("frozen_reply"));
+            }
+            return Ok(ignored("frozen"));
+        }
+    }
+
     // 7. Thread mapping.
     let kind = if is_dm && user_id.is_some() {
         "direct"

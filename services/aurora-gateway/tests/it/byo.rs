@@ -192,21 +192,37 @@ fn refusal_limiter_logs_once_per_credential_per_interval() {
 
 type Creds = Arc<Mutex<HashMap<String, RequestIdentity>>>;
 
-struct MapResolver(Creds);
+/// Agents the fake store treats as effectively frozen (RFE-006): their credentials resolve to
+/// `ResolveError::Frozen`, as the database-backed resolver does.
+type FrozenAgents = Arc<Mutex<std::collections::HashSet<Uuid>>>;
+
+struct MapResolver(Creds, FrozenAgents);
+
+impl MapResolver {
+    fn check(&self, i: Option<RequestIdentity>) -> Result<Option<RequestIdentity>, ResolveError> {
+        match i {
+            Some(i) if self.1.lock().unwrap().contains(&i.agent_id) => {
+                Err(ResolveError::Frozen { level: "agent" })
+            }
+            other => Ok(other),
+        }
+    }
+}
 
 #[async_trait]
 impl CredentialResolver for MapResolver {
     async fn resolve(&self, token: &str) -> Result<Option<RequestIdentity>, ResolveError> {
-        Ok(self.0.lock().unwrap().get(token).cloned())
+        self.check(self.0.lock().unwrap().get(token).cloned())
     }
     async fn resolve_credential(&self, id: Uuid) -> Result<Option<RequestIdentity>, ResolveError> {
-        Ok(self
-            .0
-            .lock()
-            .unwrap()
-            .values()
-            .find(|i| i.credential_id == id)
-            .cloned())
+        self.check(
+            self.0
+                .lock()
+                .unwrap()
+                .values()
+                .find(|i| i.credential_id == id)
+                .cloned(),
+        )
     }
 }
 
@@ -236,6 +252,7 @@ impl RequestHandler for Handler {
 struct Env {
     proxy: SocketAddr,
     creds: Creds,
+    frozen: FrozenAgents,
     tunnels: Arc<TunnelRegistry>,
     log: Arc<Capture>,
     gw_ca_pem: String,
@@ -243,7 +260,9 @@ struct Env {
 
 async fn start(trusted: &[&str]) -> Env {
     let creds: Creds = Arc::default();
-    let resolver: Arc<dyn CredentialResolver> = Arc::new(MapResolver(creds.clone()));
+    let frozen: FrozenAgents = Arc::default();
+    let resolver: Arc<dyn CredentialResolver> =
+        Arc::new(MapResolver(creds.clone(), frozen.clone()));
     let gw = ca::generate("gw").unwrap();
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = l.local_addr().unwrap();
@@ -273,6 +292,7 @@ async fn start(trusted: &[&str]) -> Env {
     Env {
         proxy,
         creds,
+        frozen,
         tunnels,
         log,
         gw_ca_pem: gw.cert_pem,
@@ -556,6 +576,53 @@ async fn open_tunnel(env: &Env, token: &str) -> TlsStream<TcpStream> {
         "tunnel opened"
     );
     s
+}
+
+/// RFE-006 (SEC-45): a freeze of the agent, its workspace or its org refuses new connections
+/// with 403 `frozen` (not 407) and closes live tunnels of every credential kind — hosted ones
+/// included, which carry no BYO controls — within the cache refresh; unfreezing restores the
+/// same token at once.
+#[tokio::test]
+async fn freeze_refuses_credentials_403_and_closes_live_tunnels_of_every_kind() {
+    for (token, kind, scope_of) in [
+        ("aub_boot", CredentialKind::Boot, 0u8),
+        ("auc_ctx", CredentialKind::Context, 1),
+        ("aug_agent", CredentialKind::Agent, 2),
+    ] {
+        let env = start(&[]).await;
+        let id = env.add(token, kind, None);
+        let mut tunnel = open_tunnel(&env, token).await;
+        assert_eq!(env.tunnels.len(), 1, "non-BYO tunnels are registered too");
+        // Unrelated invalidations keep it open.
+        env.tunnels.invalidate(&Invalidate {
+            scope: Scope::Org(Uuid::now_v7()),
+        });
+        env.tunnels.invalidate(&Invalidate {
+            scope: Scope::Agent(id.agent_id),
+        });
+        assert!(alive(&mut tunnel, Duration::from_millis(300)).await);
+        env.frozen.lock().unwrap().insert(id.agent_id);
+        let started = std::time::Instant::now();
+        env.tunnels.invalidate(&Invalidate {
+            scope: match scope_of {
+                0 => Scope::Org(id.org_id),
+                1 => Scope::Workspace(id.workspace_id),
+                _ => Scope::Agent(id.agent_id),
+            },
+        });
+        assert!(
+            !alive(&mut tunnel, Duration::from_secs(5)).await,
+            "{token}: tunnel closed"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let (s, text) = env.connect_req(&[], token, "").await.unwrap();
+        assert_eq!((s, body_code(&text).as_str()), (403, "frozen"), "{text}");
+        assert!(text.contains("\"level\":\"agent\""), "{text}");
+        // Unfreeze: the same token works again and nothing was revoked.
+        env.frozen.lock().unwrap().remove(&id.agent_id);
+        let (s, _) = env.connect_req(&[], token, "").await.unwrap();
+        assert_eq!(s, 200);
+    }
 }
 
 #[tokio::test]

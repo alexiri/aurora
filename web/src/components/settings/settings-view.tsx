@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { WorkspaceFreeze } from "@/components/freeze/freeze-sections";
 import { ErrorState, Loading } from "@/components/states";
 import { useResolve, useWorkspace } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
@@ -65,7 +66,10 @@ export function SettingsView({ org, ws }: { org: string; ws: string }) {
         {tab === "keys" && canOwn ? <KeysTab wsId={w.id} /> : null}
         {tab === "audit" && canOwn ? <AuditTab wsId={w.id} /> : null}
         {tab === "danger" && canOwn ? (
-          <DangerTab wsId={w.id} slug={w.slug} onDeleted={() => router.replace(`/o/${org}`)} />
+          <div className="space-y-8">
+            <WorkspaceFreeze wsId={w.id} name={w.name} orgId={w.org_id} frozen={w.frozen} />
+            <DangerTab wsId={w.id} slug={w.slug} onDeleted={() => router.replace(`/o/${org}`)} />
+          </div>
         ) : null}
       </div>
     </div>

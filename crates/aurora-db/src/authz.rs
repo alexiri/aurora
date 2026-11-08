@@ -341,6 +341,10 @@ pub async fn workspace_has_active_owner<'e, E: PgExecutor<'e>>(
 
 /// RFE-021: fire-time authority of a schedule/webhook. `anchor = workspace`: an active owner
 /// exists; otherwise (`creator`) the creator must still hold access to the workspace.
+///
+/// This is *authority* only. A frozen agent (RFE-006, FU-P2-021a) is not an authority failure — the
+/// automation stays enabled — so callers check [`crate::repo::freeze::is_agent_frozen`] separately
+/// and, for both anchors alike, skip the fire (schedules) or answer 410 `frozen` (webhooks).
 pub async fn automation_authorized(
     conn: &mut sqlx::PgConnection,
     anchor: &str,

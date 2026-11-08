@@ -136,7 +136,10 @@ pub async fn dispatch_candidates(
          WHERE t.role = 'turn' AND t.status = 'queued'
            AND s.runner_id = $1 AND s.channel_replica_id = $2 AND s.state = 'running'
            AND s.boot_id IS NOT NULL AND s.home_applied_generation >= {DESIRED}
-         ORDER BY t.created_at LIMIT $3"
+           AND NOT {frozen}
+         ORDER BY t.created_at LIMIT $3",
+        // (phase 2, RFE-006) Due-work arm 6 skips effectively frozen agents.
+        frozen = super::freeze::frozen_agent_sql("t.agent_id"),
     ))
     .bind(runner)
     .bind(replica)
@@ -443,7 +446,7 @@ pub async fn steer_candidates(
     replica: Uuid,
     limit: i64,
 ) -> Result<Vec<SteerCand>, DbError> {
-    Ok(sqlx::query_as(
+    Ok(sqlx::query_as(&format!(
         "SELECT f.id AS followup_id, t.id AS turn_id, t.conversation_id, f.text, f.speaker_label,
                 s.id AS sandbox_id, s.boot_id
          FROM turns f JOIN turns t ON t.id = f.parent_turn_id
@@ -452,8 +455,11 @@ pub async fn steer_candidates(
            AND t.role = 'turn' AND t.status = 'running' AND t.boot_id = s.boot_id
            AND s.runner_id = $1 AND s.channel_replica_id = $2 AND s.state = 'running'
            AND coalesce(s.resource_profile->'harness'->'capabilities' ? 'steer', false)
+           AND NOT {frozen}
          ORDER BY f.created_at LIMIT $3",
-    )
+        // (phase 2, RFE-006) Due-work arm 7 skips effectively frozen agents.
+        frozen = super::freeze::frozen_agent_sql("t.agent_id"),
+    ))
     .bind(runner)
     .bind(replica)
     .bind(limit)

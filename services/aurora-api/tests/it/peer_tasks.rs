@@ -156,6 +156,52 @@ async fn opens_a_peer_conversation_with_a_fenced_agent_authored_turn() {
     assert_eq!(Rig::ok(&r)["tasks"][0]["direction"], "incoming");
 }
 
+/// RFE-006: peer messaging to a frozen agent says it is paused and creates nothing; a task
+/// closing toward a frozen requester keeps its notice but starts no follow-up turn.
+#[tokio::test]
+async fn messaging_a_frozen_agent_is_refused_as_paused_and_creates_nothing() {
+    let d = duo().await;
+    sqlx::query(
+        "UPDATE agents SET frozen_at = now(), frozen_reason = 'drill', frozen_authority = 'workspace_owner' WHERE id = $1",
+    )
+    .bind(d.b)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    let r = d
+        .rig
+        .tool(
+            d.a,
+            d.conv,
+            Some(d.turn),
+            "message_agent",
+            json!({"agent": "@bravo", "text": "wake up"}),
+        )
+        .await;
+    assert!(
+        Rig::err(&r).contains("is paused by an administrator"),
+        "{}",
+        Rig::err(&r)
+    );
+    for sql in [
+        "SELECT count(*) FROM peer_tasks",
+        "SELECT count(*) FROM turns WHERE agent_id = (SELECT id FROM agents WHERE handle = 'bravo')",
+    ] {
+        let n: i64 = sqlx::query_scalar(sql)
+            .fetch_one(d.rig.h.pool())
+            .await
+            .unwrap();
+        assert_eq!(n, 0, "{sql}");
+    }
+    // Unfrozen again: the same message opens a task.
+    sqlx::query("UPDATE agents SET frozen_at = NULL, frozen_reason = NULL, frozen_authority = NULL WHERE id = $1")
+        .bind(d.b)
+        .execute(d.rig.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(d.send("now?").await["status"], "sent");
+}
+
 #[tokio::test]
 async fn non_person_speaker_cannot_start_a_task() {
     let d = duo().await;

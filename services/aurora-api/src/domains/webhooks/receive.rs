@@ -172,6 +172,22 @@ async fn decide(
         )
         .await;
     }
+    // (phase 2, RFE-006, FU-P2-021a) A frozen agent does nothing, whatever the anchor: 410
+    // `frozen` and a `paused` delivery; the webhook stays enabled. Checked after the signature
+    // (no frozen-state oracle for unauthenticated callers) and before the fire-time authority, so
+    // a freeze never disables an automation for authorization.
+    if let Some(e) = aurora_db::repo::freeze::effective_of_agent(&mut *conn, agent.id).await? {
+        return reject(
+            conn,
+            id,
+            "paused",
+            "frozen",
+            size,
+            ApiError::gone("frozen", "This agent is paused by an administrator.")
+                .with_details(json!({ "level": e.level.as_str() })),
+        )
+        .await;
+    }
     // Fire-time authority (04): the creator must still hold `can_use` on the workspace.
     // RFE-021: `anchor = workspace` is authorized by "an active owner exists" instead.
     let authorized =

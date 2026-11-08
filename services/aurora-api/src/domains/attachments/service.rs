@@ -102,6 +102,8 @@ pub async fn upload(
     mp: Result<Multipart, MultipartRejection>,
 ) -> Result<Attachment, ApiError> {
     let conv_row = conv::load_conversation_for_write(state, c, conversation_id).await?;
+    // (phase 2, RFE-006) An attachment is part of starting work: refused for a frozen agent.
+    crate::domains::freeze::service::ensure_agent_active_pool(state, conv_row.agent_id).await?;
     let mut mp = mp.map_err(|_| {
         ApiError::invalid_request(
             "Expected multipart/form-data.",

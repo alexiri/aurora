@@ -10,6 +10,7 @@ import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspaces } from "@/lib
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { cn } from "@/lib/utils";
 
+import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
 import { ThemeSwitch } from "./theme/theme-switch";
 import { Avatar } from "./agent-avatar";
 import { AuroraLogo } from "./ui/aurora-logo";
@@ -280,6 +281,7 @@ function AccountNavList({ pathname }: { pathname: string }) {
 
 const ADMIN_LINKS: { href: string; label: string; icon: IconType }[] = [
   { href: "/admin/users", label: "Users", icon: UsersIcon },
+  { href: "/admin/orgs", label: "Organizations", icon: BuildingIcon },
   { href: "/admin/plugins", label: "Plugins", icon: PlugIcon },
   { href: "/admin/connectors", label: "Connectors", icon: LinkIcon },
   { href: "/admin/storage", label: "Storage", icon: ServerIcon },
@@ -402,7 +404,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             </DialogPrimitive.Portal>
           </DialogPrimitive.Root>
         </div>
-        <main className="mx-auto w-full max-w-[1160px] px-4 py-6 md:px-8 md:py-8">{children}</main>
+        <main className="mx-auto w-full max-w-[1160px] space-y-4 px-4 py-6 md:px-8 md:py-8">
+          <FrozenEntityBanner />
+          {children}
+        </main>
       </div>
     </div>
   );

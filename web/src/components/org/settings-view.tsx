@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import { OrgFreeze } from "@/components/freeze/freeze-sections";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField, Form, FormActions } from "@/components/ui/form";
@@ -284,6 +285,7 @@ export function OrgSettingsView({ org }: { org: Org }) {
           <RetentionForm orgId={org.id} />
         </Section>
       ) : null}
+      {isOwner ? <OrgFreeze orgId={org.id} name={org.name} frozen={org.frozen} /> : null}
       {isOwner ? <OrgDangerZone orgId={org.id} slug={org.slug} onDeleted={() => router.replace("/")} /> : null}
     </div>
   );

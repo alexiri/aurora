@@ -638,6 +638,208 @@
         ]
       }
     },
+    "/v1/admin/orgs": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Organizations with their freeze state (instance administrators): the operator view of the\nkill-switch. Names and slugs only, no org data.",
+        "operationId": "adminListOrgs",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "frozen",
+            "in": "query",
+            "description": "Only frozen organizations.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AdminOrg"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/orgs/{org}/freeze": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Operator kill-switch: freeze an organization (instance administrators). The org's data stays\ninaccessible to the operator; the freeze lifts only with instance-admin authority.",
+        "operationId": "adminFreezeOrg",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FreezeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreezeResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/orgs/{org}/unfreeze": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Lift an organization freeze (instance administrators).",
+        "operationId": "adminUnfreezeOrg",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreezeResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/plugins": {
       "get": {
         "tags": [
@@ -2844,6 +3046,87 @@
         ]
       }
     },
+    "/v1/agents/{agent}/freeze": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Freeze an agent (`can_own`): no turns, no gateway access, sandbox parked, schedules/webhooks/\npresences paused, state kept. Idempotent; reversible with unfreeze.",
+        "operationId": "freezeAgent",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FreezeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreezeResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/grants": {
       "get": {
         "tags": [
@@ -4752,6 +5035,67 @@
         "security": [
           {
             "session": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/unfreeze": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Unfreeze an agent (`can_own`; 403 `freeze_authority_insufficient` when a higher authority\nfroze it).",
+        "operationId": "unfreezeAgent",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreezeResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
           }
         ]
       }
@@ -9566,6 +9910,87 @@
         ]
       }
     },
+    "/v1/orgs/{org}/freeze": {
+      "post": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "Freeze an organization: every agent of every workspace (org `owner`).",
+        "operationId": "freezeOrg",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FreezeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreezeResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/orgs/{org}/governance": {
       "get": {
         "tags": [
@@ -11442,6 +11867,67 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OrgStorage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/unfreeze": {
+      "post": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "Unfreeze an organization (org `owner`; 403 `freeze_authority_insufficient` for an\ninstance-admin freeze).",
+        "operationId": "unfreezeOrg",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreezeResult"
                 }
               }
             }
@@ -15425,6 +15911,87 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/freeze": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Freeze a workspace: every agent in it (`can_own`; org owners/admins included).",
+        "operationId": "freezeWorkspace",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FreezeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreezeResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/members/{user}/offboarding": {
       "get": {
         "tags": [
@@ -16406,6 +16973,67 @@
           }
         ]
       }
+    },
+    "/v1/workspaces/{ws}/unfreeze": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Unfreeze a workspace (`can_own`; 403 `freeze_authority_insufficient` when a higher authority\nfroze it). Agents frozen on their own stay frozen.",
+        "operationId": "unfreezeWorkspace",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreezeResult"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -16633,6 +17261,42 @@
           }
         }
       },
+      "AdminOrg": {
+        "type": "object",
+        "description": "One organization in the instance-admin list (operator view: no org data).",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "frozen": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Frozen"
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
       "AdminOrgStorage": {
         "type": "object",
         "description": "Attachment bytes of one org in the instance breakdown.",
@@ -16761,6 +17425,7 @@
           "is_default",
           "proactive_messaging",
           "brief",
+          "effective_frozen",
           "created_at",
           "updated_at"
         ],
@@ -16790,12 +17455,27 @@
             "type": "string",
             "format": "date-time"
           },
+          "effective_frozen": {
+            "type": "boolean",
+            "description": "(phase 2, RFE-006) Agent ∨ workspace ∨ organization is frozen."
+          },
           "effort": {
             "type": [
               "string",
               "null"
             ],
             "description": "`low` | `medium` | `high` | `max`."
+          },
+          "frozen": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Frozen",
+                "description": "(phase 2, RFE-006) The freeze that stops this agent (its own, its workspace's or its\norganization's; the broadest wins), `level` = where it is set; `null` when not frozen."
+              }
+            ]
           },
           "handle": {
             "type": "string"
@@ -20035,6 +20715,75 @@
           }
         }
       },
+      "FreezeRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "1..500 characters, sanitized to one line."
+          }
+        },
+        "additionalProperties": false
+      },
+      "FreezeResult": {
+        "type": "object",
+        "description": "Result of a freeze or unfreeze call.",
+        "required": [
+          "effective_frozen"
+        ],
+        "properties": {
+          "effective_frozen": {
+            "type": "boolean",
+            "description": "Whether the resource is effectively frozen after the call (an agent: agent ∨ workspace ∨\norg flag; a workspace: workspace ∨ org flag)."
+          },
+          "frozen": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Frozen",
+                "description": "The flag of the scope the call acted on: set after `freeze`, `null` after `unfreeze`."
+              }
+            ]
+          }
+        }
+      },
+      "Frozen": {
+        "type": "object",
+        "description": "A freeze record (phase 2, RFE-006).",
+        "required": [
+          "at",
+          "by_label",
+          "reason",
+          "authority",
+          "level"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "authority": {
+            "type": "string",
+            "description": "Highest authority of the freezer: `workspace_owner` | `org_admin` | `instance_admin`.\nLifting needs at least this authority."
+          },
+          "by_label": {
+            "type": "string",
+            "description": "Who froze it (their e-mail at read time)."
+          },
+          "level": {
+            "type": "string",
+            "description": "Where the flag is set: `agent` | `workspace` | `org`."
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
       "GenerationStatus": {
         "type": "string",
         "enum": [
@@ -21570,6 +22319,17 @@
           "external_id": {
             "type": "string"
           },
+          "frozen": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Frozen",
+                "description": "(phase 2, RFE-006) The organization's freeze; `null` when not frozen."
+              }
+            ]
+          },
           "id": {
             "type": "string",
             "format": "uuid"
@@ -22127,6 +22887,59 @@
           }
         }
       },
+      "Page_AdminOrg": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One organization in the instance-admin list (operator view: no org data).",
+              "required": [
+                "id",
+                "slug",
+                "name",
+                "created_at"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "frozen": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Frozen"
+                    }
+                  ]
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "slug": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_AdminUser": {
         "type": "object",
         "required": [
@@ -22190,6 +23003,7 @@
                 "is_default",
                 "proactive_messaging",
                 "brief",
+                "effective_frozen",
                 "created_at",
                 "updated_at"
               ],
@@ -22219,12 +23033,27 @@
                   "type": "string",
                   "format": "date-time"
                 },
+                "effective_frozen": {
+                  "type": "boolean",
+                  "description": "(phase 2, RFE-006) Agent ∨ workspace ∨ organization is frozen."
+                },
                 "effort": {
                   "type": [
                     "string",
                     "null"
                   ],
                   "description": "`low` | `medium` | `high` | `max`."
+                },
+                "frozen": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Frozen",
+                      "description": "(phase 2, RFE-006) The freeze that stops this agent (its own, its workspace's or its\norganization's; the broadest wins), `level` = where it is set; `null` when not frozen."
+                    }
+                  ]
                 },
                 "handle": {
                   "type": "string"
@@ -23372,6 +24201,17 @@
                 },
                 "external_id": {
                   "type": "string"
+                },
+                "frozen": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Frozen",
+                      "description": "(phase 2, RFE-006) The organization's freeze; `null` when not frozen."
+                    }
+                  ]
                 },
                 "id": {
                   "type": "string",
@@ -24714,6 +25554,17 @@
                     {
                       "$ref": "#/components/schemas/ByoPostureView",
                       "description": "(phase 2, RFE-025) The effective BYO posture and the layer that decided it; `null` in\nlist and create responses."
+                    }
+                  ]
+                },
+                "frozen": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Frozen",
+                      "description": "(phase 2, RFE-006) The freeze that stops this workspace's agents (its own or its\norganization's; the broadest wins), `level` = where it is set; `null` when not frozen."
                     }
                   ]
                 },
@@ -29094,6 +29945,17 @@
               {
                 "$ref": "#/components/schemas/ByoPostureView",
                 "description": "(phase 2, RFE-025) The effective BYO posture and the layer that decided it; `null` in\nlist and create responses."
+              }
+            ]
+          },
+          "frozen": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Frozen",
+                "description": "(phase 2, RFE-006) The freeze that stops this workspace's agents (its own or its\norganization's; the broadest wins), `level` = where it is set; `null` when not frozen."
               }
             ]
           },

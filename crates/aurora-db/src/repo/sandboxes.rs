@@ -37,7 +37,10 @@ fn start_eligible() -> String {
                     s.start_failures < 3
                     OR coalesce(s.last_engaged_at, '-infinity'::timestamptz) > s.updated_at)))
          AND ({ACTIVE_TURN} OR {DUE_SCHEDULE})
-         AND coalesce((SELECT capabilities->'harnesses' FROM runners WHERE id = $1) ? coalesce(a.harness, $3), false)"
+         AND NOT {frozen}
+         AND coalesce((SELECT capabilities->'harnesses' FROM runners WHERE id = $1) ? coalesce(a.harness, $3), false)",
+        // (phase 2, RFE-006) Due-work arm 3 skips effectively frozen agents.
+        frozen = super::freeze::frozen_agent_sql("a.id"),
     )
 }
 
@@ -111,6 +114,7 @@ pub async fn claim_stops(
            SELECT s.id,
              CASE
                WHEN s.state = 'stopping' THEN coalesce(s.stop_reason, 'idle')
+               WHEN {frozen} THEN 'frozen'
                WHEN s.restart_requested_at IS NOT NULL THEN 'restart'
                WHEN s.stop_requested_at IS NOT NULL THEN coalesce(s.stop_reason, 'idle')
                WHEN {ACTIVE_TURN} THEN NULL
@@ -128,7 +132,9 @@ pub async fn claim_stops(
          UPDATE sandboxes s SET state = 'stopping', stop_reason = p.reason,
              lifecycle_lease_until = now() + make_interval(secs => $6), updated_at = now()
          FROM pick p WHERE s.id = p.id AND s.state IN ('running','stopping')
-         RETURNING s.id AS sandbox_id, s.boot_id, p.reason"
+         RETURNING s.id AS sandbox_id, s.boot_id, p.reason",
+        // (phase 2, RFE-006) A frozen agent's sandbox is parked regardless of keep-awake reasons.
+        frozen = super::freeze::frozen_agent_sql("s.agent_id"),
     );
     Ok(sqlx::query_as(&sql)
         .bind(runner)

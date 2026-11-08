@@ -87,6 +87,8 @@ pub async fn arms(
     items: &mut Vec<WorkItem>,
     after: &mut After,
 ) -> Result<(), ApiError> {
+    // (phase 2, RFE-006) Turns of effectively frozen agents end before anything is dispatched.
+    crate::domains::freeze::service::sweep_frozen_turns(tx, &mut after.flush).await?;
     arm4_signals(tx, runner, replica, items).await?;
     arm4b_purges(tx, runner, replica, items).await?;
     arm5_home_sync(s, tx, runner, replica, items).await?;

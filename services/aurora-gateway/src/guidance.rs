@@ -13,6 +13,17 @@ pub fn proxy_auth_required() -> ApiError {
     )
 }
 
+/// (phase 2, RFE-006) 403 `frozen`: the credential is fine, the agent (or its workspace or
+/// organization) is paused by an administrator. Not 407: the client must not re-authenticate.
+pub fn frozen(level: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "frozen",
+        "This agent is paused by an administrator. Its credentials are intact and work again as soon as it is unfrozen.",
+    )
+    .with_details(json!({ "level": level }))
+}
+
 pub fn not_a_proxy_request() -> ApiError {
     ApiError::new(
         StatusCode::BAD_REQUEST,

@@ -75,10 +75,23 @@ impl Proxy {
                 let live = self.track();
                 tokio::spawn(async move {
                     let _live = live;
+                    // (RFE-006) The open-lane tunnel dies when its agent is frozen (or its BYO
+                    // admission tightens): the registry guard is held for the tunnel's life.
+                    let guard = guard;
+                    let mut kill = guard.as_ref().map(crate::byo::TunnelGuard::killed);
                     let Ok(up) = on_upgrade.await else { return };
                     let started = Instant::now();
-                    let (bytes_up, bytes_down) =
-                        bridge(TokioIo::new(up), upstream, None, this.stop.subscribe()).await;
+                    let pipe = bridge(TokioIo::new(up), upstream, None, this.stop.subscribe());
+                    let (bytes_up, bytes_down) = match kill.as_mut() {
+                        Some(k) => {
+                            tokio::select! {
+                                r = pipe => r,
+                                () = crate::byo::killed(k) => (0, 0),
+                            }
+                        }
+                        None => pipe.await,
+                    };
+                    drop(guard);
                     this.handler.tunnel_closed(TunnelReport {
                         identity: t.identity,
                         host: t.host,

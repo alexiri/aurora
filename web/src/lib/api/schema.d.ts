@@ -142,6 +142,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/orgs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Organizations with their freeze state (instance administrators): the operator view of the
+         *     kill-switch. Names and slugs only, no org data.
+         */
+        get: operations["adminListOrgs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/orgs/{org}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Operator kill-switch: freeze an organization (instance administrators). The org's data stays
+         *     inaccessible to the operator; the freeze lifts only with instance-admin authority.
+         */
+        post: operations["adminFreezeOrg"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/orgs/{org}/unfreeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Lift an organization freeze (instance administrators). */
+        post: operations["adminUnfreezeOrg"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/plugins": {
         parameters: {
             query?: never;
@@ -579,6 +636,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Freeze an agent (`can_own`): no turns, no gateway access, sandbox parked, schedules/webhooks/
+         *     presences paused, state kept. Idempotent; reversible with unfreeze.
+         */
+        post: operations["freezeAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/grants": {
         parameters: {
             query?: never;
@@ -941,6 +1018,26 @@ export interface paths {
         put?: never;
         /** Regenerate the BYO agent token (revokes the previous token and context credentials). */
         post: operations["regenerateAgentToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/unfreeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unfreeze an agent (`can_own`; 403 `freeze_authority_insufficient` when a higher authority
+         *     froze it).
+         */
+        post: operations["unfreezeAgent"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1992,6 +2089,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{org}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Freeze an organization: every agent of every workspace (org `owner`). */
+        post: operations["freezeOrg"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/governance": {
         parameters: {
             query?: never;
@@ -2291,6 +2405,26 @@ export interface paths {
         get: operations["getOrgStorage"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/unfreeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unfreeze an organization (org `owner`; 403 `freeze_authority_insufficient` for an
+         *     instance-admin freeze).
+         */
+        post: operations["unfreezeOrg"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2993,6 +3127,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Freeze a workspace: every agent in it (`can_own`; org owners/admins included). */
+        post: operations["freezeWorkspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/members/{user}/offboarding": {
         parameters: {
             query?: never;
@@ -3172,6 +3323,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/unfreeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unfreeze a workspace (`can_own`; 403 `freeze_authority_insufficient` when a higher authority
+         *     froze it). Agents frozen on their own stay frozen.
+         */
+        post: operations["unfreezeWorkspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3244,6 +3415,16 @@ export interface components {
         ActionDecisionBody: {
             decision: components["schemas"]["ActionDecision"];
         };
+        /** @description One organization in the instance-admin list (operator view: no org data). */
+        AdminOrg: {
+            /** Format: date-time */
+            created_at: string;
+            frozen?: null | components["schemas"]["Frozen"];
+            /** Format: uuid */
+            id: string;
+            name: string;
+            slug: string;
+        };
         /** @description Attachment bytes of one org in the instance breakdown. */
         AdminOrgStorage: {
             /** Format: int64 */
@@ -3296,8 +3477,11 @@ export interface components {
             byo?: null | components["schemas"]["ByoView"];
             /** Format: date-time */
             created_at: string;
+            /** @description (phase 2, RFE-006) Agent ∨ workspace ∨ organization is frozen. */
+            effective_frozen: boolean;
             /** @description `low` | `medium` | `high` | `max`. */
             effort?: string | null;
+            frozen?: null | components["schemas"]["Frozen"];
             handle: string;
             harness?: string | null;
             /** Format: uuid */
@@ -4217,6 +4401,34 @@ export interface components {
             /** @description `text` | `secret` | `select` | `file` | `json_file`. */
             type: string;
         };
+        FreezeRequest: {
+            /** @description 1..500 characters, sanitized to one line. */
+            reason: string;
+        };
+        /** @description Result of a freeze or unfreeze call. */
+        FreezeResult: {
+            /**
+             * @description Whether the resource is effectively frozen after the call (an agent: agent ∨ workspace ∨
+             *     org flag; a workspace: workspace ∨ org flag).
+             */
+            effective_frozen: boolean;
+            frozen?: null | components["schemas"]["Frozen"];
+        };
+        /** @description A freeze record (phase 2, RFE-006). */
+        Frozen: {
+            /** Format: date-time */
+            at: string;
+            /**
+             * @description Highest authority of the freezer: `workspace_owner` | `org_admin` | `instance_admin`.
+             *     Lifting needs at least this authority.
+             */
+            authority: string;
+            /** @description Who froze it (their e-mail at read time). */
+            by_label: string;
+            /** @description Where the flag is set: `agent` | `workspace` | `org`. */
+            level: string;
+            reason: string;
+        };
         /** @enum {string} */
         GenerationStatus: "draft" | "published" | "superseded";
         GovernanceDocument: {
@@ -4624,6 +4836,7 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             external_id: string;
+            frozen?: null | components["schemas"]["Frozen"];
             /** Format: uuid */
             id: string;
             my_role: components["schemas"]["OrgRole"];
@@ -4834,6 +5047,18 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_AdminOrg: {
+            items: {
+                /** Format: date-time */
+                created_at: string;
+                frozen?: null | components["schemas"]["Frozen"];
+                /** Format: uuid */
+                id: string;
+                name: string;
+                slug: string;
+            }[];
+            next_cursor?: string | null;
+        };
         Page_AdminUser: {
             items: (components["schemas"]["User"] & {
                 /** Format: date-time */
@@ -4851,8 +5076,11 @@ export interface components {
                 byo?: null | components["schemas"]["ByoView"];
                 /** Format: date-time */
                 created_at: string;
+                /** @description (phase 2, RFE-006) Agent ∨ workspace ∨ organization is frozen. */
+                effective_frozen: boolean;
                 /** @description `low` | `medium` | `high` | `max`. */
                 effort?: string | null;
+                frozen?: null | components["schemas"]["Frozen"];
                 handle: string;
                 harness?: string | null;
                 /** Format: uuid */
@@ -5172,6 +5400,7 @@ export interface components {
                 /** Format: date-time */
                 created_at: string;
                 external_id: string;
+                frozen?: null | components["schemas"]["Frozen"];
                 /** Format: uuid */
                 id: string;
                 my_role: components["schemas"]["OrgRole"];
@@ -5551,6 +5780,7 @@ export interface components {
                 /** Format: date-time */
                 created_at: string;
                 effective_byo_posture?: null | components["schemas"]["ByoPostureView"];
+                frozen?: null | components["schemas"]["Frozen"];
                 /** Format: uuid */
                 id: string;
                 memory_language: string;
@@ -6812,6 +7042,7 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             effective_byo_posture?: null | components["schemas"]["ByoPostureView"];
+            frozen?: null | components["schemas"]["Frozen"];
             /** Format: uuid */
             id: string;
             memory_language: string;
@@ -7273,6 +7504,127 @@ export interface operations {
             };
             /** @description conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListOrgs: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                cursor?: string;
+                /** @description Only frozen organizations. */
+                frozen?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AdminOrg"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminFreezeOrg: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FreezeRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreezeResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminUnfreezeOrg: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreezeResult"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8732,6 +9084,56 @@ export interface operations {
             };
         };
     };
+    freezeAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FreezeRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreezeResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listAgentGrants: {
         parameters: {
             query?: never;
@@ -9868,6 +10270,44 @@ export interface operations {
                 };
             };
             /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    unfreezeAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreezeResult"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -13022,6 +13462,56 @@ export interface operations {
             };
         };
     };
+    freezeOrg: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FreezeRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreezeResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getOrgGovernance: {
         parameters: {
             query?: never;
@@ -14200,6 +14690,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgStorage"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    unfreezeOrg: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreezeResult"];
                 };
             };
             403: {
@@ -16615,6 +17143,56 @@ export interface operations {
             };
         };
     };
+    freezeWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FreezeRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreezeResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     workspaceMemberOffboarding: {
         parameters: {
             query?: never;
@@ -17235,6 +17813,44 @@ export interface operations {
             };
             /** @description secret_store_unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    unfreezeWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreezeResult"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

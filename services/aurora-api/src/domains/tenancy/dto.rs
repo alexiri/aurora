@@ -103,6 +103,8 @@ pub struct Org {
     pub app_posture: String,
     pub settings: OrgSettings,
     pub my_role: OrgRole,
+    /// (phase 2, RFE-006) The organization's freeze; `null` when not frozen.
+    pub frozen: Option<crate::domains::freeze::dto::Frozen>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -140,6 +142,7 @@ impl From<OrgRow> for Org {
             app_posture: o.app_posture,
             settings: OrgSettings::from_json(&o.settings),
             my_role: parse_org_role(&o.my_role),
+            frozen: None,
             created_at: o.created_at,
         }
     }
@@ -160,6 +163,9 @@ pub struct Workspace {
     pub effective_byo_posture: Option<crate::domains::agents::byo::ByoPostureView>,
     /// Org owner/admin => `owner`.
     pub my_role: WorkspaceRole,
+    /// (phase 2, RFE-006) The freeze that stops this workspace's agents (its own or its
+    /// organization's; the broadest wins), `level` = where it is set; `null` when not frozen.
+    pub frozen: Option<crate::domains::freeze::dto::Frozen>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -176,6 +182,7 @@ impl Workspace {
             byo_posture: w.byo_posture,
             effective_byo_posture: None,
             my_role,
+            frozen: None,
             created_at: w.created_at,
             updated_at: w.updated_at,
         }

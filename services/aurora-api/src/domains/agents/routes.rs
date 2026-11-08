@@ -55,7 +55,7 @@ async fn list_agents(
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     let refs: Vec<&agents::AgentRow> = page.items.iter().collect();
     let views = super::byo::views(&state, a.org_id, ws, &refs).await?;
-    let items = page
+    let mut items: Vec<Agent> = page
         .items
         .into_iter()
         .zip(views)
@@ -65,6 +65,7 @@ async fn list_agents(
             a
         })
         .collect();
+    crate::domains::freeze::service::decorate_agents(&state, &mut items).await?;
     Ok(Json(Page {
         items,
         next_cursor: page.next_cursor,
@@ -108,6 +109,7 @@ async fn with_byo(state: &AppState, row: agents::AgentRow) -> Result<Agent, ApiE
     };
     let mut a = Agent::from(row);
     a.byo = byo;
+    crate::domains::freeze::service::decorate_agents(state, std::slice::from_mut(&mut a)).await?;
     Ok(a)
 }
 
@@ -364,6 +366,7 @@ async fn self_container_config(
     let row = agents::get(&state.pool, agent.agent_id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    crate::domains::freeze::service::ensure_agent_active_pool(&state, row.id).await?;
     let eff = super::byo::require_not_disabled(&state, &row).await?;
     Ok(Json(
         service::container_config(&state, Some(tok), Some(&eff)).await?,
@@ -395,6 +398,7 @@ async fn create_context_credential(
     let row = agents::get(&state.pool, agent.agent_id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    crate::domains::freeze::service::ensure_agent_active_pool(&state, row.id).await?;
     super::byo::require_not_disabled(&state, &row).await?;
     let out = service::mint_context(&state, agent.agent_id, req).await?;
     audit::record(

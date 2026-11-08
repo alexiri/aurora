@@ -86,6 +86,10 @@ External identities linked to a user (OIDC).
 | governance_revision | bigint not null default 0 | optimistic concurrency for governance edits |
 | external_id | text unique not null | 32 random hex chars at creation; immutable; exposed to plugins as context variable `org_external_id` (e.g. AWS external id) |
 | settings | jsonb not null default `{}` | `{ "max_agents"?: int, "max_members"?: int, "sandbox_overrides"?: ResourceProfile }` |
+| frozen_at | timestamptz null | (phase 2, RFE-006) set ⇒ frozen at this level (`04 §Freeze`); effective freeze of an agent = agent ∨ workspace ∨ org |
+| frozen_by_user_id | uuid null FK→users (set null) | (phase 2, RFE-006) |
+| frozen_reason | text null | (phase 2, RFE-006) 1..500 chars, sanitized; required when `frozen_at` is set |
+| frozen_authority | text null CHECK in (`workspace_owner`,`org_admin`,`instance_admin`) | (phase 2, RFE-006) highest authority of the freezer; lifting needs at least this. A CHECK keeps the four `frozen_*` columns all null or (all but `frozen_by_user_id`) set |
 
 ### `org_members`
 | Column | Type | Notes |
@@ -125,6 +129,10 @@ owner cannot be demoted or removed).
 | memory_language | text not null default `english` | Postgres text-search configuration name or `simple`; validated against `pg_ts_config` |
 | home_sync_generation | bigint not null default 0 | bumped when a workspace setting affects projections |
 | byo_posture | text null CHECK in (`enabled`,`owners_only`,`disabled`) | (phase 2, RFE-025) null = inherit; can only tighten (`08 §11.9`) |
+| frozen_at | timestamptz null | (phase 2, RFE-006) as on `organizations` |
+| frozen_by_user_id | uuid null FK→users (set null) | (phase 2, RFE-006) |
+| frozen_reason | text null | (phase 2, RFE-006) |
+| frozen_authority | text null CHECK in (`workspace_owner`,`org_admin`,`instance_admin`) | (phase 2, RFE-006) |
 
 ### `workspace_access`
 | Column | Type | Notes |
@@ -524,6 +532,10 @@ Reserved name; phase 0 rate limiting is in-memory per gateway replica (`07`).
 | created_by | uuid null FK→users (set null) | |
 | byo_source_cidrs | text[] null | (phase 2, RFE-025) BYO only (CHECK `kind = 'byo'` when set); 1–32 CIDR strings (`cidr` syntax, no `/0`); null = inherit org/instance default list (`08 §11.9`). Validated by the API; never empty |
 | byo_require_context | bool not null default false | (phase 2, RFE-025) BYO only: credentialed requests must use a context credential (`08 §11.9`) |
+| frozen_at | timestamptz null | (phase 2, RFE-006) as on `organizations` |
+| frozen_by_user_id | uuid null FK→users (set null) | (phase 2, RFE-006) |
+| frozen_reason | text null | (phase 2, RFE-006) |
+| frozen_authority | text null CHECK in (`workspace_owner`,`org_admin`,`instance_admin`) | (phase 2, RFE-006) |
 
 ### `gateway_credentials`
 All tokens the gateway accepts.
@@ -741,7 +753,7 @@ Phase 0 blob backend (`postgres`).
 | next_fire_at | timestamptz null | |
 | fire_lease_until | timestamptz null | claim clock |
 | last_fire_at | timestamptz null | |
-| last_outcome | text null CHECK in (`ok`,`failed`,`skipped_busy`,`gated_quiet`) | |
+| last_outcome | text null CHECK in (`ok`,`failed`,`skipped_busy`,`gated_quiet`,`skipped_frozen`) | `skipped_frozen` (phase 2, RFE-006): fire skipped because the agent is effectively frozen (`10 §Schedules`); `schedule_runs.outcome` (open text) records `skipped_frozen` too |
 | anchor | text not null default `creator` CHECK in (`creator`,`workspace`) | fire-time authority: the creator's access (`creator`) or "an active owner exists" (`workspace`); `creator_user_id` stays as provenance (`04 §Fire-time authority`) |
 
 ### `schedule_runs`
@@ -852,7 +864,7 @@ Phase 0 blob backend (`postgres`).
 | home_ref | text null | |
 | bootstrap_token_hash | bytea null | `aup_`; single use |
 | bootstrap_used_at | timestamptz null | |
-| stop_reason | text null CHECK in (`idle`,`cap`,`evict`,`restart`,`delete`,`failure`) | |
+| stop_reason | text null CHECK in (`idle`,`cap`,`evict`,`restart`,`delete`,`failure`,`frozen`) | `frozen` (phase 2, RFE-006): agent effectively frozen (`11`) |
 | stop_requested_at | timestamptz null | |
 | restart_requested_at | timestamptz null | |
 | last_engaged_at | timestamptz null | person/turn engagement clock |
@@ -1157,26 +1169,6 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | (whole table) | — | unused from phase 1 (no e-mail verification or password reset, RFE-004); existing rows are ignored and the table is dropped by the contract migration in a later release | 1 → drop later (RFE-004) |
-
-#### `agents`, `workspaces`, `organizations` (freeze)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| frozen_at | timestamptz null | set ⇒ frozen at this level (`04 §Freeze`); effective freeze of an agent = agent ∨ workspace ∨ org | 2 (RFE-006) |
-| frozen_by_user_id | uuid null FK→users (set null) | | 2 (RFE-006) |
-| frozen_reason | text null | 1..500 chars, sanitized; required when `frozen_at` is set | 2 (RFE-006) |
-| frozen_authority | text null CHECK in (`workspace_owner`,`org_admin`,`instance_admin`) | highest authority of the freezer; lifting needs at least this | 2 (RFE-006) |
-
-(The same four columns on each of the three tables; a CHECK keeps them all null or all set.)
-
-#### `sandboxes`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| stop_reason | CHECK gains `frozen` | agent effectively frozen (`11`) | 2 (RFE-006) |
-
-#### `schedules`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| last_outcome | CHECK gains `skipped_frozen` | fire skipped because the agent is effectively frozen (`10 §Schedules`); `schedule_runs.outcome` (open text) records `skipped_frozen` too | 2 (RFE-006) |
 
 #### `audit_log`
 | Planned column | Type | Notes | Phase |

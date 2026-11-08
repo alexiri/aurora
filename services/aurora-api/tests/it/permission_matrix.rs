@@ -240,6 +240,10 @@ const EXEMPT: &[(&str, &str, &str)] = &[
 /// Route table. `p` is the OpenAPI path template (placeholder names are normalized).
 const ROWS: &[Row] = &[
     // ---- instance admin ----
+    // (phase 2, RFE-006) operator kill-switch for organizations.
+    r("GET", "/v1/admin/orgs", G::Inst, false),
+    r("POST", "/v1/admin/orgs/{org}/freeze", G::Inst, false),
+    r("POST", "/v1/admin/orgs/{org}/unfreeze", G::Inst, false),
     r("GET", "/v1/admin/host-claims", G::Inst, false),
     r("PUT", "/v1/admin/host-claims/{group_key}", G::Inst, false),
     r("GET", "/v1/admin/oauth-clients", G::Inst, false),
@@ -298,6 +302,13 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/orgs/{org}", G::Member, false),
     r("PATCH", "/v1/orgs/{org}", G::Owner, false),
     r("DELETE", "/v1/orgs/{org}", G::Owner, false),
+    // (phase 2, RFE-006) freeze / unfreeze: org owner; workspace and agent: `can_own`.
+    r("POST", "/v1/orgs/{org}/freeze", G::Owner, false),
+    r("POST", "/v1/orgs/{org}/unfreeze", G::Owner, false),
+    r("POST", "/v1/workspaces/{ws}/freeze", G::WsOwn, false),
+    r("POST", "/v1/workspaces/{ws}/unfreeze", G::WsOwn, false),
+    r("POST", "/v1/agents/{agent}/freeze", G::WsOwn, false),
+    r("POST", "/v1/agents/{agent}/unfreeze", G::WsOwn, false),
     r(
         "GET",
         "/v1/orgs/{org}/governance/effective",
@@ -896,6 +907,13 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ) => json!({"package_id": "x", "client_key": "x", "fields": {}}),
         // wrong confirmation text: an authorized caller gets a validation error, nothing is deleted
         ("DELETE", "/v1/orgs/{org}" | "/v1/workspaces/{ws}") => json!({"confirm": "not-the-slug"}),
+        (
+            "POST",
+            "/v1/orgs/{org}/freeze"
+            | "/v1/workspaces/{ws}/freeze"
+            | "/v1/agents/{agent}/freeze"
+            | "/v1/admin/orgs/{org}/freeze",
+        ) => json!({"reason": "matrix"}),
         ("POST", "/v1/orgs") => json!({"name": "Matrix second org"}),
         ("POST", "/v1/admin/runners") => json!({"name": "matrix-runner"}),
         ("POST", "/v1/admin/trusted-keys") => {
@@ -1117,6 +1135,8 @@ fn isolated(row: &Row) -> bool {
         // a successful create makes the creator an owner of the new workspace, which changes
         // what they may read at org level (I-27 amendment) for every later row
         || (row.m == "POST" && row.p == "/v1/orgs/{org}/workspaces")
+        // a successful freeze changes later principals' outcomes (and unfreeze needs authority)
+        || (row.m == "POST" && (row.p.ends_with("/freeze") || row.p.ends_with("/unfreeze")))
 }
 
 #[tokio::test]

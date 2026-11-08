@@ -3,6 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { AgentFreeze } from "@/components/freeze/freeze-sections";
 import { ErrorState, Loading } from "@/components/states";
 import { Avatar } from "@/components/agent-avatar";
 import { Badge } from "@/components/ui/badge";
@@ -90,6 +91,15 @@ export function AgentPage() {
         }
         className="mb-2"
       />
+      {workspace.data ? (
+        <AgentFreeze
+          agentId={agent.id}
+          name={agent.name}
+          orgId={workspace.data.org_id}
+          frozen={agent.frozen}
+          canOwn={workspace.data.my_role === "owner"}
+        />
+      ) : null}
       <Tabs
         items={tabs.map((t) => ({ value: t.id, label: t.label }))}
         value={tab}

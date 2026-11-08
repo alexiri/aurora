@@ -23,6 +23,7 @@ pub mod conversations;
 pub mod credentials;
 pub mod derived_rules;
 pub mod dm_defaults;
+pub mod freeze;
 pub mod gateway;
 pub mod governance;
 pub mod grants;
