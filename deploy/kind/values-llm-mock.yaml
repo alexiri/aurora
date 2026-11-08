@@ -5,6 +5,10 @@
 # SEC-09 / docs/06: the gateway refuses private destinations. Only the Service's fixed ClusterIP /32
 # is opened (not the cluster), and the gateway NetworkPolicy gets one extra egress rule to that namespace.
 config:
+  # P2-E2E-1 / FU-OPS-017a: hosted agents run the REAL claude-code harness against the mock. The image is the dev
+  # sandbox plus the pinned Claude Code CLI (scripts/e2e/llm.Containerfile), built and loaded by kind-dev.sh.
+  runner:
+    image: localhost/aurora-dev/aurora-sandbox-llm:dev
   gateway:
     allowed_private: ["10.96.100.40/32"]
   llm:
