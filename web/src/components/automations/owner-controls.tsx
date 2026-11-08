@@ -4,6 +4,8 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
+import { CheckboxField } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
 import { useAccess } from "@/lib/api/account";
 import { useReassignCreator, type Offboarding, type ReassignTarget } from "@/lib/api/automations";
 import { errorMessage } from "@/lib/api/errors";
@@ -40,9 +42,10 @@ export function AnchorSwitch({
 }) {
   return (
     <div className="text-sm">
-      <label className="flex items-center gap-2">
+      <label className="flex min-h-9 items-center gap-2.5 font-medium text-ink">
         <input
           type="checkbox"
+          className="size-4 shrink-0 accent-accent"
           aria-label={`Anchor ${name} to workspace`}
           checked={anchor === "workspace"}
           disabled={busy}
@@ -51,7 +54,7 @@ export function AnchorSwitch({
         Anchor to workspace
       </label>
       {anchor !== "workspace" ? (
-        <p className="ml-6 text-xs text-ink-2">
+        <p className="ml-[1.625rem] text-xs text-muted">
           The item will outlive any single member: it keeps running as long as the workspace has an active owner.
         </p>
       ) : null}
@@ -87,7 +90,7 @@ export function ReassignPanel({
   return (
     <form
       aria-label={`Reassign ${name}`}
-      className="space-y-2 rounded-control border border-line bg-subtle p-3"
+      className="space-y-3 rounded-card border border-line bg-subtle p-3 sm:p-4"
       onSubmit={(e) => {
         e.preventDefault();
         if (!user) return;
@@ -109,17 +112,19 @@ export function ReassignPanel({
         ))}
       </select>
       {disabledReason === "authorization" ? (
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={reEnable} onChange={(e) => setReEnable(e.target.checked)} />
-          Re-enable it (it was disabled because its owner lost access)
-        </label>
+        <CheckboxField
+          id={`reassign-re-enable-${id}`}
+          label="Re-enable it (it was disabled because its owner lost access)"
+          checked={reEnable}
+          onChange={setReEnable}
+        />
       ) : null}
       {reassign.error ? (
-        <p role="alert" className="text-sm text-danger-ink">
+        <Notice tone="danger" role="alert">
           {errorMessage(reassign.error)}
-        </p>
+        </Notice>
       ) : null}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button type="submit" size="sm" disabled={!user || reassign.isPending}>
           Reassign
         </Button>

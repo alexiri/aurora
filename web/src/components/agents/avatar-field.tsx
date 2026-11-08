@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 
 import { AgentAvatar } from "@/components/agent-avatar";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
 import {
   avatarErrorMessage,
   avatarProblem,
@@ -43,9 +44,8 @@ export function AvatarField({ agent, wsId }: { agent: Agent; wsId: string }) {
   }
 
   return (
-    <div className="space-y-2">
-      <span className="block text-sm font-medium">Avatar</span>
-      <div className="flex items-center gap-4">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-4">
         <AgentAvatar name={agent.name} url={preview ?? agent.avatar_url} size={64} />
         <div className="flex flex-wrap items-center gap-2">
           <input
@@ -58,12 +58,13 @@ export function AvatarField({ agent, wsId }: { agent: Agent; wsId: string }) {
             disabled={busy}
             onChange={(e) => void onPick(e.target.files?.[0])}
           />
-          <Button type="button" disabled={busy} onClick={() => input.current?.click()}>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => input.current?.click()}>
             {upload.isPending ? "Uploading…" : agent.avatar_url ? "Change avatar" : "Upload avatar"}
           </Button>
           {agent.avatar_url ? (
             <Button
               type="button"
+              variant="outline"
               disabled={busy}
               onClick={() => {
                 setProblem("");
@@ -78,9 +79,9 @@ export function AvatarField({ agent, wsId }: { agent: Agent; wsId: string }) {
       </div>
       <p className="text-xs text-muted">PNG, JPEG or WebP, up to 512 KiB. It is cropped to a square and resized to 256×256.</p>
       {problem || serverError ? (
-        <p role="alert" className="text-sm text-danger-ink">
+        <Notice tone="danger" role="alert">
           {problem || avatarErrorMessage(serverError)}
-        </p>
+        </Notice>
       ) : null}
     </div>
   );

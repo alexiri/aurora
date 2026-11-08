@@ -8,6 +8,7 @@ import { Avatar } from "@/components/agent-avatar";
 import { Markdown } from "@/components/apps/markdown";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
 import { PaperclipIcon, SendIcon } from "@/components/ui/icons";
 import { cn } from "@/lib/utils";
 import { useRetention } from "@/lib/api/org";
@@ -305,27 +306,29 @@ export function ChatTab({ agentId, wsId, base, orgId, agent }: { agentId: string
       "block min-h-9 w-full rounded-control px-2.5 py-1.5 text-left",
       active ? "bg-subtle font-semibold text-ink" : "text-ink-2 hover:bg-subtle",
     );
-  const kindChip = "mr-1 rounded-full border border-line-strong px-1.5 text-xs text-ink-2";
+  const kindChip = "mr-1.5 inline-flex rounded-full bg-subtle px-1.5 text-[11px] font-semibold uppercase leading-4 tracking-[0.06em] text-ink-2";
   return (
     <div className="space-y-3">
       {days ? (
-        <p role="note" className="rounded-control bg-subtle p-2 text-xs text-ink-2">
+        <Notice role="note" className="text-xs">
           Your organization deletes conversations after {days} days without activity.
-        </p>
+        </Notice>
       ) : null}
     <div className="grid gap-4 md:grid-cols-[14rem_1fr]">
       <nav aria-label="Conversations" className="min-w-0 space-y-1 text-sm">
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           aria-pressed={showArchived}
           onClick={() => {
             setShowArchived((v) => !v);
             setPicked(null);
           }}
-          className="block min-h-9 w-full rounded-control border border-line-strong bg-surface px-2.5 py-1.5 text-left text-xs text-ink hover:bg-subtle"
+          className="mb-1 w-full justify-start text-xs"
         >
           {showArchived ? "Back to conversations" : "Archived"}
-        </button>
+        </Button>
         {showArchived && archivedItems.length === 0 ? <p className="px-2 text-xs text-muted">No archived conversations.</p> : null}
         {archivedItems.map((c) => (
           <button key={c.id} type="button" onClick={() => setPicked(c.id)} aria-current={picked === c.id} className={convBtn(picked === c.id)}>
@@ -466,15 +469,15 @@ export function ChatPane({
       <section aria-label="Chat" className="space-y-3">
         {onGone ? <ConversationActions agentId={agentId} convId={convId} archived={archived} onGone={onGone} /> : null}
         {ownDirect || direct ? (
-          <p role="note" className="rounded-control bg-subtle p-2 text-xs text-ink-2">
+          <Notice role="note" className="p-2 text-xs">
             Only you and workspace owners can see this conversation.
-          </p>
+          </Notice>
         ) : null}
         {ownerView !== null ? (
-          <p role="note" className="rounded-control border border-pending-line bg-pending-panel p-2 text-xs text-pending-ink">
+          <Notice tone="pending" role="note" className="p-2 text-xs">
             This is {ownerView || "another member"}&apos;s direct conversation. You can read it because you own this workspace; your
             access is recorded in the audit log. You can stop its turns but cannot write in it.
-          </p>
+          </Notice>
         ) : null}
         {loading ? <Loading /> : null}
         {error ? <ErrorState error={error} /> : null}

@@ -3,8 +3,9 @@
 import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
 import { useCreateAgent } from "@/lib/api/agents";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { useInstance, useWorkspace } from "@/lib/api/queries";
@@ -73,18 +74,20 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
 
   return (
     <>
-      <Dialog
+      <Button onClick={() => setOpen(true)}>New agent</Button>
+      <FormDialog
         open={open}
         onOpenChange={(o) => {
           setOpen(o);
           if (!o) reset();
         }}
+        title="New agent"
+        submitLabel={create.isPending ? "Creating…" : "Create agent"}
+        busy={create.isPending}
+        submitDisabled={byoBlocked !== null && !hostedAllowed}
+        onSubmit={(e) => void submit(e)}
       >
-        <DialogTrigger asChild>
-          <Button>New agent</Button>
-        </DialogTrigger>
-        <DialogContent title="New agent">
-          <form onSubmit={(e) => void submit(e)} noValidate className="space-y-3">
+        <div className="space-y-4">
             <Field id="agent-name" label="Name" error={clientErr.name || fe.name}>
               <input id="agent-name" className={inputClass} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
             </Field>
@@ -110,24 +113,18 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
               </select>
             </Field>
             {byoBlocked ? (
-              <p role="status" className="text-sm text-muted">
-                {byoBlocked}.
-              </p>
+              <Notice role="status">{byoBlocked}.</Notice>
             ) : null}
             <Field id="agent-brief" label="Brief (optional)" error={fe.brief}>
               <textarea id="agent-brief" className={inputClass} rows={3} value={brief} onChange={(e) => setBrief(e.target.value)} />
             </Field>
             {create.error && Object.keys(fe).length === 0 ? (
-              <p role="alert" className="text-sm text-danger-ink">
+              <Notice tone="danger" role="alert">
                 {errorMessage(create.error)}
-              </p>
+              </Notice>
             ) : null}
-            <Button type="submit" disabled={create.isPending || (byoBlocked !== null && !hostedAllowed)}>
-              {create.isPending ? "Creating…" : "Create agent"}
-            </Button>
-          </form>
-        </DialogContent>
-      </Dialog>
+        </div>
+      </FormDialog>
       <AgentRevealDialog revealed={revealed} onClose={() => setRevealed(null)} />
     </>
   );

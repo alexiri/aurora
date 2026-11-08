@@ -3,8 +3,13 @@
 import { useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DataTable, Td, Th } from "@/components/ui/data-table";
+import { Notice } from "@/components/ui/notice";
+import { Section } from "@/components/ui/section";
+import { StatusDot } from "@/components/ui/status-dot";
 import { errorMessage } from "@/lib/api/errors";
 import { useRestartSandbox, useSandbox } from "@/lib/api/conversations";
 import { errorCopy } from "@/lib/chat/transcript";
@@ -25,89 +30,88 @@ export function ComputerTab({ agentId }: { agentId: string }) {
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   const v = q.data;
+  const tone = v.state === "running" ? "accent" : v.state === "failed" ? "danger" : v.state === "starting" || v.state === "stopping" ? "pending" : "neutral";
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <p>
-          State: <span className="font-medium">{v.state}</span>
-        </p>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button variant="outline" size="sm" disabled={restart.isPending}>
-              Restart
-            </Button>
-          </DialogTrigger>
-          <DialogContent title="Restart this computer?" description="Running processes will be stopped and the computer boots again.">
-            <div className="flex justify-end gap-2">
-              <DialogClose asChild>
-                <Button variant="outline">Cancel</Button>
-              </DialogClose>
-              <Button
-                onClick={() => {
-                  restart.mutate(undefined, { onSettled: () => setOpen(false) });
-                }}
-              >
-                Restart
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </div>
+    <div className="space-y-8">
+      <Section
+        id="computer-state"
+        title="Computer"
+        description={v.image ? `Image: ${v.image}` : undefined}
+        actions={
+          <Button variant="outline" size="sm" disabled={restart.isPending} onClick={() => setOpen(true)}>
+            Restart
+          </Button>
+        }
+        card
+      >
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          State: <StatusDot tone={tone}>{v.state}</StatusDot>
+        </div>
+      </Section>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Restart this computer?"
+        description="Running processes will be stopped and the computer boots again."
+        confirmLabel="Restart"
+        onConfirm={() => {
+          restart.mutate(undefined, { onSettled: () => setOpen(false) });
+        }}
+      />
       {restart.error ? (
-        <p role="alert" className="text-sm text-danger-ink">
+        <Notice tone="danger" role="alert">
           {errorMessage(restart.error)}
-        </p>
+        </Notice>
       ) : null}
       {v.restart_to_update ? (
-        <p role="status" className="rounded-control bg-subtle p-3 text-sm text-ink-2">
-          Configuration changed. Restart to update this computer.
-        </p>
+        <Notice role="status">Configuration changed. Restart to update this computer.</Notice>
       ) : null}
       {v.state === "failed" ? (
-        <p role="alert" className="text-sm text-danger-ink">
+        <Notice tone="danger" role="alert">
           {errorCopy(v.failure_code).message} {v.failure_message ?? ""}
-        </p>
+        </Notice>
       ) : null}
-      {v.image ? <p className="text-sm text-muted">Image: {v.image}</p> : null}
-      <section aria-label="Awake reasons">
-        <h2 className="text-sm font-semibold">Awake because</h2>
+      <Section id="awake-reasons" title="Awake because" card>
         {v.keep_awake_reasons.length ? (
-          <ul className="list-disc pl-5 text-sm">
+          <ul className="flex flex-wrap gap-2">
             {v.keep_awake_reasons.map((r) => (
-              <li key={r}>{reasonLabel(r)}</li>
+              <li key={r}>
+                <Badge tone="accent" className="normal-case tracking-normal">
+                  {reasonLabel(r)}
+                </Badge>
+              </li>
             ))}
           </ul>
         ) : (
           <p className="text-sm text-muted">Nothing is keeping this computer awake.</p>
         )}
-      </section>
-      <section aria-label="Processes">
-        <h2 className="text-sm font-semibold">Processes</h2>
+      </Section>
+      <Section id="processes" title="Processes">
         {v.processes.length ? (
-          <table className="w-full text-left text-sm">
+          <DataTable caption="Processes">
             <thead>
               <tr>
-                <th scope="col">Name</th>
-                <th scope="col">State</th>
-                <th scope="col">Busy</th>
-                <th scope="col">Started</th>
+                <Th>Name</Th>
+                <Th>State</Th>
+                <Th>Busy</Th>
+                <Th>Started</Th>
               </tr>
             </thead>
             <tbody>
               {v.processes.map((p) => (
                 <tr key={p.id}>
-                  <td>{p.name}</td>
-                  <td>{p.state}</td>
-                  <td>{p.busy ? "yes" : "no"}</td>
-                  <td>{p.started_at ?? ""}</td>
+                  <Td className="font-mono">{p.name}</Td>
+                  <Td>{p.state}</Td>
+                  <Td>{p.busy ? "yes" : "no"}</Td>
+                  <Td className="whitespace-nowrap text-ink-2">{p.started_at ?? ""}</Td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </DataTable>
         ) : (
           <p className="text-sm text-muted">No processes.</p>
         )}
-      </section>
+      </Section>
     </div>
   );
 }

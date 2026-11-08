@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, inputClass } from "@/components/ui/field";
+import { CheckboxField, FormActions } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
 import { usePutAgentByo } from "@/lib/api/agents";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { splitList } from "@/lib/api/governance";
@@ -37,15 +39,15 @@ export function ByoSettings({ agent, wsId, canOwn }: { agent: Agent; wsId: strin
   }
 
   return (
-    <Card className="space-y-3" aria-labelledby="byo-h">
-      <h2 id="byo-h" className="text-lg font-medium">
+    <Card className="space-y-4" aria-labelledby="byo-h">
+      <h2 id="byo-h" className="font-display text-base font-semibold text-ink">
         Access controls
       </h2>
       {disabled ? (
-        <p role="status" className="rounded-control bg-danger-soft p-3 text-sm text-danger-ink">
+        <Notice tone="danger" role="status">
           BYO disabled by {byo.posture_level}: this agent&apos;s token is refused and live tunnels were closed.
           Nothing was deleted; loosening the setting restores it without a new token.
-        </p>
+        </Notice>
       ) : (
         <p className="text-sm text-ink-2">
           Posture <Badge tone="accent">{byo.posture}</Badge>{" "}
@@ -92,33 +94,32 @@ export function ByoSettings({ agent, wsId, canOwn }: { agent: Agent; wsId: strin
               onChange={(e) => setCidrs(e.target.value)}
             />
           </Field>
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={requireContext || byo.effective_require_context_level === "instance" || byo.effective_require_context_level === "org"}
-              disabled={byo.effective_require_context_level === "instance" || byo.effective_require_context_level === "org"}
-              onChange={(e) => setRequireContext(e.target.checked)}
-            />
-            <span>
-              Require context credentials
-              <span className="block text-xs text-muted">
+          <CheckboxField
+            id="byo-require-context"
+            label="Require context credentials"
+            hint={
+              <>
                 Requests that need a credential must come from a labelled run (<code>aurora run</code>).
-              </span>
-            </span>
-          </label>
+              </>
+            }
+            checked={requireContext || byo.effective_require_context_level === "instance" || byo.effective_require_context_level === "org"}
+            disabled={byo.effective_require_context_level === "instance" || byo.effective_require_context_level === "org"}
+            onChange={setRequireContext}
+          />
         </fieldset>
         {!canOwn ? <p className="text-xs text-muted">Only workspace owners can change these settings.</p> : null}
-        {saved ? (
-          <p role="status" className="text-sm text-accent-ink">
-            Saved. Live connections were re-checked.
-          </p>
-        ) : null}
-        {canOwn ? (
-          <Button type="submit" disabled={put.isPending}>
-            {put.isPending ? "Saving…" : "Save access controls"}
-          </Button>
-        ) : null}
+        <FormActions>
+          {canOwn ? (
+            <Button type="submit" disabled={put.isPending}>
+              {put.isPending ? "Saving…" : "Save access controls"}
+            </Button>
+          ) : null}
+          {saved ? (
+            <span role="status" className="text-sm text-accent-ink">
+              Saved. Live connections were re-checked.
+            </span>
+          ) : null}
+        </FormActions>
       </form>
     </Card>
   );

@@ -4,7 +4,12 @@ import { useState, type FormEvent } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Field, inputClass } from "@/components/ui/field";
+import { FormActions } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
+import { ItemList } from "@/components/ui/section";
+import { cn } from "@/lib/utils";
 import { errorMessage } from "@/lib/api/errors";
 import {
   MEMORY_CONTENT_MAX,
@@ -24,6 +29,8 @@ import {
 
 import { SizeMeter } from "./size-meter";
 
+const memItem = "block min-h-11 w-full px-3 py-2 text-left text-sm hover:bg-subtle sm:px-4";
+
 function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
@@ -40,12 +47,10 @@ export function MemoryTab({ agentId, memoryLanguage }: { agentId: string; memory
   return (
     <div className="space-y-4">
       {memoryLanguage ? (
-        <p role="note" className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm">
-          Memories in this workspace are written in {capitalize(memoryLanguage)}.
-        </p>
+        <Notice role="note">Memories in this workspace are written in {capitalize(memoryLanguage)}.</Notice>
       ) : null}
-      <div className="flex items-end gap-2">
-        <div className="flex-1">
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-0 flex-1 basis-56">
           <Field id="mem-search" label="Search memories">
             <input id="mem-search" type="search" className={inputClass} value={q} onChange={(e) => setQ(e.target.value)} />
           </Field>
@@ -63,36 +68,40 @@ export function MemoryTab({ agentId, memoryLanguage }: { agentId: string; memory
               {search.isPending ? <Loading label="Searching…" /> : null}
               {search.isError ? <ErrorState error={search.error} /> : null}
               {search.data && search.data.items.length === 0 ? <EmptyState title="No matches" /> : null}
-              <ul aria-label="Search results" className="space-y-1">
-                {search.data?.items.map((h) => (
+              {search.data?.items.length ? (
+              <ItemList aria-label="Search results">
+                {search.data.items.map((h) => (
                   <li key={h.key}>
-                    <button type="button" className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-neutral-50" onClick={() => { setSelected(h.key); setCreating(false); }}>
+                    <button type="button" className={memItem} onClick={() => { setSelected(h.key); setCreating(false); }}>
                       <span className="font-mono">{h.key}</span>
-                      <span className="block text-xs text-neutral-600">{h.snippet}</span>
+                      <span className="block text-xs text-muted">{h.snippet}</span>
                     </button>
                   </li>
                 ))}
-              </ul>
+              </ItemList>
+              ) : null}
             </>
           ) : (
             <>
               {list.data && items.length === 0 ? <EmptyState title="No memories yet" /> : null}
-              <ul aria-label="Memories" className="space-y-1">
+              {items.length ? (
+              <ItemList aria-label="Memories">
                 {items.map((m) => (
                   <li key={m.key}>
                     <button
                       type="button"
                       aria-current={selected === m.key}
-                      className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-neutral-50 aria-[current=true]:bg-neutral-100"
+                      className={cn(memItem, "aria-[current=true]:bg-subtle")}
                       onClick={() => { setSelected(m.key); setCreating(false); }}
                     >
-                      <span className="font-mono">{m.key}</span>
-                      <span className="block truncate text-xs text-neutral-600">{m.index_line}</span>
-                      <span className="block text-xs text-neutral-500">Updated {new Date(m.updated_at).toLocaleString()}</span>
+                      <span className="font-mono font-medium text-ink">{m.key}</span>
+                      <span className="block truncate text-xs text-ink-2">{m.index_line}</span>
+                      <span className="block text-xs text-muted">Updated {new Date(m.updated_at).toLocaleString()}</span>
                     </button>
                   </li>
                 ))}
-              </ul>
+              </ItemList>
+              ) : null}
             </>
           )}
         </div>
@@ -101,7 +110,7 @@ export function MemoryTab({ agentId, memoryLanguage }: { agentId: string; memory
           {!creating && current ? (
             <MemoryEditor key={`${current.key}:${current.revision}`} agentId={agentId} memory={current} onDone={(k) => setSelected(k)} />
           ) : null}
-          {!creating && !current ? <p className="text-sm text-neutral-500">Select a memory to edit it.</p> : null}
+          {!creating && !current ? <p className="text-sm text-muted">Select a memory to edit it.</p> : null}
         </div>
       </div>
     </div>
@@ -146,7 +155,8 @@ function MemoryEditor({ agentId, memory, onDone }: { agentId: string; memory?: M
 
   return (
     <div className="space-y-4">
-      <form onSubmit={(e) => void submit(e)} noValidate className="space-y-3">
+      <Card>
+      <form onSubmit={(e) => void submit(e)} noValidate className="space-y-4">
         <Field id="mem-key" label="Key" hint="Immutable once created." error={err && !memory ? err : undefined}>
           <input id="mem-key" className={inputClass} value={key} readOnly={!!memory} maxLength={MEMORY_KEY_MAX} onChange={(e) => setKey(e.target.value)} />
         </Field>
@@ -160,9 +170,9 @@ function MemoryEditor({ agentId, memory, onDone }: { agentId: string; memory?: M
           <textarea id="mem-content" className={`${inputClass} font-mono`} rows={12} value={content} onChange={(e) => setContent(e.target.value)} />
         </Field>
         <SizeMeter label="Content" used={content.length} max={MEMORY_CONTENT_MAX} />
-        {err && memory ? <p role="alert" className="text-sm text-red-700">{err}</p> : null}
-        {failed ? <p role="alert" className="text-sm text-red-700">{errorMessage(failed)}</p> : null}
-        <div className="flex gap-2">
+        {err && memory ? <Notice tone="danger" role="alert">{err}</Notice> : null}
+        {failed ? <Notice tone="danger" role="alert">{errorMessage(failed)}</Notice> : null}
+        <FormActions className="gap-2">
           <Button type="submit" disabled={over || create.isPending || put.isPending}>Save</Button>
           {memory ? (
             <>
@@ -171,18 +181,19 @@ function MemoryEditor({ agentId, memory, onDone }: { agentId: string; memory?: M
               </Button>
               {confirmDel ? (
                 <>
-                  <Button type="button" variant="outline" onClick={() => void del.mutateAsync(memory.key).then(() => onDone(null))}>
+                  <Button type="button" variant="danger" onClick={() => void del.mutateAsync(memory.key).then(() => onDone(null))}>
                     Confirm delete
                   </Button>
                   <Button type="button" variant="ghost" onClick={() => setConfirmDel(false)}>Cancel</Button>
                 </>
               ) : (
-                <Button type="button" variant="outline" onClick={() => setConfirmDel(true)}>Delete</Button>
+                <Button type="button" variant="danger" onClick={() => setConfirmDel(true)}>Delete</Button>
               )}
             </>
           ) : null}
-        </div>
+        </FormActions>
       </form>
+      </Card>
       {memory && history ? <RevisionHistory agentId={agentId} memory={memory} /> : null}
     </div>
   );
@@ -197,24 +208,24 @@ export function RevisionHistory({ agentId, memory }: { agentId: string; memory: 
   const failed = restore.error ?? redact.error;
 
   return (
-    <section aria-label="Revision history" className="space-y-2 rounded-md border border-neutral-200 p-3">
-      <h3 className="text-sm font-medium">Revision history</h3>
+    <Card role="region" aria-label="Revision history" className="space-y-3">
+      <h3 className="font-display text-base font-semibold text-ink">Revision history</h3>
       {revs.isPending ? <Loading /> : null}
       {revs.isError ? <ErrorState error={revs.error} onRetry={() => revs.refetch()} /> : null}
-      {failed ? <p role="alert" className="text-sm text-red-700">{errorMessage(failed)}</p> : null}
-      <ul className="space-y-2">
+      {failed ? <Notice tone="danger" role="alert">{errorMessage(failed)}</Notice> : null}
+      <ul className="divide-y divide-line">
         {revs.data?.items.map((r) => (
-          <li key={r.revision} className="rounded border border-neutral-100 p-2 text-sm">
+          <li key={r.revision} className="space-y-1 py-3 text-sm first:pt-0 last:pb-0">
             <p>
               <strong>#{r.revision}</strong>
               {r.revision === memory.revision ? " (latest)" : ""} - {r.author_label} ({r.author_kind}, {r.provenance}) -{" "}
               {new Date(r.created_at).toLocaleString()}
             </p>
-            {r.redacted ? <p className="text-neutral-500">Redacted</p> : null}
+            {r.redacted ? <p className="text-muted">Redacted</p> : null}
             {viewing === r.revision && r.content != null ? (
-              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-neutral-50 p-2 text-xs">{r.content}</pre>
+              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-control border border-line bg-subtle p-2 font-mono text-xs text-ink">{r.content}</pre>
             ) : null}
-            <div className="mt-1 flex gap-2">
+            <div className="mt-1 flex flex-wrap gap-2">
               {!r.redacted ? (
                 <Button type="button" size="sm" variant="ghost" onClick={() => setViewing(viewing === r.revision ? null : r.revision)}>
                   {viewing === r.revision ? "Hide" : "View"} #{r.revision}
@@ -250,6 +261,6 @@ export function RevisionHistory({ agentId, memory }: { agentId: string; memory: 
           </li>
         ))}
       </ul>
-    </section>
+    </Card>
   );
 }

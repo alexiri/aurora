@@ -3,8 +3,9 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import { authorityRank, type Frozen } from "@/lib/api/freeze";
 
@@ -26,7 +27,7 @@ function date(iso: string): string {
 export function FrozenBanner({ frozen, subject, children }: { frozen: Frozen; subject: FreezeSubject; children?: ReactNode }) {
   const inherited = frozen.level !== subject;
   return (
-    <div role="status" className="space-y-2 rounded-card border border-danger-ink bg-danger-soft p-4 text-sm text-danger-ink">
+    <Notice tone="danger" role="status" className="space-y-2 rounded-card border-danger-ink p-4">
       {inherited ? (
         <p className="font-semibold">
           This {SUBJECT_LABEL[subject]} is paused because its {SUBJECT_LABEL[frozen.level as FreezeSubject] ?? frozen.level} is frozen.
@@ -36,7 +37,7 @@ export function FrozenBanner({ frozen, subject, children }: { frozen: Frozen; su
         Frozen by {frozen.by_label} on {date(frozen.at)}: {frozen.reason}
       </p>
       {children}
-    </div>
+    </Notice>
   );
 }
 
@@ -130,50 +131,43 @@ export function FreezeControl({
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button type="button" variant="danger" size="sm">
-          Freeze {label}
-        </Button>
-      </DialogTrigger>
-      <DialogContent
+    <>
+      <Button type="button" variant="danger" size="sm" onClick={() => setOpen(true)}>
+        Freeze {label}
+      </Button>
+      <FormDialog
+        open={open}
+        onOpenChange={setOpen}
         title={`Freeze ${label} ${name}?`}
         description="An emergency stop. Nothing is deleted and you can unfreeze at any time."
+        submitLabel={freeze.isPending ? "Freezing…" : `Freeze ${label}`}
+        danger
+        busy={freeze.isPending}
+        submitDisabled={reason.trim() === ""}
+        onSubmit={(e) => void submit(e)}
       >
-        <form onSubmit={(e) => void submit(e)} className="space-y-4">
-          <ul className="list-disc space-y-1 pl-5 text-sm text-ink-2">
-            {EFFECTS.map((e) => (
-              <li key={e}>{e}</li>
-            ))}
-          </ul>
-          <Field id={`freeze-reason-${subject}`} label="Reason" hint={`Required, up to ${REASON_MAX} characters. Shown to everyone who can see the ${label}.`}>
-            <textarea
-              id={`freeze-reason-${subject}`}
-              className={inputClass}
-              rows={3}
-              maxLength={REASON_MAX}
-              required
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            />
-          </Field>
-          {freeze.error ? (
-            <p role="alert" className="text-sm text-danger-ink">
-              {errorMessage(freeze.error)}
-            </p>
-          ) : null}
-          <div className="flex justify-end gap-2">
-            <DialogClose asChild>
-              <Button type="button" variant="outline">
-                Cancel
-              </Button>
-            </DialogClose>
-            <Button type="submit" variant="danger" disabled={freeze.isPending || reason.trim() === ""}>
-              {freeze.isPending ? "Freezing…" : `Freeze ${label}`}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-ink-2">
+          {EFFECTS.map((e) => (
+            <li key={e}>{e}</li>
+          ))}
+        </ul>
+        <Field id={`freeze-reason-${subject}`} label="Reason" hint={`Required, up to ${REASON_MAX} characters. Shown to everyone who can see the ${label}.`}>
+          <textarea
+            id={`freeze-reason-${subject}`}
+            className={inputClass}
+            rows={3}
+            maxLength={REASON_MAX}
+            required
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </Field>
+        {freeze.error ? (
+          <Notice tone="danger" role="alert">
+            {errorMessage(freeze.error)}
+          </Notice>
+        ) : null}
+      </FormDialog>
+    </>
   );
 }
