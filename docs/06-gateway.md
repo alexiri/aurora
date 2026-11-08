@@ -242,6 +242,13 @@ prefixed by org and workspace (so invalidation can drop whole scopes):
    tuples whose claim is not lost to another package. For each app, the
    workspace's and org's `active` connections of that app (with `tenant_host`
    equal to the request host when the host entry is tenant-bound).
+   (Phase 2, D-74) The host is also looked up in the **registered app
+   instances** visible to the org (instance-wide and the org's own, `09 §3.4
+   Instance-bound hosts`), exact host match only: a hit yields the app's
+   `{instance}` host entries with `{instance}` = the request host, and only
+   connections whose `instance_id` is that instance are candidates. The
+   instance list is cached per org and dropped by the `org` invalidation scope
+   (instance-wide changes invalidate every org).
 3. **Secret candidates**: workspace and org secrets whose `host_pattern`
    matches (path patterns are evaluated per request).
 4. **LLM candidates**: if the host is an LLM provider host (`08 §LLM
@@ -444,7 +451,7 @@ dashboard URL to fix the problem when one exists.
 | `app_not_connected` | (upstream status) | known app host, no connection in scope | `app_id`, `connect_url` |
 | `app_path_unserved` | (upstream status) | known app host, path no app serves | `host` |
 | `credential_not_found` | (upstream status) | unknown host, nothing stored | `create_secret_url` |
-| `host_mismatch` | 421 | tenant-bound credential on wrong host | `expected_host` |
+| `host_mismatch` | 421 | tenant-bound (or, phase 2 D-74, instance-bound) credential on wrong host | `expected_host` |
 | `upstream_timeout` | 504 | step 13 | — |
 | `bad_gateway` / `resolution_failed` | 502 | upstream connect/DNS failure | — |
 

@@ -9,6 +9,7 @@ Add the first built-in package set (`19 §Phase 2`), one lane per group below. E
 - Narrowest scopes by default; write scopes marked. Tools are read-only unless the API operation writes. Write tools get clamped summaries.
 - Use the vendor's official API documentation for hosts, paths, scopes and token endpoints, and cite each `about.api_docs` / `api_spec` URL. Never guess an endpoint: if the docs are unclear, leave the tool out and report it.
 - Don't change the manifest contract or gateway mechanisms. If a package needs something the contract lacks, stop and ask through Orca `ask`.
+- Self-hostable products (Jira/Confluence Data Center, Sentry self-hosted, …): once P2-INST has merged, declare `instances` (`09 §3.4 Instance-bound hosts`, D-74) so one package serves the SaaS host and registered self-hosted instances. Lanes that start before P2-INST ship the SaaS host only and list the self-hosted follow-up in their report.
 - You own only `plugins/builtin/<your packages>/**`. Shared files (guards, CI, the README) are P2-CAT-0's; report needed changes instead of making them.
 - Acceptance: `aurora plugin validate`, `aurora plugin test` and the P2-CAT-0 checks pass for every package of your group; the dev stack lists them; guards pass.
 

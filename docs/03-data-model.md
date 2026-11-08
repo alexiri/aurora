@@ -1123,6 +1123,26 @@ headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
 
+#### `app_instances` (new table; self-hosted apps, D-74)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 2 (D-74) |
+| org_id | uuid null FK→organizations (cascade) | null ⇒ instance-wide (instance admins) | 2 (D-74) |
+| package_id | text not null | | 2 (D-74) |
+| app_id | text not null | an app that declares `instances` (`09 §3.4`) | 2 (D-74) |
+| host | text not null | lower-case DNS name; no IP, port, path or userinfo | 2 (D-74) |
+| label | text not null | | 2 (D-74) |
+| status | text not null CHECK in (`active`,`disabled`) | | 2 (D-74) |
+| created_by | uuid null FK→users (set null) | | 2 (D-74) |
+| created_at / updated_at | timestamptz not null | | 2 (D-74) |
+| unique | (org_id, app_id, host) nulls not distinct; and a host is unique across scopes that can see each other (instance-wide vs any org) | enforced by the API in the creating transaction | 2 (D-74) |
+
+#### `app_connections` / `app_oauth_clients` (instance binding, D-74)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| app_connections.instance_id | uuid null FK→app_instances (restrict) | set for a connection of a registered instance; null for `default_host` and every other app | 2 (D-74) |
+| app_oauth_clients.instance_id | uuid null FK→app_instances (cascade) | a BYOC client bound to one self-hosted instance; its templated OAuth URLs resolve to that host | 2 (D-74) |
+
 #### `channel_integrations` (jsonb key in `config`)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

@@ -231,6 +231,56 @@ hosts:
                              session_token: "{credentials.session_token}" } }
 ```
 
+#### Instance-bound hosts: self-hosted apps (phase 2, D-74)
+
+A `tenant` zone covers SaaS subdomains (`acme.zendesk.com`). A **self-hosted**
+deployment (a company's own GitLab, Jira Data Center, Sentry, Mattermost) lives
+on an arbitrary domain that no zone can declare. For these, an app declares
+`instances`, and its hosts, tools, probe, OAuth URLs and hook egress use the
+placeholder host `{instance}`:
+
+```yaml
+instances:
+  label: GitLab instance        # shown in the registration form and the connect picker
+  default_host: gitlab.com      # optional: the SaaS host, a normal static claim
+  probe: { method: GET, path: /api/v4/version, expect_status: [200, 401] }   # optional reachability check
+hosts:
+  - match: { host: "{instance}", path_prefix: /api/v4 }
+    inject: [ { bearer: "{credentials.access_token}" } ]
+tools:
+  - { id: list_projects, host: "{instance}", path: /api/v4/projects, methods: [GET] }
+oauth_clients:
+  - id: gitlab
+    authorize_url: "https://{instance}/oauth/authorize"
+    token_url: "https://{instance}/oauth/token"
+```
+
+- `{instance}` stands for a whole host only (never part of a host or a path),
+  and only in an app that declares `instances`. With `default_host`, every
+  `{instance}` entry also applies to that host as an ordinary static claim.
+- An **app instance** (`03 app_instances`) is a host registered for one app by
+  an admin: instance-wide by an instance admin, or for one organization by its
+  owners/admins (`05 §App instances`). Registration is the trust decision
+  about where that app's credentials may be sent; members never type a host.
+- At registration the host MUST be a DNS name in lower case: no IP literal,
+  userinfo, port or path, and not under `aurora.internal`. It MUST NOT equal or
+  fall under a static claim of any active package (another app's host), a
+  governed LLM host (`08 §6`), or another registered instance of the same scope
+  (`instance_host_conflict`). The optional `probe` runs through the gateway's
+  destination guard. A private address is reachable only where the operator
+  allows it (`gateway.allowed_private`, `06`).
+- A connection of an instance-bound app records its `instance_id` (or none for
+  `default_host`). The gateway injects it **only** on that instance's host,
+  exactly as a tenant-bound connection only on its `tenant_host` (SEC-04, SEC-59).
+- OAuth: each self-hosted instance has its own OAuth application, so the client
+  is a BYOC client bound to the instance (`app_oauth_clients.instance_id`); the
+  templated URLs resolve to that instance's host and MUST be https.
+- Registered instance hosts are claims for `§7`: a package activated later
+  whose static claim overlaps a registered instance host needs an instance-admin
+  decision like any other conflict.
+- Deleting an instance disables its connections (`status_reason:
+  instance_deleted`) and its OAuth clients; nothing is injected on its host again.
+
 #### `token`
 ```yaml
 token:
@@ -367,7 +417,9 @@ if any of:
   `hosts`; a group wildcard that is not a true superset of its group;
 - tenant/rewrite host not constrained to a declared zone; zone broader than
   `*.<registrable domain>` (public-suffix list check);
-- token endpoint not https, or templated without a zone;
+- token endpoint not https, or templated without a zone or `{instance}`;
+- (phase 2, D-74) `{instance}` used as part of a host, in a path, or in an app
+  without `instances`; `instances.default_host` that is not a plain DNS name;
 - probe URL or approval link host not declared;
 - template references to undeclared credentials/metadata or unpermitted
   context variables;
@@ -396,6 +448,11 @@ claim are hidden from pickers, rules naming them are flagged inert, and its
 connections show "not injecting on <host> (lost to <app>)". Decisions survive
 upgrades while `claim_fingerprint` is unchanged; a changed claim requires a new
 decision. Reversing a decision is allowed and audited.
+
+(phase 2, D-74) A registered app instance host (`§3.4 Instance-bound hosts`) is
+a claim of its app. Registration refuses a host that conflicts with an existing
+static claim; a static claim activated later that overlaps a registered
+instance host is a conflict decided as above.
 
 ## 8. Hooks
 

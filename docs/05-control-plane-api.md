@@ -455,7 +455,17 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/oauth/callback` | P | state-bound; renders a tiny HTML page that posts to the opener and closes |
 | GET `/v1/workspaces/{ws}/connections`, `/v1/orgs/{org}/connections` | S/K | |
 | GET/PATCH/DELETE `/v1/connections/{id}` | S/K | label, status (`disabled`↔`active`) |
-| GET/POST `/v1/workspaces/{ws}/oauth-clients`, `/v1/orgs/{org}/oauth-clients`; PATCH/DELETE `/v1/oauth-clients/{id}` | S/K | BYOC |
+| GET/POST `/v1/workspaces/{ws}/oauth-clients`, `/v1/orgs/{org}/oauth-clients`; PATCH/DELETE `/v1/oauth-clients/{id}` | S/K | BYOC; (phase 2, D-74) optional `instance_id` binds the client to a self-hosted instance |
+
+### App instances (self-hosted apps; phase 2, D-74)
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET `/v1/orgs/{org}/app-instances` | S/K | instances usable in the org (instance-wide + the org's own); any member |
+| POST `/v1/orgs/{org}/app-instances` | S/K | `{ app_id, host, label }` → `AppInstance`; org owner/admin; validated per `09 §3.4 Instance-bound hosts` (probe included) |
+| GET/POST `/v1/admin/app-instances` | S | instance-wide instances; instance admins |
+| PATCH/DELETE `/v1/app-instances/{id}` | S/K | label, `status`; delete disables its connections; owner/admin of its scope (instance admin for instance-wide) |
+
+`POST /v1/apps/{app}/connect` takes `instance_id` for an instance-bound app (absent = `default_host`, refused when the app has none). The connect form and the dashboard list the instances visible to the org.
 
 ### Grants and effective views
 | Method & path | Auth | Purpose |
