@@ -11,7 +11,7 @@ import { Notice } from "@/components/ui/notice";
 import { usePutAgentByo } from "@/lib/api/agents";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { splitList } from "@/lib/api/governance";
-import type { Agent } from "@/lib/api/queries";
+import { useSession, type Agent } from "@/lib/api/queries";
 
 /**
  * (phase 2, RFE-025) A BYO agent's governance: effective posture, source CIDR list and the
@@ -21,6 +21,7 @@ import type { Agent } from "@/lib/api/queries";
 export function ByoSettings({ agent, wsId, canOwn }: { agent: Agent; wsId: string | undefined; canOwn: boolean }) {
   const byo = agent.byo;
   const put = usePutAgentByo(wsId, agent.id);
+  const me = useSession();
   const [cidrs, setCidrs] = useState((byo?.source_cidrs ?? []).join("\n"));
   const [requireContext, setRequireContext] = useState(byo?.require_context ?? false);
   const [saved, setSaved] = useState(false);
@@ -94,6 +95,13 @@ export function ByoSettings({ agent, wsId, canOwn }: { agent: Agent; wsId: strin
               onChange={(e) => setCidrs(e.target.value)}
             />
           </Field>
+          {me.data?.client_address ? (
+            <p data-testid="caller-address" className="text-xs text-muted">
+              Your current address, as this server sees it:{" "}
+              <code className="font-mono text-ink">{me.data.client_address}</code>. The gateway may see a different
+              address (NAT, a load balancer or PROXY protocol), so treat this as a hint, not as the value to allow.
+            </p>
+          ) : null}
           <CheckboxField
             id="byo-require-context"
             label="Require context credentials"

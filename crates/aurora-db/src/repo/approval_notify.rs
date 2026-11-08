@@ -296,8 +296,8 @@ pub async fn hourly(pool: &PgPool, user: Uuid) -> Result<(i64, bool), DbError> {
     Ok((mails, digest))
 }
 
-/// The active, enabled owners of an org with the org's name and slug: the recipients of the
-/// attachment quota e-mail notice (FU-P2-015b).
+/// The active, enabled owners and admins of an org with the org's name and slug: the recipients
+/// of the attachment quota e-mail notice (FU-P2-015b, `02` `ATTACH_QUOTA_NOTICE`).
 pub async fn org_owners(
     pool: &PgPool,
     org: Uuid,
@@ -309,7 +309,7 @@ pub async fn org_owners(
             .await?;
     let owners = sqlx::query_as(
         "SELECT u.id, u.email::text FROM org_members m JOIN users u ON u.id = m.user_id \
-         WHERE m.org_id = $1 AND m.status = 'active' AND m.role = 'owner' \
+         WHERE m.org_id = $1 AND m.status = 'active' AND m.role IN ('owner', 'admin') \
            AND u.disabled_at IS NULL ORDER BY u.id",
     )
     .bind(org)

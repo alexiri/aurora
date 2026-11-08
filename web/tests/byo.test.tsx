@@ -245,6 +245,26 @@ describe("agent access controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save access controls" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
   });
+  it("shows the caller's address as a hint next to the source list, with the NAT caveat (C-195)", async () => {
+    mockFetch({
+      "GET /v1/me": () =>
+        json(200, { user: { id: "u1", email: "a@x.io" }, default_org_id: null, approval_email: true, client_address: "203.0.113.7", memberships: [] }),
+    });
+    wrap(<ByoSettings agent={byoAgent()} wsId="w1" canOwn />);
+    const hint = await screen.findByTestId("caller-address");
+    expect(hint.textContent).toContain("203.0.113.7");
+    expect(hint.textContent).toMatch(/gateway may see a different address/);
+    expect(hint.textContent).toMatch(/NAT/);
+  });
+  it("omits the address hint when the API reports none", async () => {
+    const fn = mockFetch({
+      "GET /v1/me": () => json(200, { user: { id: "u1", email: "a@x.io" }, default_org_id: null, approval_email: true, client_address: null, memberships: [] }),
+    });
+    wrap(<ByoSettings agent={byoAgent()} wsId="w1" canOwn />);
+    await waitFor(() => expect(fn).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId("caller-address")).toBeNull();
+  });
   it("the connect tab shows the context-credential note and the agent list marks disabled BYO agents", async () => {
     mockFetch({
       "GET /v1/agents/a1/container-config": () =>

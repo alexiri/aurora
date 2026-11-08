@@ -566,7 +566,7 @@ Reserved name; phase 0 rate limiting is in-memory per gateway replica (`07`).
 | effort | text null CHECK in (`low`,`medium`,`high`,`max`) | |
 | brief | text not null default `''` | ≤20 000 chars |
 | avatar_blob_key | text null | |
-| avatar_public_key | text null | unguessable, rotating; gates the public avatar GET |
+| avatar_public_key | text null | unguessable, rotating; gates the public avatar GET; partial index (avatar_public_key) WHERE avatar_public_key IS NOT NULL |
 | resource_overrides | jsonb null | `ResourceProfile` (instance admins only) |
 | home_sync_generation | bigint not null default 0 | desired projection generation |
 | created_by | uuid null FK→users (set null) | |
@@ -694,7 +694,7 @@ Pending deletions of harness session files after a conversation delete or a `res
 | size_bytes | bigint not null | |
 | sha256 | text not null | |
 | blob_backend | text not null | `postgres` (phase 0) |
-| blob_key | text not null | |
+| blob_key | text not null | partial index (blob_key) WHERE blob_key <> '' |
 | caption | text null | |
 | failure_reason | text null | |
 | created_by_user_id | uuid null | |

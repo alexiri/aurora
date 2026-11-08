@@ -1,4 +1,6 @@
-use super::dto::{Conversation, EventsPage, MessageAccepted, TranscriptEvent, Turn};
+use super::dto::{
+    Conversation, EventsPage, MessageAccepted, PurgedAttachment, TranscriptEvent, Turn,
+};
 use crate::app::AppState;
 use crate::audit::{AuditActor, Outcome};
 use crate::http::auth::Caller;
@@ -253,10 +255,48 @@ pub async fn events(
     let last_seq = rows
         .last()
         .map_or(after.min(conv.last_seq).max(0), |r| r.seq);
+    let items: Vec<TranscriptEvent> = rows.into_iter().map(TranscriptEvent::from).collect();
+    let purged_attachments = purged_attachments_of(state, id, &items).await?;
     Ok(EventsPage {
-        items: rows.into_iter().map(TranscriptEvent::from).collect(),
+        items,
         last_seq,
+        purged_attachments,
     })
+}
+
+/// The purged attachments among those the page's events reference (`attachment` events and
+/// `turn.queued.attachments`).
+async fn purged_attachments_of(
+    state: &AppState,
+    conversation: Uuid,
+    items: &[TranscriptEvent],
+) -> Result<Vec<PurgedAttachment>, ApiError> {
+    let mut ids: Vec<Uuid> = Vec::new();
+    let mut push = |v: &Value| {
+        if let Some(id) = v.as_str().and_then(|s| s.parse::<Uuid>().ok()) {
+            ids.push(id);
+        }
+    };
+    for e in items {
+        match e.ty.as_str() {
+            "attachment" => push(&e.payload["attachment_id"]),
+            "turn.queued" => {
+                if let Some(list) = e.payload["attachments"].as_array() {
+                    list.iter().for_each(&mut push);
+                }
+            }
+            _ => {}
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(
+        aurora_db::repo::attachments::purged_among(&state.pool, conversation, &ids)
+            .await?
+            .into_iter()
+            .map(|(id, reason)| PurgedAttachment { id, reason })
+            .collect(),
+    )
 }
 
 // ---------------------------------------------------------------- turns

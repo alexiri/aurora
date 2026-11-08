@@ -17,6 +17,62 @@ fn code(v: &Value) -> &str {
     v["error"]["code"].as_str().unwrap_or("")
 }
 
+/// `GET /v1/me` from `peer`, sending `xff` when given.
+async fn me_from(h: &Harness, tok: &str, peer: &str, xff: Option<&str>) -> Value {
+    use axum::extract::ConnectInfo;
+    use tower::ServiceExt;
+    let mut b = http::Request::builder()
+        .method(Method::GET)
+        .uri("/v1/me")
+        .header("cookie", cookie(tok));
+    if let Some(x) = xff {
+        b = b.header("x-forwarded-for", x);
+    }
+    let mut req = b.body(axum::body::Body::empty()).unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo(std::net::SocketAddr::new(
+            peer.parse().unwrap(),
+            40000,
+        )));
+    let res = h.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), 200);
+    use http_body_util::BodyExt;
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+/// FU-P2-025b (C-195): `client_address` is the address as the API resolves it behind
+/// `server.trusted_proxies`; an untrusted peer cannot choose it with `X-Forwarded-For`.
+#[tokio::test]
+async fn me_reports_the_callers_address_as_the_api_sees_it() {
+    let h =
+        Harness::with_config(|c| c.server.trusted_proxies = vec!["10.0.0.0/8".to_owned()]).await;
+    let u = h.user("addr@x.io", false).await;
+    let (_, tok) = h.good_session(u).await;
+    // Direct peer, no header.
+    let v = me_from(&h, &tok, "203.0.113.7", None).await;
+    assert_eq!(v["client_address"], "203.0.113.7");
+    // Trusted proxy: the rightmost untrusted hop (a spoofed left entry is ignored).
+    let v = me_from(
+        &h,
+        &tok,
+        "10.1.2.3",
+        Some("6.6.6.6, 198.51.100.9, 10.9.9.9"),
+    )
+    .await;
+    assert_eq!(v["client_address"], "198.51.100.9");
+    // Trusted proxy without the header: the proxy itself.
+    let v = me_from(&h, &tok, "10.1.2.3", None).await;
+    assert_eq!(v["client_address"], "10.1.2.3");
+    // Untrusted peer sending X-Forwarded-For: ignored.
+    let v = me_from(&h, &tok, "203.0.113.7", Some("1.2.3.4")).await;
+    assert_eq!(v["client_address"], "203.0.113.7");
+    // No socket info (in-process call): null, field present.
+    let (s, v) = call(&h, &tok, Method::GET, "/v1/me", None).await;
+    assert_eq!(s, 200);
+    assert!(v.get("client_address").is_some_and(Value::is_null), "{v}");
+}
+
 #[tokio::test]
 async fn me_shape_and_suspended_membership() {
     let h = Harness::new().await;

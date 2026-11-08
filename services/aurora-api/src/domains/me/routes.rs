@@ -3,9 +3,11 @@ use super::service;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::auth::{Caller, Principal, SessionCaller};
+use crate::http::client_ip::ClientIp;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::Json;
 use aurora_core::ApiError;
+use axum::Extension;
 use axum::extract::State;
 use axum::http::StatusCode;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -18,8 +20,14 @@ pub fn router() -> OpenApiRouter<AppState> {
 #[utoipa::path(get, path = "/me", operation_id = "getMe", tag = "me",
     responses((status = 200, body = Me), (status = 401, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
-async fn get_me(c: Caller, State(s): State<AppState>) -> Result<Json<Me>, ApiError> {
-    Ok(Json(service::load_me(&s, c.user_id).await?))
+async fn get_me(
+    c: Caller,
+    State(s): State<AppState>,
+    Extension(ip): Extension<ClientIp>,
+) -> Result<Json<Me>, ApiError> {
+    let mut me = service::load_me(&s, c.user_id).await?;
+    me.client_address = ip.0.map(|a| a.to_string());
+    Ok(Json(me))
 }
 
 /// Update display name and/or default organization.
@@ -31,9 +39,11 @@ async fn get_me(c: Caller, State(s): State<AppState>) -> Result<Json<Me>, ApiErr
 async fn patch_me(
     c: Caller,
     State(s): State<AppState>,
+    Extension(ip): Extension<ClientIp>,
     Json(req): Json<PatchMeRequest>,
 ) -> Result<Json<Me>, ApiError> {
-    let me = service::patch_me(&s, c.user_id, req).await?;
+    let mut me = service::patch_me(&s, c.user_id, req).await?;
+    me.client_address = ip.0.map(|a| a.to_string());
     audit::record(
         &s,
         AuditEvent::new(AuditActor::from_caller(&c), "user.update", Outcome::Success)

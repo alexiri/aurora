@@ -98,6 +98,17 @@ pub struct TranscriptEvent {
 pub struct EventsPage {
     pub items: Vec<TranscriptEvent>,
     pub last_seq: i64,
+    /// (P2-FU-1, C-196) The attachments referenced by `items` (`attachment` events and the
+    /// `attachments` of `turn.queued`) whose bytes are gone, so the transcript renders "expired"
+    /// instead of a download link. Empty when none.
+    pub purged_attachments: Vec<PurgedAttachment>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct PurgedAttachment {
+    pub id: Uuid,
+    /// `retention` (expired by the org's window) | `deleted` (removed by a person).
+    pub reason: String,
 }
 
 #[derive(Deserialize, ToSchema)]

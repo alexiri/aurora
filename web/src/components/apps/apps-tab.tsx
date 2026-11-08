@@ -5,6 +5,7 @@ import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { AppIcon } from "@/components/ui/app-icon";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
@@ -94,8 +95,7 @@ function AppCard({
   return (
     <li className="flex flex-col gap-3 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
       <div className="flex items-center gap-3">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={`/v1/apps/${encodeURIComponent(app.app_id)}/icon`} alt="" width={40} height={40} className="size-10 shrink-0 rounded-control border border-line bg-surface" />
+        <AppIcon appId={app.app_id} name={app.name} hasDarkIcon={app.has_dark_icon} size={40} />
         <div className="min-w-0">
           <p className="truncate font-display text-base font-semibold text-ink">{app.name}</p>
           <p className="text-xs text-muted">

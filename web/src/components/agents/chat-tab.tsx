@@ -7,6 +7,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import { Avatar } from "@/components/agent-avatar";
 import { Markdown } from "@/components/apps/markdown";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { PaperclipIcon, SendIcon } from "@/components/ui/icons";
@@ -22,6 +23,7 @@ import {
   classifySend,
   errorCopy,
   pendingFollowups,
+  type PurgeReason,
   type TranscriptState,
 } from "@/lib/chat/transcript";
 import { useTranscript } from "@/lib/chat/use-transcript";
@@ -34,8 +36,29 @@ const s = (v: unknown): string => (typeof v === "string" ? v : "");
  * Download link for an attachment. Content is never rendered inline (no HTML/SVG): the only embedded
  * form is an <img> of the download URL for raster images.
  */
-export function AttachmentLink({ id, filename, contentType, size }: { id: string; filename?: string; contentType?: string; size?: number }) {
+export function AttachmentLink({
+  id,
+  filename,
+  contentType,
+  size,
+  purged,
+}: {
+  id: string;
+  filename?: string;
+  contentType?: string;
+  size?: number;
+  /** Set when the bytes are gone (C-196): a chip instead of a link, a thumbnail or a download. */
+  purged?: PurgeReason;
+}) {
   const url = attachmentUrl(id);
+  if (purged) {
+    return (
+      <span data-testid="attachment-expired" className="flex flex-wrap items-center gap-2 text-sm text-muted">
+        <span>{filename || "Attachment"}</span>
+        <Badge>{purged === "deleted" ? "Removed" : "Expired by retention"}</Badge>
+      </span>
+    );
+  }
   return (
     <span className="flex items-center gap-2 text-sm">
       {canThumbnail(contentType) ? (
@@ -191,7 +214,7 @@ export function EventView({
           </p>
           <p className="whitespace-pre-wrap">{s(p.text)}</p>
           {Array.isArray(p.attachments)
-            ? (p.attachments as unknown[]).map((a) => <AttachmentLink key={s(a)} id={s(a)} />)
+            ? (p.attachments as unknown[]).map((a) => <AttachmentLink key={s(a)} id={s(a)} purged={state.purged?.[s(a)]} />)
             : null}
         </div>
       );
@@ -234,6 +257,7 @@ export function EventView({
       return (
         <AttachmentLink
           id={s(p.attachment_id)}
+          purged={state.purged?.[s(p.attachment_id)]}
           filename={s(p.filename)}
           contentType={s(p.content_type)}
           size={typeof p.size === "number" ? p.size : typeof p.size_bytes === "number" ? p.size_bytes : undefined}

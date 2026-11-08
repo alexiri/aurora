@@ -21313,7 +21313,8 @@
         "type": "object",
         "required": [
           "items",
-          "last_seq"
+          "last_seq",
+          "purged_attachments"
         ],
         "properties": {
           "items": {
@@ -21325,6 +21326,13 @@
           "last_seq": {
             "type": "integer",
             "format": "int64"
+          },
+          "purged_attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PurgedAttachment"
+            },
+            "description": "(P2-FU-1, C-196) The attachments referenced by `items` (`attachment` events and the\n`attachments` of `turn.queued`) whose bytes are gone, so the transcript renders \"expired\"\ninstead of a download link. Empty when none."
           }
         }
       },
@@ -22467,6 +22475,13 @@
           "approval_email": {
             "type": "boolean",
             "description": "(phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`)."
+          },
+          "client_address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(P2-FU-1, C-195) The caller's own client address as this API resolves it: the socket peer,\nor the rightmost untrusted `X-Forwarded-For` hop when the peer is in\n`server.trusted_proxies`. A hint for allow-lists; the gateway may see another address\n(NAT, load balancer, PROXY protocol). `null` when unknown. Set on `GET`/`PATCH /v1/me`."
           },
           "default_org_id": {
             "type": [
@@ -27670,6 +27685,23 @@
           }
         },
         "additionalProperties": false
+      },
+      "PurgedAttachment": {
+        "type": "object",
+        "required": [
+          "id",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string",
+            "description": "`retention` (expired by the org's window) | `deleted` (removed by a person)."
+          }
+        }
       },
       "PutAccessRequest": {
         "type": "object",
