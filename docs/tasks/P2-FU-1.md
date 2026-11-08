@@ -34,6 +34,12 @@ Five small, independent gaps. Each has its own tests. Contract numbers: **C-195.
 - Add it, in the same shape `set_icon` and the config feed already use.
 - Tests: the provision payload contains it, and the connector fake or SDK test accepts it.
 
+## (f) App icon fallback (owner report, 2026-11-08)
+`web/src/components/apps/apps-tab.tsx` renders `<img src="/v1/apps/{id}/icon">` with no fallback, so a failed or missing icon shows the browser's broken-image glyph.
+- Add a shared `AppIcon` primitive in `web/src/components/ui`, modelled on `AgentAvatar`. It renders the icon and falls back on `onError`, or when the app has no icon, to a monogram tile: the app name's first letter on a token background, in both themes.
+- Use it everywhere an app or package icon appears: the apps tab, connections, the approvals/activity rows if they show app icons, and the catalogue.
+- Tests: a vitest for the fallback.
+
 ## Constraints
 - Additive migrations only.
 - The new field in (c) must not reveal anything beyond the caller's own address.
