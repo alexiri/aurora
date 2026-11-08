@@ -26,4 +26,7 @@ bash scripts/guards/no-live-tokens.sh
 echo "== dev-gateway-address (kind dev profile: in-cluster gateway proxy)"
 bash scripts/guards/dev-gateway-address.sh
 
+echo "== no-conflict-markers"
+bash scripts/guards/no-conflict-markers.sh
+
 echo "== all guards passed"
