@@ -123,7 +123,8 @@ one new entry without activating it.
 | `approvals.max_timeout_secs` | 3600 | api, gateway | (phase 2, RFE-011a) upper bound of per-rule/per-grant timeouts, 300–14400, must be < `hosted.turn_ceiling_secs − 900` or startup fails |
 | `approvals.email_notifications` | `true` | api | (phase 2, RFE-011a) e-mail deciders when an approval has no live surface (needs `email.smtp_url`; log-only otherwise) |
 | `plugins.dir` | `/var/lib/aurora/plugins` | api | scanned packages |
-| `plugins.allow_unsigned` | `false` | api | dev only (warning banner) |
+| `plugins.builtin_dir` | `/usr/share/aurora/plugins` | api | (phase 2, C-210) built-in catalogue shipped in the API image; scanned like `plugins.dir` but fail-closed: only archives signed by the compiled-in project key (publisher `aurora`) load, anything else is refused and logged; `plugins.allow_unsigned` does not apply. Must not be empty (`ops/builtin-plugin-signing.md`) |
+| `plugins.allow_unsigned` | `false` | api | dev only (warning banner); never applies to `plugins.builtin_dir` |
 | `hookhost.api_internal_url` | `http://aurora-api:4111` | hookhost | snapshot/blob source |
 | `runner.api_url` | — | runner | e.g. `http://aurora-api:4101` |
 | `runner.backend` | — (required) | runner | `podman`, `kubernetes`, `fake` (config, never detection) |

@@ -104,8 +104,23 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
                  aurora-connector-mattermost; do \
          cp target/release/$b /out/; done
 
+# Built-in app packages (P2-CAT-0, docs/09 §10): plugins/builtin/<id> -> <id>-<version>.aurora-plugin.
+# Signed with the project key when the build gets the BuildKit/podman secret
+# `aurora_project_signing_key` (base64 seed; CI passes it from the `release` environment, see
+# docs/ops/builtin-plugin-signing.md). Without it the archives are unsigned and the API's builtin
+# directory refuses them (fail closed). Only the `api` target uses this stage.
+FROM builder AS plugin-archives
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/root/.cache/sccache \
+    with-sccache cargo build --release --locked -p aurora-cli
+RUN --mount=type=secret,id=aurora_project_signing_key,required=false \
+    bash scripts/plugins/build-builtin.sh --out /out-plugins --aurora target/release/aurora \
+      --key-file /run/secrets/aurora_project_signing_key
+
 FROM gcr.io/distroless/cc-debian12:nonroot AS api
 COPY --from=builder /out/aurora-api /usr/local/bin/aurora-api
+COPY --from=plugin-archives /out-plugins/ /usr/share/aurora/plugins/
 EXPOSE 4101 4111
 ENTRYPOINT ["/usr/local/bin/aurora-api"]
 CMD ["serve"]

@@ -463,12 +463,15 @@ impl Default for ApprovalsSection {
 #[serde(default, deny_unknown_fields)]
 pub struct PluginsSection {
     pub dir: String,
+    /// Built-in catalogue (09 §10): only archives signed by the project key are loaded from here.
+    pub builtin_dir: String,
     pub allow_unsigned: bool,
 }
 impl Default for PluginsSection {
     fn default() -> Self {
         Self {
             dir: "/var/lib/aurora/plugins".into(),
+            builtin_dir: "/usr/share/aurora/plugins".into(),
             allow_unsigned: false,
         }
     }

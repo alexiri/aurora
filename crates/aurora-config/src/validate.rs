@@ -325,6 +325,9 @@ impl RawConfig {
         if self.plugins.dir.is_empty() {
             c.err("plugins.dir", "must not be empty");
         }
+        if self.plugins.builtin_dir.is_empty() {
+            c.err("plugins.builtin_dir", "must not be empty");
+        }
         check_pos(
             &mut c,
             "retention.request_log_days",

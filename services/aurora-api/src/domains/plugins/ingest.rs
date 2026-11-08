@@ -204,8 +204,16 @@ pub async fn ingest(
 ) -> Result<Ingested, ApiError> {
     let pkg = Package::read(bytes, &Limits::default()).map_err(|v| reject(&v))?;
     let trust = keys::trust_store(&state.pool).await?;
-    let allow_unsigned = state.config.plugins.allow_unsigned;
+    // The builtin source is fail-closed (09 §10): never unsigned, and only the project key counts.
+    let allow_unsigned = state.config.plugins.allow_unsigned && source != Source::Builtin;
     let signer = signature::verify(&pkg, &trust, allow_unsigned).map_err(|v| reject(&[v]))?;
+    if source == Source::Builtin && signer != Signer::Project {
+        return Err(reject(&[Violation::new(
+            "builtin_not_project_signed",
+            "SIGNATURE",
+            "built-in packages must be signed by the project key",
+        )]));
+    }
     let signer_key_id = match &signer {
         Signer::Project => signature::BUILTIN.to_owned(),
         Signer::Trusted { key_id, .. } => key_id.clone(),

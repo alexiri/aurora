@@ -713,6 +713,12 @@ Rule: `09 §3.4 Instance-bound hosts`, `§6`, `§7`, `06 §MITM lane: connect-ti
 - C-245 **App catalogue** (`GET /v1/apps/{app}`): new `instances: { label, default_host: string|null } | null` (null when the app is not instance-bound) so the dashboard shows the instance picker and the registration form.
 - C-246 **Gateway** (proxy, not `/v1`): resolution and injection per `06` step 2; an instance-bound connection on any other host is refused like a tenant-bound one (421 `host_mismatch`, `details.expected_host` = the instance host). A disabled or deleted instance injects nothing (its host falls back to the ordinary unknown-host handling).
 
+### Phase 2 — P2-CAT-0 (built-in catalogue, D-75)
+
+Reserved numbers C-210..C-219. No route or wire shape changes.
+
+- C-210 **Config** `[plugins] builtin_dir` (string, default `/usr/share/aurora/plugins`, must not be empty; env `AURORA__PLUGINS__BUILTIN_DIR`). The API scans it at startup and every 60 s (same singleton job and idempotence by digest as `plugins.dir`) with source `builtin`. Fail-closed: an archive is ingested only when its `SIGNATURE` verifies against the compiled-in project key (`AURORA_PROJECT_PUBLIC_KEY`, publisher `aurora`); `plugins.allow_unsigned` never applies, and a package signed by a trusted key is refused too (422 `package_invalid`, violation `builtin_not_project_signed`, or the underlying `signature_missing` / `signature_*` code). A refused file creates no row and is logged (`plugin file refused`, `source=builtin`, `code`). Project-signed packages activate on first sight and on upgrades that do not widen permissions (09 §10).
+
 ### W9 hook-host JSON encoding (C-18, C-19)
 
 - C-18 Internal snapshot route returns the exact canonical bytes so consumers verify `sha256(body) == x-snapshot-hash` without re-serialization.
