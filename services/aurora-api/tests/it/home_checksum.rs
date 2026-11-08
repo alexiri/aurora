@@ -93,10 +93,8 @@ async fn api_rendered_memory_round_trips_the_trailer_and_tampering_is_harvested(
         &h,
         agent,
         "with-front-matter",
-        // (A title containing `"` or `\` does not survive the harvest: the API JSON-quotes it, the
-        // supervisor's `unquote` drops the quotes without unescaping. Reported in P2-TEST-1, not
-        // covered here: this test is about the checksum.)
-        Some("Café menu"),
+        // Quoted: the API JSON-escapes it, the harvest must unescape it (FIX-012).
+        Some(r#"Café "menu""#),
         Some("what: the user likes"),
         "line one\nline two ü 日本語\n",
     )
@@ -201,7 +199,7 @@ async fn api_rendered_memory_round_trips_the_trailer_and_tampering_is_harvested(
     let writes = harvester.scan();
     assert_eq!(keys(&writes), ["with-front-matter"], "{writes:?}");
     assert!(writes[0].content.contains("line ONE"), "{writes:?}");
-    assert_eq!(writes[0].title.as_deref(), Some("Café menu"));
+    assert_eq!(writes[0].title.as_deref(), Some(r#"Café "menu""#));
     assert_eq!(
         writes[0].description.as_deref(),
         Some("what: the user likes")
@@ -236,4 +234,93 @@ async fn api_rendered_memory_round_trips_the_trailer_and_tampering_is_harvested(
     }
     let mut fresh = Harvester::new(&root.0);
     assert!(fresh.scan().is_empty(), "a re-rendered projection is clean");
+}
+
+/// Renders every memory of `agent` with the real API renderer and installs it into a fresh scratch
+/// root with the real projector.
+async fn render_install(h: &Harness, agent: Uuid, generation: i64) -> Scratch {
+    let mut conn = h.pool().acquire().await.unwrap();
+    let claim = HomeSyncClaim {
+        sandbox_id: Uuid::now_v7(),
+        boot_id: Uuid::now_v7(),
+        agent_id: agent,
+        generation,
+        harness_id: None,
+    };
+    let parts = aurora_api::domains::hosted::home::render(&h.state, &mut conn, &claim)
+        .await
+        .unwrap();
+    let root = Scratch::new();
+    let mut projector = HomeProjector::new(HomeConfig {
+        root: root.0.clone(),
+        skills_dir: Some(aurora_api::domains::hosted::home::skills_dir(None).to_owned()),
+        instruction_files: vec![],
+        pg: None,
+    });
+    for part in &parts {
+        projector.apply_part(part).unwrap();
+    }
+    projector.commit(generation as _).unwrap();
+    root
+}
+
+/// FIX-012: titles and descriptions with escapes survive render -> harvest unchanged, and a second
+/// round trip (the harvested values stored, rendered and harvested again) does not grow them.
+#[tokio::test]
+async fn escaped_titles_and_descriptions_survive_two_round_trips() {
+    let h = Harness::new().await;
+    let org = h.org().await;
+    let ws = h.workspace(org).await;
+    let agent = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness, effort, brief) VALUES ($1,$2,$3,'ada','Ada','hosted','fake','medium','')")
+        .bind(agent).bind(org).bind(ws).execute(h.pool()).await.unwrap();
+    // (key, title, description). The empty string harvests as "no value" (the harvester has always
+    // skipped empty scalars), and must stay that way rather than turning into `""` text.
+    let cases: [(&str, &str, &str); 8] = [
+        ("dq", r#"Cafe "menu""#, r#"say "hi""#),
+        ("bs", r"C:\temp\new", r"a\\b \n literal"),
+        ("nl", "two\nlines", "line1\nline2\r\nline3"),
+        ("tab", "a\tb", "\ttabbed\t"),
+        ("uni", "Café 日本語 😀", "ü ñ \u{2028} é"),
+        ("sq", "it's 'quoted'", "''"),
+        ("empty", "", ""),
+        ("mix", "\"\\'\n\t é", "all: of #them \"\\ ' \u{1} end"),
+    ];
+    for (key, t, d) in cases {
+        insert_memory(&h, agent, key, Some(t), Some(d), "body\n").await;
+    }
+    let expect = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+
+    for round in 1..=2_i64 {
+        let root = render_install(&h, agent, round).await;
+        let mut harvester = Harvester::new(&root.0);
+        assert!(
+            harvester.scan().is_empty(),
+            "round {round}: clean projection"
+        );
+        for (key, ..) in cases {
+            let file = read(&root.0, key);
+            write(&root.0, key, &format!("{file}edit {round}\n"));
+        }
+        let writes = harvester.scan();
+        assert_eq!(writes.len(), cases.len(), "round {round}: {writes:?}");
+        for (key, t, d) in cases {
+            let w = writes.iter().find(|w| w.key == key).unwrap();
+            assert_eq!(w.title, expect(t), "round {round}: {key} title");
+            assert_eq!(w.description, expect(d), "round {round}: {key} description");
+            assert!(w.content.contains(&format!("edit {round}")), "{w:?}");
+            // Store what the harvest produced (as the API would); an absent value keeps the old one.
+            sqlx::query(
+                "UPDATE memories SET title = COALESCE($2, title), description = COALESCE($3, description) \
+                 WHERE agent_id = $1 AND key = $4",
+            )
+            .bind(agent)
+            .bind(w.title.as_deref())
+            .bind(w.description.as_deref())
+            .bind(key)
+            .execute(h.pool())
+            .await
+            .unwrap();
+        }
+    }
 }
