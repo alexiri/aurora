@@ -272,6 +272,10 @@ oauth_clients:
 - A connection of an instance-bound app records its `instance_id` (or none for
   `default_host`). The gateway injects it **only** on that instance's host,
   exactly as a tenant-bound connection only on its `tenant_host` (SEC-04, SEC-59).
+  A connection without an instance stands for `default_host`: `{instance}`
+  resolves to that host in every gateway path (token refresh/exchange, hook
+  egress, injection guard), it is injected only there, never on a registered
+  instance's host (D-86).
 - OAuth: each self-hosted instance has its own OAuth application, so the client
   is a BYOC client bound to the instance (`app_oauth_clients.instance_id`); the
   templated URLs resolve to that instance's host and MUST be https.
@@ -728,7 +732,16 @@ Fixture file format (`tests/*.yaml`):
 - name: close task summary
   request: { method: POST, url: "https://api.todoist.com/rest/v2/tasks/123/close" }
   expect: { tool: close_task, summary: { title: "Complete task", fields: { Task: "123" } } }
+- name: token is not sent outside its prefixes
+  connection: { credentials: { api_token: "tok" } }
+  request: { method: GET, url: "https://api.todoist.com/public/x" }
+  expect:
+    upstream: { headers_absent: [authorization, x-api-key] }   # fails if any listed header is on the upstream request
 ```
+`expect.upstream.headers_absent` (D-86) lists header names (case-insensitive) that the upstream
+request must not carry, whether injected by the package or sent by the client. In a case without a
+`connection.instance_host`, the connection of an instance-bound app is its default-host connection
+(`{instance}` is the app's `default_host`).
 
 **Token lifecycle cases** (D-82; `token.kind: oauth2_refresh`). A case replays a stale upstream
 answer, the refresh exchange against a recorded token endpoint and what the gateway does next. It
@@ -738,7 +751,7 @@ the network and the database are replaced by the recording.
 ```yaml
 - name: refresh after a stale 401
   connection:
-    instance_host: gitlab.example.com        # the connection's bound host (instance-bound apps)
+    instance_host: gitlab.example.com        # the registered instance (omit for the default-host connection)
     credentials: { access_token: "tok-old", refresh_token: "refresh-1" }
     oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }   # fake fields of the registered OAuth client
   request: { method: GET, url: "https://gitlab.example.com/api/v4/user" }

@@ -37,7 +37,9 @@ pub struct ConnCand {
     /// The registered app instance this connection is bound to (D-74): it is injected only on
     /// that instance's exact host.
     pub instance_id: Option<Uuid>,
-    /// Host of `instance_id` (set by the resolver from the org's active instances).
+    /// What `{instance}` stands for: the host of `instance_id` (set by the resolver from the org's
+    /// active instances), or, for a default-host connection of an instance-bound app, the app's
+    /// `default_host` (D-86).
     pub instance_host: Option<String>,
     /// `status = reauth_required`: refused with reconnect guidance after the decision.
     pub reauth_required: bool,

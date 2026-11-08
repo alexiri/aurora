@@ -45,10 +45,16 @@ pub fn instance_guard(
     host: &str,
 ) -> Result<(), GuardError> {
     let Some(id) = conn_instance else {
-        return if on_instance.is_some() {
-            Err(GuardError::Unavailable)
-        } else {
-            Ok(())
+        if on_instance.is_some() {
+            return Err(GuardError::Unavailable);
+        }
+        // A default-host connection of an instance-bound app (`conn_instance_host` is the app's
+        // `default_host`) is injected on that exact host only.
+        return match conn_instance_host {
+            Some(d) if !d.eq_ignore_ascii_case(host) => Err(GuardError::Mismatch {
+                expected: d.to_ascii_lowercase(),
+            }),
+            _ => Ok(()),
         };
     };
     let stored = conn_instance_host.ok_or(GuardError::Unavailable)?;
@@ -117,6 +123,18 @@ mod tests {
             Err(GuardError::Unavailable)
         );
         assert!(instance_guard(None, None, None, "saas.test").is_ok());
+        // A default-host connection (host = the app's default_host): that host only.
+        assert!(instance_guard(None, Some("saas.test"), None, "SaaS.test").is_ok());
+        assert_eq!(
+            instance_guard(None, Some("saas.test"), None, "saas.test.evil.test"),
+            Err(GuardError::Mismatch {
+                expected: "saas.test".into()
+            })
+        );
+        assert_eq!(
+            instance_guard(None, Some("saas.test"), Some(b), "desk.acme.test"),
+            Err(GuardError::Unavailable)
+        );
         // A bound connection whose instance host is unknown fails closed.
         assert_eq!(
             instance_guard(Some(a), None, Some(a), "desk.acme.test"),

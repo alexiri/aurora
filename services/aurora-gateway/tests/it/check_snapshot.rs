@@ -77,6 +77,34 @@ fn mismatch_fails_and_missing_credential_is_reported() {
     assert_eq!(r.json["failed"], 2);
 }
 
+#[test]
+fn headers_absent_passes_when_missing_and_fails_when_sent_case_insensitive() {
+    // The bearer is injected on api.todoist.com, so `Authorization` is present there.
+    let y = r#"
+- name: present header fails
+  connection: { credentials: { api_token: tok } }
+  request: { method: GET, url: "https://api.todoist.com/rest/v2/tasks" }
+  expect: { upstream: { headers_absent: [Authorization] } }
+- name: absent header passes
+  connection: { credentials: { api_token: tok } }
+  request: { method: GET, url: "https://api.todoist.com/rest/v2/tasks" }
+  expect: { upstream: { headers_absent: [x-api-key, X-Other] } }
+- name: client-sent header also counts
+  connection: { credentials: { api_token: tok } }
+  request: { method: GET, url: "https://api.todoist.com/rest/v2/tasks", headers: { X-Leak: "1" } }
+  expect: { upstream: { headers_absent: [x-leak] } }
+"#;
+    let r = run(&snapshot(), &files(y)).unwrap();
+    assert!(!r.ok);
+    assert_eq!(
+        (r.json["passed"].as_u64(), r.json["failed"].as_u64()),
+        (Some(1), Some(2))
+    );
+    let text = r.json.to_string();
+    assert!(text.contains("headers_absent.Authorization"), "{text}");
+    assert!(text.contains("headers_absent.x-leak"), "{text}");
+}
+
 const GMAIL: &str = r#"
 package: { id: mailapp, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: aurora, name: Mail }
 apps:

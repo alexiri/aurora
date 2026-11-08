@@ -567,7 +567,13 @@ impl Resolver {
                                 continue;
                             }
                         },
-                        None => None,
+                        // A default-host connection of an instance-bound app: `{instance}` is
+                        // the app's `default_host` (D-74, D-86).
+                        None => l
+                            .snapshot
+                            .app(&r.app_id)
+                            .and_then(|a| a.instances.as_ref())
+                            .and_then(|i| i.default_host.clone()),
                     };
                     match ConnCand::from_row(r, k.org) {
                         Ok(mut c) => {
