@@ -227,6 +227,7 @@ fn rule(name: &str, action: &str, targets: Value, extra: Value) -> PolicyRuleRow
         targets,
         action: action.into(),
         require_approval: false,
+        approval_timeout_secs: None,
         rate_limit: None,
         conditions: json!([]),
     };

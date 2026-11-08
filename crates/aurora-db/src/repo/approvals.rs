@@ -226,7 +226,8 @@ pub async fn decide(
     let mut tx = pool.begin().await?;
     let won: Option<Uuid> = sqlx::query_scalar(
         "UPDATE approvals SET status = $2, decided_by_user_id = $3, decided_via = $4, \
-         decided_at = now(), updated_at = now() WHERE id = $1 AND status = 'pending' \
+         decided_at = now(), resolved_at = now(), updated_at = now() \
+         WHERE id = $1 AND status = 'pending' \
          RETURNING workspace_id",
     )
     .bind(id)
@@ -284,7 +285,7 @@ pub async fn decide_batch(
     let mut tx = pool.begin().await?;
     let rows: Vec<(Uuid, Uuid, Uuid)> = sqlx::query_as(&format!(
         "UPDATE approvals a SET status = $6, decided_by_user_id = $1, decided_via = $7, \
-         decided_at = now(), updated_at = now() \
+         decided_at = now(), resolved_at = now(), updated_at = now() \
          WHERE a.status = 'pending' AND a.batch_id = $5 AND a.agent_id = $4 AND {} \
          AND ($2::uuid IS NULL OR a.org_id = $2) AND ($3::uuid IS NULL OR a.workspace_id = $3) \
          RETURNING a.id, a.workspace_id, a.org_id",
@@ -310,7 +311,8 @@ pub async fn decide_batch(
 pub async fn expire_overdue(pool: &PgPool, grace_secs: f64) -> Result<Vec<(Uuid, Uuid)>, DbError> {
     let mut tx = pool.begin().await?;
     let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
-        "UPDATE approvals SET status = 'expired', decided_at = now(), updated_at = now() \
+        "UPDATE approvals SET status = 'expired', decided_at = now(), resolved_at = now(), \
+         updated_at = now() \
          WHERE status = 'pending' AND deadline + make_interval(secs => $1) < now() \
          RETURNING id, workspace_id",
     )
@@ -329,7 +331,7 @@ pub async fn expire_overdue(pool: &PgPool, grace_secs: f64) -> Result<Vec<(Uuid,
 pub async fn abandon_unseen(pool: &PgPool, unseen_secs: f64) -> Result<Vec<(Uuid, Uuid)>, DbError> {
     let mut tx = pool.begin().await?;
     let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
-        "UPDATE approvals a SET status = 'abandoned', updated_at = now() \
+        "UPDATE approvals a SET status = 'abandoned', resolved_at = now(), updated_at = now() \
          WHERE a.status = 'pending' AND NOT EXISTS (SELECT 1 FROM gateway_instances g \
            WHERE g.id = a.gateway_instance_id AND g.stopped_at IS NULL \
              AND g.last_seen_at >= now() - make_interval(secs => $1)) \

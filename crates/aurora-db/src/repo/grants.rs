@@ -77,11 +77,13 @@ pub struct ConnectionGrantRow {
     pub mode: String,
     pub allow_tools: Vec<String>,
     pub ask_tools: Vec<String>,
+    /// (RFE-011a) hold deadline preference of the ask rule, seconds.
+    pub ask_timeout_secs: Option<i32>,
     pub created_at: DateTime<Utc>,
 }
 
-const CONN_COLS: &str =
-    "id, workspace_id, agent_id, connection_id, mode, allow_tools, ask_tools, created_at";
+const CONN_COLS: &str = "id, workspace_id, agent_id, connection_id, mode, allow_tools, ask_tools, \
+     ask_timeout_secs, created_at";
 
 /// Create or replace the `(agent, connection)` grant (mode and tool lists are overwritten).
 #[allow(clippy::too_many_arguments)]
@@ -93,13 +95,16 @@ pub async fn upsert_connection_grant<'e, E: PgExecutor<'e>>(
     mode: &str,
     allow_tools: &[String],
     ask_tools: &[String],
+    ask_timeout_secs: Option<i32>,
     created_by: Option<Uuid>,
 ) -> Result<ConnectionGrantRow, DbError> {
     Ok(sqlx::query_as(&format!(
-        "INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode, allow_tools, ask_tools, created_by) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) \
+        "INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode, allow_tools, ask_tools, \
+         created_by, ask_timeout_secs) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) \
          ON CONFLICT (agent_id, connection_id) DO UPDATE SET mode = EXCLUDED.mode, \
-         allow_tools = EXCLUDED.allow_tools, ask_tools = EXCLUDED.ask_tools, updated_at = now() \
+         allow_tools = EXCLUDED.allow_tools, ask_tools = EXCLUDED.ask_tools, \
+         ask_timeout_secs = EXCLUDED.ask_timeout_secs, updated_at = now() \
          RETURNING {CONN_COLS}"
     ))
     .bind(Uuid::now_v7())
@@ -110,6 +115,7 @@ pub async fn upsert_connection_grant<'e, E: PgExecutor<'e>>(
     .bind(allow_tools)
     .bind(ask_tools)
     .bind(created_by)
+    .bind(ask_timeout_secs)
     .fetch_one(exec)
     .await?)
 }

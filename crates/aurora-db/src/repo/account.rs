@@ -72,6 +72,33 @@ pub async fn update_display_name<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
+/// (RFE-011a) Does the user want e-mails about approvals nobody is watching? Default `true`.
+pub async fn approval_email_enabled<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+) -> Result<bool, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT approval_email_enabled FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(exec)
+            .await?
+            .unwrap_or(true),
+    )
+}
+
+pub async fn set_approval_email<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    enabled: bool,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE users SET approval_email_enabled = $2, updated_at = now() WHERE id = $1")
+        .bind(id)
+        .bind(enabled)
+        .execute(exec)
+        .await?;
+    Ok(())
+}
+
 pub async fn is_active_member<'e, E: PgExecutor<'e>>(
     exec: E,
     user: Uuid,

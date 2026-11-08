@@ -40,6 +40,7 @@ MUST implement it exactly; any change starts here.
 | disabled_at | timestamptz null | instance-level disable |
 | default_org_id | uuid null FK→organizations (set null) | |
 | last_login_at | timestamptz null | churn column |
+| approval_email_enabled | bool not null default true | per-user opt-out of approval e-mails (phase 2, RFE-011a; `PATCH /v1/me { approval_email }`) |
 
 ### `user_identities`
 External identities linked to a user (OIDC).
@@ -386,6 +387,7 @@ Only consulted when `organizations.app_posture = 'restricted'`.
 | require_approval | bool not null default false | allow only |
 | rate_limit | jsonb null | `{ "count": int, "per": "minute"|"hour"|"day" }`; allow only |
 | conditions | jsonb not null default `[]` | `[Condition]` |
+| approval_timeout_secs | int null | (phase 2, RFE-011a) only with `require_approval`; 60 … `approvals.max_timeout_secs` (CHECK 60…14400, the instance maximum is checked at authoring); null = no preference (`07 §Approval deadlines`) |
 
 Shapes of `Identity`, `Target`, `Condition`: `07 §Rule anatomy`.
 
@@ -400,6 +402,7 @@ Shapes of `Identity`, `Target`, `Condition`: `07 §Rule anatomy`.
 | mode | text CHECK in (`full`,`custom`) null | connections only |
 | allow_tools | text[] not null default `{}` | custom mode |
 | ask_tools | text[] not null default `{}` | custom mode |
+| ask_timeout_secs | int null | (phase 2, RFE-011a) custom connection grants with `ask_tools`; compiled into the derived ask rule as `approval_timeout_secs` (CHECK 60…14400; the instance maximum is checked at authoring) |
 | created_by | uuid null FK→users (set null) | |
 | unique | (agent_id, connection_id), (agent_id, secret_id) | |
 
@@ -414,7 +417,7 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 | source_id | uuid not null | grant id or connection id |
 | ordinal | int not null | order within the source |
 | logical_id | uuid not null | stable while the source exists |
-| rule | jsonb not null | same fields as `policy_rules` minus ids/priority |
+| rule | jsonb not null | same fields as `policy_rules` minus ids/priority (phase 2, RFE-011a: including `approval_timeout_secs`) |
 | unique | (source_kind, source_id, ordinal) | |
 
 ### `approvals`
@@ -442,7 +445,27 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 | decided_via | text null CHECK in (`dashboard`,`api`,`channel`) | |
 | decided_at | timestamptz null | |
 | context_label | text null | (phase 2, RFE-025) label of the BYO context credential that made the request, ≤128, sanitized; shown on the approval card (`08 §11.9`) |
-| deadline | timestamptz not null | |
+| deadline | timestamptz not null | `created + effective timeout` (`07 §Approval deadlines`) |
+| resolved_at | timestamptz null | (phase 2, RFE-011a) set on every terminal transition (approve, deny, expire, abandon); the stall clock restarts here (`07 §Approval deadlines`). Gateway role may write it with `status` |
+
+### `approval_watchers`
+(phase 2, RFE-011a) A live `approvals/stream` or `approvals/pending` connection; a *live delivery surface* (`07 §Approvals`).
+| Column | Type | Notes |
+|---|---|---|
+| replica_id | uuid | API replica holding the connection; pk part |
+| user_id | uuid FK→users (cascade) | pk part |
+| workspace_id | uuid FK→workspaces (cascade) | pk part; the workspace whose approvals the connection watches |
+| last_seen_at | timestamptz not null | churn column; live when within `APPROVAL_WATCHER_TTL`; index (workspace_id, last_seen_at) |
+
+### `approval_notifications`
+(phase 2, RFE-011a) One row per (approval, decider) e-mail claim.
+| Column | Type | Notes |
+|---|---|---|
+| approval_id | uuid | gateway or action approval id; pk part (no FK: approval history survives) |
+| user_id | uuid FK→users (cascade) | pk part |
+| kind | text CHECK in (`gateway`,`action`) | |
+| sent_at | timestamptz not null default now() | insert-on-conflict claim makes the e-mail idempotent across replicas; pruned with the daily retention pruning; index (user_id, sent_at) |
+| delivery | text not null default `mail` CHECK in (`mail`,`batch`,`digest_mail`,`digest`) | how the claim was served: its own e-mail; folded into the e-mail of its `batch_id`; the "N more waiting" digest e-mail; or folded silently into a digest already sent this hour (hourly cap `APPROVAL_EMAIL_PER_USER_HOUR`, D-81) |
 
 ### `request_log` — *no FKs*, range-partitioned by month on `ts`
 | Column | Type | Notes |
@@ -1175,39 +1198,6 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | `settings.retention` | `{ "conversations_days"?: int\|null, "attachments_days"?: int\|null, "attachment_quota_mib"?: int\|null }` | per-org retention (RFE-010) and attachment limits (RFE-015); null/absent = keep forever / unlimited. No column: `settings` is `jsonb`. | 2 (RFE-010/015) |
-
-#### `policy_rules`, `grants`, `derived_rules` (approval timeout)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| policy_rules.approval_timeout_secs | int null | only with `require_approval`; 60 … `approvals.max_timeout_secs`; null = no preference (`07 §Approval deadlines`) | 2 (RFE-011a) |
-| grants.ask_timeout_secs | int null | custom connection grants with `ask_tools`; compiled into the derived ask rule | 2 (RFE-011a) |
-| derived_rules.rule | jsonb gains `approval_timeout_secs` | same field as in `policy_rules` | 2 (RFE-011a) |
-
-#### `approvals`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| resolved_at | timestamptz null | set on every terminal transition (approve, deny, expire, abandon); the stall clock restarts here (`07 §Approval deadlines`). Gateway role may write it with `status` | 2 (RFE-011a) |
-
-#### `approval_watchers` (new table)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| replica_id | uuid | API replica holding the connection; pk part | 2 (RFE-011a) |
-| user_id | uuid FK→users (cascade) | pk part | 2 (RFE-011a) |
-| workspace_id | uuid FK→workspaces (cascade) | pk part; the workspace whose approvals the connection watches | 2 (RFE-011a) |
-| last_seen_at | timestamptz not null | churn column; live when within `APPROVAL_WATCHER_TTL` | 2 (RFE-011a) |
-
-#### `approval_notifications` (new table)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| approval_id | uuid | gateway or action approval id; pk part (no FK: approval history survives) | 2 (RFE-011a) |
-| user_id | uuid FK→users (cascade) | pk part | 2 (RFE-011a) |
-| kind | text CHECK in (`gateway`,`action`) | | 2 (RFE-011a) |
-| sent_at | timestamptz not null | insert-on-conflict claim makes the e-mail idempotent across replicas; pruned with the daily retention pruning | 2 (RFE-011a) |
-
-#### `users`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| approval_email_enabled | bool not null default true | per-user opt-out of approval e-mails | 2 (RFE-011a) |
 
 #### `gateway_credentials` (token age and use)
 | Planned column | Type | Notes | Phase |

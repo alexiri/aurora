@@ -114,6 +114,19 @@
       "secret_ref",
       "workspace_id"
     ],
+    "approval_notifications": [
+      "approval_id",
+      "delivery",
+      "kind",
+      "sent_at",
+      "user_id"
+    ],
+    "approval_watchers": [
+      "last_seen_at",
+      "replica_id",
+      "user_id",
+      "workspace_id"
+    ],
     "approvals": [
       "agent_id",
       "app_id",
@@ -133,6 +146,7 @@
       "method",
       "org_id",
       "path",
+      "resolved_at",
       "rule_logical_id",
       "rule_name",
       "status",
@@ -348,6 +362,7 @@
     "grants": [
       "agent_id",
       "allow_tools",
+      "ask_timeout_secs",
       "ask_tools",
       "connection_id",
       "created_by",
@@ -500,6 +515,7 @@
     ],
     "policy_rules": [
       "action",
+      "approval_timeout_secs",
       "conditions",
       "description",
       "enabled",
@@ -813,6 +829,7 @@
       "user_id"
     ],
     "users": [
+      "approval_email_enabled",
       "default_org_id",
       "disabled_at",
       "display_name",

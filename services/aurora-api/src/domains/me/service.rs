@@ -41,8 +41,10 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
             }
         })
         .collect();
+    let approval_email = account::approval_email_enabled(&state.pool, user_id).await?;
     Ok(Me {
         default_org_id: user.default_org_id,
+        approval_email,
         user: user.into(),
         memberships,
     })
@@ -76,6 +78,9 @@ pub async fn patch_me(
     }
     if let Some(org) = req.default_org_id {
         users::set_default_org(&mut *tx, user_id, org).await?;
+    }
+    if let Some(on) = req.approval_email {
+        account::set_approval_email(&mut *tx, user_id, on).await?;
     }
     tx.commit().await.map_err(DbError::from)?;
     load_me(state, user_id).await

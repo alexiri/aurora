@@ -193,6 +193,7 @@ fn rule(name: &str, action: &str, targets: Value, extra: Value) -> PolicyRuleRow
         targets,
         action: action.into(),
         require_approval: false,
+        approval_timeout_secs: None,
         rate_limit: None,
         conditions: json!([]),
     };
@@ -276,13 +277,11 @@ async fn start(
     while !hub.is_connected() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    let holds = Arc::new(Holds::new(
-        pool.clone(),
-        hub,
-        Uuid::now_v7(),
-        timeout,
-        Some(rx),
-    ));
+    let holds = Arc::new(
+        Holds::new(pool.clone(), hub, Uuid::now_v7(), timeout, Some(rx))
+            // RFE-011a: tests use second-scale rule timeouts, below the production lower bound.
+            .with_min_timeout(Duration::from_secs(1)),
+    );
     let handler = Arc::new(PolicyHandler::new(PolicyHandlerParts {
         resolver: resolver.clone(),
         plaintext,
@@ -534,6 +533,128 @@ async fn deadline_expires() {
     assert_eq!(status_of(&env.pool, id).await, "expired");
 }
 
+/// Both scopes require approval on the secret; each may carry a timeout (RFE-011a).
+fn timeout_env(org_t: Option<i32>, ws_t: Option<i32>) -> impl FnOnce(&World, &SecretRef) -> Rows {
+    move |w, v| {
+        let mut rows = approval_env(w, v);
+        rows.ws.rules[0].approval_timeout_secs = ws_t;
+        let mut o = allow_secret(&rows.secrets[0]);
+        o.require_approval = true;
+        o.approval_timeout_secs = org_t;
+        rows.org.rules.push(o);
+        rows
+    }
+}
+
+async fn deadline_span(pool: &sqlx::PgPool, id: Uuid) -> f64 {
+    sqlx::query_scalar(
+        "SELECT extract(epoch FROM (deadline - created_at))::float8 FROM approvals WHERE id=$1",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+// RFE-011a, SEC-49: the effective timeout is the minimum of the timeouts set on the requiring
+// rules of both scopes; the default applies only when none is set; expiry still denies and
+// restarts the stall clock (`resolved_at`).
+#[tokio::test]
+async fn rule_timeouts_take_the_minimum_across_scopes() {
+    let db = TestDb::new().await;
+    let env = Arc::new(
+        start(
+            timeout_env(Some(20), Some(3)),
+            no_llm(),
+            db.pool().clone(),
+            Duration::from_secs(30),
+        )
+        .await,
+    );
+    let e2 = env.clone();
+    let t = tokio::spawn(async move { get(&e2, "/x", "").await });
+    let (id, _, _) = pending_for(&env.pool, env.w.ws).await;
+    let span = deadline_span(&env.pool, id).await;
+    assert!((span - 3.0).abs() < 0.5, "deadline span {span}");
+    let r = tokio::time::timeout(Duration::from_secs(10), t)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(r.status, 403);
+    assert_eq!(r.json()["error"]["code"], "manual_approval_expired");
+    assert_eq!(status_of(&env.pool, id).await, "expired");
+    let resolved: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT resolved_at FROM approvals WHERE id=$1")
+            .bind(id)
+            .fetch_one(&env.pool)
+            .await
+            .unwrap();
+    assert!(resolved.is_some(), "expiry sets resolved_at");
+
+    // The org scope's smaller value wins just the same.
+    let env = start(
+        timeout_env(Some(2), Some(20)),
+        no_llm(),
+        db.pool().clone(),
+        Duration::from_secs(30),
+    )
+    .await;
+    let r = get(&env, "/x", "").await;
+    assert_eq!(r.json()["error"]["code"], "manual_approval_expired");
+    let (id, _, _) = pending_for(&env.pool, env.w.ws).await;
+    let span = deadline_span(&env.pool, id).await;
+    assert!((span - 2.0).abs() < 0.5, "deadline span {span}");
+
+    // A rule without a timeout expresses no preference: the other one still applies.
+    let env = start(
+        timeout_env(None, Some(2)),
+        no_llm(),
+        db.pool().clone(),
+        Duration::from_secs(30),
+    )
+    .await;
+    let r = get(&env, "/x", "").await;
+    assert_eq!(r.json()["error"]["code"], "manual_approval_expired");
+    let (id, _, _) = pending_for(&env.pool, env.w.ws).await;
+    assert!((deadline_span(&env.pool, id).await - 2.0).abs() < 0.5);
+
+    // No timeout anywhere: the default timeout (`approvals.timeout_secs`).
+    let env = start(
+        timeout_env(None, None),
+        no_llm(),
+        db.pool().clone(),
+        Duration::from_secs(1),
+    )
+    .await;
+    let r = get(&env, "/x", "").await;
+    assert_eq!(r.json()["error"]["code"], "manual_approval_expired");
+    let (id, _, _) = pending_for(&env.pool, env.w.ws).await;
+    assert!((deadline_span(&env.pool, id).await - 1.0).abs() < 0.5);
+}
+
+// RFE-011a: rule-level timeouts are clamped to [APPROVAL_TIMEOUT_MIN, approvals.max_timeout_secs]
+// whatever a stored row says; the default timeout is used as configured.
+#[tokio::test]
+async fn effective_timeout_is_clamped_to_the_bounds() {
+    let db = TestDb::new().await;
+    let hub = Hub::new();
+    let holds = Holds::new(
+        db.pool().clone(),
+        hub,
+        Uuid::now_v7(),
+        Duration::from_secs(300),
+        None,
+    )
+    .with_max_timeout(Duration::from_secs(1200));
+    assert_eq!(holds.effective_timeout(None), Duration::from_secs(300));
+    assert_eq!(holds.effective_timeout(Some(10)), Duration::from_secs(60));
+    assert_eq!(holds.effective_timeout(Some(600)), Duration::from_secs(600));
+    assert_eq!(
+        holds.effective_timeout(Some(14_400)),
+        Duration::from_secs(1200)
+    );
+}
+
 #[tokio::test]
 async fn client_disconnect_abandons() {
     let db = TestDb::new().await;
@@ -555,6 +676,13 @@ async fn client_disconnect_abandons() {
     let (id, _, _) = pending_for(&env.pool, env.w.ws).await;
     drop(s);
     wait_status(&env.pool, id, "abandoned").await;
+    let resolved: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT resolved_at FROM approvals WHERE id=$1")
+            .bind(id)
+            .fetch_one(&env.pool)
+            .await
+            .unwrap();
+    assert!(resolved.is_some(), "abandon sets resolved_at (RFE-011a)");
 }
 
 #[tokio::test]

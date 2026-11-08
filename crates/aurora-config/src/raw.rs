@@ -452,10 +452,18 @@ impl Default for GatewaySection {
 #[serde(default, deny_unknown_fields)]
 pub struct ApprovalsSection {
     pub timeout_secs: u64,
+    /// (RFE-011a) Upper bound of per-rule / per-grant timeouts (300..=14400, below the turn ceiling).
+    pub max_timeout_secs: u64,
+    /// (RFE-011a) E-mail deciders when an approval has no live surface.
+    pub email_notifications: bool,
 }
 impl Default for ApprovalsSection {
     fn default() -> Self {
-        Self { timeout_secs: 300 }
+        Self {
+            timeout_secs: 300,
+            max_timeout_secs: 3600,
+            email_notifications: true,
+        }
     }
 }
 

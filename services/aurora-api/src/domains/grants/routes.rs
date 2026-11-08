@@ -193,7 +193,8 @@ async fn put_connection_grant(
         "grant.create",
         &a,
         conn,
-        json!({"mode": g.mode, "allow_tools": g.allow_tools, "ask_tools": g.ask_tools}),
+        json!({"mode": g.mode, "allow_tools": g.allow_tools, "ask_tools": g.ask_tools,
+               "ask_timeout_secs": g.ask_timeout_secs}),
     );
     Ok(Json(g))
 }

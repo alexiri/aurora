@@ -5,6 +5,8 @@ mod admin;
 mod agents;
 mod api_ratelimit;
 mod app_instances;
+mod approval_notify;
+mod approval_stall;
 mod approvals;
 mod apps_connections;
 mod apps_tools;

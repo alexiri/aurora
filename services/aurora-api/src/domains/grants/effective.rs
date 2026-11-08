@@ -194,6 +194,12 @@ async fn compute_inner(
                             .organization
                             .verdict
                             .map(|v| verdict_str(v).into()),
+                        approval_timeout_secs: (d.verdict == Verdict::NeedsApproval).then(|| {
+                            crate::domains::policy::simulate::effective_timeout_secs(
+                                &state.config.approvals,
+                                d.approval_timeout_secs,
+                            )
+                        }),
                     });
                 }
             }
@@ -209,6 +215,7 @@ async fn compute_inner(
                             decision: "inert".into(),
                             inert: true,
                             org_ceiling: None,
+                            approval_timeout_secs: None,
                         });
                     }
                 }

@@ -10,6 +10,7 @@ import { logout, useMe, useOrg, useOrgs, useResolve, useWorkspaces } from "@/lib
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { cn } from "@/lib/utils";
 
+import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
 import { ThemeSwitch } from "./theme/theme-switch";
 import { Avatar } from "./agent-avatar";
@@ -407,6 +408,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </DialogPrimitive.Root>
         </div>
         <main className="mx-auto w-full max-w-[1160px] space-y-4 px-4 py-6 md:px-8 md:py-8">
+          <ApprovalNotifier />
           <FrozenEntityBanner />
           {children}
         </main>

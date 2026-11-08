@@ -321,6 +321,10 @@ pub struct Rule {
     pub action: Action,
     #[serde(default)]
     pub require_approval: bool,
+    /// (RFE-011a) Optional hold deadline preference in seconds; only meaningful with
+    /// `require_approval`. Absent = no preference (`07 §Approval deadlines`).
+    #[serde(default)]
+    pub approval_timeout_secs: Option<u32>,
     #[serde(default)]
     pub rate_limit: Option<RateLimit>,
     #[serde(default)]

@@ -27,6 +27,10 @@ pub struct InstanceInfo {
     pub external_url: String,
     /// `smtp` | `log`.
     pub email_delivery: String,
+    /// (phase 2, RFE-011a) `smtp` (approval e-mails are sent), `log` (SMTP unset: they are only
+    /// logged; the admin overview warns "approval e-mails disabled") or `disabled`
+    /// (`approvals.email_notifications = false`).
+    pub approval_email: String,
     pub setup_errors: Vec<String>,
 }
 
@@ -60,6 +64,14 @@ pub fn instance_info(cfg: &ApiConfig) -> InstanceInfo {
         default_agent_name: cfg.agents.default_name.clone(),
         external_url: cfg.external_url.clone(),
         email_delivery: if cfg.email.smtp_url.is_some() {
+            "smtp"
+        } else {
+            "log"
+        }
+        .to_owned(),
+        approval_email: if !cfg.approvals.email_notifications {
+            "disabled"
+        } else if cfg.email.smtp_url.is_some() {
             "smtp"
         } else {
             "log"

@@ -202,12 +202,21 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = aurora_api::domains::connectors::bootstrap_tokens(&state).await {
         tracing::warn!(error = %e, "bootstrap connector tokens not applied");
     }
+    // (FU-P2-015b) Quota notices ride the RFE-011a e-mail channel when it is enabled.
+    let quota_mail = cfg.approvals.email_notifications.then(|| {
+        aurora_api::domains::attachments::sweep::QuotaMail {
+            mailer: state.mailer.clone(),
+            external_url: cfg.external_url.clone(),
+        }
+    });
     aurora_api::jobs::spawn(
         pool,
         cfg.retention.request_log_days,
         cfg.retention.conversation_days_max,
         cfg.attachments.clone(),
+        quota_mail,
     );
+    aurora_api::domains::approvals::notify::spawn(state.clone());
     aurora_api::domains::connectors::inbox::spawn(state.clone());
     aurora_api::domains::channels::cards::fanout::spawn(state.clone());
     aurora_api::domains::plugins::scan::spawn(state.clone());

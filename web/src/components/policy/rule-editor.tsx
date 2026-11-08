@@ -274,9 +274,33 @@ export function RuleEditorDialog({
           {allow ? (
             <fieldset className="space-y-2" aria-label="Modifiers">
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={rule.require_approval ?? false} onChange={(e) => patch({ require_approval: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  checked={rule.require_approval ?? false}
+                  onChange={(e) =>
+                    patch(e.target.checked ? { require_approval: true } : { require_approval: false, approval_timeout_secs: null })
+                  }
+                />
                 Require approval
               </label>
+              {rule.require_approval ? (
+                <div className="flex flex-wrap items-center gap-2 pl-6 text-sm">
+                  <label htmlFor="rule-approval-timeout">Approval timeout (seconds)</label>
+                  <input
+                    id="rule-approval-timeout"
+                    type="number"
+                    min={60}
+                    inputMode="numeric"
+                    placeholder="default"
+                    className={inputClass + " w-28"}
+                    value={rule.approval_timeout_secs ?? ""}
+                    onChange={(e) => patch({ approval_timeout_secs: e.target.value === "" ? null : Number(e.target.value) })}
+                  />
+                  <span className="text-xs text-muted">
+                    Empty = the instance default (5 min). At least 60 s, at most the instance maximum (1 h unless raised).
+                  </span>
+                </div>
+              ) : null}
               <div className="flex items-center gap-2 text-sm">
                 <label className="flex items-center gap-2">
                   <input

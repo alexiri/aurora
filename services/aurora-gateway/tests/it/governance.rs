@@ -297,6 +297,7 @@ async fn start(o: Opts) -> Env {
             targets: json!([{"type":"secret","id":id}]),
             action: "allow".into(),
             require_approval: false,
+            approval_timeout_secs: None,
             rate_limit: None,
             conditions: json!([]),
         });

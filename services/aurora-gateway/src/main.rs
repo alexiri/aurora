@@ -204,13 +204,16 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let reqlog = RequestLog::new(Arc::new(DbWriter(pool.clone())));
     let (tx, rx) = tokio::sync::watch::channel(false);
     let instance_id = uuid::Uuid::now_v7();
-    let holds = Arc::new(Holds::new(
-        pool.clone(),
-        hub.clone(),
-        instance_id,
-        Duration::from_secs(cfg.approvals.timeout_secs),
-        Some(rx.clone()),
-    ));
+    let holds = Arc::new(
+        Holds::new(
+            pool.clone(),
+            hub.clone(),
+            instance_id,
+            Duration::from_secs(cfg.approvals.timeout_secs),
+            Some(rx.clone()),
+        )
+        .with_max_timeout(Duration::from_secs(cfg.approvals.max_timeout_secs)),
+    );
     let handler = Arc::new(
         PolicyHandler::new(PolicyHandlerParts {
             resolver: policy_resolver,

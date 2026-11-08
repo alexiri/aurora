@@ -178,6 +178,7 @@ fn rule(c: &AppConnectionRow, n: usize) -> PolicyRuleRow {
         targets: json!([{"type": "connection", "id": c.id, "tools": null}]),
         action: "allow".into(),
         require_approval: false,
+        approval_timeout_secs: None,
         rate_limit: None,
         conditions: json!([]),
     }

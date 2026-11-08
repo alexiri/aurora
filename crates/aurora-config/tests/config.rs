@@ -65,6 +65,39 @@ fn plugins_builtin_dir_default_override_and_empty() {
     assert!(raw.api_config().unwrap_err().has_key("plugins.builtin_dir"));
 }
 
+// P2-011A (RFE-011a, D-56): the instance maximum of approval timeouts is bounded and always
+// below the turn ceiling minus its warning; startup refuses anything else.
+#[test]
+fn approvals_max_timeout_bounds_and_turn_ceiling() {
+    let raw = load_with(BASE, &[]).unwrap();
+    assert_eq!(raw.approvals.max_timeout_secs, 3600);
+    assert!(raw.approvals.email_notifications);
+    assert_eq!(raw.api_config().unwrap().approvals.max_timeout_secs, 3600);
+    for ok in ["300", "14400"] {
+        let raw = load_with(BASE, &[("AURORA__APPROVALS__MAX_TIMEOUT_SECS", ok)]).unwrap();
+        assert!(raw.api_config().is_ok(), "{ok}");
+    }
+    for bad in ["299", "14401", "0"] {
+        let raw = load_with(BASE, &[("AURORA__APPROVALS__MAX_TIMEOUT_SECS", bad)]).unwrap();
+        let e = raw.api_config().unwrap_err();
+        assert!(e.has_key("approvals.max_timeout_secs"), "{bad}: {e}");
+    }
+    // Maximum 3600 against a ceiling of 3600 + 900: refused; one second more ceiling: accepted.
+    let env = |ceiling: &'static str| {
+        load_with(
+            BASE,
+            &[
+                ("AURORA__APPROVALS__MAX_TIMEOUT_SECS", "3600"),
+                ("AURORA__HOSTED__TURN_CEILING_SECS", ceiling),
+            ],
+        )
+        .unwrap()
+    };
+    let e = env("4500").api_config().unwrap_err();
+    assert!(e.has_key("approvals.max_timeout_secs"), "{e}");
+    assert!(env("4501").api_config().is_ok());
+}
+
 #[test]
 fn env_overrides_nested_and_typed() {
     let raw = load_with(

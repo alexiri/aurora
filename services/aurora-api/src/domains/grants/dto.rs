@@ -47,6 +47,8 @@ pub struct ConnectionGrant {
     pub mode: GrantMode,
     pub allow_tools: Vec<String>,
     pub ask_tools: Vec<String>,
+    /// (phase 2, RFE-011a) hold deadline preference of the ask tools in seconds; `null` = none.
+    pub ask_timeout_secs: Option<i32>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -63,6 +65,7 @@ impl From<ConnectionGrantRow> for ConnectionGrant {
             },
             allow_tools: r.allow_tools,
             ask_tools: r.ask_tools,
+            ask_timeout_secs: r.ask_timeout_secs,
             created_at: r.created_at,
         }
     }
@@ -76,6 +79,10 @@ pub struct PutConnectionGrant {
     pub allow_tools: Vec<String>,
     #[serde(default)]
     pub ask_tools: Vec<String>,
+    /// (phase 2, RFE-011a) custom grants with `ask_tools` only; validated like a rule's timeout
+    /// (422 `approval_timeout_out_of_range`).
+    #[serde(default)]
+    pub ask_timeout_secs: Option<i64>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -124,6 +131,9 @@ pub struct EffectiveTool {
     pub decision: String,
     pub inert: bool,
     pub org_ceiling: Option<String>,
+    /// (phase 2, RFE-011a) Only for `needs_approval`: the hold timeout in seconds a call of this
+    /// tool would get (minimum of the set rule timeouts, else `approvals.timeout_secs`).
+    pub approval_timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

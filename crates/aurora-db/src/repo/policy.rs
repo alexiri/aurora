@@ -75,6 +75,8 @@ pub struct RuleRow {
     pub targets: serde_json::Value,
     pub action: String,
     pub require_approval: bool,
+    /// (RFE-011a) hold deadline preference in seconds; only with `require_approval`.
+    pub approval_timeout_secs: Option<i32>,
     pub rate_limit: Option<serde_json::Value>,
     pub conditions: serde_json::Value,
 }
@@ -90,6 +92,7 @@ pub struct NewRule {
     pub targets: serde_json::Value,
     pub action: String,
     pub require_approval: bool,
+    pub approval_timeout_secs: Option<i32>,
     pub rate_limit: Option<serde_json::Value>,
     pub conditions: serde_json::Value,
 }
@@ -184,7 +187,7 @@ pub async fn rules_of<'e, E: PgExecutor<'e>>(
 ) -> Result<Vec<RuleRow>, DbError> {
     Ok(sqlx::query_as(
         "SELECT logical_id, priority, name, description, enabled, identities, targets, action, \
-                require_approval, rate_limit, conditions \
+                require_approval, approval_timeout_secs, rate_limit, conditions \
          FROM policy_rules WHERE generation_id = $1 ORDER BY priority",
     )
     .bind(generation_id)
@@ -237,8 +240,9 @@ pub async fn replace_draft(
     for (i, r) in rules.iter().enumerate() {
         sqlx::query(
             "INSERT INTO policy_rules (id, generation_id, logical_id, priority, name, description, \
-             enabled, identities, targets, action, require_approval, rate_limit, conditions) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+             enabled, identities, targets, action, require_approval, rate_limit, conditions, \
+             approval_timeout_secs) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
         )
         .bind(Uuid::now_v7())
         .bind(generation_id)
@@ -253,6 +257,7 @@ pub async fn replace_draft(
         .bind(r.require_approval)
         .bind(&r.rate_limit)
         .bind(&r.conditions)
+        .bind(r.approval_timeout_secs)
         .execute(&mut *conn)
         .await?;
     }
@@ -278,9 +283,11 @@ pub async fn copy_content(conn: &mut PgConnection, from: Uuid, to: Uuid) -> Resu
         .await?;
     sqlx::query(
         "INSERT INTO policy_rules (id, generation_id, logical_id, priority, name, description, \
-         enabled, identities, targets, action, require_approval, rate_limit, conditions) \
+         enabled, identities, targets, action, require_approval, rate_limit, conditions, \
+         approval_timeout_secs) \
          SELECT gen_random_uuid(), $2, logical_id, priority, name, description, enabled, \
-                identities, targets, action, require_approval, rate_limit, conditions \
+                identities, targets, action, require_approval, rate_limit, conditions, \
+                approval_timeout_secs \
          FROM policy_rules WHERE generation_id = $1",
     )
     .bind(from)
@@ -375,6 +382,7 @@ pub async fn load_scope_rows(
                 targets: r.targets,
                 action: r.action,
                 require_approval: r.require_approval,
+                approval_timeout_secs: r.approval_timeout_secs,
                 rate_limit: r.rate_limit,
                 conditions: r.conditions,
             })

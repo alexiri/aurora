@@ -274,6 +274,40 @@ async fn full_and_custom_grants_compile_exactly_and_validate() {
     assert_eq!(r[2]["targets"], json!([{"type": "connection", "id": conn}]));
     assert_eq!(r[2]["action"], "block");
 
+    // (RFE-011a) ask_timeout_secs rides on the derived ask rule, bounded like a rule's timeout.
+    for bad in [30, 99_999] {
+        let body = json!({"mode": "custom", "ask_tools": ["create_item"], "ask_timeout_secs": bad});
+        let (s, v) = w.call(&w.owner, Method::PUT, &u, Some(body)).await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some("approval_timeout_out_of_range")),
+            "{v}"
+        );
+    }
+    let body = json!({"mode": "custom", "allow_tools": ["get_item"], "ask_timeout_secs": 600});
+    let (s, v) = w.call(&w.owner, Method::PUT, &u, Some(body)).await;
+    assert_eq!(
+        (s, reason(&v)),
+        (422, Some("ask_timeout_without_ask_tools")),
+        "{v}"
+    );
+    let body = json!({"mode": "custom", "allow_tools": ["get_item"], "ask_tools": ["create_item"], "ask_timeout_secs": 900});
+    let (s, v) = w.call(&w.owner, Method::PUT, &u, Some(body)).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["ask_timeout_secs"], 900);
+    let r = w.rules(gid).await;
+    assert_eq!(r[1]["approval_timeout_secs"], 900);
+    assert!(
+        r[0].get("approval_timeout_secs")
+            .is_none_or(|x| x.is_null())
+    );
+    let body = json!({"mode": "custom", "allow_tools": ["get_item"], "ask_tools": ["create_item"]});
+    let (_, v) = w.call(&w.owner, Method::PUT, &u, Some(body)).await;
+    assert!(
+        v["ask_timeout_secs"].is_null(),
+        "replacing the grant clears the timeout"
+    );
+
     // ask-only custom: no allow rule
     let (s, _) = w
         .call(

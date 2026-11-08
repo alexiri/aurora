@@ -3765,6 +3765,29 @@ export interface components {
             approval: components["schemas"]["Approval"];
             /** @description `created` | `decided` | `expired` */
             event: string;
+            notice?: null | components["schemas"]["ApprovalNotice"];
+        };
+        /**
+         * @description (phase 2, RFE-011a) The sanitized facts of a new approval: `{ id, workspace, agent, title,
+         *     kind, expires_at }`. No summary fields, no request body, no decision link.
+         */
+        ApprovalNotice: {
+            agent?: null | components["schemas"]["ApprovalAgent"];
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            /** @description `gateway` | `action` */
+            kind: string;
+            title: string;
+            workspace: components["schemas"]["ApprovalNoticeWorkspace"];
+        };
+        ApprovalNoticeWorkspace: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            org_slug: string;
+            slug: string;
         };
         ApprovalSummary: {
             fields: components["schemas"]["SummaryField"][];
@@ -4042,6 +4065,11 @@ export interface components {
             /** Format: uuid */
             agent_id: string;
             allow_tools: string[];
+            /**
+             * Format: int32
+             * @description (phase 2, RFE-011a) hold deadline preference of the ask tools in seconds; `null` = none.
+             */
+            ask_timeout_secs?: number | null;
             ask_tools: string[];
             /** Format: uuid */
             connection_id: string;
@@ -4455,6 +4483,12 @@ export interface components {
         EffectiveTool: {
             app_id: string;
             /**
+             * Format: int64
+             * @description (phase 2, RFE-011a) Only for `needs_approval`: the hold timeout in seconds a call of this
+             *     tool would get (minimum of the set rule timeouts, else `approvals.timeout_secs`).
+             */
+            approval_timeout_secs?: number | null;
+            /**
              * Format: uuid
              * @description Connection the decision was computed for.
              */
@@ -4664,6 +4698,12 @@ export interface components {
             llm: components["schemas"]["InstanceLlm"];
         };
         InstanceInfo: {
+            /**
+             * @description (phase 2, RFE-011a) `smtp` (approval e-mails are sent), `log` (SMTP unset: they are only
+             *     logged; the admin overview warns "approval e-mails disabled") or `disabled`
+             *     (`approvals.email_notifications = false`).
+             */
+            approval_email: string;
             default_agent_name: string;
             /** @description `smtp` | `log`. */
             email_delivery: string;
@@ -4785,6 +4825,8 @@ export interface components {
             endpoint_id: string;
         };
         Me: {
+            /** @description (phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`). */
+            approval_email: boolean;
             /** Format: uuid */
             default_org_id?: string | null;
             memberships: components["schemas"]["MeMembership"][];
@@ -5996,6 +6038,8 @@ export interface components {
             status?: null | components["schemas"]["SettableStatus"];
         };
         PatchMeRequest: {
+            /** @description (phase 2, RFE-011a) Opt in or out of approval e-mails. */
+            approval_email?: boolean | null;
             /**
              * Format: uuid
              * @description Must be an organization where the caller is an active member.
@@ -6206,6 +6250,12 @@ export interface components {
         };
         PolicyRule: {
             action: components["schemas"]["Action"];
+            /**
+             * Format: int32
+             * @description (phase 2, RFE-011a) hold deadline preference in seconds (60 … `approvals.max_timeout_secs`);
+             *     only on `require_approval` rules; `null` = no preference (`07 §Approval deadlines`).
+             */
+            approval_timeout_secs?: number | null;
             conditions: components["schemas"]["Condition"][];
             description?: string | null;
             enabled: boolean;
@@ -6286,6 +6336,12 @@ export interface components {
         };
         PutConnectionGrant: {
             allow_tools?: string[];
+            /**
+             * Format: int64
+             * @description (phase 2, RFE-011a) custom grants with `ask_tools` only; validated like a rule's timeout
+             *     (422 `approval_timeout_out_of_range`).
+             */
+            ask_timeout_secs?: number | null;
             ask_tools?: string[];
             mode: components["schemas"]["GrantMode"];
         };
@@ -6516,6 +6572,11 @@ export interface components {
         /** @description A rule in a draft body: no `priority` (array order), optional `logical_id` (C-08). */
         RuleInput: {
             action: components["schemas"]["Action"];
+            /**
+             * Format: int64
+             * @description (phase 2, RFE-011a) range-checked at authoring: 422 `approval_timeout_out_of_range`.
+             */
+            approval_timeout_secs?: number | null;
             conditions?: components["schemas"]["Condition"][];
             description?: string | null;
             enabled?: boolean;
@@ -6807,6 +6868,12 @@ export interface components {
             use_draft?: boolean | null;
         };
         Simulation: {
+            /**
+             * Format: int64
+             * @description (phase 2, RFE-011a) Only for `needs_approval`: the hold timeout in seconds the request
+             *     would get (minimum of the set rule timeouts, else `approvals.timeout_secs`).
+             */
+            approval_timeout_secs?: number | null;
             candidates: components["schemas"]["SimCandidate"][];
             guidance_code?: string | null;
             reason?: null | components["schemas"]["SimReason"];

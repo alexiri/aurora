@@ -93,6 +93,85 @@ fn net(host: &str) -> Value {
     json!([{"type": "network", "host": host}])
 }
 
+// P2-011A (RFE-011a, SEC-49): `approval_timeout_secs` is bounded at authoring, only valid on
+// require-approval rules, round-trips, and simulate shows the timeout a request would get.
+#[tokio::test]
+async fn approval_timeout_authoring_bounds_and_simulate() {
+    let w = world().await;
+    let rule = |t: Value, approval: bool| {
+        json!([{"name": "ask", "action": "allow", "require_approval": approval,
+                "approval_timeout_secs": t, "targets": net("a.example.com")}])
+    };
+    // Default instance maximum is 3600 s, the minimum 60 s.
+    for bad in [json!(59), json!(3601), json!(-5), json!(100_000)] {
+        let (s, v) = w
+            .put(&w.wsu("/draft"), 0, "none", rule(bad.clone(), true))
+            .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some("approval_timeout_out_of_range")),
+            "{bad}: {v}"
+        );
+        assert_eq!(
+            v["error"]["details"]["fields"][0]["path"],
+            "/rules/0/approval_timeout_secs"
+        );
+    }
+    // A timeout on a rule that does not require approval is refused.
+    let (s, v) = w
+        .put(&w.wsu("/draft"), 0, "none", rule(json!(600), false))
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("policy_invalid")),
+        "{v}"
+    );
+    // Both bounds are inclusive and the value round-trips; absent/null = no preference.
+    let (s, v) = w
+        .put(&w.wsu("/draft"), 0, "none", rule(json!(60), true))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["rules"][0]["approval_timeout_secs"], 60);
+    let (s, v) = w
+        .put(&w.wsu("/draft"), 1, "none", rule(json!(3600), true))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w
+        .put(&w.wsu("/draft"), 2, "none", rule(json!(null), true))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["rules"][0]["approval_timeout_secs"].is_null());
+    // Simulate: the draft's timeout, else the instance default (300 s).
+    let (s, v) = w
+        .put(&w.wsu("/draft"), 3, "none", rule(json!(1200), true))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.wsu("/simulate"),
+            &w.owner,
+            Some(json!({"agent_id": w.agent, "method": "GET", "url": "https://a.example.com/x", "use_draft": true})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["verdict"], "needs_approval");
+    assert_eq!(v["approval_timeout_secs"], 1200);
+    let (_, v) = w
+        .put(&w.wsu("/draft"), 4, "none", rule(json!(null), true))
+        .await;
+    let _ = v;
+    let (_, v) = w
+        .call(
+            Method::POST,
+            &w.wsu("/simulate"),
+            &w.owner,
+            Some(json!({"agent_id": w.agent, "method": "GET", "url": "https://a.example.com/x", "use_draft": true})),
+        )
+        .await;
+    assert_eq!(v["approval_timeout_secs"], 300);
+}
+
 #[tokio::test]
 async fn draft_validation_stale_publish_rollback() {
     let w = world().await;

@@ -396,7 +396,8 @@ pub async fn abandon_pending_approvals(
     agents: &[Uuid],
 ) -> Result<Vec<(Uuid, Uuid)>, DbError> {
     Ok(sqlx::query_as(
-        "UPDATE approvals SET status = 'abandoned', decided_at = now(), updated_at = now()
+        "UPDATE approvals SET status = 'abandoned', decided_at = now(), resolved_at = now(),
+             updated_at = now()
          WHERE status = 'pending' AND agent_id = ANY($1) RETURNING id, workspace_id",
     )
     .bind(agents)

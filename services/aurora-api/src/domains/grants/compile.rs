@@ -79,6 +79,7 @@ pub async fn compile_connection_grant(
     mode: GrantMode,
     allow_tools: &[String],
     ask_tools: &[String],
+    ask_timeout_secs: Option<i32>,
 ) -> Result<(), ApiError> {
     let name = format!("Grant: {label}");
     let mut rules: Vec<(i32, serde_json::Value)> = Vec::new();
@@ -102,17 +103,19 @@ pub async fn compile_connection_grant(
                 ));
             }
             if !ask_tools.is_empty() {
-                rules.push((
-                    1,
-                    conn_rule(
-                        format!("{name} (ask)"),
-                        agent_id,
-                        connection_id,
-                        Some(ask_tools),
-                        "allow",
-                        true,
-                    ),
-                ));
+                let mut ask_rule = conn_rule(
+                    format!("{name} (ask)"),
+                    agent_id,
+                    connection_id,
+                    Some(ask_tools),
+                    "allow",
+                    true,
+                );
+                // (RFE-011a) The grant's ask timeout rides on the derived ask rule.
+                if let Some(t) = ask_timeout_secs {
+                    ask_rule["approval_timeout_secs"] = json!(t);
+                }
+                rules.push((1, ask_rule));
             }
             rules.push((
                 2,

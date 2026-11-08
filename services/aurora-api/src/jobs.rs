@@ -60,9 +60,10 @@ pub async fn sweep_conversation_retention(
 pub async fn sweep_attachment_storage(
     pool: &PgPool,
     cfg: &AttachmentsSection,
+    mail: Option<&crate::domains::attachments::sweep::QuotaMail>,
 ) -> Result<Option<crate::domains::attachments::sweep::SweepReport>, aurora_core::ApiError> {
     let ran = aurora_db::jobs::try_singleton(pool, ATTACHMENT_SWEEP_JOB, || {
-        crate::domains::attachments::sweep::run(pool, cfg)
+        crate::domains::attachments::sweep::run_with(pool, cfg, mail)
     })
     .await?;
     ran.transpose()
@@ -93,6 +94,7 @@ pub fn spawn(
     retention_days: u32,
     conversation_days_max: Option<u32>,
     attachments: AttachmentsSection,
+    quota_mail: Option<crate::domains::attachments::sweep::QuotaMail>,
 ) {
     let rp = pool.clone();
     tokio::spawn(async move {
@@ -107,8 +109,17 @@ pub fn spawn(
                     tracing::warn!(error = %e.message(), "conversation retention sweep failed")
                 }
             }
+            // (RFE-011a) Approval e-mail claims are pruned with the daily retention pass.
+            if let Err(e) = aurora_db::repo::approval_notify::prune_notifications(
+                &rp,
+                crate::domains::approvals::notify::CLAIM_RETENTION_DAYS,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "approval notification pruning failed");
+            }
             // The attachment sweep shares this daily tick (docs/05 §Background jobs).
-            match sweep_attachment_storage(&rp, &attachments).await {
+            match sweep_attachment_storage(&rp, &attachments, quota_mail.as_ref()).await {
                 Ok(Some(r)) if r != Default::default() => {
                     tracing::info!(report = ?r, "attachment storage sweep")
                 }
