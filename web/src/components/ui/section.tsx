@@ -42,6 +42,34 @@ export function Section({
   );
 }
 
+/**
+ * Destructive actions (delete, offboard, revoke everything): a Card with a danger border, a
+ * `danger-ink` heading, an explanation and the action as children. Use it at the bottom of a page.
+ */
+export function DangerZone({
+  id,
+  title,
+  description,
+  children,
+  className,
+}: {
+  id: string;
+  title: ReactNode;
+  description?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section aria-labelledby={`${id}-h`} className={cn("space-y-3 rounded-card border border-danger-ink/40 bg-surface p-4 shadow-card sm:p-5", className)}>
+      <h2 id={`${id}-h`} className="font-display text-base font-semibold text-danger-ink">
+        {title}
+      </h2>
+      {description ? <p className="text-sm text-ink-2">{description}</p> : null}
+      {children}
+    </section>
+  );
+}
+
 /** Divided list in a bordered surface; rows are `<ListRow>`. Give it an `aria-label`. */
 export function ItemList({ className, ...props }: HTMLAttributes<HTMLUListElement>) {
   return (

@@ -4,6 +4,9 @@ import { useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { CheckboxField, FormActions, FormSection } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
 import { errorMessage } from "@/lib/api/errors";
 import {
   toggleAllow,
@@ -40,40 +43,55 @@ export function AvailabilityEditor({
     }
   }
   return (
-    <div className="space-y-4">
-      <fieldset className="space-y-1" disabled={!canEdit}>
-        <legend className="text-sm font-medium">Availability posture</legend>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="radio" name="posture" checked={posture === "open"} onChange={() => setPosture("open")} />
-          Open — every installed app can be connected
-        </label>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="radio" name="posture" checked={posture === "restricted"} onChange={() => setPosture("restricted")} />
-          Restricted — only apps on the allow-list can be connected
-        </label>
-      </fieldset>
+    <div className="space-y-5">
+      <FormSection title="Availability posture" description="Which installed apps people in this organization can connect.">
+        <fieldset className="space-y-3" disabled={!canEdit}>
+          <legend className="sr-only">Posture options</legend>
+          <label className="flex items-start gap-2.5 text-sm text-ink">
+            <input type="radio" name="posture" className="mt-0.5 size-4 accent-accent" checked={posture === "open"} onChange={() => setPosture("open")} />
+            Open — every installed app can be connected
+          </label>
+          <label className="flex items-start gap-2.5 text-sm text-ink">
+            <input type="radio" name="posture" className="mt-0.5 size-4 accent-accent" checked={posture === "restricted"} onChange={() => setPosture("restricted")} />
+            Restricted — only apps on the allow-list can be connected
+          </label>
+        </fieldset>
+      </FormSection>
       {posture === "restricted" ? (
-        <fieldset className="space-y-1" disabled={!canEdit}>
-          <legend className="text-sm font-medium">Allowed apps (organization-wide)</legend>
+        <fieldset className="min-w-0 space-y-3 rounded-card border border-line bg-surface p-4 sm:p-5" disabled={!canEdit}>
+          <legend className="px-1 font-display text-base font-semibold text-ink">Allowed apps (organization-wide)</legend>
           {apps.map((a) => (
-            <label key={a.app_id} className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={orgWide(a.app_id)} onChange={() => setAllow((cur) => toggleAllow(cur, a.app_id, null))} />
-              {a.name}
-            </label>
+            <CheckboxField
+              key={a.app_id}
+              id={`allow-${a.app_id}`}
+              label={a.name}
+              checked={orgWide(a.app_id)}
+              onChange={() => setAllow((cur) => toggleAllow(cur, a.app_id, null))}
+            />
           ))}
           {allow.filter((e) => e.workspace_id || !known.has(e.app_id)).length > 0 ? (
-            <p className="text-xs text-neutral-500">
-              Workspace-specific or unknown entries are kept as they are.
-            </p>
+            <p className="text-xs text-muted">Workspace-specific or unknown entries are kept as they are.</p>
           ) : null}
         </fieldset>
       ) : null}
-      {put.error ? <p role="alert" className="text-sm text-red-700">{errorMessage(put.error)}</p> : null}
-      {saved ? <p role="status" className="text-sm text-green-700">Saved.</p> : null}
+      {put.error ? (
+        <Notice tone="danger" role="alert">
+          {errorMessage(put.error)}
+        </Notice>
+      ) : null}
+      {saved ? (
+        <Notice tone="accent" role="status">
+          Saved.
+        </Notice>
+      ) : null}
       {canEdit ? (
-        <Button size="sm" disabled={put.isPending} onClick={() => void save()}>Save</Button>
+        <FormActions>
+          <Button size="lg" disabled={put.isPending} onClick={() => void save()}>
+            Save
+          </Button>
+        </FormActions>
       ) : (
-        <p className="text-sm text-neutral-600">Only owners and admins can change this.</p>
+        <Notice role="status">Only owners and admins can change this.</Notice>
       )}
     </div>
   );
@@ -86,8 +104,8 @@ export function AvailabilityView({ orgId, canEdit }: { orgId: string; canEdit: b
   if (avail.isError) return <ErrorState error={avail.error} onRetry={() => avail.refetch()} />;
   if (apps.isError) return <ErrorState error={apps.error} onRetry={() => apps.refetch()} />;
   return (
-    <div className="max-w-2xl space-y-4">
-      <h1 className="text-xl font-semibold">Apps</h1>
+    <div className="max-w-[880px]">
+      <PageHeader title="Apps" description="Choose which installed apps can be connected in this organization." />
       <AvailabilityEditor orgId={orgId} initial={avail.data} apps={apps.data.items} canEdit={canEdit} />
     </div>
   );

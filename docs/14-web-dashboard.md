@@ -255,6 +255,8 @@ here, add it here and document it.
 | List | `ItemList` + `ListRow` | Divided rows with an actions slot; rows wrap on narrow screens. For few, rich rows (agents, members, keys). |
 | Data table | `DataTable`, `Th`, `Td` | For columns of comparable data. The wrapper scrolls inside itself at 390 px, so the page never scrolls horizontally. Always give `caption`. |
 | Form | `Form`, `FormSection`, `FormActions`, `Field`, `inputClass` | `Field` links label, hint and error to the control; `FormSection` is a fieldset with a heading; `FormActions` is the submit row. Frontend validation is UX only. |
+| Checkbox | `CheckboxField` | A checkbox with its label and optional hint; use it for boolean settings instead of a bare `<input type="checkbox">`. |
+| Danger zone | `DangerZone` | Destructive actions (delete an organization or account) in a `danger`-bordered card at the bottom of a page: heading, explanation, then the form. |
 | States | `Loading`, `EmptyState`, `ErrorState` | Every list/query shows one of the three. |
 | Notice | `Notice` (`neutral`, `accent`, `pending`, `danger`) | Inline callout for conflicts, warnings, errors and info. Use `role="alert"` after an action, `role="status"` otherwise. |
 | Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. |

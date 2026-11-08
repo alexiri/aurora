@@ -4,8 +4,13 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { fmtDate } from "@/components/account/key-table";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
@@ -24,14 +29,22 @@ export function violationsOf(err: unknown): PluginViolation[] {
 export function ViolationList({ violations }: { violations: PluginViolation[] }) {
   if (violations.length === 0) return null;
   return (
-    <ul aria-label="Violations" className="space-y-1 text-xs text-red-800">
+    <ul aria-label="Violations" className="space-y-1 text-xs text-danger-ink">
       {violations.map((v, i) => (
         <li key={`${v.code}-${v.path}-${i}`}>
-          <code>{v.code}</code> {v.path ? <code>{v.path}</code> : null} {v.message}
+          <code className="font-mono">{v.code}</code> {v.path ? <code className="font-mono">{v.path}</code> : null} {v.message}
         </li>
       ))}
     </ul>
   );
+}
+
+/** Tone for a plugin lifecycle status (text always shown beside it). */
+export function statusTone(status: string): "neutral" | "accent" | "pending" | "danger" {
+  if (status === "active") return "accent";
+  if (status === "pending_approval") return "pending";
+  if (status === "rejected" || status === "invalid") return "danger";
+  return "neutral";
 }
 
 export function UploadForm({ onDone }: { onDone?: () => void }) {
@@ -39,36 +52,41 @@ export function UploadForm({ onDone }: { onDone?: () => void }) {
   const [file, setFile] = useState<File | null>(null);
   return (
     <form
-      className="space-y-3"
+      className="space-y-4"
       onSubmit={(e) => {
         e.preventDefault();
         if (!file) return;
         upload.mutate(file, { onSuccess: () => onDone?.() });
       }}
     >
-      <label className="block text-sm font-medium" htmlFor="plugin-package">
-        Plugin package
-      </label>
-      <input
-        id="plugin-package"
-        type="file"
-        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-      />
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-ink" htmlFor="plugin-package">
+          Plugin package
+        </label>
+        <input
+          id="plugin-package"
+          type="file"
+          className={`${inputClass} file:mr-3 file:rounded-control file:border-0 file:bg-subtle file:px-3 file:py-1 file:text-sm file:font-medium file:text-ink`}
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        />
+      </div>
       {upload.isError ? (
-        <div role="alert" className="space-y-1 text-sm text-red-700">
+        <Notice tone="danger" role="alert" className="space-y-1">
           <p>{errorMessage(upload.error)}</p>
           <ViolationList violations={violationsOf(upload.error)} />
-        </div>
+        </Notice>
       ) : null}
       {upload.data?.status === "invalid" ? (
-        <div role="alert" className="space-y-1 text-sm text-red-700">
+        <Notice tone="danger" role="alert" className="space-y-1">
           <p>The package was stored but is invalid.</p>
           <ViolationList violations={upload.data.violations} />
-        </div>
+        </Notice>
       ) : null}
-      <Button type="submit" disabled={!file || upload.isPending}>
-        {upload.isPending ? "Uploading…" : "Upload"}
-      </Button>
+      <div className="flex justify-end">
+        <Button type="submit" size="lg" disabled={!file || upload.isPending}>
+          {upload.isPending ? "Uploading…" : "Upload"}
+        </Button>
+      </div>
     </form>
   );
 }
@@ -78,28 +96,27 @@ export function PluginsView() {
   const [open, setOpen] = useState(false);
   const q = usePlugins(status);
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Plugins</h1>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button>Upload plugin</Button>
-          </DialogTrigger>
-          <DialogContent title="Upload plugin" description="Upload a signed plugin package for review.">
-            <UploadForm onDone={() => setOpen(false)} />
-          </DialogContent>
-        </Dialog>
-      </div>
-      <div className="max-w-xs">
-        <label htmlFor="plugin-status" className="block text-sm font-medium">
+    <div className="max-w-[1160px] space-y-4">
+      <PageHeader
+        title="Plugins"
+        description="Signed packages that add apps and connectors to this instance."
+        className="mb-2"
+        actions={
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button>Upload plugin</Button>
+            </DialogTrigger>
+            <DialogContent title="Upload plugin" description="Upload a signed plugin package for review.">
+              <UploadForm onDone={() => setOpen(false)} />
+            </DialogContent>
+          </Dialog>
+        }
+      />
+      <div className="max-w-xs space-y-1.5">
+        <label htmlFor="plugin-status" className="block text-sm font-medium text-ink">
           Status
         </label>
-        <select
-          id="plugin-status"
-          className="block w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm"
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-        >
+        <select id="plugin-status" className={inputClass} value={status} onChange={(e) => setStatus(e.target.value)}>
           {STATUSES.map((s) => (
             <option key={s} value={s}>
               {s ? s.replace("_", " ") : "All"}
@@ -111,33 +128,35 @@ export function PluginsView() {
       {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}
       {q.data && q.data.items.length === 0 ? <EmptyState title="No plugins" /> : null}
       {q.data && q.data.items.length > 0 ? (
-        <table className="w-full text-left text-sm">
-          <thead className="text-neutral-500">
+        <DataTable caption="Plugins">
+          <thead>
             <tr>
-              <th className="py-2 pr-4 font-medium">Package</th>
-              <th className="py-2 pr-4 font-medium">Version</th>
-              <th className="py-2 pr-4 font-medium">Signer</th>
-              <th className="py-2 pr-4 font-medium">Status</th>
-              <th className="py-2 font-medium">Added</th>
+              <Th>Package</Th>
+              <Th>Version</Th>
+              <Th>Signer</Th>
+              <Th>Status</Th>
+              <Th>Added</Th>
             </tr>
           </thead>
           <tbody>
             {q.data.items.map((p) => (
-              <tr key={p.id} className="border-t border-neutral-200">
-                <td className="py-2 pr-4">
-                  <Link href={`/admin/plugins/${p.id}`} className="font-medium underline">
+              <tr key={p.id}>
+                <Td>
+                  <Link href={`/admin/plugins/${p.id}`} className="font-medium text-link underline">
                     {p.package_id}
                   </Link>
-                  <div className="text-neutral-500">{p.publisher}</div>
-                </td>
-                <td className="py-2 pr-4">{p.version}</td>
-                <td className="py-2 pr-4">{p.signer.kind === "trusted_key" ? (p.signer.name ?? "trusted key") : p.signer.kind}</td>
-                <td className="py-2 pr-4">{p.status.replace("_", " ")}</td>
-                <td className="py-2">{fmtDate(p.created_at)}</td>
+                  <div className="text-muted">{p.publisher}</div>
+                </Td>
+                <Td className="font-mono text-xs">{p.version}</Td>
+                <Td>{p.signer.kind === "trusted_key" ? (p.signer.name ?? "trusted key") : p.signer.kind}</Td>
+                <Td>
+                  <Badge tone={statusTone(p.status)}>{p.status.replace("_", " ")}</Badge>
+                </Td>
+                <Td className="whitespace-nowrap text-ink-2">{fmtDate(p.created_at)}</Td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       ) : null}
     </div>
   );

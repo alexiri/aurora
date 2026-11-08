@@ -3,7 +3,10 @@
 import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Loading } from "@/components/states";
 import { Field, inputClass } from "@/components/ui/field";
+import { Form, FormActions } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import {
   buildLlmCreate,
@@ -52,15 +55,15 @@ export function LlmKeyForm({ scope, orgId }: { scope: SecretScope; orgId: string
     }
   }
 
-  if (providers.isPending) return <p role="status" className="text-sm text-neutral-500">Loading…</p>;
+  if (providers.isPending) return <Loading />;
   if (providers.isError)
-    return <p role="alert" className="text-sm text-red-700">{errorMessage(providers.error)}</p>;
+    return <Notice tone="danger" role="alert">{errorMessage(providers.error)}</Notice>;
   if (endpoints.length === 0)
-    return <p className="text-sm text-neutral-600">Your organization&apos;s governance does not permit any LLM endpoints.</p>;
+    return <Notice role="status">Your organization&apos;s governance does not permit any LLM endpoints.</Notice>;
 
   return (
     <div className="space-y-3">
-      <form onSubmit={(e) => void submit(e)} noValidate className="max-w-xl space-y-3" aria-label="New LLM key">
+      <Form onSubmit={(e) => void submit(e)} noValidate className="rounded-card border border-line bg-surface p-4 shadow-card sm:p-5" aria-label="New LLM key">
         <Field id="l-name" label="Name">
           <input id="l-name" className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
@@ -100,26 +103,28 @@ export function LlmKeyForm({ scope, orgId }: { scope: SecretScope; orgId: string
           </Field>
         ) : null}
         {endpoint?.origin_method ? (
-          <p className="text-xs text-neutral-600">
+          <p className="text-xs text-muted">
             Your organization requires the key to belong to its own account; Aurora verifies this when you save
             (method: {endpoint.origin_method}).
           </p>
         ) : null}
         <ValueInput id="l-value" label="API key" value={value} onChange={setValue} />
         {clientErr || create.error ? (
-          <p role="alert" className="text-sm text-red-700">
+          <Notice tone="danger" role="alert">
             {clientErr || errorMessage(create.error)}
-          </p>
+          </Notice>
         ) : null}
-        <Button type="submit" disabled={create.isPending || !scopeOk}>
-          {create.isPending ? "Verifying…" : "Add LLM key"}
-        </Button>
-      </form>
+        <FormActions>
+          <Button type="submit" size="lg" disabled={create.isPending || !scopeOk}>
+            {create.isPending ? "Verifying…" : "Add LLM key"}
+          </Button>
+        </FormActions>
+      </Form>
       {saved ? (
-        <div role="status" className="max-w-xl rounded-md border border-green-200 bg-green-50 p-3 text-sm">
+        <Notice tone="accent" role="status" className="max-w-xl">
           <p className="font-medium">Saved {saved.name}</p>
           <OriginView origin={saved.origin} />
-        </div>
+        </Notice>
       ) : null}
     </div>
   );

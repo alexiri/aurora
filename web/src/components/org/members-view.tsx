@@ -4,9 +4,15 @@ import { useState } from "react";
 
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { OffboardingDialog } from "@/components/automations/offboarding-dialog";
+import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
+import { Section } from "@/components/ui/section";
+import { cn } from "@/lib/utils";
 import { errorMessage } from "@/lib/api/errors";
 import {
   canManageMember,
@@ -42,16 +48,16 @@ export function MemberRow({
   const options = roleOptions(viewer, m.role);
   const manage = canManageMember(viewer, m.role);
   return (
-    <tr className="border-t border-neutral-200">
-      <td className="py-2 pr-4">
+    <tr>
+      <Td>
         <div className="font-medium">{m.display_name}</div>
-        <div className="text-neutral-500">{m.email}</div>
-      </td>
-      <td className="py-2 pr-4">
+        <div className="text-muted">{m.email}</div>
+      </Td>
+      <Td>
         {options.length > 0 ? (
           <select
             aria-label={`Role for ${m.email}`}
-            className={inputClass}
+            className={cn(inputClass, "min-w-28")}
             value={m.role}
             disabled={busy}
             onChange={(e) => onRole(e.target.value as OrgRole)}
@@ -65,10 +71,12 @@ export function MemberRow({
         ) : (
           m.role
         )}
-      </td>
-      <td className="py-2 pr-4">{m.status}</td>
-      <td className="py-2 pr-4">{fmtDate(m.created_at)}</td>
-      <td className="py-2">
+      </Td>
+      <Td>
+        <Badge tone={m.status === "active" ? "accent" : "pending"}>{m.status}</Badge>
+      </Td>
+      <Td className="whitespace-nowrap text-ink-2">{fmtDate(m.created_at)}</Td>
+      <Td>
         {manage ? (
           <div className="flex gap-2">
             <Button
@@ -81,7 +89,7 @@ export function MemberRow({
               {m.status === "active" ? "Suspend" : "Reactivate"}
             </Button>
             <Button
-              variant="outline"
+              variant="danger"
               size="sm"
               disabled={busy}
               aria-label={`Remove ${m.email}`}
@@ -91,7 +99,7 @@ export function MemberRow({
             </Button>
           </div>
         ) : null}
-      </td>
+      </Td>
     </tr>
   );
 }
@@ -154,26 +162,25 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
   const onError = (e: unknown) => setErr(e);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {err ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(err)}
-        </p>
+        </Notice>
       ) : null}
       {items.length === 0 ? (
         <EmptyState title="No members" />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="text-neutral-500">
+        <DataTable caption="People">
+            <thead>
               <tr>
-                <th className="py-2 pr-4 font-medium">Person</th>
-                <th className="py-2 pr-4 font-medium">Role</th>
-                <th className="py-2 pr-4 font-medium">Status</th>
-                <th className="py-2 pr-4 font-medium">Joined</th>
-                <th className="py-2 font-medium">
+                <Th>Person</Th>
+                <Th>Role</Th>
+                <Th>Status</Th>
+                <Th>Joined</Th>
+                <Th>
                   <span className="sr-only">Actions</span>
-                </th>
+                </Th>
               </tr>
             </thead>
             <tbody>
@@ -197,8 +204,7 @@ function Members({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
                 />
               ))}
             </tbody>
-          </table>
-        </div>
+        </DataTable>
       )}
       {members.hasNextPage ? (
         <Button
@@ -242,32 +248,32 @@ function Invitations({ orgId }: { orgId: string }) {
   const items = invites.data.items;
   if (items.length === 0) return <EmptyState title="No pending invitations" />;
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {cancel.error ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(cancel.error)}
-        </p>
+        </Notice>
       ) : null}
-      <table className="w-full text-left text-sm">
-        <thead className="text-neutral-500">
+      <DataTable caption="Pending invitations">
+        <thead>
           <tr>
-            <th className="py-2 pr-4 font-medium">Email</th>
-            <th className="py-2 pr-4 font-medium">Role</th>
-            <th className="py-2 pr-4 font-medium">Workspaces</th>
-            <th className="py-2 pr-4 font-medium">Expires</th>
-            <th className="py-2 font-medium">
+            <Th>Email</Th>
+            <Th>Role</Th>
+            <Th>Workspaces</Th>
+            <Th>Expires</Th>
+            <Th>
               <span className="sr-only">Actions</span>
-            </th>
+            </Th>
           </tr>
         </thead>
         <tbody>
           {items.map((i) => (
-            <tr key={i.id} className="border-t border-neutral-200">
-              <td className="py-2 pr-4">{i.email}</td>
-              <td className="py-2 pr-4">{i.role}</td>
-              <td className="py-2 pr-4">{i.workspace_ids.length}</td>
-              <td className="py-2 pr-4">{fmtDate(i.expires_at)}</td>
-              <td className="py-2">
+            <tr key={i.id}>
+              <Td>{i.email}</Td>
+              <Td>{i.role}</Td>
+              <Td>{i.workspace_ids.length}</Td>
+              <Td className="whitespace-nowrap text-ink-2">{fmtDate(i.expires_at)}</Td>
+              <Td className="text-right">
                 <Button
                   variant="outline"
                   size="sm"
@@ -277,11 +283,11 @@ function Invitations({ orgId }: { orgId: string }) {
                 >
                   Cancel
                 </Button>
-              </td>
+              </Td>
             </tr>
           ))}
         </tbody>
-      </table>
+      </DataTable>
     </div>
   );
 }
@@ -289,28 +295,24 @@ function Invitations({ orgId }: { orgId: string }) {
 export function MembersView({ orgId, viewer }: { orgId: string; viewer: OrgRole }) {
   const instance = useInstance();
   return (
-    <div className="max-w-4xl space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Members</h1>
-        <InviteDialog orgId={orgId} />
-      </div>
-      <section aria-labelledby="members-h" className="space-y-2">
-        <h2 id="members-h" className="text-sm font-medium text-neutral-600">
-          People
-        </h2>
+    <div className="max-w-[1160px] space-y-8">
+      <PageHeader
+        title="Members"
+        description="People in this organization and the invitations still waiting."
+        actions={<InviteDialog orgId={orgId} />}
+        className="mb-6"
+      />
+      <Section id="members" title="People">
         <Members orgId={orgId} viewer={viewer} />
-      </section>
-      <section aria-labelledby="invites-h" className="space-y-2">
-        <h2 id="invites-h" className="text-sm font-medium text-neutral-600">
-          Pending invitations
-        </h2>
-        {instance.data?.email_delivery === "log" ? (
-          <p className="rounded-md bg-neutral-100 p-3 text-sm text-neutral-700">
-            Email is not configured: invitation links are written to the server log.
-          </p>
-        ) : null}
-        <Invitations orgId={orgId} />
-      </section>
+      </Section>
+      <Section id="invites" title="Pending invitations">
+        <div className="space-y-3">
+          {instance.data?.email_delivery === "log" ? (
+            <Notice role="status">Email is not configured: invitation links are written to the server log.</Notice>
+          ) : null}
+          <Invitations orgId={orgId} />
+        </div>
+      </Section>
     </div>
   );
 }

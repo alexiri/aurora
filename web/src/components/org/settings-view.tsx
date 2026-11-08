@@ -5,6 +5,10 @@ import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { CheckboxField, Form, FormActions } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
+import { DangerZone, Section } from "@/components/ui/section";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { deleteOrg, usePatchOrg, usePutRetention, useRetention } from "@/lib/api/org";
 import type { Org } from "@/lib/api/queries";
@@ -63,12 +67,8 @@ function GeneralForm({ org, isOwner }: { org: Org; isOwner: boolean }) {
   }
 
   return (
-    <form onSubmit={submit} noValidate className="max-w-md space-y-4">
-      {!isOwner ? (
-        <p className="rounded-md bg-neutral-100 p-3 text-sm text-neutral-700">
-          Only organization owners can change these settings.
-        </p>
-      ) : null}
+    <Form onSubmit={submit} noValidate className="max-w-md">
+      {!isOwner ? <Notice role="status">Only organization owners can change these settings.</Notice> : null}
       <fieldset disabled={!isOwner || patch.isPending} className="space-y-4">
         <Field id="org-name" label="Name" error={clientErr.name || fe.name}>
           <input
@@ -87,14 +87,12 @@ function GeneralForm({ org, isOwner }: { org: Org; isOwner: boolean }) {
             onChange={(e) => setSlug(e.target.value)}
           />
         </Field>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={canCreate}
-            onChange={(e) => setCanCreate(e.target.checked)}
-          />
-          Members can create workspaces
-        </label>
+        <CheckboxField
+          id="org-can-create"
+          label="Members can create workspaces"
+          checked={canCreate}
+          onChange={setCanCreate}
+        />
         <Field
           id="org-max-members"
           label="Member limit"
@@ -125,21 +123,23 @@ function GeneralForm({ org, isOwner }: { org: Org; isOwner: boolean }) {
         </Field>
       </fieldset>
       {patch.error && Object.keys(fe).length === 0 ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(patch.error)}
-        </p>
+        </Notice>
       ) : null}
       {saved ? (
-        <p role="status" className="text-sm text-green-700">
+        <Notice tone="accent" role="status">
           Settings saved.
-        </p>
+        </Notice>
       ) : null}
       {isOwner ? (
-        <Button type="submit" disabled={patch.isPending}>
-          {patch.isPending ? "Saving…" : "Save changes"}
-        </Button>
+        <FormActions>
+          <Button type="submit" size="lg" disabled={patch.isPending}>
+            {patch.isPending ? "Saving…" : "Save changes"}
+          </Button>
+        </FormActions>
       ) : null}
-    </form>
+    </Form>
   );
 }
 
@@ -170,12 +170,7 @@ function RetentionForm({ orgId }: { orgId: string }) {
 
   const serverErr = put.error ? errorMessage(put.error) : undefined;
   return (
-    <form onSubmit={submit} noValidate aria-label="Conversation retention" className="max-w-md space-y-3">
-      <h2 className="text-lg font-medium">Conversation retention</h2>
-      <p className="text-sm text-neutral-600">
-        Delete conversations (messages, attachments and the agent&apos;s stored session) after this many days without activity. Leave
-        empty to keep them until someone deletes them.
-      </p>
+    <Form onSubmit={submit} noValidate aria-label="Conversation retention" className="max-w-md">
       <Field
         id="retention-days"
         label="Days of inactivity"
@@ -194,14 +189,16 @@ function RetentionForm({ orgId }: { orgId: string }) {
         />
       </Field>
       {saved ? (
-        <p role="status" className="text-sm text-green-700">
+        <Notice tone="accent" role="status">
           Retention saved.
-        </p>
+        </Notice>
       ) : null}
-      <Button type="submit" disabled={put.isPending}>
-        {put.isPending ? "Saving…" : "Save retention"}
-      </Button>
-    </form>
+      <FormActions>
+        <Button type="submit" size="lg" disabled={put.isPending}>
+          {put.isPending ? "Saving…" : "Save retention"}
+        </Button>
+      </FormActions>
+    </Form>
   );
 }
 
@@ -233,12 +230,17 @@ export function OrgDangerZone({
   }
 
   return (
-    <form onSubmit={(e) => void submit(e)} className="max-w-md space-y-4">
-      <h2 className="text-lg font-medium text-red-800">Delete this organization</h2>
-      <p className="text-sm text-neutral-600">
-        This permanently deletes the organization, its workspaces and everything in them. Type{" "}
-        <code className="font-mono">{slug}</code> to confirm.
-      </p>
+    <DangerZone
+      id="delete-org"
+      title="Delete this organization"
+      description={
+        <>
+          This permanently deletes the organization, its workspaces and everything in them. Type{" "}
+          <code className="font-mono text-ink">{slug}</code> to confirm.
+        </>
+      }
+    >
+    <Form onSubmit={(e) => void submit(e)} className="max-w-md">
       <Field id="del-org" label="Organization URL name">
         <input
           id="del-org"
@@ -249,14 +251,17 @@ export function OrgDangerZone({
         />
       </Field>
       {error !== null ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(error)}
-        </p>
+        </Notice>
       ) : null}
-      <Button type="submit" disabled={pending || confirm !== slug} className="bg-red-700 text-white">
-        {pending ? "Deleting…" : "Delete organization"}
-      </Button>
-    </form>
+      <FormActions>
+        <Button type="submit" variant="danger" disabled={pending || confirm !== slug}>
+          {pending ? "Deleting…" : "Delete organization"}
+        </Button>
+      </FormActions>
+    </Form>
+    </DangerZone>
   );
 }
 
@@ -264,19 +269,22 @@ export function OrgSettingsView({ org }: { org: Org }) {
   const router = useRouter();
   const isOwner = org.my_role === "owner";
   return (
-    <div className="max-w-4xl space-y-8">
-      <h1 className="text-xl font-semibold">Organization settings</h1>
-      <GeneralForm key={`${org.slug}:${org.name}`} org={org} isOwner={isOwner} />
+    <div className="max-w-[880px] space-y-8">
+      <PageHeader title="Organization settings" description="Name, limits, conversation retention and deletion." className="mb-6" />
+      <Section id="org-general" title="General" card>
+        <GeneralForm key={`${org.slug}:${org.name}`} org={org} isOwner={isOwner} />
+      </Section>
       {isOwner || org.my_role === "admin" ? (
-        <section aria-label="Retention" className="border-t border-neutral-200 pt-6">
+        <Section
+          id="org-retention"
+          title="Conversation retention"
+          description="Delete conversations (messages, attachments and the agent's stored session) after this many days without activity. Leave empty to keep them until someone deletes them."
+          card
+        >
           <RetentionForm orgId={org.id} />
-        </section>
+        </Section>
       ) : null}
-      {isOwner ? (
-        <section aria-label="Danger zone" className="border-t border-neutral-200 pt-6">
-          <OrgDangerZone orgId={org.id} slug={org.slug} onDeleted={() => router.replace("/")} />
-        </section>
-      ) : null}
+      {isOwner ? <OrgDangerZone orgId={org.id} slug={org.slug} onDeleted={() => router.replace("/")} /> : null}
     </div>
   );
 }

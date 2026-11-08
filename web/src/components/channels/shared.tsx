@@ -3,8 +3,9 @@
 import { ErrorState } from "@/components/states";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
+import { Badge } from "@/components/ui/badge";
+import { Notice } from "@/components/ui/notice";
 import type { FormField } from "@/lib/api/connectors";
-import { cn } from "@/lib/utils";
 
 /** Messages for the M6 error codes (API_CONTRACTS C-31..C-38). */
 const CHANNEL_MESSAGES: Record<string, string> = {
@@ -38,9 +39,9 @@ export function channelError(err: unknown): string {
 export function MutationError({ error }: { error: unknown }) {
   if (!error) return null;
   return (
-    <p role="alert" className="text-sm text-red-700">
+    <Notice tone="danger" role="alert">
       {channelError(error)}
-    </p>
+    </Notice>
   );
 }
 
@@ -48,27 +49,24 @@ export function isStatus(err: unknown, code: string): boolean {
   return err instanceof ApiError && err.code === code;
 }
 
-const TONE: Record<string, string> = {
-  active: "bg-green-100 text-green-800",
-  approved: "bg-green-100 text-green-800",
-  validating: "bg-amber-100 text-amber-800",
-  pending_setup: "bg-amber-100 text-amber-800",
-  pending: "bg-amber-100 text-amber-800",
-  pending_approval: "bg-amber-100 text-amber-800",
-  awaiting_registration: "bg-neutral-100 text-neutral-700",
-  needs_attention: "bg-red-100 text-red-800",
-  blocked: "bg-red-100 text-red-800",
-  disabled: "bg-neutral-200 text-neutral-700",
+const TONE: Record<string, "neutral" | "accent" | "pending" | "danger"> = {
+  active: "accent",
+  approved: "accent",
+  validating: "pending",
+  pending_setup: "pending",
+  pending: "pending",
+  pending_approval: "pending",
+  awaiting_registration: "neutral",
+  needs_attention: "danger",
+  blocked: "danger",
+  disabled: "neutral",
 };
 
 export function StatusChip({ status }: { status: string }) {
   return (
-    <span
-      data-testid="status-chip"
-      className={cn("rounded-full px-2 py-0.5 text-xs", TONE[status] ?? "bg-neutral-100 text-neutral-700")}
-    >
+    <Badge data-testid="status-chip" tone={TONE[status] ?? "neutral"}>
       {status.replace(/_/g, " ")}
-    </span>
+    </Badge>
   );
 }
 

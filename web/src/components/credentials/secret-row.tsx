@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import {
   buildRecipe,
@@ -39,8 +40,8 @@ function ReplaceValue({ scope, secret, onClose }: { scope: SecretScope; secret: 
   return (
     <form onSubmit={(e) => void submit(e)} className="space-y-2" aria-label={`Replace value of ${secret.name}`}>
       <ValueInput id={`rv-${secret.id}`} label="New value" value={value} onChange={setValue} />
-      {set.error ? <p role="alert" className="text-sm text-red-700">{errorMessage(set.error)}</p> : null}
-      <div className="flex gap-2">
+      {set.error ? <Notice tone="danger" role="alert">{errorMessage(set.error)}</Notice> : null}
+      <div className="flex flex-wrap gap-2">
         <Button type="submit" size="sm" disabled={set.isPending}>Replace</Button>
         <Button type="button" size="sm" variant="outline" onClick={onClose}>Cancel</Button>
       </div>
@@ -86,8 +87,8 @@ function EditMeta({ scope, secret, onClose }: { scope: SecretScope; secret: Secr
           <RecipeFieldsInput idp={id} kind={kind} fields={fields} onKind={setKind} onFields={setFields} />
         </>
       ) : null}
-      {patch.error ? <p role="alert" className="text-sm text-red-700">{errorMessage(patch.error)}</p> : null}
-      <div className="flex gap-2">
+      {patch.error ? <Notice tone="danger" role="alert">{errorMessage(patch.error)}</Notice> : null}
+      <div className="flex flex-wrap gap-2">
         <Button type="submit" size="sm" disabled={patch.isPending}>Save</Button>
         <Button type="button" size="sm" variant="outline" onClick={onClose}>Cancel</Button>
       </div>
@@ -101,17 +102,17 @@ export function SecretRow({ scope, secret, canOwn }: { scope: SecretScope; secre
   const verify = useVerifySecret(scope, secret.id);
   const close = () => setMode("none");
   return (
-    <li className="space-y-2 rounded-md border border-neutral-200 p-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <span className="font-medium">{secret.name}</span>{" "}
-          <span className="text-xs text-neutral-500">
+    <li className="space-y-3 rounded-card border border-line bg-surface p-4 shadow-card">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0">
+          <span className="font-medium text-ink">{secret.name}</span>{" "}
+          <span className="break-all font-mono text-xs text-muted">
             {secret.kind === "llm" ? `LLM · ${secret.llm?.provider ?? ""}` : secret.injection.kind} · {secret.host_pattern}
             {secret.path_pattern ? secret.path_pattern : ""} · {secret.value_source} · v{secret.value_version}
           </span>
         </div>
         {canOwn ? (
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-2">
             {secret.kind === "llm" ? (
               <Button size="sm" variant="outline" disabled={verify.isPending} onClick={() => verify.mutate()}>
                 Re-verify
@@ -119,23 +120,23 @@ export function SecretRow({ scope, secret, canOwn }: { scope: SecretScope; secre
             ) : null}
             <Button size="sm" variant="outline" onClick={() => setMode("replace")}>Replace value</Button>
             <Button size="sm" variant="outline" onClick={() => setMode("edit")}>Edit</Button>
-            <Button size="sm" variant="outline" onClick={() => setMode("delete")}>Delete</Button>
+            <Button size="sm" variant="danger" onClick={() => setMode("delete")}>Delete</Button>
           </div>
         ) : null}
       </div>
       {secret.kind === "llm" ? <OriginView origin={secret.origin} /> : null}
-      {verify.error ? <p role="alert" className="text-sm text-red-700">{errorMessage(verify.error)}</p> : null}
+      {verify.error ? <Notice tone="danger" role="alert">{errorMessage(verify.error)}</Notice> : null}
       {mode === "replace" ? <ReplaceValue scope={scope} secret={secret} onClose={close} /> : null}
       {mode === "edit" ? <EditMeta scope={scope} secret={secret} onClose={close} /> : null}
       {mode === "delete" ? (
-        <div role="alertdialog" aria-label={`Delete ${secret.name}`} className="space-y-2 text-sm">
+        <Notice tone="danger" role="alertdialog" aria-label={`Delete ${secret.name}`} className="space-y-2">
           <p>Delete {secret.name}? Agents will lose access to it.</p>
-          {del.error ? <p role="alert" className="text-red-700">{errorMessage(del.error)}</p> : null}
+          {del.error ? <p role="alert">{errorMessage(del.error)}</p> : null}
           <div className="flex gap-2">
-            <Button size="sm" disabled={del.isPending} onClick={() => del.mutate()}>Confirm delete</Button>
+            <Button size="sm" variant="danger" disabled={del.isPending} onClick={() => del.mutate()}>Confirm delete</Button>
             <Button size="sm" variant="outline" onClick={close}>Cancel</Button>
           </div>
-        </div>
+        </Notice>
       ) : null}
     </li>
   );

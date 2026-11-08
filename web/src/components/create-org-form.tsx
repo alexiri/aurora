@@ -9,6 +9,7 @@ import { validateNameSlug } from "@/lib/nav/validation";
 
 import { Button } from "./ui/button";
 import { Field, inputClass } from "./ui/field";
+import { Notice } from "./ui/notice";
 
 export function CreateOrgForm({
   onSubmit,
@@ -60,11 +61,11 @@ export function CreateOrgForm({
         />
       </Field>
       {error && (forbidden || !Object.values(server).some(Boolean)) ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(error)}
-        </p>
+        </Notice>
       ) : null}
-      <Button type="submit" disabled={pending}>
+      <Button type="submit" size="lg" disabled={pending}>
         {pending ? "Creating…" : "Create organization"}
       </Button>
     </form>

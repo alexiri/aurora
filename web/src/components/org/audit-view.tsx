@@ -5,7 +5,9 @@ import { useState } from "react";
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
+import { PageHeader } from "@/components/ui/page-header";
 import { useOrgAudit } from "@/lib/api/org";
 
 export function OrgAuditView({ orgId }: { orgId: string }) {
@@ -14,8 +16,8 @@ export function OrgAuditView({ orgId }: { orgId: string }) {
   const audit = useOrgAudit(orgId, action);
   const items = audit.data?.pages.flatMap((p) => p.items) ?? [];
   return (
-    <div className="max-w-5xl space-y-4">
-      <h1 className="text-xl font-semibold">Audit log</h1>
+    <div className="max-w-[1160px] space-y-4">
+      <PageHeader title="Audit log" description="Who did what in this organization, newest first." className="mb-2" />
       <form
         role="search"
         className="flex max-w-md gap-2"
@@ -39,32 +41,28 @@ export function OrgAuditView({ orgId }: { orgId: string }) {
       {audit.isError ? <ErrorState error={audit.error} onRetry={() => audit.refetch()} /> : null}
       {audit.data && items.length === 0 ? <EmptyState title="No audit entries" /> : null}
       {items.length > 0 ? (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="text-neutral-500">
-              <tr>
-                <th className="py-2 pr-4 font-medium">When</th>
-                <th className="py-2 pr-4 font-medium">Actor</th>
-                <th className="py-2 pr-4 font-medium">Action</th>
-                <th className="py-2 pr-4 font-medium">Target</th>
-                <th className="py-2 font-medium">Outcome</th>
+        <DataTable caption="Audit log">
+          <thead>
+            <tr>
+              <Th>When</Th>
+              <Th>Actor</Th>
+              <Th>Action</Th>
+              <Th>Target</Th>
+              <Th>Outcome</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((e) => (
+              <tr key={e.id}>
+                <Td className="whitespace-nowrap text-ink-2">{fmtDate(e.created_at)}</Td>
+                <Td>{e.actor_label}</Td>
+                <Td className="font-mono text-xs">{e.action}</Td>
+                <Td className="text-ink-2">{e.target_kind ? `${e.target_kind} ${e.target_id ?? ""}` : "—"}</Td>
+                <Td>{e.outcome}</Td>
               </tr>
-            </thead>
-            <tbody>
-              {items.map((e) => (
-                <tr key={e.id} className="border-t border-neutral-200">
-                  <td className="py-2 pr-4">{fmtDate(e.created_at)}</td>
-                  <td className="py-2 pr-4">{e.actor_label}</td>
-                  <td className="py-2 pr-4 font-mono">{e.action}</td>
-                  <td className="py-2 pr-4">
-                    {e.target_kind ? `${e.target_kind} ${e.target_id ?? ""}` : "—"}
-                  </td>
-                  <td className="py-2">{e.outcome}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </DataTable>
       ) : null}
       {audit.hasNextPage ? (
         <Button

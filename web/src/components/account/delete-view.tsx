@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
+import { DangerZone } from "@/components/ui/section";
 import { deleteAccount } from "@/lib/api/account";
 import { oidcStartUrl } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
@@ -43,34 +45,33 @@ export function DeleteView({ onDeleted }: { onDeleted?: () => void }) {
   }
 
   return (
-    <form onSubmit={(e) => void submit(e)} noValidate className="max-w-md space-y-4">
-      <h2 className="text-lg font-medium text-red-800">Delete account</h2>
-      <p className="text-sm text-neutral-600">
-        This permanently deletes your account and signs you out everywhere. It cannot be undone.
-        You will be asked to sign in again with your provider first.
-      </p>
-      {error !== null ? (
-        <p role="alert" className="text-sm text-red-700">
-          {deleteErrorMessage(error)}
-        </p>
-      ) : null}
-      {needsReauth ? (
-        <div className="space-y-2" aria-label="Re-authenticate">
-          {providers.map((p) => (
-            <Button key={p.id} asChild variant="outline" className="w-full">
-              {/* Full navigation: the API redirects to the provider with prompt=login. */}
-              <a
-                href={oidcStartUrl(p.id, { reauth: true, returnTo: "/account/delete" })}
-              >
-                Sign in again with {p.display_name}
-              </a>
-            </Button>
-          ))}
-        </div>
-      ) : null}
-      <Button type="submit" variant="danger" disabled={pending}>
-        {pending ? "Deleting…" : "Delete my account"}
-      </Button>
-    </form>
+    <DangerZone
+      id="delete-account"
+      title="Delete account"
+      description="This permanently deletes your account and signs you out everywhere. It cannot be undone. You will be asked to sign in again with your provider first."
+    >
+      <form onSubmit={(e) => void submit(e)} noValidate className="max-w-md space-y-4">
+        {error !== null ? (
+          <Notice tone="danger" role="alert">
+            {deleteErrorMessage(error)}
+          </Notice>
+        ) : null}
+        {needsReauth ? (
+          <div className="space-y-2" aria-label="Re-authenticate">
+            {providers.map((p) => (
+              <Button key={p.id} asChild variant="outline" className="w-full">
+                {/* Full navigation: the API redirects to the provider with prompt=login. */}
+                <a href={oidcStartUrl(p.id, { reauth: true, returnTo: "/account/delete" })}>
+                  Sign in again with {p.display_name}
+                </a>
+              </Button>
+            ))}
+          </div>
+        ) : null}
+        <Button type="submit" variant="danger" disabled={pending}>
+          {pending ? "Deleting…" : "Delete my account"}
+        </Button>
+      </form>
+    </DangerZone>
   );
 }

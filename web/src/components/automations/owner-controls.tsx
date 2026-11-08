@@ -14,13 +14,13 @@ type Creator = { id: string; display_name: string } | null | undefined;
 export function OwnerLabel({ anchor, creator }: { anchor: string; creator: Creator }) {
   if (anchor === "workspace") {
     return (
-      <span className="text-xs text-neutral-600" title={creator ? `Created by ${creator.display_name}` : undefined}>
+      <span className="text-xs text-ink-2" title={creator ? `Created by ${creator.display_name}` : undefined}>
         Owner: <strong className="font-medium">Workspace</strong>
       </span>
     );
   }
   return (
-    <span className="text-xs text-neutral-600">
+    <span className="text-xs text-ink-2">
       Owner: {creator ? creator.display_name || "Unknown" : "nobody (creator removed)"}
     </span>
   );
@@ -51,7 +51,7 @@ export function AnchorSwitch({
         Anchor to workspace
       </label>
       {anchor !== "workspace" ? (
-        <p className="ml-6 text-xs text-neutral-600">
+        <p className="ml-6 text-xs text-ink-2">
           The item will outlive any single member: it keeps running as long as the workspace has an active owner.
         </p>
       ) : null}
@@ -87,7 +87,7 @@ export function ReassignPanel({
   return (
     <form
       aria-label={`Reassign ${name}`}
-      className="space-y-2 rounded-md bg-neutral-50 p-3"
+      className="space-y-2 rounded-control border border-line bg-subtle p-3"
       onSubmit={(e) => {
         e.preventDefault();
         if (!user) return;
@@ -115,7 +115,7 @@ export function ReassignPanel({
         </label>
       ) : null}
       {reassign.error ? (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger-ink">
           {errorMessage(reassign.error)}
         </p>
       ) : null}
@@ -160,7 +160,7 @@ export function OffboardingPrompt({
           <ul className="max-h-40 list-disc overflow-y-auto pl-5">
             {items.map((i) => (
               <li key={i.id}>
-                {i.name} <span className="text-neutral-600">({i.agent.name}, {i.workspace.name})</span>
+                {i.name} <span className="text-ink-2">({i.agent.name}, {i.workspace.name})</span>
               </li>
             ))}
           </ul>
@@ -184,9 +184,9 @@ export function OffboardingPrompt({
         </>
       ) : null}
       {data.peer_tasks.length > 0 ? (
-        <p className="text-neutral-600">{data.peer_tasks.length} open peer task(s) they requested will stop.</p>
+        <p className="text-ink-2">{data.peer_tasks.length} open peer task(s) they requested will stop.</p>
       ) : null}
-      {data.api_keys > 0 ? <p className="text-neutral-600">{data.api_keys} API key(s) will stop working.</p> : null}
+      {data.api_keys > 0 ? <p className="text-ink-2">{data.api_keys} API key(s) will stop working.</p> : null}
     </div>
   );
 }

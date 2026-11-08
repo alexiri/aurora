@@ -6,6 +6,9 @@ import { ErrorState, Loading } from "@/components/states";
 import { ThemeSwitch } from "@/components/theme/theme-switch";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { Form, FormActions } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
+import { Section } from "@/components/ui/section";
 import { useUpdateMe } from "@/lib/api/account";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { useSession, type Me } from "@/lib/api/queries";
@@ -34,7 +37,7 @@ function ProfileForm({ me }: { me: Me }) {
   }
 
   return (
-    <form onSubmit={submit} noValidate className="max-w-md space-y-4">
+    <Form onSubmit={submit} noValidate className="max-w-md">
       <Field id="acc-email" label="Email">
         <input id="acc-email" className={inputClass} value={me.user.email} readOnly disabled />
       </Field>
@@ -70,19 +73,21 @@ function ProfileForm({ me }: { me: Me }) {
         </select>
       </Field>
       {update.error && Object.keys(fe).length === 0 ? (
-        <p role="alert" className="text-sm text-danger-ink">
+        <Notice tone="danger" role="alert">
           {errorMessage(update.error)}
-        </p>
+        </Notice>
       ) : null}
       {saved ? (
-        <p role="status" className="text-sm text-accent-ink">
+        <Notice tone="accent" role="status">
           Profile saved.
-        </p>
+        </Notice>
       ) : null}
-      <Button type="submit" disabled={update.isPending}>
-        {update.isPending ? "Saving…" : "Save changes"}
-      </Button>
-    </form>
+      <FormActions>
+        <Button type="submit" size="lg" disabled={update.isPending}>
+          {update.isPending ? "Saving…" : "Save changes"}
+        </Button>
+      </FormActions>
+    </Form>
   );
 }
 
@@ -92,14 +97,12 @@ export function ProfileView() {
   if (me.isError) return <ErrorState error={me.error} onRetry={() => me.refetch()} />;
   return (
     <div className="space-y-8">
-      <ProfileForm key={me.dataUpdatedAt} me={me.data} />
-      <section aria-labelledby="appearance-heading" className="max-w-md space-y-2">
-        <h2 id="appearance-heading" className="font-display text-base font-semibold">
-          Appearance
-        </h2>
-        <p className="text-sm text-ink-2">Stored in this browser only.</p>
+      <Section id="profile" title="Profile" description="How you appear to other people in your organizations." card>
+        <ProfileForm key={me.dataUpdatedAt} me={me.data} />
+      </Section>
+      <Section id="appearance" title="Appearance" description="Stored in this browser only." card>
         <ThemeSwitch />
-      </section>
+      </Section>
     </div>
   );
 }

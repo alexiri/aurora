@@ -120,7 +120,7 @@ export function ByoPanel({
         <label className="flex items-start gap-2 text-sm text-ink">
           <input
             type="checkbox"
-            className="mt-1"
+            className="mt-0.5 size-4 shrink-0 accent-accent"
             checked={b.requireContext || b.requireContextLocked}
             disabled={readOnly || b.requireContextLocked || b.instanceOff}
             onChange={(e) => set({ requireContext: e.target.checked })}

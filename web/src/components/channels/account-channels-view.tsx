@@ -5,6 +5,7 @@ import { useQueries } from "@tanstack/react-query";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
+import { Section } from "@/components/ui/section";
 import { api } from "@/lib/api/client";
 import { unwrap } from "@/lib/api/unwrap";
 import { useDmDefaults, useMyChannelLinks, useSetDmDefault, useUnlinkMine } from "@/lib/api/channels";
@@ -44,64 +45,67 @@ export function AccountChannelsView() {
     defaults.data.items.find((d) => d.integration_id === integrationId && d.platform_user_ref === ref);
 
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-neutral-600">
-        Chat accounts linked to you, and which agent answers when you message the shared bot directly.
-      </p>
-      {links.data.items.length === 0 ? (
-        <EmptyState title="No linked chat accounts">
-          Message the bot in your chat platform to get a sign-in link.
-        </EmptyState>
-      ) : (
-        <ul aria-label="Linked chat accounts" className="space-y-3">
-          {links.data.items.map((l) => {
-            const d = dmFor(l.integration_id, l.platform_user_ref);
-            const selectId = `dm-${l.id}`;
-            return (
-              <li key={l.id} className="space-y-2 rounded-md border border-neutral-200 p-3">
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="font-medium">{l.tenant_label}</span>
-                  <code className="text-xs">{l.platform_user_ref}</code>
-                  <span className="text-xs text-neutral-500">{l.method.replace(/_/g, " ")}</span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="ml-auto"
-                    aria-label={`Unlink ${l.tenant_label}`}
-                    disabled={unlink.isPending}
-                    onClick={() => unlink.mutate(l.id)}
-                  >
-                    Unlink
-                  </Button>
-                </div>
-                <div>
-                  <label htmlFor={selectId} className="block text-sm font-medium">
-                    Default agent for direct messages
-                  </label>
-                  <select
-                    id={selectId}
-                    className={inputClass}
-                    value={d?.agent_id ?? ""}
-                    disabled={setDefault.isPending || agentsPending}
-                    onChange={(e) =>
-                      e.target.value &&
-                      setDefault.mutate({ integration_id: l.integration_id, agent_id: e.target.value })
-                    }
-                  >
-                    <option value="">{d?.agent_id ? "Select…" : "None chosen"}</option>
-                    {agents.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      <MutationError error={unlink.error ?? setDefault.error} />
-    </div>
+    <Section
+      id="my-channels"
+      title="Linked chat accounts"
+      description="Chat accounts linked to you, and which agent answers when you message the shared bot directly."
+    >
+      <div className="space-y-3">
+        {links.data.items.length === 0 ? (
+          <EmptyState title="No linked chat accounts">
+            Message the bot in your chat platform to get a sign-in link.
+          </EmptyState>
+        ) : (
+          <ul aria-label="Linked chat accounts" className="space-y-3">
+            {links.data.items.map((l) => {
+              const d = dmFor(l.integration_id, l.platform_user_ref);
+              const selectId = `dm-${l.id}`;
+              return (
+                <li key={l.id} className="space-y-3 rounded-card border border-line bg-surface p-4 shadow-card">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+                    <span className="font-medium text-ink">{l.tenant_label}</span>
+                    <code className="font-mono text-xs text-ink-2">{l.platform_user_ref}</code>
+                    <span className="text-xs text-muted">{l.method.replace(/_/g, " ")}</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="ml-auto"
+                      aria-label={`Unlink ${l.tenant_label}`}
+                      disabled={unlink.isPending}
+                      onClick={() => unlink.mutate(l.id)}
+                    >
+                      Unlink
+                    </Button>
+                  </div>
+                  <div className="max-w-md space-y-1.5">
+                    <label htmlFor={selectId} className="block text-sm font-medium text-ink">
+                      Default agent for direct messages
+                    </label>
+                    <select
+                      id={selectId}
+                      className={inputClass}
+                      value={d?.agent_id ?? ""}
+                      disabled={setDefault.isPending || agentsPending}
+                      onChange={(e) =>
+                        e.target.value &&
+                        setDefault.mutate({ integration_id: l.integration_id, agent_id: e.target.value })
+                      }
+                    >
+                      <option value="">{d?.agent_id ? "Select…" : "None chosen"}</option>
+                      {agents.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <MutationError error={unlink.error ?? setDefault.error} />
+      </div>
+    </Section>
   );
 }

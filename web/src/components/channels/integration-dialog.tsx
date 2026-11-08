@@ -78,7 +78,7 @@ export function IntegrationDialog({
         {connector ? (
           <form className="space-y-3" onSubmit={submit} aria-busy={pending}>
             {connector.setup_guide_md ? (
-              <div className="rounded-md bg-neutral-50 p-3 text-sm">
+              <div className="rounded-control border border-line bg-subtle p-3 text-sm text-ink-2">
                 <Markdown source={connector.setup_guide_md} />
               </div>
             ) : null}
@@ -89,15 +89,15 @@ export function IntegrationDialog({
               onChange={(n, v) => setValues((p) => ({ ...p, [n]: v }))}
             />
             {existing ? (
-              <p className="text-xs text-neutral-500">Credentials: stored. Leave blank to keep them.</p>
+              <p className="text-xs text-muted">Credentials: stored. Leave blank to keep them.</p>
             ) : null}
             <MutationError error={error} />
             {pending ? (
-              <p role="status" className="text-sm text-neutral-600">
+              <p role="status" className="text-sm text-ink-2">
                 Validating with {connector.display_name}… this can take up to 10 seconds.
               </p>
             ) : null}
-            <Button type="submit" disabled={pending}>
+            <Button type="submit" size="lg" disabled={pending}>
               {pending ? "Validating…" : existing ? "Save" : "Connect"}
             </Button>
           </form>

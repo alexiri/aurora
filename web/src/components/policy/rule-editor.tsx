@@ -66,7 +66,7 @@ function IdentityRow({
         Remove
       </Button>
       {value.kind === "user" ? (
-        <p className="basis-full text-xs text-neutral-600">
+        <p className="basis-full text-xs text-muted">
           Matches only turns this person is speaking in — never schedules, webhooks, BYO or boot traffic. For “anyone with access”, leave who empty.
         </p>
       ) : null}
@@ -88,8 +88,8 @@ function TargetRow({
   onRemove: () => void;
 }) {
   return (
-    <li className="space-y-2 rounded border border-neutral-200 p-2">
-      <div className="flex gap-2">
+    <li className="space-y-2 rounded-control border border-line p-2.5">
+      <div className="flex flex-wrap gap-2">
         <select
           aria-label="Target type"
           className={inputClass}
@@ -126,7 +126,7 @@ function TargetRow({
                 {m}
               </label>
             ))}
-            <span className="text-xs text-neutral-500">(none = any method)</span>
+            <span className="text-xs text-muted">(none = any method)</span>
           </fieldset>
         </div>
       ) : null}

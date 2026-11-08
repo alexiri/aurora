@@ -5,8 +5,14 @@ import { useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
 import { ByoPanel } from "./byo-panel";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
+import { FormActions } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
+import { ItemList, ListRow } from "@/components/ui/section";
+import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { errorMessage } from "@/lib/api/errors";
 import {
   formFromDocument,
@@ -39,16 +45,16 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function Locked() {
   return (
-    <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs font-normal text-neutral-700" title="Set by the instance operator">
+    <Badge className="ml-2 align-middle normal-case tracking-normal" title="Set by the instance operator">
       enforced by instance
-    </span>
+    </Badge>
   );
 }
 
 function Errors({ messages }: { messages: string[] }) {
   if (messages.length === 0) return null;
   return (
-    <ul role="alert" className="text-xs text-red-700">
+    <ul role="alert" className="text-xs text-danger-ink">
       {messages.map((m, i) => (
         <li key={i}>{m}</li>
       ))}
@@ -108,29 +114,28 @@ function Body({
     put.mutate({ document: formToDocument(form), revision }, { onSuccess: () => setSaved(true) });
 
   return (
-    <div className="max-w-4xl space-y-4">
-      <h1 className="text-xl font-semibold">Governance</h1>
-      {!canEdit ? (
-        <p className="text-sm text-neutral-600">These rules apply to your organization. Only owners and admins can change them.</p>
-      ) : null}
-      <div role="tablist" aria-label="Governance" className="flex gap-1 border-b border-neutral-200">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            role="tab"
-            type="button"
-            id={`tab-${t.id}`}
-            aria-selected={tab === t.id}
-            aria-controls="gov-panel"
-            onClick={() => setTab(t.id)}
-            className={cn("-mb-px border-b-2 px-3 py-2 text-sm", tab === t.id ? "border-neutral-900 font-medium" : "border-transparent")}
-          >
-            {t.label}
-            {t.id === "compliance" && eff.non_compliant_secrets.length > 0 ? ` (${eff.non_compliant_secrets.length})` : ""}
-          </button>
-        ))}
-      </div>
-      <div role="tabpanel" id="gov-panel" aria-labelledby={`tab-${tab}`} className="space-y-4 pt-2">
+    <div className="max-w-[880px] space-y-4">
+      <PageHeader
+        title="Governance"
+        description={
+          canEdit
+            ? "Model access, egress and BYO rules for the whole organization."
+            : "These rules apply to your organization. Only owners and admins can change them."
+        }
+        className="mb-2"
+      />
+      <Tabs
+        items={TABS.map((t) => ({
+          value: t.id,
+          label: `${t.label}${t.id === "compliance" && eff.non_compliant_secrets.length > 0 ? ` (${eff.non_compliant_secrets.length})` : ""}`,
+        }))}
+        value={tab}
+        onValueChange={(v) => setTab(v as Tab)}
+        variant="underline"
+        label="Governance"
+        idBase="gov"
+      />
+      <div role="tabpanel" id={tabPanelId("gov", tab)} aria-labelledby={tabId("gov", tab)} className="space-y-5 pt-2">
         {tab === "models" ? <ModelsTab form={form} patch={patch} issues={issues} readOnly={!canEdit} /> : null}
         {tab === "egress" ? (
           <EgressTab form={form} patch={patch} issues={issues} readOnly={!canEdit} eff={eff} orgId={orgId} />
@@ -139,24 +144,26 @@ function Body({
         {tab === "compliance" ? <ComplianceTab eff={eff} orgId={orgId} orgSlug={orgSlug} /> : null}
       </div>
       {canEdit && tab !== "compliance" ? (
-        <div className="space-y-2 border-t border-neutral-200 pt-3">
+        <div className="space-y-3 border-t border-line pt-4">
           {stale ? (
-            <div role="alert" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <Notice tone="pending" role="alert">
               The governance settings were changed by someone else. Reload to see the latest version.{" "}
               <Button size="sm" variant="outline" onClick={() => { put.reset(); onReload(); }}>
                 Reload latest
               </Button>
-            </div>
+            </Notice>
           ) : put.isError ? (
-            <div role="alert" className="text-sm text-red-700">
+            <Notice tone="danger" role="alert">
               {errorMessage(put.error)}
               <Errors messages={issues.general} />
-            </div>
+            </Notice>
           ) : null}
-          {saved ? <p role="status" className="text-sm text-green-700">Saved. Existing keys were re-checked against the new rules.</p> : null}
-          <Button onClick={save} disabled={put.isPending}>
-            {put.isPending ? "Saving…" : "Save governance"}
-          </Button>
+          {saved ? <Notice tone="accent" role="status">Saved. Existing keys were re-checked against the new rules.</Notice> : null}
+          <FormActions>
+            <Button size="lg" onClick={save} disabled={put.isPending}>
+              {put.isPending ? "Saving…" : "Save governance"}
+            </Button>
+          </FormActions>
         </div>
       ) : null}
     </div>
@@ -169,9 +176,9 @@ function PostureSelect<T extends string>({
   label: string; value: T; options: { value: T; label: string }[]; locked: boolean; readOnly: boolean; onChange: (v: T) => void;
 }) {
   return (
-    <label className="block text-sm font-medium">
+    <label className="block text-sm font-medium text-ink">
       <span>{label}{locked ? <Locked /> : null}</span>
-      <select className={cn(inputClass, "mt-1 max-w-xs")} value={value} disabled={locked || readOnly} onChange={(e) => onChange(e.target.value as T)}>
+      <select className={cn(inputClass, "mt-1.5 max-w-lg")} value={value} disabled={locked || readOnly} onChange={(e) => onChange(e.target.value as T)}>
         {options.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}
@@ -197,29 +204,30 @@ function ModelsTab({ form, patch, issues, readOnly }: { form: GovForm; patch: (p
         ]}
       />
       <Errors messages={issuesUnder(issues, "/llm/posture")} />
-      {form.endpoints.length === 0 ? <p className="text-sm text-neutral-600">No LLM endpoints are configured on this instance.</p> : null}
+      {form.endpoints.length === 0 ? <p className="text-sm text-ink-2">No LLM endpoints are configured on this instance.</p> : null}
       {form.endpoints.map((e, i) => {
         const base = `/llm/endpoints/${e.id}`;
         const dis = readOnly;
         return (
-          <fieldset key={e.id} className="space-y-3 rounded-md border border-neutral-200 p-4">
-            <legend className="px-1 text-sm font-medium">
-              {e.display_name} <span className="font-mono text-xs text-neutral-500">{e.id}</span>
+          <fieldset key={e.id} className="min-w-0 space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
+            <legend className="px-1 font-display text-base font-semibold text-ink">
+              {e.display_name} <span className="font-mono text-xs font-normal text-muted">{e.id}</span>
             </legend>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={e.allowed} disabled={dis || e.locked.permitted} onChange={(ev) => setEp(i, { allowed: ev.target.checked })} />
+            <label className="flex items-center gap-2 text-sm font-medium text-ink">
+              <input type="checkbox" className="size-4 accent-accent" checked={e.allowed} disabled={dis || e.locked.permitted} onChange={(ev) => setEp(i, { allowed: ev.target.checked })} />
               Permitted
               {e.locked.permitted ? <Locked /> : null}
             </label>
             <Errors messages={issuesUnder(issues, `${base}/allowed`)} />
-            <div role="group" aria-label={`Key scopes for ${e.display_name}`} className="text-sm">
+            <div role="group" aria-label={`Key scopes for ${e.display_name}`} className="text-sm text-ink">
               <span className="font-medium">Key scopes</span>
               {e.locked.key_scopes ? <Locked /> : null}
-              <div className="mt-1 flex gap-4">
+              <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
                 {KEY_SCOPES.map((s) => (
-                  <label key={s} className="flex items-center gap-1">
+                  <label key={s} className="flex items-center gap-1.5">
                     <input
                       type="checkbox"
+                      className="size-4 accent-accent"
                       checked={e.key_scopes.includes(s)}
                       disabled={dis || e.locked.key_scopes}
                       onChange={(ev) => setEp(i, { key_scopes: ev.target.checked ? [...e.key_scopes, s] : e.key_scopes.filter((x) => x !== s) })}
@@ -248,12 +256,12 @@ function TextArea({ id, label, hint, value, locked, readOnly, onChange, errors }
   id: string; label: string; hint?: string; value: string; locked?: boolean; readOnly: boolean; onChange: (v: string) => void; errors: string[];
 }) {
   return (
-    <div className="space-y-1">
-      <label htmlFor={id} className="block text-sm font-medium">
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="block text-sm font-medium text-ink">
         {label}{locked ? <Locked /> : null}
       </label>
       <textarea id={id} rows={3} className={cn(inputClass, "font-mono")} value={value} disabled={readOnly || locked} onChange={(e) => onChange(e.target.value)} aria-invalid={errors.length > 0} />
-      {hint ? <p className="text-xs text-neutral-500">{hint}</p> : null}
+      {hint ? <p className="text-xs text-muted">{hint}</p> : null}
       <Errors messages={errors} />
     </div>
   );
@@ -293,18 +301,18 @@ function EgressTab({ form, patch, issues, readOnly, eff, orgId }: {
           { value: "disabled", label: "Disabled: no browser tunnels" },
         ]}
       />
-      <p className="text-xs text-neutral-600">
-        Tunnels cannot be inspected or given credentials; <code>allowlist_only</code> limits them to the allow-list.
+      <p className="text-xs text-muted">
+        Tunnels cannot be inspected or given credentials; <code className="font-mono">allowlist_only</code> limits them to the allow-list.
       </p>
       <Errors messages={issuesUnder(issues, "/egress/open_lane")} />
-      <section aria-label="Organization allow-list" className="space-y-2">
-        <h2 className="text-sm font-medium">Organization allow-list</h2>
-        {form.allowlist.length === 0 ? <p className="text-sm text-neutral-600">No hosts allowed beyond the instance baseline.</p> : null}
+      <section aria-label="Organization allow-list" className="space-y-3">
+        <h2 className="font-display text-base font-semibold text-ink">Organization allow-list</h2>
+        {form.allowlist.length === 0 ? <p className="text-sm text-ink-2">No hosts allowed beyond the instance baseline.</p> : null}
         {form.allowlist.map((r, i) => (
           <div key={i} className="space-y-1">
-            <div className="flex items-center gap-2">
-              <input aria-label={`Host ${i + 1}`} className={inputClass} placeholder="host, e.g. *.example.com" value={r.host} disabled={readOnly} onChange={(e) => setRow(i, { host: e.target.value })} />
-              <input aria-label={`Path ${i + 1}`} className={inputClass} placeholder="path pattern (optional)" value={r.path} disabled={readOnly} onChange={(e) => setRow(i, { path: e.target.value })} />
+            <div className="flex flex-wrap items-center gap-2">
+              <input aria-label={`Host ${i + 1}`} className={cn(inputClass, "min-w-0 flex-1 basis-48")} placeholder="host, e.g. *.example.com" value={r.host} disabled={readOnly} onChange={(e) => setRow(i, { host: e.target.value })} />
+              <input aria-label={`Path ${i + 1}`} className={cn(inputClass, "min-w-0 flex-1 basis-48")} placeholder="path pattern (optional)" value={r.path} disabled={readOnly} onChange={(e) => setRow(i, { path: e.target.value })} />
               {!readOnly ? (
                 <Button variant="ghost" size="sm" onClick={() => patch({ allowlist: form.allowlist.filter((_, j) => j !== i) })}>
                   Remove
@@ -322,30 +330,35 @@ function EgressTab({ form, patch, issues, readOnly, eff, orgId }: {
         ) : null}
       </section>
       {blocked.length > 0 ? (
-        <section aria-label="Recently blocked hosts" className="space-y-2">
-          <h2 className="text-sm font-medium">Recently blocked hosts</h2>
-          <ul className="divide-y divide-neutral-100 rounded-md border border-neutral-200 text-sm">
+        <section aria-label="Recently blocked hosts" className="space-y-3">
+          <h2 className="font-display text-base font-semibold text-ink">Recently blocked hosts</h2>
+          <ItemList aria-label="Recently blocked hosts">
             {blocked.map((b) => (
-              <li key={b.host} className="flex items-center justify-between px-3 py-1.5">
-                <span><span className="font-mono">{b.host}</span> <span className="text-xs text-neutral-500">{b.count}x</span></span>
-                {!readOnly && !listed.has(b.host) ? (
-                  <Button variant="ghost" size="sm" onClick={() => patch({ allowlist: [...form.allowlist, { host: b.host, path: "" }] })}>
-                    Add to allow-list
-                  </Button>
-                ) : null}
-              </li>
+              <ListRow
+                key={b.host}
+                actions={
+                  !readOnly && !listed.has(b.host) ? (
+                    <Button variant="ghost" size="sm" onClick={() => patch({ allowlist: [...form.allowlist, { host: b.host, path: "" }] })}>
+                      Add to allow-list
+                    </Button>
+                  ) : null
+                }
+              >
+                <span className="font-mono text-sm text-ink">{b.host}</span>
+                <span className="text-xs text-muted">{b.count}x</span>
+              </ListRow>
             ))}
-          </ul>
+          </ItemList>
         </section>
       ) : null}
-      <section aria-label="Instance baseline" className="space-y-2">
-        <h2 className="text-sm font-medium">Instance baseline<Locked /></h2>
+      <section aria-label="Instance baseline" className="space-y-3">
+        <h2 className="font-display text-base font-semibold text-ink">Instance baseline<Locked /></h2>
         {eff.egress.baseline_allowlist.length === 0 ? (
-          <p className="text-sm text-neutral-600">The instance has no baseline allow-list.</p>
+          <p className="text-sm text-ink-2">The instance has no baseline allow-list.</p>
         ) : (
-          <ul className="rounded-md border border-neutral-200 px-3 py-2 font-mono text-sm">
+          <ul className="rounded-card border border-line bg-surface px-4 py-3 font-mono text-sm text-ink shadow-card">
             {eff.egress.baseline_allowlist.map((e, i) => (
-              <li key={i}>{e.host}{e.path ?? ""}</li>
+              <li key={i} className="break-all">{e.host}{e.path ?? ""}</li>
             ))}
           </ul>
         )}
@@ -365,22 +378,34 @@ function ComplianceTab({ eff, orgId, orgSlug }: { eff: EffectiveGovernance; orgI
   const workspaces = useWorkspaces(orgId);
   const slugOf = new Map((workspaces.data?.items ?? []).map((w) => [w.id, w.slug]));
   if (eff.non_compliant_secrets.length === 0)
-    return <p className="text-sm text-neutral-600">All LLM keys comply with the current rules.</p>;
+    return (
+      <Notice tone="accent" role="status">
+        All LLM keys comply with the current rules.
+      </Notice>
+    );
   return (
-    <ul aria-label="Non-compliant LLM keys" className="divide-y divide-neutral-100 rounded-md border border-neutral-200 text-sm">
+    <ItemList aria-label="Non-compliant LLM keys">
       {eff.non_compliant_secrets.map((s) => {
         const ws = s.workspace_id ? slugOf.get(s.workspace_id) : null;
         const href = s.workspace_id ? (ws ? `/o/${orgSlug}/w/${ws}/credentials` : null) : `/o/${orgSlug}/credentials`;
         return (
-          <li key={s.id} className="flex items-center justify-between px-3 py-2">
-            <span>
-              <span className="font-medium">{s.name}</span>{" "}
-              <span className="text-neutral-600">{REASONS[s.reason] ?? s.reason}</span>
+          <ListRow
+            key={s.id}
+            actions={
+              href ? (
+                <Link className="text-sm font-medium text-link underline" href={href}>
+                  Fix
+                </Link>
+              ) : null
+            }
+          >
+            <span className="text-sm">
+              <span className="font-medium text-ink">{s.name}</span>{" "}
+              <span className="text-ink-2">{REASONS[s.reason] ?? s.reason}</span>
             </span>
-            {href ? <Link className="underline" href={href}>Fix</Link> : null}
-          </li>
+          </ListRow>
         );
       })}
-    </ul>
+    </ItemList>
   );
 }

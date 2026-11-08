@@ -3,9 +3,15 @@
 import { useState } from "react";
 
 import { fmtDate } from "@/components/account/key-table";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
+import { Form, FormActions } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
+import { Section } from "@/components/ui/section";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { errorMessage } from "@/lib/api/errors";
 import {
@@ -21,8 +27,7 @@ function AddKeyForm() {
   const [name, setName] = useState("");
   const [key, setKey] = useState("");
   return (
-    <form
-      className="grid max-w-xl gap-3"
+    <Form
       onSubmit={(e) => {
         e.preventDefault();
         add.mutate(
@@ -44,19 +49,19 @@ function AddKeyForm() {
         <input id="tk-name" required className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
       <Field id="tk-key" label="Public key">
-        <input id="tk-key" required className={inputClass} value={key} onChange={(e) => setKey(e.target.value)} />
+        <input id="tk-key" required className={`${inputClass} font-mono`} value={key} onChange={(e) => setKey(e.target.value)} />
       </Field>
       {add.isError ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(add.error)}
-        </p>
+        </Notice>
       ) : null}
-      <div>
-        <Button type="submit" disabled={add.isPending}>
+      <FormActions>
+        <Button type="submit" size="lg" disabled={add.isPending}>
           Add trusted key
         </Button>
-      </div>
-    </form>
+      </FormActions>
+    </Form>
   );
 }
 
@@ -65,73 +70,65 @@ export function TrustedKeysView() {
   const revoke = useRevokeTrustedKey();
   const [target, setTarget] = useState<TrustedKey | null>(null);
   return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Trusted keys</h1>
-      <AddKeyForm />
-      {q.isPending ? <Loading /> : null}
-      {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}
-      {q.data && q.data.items.length === 0 ? <EmptyState title="No trusted keys" /> : null}
-      {q.data && q.data.items.length > 0 ? (
-        <table className="w-full text-left text-sm">
-          <thead className="text-neutral-500">
-            <tr>
-              <th className="py-2 pr-4 font-medium">Name</th>
-              <th className="py-2 pr-4 font-medium">Publisher</th>
-              <th className="py-2 pr-4 font-medium">Added</th>
-              <th className="py-2 font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {q.data.items.map((k) => (
-              <tr key={k.id} className="border-t border-neutral-200">
-                <td className="py-2 pr-4">
-                  {k.name}
-                  <div className="break-all font-mono text-xs text-neutral-500">{k.public_key}</div>
-                </td>
-                <td className="py-2 pr-4">{k.publisher}</td>
-                <td className="py-2 pr-4">{fmtDate(k.created_at)}</td>
-                <td className="py-2">
-                  {k.revoked_at ? (
-                    `Revoked ${fmtDate(k.revoked_at)}`
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      aria-label={`Revoke ${k.name}`}
-                      onClick={() => setTarget(k)}
-                    >
-                      Revoke
-                    </Button>
-                  )}
-                </td>
+    <div className="max-w-[1160px] space-y-8">
+      <PageHeader title="Trusted keys" description="Publishers whose signed plugin packages this instance accepts." className="mb-6" />
+      <Section id="tk-add" title="Add a trusted key" card>
+        <AddKeyForm />
+      </Section>
+      <Section id="tk-list" title="Keys">
+        {q.isPending ? <Loading /> : null}
+        {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}
+        {q.data && q.data.items.length === 0 ? <EmptyState title="No trusted keys" /> : null}
+        {q.data && q.data.items.length > 0 ? (
+          <DataTable caption="Trusted keys">
+            <thead>
+              <tr>
+                <Th>Name</Th>
+                <Th>Publisher</Th>
+                <Th>Added</Th>
+                <Th>Status</Th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
-      <Dialog open={target !== null} onOpenChange={(o) => !o && setTarget(null)}>
-        <DialogContent
-          title="Revoke trusted key"
-          description="Revoking this key disables every package signed by it."
-        >
-          {revoke.isError ? (
-            <p role="alert" className="mb-2 text-sm text-red-700">
-              {errorMessage(revoke.error)}
-            </p>
-          ) : null}
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setTarget(null)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={revoke.isPending}
-              onClick={() => target && revoke.mutate(target.id, { onSuccess: () => setTarget(null) })}
-            >
-              Revoke key
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+            </thead>
+            <tbody>
+              {q.data.items.map((k) => (
+                <tr key={k.id}>
+                  <Td>
+                    <span className="font-medium">{k.name}</span>
+                    <div className="max-w-md break-all font-mono text-xs text-muted">{k.public_key}</div>
+                  </Td>
+                  <Td>{k.publisher}</Td>
+                  <Td className="whitespace-nowrap text-ink-2">{fmtDate(k.created_at)}</Td>
+                  <Td>
+                    {k.revoked_at ? (
+                      <Badge tone="danger">{`Revoked ${fmtDate(k.revoked_at)}`}</Badge>
+                    ) : (
+                      <Button size="sm" variant="danger" aria-label={`Revoke ${k.name}`} onClick={() => setTarget(k)}>
+                        Revoke
+                      </Button>
+                    )}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+        ) : null}
+      </Section>
+      <ConfirmDialog
+        open={target !== null}
+        onOpenChange={(o) => !o && setTarget(null)}
+        title="Revoke trusted key"
+        description="Revoking this key disables every package signed by it."
+        confirmLabel="Revoke key"
+        danger
+        busy={revoke.isPending}
+        onConfirm={() => target && revoke.mutate(target.id, { onSuccess: () => setTarget(null) })}
+      >
+        {revoke.isError ? (
+          <Notice tone="danger" role="alert" className="mb-2">
+            {errorMessage(revoke.error)}
+          </Notice>
+        ) : null}
+      </ConfirmDialog>
     </div>
   );
 }

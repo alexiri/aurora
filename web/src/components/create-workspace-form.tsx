@@ -9,6 +9,7 @@ import { validateNameSlug } from "@/lib/nav/validation";
 
 import { Button } from "./ui/button";
 import { Field, inputClass } from "./ui/field";
+import { Notice } from "./ui/notice";
 
 const ZONES = timeZones();
 
@@ -113,12 +114,12 @@ export function CreateWorkspaceForm({
         </select>
       </Field>
       {error && !hasFieldErrors ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(error)}
-        </p>
+        </Notice>
       ) : null}
       <div className="flex justify-end">
-        <Button type="submit" disabled={pending}>
+        <Button type="submit" size="lg" disabled={pending}>
           {pending ? "Creating…" : "Create workspace"}
         </Button>
       </div>
