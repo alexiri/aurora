@@ -11,12 +11,15 @@ import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import {
   buildClientPatchFields,
+  useAppInstances,
   useApps,
   useCreateOAuthClient,
   useDeleteOAuthClient,
   useOAuthClients,
   usePatchOAuthClient,
+  type AppInstance,
   type CredScope,
+  type InstanceScope,
   type OAuthClient,
   type OAuthClientDefinition,
 } from "@/lib/api/apps";
@@ -28,6 +31,9 @@ interface Definition {
   package_id: string;
   app_name: string;
   def: OAuthClientDefinition;
+  /** The app can be served by self-hosted instances (D-74): a client may be bound to one. */
+  instance_bound: boolean;
+  default_host: string | null;
 }
 
 /** Definitions (fields, setup note, redirect URI) come from AppDetail.oauth_clients; no app knowledge lives in the bundle. */
@@ -43,7 +49,13 @@ function useDefinitions(scope: CredScope) {
   const defs = new Map<string, Definition>();
   for (const q of detailQueries)
     for (const d of q.data?.oauth_clients ?? [])
-      defs.set(`${q.data!.package_id}|${d.client_key}`, { package_id: q.data!.package_id, app_name: q.data!.name, def: d });
+      defs.set(`${q.data!.package_id}|${d.client_key}`, {
+        package_id: q.data!.package_id,
+        app_name: q.data!.name,
+        def: d,
+        instance_bound: q.data!.instances != null,
+        default_host: q.data!.instances?.default_host ?? null,
+      });
   return defs;
 }
 
@@ -103,19 +115,40 @@ function DefinitionInputs({
   );
 }
 
-function CreateForm({ scope, onDone, defs }: { scope: CredScope; onDone: () => void; defs: Map<string, Definition> }) {
+function CreateForm({
+  scope,
+  onDone,
+  defs,
+  instances,
+}: {
+  scope: CredScope;
+  onDone: () => void;
+  defs: Map<string, Definition>;
+  instances: AppInstance[];
+}) {
   const create = useCreateOAuthClient(scope);
   const [choice, setChoice] = useState("");
+  const [instanceId, setInstanceId] = useState("");
   const [values, setValues] = useState<Record<string, string>>({});
   const selected = defs.get(choice);
+  // An instance-level client binds instance-wide instances only; the others also their org's own.
+  const choices = instances.filter(
+    (i) => i.package_id === selected?.package_id && i.status === "active" && (scope.kind !== "instance" || i.org_id == null),
+  );
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!selected) return;
     const fields: Record<string, string> = {};
     for (const f of selected.def.fields) if ((values[f.name] ?? "") !== "") fields[f.name] = values[f.name];
     try {
-      await create.mutateAsync({ package_id: selected.package_id, client_key: selected.def.client_key, fields });
+      await create.mutateAsync({
+        package_id: selected.package_id,
+        client_key: selected.def.client_key,
+        fields,
+        ...(selected.instance_bound && instanceId ? { instance_id: instanceId } : {}),
+      });
       setValues({});
+      setInstanceId("");
       onDone();
     } catch {
       // shown below
@@ -130,6 +163,7 @@ function CreateForm({ scope, onDone, defs }: { scope: CredScope; onDone: () => v
           value={choice}
           onChange={(e) => {
             setChoice(e.target.value);
+            setInstanceId("");
             setValues({});
           }}
           required
@@ -140,17 +174,48 @@ function CreateForm({ scope, onDone, defs }: { scope: CredScope; onDone: () => v
           ))}
         </select>
       </Field>
+      {selected?.instance_bound ? (
+        <Field
+          id="oc-instance"
+          label="Instance"
+          hint="Each self-hosted instance has its own OAuth application. Leave on the default host for the SaaS application."
+        >
+          <select id="oc-instance" className={inputClass} value={instanceId} onChange={(e) => setInstanceId(e.target.value)}>
+            <option value="">{selected.default_host ? `${selected.default_host} (default host)` : "Select…"}</option>
+            {choices.map((i) => (
+              <option key={i.id} value={i.id}>{`${i.label} (${i.host})`}</option>
+            ))}
+          </select>
+        </Field>
+      ) : null}
       {selected ? <DefinitionInputs def={selected.def} values={values} onChange={setValues} /> : null}
       {create.error ? <Notice tone="danger" role="alert">{errorMessage(create.error)}</Notice> : null}
       <FormActions>
-        <Button type="submit" disabled={create.isPending || !selected}>Add</Button>
+        <Button
+          type="submit"
+          disabled={create.isPending || !selected || (!!selected.instance_bound && !selected.default_host && !instanceId)}
+        >
+          Add
+        </Button>
         <Button type="button" variant="outline" onClick={onDone}>Cancel</Button>
       </FormActions>
     </Form>
   );
 }
 
-function ClientRow({ scope, c, canOwn, def }: { scope: CredScope; c: OAuthClient; canOwn: boolean; def?: OAuthClientDefinition }) {
+function ClientRow({
+  scope,
+  c,
+  canOwn,
+  def,
+  instanceHost,
+}: {
+  scope: CredScope;
+  c: OAuthClient;
+  canOwn: boolean;
+  def?: OAuthClientDefinition;
+  instanceHost?: string;
+}) {
   const patch = usePatchOAuthClient(scope);
   const del = useDeleteOAuthClient(scope);
   const [mode, setMode] = useState<"none" | "edit" | "delete">("none");
@@ -181,6 +246,7 @@ function ClientRow({ scope, c, canOwn, def }: { scope: CredScope; c: OAuthClient
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className="font-medium text-ink">{c.package_id}</span>{" "}
           <span className="font-mono text-xs text-muted">{c.client_key} · {c.scope} · {c.connection_count} connection{c.connection_count === 1 ? "" : "s"}</span>
+          {c.instance_id ? <Badge className="font-mono normal-case tracking-normal">{instanceHost ?? "self-hosted instance"}</Badge> : null}
           {!c.enabled ? <Badge>Disabled</Badge> : null}
         </div>
         {canOwn && mine ? (
@@ -225,9 +291,20 @@ function ClientRow({ scope, c, canOwn, def }: { scope: CredScope; c: OAuthClient
   );
 }
 
-export function OAuthClientsPanel({ scope, canOwn }: { scope: CredScope; canOwn: boolean }) {
+export function OAuthClientsPanel({ scope, canOwn, orgId }: { scope: CredScope; canOwn: boolean; orgId?: string }) {
   const list = useOAuthClients(scope);
   const defs = useDefinitions(scope);
+  // Self-hosted instances a client can be bound to (an org scope also sees the instance-wide ones).
+  const instScope: InstanceScope | undefined =
+    scope.kind === "instance"
+      ? { kind: "instance" }
+      : scope.kind === "organization"
+        ? { kind: "organization", id: scope.id }
+        : orgId
+          ? { kind: "organization", id: orgId }
+          : undefined;
+  const instances = useAppInstances(instScope).data?.items ?? [];
+  const hosts = new Map(instances.map((i) => [i.id, i.host]));
   const [adding, setAdding] = useState(false);
   if (list.isPending) return <Loading />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => list.refetch()} />;
@@ -235,7 +312,7 @@ export function OAuthClientsPanel({ scope, canOwn }: { scope: CredScope; canOwn:
     <div className="space-y-3">
       {canOwn ? (
         adding ? (
-          <CreateForm scope={scope} defs={defs} onDone={() => setAdding(false)} />
+          <CreateForm scope={scope} defs={defs} instances={instances} onDone={() => setAdding(false)} />
         ) : (
           <div>
             <Button variant="outline" onClick={() => setAdding(true)}>Add an OAuth client</Button>
@@ -247,7 +324,14 @@ export function OAuthClientsPanel({ scope, canOwn }: { scope: CredScope; canOwn:
       ) : (
         <ul className="space-y-3" aria-label="OAuth clients">
           {list.data.items.map((c) => (
-            <ClientRow key={c.id} scope={scope} c={c} canOwn={canOwn} def={defs.get(`${c.package_id}|${c.client_key}`)?.def} />
+            <ClientRow
+              key={c.id}
+              scope={scope}
+              c={c}
+              canOwn={canOwn}
+              def={defs.get(`${c.package_id}|${c.client_key}`)?.def}
+              instanceHost={c.instance_id ? hosts.get(c.instance_id) : undefined}
+            />
           ))}
         </ul>
       )}

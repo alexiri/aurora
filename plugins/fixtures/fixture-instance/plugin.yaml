@@ -1,0 +1,71 @@
+package:
+  id: fixture-instance
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Fixture Instance
+  description: Phase 2 fixture, self-hosted app with a SaaS default host and admin-registered instances (D-74)
+oauth_clients:
+  - id: selfhosted
+    authorize_url: "https://{instance}/oauth/authorize"
+    token_url: "https://{instance}/oauth/token"
+    pkce: true
+    fields:
+      - { name: client_id, label: Client ID }
+      - { name: client_secret, label: Client secret, secret: true }
+apps:
+  - about:
+      id: instance-desk
+      name: Instance desk
+      description: Help desk that runs as a SaaS and as self-hosted deployments
+      category: testing
+      web_hosts: [saas.instance.example.test]
+    instances:
+      label: Desk instance
+      default_host: saas.instance.example.test
+      probe: { method: GET, path: /api/v1/health, expect_status: [200] }
+    credentials:
+      - { name: api_token, secret: true }
+      - { name: access_token, secret: true, optional: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: username }
+    connect:
+      - id: api_key
+        kind: fields
+        fields:
+          - { name: api_token, label: API token, type: secret, required: true }
+        probe:
+          url: "https://{instance}/api/v1/me"
+          label: /name
+          metadata: { username: /name }
+      - id: oauth
+        kind: oauth2
+        client: selfhosted
+        scopes:
+          - { scope: read, name: Read, access: read }
+        default_scopes: [read]
+        token_response: { access_token: /access_token, refresh_token: /refresh_token, expires_in: /expires_in }
+    hosts:
+      - match: { host: "{instance}", path_prefix: /api/v1 }
+        inject:
+          - bearer: "{credentials.api_token}"
+          - header: { name: x-fixture, value: instance }
+    token:
+      kind: oauth2_refresh
+      client: selfhosted
+      refresh_field: refresh_token
+      reauth_codes: [invalid_grant]
+    tools:
+      read:
+        items:
+          - { id: list_items, name: List items, host: "{instance}", path: /api/v1/items, methods: [GET] }
+      write:
+        items:
+          - { id: create_item, name: Create item, host: "{instance}", path: /api/v1/items, methods: [POST] }
+    approvals:
+      create_item:
+        title: Create item
+        fields:
+          - { label: Name, source: body, steps: [ { json: /name } ] }

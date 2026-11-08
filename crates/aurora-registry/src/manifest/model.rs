@@ -113,10 +113,38 @@ pub struct OauthClient {
     pub setup_note: Option<String>,
 }
 
+/// The whole-host placeholder of an instance-bound app (09 §3.4 Instance-bound hosts, D-74).
+pub const INSTANCE_HOST: &str = "{instance}";
+
+/// `instances` block: the app can be served by self-hosted deployments registered as app
+/// instances (D-74).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Instances {
+    /// Shown in the registration form and the connect picker.
+    pub label: String,
+    /// The SaaS host, compiled as an ordinary static claim.
+    pub default_host: Option<String>,
+    /// Optional reachability check run at registration.
+    pub probe: Option<InstanceProbe>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstanceProbe {
+    #[serde(default)]
+    pub method: ProbeMethod,
+    pub path: String,
+    #[serde(default = "default_status")]
+    pub expect_status: Vec<u16>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct App {
     pub about: About,
+    #[serde(default)]
+    pub instances: Option<Instances>,
     #[serde(default)]
     pub credentials: Vec<CredentialDecl>,
     #[serde(default)]

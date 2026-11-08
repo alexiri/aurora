@@ -22,6 +22,9 @@ pub struct Flow {
     pub org_id: Uuid,
     pub user_id: Uuid,
     pub client_id: Option<Uuid>,
+    /// The registered app instance this flow connects (D-74); re-checked at the callback.
+    #[serde(default)]
+    pub instance_id: Option<Uuid>,
     pub access_level: Option<String>,
     pub pkce_verifier: Option<String>,
     pub reconnect: Option<Uuid>,

@@ -1,0 +1,48 @@
+- name: default host serves a connection without an instance
+  connection: { credentials: { api_token: "secret" } }
+  request: { method: GET, url: "https://saas.instance.example.test/api/v1/items" }
+  expect:
+    app: instance-desk
+    tool: list_items
+    upstream:
+      url: "https://saas.instance.example.test/api/v1/items"
+      headers: { authorization: "Bearer secret", x-fixture: instance }
+- name: a registered instance host injects for its own connection
+  connection:
+    instance_host: desk.acme.example.test
+    credentials: { api_token: "secret" }
+  request: { method: GET, url: "https://desk.acme.example.test/api/v1/items" }
+  expect:
+    app: instance-desk
+    tool: list_items
+    upstream:
+      url: "https://desk.acme.example.test/api/v1/items"
+      headers: { authorization: "Bearer secret", x-fixture: instance }
+- name: write tool on the instance host is summarised
+  connection:
+    instance_host: desk.acme.example.test
+    credentials: { api_token: "secret" }
+  request:
+    method: POST
+    url: "https://desk.acme.example.test/api/v1/items"
+    headers: { content-type: application/json }
+    body: '{"name":"widget"}'
+  expect:
+    tool: create_item
+    summary: { title: "Create item", fields: { Name: widget } }
+- name: an instance connection is refused on the default host
+  connection:
+    instance_host: desk.acme.example.test
+    credentials: { api_token: "secret" }
+  request: { method: GET, url: "https://saas.instance.example.test/api/v1/items" }
+  expect: { refused: host_mismatch, expected_host: desk.acme.example.test }
+- name: an instance connection is not injected on another host
+  connection:
+    instance_host: desk.acme.example.test
+    credentials: { api_token: "secret" }
+  request: { method: GET, url: "https://desk.other.example.test/api/v1/items" }
+  expect: { unmatched: true }
+- name: an unregistered host injects nothing
+  connection: { credentials: { api_token: "secret" } }
+  request: { method: GET, url: "https://desk.acme.example.test/api/v1/items" }
+  expect: { unmatched: true }

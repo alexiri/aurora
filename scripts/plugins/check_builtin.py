@@ -138,9 +138,13 @@ def url_parts(url):
     return (u.hostname or "").lower(), u.path or "/"
 
 
-def entry_matches(entry, host, path):
+def entry_matches(entry, host, path, instance_hosts=()):
     m = entry["match"]
-    if not fnmatch.fnmatchcase(host, m["host"].lower()):
+    if m["host"] == "{instance}":
+        # an instance-bound entry serves the app's default_host and a registered instance host
+        if host not in instance_hosts:
+            return False
+    elif not fnmatch.fnmatchcase(host, m["host"].lower()):
         return False
     pre = m.get("path_prefix")
     return pre is None or path == pre or path.startswith(pre.rstrip("/") + "/")
@@ -156,11 +160,14 @@ def check_app(app, paired, err):
     def specificity(e):
         return len(e["match"].get("path_prefix") or "")
 
+    default_host = (app.get("instances") or {}).get("default_host")
+
     for i, e in enumerate(hosts):
         covered = False
         for c, r in mine:
             host, path = url_parts(c["request"]["url"])
-            cand = [x for x in hosts if entry_matches(x, host, path)]
+            inst = {h for h in (default_host, (c.get("connection") or {}).get("instance_host")) if h}
+            cand = [x for x in hosts if entry_matches(x, host, path, inst)]
             if cand and max(cand, key=specificity) is e and r["status"] == "pass":
                 covered = True
                 break

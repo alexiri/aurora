@@ -54,6 +54,17 @@ export const ERROR_MESSAGES: Record<string, string> = {
   reference_not_permitted: "Referencing an external secret store is not permitted here.",
   secret_store_unavailable: "The secret store is unavailable. Try again later.",
   name_taken: "That name is already in use.",
+  app_not_instance_bound: "This app does not support self-hosted instances.",
+  instance_host_invalid:
+    "Enter the host name only, in lower case, for example gitlab.example.com: no https://, port, path, user name or IP address.",
+  instance_host_conflict:
+    "That host is already claimed by another app, an LLM endpoint or another registered instance.",
+  instance_probe_failed:
+    "The instance did not answer as expected. Check the host, that it is reachable from the gateway (private addresses need the operator's gateway.allowed_private), and try again.",
+  instance_required: "Choose which instance to connect to.",
+  instance_oauth_client_required:
+    "Ask an administrator to register an OAuth application for this instance first (Credentials, OAuth clients).",
+  instance_deleted: "The instance of this connection was deleted. Connect again.",
   not_proposed: "This secret is no longer awaiting a value.",
   stale_revision: "The policy was changed by someone else. Reload to see the latest version.",
   policy_invalid: "The policy has errors. Fix the highlighted rules and try again.",

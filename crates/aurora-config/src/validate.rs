@@ -167,6 +167,9 @@ pub struct ApiConfig {
     pub advertised_proxy_url: String,
     /// `gateway.ca_dir`: directory holding the gateway's `ca.pem`.
     pub gateway_ca_dir: String,
+    /// `gateway.allowed_private`: private destinations the operator opened. The API honours it
+    /// for connect/probe requests to a registered app instance only (D-74).
+    pub gateway_allowed_private: Vec<String>,
     /// (phase 1, RFE-002) `true` when `gateway.proxy_tls.cert_file` is set: the proxy listener
     /// presents an operator certificate, so BYO clients verify the outer leg with system roots.
     pub gateway_proxy_operator_cert: bool,
@@ -406,6 +409,7 @@ impl RawConfig {
             hosted: self.hosted.clone(),
             advertised_proxy_url,
             gateway_ca_dir: self.gateway.ca_dir.clone(),
+            gateway_allowed_private: self.gateway.allowed_private.clone(),
             gateway_proxy_operator_cert: self.gateway.proxy_tls.cert_file.is_some(),
             hookhost_url: self.api.hookhost_url.clone(),
             plugins: self.plugins.clone(),

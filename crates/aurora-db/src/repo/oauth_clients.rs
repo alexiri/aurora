@@ -17,13 +17,15 @@ pub struct ClientRow {
     pub fields: serde_json::Value,
     pub secret_ref: String,
     pub enabled: bool,
+    /// The self-hosted instance this client is bound to (D-74).
+    pub instance_id: Option<Uuid>,
     pub connection_count: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 const SELECT: &str = "SELECT c.id, c.org_id, c.workspace_id, c.package_id, c.client_key, c.fields, \
-    c.secret_ref, c.enabled, \
+    c.secret_ref, c.enabled, c.instance_id, \
     (SELECT count(*) FROM app_connections k WHERE k.oauth_client_id = c.id) AS connection_count, \
     c.created_at, c.updated_at FROM app_oauth_clients c";
 
@@ -37,12 +39,13 @@ pub struct NewClient<'a> {
     pub client_key: &'a str,
     pub fields: &'a serde_json::Value,
     pub secret_ref: &'a str,
+    pub instance_id: Option<Uuid>,
 }
 
 pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewClient<'_>) -> Result<(), DbError> {
     sqlx::query(
-        "INSERT INTO app_oauth_clients (id, org_id, workspace_id, package_id, client_key, fields, secret_ref) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        "INSERT INTO app_oauth_clients (id, org_id, workspace_id, package_id, client_key, fields, secret_ref, instance_id) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
     )
     .bind(n.id)
     .bind(n.org_id)
@@ -51,6 +54,7 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewClient<'_>) -> Result
     .bind(n.client_key)
     .bind(n.fields)
     .bind(n.secret_ref)
+    .bind(n.instance_id)
     .execute(exec)
     .await?;
     Ok(())

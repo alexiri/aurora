@@ -34,6 +34,33 @@ pub fn tenant_guard(t: &Tenant, stored: Option<&str>, host: &str) -> Result<(), 
     }
 }
 
+/// Instance guard (D-74, SEC-04/SEC-59): an instance-bound connection is injected only when the
+/// request host equals its instance's host, exactly. `on_instance` is the registered instance
+/// the request host resolved to, if any: a connection without an instance never rides on an
+/// instance host, and one bound to another instance answers 421 `host_mismatch`.
+pub fn instance_guard(
+    conn_instance: Option<uuid::Uuid>,
+    conn_instance_host: Option<&str>,
+    on_instance: Option<uuid::Uuid>,
+    host: &str,
+) -> Result<(), GuardError> {
+    let Some(id) = conn_instance else {
+        return if on_instance.is_some() {
+            Err(GuardError::Unavailable)
+        } else {
+            Ok(())
+        };
+    };
+    let stored = conn_instance_host.ok_or(GuardError::Unavailable)?;
+    if stored.eq_ignore_ascii_case(host) && on_instance.is_none_or(|o| o == id) {
+        Ok(())
+    } else {
+        Err(GuardError::Mismatch {
+            expected: stored.to_ascii_lowercase(),
+        })
+    }
+}
+
 /// The upstream host (and TLS server name) replaced by the rendered template, which
 /// must stay inside the zone.
 pub fn rewrite_host(r: &RewriteHost, v: &Vars<'_>) -> Result<String, Unavailable> {
@@ -55,6 +82,46 @@ mod tests {
             field: "connection.tenant_host".into(),
             zone: "*.example.com".into(),
         }
+    }
+
+    #[test]
+    fn instance_guard_is_exact_host_only() {
+        use uuid::Uuid;
+        let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
+        // Bound connection on its own instance host, with or without the request resolving to it.
+        assert!(instance_guard(Some(a), Some("Desk.Acme.test"), Some(a), "desk.acme.test").is_ok());
+        assert!(instance_guard(Some(a), Some("desk.acme.test"), None, "desk.acme.test").is_ok());
+        // Any other host, including a lookalike or the instance's parent: 421 naming the host.
+        for h in [
+            "desk.acme.test.evil.test",
+            "acme.test",
+            "evil.test",
+            "xdesk.acme.test",
+        ] {
+            assert_eq!(
+                instance_guard(Some(a), Some("desk.acme.test"), None, h),
+                Err(GuardError::Mismatch {
+                    expected: "desk.acme.test".into()
+                }),
+                "{h}"
+            );
+        }
+        // On another instance's host the connection of instance `a` is refused.
+        assert!(matches!(
+            instance_guard(Some(a), Some("desk.acme.test"), Some(b), "desk.acme.test"),
+            Err(GuardError::Mismatch { .. })
+        ));
+        // A connection without an instance never rides on an instance host.
+        assert_eq!(
+            instance_guard(None, None, Some(b), "desk.acme.test"),
+            Err(GuardError::Unavailable)
+        );
+        assert!(instance_guard(None, None, None, "saas.test").is_ok());
+        // A bound connection whose instance host is unknown fails closed.
+        assert_eq!(
+            instance_guard(Some(a), None, Some(a), "desk.acme.test"),
+            Err(GuardError::Unavailable)
+        );
     }
 
     #[test]

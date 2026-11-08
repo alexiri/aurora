@@ -115,6 +115,7 @@ pub async fn delete_cascade(conn: &mut PgConnection, org: Uuid) -> Result<(), Db
         "derived_rules",
         "app_connections",
         "app_oauth_clients",
+        "app_instances",
         "secrets",
         "policy_generations",
         "api_keys",

@@ -6,7 +6,9 @@ use crate::auth::RequestIdentity;
 use crate::invalidation::{Invalidatable, Invalidate, Scope};
 use crate::snapshot::{Loaded, SnapshotStore};
 use async_trait::async_trait;
-use aurora_db::repo::gateway::{self as repo, AppConnectionRow, ScopePolicyRows, SecretMetaRow};
+use aurora_db::repo::gateway::{
+    self as repo, AppConnectionRow, InstanceHostRow, ScopePolicyRows, SecretMetaRow,
+};
 use aurora_llm::{AuthMode, LlmInjection, ProviderRegistry};
 use aurora_policy::facts::{Level, SecretKind};
 use aurora_policy::{Credential, HostPattern, PathPattern, Rule, ScopePolicy};
@@ -73,8 +75,11 @@ pub struct ResolvedHost {
     pub disabled_apps: HashSet<String>,
     /// Apps removed by a `restricted` org posture (`app_unavailable`).
     pub unavailable_apps: HashSet<String>,
-    /// Some active host entry of the snapshot covers this host.
+    /// Some active host entry of the snapshot covers this host, or it is a registered instance.
     pub known_app_host: bool,
+    /// The registered, active app instance whose host equals this host exactly and that no other
+    /// app's static claim shadows (D-74, `06` resolution step 2).
+    pub instance: Option<InstanceHostRow>,
     /// App ids whose active host entries cover this host (open-lane `app` targets).
     pub host_apps: Vec<String>,
     /// The workspace's published open-lane posture (RFE-003).
@@ -118,6 +123,10 @@ pub trait PolicySource: Send + Sync + 'static {
     async fn app_availability(&self, _org: Uuid, _ws: Uuid) -> Result<(bool, Vec<String>), String> {
         Ok((false, Vec::new()))
     }
+    /// `active` app instances visible to the org: instance-wide and its own (default: none).
+    async fn instances(&self, _org: Uuid) -> Result<Vec<InstanceHostRow>, String> {
+        Ok(Vec::new())
+    }
 }
 
 pub struct DbSource(pub aurora_db::PgPool);
@@ -151,6 +160,11 @@ impl PolicySource for DbSource {
     }
     async fn app_availability(&self, org: Uuid, ws: Uuid) -> Result<(bool, Vec<String>), String> {
         repo::app_availability(&self.0, org, ws)
+            .await
+            .map_err(|e| e.to_string())
+    }
+    async fn instances(&self, org: Uuid) -> Result<Vec<InstanceHostRow>, String> {
+        repo::visible_instances(&self.0, org)
             .await
             .map_err(|e| e.to_string())
     }
@@ -426,14 +440,30 @@ impl Resolver {
         let (mut conns, mut disabled_apps, mut unavailable_apps, mut known_app_host) =
             (Vec::new(), HashSet::new(), HashSet::new(), false);
         let mut host_apps: Vec<String> = Vec::new();
+        let mut instance: Option<InstanceHostRow> = None;
         // Governed LLM hosts never serve app connections (SEC-37).
         if let Some(l) = registry
             .as_ref()
             .filter(|l| !is_llm_host && !l.is_reserved(&k.host, k.port))
         {
             let entries = l.entries_for_host(&k.host, k.port);
-            known_app_host = !entries.is_empty();
+            // Registered app instances (D-74): exact host match only. A static claim of another
+            // app on the same host shadows the instance (fail closed: nothing is injected for it).
+            let visible = self.source.instances(k.org).await.map_err(fail)?;
+            let inst_hosts: HashMap<Uuid, String> =
+                visible.iter().map(|i| (i.id, i.host.clone())).collect();
+            instance = visible
+                .into_iter()
+                .filter(|i| i.host.eq_ignore_ascii_case(&k.host))
+                .filter(|i| {
+                    l.snapshot
+                        .app(&i.app_id)
+                        .is_some_and(|a| a.instances.is_some())
+                })
+                .find(|i| !entries.iter().any(|e| e.app_id != i.app_id));
+            known_app_host = !entries.is_empty() || instance.is_some();
             let mut app_ids: Vec<String> = entries.iter().map(|e| e.app_id.clone()).collect();
+            app_ids.extend(instance.iter().map(|i| i.app_id.clone()));
             app_ids.sort();
             app_ids.dedup();
             host_apps = app_ids.clone();
@@ -463,8 +493,23 @@ impl Resolver {
                         disabled_apps.insert(r.app_id);
                         continue;
                     }
+                    // A connection of a registered instance: only while that instance is active
+                    // and visible, and with its host (the injection and refresh target).
+                    let host = match r.instance_id {
+                        Some(id) => match inst_hosts.get(&id) {
+                            Some(h) => Some(h.clone()),
+                            None => {
+                                disabled_apps.insert(r.app_id);
+                                continue;
+                            }
+                        },
+                        None => None,
+                    };
                     match ConnCand::from_row(r, k.org) {
-                        Ok(c) => conns.push(Arc::new(c)),
+                        Ok(mut c) => {
+                            c.instance_host = host;
+                            conns.push(Arc::new(c));
+                        }
                         Err(e) => tracing::warn!(error = %e, "skipping unusable connection"),
                     }
                 }
@@ -491,6 +536,7 @@ impl Resolver {
             disabled_apps,
             unavailable_apps,
             known_app_host,
+            instance,
             host_apps,
             ws_open_lane,
         })

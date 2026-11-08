@@ -77,6 +77,7 @@
       "credentials_ref",
       "credentials_version",
       "id",
+      "instance_id",
       "label",
       "last_used_at",
       "metadata",
@@ -92,11 +93,22 @@
       "tenant_host",
       "workspace_id"
     ],
+    "app_instances": [
+      "app_id",
+      "created_by",
+      "host",
+      "id",
+      "label",
+      "org_id",
+      "package_id",
+      "status"
+    ],
     "app_oauth_clients": [
       "client_key",
       "enabled",
       "fields",
       "id",
+      "instance_id",
       "org_id",
       "package_id",
       "secret_ref",

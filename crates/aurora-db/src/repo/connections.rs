@@ -22,6 +22,10 @@ pub struct ConnectionRow {
     pub metadata: serde_json::Value,
     pub tenant_host: Option<String>,
     pub oauth_client_id: Option<Uuid>,
+    /// The registered self-hosted instance (D-74); null for `default_host` and other apps.
+    pub instance_id: Option<Uuid>,
+    pub instance_host: Option<String>,
+    pub instance_label: Option<String>,
     pub credentials_expires_at: Option<DateTime<Utc>>,
     pub connected_by: Option<Uuid>,
     pub connected_by_name: Option<String>,
@@ -32,8 +36,10 @@ pub struct ConnectionRow {
 
 const SELECT: &str = "SELECT c.id, c.org_id, c.workspace_id, c.app_id, c.package_id, c.app_version, \
     c.label, c.status, c.status_reason, c.scopes, c.requested_scopes, c.metadata, c.tenant_host, c.oauth_client_id, \
+    c.instance_id, ai.host AS instance_host, ai.label AS instance_label, \
     c.credentials_expires_at, c.connected_by, u.display_name AS connected_by_name, c.last_used_at, \
-    c.created_at, c.updated_at FROM app_connections c LEFT JOIN users u ON u.id = c.connected_by";
+    c.created_at, c.updated_at FROM app_connections c LEFT JOIN users u ON u.id = c.connected_by \
+    LEFT JOIN app_instances ai ON ai.id = c.instance_id";
 
 pub async fn get<'e, E: PgExecutor<'e>>(
     exec: E,
@@ -187,14 +193,16 @@ pub struct NewConnection<'a> {
     pub tenant_host: Option<&'a str>,
     pub oauth_client_id: Option<Uuid>,
     pub connected_by: Uuid,
+    /// The registered app instance (D-74); immutable once set (a reconnect keeps it).
+    pub instance_id: Option<Uuid>,
 }
 
 pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Result<(), DbError> {
     sqlx::query(
         "INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, \
          label, status, credentials_ref, credentials_expires_at, scopes, metadata, tenant_host, \
-         oauth_client_id, connected_by, requested_scopes) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,$13,$14,$15)",
+         oauth_client_id, connected_by, requested_scopes, instance_id) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,$13,$14,$15,$16)",
     )
     .bind(n.id)
     .bind(n.org_id)
@@ -211,6 +219,7 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Re
     .bind(n.oauth_client_id)
     .bind(n.connected_by)
     .bind(n.requested_scopes)
+    .bind(n.instance_id)
     .execute(exec)
     .await?;
     Ok(())
@@ -243,7 +252,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
          status_reason = CASE WHEN status IN ('reauth_required','orphaned') THEN NULL ELSE status_reason END, \
          status = CASE WHEN status IN ('reauth_required','orphaned') THEN 'active' ELSE status END, \
          reauth_required_at = NULL, updated_at = now() \
-         WHERE id = $1 AND credentials_version = $2",
+         WHERE id = $1 AND credentials_version = $2 AND instance_id IS NOT DISTINCT FROM $13",
     )
     .bind(n.id)
     .bind(read_version)
@@ -257,6 +266,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
     .bind(n.app_version)
     .bind(n.connected_by)
     .bind(n.requested_scopes)
+    .bind(n.instance_id)
     .execute(exec)
     .await?
     .rows_affected()
@@ -294,18 +304,22 @@ pub async fn org_app_available<'e, E: PgExecutor<'e>>(
 }
 
 /// Enabled OAuth clients usable from a scope, most specific first
-/// (workspace, organization, instance).
+/// (workspace, organization, instance). A client bound to a self-hosted instance (D-74) is
+/// returned only when `instance` names that instance; with `instance = None` only unbound
+/// clients are (the SaaS `default_host` and every non-instance app).
 pub async fn usable_clients<'e, E: PgExecutor<'e>>(
     exec: E,
     package_id: &str,
     client_key: &str,
     org: Uuid,
     workspace: Option<Uuid>,
+    instance: Option<Uuid>,
 ) -> Result<Vec<super::oauth_clients::ClientRow>, DbError> {
     Ok(sqlx::query_as(
         "SELECT c.id, c.org_id, c.workspace_id, c.package_id, c.client_key, c.fields, c.secret_ref, \
-         c.enabled, 0::bigint AS connection_count, c.created_at, c.updated_at \
+         c.enabled, c.instance_id, 0::bigint AS connection_count, c.created_at, c.updated_at \
          FROM app_oauth_clients c WHERE c.package_id = $1 AND c.client_key = $2 AND c.enabled \
+         AND c.instance_id IS NOT DISTINCT FROM $5 \
          AND ((c.org_id IS NULL) OR (c.org_id = $3 AND (c.workspace_id IS NULL OR c.workspace_id = $4))) \
          ORDER BY (c.workspace_id IS NOT NULL) DESC, (c.org_id IS NOT NULL) DESC, c.created_at",
     )
@@ -313,6 +327,7 @@ pub async fn usable_clients<'e, E: PgExecutor<'e>>(
     .bind(client_key)
     .bind(org)
     .bind(workspace)
+    .bind(instance)
     .fetch_all(exec)
     .await?)
 }

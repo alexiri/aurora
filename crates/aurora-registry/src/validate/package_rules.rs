@@ -162,6 +162,15 @@ fn is_reserved(h: &HostPattern, ctx: &ValidationContext) -> bool {
 
 fn reserved_claims(m: &Manifest, ctx: &ValidationContext, out: &mut Vec<Violation>) {
     for (i, a) in m.apps.iter().enumerate() {
+        if let Some(d) = a.instances.as_ref().and_then(|x| x.default_host.as_deref())
+            && HostPattern::parse(d).is_ok_and(|p| is_reserved(&p, ctx))
+        {
+            out.push(Violation::new(
+                "reserved_host",
+                format!("/apps/{i}/instances/default_host"),
+                format!("`{d}` overlaps a reserved host"),
+            ));
+        }
         for (j, h) in a.hosts.iter().enumerate() {
             let mut claims = vec![(
                 h.matcher.host.as_str(),

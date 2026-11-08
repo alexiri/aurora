@@ -21,6 +21,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/app-instances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List instance-wide app instances (instance admin). */
+        get: operations["listInstanceAppInstances"];
+        put?: never;
+        /** Register an instance-wide app instance (instance admin). */
+        post: operations["createInstanceAppInstance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/connectors": {
         parameters: {
             query?: never;
@@ -1079,6 +1097,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/app-instances/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete an instance: its connections are disabled (`instance_deleted`) and its OAuth clients
+         *     removed in the same transaction; nothing is injected on its host again.
+         */
+        delete: operations["deleteAppInstance"];
+        options?: never;
+        head?: never;
+        /** Rename an instance or enable/disable injection on it (the host is immutable). */
+        patch: operations["updateAppInstance"];
+        trace?: never;
+    };
     "/v1/approvals/batches/{batch_id}/decision": {
         parameters: {
             query?: never;
@@ -2025,6 +2064,30 @@ export interface paths {
         /** Replace posture and allow-list (owner/admin). */
         put: operations["putOrgAppAvailability"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/app-instances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the app instances usable in an organization: the instance-wide ones and its own (any
+         *     member).
+         */
+        get: operations["listOrgAppInstances"];
+        put?: never;
+        /**
+         * Register a self-hosted instance of an app for an organization (owner/admin). The host is the
+         *     only place the app's credentials may be sent for connections bound to it (SEC-59).
+         */
+        post: operations["createOrgAppInstance"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3575,6 +3638,7 @@ export interface components {
             description: string;
             has_dark_icon: boolean;
             hosts: components["schemas"]["HostInfo"][];
+            instances?: null | components["schemas"]["AppInstances"];
             label_hint?: string | null;
             metadata: string[];
             name: string;
@@ -3582,6 +3646,39 @@ export interface components {
             package_id: string;
             package_version: string;
             tools: components["schemas"]["Tool"][];
+        };
+        /** @description A self-hosted app instance: a host an admin registered for one app (C-240, D-74). */
+        AppInstance: {
+            app_id: string;
+            /**
+             * Format: int64
+             * @description Connections bound to this instance.
+             */
+            connections: number;
+            /** Format: date-time */
+            created_at: string;
+            created_by?: null | components["schemas"]["ConnectedBy"];
+            host: string;
+            /** Format: uuid */
+            id: string;
+            label: string;
+            /**
+             * Format: uuid
+             * @description `null` = instance-wide.
+             */
+            org_id?: string | null;
+            package_id: string;
+            /** @description `active` | `disabled`. */
+            status: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description An instance-bound app's `instances` declaration (C-245, D-74). */
+        AppInstances: {
+            /** @description The SaaS host (a normal static claim); `null` when the app has no hosted default. */
+            default_host?: string | null;
+            /** @description Shown in the registration form and the connect picker. */
+            label: string;
         };
         AppList: {
             items: components["schemas"]["AppSummary"][];
@@ -3866,6 +3963,12 @@ export interface components {
             fields?: {
                 [key: string]: string;
             };
+            /**
+             * Format: uuid
+             * @description A registered self-hosted instance of an instance-bound app (C-243). Absent = the app's
+             *     `default_host`.
+             */
+            instance_id?: string | null;
             method_id: string;
             /** Format: uuid */
             oauth_client_id?: string | null;
@@ -3909,6 +4012,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             injecting: components["schemas"]["Injecting"][];
+            instance?: null | components["schemas"]["InstanceRef"];
             label: string;
             /** Format: date-time */
             last_used_at?: string | null;
@@ -4106,6 +4210,12 @@ export interface components {
             external_ref: string;
             title?: string | null;
         };
+        CreateAppInstanceRequest: {
+            app_id: string;
+            /** @description A lower-case DNS name: no port, path, userinfo or IP literal. */
+            host: string;
+            label: string;
+        };
         CreateConnectorRequest: {
             /** @description Name shown to administrators (1-80 chars). */
             display_name: string;
@@ -4148,6 +4258,12 @@ export interface components {
             fields: {
                 [key: string]: string;
             };
+            /**
+             * Format: uuid
+             * @description Bind the client to a self-hosted instance of the client's package visible to the scope
+             *     (C-244, D-74).
+             */
+            instance_id?: string | null;
             package_id: string;
         };
         CreateOrgRequest: {
@@ -4568,6 +4684,13 @@ export interface components {
             minimum_posture: string;
             require_key_origin: boolean;
         };
+        /** @description The registered self-hosted instance a connection is bound to (C-243). */
+        InstanceRef: {
+            host: string;
+            /** Format: uuid */
+            id: string;
+            label: string;
+        };
         /** @enum {string} */
         IntegrationStatus: "validating" | "active" | "needs_attention" | "disabled";
         /** @description An invitation. The token is never part of any response. */
@@ -4780,6 +4903,11 @@ export interface components {
             };
             /** Format: uuid */
             id: string;
+            /**
+             * Format: uuid
+             * @description The self-hosted app instance this client is bound to (D-74); `null` = unbound.
+             */
+            instance_id?: string | null;
             /** Format: uuid */
             org_id?: string | null;
             package_id: string;
@@ -5130,6 +5258,34 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_AppInstance: {
+            items: {
+                app_id: string;
+                /**
+                 * Format: int64
+                 * @description Connections bound to this instance.
+                 */
+                connections: number;
+                /** Format: date-time */
+                created_at: string;
+                created_by?: null | components["schemas"]["ConnectedBy"];
+                host: string;
+                /** Format: uuid */
+                id: string;
+                label: string;
+                /**
+                 * Format: uuid
+                 * @description `null` = instance-wide.
+                 */
+                org_id?: string | null;
+                package_id: string;
+                /** @description `active` | `disabled`. */
+                status: string;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+            next_cursor?: string | null;
+        };
         Page_Approval: {
             items: {
                 agent?: null | components["schemas"]["ApprovalAgent"];
@@ -5237,6 +5393,7 @@ export interface components {
                 /** Format: uuid */
                 id: string;
                 injecting: components["schemas"]["Injecting"][];
+                instance?: null | components["schemas"]["InstanceRef"];
                 label: string;
                 /** Format: date-time */
                 last_used_at?: string | null;
@@ -5381,6 +5538,11 @@ export interface components {
                 };
                 /** Format: uuid */
                 id: string;
+                /**
+                 * Format: uuid
+                 * @description The self-hosted app instance this client is bound to (D-74); `null` = unbound.
+                 */
+                instance_id?: string | null;
                 /** Format: uuid */
                 org_id?: string | null;
                 package_id: string;
@@ -5810,6 +5972,12 @@ export interface components {
             proactive_messaging?: string | null;
             /** @description Instance admins only. */
             resource_overrides?: Record<string, never> | null;
+        };
+        /** @description The host is immutable: register a new instance instead. */
+        PatchAppInstanceRequest: {
+            label?: string | null;
+            /** @description `active` | `disabled`. */
+            status?: string | null;
         };
         PatchBindingRequest: {
             followups_need_mention?: boolean | null;
@@ -7130,6 +7298,90 @@ export interface operations {
                 };
             };
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listInstanceAppInstances: {
+        parameters: {
+            query?: {
+                app_id?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Instances */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AppInstance"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createInstanceAppInstance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAppInstanceRequest"];
+            };
+        };
+        responses: {
+            /** @description Registered */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppInstance"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description app_not_instance_bound, instance_host_invalid, instance_host_conflict or instance_probe_failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10435,6 +10687,99 @@ export interface operations {
             };
         };
     };
+    deleteAppInstance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description App instance id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    updateAppInstance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description App instance id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchAppInstanceRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppInstance"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     decideApprovalBatch: {
         parameters: {
             query?: never;
@@ -13245,6 +13590,105 @@ export interface operations {
             };
             /** @description Not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listOrgAppInstances: {
+        parameters: {
+            query?: {
+                app_id?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Instances */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AppInstance"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createOrgAppInstance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAppInstanceRequest"];
+            };
+        };
+        responses: {
+            /** @description Registered */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppInstance"];
+                };
+            };
+            /** @description Invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description app_not_instance_bound, instance_host_invalid, instance_host_conflict or instance_probe_failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

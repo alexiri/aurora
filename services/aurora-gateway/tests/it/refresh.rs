@@ -167,6 +167,7 @@ async fn fixture(kind: &str, token_url: &str, refresh: &str) -> Fx {
         credentials_expires_at: Some(chrono::Utc::now() - chrono::Duration::seconds(10)),
         metadata: json!({}),
         tenant_host: None,
+        instance_id: None,
     };
     Fx {
         db,
@@ -364,6 +365,7 @@ async fn http_minter_follows_w9() {
             credentials: serde_json::Map::new(),
             metadata: json!({"a": "b"}),
             tenant_host: None,
+            instance_host: None,
             client: serde_json::Map::new(),
             client_secret: serde_json::Map::new(),
             context: Default::default(),
@@ -414,6 +416,7 @@ async fn minter_presents_active_key_id_and_status_checks_the_ring() {
         credentials: serde_json::Map::new(),
         metadata: json!({}),
         tenant_host: None,
+        instance_host: None,
         client: serde_json::Map::new(),
         client_secret: serde_json::Map::new(),
         context: Default::default(),

@@ -14,6 +14,8 @@ export type FormField = components["schemas"]["FormField"];
 export type Connection = components["schemas"]["Connection"];
 export type OAuthClient = components["schemas"]["OAuthClient"];
 export type AppAvailability = components["schemas"]["AppAvailability"];
+export type AppInstance = components["schemas"]["AppInstance"];
+export type CreateAppInstanceRequest = components["schemas"]["CreateAppInstanceRequest"];
 
 /** Scope of a connection / OAuth client list. `instance` is only valid for OAuth clients. */
 export type CredScope =
@@ -28,7 +30,59 @@ export const appKeys = {
   connections: (s: CredScope) => ["connections", s.kind, "id" in s ? s.id : ""] as const,
   clients: (s: CredScope) => ["oauth-clients", s.kind, "id" in s ? s.id : ""] as const,
   availability: (org: string) => ["app-availability", org] as const,
+  instances: (s: InstanceScope) => ["app-instances", s.kind, "id" in s ? s.id : ""] as const,
 };
+
+/** Where app instances are listed/registered: an organization (its own and the instance-wide ones) or instance-wide. */
+export type InstanceScope = { kind: "organization"; id: string } | { kind: "instance" };
+
+/** Self-hosted app instances (D-74): instance-wide and the org's own for an org scope. */
+export function useAppInstances(scope: InstanceScope | undefined) {
+  return useQuery({
+    queryKey: scope ? appKeys.instances(scope) : ["app-instances", "none"],
+    queryFn: () =>
+      scope!.kind === "organization"
+        ? unwrap(api.GET("/v1/orgs/{org}/app-instances", { params: { path: { org: scope!.id } } }))
+        : unwrap(api.GET("/v1/admin/app-instances")),
+    enabled: !!scope,
+    retry: false,
+  });
+}
+
+export function useCreateAppInstance(scope: InstanceScope) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateAppInstanceRequest) =>
+      scope.kind === "organization"
+        ? unwrap(api.POST("/v1/orgs/{org}/app-instances", { params: { path: { org: scope.id } }, body }))
+        : unwrap(api.POST("/v1/admin/app-instances", { body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app-instances"] }),
+  });
+}
+
+export function usePatchAppInstance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string } & components["schemas"]["PatchAppInstanceRequest"]) =>
+      unwrap(api.PATCH("/v1/app-instances/{id}", { params: { path: { id } }, body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app-instances"] }),
+  });
+}
+
+export function useDeleteAppInstance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error, response } = await api.DELETE("/v1/app-instances/{id}", { params: { path: { id } } });
+      if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["app-instances"] });
+      void qc.invalidateQueries({ queryKey: ["connections"] });
+      void qc.invalidateQueries({ queryKey: ["oauth-clients"] });
+    },
+  });
+}
 
 export function useApps(workspaceId: string | undefined) {
   return useQuery({

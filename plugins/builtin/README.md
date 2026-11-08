@@ -106,11 +106,11 @@ summary. There are no live calls.
 
 ## Self-managed and tenant hosts
 
-A package may only claim hosts it declares. Packages ship the vendor's own hosted service with
-plain host strings (GitLab: `gitlab.com`, written the same way in every host, tool host and OAuth
-URL). Self-managed instances of products arrive with P2-INST (admin-registered app instances,
-D-74), which will switch those strings to the `{instance}` placeholder; keep hosts in one
-consistent plain form so that change stays mechanical.
+A package may only claim hosts it declares. A product that can be self-hosted declares `instances` (label, optional `default_host` for the SaaS
+host, optional `probe`) and uses the whole-host placeholder `{instance}` in `hosts`, tool hosts,
+probe and OAuth URLs (D-74, `docs/09 §3.4`); GitLab is the reference. Fixtures set
+`connection.instance_host` to register an instance for a case, and `expect: { refused: host_mismatch,
+expected_host }` to prove the guard. Approval links use `{request.host}`.
 
 ## Signing and release
 

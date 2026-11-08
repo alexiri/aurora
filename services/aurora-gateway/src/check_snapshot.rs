@@ -7,7 +7,7 @@
 use crate::apps::{identify_app, identify_tool};
 use crate::decide::{finalize_request, inject_and_route};
 use crate::hold::{SummaryRequest, build_summary};
-use crate::mechanisms::route::{GuardError, tenant_guard};
+use crate::mechanisms::route::{GuardError, instance_guard, tenant_guard};
 use crate::mechanisms::template::Vars;
 use crate::pipeline::Scheme;
 use crate::snapshot::Loaded;
@@ -41,6 +41,12 @@ struct Connection {
     #[serde(default)]
     metadata: Value,
     tenant_host: Option<String>,
+    /// (D-74) The connection is bound to a registered app instance with this host: requests to
+    /// exactly this host are served by the app's `{instance}` host entries, any other host is
+    /// refused by the instance guard.
+    instance_host: Option<String>,
+    /// The app the instance belongs to; defaults to the snapshot's only instance-bound app.
+    instance_app: Option<String>,
     #[serde(default)]
     context: HashMap<String, String>,
 }
@@ -64,6 +70,10 @@ struct Expect {
     /// Expect no app match at all.
     #[serde(default)]
     unmatched: bool,
+    /// (D-74) Expect the instance guard to refuse: `host_mismatch`.
+    refused: Option<String>,
+    /// With `refused: host_mismatch`: the host the connection is bound to.
+    expected_host: Option<String>,
     upstream: Option<ExpectUpstream>,
     summary: Option<ExpectSummary>,
 }
@@ -185,11 +195,54 @@ fn execute(l: &Loaded, c: &Case, failures: &mut Vec<String>) -> Result<Value, St
     }
     let body = c.request.body.as_deref().unwrap_or("").as_bytes();
 
-    let Some(m) = identify_app(l, &host, port, &path) else {
+    // A registered instance serves its exact host unless another app's static claim covers it.
+    let instance_host = c
+        .connection
+        .instance_host
+        .as_deref()
+        .map(str::to_ascii_lowercase);
+    let instance_app: Option<String> = instance_host.as_ref().and_then(|_| {
+        c.connection.instance_app.clone().or_else(|| {
+            let mut bound = l
+                .snapshot
+                .apps
+                .iter()
+                .filter(|a| a.instances.is_some())
+                .map(|a| a.app_id.clone());
+            let first = bound.next();
+            if bound.next().is_some() { None } else { first }
+        })
+    });
+    let on_instance = instance_host
+        .as_deref()
+        .filter(|h| *h == host)
+        .and(instance_app.as_deref())
+        .filter(|app| {
+            !l.entries_for_host(&host, port)
+                .iter()
+                .any(|e| e.app_id != *app)
+        });
+    let found = on_instance
+        .and_then(|app| crate::apps::identify_instance_app(l, app, &path))
+        .or_else(|| identify_app(l, &host, port, &path));
+    let Some(m) = found else {
         return Ok(json!({ "app": null, "tool": null }));
     };
+    let mut refusal: Option<Value> = None;
+    if let Some(ih) = instance_host.as_deref() {
+        let on = on_instance.map(|_| uuid::Uuid::nil());
+        match instance_guard(Some(uuid::Uuid::nil()), Some(ih), on, &host) {
+            Ok(()) => {}
+            Err(GuardError::Mismatch { expected }) => {
+                refusal = Some(json!({ "code": "host_mismatch", "expected_host": expected }));
+            }
+            Err(GuardError::Unavailable) => {
+                refusal = Some(json!({ "code": "credential_unavailable" }));
+            }
+        }
+    }
     let tool = identify_tool(
-        m.app,
+        &m,
         &host,
         port,
         &path,
@@ -199,6 +252,13 @@ fn execute(l: &Loaded, c: &Case, failures: &mut Vec<String>) -> Result<Value, St
         false,
     );
     let mut obs = json!({ "app": m.app.app_id, "tool": tool.map(|t| t.id.as_str()) });
+    // The instance guard refused: nothing is injected (compared against `expect.refused`).
+    if let Some(r) = refusal {
+        if let Some(o) = obs.as_object_mut() {
+            o.insert("refused".into(), r);
+        }
+        return Ok(obs);
+    }
 
     if let Some(t) = &m.entry.tenant {
         match tenant_guard(t, c.connection.tenant_host.as_deref(), &host) {
@@ -327,6 +387,25 @@ fn execute(l: &Loaded, c: &Case, failures: &mut Vec<String>) -> Result<Value, St
 fn compare(e: &Expect, o: &Value) -> Vec<String> {
     let mut f = Vec::new();
     let got = |k: &str| o.get(k).and_then(Value::as_str);
+    let refused = o.get("refused").and_then(|r| r["code"].as_str());
+    match (&e.refused, refused) {
+        (Some(want), Some(have)) if want == have => {
+            if let Some(h) = &e.expected_host
+                && o["refused"]["expected_host"].as_str() != Some(h)
+            {
+                f.push(format!(
+                    "refused.expected_host: expected `{h}`, got {}",
+                    o["refused"]["expected_host"]
+                ));
+            }
+        }
+        (Some(want), have) => f.push(format!("expected refusal `{want}`, got {have:?}")),
+        (None, Some(have)) => f.push(format!("refused by the instance guard: {have}")),
+        (None, None) => {}
+    }
+    if e.refused.is_some() {
+        return f;
+    }
     if e.unmatched {
         if got("app").is_some() {
             f.push(format!("expected no app match, got {:?}", got("app")));

@@ -38,8 +38,19 @@ JSON requests, the title or message.
 
 ## Self-managed GitLab
 
-This package only covers gitlab.com. Support for self-managed GitLab instances arrives with a
-later release (admin-registered app instances).
+gitlab.com works out of the box. For your own GitLab, an administrator registers it once:
+
+1. Open *Instances* (organization owners and admins for one organization, instance admins for all),
+   choose GitLab, enter the host, for example `gitlab.example.com` (host name only: no `https://`,
+   port or path), and register it. Aurora checks `GET /api/v4/version` first. Registering decides
+   where GitLab credentials may be sent, so only register hosts you trust.
+2. Create the OAuth application **on that GitLab** (see above) and add it under *Credentials,
+   OAuth clients*, choosing the instance. Every instance has its own application.
+3. People then pick the instance when they connect (access token or OAuth).
+
+If the GitLab has a private address, the operator must allow it with `gateway.allowed_private`
+(and the gateway's network policy) before registration and requests can reach it.
+Deleting an instance disables its connections and removes its OAuth clients.
 
 ## Limits
 

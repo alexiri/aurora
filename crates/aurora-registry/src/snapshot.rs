@@ -13,11 +13,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::claims::{ConflictGroup, claim_key, claims, conflict_groups};
+use crate::claims::{ConflictGroup, claim_key, claims, conflict_groups, static_host};
 use crate::manifest::{
     About, Agent, Approval, BodyFormat, ClientAuth, ClientField, Connect, CredentialDecl, Database,
-    Finalize, Hook, HostRule, Inject, Intercept, Manifest, MetadataDecl, Passthrough, RewriteHost,
-    Tenant, Token, Tools, Transform, UrlOrTemplate, de_opt, de_vec,
+    Finalize, Hook, HostRule, INSTANCE_HOST, Inject, Instances, Intercept, Manifest, MetadataDecl,
+    Passthrough, RewriteHost, Tenant, Token, Tools, Transform, UrlOrTemplate, de_opt, de_vec,
 };
 
 pub const FORMAT: u32 = 1;
@@ -105,6 +105,9 @@ pub struct AppEntry {
     pub app_id: String,
     pub package_id: String,
     pub about: About,
+    /// Present for an instance-bound app (D-74).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instances: Option<Instances>,
     pub credentials: Vec<CredentialDecl>,
     pub metadata: Vec<MetadataDecl>,
     pub connect: Vec<Connect>,
@@ -144,10 +147,21 @@ pub struct Snapshot {
     pub oauth_clients: Vec<OauthClientEntry>,
     pub apps: Vec<AppEntry>,
     pub hosts: Vec<HostEntry>,
+    /// Host entries of instance-bound apps whose host is `{instance}` (D-74). Kept apart from
+    /// the static host index: they apply only to a registered app instance's exact host.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instance_hosts: Vec<HostEntry>,
     pub reserved_hosts: Vec<String>,
 }
 
 impl Snapshot {
+    /// The `{instance}` entries of an app (longest path prefix first).
+    pub fn instance_entries(&self, app_id: &str) -> impl Iterator<Item = &HostEntry> {
+        self.instance_hosts
+            .iter()
+            .filter(move |e| e.app_id == app_id)
+    }
+
     pub fn from_slice(b: &[u8]) -> Result<Self, serde_json::Error> {
         serde_json::from_slice(b)
     }
@@ -279,6 +293,7 @@ pub fn compile(
         oauth_clients: Vec::new(),
         apps: Vec::new(),
         hosts: Vec::new(),
+        instance_hosts: Vec::new(),
         reserved_hosts: reserved_hosts
             .iter()
             .map(|h| h.to_ascii_lowercase())
@@ -322,6 +337,7 @@ pub fn compile(
                 app_id: app_id.clone(),
                 package_id: pid.clone(),
                 about: a.about.clone(),
+                instances: a.instances.clone(),
                 credentials: a.credentials.clone(),
                 metadata: a.metadata.clone(),
                 connect: a.connect.clone(),
@@ -332,15 +348,23 @@ pub fn compile(
                 database: a.database.clone(),
             });
             for r in &a.hosts {
-                snap.hosts.push(host_entry(
-                    &app_id,
-                    r,
-                    lost.contains(&(
-                        pid.clone(),
-                        app_id.clone(),
-                        claim_key(&r.matcher.host, r.matcher.path_prefix.as_deref()),
-                    )),
-                ));
+                if r.matcher.host == INSTANCE_HOST {
+                    snap.instance_hosts
+                        .push(host_entry(&app_id, INSTANCE_HOST, r, false));
+                }
+                // An `{instance}` rule is also an ordinary static claim on `default_host`.
+                if let Some(h) = static_host(a, r) {
+                    snap.hosts.push(host_entry(
+                        &app_id,
+                        h,
+                        r,
+                        lost.contains(&(
+                            pid.clone(),
+                            app_id.clone(),
+                            claim_key(h, r.matcher.path_prefix.as_deref()),
+                        )),
+                    ));
+                }
             }
         }
     }
@@ -353,6 +377,9 @@ pub fn compile(
         (&a.host, &a.path_prefix, &a.app_id).cmp(&(&b.host, &b.path_prefix, &b.app_id))
     });
 
+    snap.instance_hosts
+        .sort_by(|a, b| (&a.path_prefix, &a.app_id).cmp(&(&b.path_prefix, &b.app_id)));
+
     let v = serde_json::to_value(&snap).map_err(|e| CompileError::Serialize(e.to_string()))?;
     let json = canonical_bytes(&v);
     let hash = hex(&Sha256::digest(&json));
@@ -363,9 +390,13 @@ pub fn compile(
     })
 }
 
-fn host_entry(app_id: &str, r: &HostRule, lost: bool) -> HostEntry {
+fn host_entry(app_id: &str, host: &str, r: &HostRule, lost: bool) -> HostEntry {
     HostEntry {
-        host: HostPattern::lenient(&r.matcher.host).as_str().to_owned(),
+        host: if host == INSTANCE_HOST {
+            INSTANCE_HOST.to_owned()
+        } else {
+            HostPattern::lenient(host).as_str().to_owned()
+        },
         path_prefix: r.matcher.path_prefix.clone(),
         app_id: app_id.to_owned(),
         claim_status: if lost {

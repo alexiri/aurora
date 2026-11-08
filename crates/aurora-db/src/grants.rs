@@ -80,6 +80,7 @@ pub async fn apply_gateway_grants(pool: &PgPool, role: &str) -> Result<(), Grant
         "secrets",
         "app_connections",
         "app_oauth_clients",
+        "app_instances",
         "grants",
         "derived_rules",
         "policy_generations",

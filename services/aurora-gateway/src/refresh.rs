@@ -334,6 +334,7 @@ impl TokenManager {
                 credentials: current.clone(),
                 metadata: job.conn.metadata.clone(),
                 tenant_host: job.conn.tenant_host.clone(),
+                instance_host: job.conn.instance_host.clone(),
                 client,
                 client_secret,
                 context: job.context.clone(),
@@ -371,7 +372,11 @@ impl TokenManager {
             .filter(|s| !s.is_empty())
             .ok_or(RefreshError::Unavailable)?;
         let (public, secret) = self.client_fields(st).await?;
-        let url = token_url(client, job.conn.tenant_host.as_deref())?;
+        let url = token_url(
+            client,
+            job.conn.tenant_host.as_deref(),
+            job.conn.instance_host.as_deref(),
+        )?;
         let mut params: Vec<(String, String)> = vec![
             ("grant_type".into(), "refresh_token".into()),
             ("refresh_token".into(), refresh.to_owned()),
@@ -456,8 +461,17 @@ impl TokenManager {
     }
 }
 
-fn token_url(c: &OauthClientEntry, tenant_host: Option<&str>) -> Result<String, RefreshError> {
+fn token_url(
+    c: &OauthClientEntry,
+    tenant_host: Option<&str>,
+    instance_host: Option<&str>,
+) -> Result<String, RefreshError> {
     match &c.token_url {
+        // (D-74, SEC-04) `https://{instance}/...`: the connection's own instance host, https, no
+        // port or userinfo; a refresh token never leaves its instance.
+        UrlOrTemplate::Url(u) if u.contains(aurora_registry::manifest::INSTANCE_HOST) => {
+            instance_token_url(u, instance_host)
+        }
         UrlOrTemplate::Url(u) => Ok(u.clone()),
         UrlOrTemplate::Templated(z) => {
             let creds = Map::new();
@@ -478,6 +492,31 @@ fn token_url(c: &OauthClientEntry, tenant_host: Option<&str>) -> Result<String, 
             check_templated_token_url(&url, &z.zone)?;
             Ok(url)
         }
+    }
+}
+
+/// Substitute `{instance}` in a fixed token URL; fail closed unless the result is plain https on
+/// exactly `instance_host`.
+fn instance_token_url(raw: &str, instance_host: Option<&str>) -> Result<String, RefreshError> {
+    let host = instance_host
+        .filter(|h| {
+            !h.is_empty()
+                && h.parse::<std::net::IpAddr>().is_err()
+                && h.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+        })
+        .ok_or(RefreshError::Unavailable)?;
+    let url = raw.replacen(aurora_registry::manifest::INSTANCE_HOST, host, 1);
+    let uri: http::Uri = url.parse().map_err(|_| RefreshError::Unavailable)?;
+    let ok = uri.scheme_str() == Some("https")
+        && uri.port_u16().is_none()
+        && uri
+            .authority()
+            .is_some_and(|a| !a.as_str().contains('@') && a.host().eq_ignore_ascii_case(host));
+    if ok {
+        Ok(url)
+    } else {
+        Err(RefreshError::Unavailable)
     }
 }
 
@@ -517,7 +556,33 @@ fn store_err(e: aurora_secrets::SecretError) -> RefreshError {
 
 #[cfg(test)]
 mod token_url_tests {
-    use super::check_templated_token_url;
+    use super::{check_templated_token_url, instance_token_url};
+
+    /// SEC-04/SEC-59: a refresh token is only ever sent to the connection's own instance host.
+    #[test]
+    fn instance_token_url_is_the_instance_host_or_nothing() {
+        assert_eq!(
+            instance_token_url("https://{instance}/oauth/token", Some("desk.acme.test")).ok(),
+            Some("https://desk.acme.test/oauth/token".to_owned())
+        );
+        // No instance host (a connection without an instance, a deleted instance): fail closed.
+        assert!(instance_token_url("https://{instance}/oauth/token", None).is_err());
+        for bad in [
+            "10.0.0.1",
+            "desk.acme.test:8443",
+            "evil.test/x",
+            "a@evil.test",
+            "",
+            "[::1]",
+        ] {
+            assert!(
+                instance_token_url("https://{instance}/oauth/token", Some(bad)).is_err(),
+                "{bad}"
+            );
+        }
+        // A non-https template never resolves.
+        assert!(instance_token_url("http://{instance}/oauth/token", Some("a.acme.test")).is_err());
+    }
 
     #[test]
     fn templated_token_url_must_stay_in_zone() {

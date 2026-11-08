@@ -44,6 +44,11 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
           <span className="font-medium text-ink">{c.label}</span>
           <span className="font-mono text-xs text-muted">{c.app_id}</span>
           <Badge tone={bad ? "danger" : c.status === "active" ? "accent" : "neutral"}>{STATUS_LABEL[c.status] ?? c.status}</Badge>
+          {c.instance ? (
+            <Badge className="font-mono normal-case tracking-normal" title={`Self-hosted instance: ${c.instance.label}`}>
+              {c.instance.host}
+            </Badge>
+          ) : null}
         </div>
         {canOwn ? (
           <div className="flex flex-wrap gap-2">
@@ -52,7 +57,7 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
                 Reconnect
               </Button>
             ) : null}
-            {c.status === "active" || c.status === "disabled" ? (
+            {(c.status === "active" || c.status === "disabled") && c.status_reason !== "instance_deleted" ? (
               <Button
                 size="sm"
                 variant="outline"
@@ -66,7 +71,13 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
           </div>
         ) : null}
       </div>
-      {c.status_reason ? <p className="text-sm text-ink-2">{c.status_reason}</p> : null}
+      {c.status_reason ? (
+        <p className="text-sm text-ink-2">
+          {c.status_reason === "instance_deleted"
+            ? "The app instance of this connection was deleted. Connect again."
+            : c.status_reason}
+        </p>
+      ) : null}
       <p className="text-xs text-muted">
         {c.scopes.length ? `Scopes: ${c.scopes.join(", ")} · ` : ""}
         {c.connected_by ? `Connected by ${c.connected_by.display_name} · ` : ""}

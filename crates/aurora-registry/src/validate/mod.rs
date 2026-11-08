@@ -17,8 +17,8 @@ use regex::Regex;
 
 use crate::Violation;
 use crate::manifest::{
-    App, Connect, FieldType, FormField, Hook, HostRule, Inject, Manifest, Probe, Source, Store,
-    TokenKind, UrlOrTemplate,
+    App, Connect, FieldType, FormField, Hook, HostRule, INSTANCE_HOST, Inject, Manifest, Probe,
+    Source, Store, TokenKind, UrlOrTemplate,
 };
 use crate::template::{CONTEXT_VARS, Declared, Place, Template};
 
@@ -74,6 +74,41 @@ fn re(cell: &'static OnceLock<Option<Regex>>, pat: &str) -> Option<&'static Rege
     cell.get_or_init(|| Regex::new(pat).ok()).as_ref()
 }
 
+/// A plain lower-case DNS name: labels of `[a-z0-9-]`, at least two labels, no IP literal, no port,
+/// path or userinfo (the shape an app instance host must have, D-74).
+#[must_use]
+pub fn plain_dns_name(h: &str) -> bool {
+    h.len() <= 253
+        && h.contains('.')
+        && h.parse::<std::net::IpAddr>().is_err()
+        && h.split('.').all(|l| {
+            !l.is_empty()
+                && l.len() <= 63
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+}
+
+/// `{instance}` may stand for a whole host only: in a URL it must be the authority and nothing
+/// else in the string may contain braces (09 §6).
+fn instance_url_ok(raw: &str) -> bool {
+    let n = raw.matches(INSTANCE_HOST).count();
+    if n == 0 {
+        return true;
+    }
+    let Some(rest) = raw.strip_prefix("https://{instance}") else {
+        return false;
+    };
+    n == 1 && (rest.is_empty() || rest.starts_with(['/', '?', '#']))
+}
+
+/// A host string that carries braces must be exactly `{instance}`.
+fn host_braces_ok(h: &str) -> bool {
+    h == INSTANCE_HOST || !h.contains(['{', '}'])
+}
+
 fn zone_ok(z: &str) -> bool {
     static R: OnceLock<Option<Regex>> = OnceLock::new();
     re(
@@ -119,6 +154,16 @@ impl Ctx<'_> {
         for i in t.check(place, &d) {
             self.v(i.code, path, i.message);
         }
+        if self.app.instances.is_none()
+            && t.references()
+                .any(|r| r.ns == crate::template::Ns::Instance)
+        {
+            self.v(
+                "instance_placeholder_misuse",
+                path,
+                "`{instance}` needs an `instances` block on the app",
+            );
+        }
     }
 
     fn host_declared(&self, host: &str) -> bool {
@@ -163,12 +208,45 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
         ));
     }
     let clients: BTreeSet<&str> = m.oauth_clients.iter().map(|c| c.id.as_str()).collect();
+    // OAuth clients used by an app that declares `instances` may template `{instance}` (D-74).
+    let instance_clients: BTreeSet<&str> = m
+        .apps
+        .iter()
+        .filter(|a| a.instances.is_some())
+        .flat_map(|a| {
+            a.connect
+                .iter()
+                .filter_map(|c| match c {
+                    Connect::Oauth2(o) => Some(o.client.as_str()),
+                    _ => None,
+                })
+                .chain(a.token.iter().filter_map(|t| t.client.as_deref()))
+        })
+        .collect();
     for (i, c) in m.oauth_clients.iter().enumerate() {
         for (key, url) in [
             ("authorize_url", &c.authorize_url),
             ("token_url", &c.token_url),
         ] {
-            check_oauth_url(&mut out, &format!("/oauth_clients/{i}/{key}"), key, url);
+            check_oauth_url(
+                &mut out,
+                &format!("/oauth_clients/{i}/{key}"),
+                key,
+                url,
+                instance_clients.contains(c.id.as_str()),
+            );
+        }
+    }
+    let any_instances = m.apps.iter().any(|a| a.instances.is_some());
+    for (hook, hosts) in &m.permissions.egress {
+        for (i, h) in hosts.iter().enumerate() {
+            if !host_braces_ok(h) || (h == INSTANCE_HOST && !any_instances) {
+                out.push(Violation::new(
+                    "instance_placeholder_misuse",
+                    format!("/permissions/egress/{}/{i}", hook_key(*hook)),
+                    "`{instance}` is only valid as a whole host in an app that declares `instances`",
+                ));
+            }
         }
     }
 
@@ -200,8 +278,37 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
     out
 }
 
-fn check_oauth_url(out: &mut Vec<Violation>, base: &str, key: &str, url: &UrlOrTemplate) {
+fn hook_key(h: Hook) -> &'static str {
+    match h {
+        Hook::ConnectAuthorize => "connect.authorize",
+        Hook::ConnectExchange => "connect.exchange",
+        Hook::TokenMint => "token.mint",
+        Hook::ApprovalSummarize => "approval.summarize",
+    }
+}
+
+fn check_oauth_url(
+    out: &mut Vec<Violation>,
+    base: &str,
+    key: &str,
+    url: &UrlOrTemplate,
+    instance_bound: bool,
+) {
     match url {
+        UrlOrTemplate::Url(u) if u.contains(INSTANCE_HOST) => {
+            if !instance_bound
+                || !instance_url_ok(u)
+                || u.replacen(INSTANCE_HOST, "", 1).contains(['{', '}'])
+            {
+                out.push(Violation::new(
+                    "instance_placeholder_misuse",
+                    base,
+                    format!(
+                        "`{{instance}}` in {key} must be the whole https host, in a client used by an app that declares `instances`"
+                    ),
+                ));
+            }
+        }
         UrlOrTemplate::Url(u) => {
             if u.contains('{') || u.contains('}') {
                 out.push(Violation::new(
@@ -254,6 +361,52 @@ fn check_oauth_url(out: &mut Vec<Violation>, base: &str, key: &str, url: &UrlOrT
 
 fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hook>) {
     let app = cx.app;
+    // instances (D-74)
+    if let Some(ins) = &app.instances {
+        if ins.label.trim().is_empty() {
+            cx.v(
+                "instances_label_empty",
+                "/instances/label",
+                "label is empty",
+            );
+        }
+        if let Some(d) = &ins.default_host
+            && !plain_dns_name(d)
+        {
+            cx.v(
+                "instance_default_host_invalid",
+                "/instances/default_host",
+                "default_host must be a plain lower-case DNS name",
+            );
+        }
+        if let Some(p) = &ins.probe
+            && (!p.path.starts_with('/')
+                || p.path.contains(['{', '}', '#'])
+                || p.path.starts_with("//"))
+        {
+            cx.v(
+                "instance_probe_invalid",
+                "/instances/probe/path",
+                "probe path must start with a single `/` and carry no placeholder",
+            );
+        }
+        if !app.hosts.iter().any(|h| h.matcher.host == INSTANCE_HOST) {
+            cx.v(
+                "instances_without_instance_host",
+                "/instances",
+                "an app with `instances` needs a hosts[] entry for `{instance}`",
+            );
+        }
+    }
+    for (i, w) in app.about.web_hosts.iter().enumerate() {
+        if w.contains(['{', '}']) {
+            cx.v(
+                "instance_placeholder_misuse",
+                &format!("/about/web_hosts/{i}"),
+                "web_hosts are plain hosts",
+            );
+        }
+    }
     // hosts
     for (i, h) in app.hosts.iter().enumerate() {
         host_rule(cx, h, &format!("/hosts/{i}"));
@@ -357,6 +510,15 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                         format!("duplicate tool id `{}`", it.id),
                     );
                 }
+                if !host_braces_ok(&it.host)
+                    || (it.host == INSTANCE_HOST && app.instances.is_none())
+                {
+                    cx.v(
+                        "instance_placeholder_misuse",
+                        &format!("{p}/host"),
+                        "`{instance}` is only valid as a whole host in an app that declares `instances`",
+                    );
+                }
                 match HostPattern::parse(&it.host) {
                     Err(e) => cx.v("host_pattern_invalid", &format!("{p}/host"), e.to_string()),
                     Ok(hp) => {
@@ -374,6 +536,13 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                             );
                         }
                     }
+                }
+                if it.path.contains(['{', '}']) {
+                    cx.v(
+                        "instance_placeholder_misuse",
+                        &format!("{p}/path"),
+                        "`{instance}` never appears in a path",
+                    );
                 }
                 if aurora_policy::PathPattern::parse(&it.path).is_err() {
                     cx.v(
@@ -504,6 +673,13 @@ fn probe(cx: &mut Ctx<'_>, pr: &Probe, p: &str, fields: &[&str], fields_connect:
         &format!("{p}/url"),
         fields,
     );
+    if pr.url.as_str().contains(INSTANCE_HOST) && !instance_url_ok(pr.url.as_str()) {
+        cx.v(
+            "instance_placeholder_misuse",
+            &format!("{p}/url"),
+            "`{instance}` must be the whole https host of the probe URL",
+        );
+    }
     if let Some(h) = url_host(pr.url.as_str()).filter(|h| !h.contains('{')) {
         if !cx
             .app
@@ -542,6 +718,39 @@ fn probe(cx: &mut Ctx<'_>, pr: &Probe, p: &str, fields: &[&str], fields_connect:
 }
 
 fn host_rule(cx: &mut Ctx<'_>, h: &HostRule, p: &str) {
+    if !host_braces_ok(&h.matcher.host) {
+        cx.v(
+            "instance_placeholder_misuse",
+            &format!("{p}/match/host"),
+            "`{instance}` stands for a whole host only, never part of one",
+        );
+    } else if h.matcher.host == INSTANCE_HOST {
+        if cx.app.instances.is_none() {
+            cx.v(
+                "instance_placeholder_misuse",
+                &format!("{p}/match/host"),
+                "`{instance}` needs an `instances` block on the app",
+            );
+        }
+        if h.tenant.is_some() || h.rewrite_host.is_some() {
+            cx.v(
+                "instance_placeholder_misuse",
+                p,
+                "an `{instance}` host rule cannot also be tenant-bound or rewrite the host",
+            );
+        }
+    }
+    if h.matcher
+        .path_prefix
+        .as_deref()
+        .is_some_and(|x| x.contains(['{', '}']))
+    {
+        cx.v(
+            "instance_placeholder_misuse",
+            &format!("{p}/match/path_prefix"),
+            "`{instance}` never appears in a path",
+        );
+    }
     if let Err(e) = HostPattern::parse(&h.matcher.host) {
         cx.v(
             "host_pattern_invalid",

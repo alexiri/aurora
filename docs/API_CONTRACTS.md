@@ -713,6 +713,12 @@ Rule: `09 §3.4 Instance-bound hosts`, `§6`, `§7`, `06 §MITM lane: connect-ti
 - C-245 **App catalogue** (`GET /v1/apps/{app}`): new `instances: { label, default_host: string|null } | null` (null when the app is not instance-bound) so the dashboard shows the instance picker and the registration form.
 - C-246 **Gateway** (proxy, not `/v1`): resolution and injection per `06` step 2; an instance-bound connection on any other host is refused like a tenant-bound one (421 `host_mismatch`, `details.expected_host` = the instance host). A disabled or deleted instance injects nothing (its host falls back to the ordinary unknown-host handling).
 
+New wire details found while implementing (C-247..C-249):
+
+- C-247 **`PATCH /v1/connections/{id}`** with `status: "active"` on a connection whose `status_reason` is `instance_deleted` → 409 `instance_deleted` (deleting an instance clears the connection's `instance_id`, so re-enabling would make it a default-host connection; connect again instead).
+- C-248 **BYOC** `instance_id` that is unknown, of another package, or not visible to the scope (an instance-level client binds instance-wide instances only) → 400 `invalid_request` at `/instance_id`. A client bound to an instance is used only for connects to that instance, an unbound one only for the default host. One client per (scope, package, key, instance): a duplicate is 409 `conflict`.
+- C-249 **Internal and tooling**: the hook host request carries `instance_host` (what `{instance}` in `permissions.egress` resolves to; absent = nothing). Offline fixtures (`aurora plugin test`) take `connection.instance_host` (+ optional `instance_app`) and `expect: { refused: host_mismatch, expected_host }`. Config: the API honours `gateway.allowed_private` for the registration probe and connect requests to a registered instance only.
+
 ### Phase 2 — P2-CAT-0 (built-in catalogue, D-75)
 
 Reserved numbers C-210..C-219. No route or wire shape changes.

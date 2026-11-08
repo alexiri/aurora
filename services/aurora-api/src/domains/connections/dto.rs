@@ -18,6 +18,14 @@ pub struct Injecting {
     pub lost_to_app_id: Option<String>,
 }
 
+/// The registered self-hosted instance a connection is bound to (C-243).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InstanceRef {
+    pub id: Uuid,
+    pub host: String,
+    pub label: String,
+}
+
 /// A connection. Credentials are never returned (SEC-12).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Connection {
@@ -39,6 +47,8 @@ pub struct Connection {
     pub metadata: BTreeMap<String, String>,
     pub tenant_host: Option<String>,
     pub oauth_client_id: Option<Uuid>,
+    /// The registered instance of an instance-bound app; `null` for `default_host` and other apps.
+    pub instance: Option<InstanceRef>,
     pub credentials_expires_at: Option<DateTime<Utc>>,
     pub connected_by: Option<ConnectedBy>,
     pub last_used_at: Option<DateTime<Utc>>,
@@ -58,9 +68,22 @@ impl Connection {
                     .collect()
             })
             .unwrap_or_default();
-        let injecting = match (snap, r.status.as_str()) {
-            (Some(s), "active" | "reauth_required") => injecting(s, &r.app_id),
+        let injecting = match (snap, r.status.as_str(), &r.instance_host) {
+            // An instance connection injects on its instance's host only (D-74).
+            (Some(_), "active" | "reauth_required", Some(h)) => vec![Injecting {
+                host: h.clone(),
+                lost_to_app_id: None,
+            }],
+            (Some(s), "active" | "reauth_required", None) => injecting(s, &r.app_id),
             _ => Vec::new(),
+        };
+        let instance = match (r.instance_id, r.instance_host.clone()) {
+            (Some(id), Some(host)) => Some(InstanceRef {
+                id,
+                host,
+                label: r.instance_label.clone().unwrap_or_default(),
+            }),
+            _ => None,
         };
         let missing_scopes = r
             .requested_scopes
@@ -89,6 +112,7 @@ impl Connection {
             metadata,
             tenant_host: r.tenant_host,
             oauth_client_id: r.oauth_client_id,
+            instance,
             credentials_expires_at: r.credentials_expires_at,
             connected_by: r.connected_by.map(|id| ConnectedBy {
                 id,

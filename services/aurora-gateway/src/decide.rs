@@ -514,9 +514,14 @@ impl RequestHandler for PolicyHandler {
         let fi = facts_identity(&identity);
         // 5. app identification (host/path); the tool follows once the body is known.
         let registry = rv.registry.clone();
-        let app_match = registry
-            .as_ref()
-            .and_then(|l| apps::identify_app(l, &host, port, &path));
+        // (D-74) A host that is exactly a registered app instance serves that app's `{instance}`
+        // host entries; otherwise the static host index decides.
+        let app_match = registry.as_ref().and_then(|l| {
+            rv.instance
+                .as_ref()
+                .and_then(|i| apps::identify_instance_app(l, &i.app_id, &path))
+                .or_else(|| apps::identify_app(l, &host, port, &path))
+        });
         // Candidates serving this path; selection by allow rules (07 §Injection selection).
         let mut cands: Vec<Cand> = rv
             .secrets
@@ -537,7 +542,32 @@ impl RequestHandler for PolicyHandler {
                 .collect();
             // Tenant-bound entries only offer connections stored for this host; when none
             // does, the mismatching ones stay so that the guard answers 421.
-            let bound: Vec<_> = if m.entry.tenant.is_some() {
+            let on_instance = rv.instance.as_ref().filter(|_| m.instance).map(|i| i.id);
+            let bound: Vec<_> = if let Some(iid) = on_instance {
+                // Instance host: only connections bound to this very instance; connections of
+                // other instances stay so the guard answers 421, default-host ones never ride here.
+                let ok: Vec<_> = same
+                    .iter()
+                    .filter(|c| c.instance_id == Some(iid))
+                    .cloned()
+                    .collect();
+                if ok.is_empty() {
+                    same.into_iter()
+                        .filter(|c| c.instance_id.is_some())
+                        .collect()
+                } else {
+                    ok
+                }
+            } else if m.app.instances.is_some() {
+                // Static (default) host of an instance-bound app: connections without an
+                // instance; instance-bound ones stay only so the guard answers 421.
+                let ok: Vec<_> = same
+                    .iter()
+                    .filter(|c| c.instance_id.is_none())
+                    .cloned()
+                    .collect();
+                if ok.is_empty() { same } else { ok }
+            } else if m.entry.tenant.is_some() {
                 let ok: Vec<_> = same
                     .iter()
                     .filter(|c| {
@@ -608,7 +638,7 @@ impl RequestHandler for PolicyHandler {
             .is_some_and(|g| Governance::needs_body(g, &host_port, wsec))
             || app_match
                 .as_ref()
-                .is_some_and(|m| apps::needs_body(m.app, &host, port, &path, method.as_str()));
+                .is_some_and(|m| apps::needs_body(m, &host, port, &path, method.as_str()));
         let (body_prefix, truncated, mut body) = if rv.needs_body() || may_hold || llm_body {
             let limit = if rv.needs_body() || llm_body {
                 self.condition_body_limit
@@ -622,7 +652,7 @@ impl RequestHandler for PolicyHandler {
         };
         let tool = app_match.as_ref().and_then(|m| {
             apps::identify_tool(
-                m.app,
+                m,
                 &host,
                 port,
                 &path,
@@ -773,6 +803,30 @@ impl RequestHandler for PolicyHandler {
             let unavailable = |s: &Self, ctx: Ctx| {
                 Outcome::Respond(s.refuse(ctx, &credential_unavailable("connection"), "error"))
             };
+            // (D-74, SEC-04/SEC-59) An instance-bound connection is injected only on its
+            // instance's exact host; one that is not bound never rides on an instance host.
+            match mechanisms::route::instance_guard(
+                conn.instance_id,
+                conn.instance_host.as_deref(),
+                rv.instance.as_ref().filter(|_| m.instance).map(|i| i.id),
+                &host,
+            ) {
+                Ok(()) => {}
+                Err(mechanisms::route::GuardError::Mismatch { expected }) => {
+                    let err = ApiError::new(
+                        StatusCode::MISDIRECTED_REQUEST,
+                        "host_mismatch",
+                        format!(
+                            "This connection is bound to {expected}; send the request to that host."
+                        ),
+                    )
+                    .with_details(json!({ "expected_host": expected }));
+                    return Outcome::Respond(self.refuse(ctx, &err, "guard_refused"));
+                }
+                Err(mechanisms::route::GuardError::Unavailable) => {
+                    return unavailable(self, ctx);
+                }
+            }
             if let Some(t) = &m.entry.tenant {
                 match mechanisms::route::tenant_guard(t, conn.tenant_host.as_deref(), &host) {
                     Ok(()) => {}

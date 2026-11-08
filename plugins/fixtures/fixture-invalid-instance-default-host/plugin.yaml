@@ -1,0 +1,24 @@
+package:
+  id: fixture-invalid-instance-default-host
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: fixtures
+  name: Invalid fixture
+  description: "Expected rejection: instance_default_host_invalid"
+apps:
+  - about: { id: invalid-app, name: Invalid app, web_hosts: [app.invalid.example.test] }
+    instances: { label: Invalid instance, default_host: "Saas.Invalid.example.test:8443" }
+    credentials: [ { name: api_token, secret: true } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: API token, type: secret, required: true } ]
+    hosts:
+      - match: { host: "{instance}" }
+        inject:
+          - bearer: "{credentials.api_token}"
+    tools:
+      read:
+        items:
+          - { id: list_things, name: List things, host: "{instance}", path: /v1/things, methods: [GET] }

@@ -63,6 +63,9 @@ pub struct Call<'a> {
     pub package_id: &'a str,
     pub package_digest: &'a str,
     pub app_id: &'a str,
+    /// The connection's instance host (or the app's `default_host`): what `{instance}` in the
+    /// package's egress list stands for (D-74).
+    pub instance_host: Option<&'a str>,
 }
 
 impl HookClient {
@@ -81,7 +84,7 @@ impl HookClient {
 
     async fn call(&self, hook: &str, c: &Call<'_>, input: Value) -> Result<Value, HookFail> {
         let body = json!({"package_id": c.package_id, "package_digest": c.package_digest,
-            "app_id": c.app_id, "input": input});
+            "app_id": c.app_id, "instance_host": c.instance_host, "input": input});
         let resp = self
             .http
             .post(format!("{}/internal/v1/hooks/{hook}", self.base))
