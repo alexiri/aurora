@@ -670,6 +670,18 @@ fn runner_config(k8s_toml: &str) -> aurora_config::RunnerConfig {
         .unwrap()
 }
 
+// FIX-011 (C-191): `runner.sandbox_*` / `runner.home_gib` become the advertised defaults
+// (docs/15: 1 CPU, 2048 MiB, 512 pids, 10 GiB).
+#[test]
+fn runner_settings_advertise_the_configured_sandbox_defaults() {
+    let s = aurora_runner::runner::RunnerSettings::from_config(&runner_config(""));
+    let d = s.defaults.unwrap();
+    assert_eq!(
+        (d.cpu_millis, d.memory_mib, d.pids, d.home_gib),
+        (1000, 2048, 512, 10)
+    );
+}
+
 #[test]
 fn settings_come_from_config() {
     let cfg = runner_config(

@@ -129,6 +129,15 @@ pub struct Range {
     pub max: u32,
 }
 
+/// Per-sandbox resource defaults of a runner (FIX-011, D-90).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SandboxDefaults {
+    pub cpu_millis: u32,
+    pub memory_mib: u32,
+    pub pids: u32,
+    pub home_gib: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ResourceRanges {
     pub cpu: Range,
@@ -154,6 +163,11 @@ pub struct RunnerCapabilities {
     /// `max(1, max_sandboxes − 1)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held_awake_ceiling: Option<u32>,
+    /// (FIX-011, D-90) The runner's configured sandbox defaults (`runner.sandbox_cpus`,
+    /// `sandbox_memory_mib`, `sandbox_pids`, `home_gib`): the API uses them when neither the
+    /// agent nor the org overrides a resource axis. Absent from older runners.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defaults: Option<SandboxDefaults>,
     /// (phase 1, RFE-003) Capabilities the sandbox image declares in its
     /// `org.aurora.capabilities` label (docs/11 §The boot document); phase 1 defines
     /// `browser`. Open vocabulary; absent = none (fail closed, also for older runners).

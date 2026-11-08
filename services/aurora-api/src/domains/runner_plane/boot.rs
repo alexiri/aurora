@@ -16,16 +16,20 @@ use uuid::Uuid;
 /// Sandbox-facing supervisor port of the runner (decision I-07).
 pub const SUPERVISOR_PORT: u16 = 4105;
 
-const DEFAULT_CPU_MILLIS: u32 = 2000;
-const DEFAULT_MEMORY_MIB: u32 = 4096;
-const DEFAULT_PIDS: u32 = 1024;
+// Fallbacks for runners that do not send `defaults`: the docs/15 values of
+// `runner.sandbox_cpus` / `sandbox_memory_mib` / `sandbox_pids` / `home_gib` (FIX-011, D-90).
+const DEFAULT_CPU_MILLIS: u32 = 1000;
+const DEFAULT_MEMORY_MIB: u32 = 2048;
+const DEFAULT_PIDS: u32 = 512;
 const DEFAULT_HOME_GIB: u32 = 10;
 
-/// Resource profile: agent override > runner default, clamped to the runner's bounds.
+/// Resource profile: agent override > runner default (`caps.defaults`, else the docs/15
+/// constants), clamped to the runner's bounds. (There is no org override in the code yet.)
 pub fn profile(
     caps: Option<&RunnerCapabilities>,
     overrides: Option<&Value>,
 ) -> (SandboxResources, u32) {
+    let d = caps.and_then(|c| c.defaults);
     let pick = |key: &str, default: u32, range: Option<&aurora_protocol::runner::Range>| {
         let v = overrides
             .and_then(|o| o.get(key))
@@ -37,11 +41,27 @@ pub fn profile(
     let r = caps.map(|c| &c.resources);
     (
         SandboxResources {
-            cpu_millis: pick("cpu_millis", DEFAULT_CPU_MILLIS, r.map(|r| &r.cpu)),
-            memory_mib: pick("memory_mib", DEFAULT_MEMORY_MIB, r.map(|r| &r.memory_mib)),
-            pids: pick("pids", DEFAULT_PIDS, r.map(|r| &r.pids)),
+            cpu_millis: pick(
+                "cpu_millis",
+                d.map_or(DEFAULT_CPU_MILLIS, |d| d.cpu_millis),
+                r.map(|r| &r.cpu),
+            ),
+            memory_mib: pick(
+                "memory_mib",
+                d.map_or(DEFAULT_MEMORY_MIB, |d| d.memory_mib),
+                r.map(|r| &r.memory_mib),
+            ),
+            pids: pick(
+                "pids",
+                d.map_or(DEFAULT_PIDS, |d| d.pids),
+                r.map(|r| &r.pids),
+            ),
         },
-        pick("home_gib", DEFAULT_HOME_GIB, r.map(|r| &r.home_gib)),
+        pick(
+            "home_gib",
+            d.map_or(DEFAULT_HOME_GIB, |d| d.home_gib),
+            r.map(|r| &r.home_gib),
+        ),
     )
 }
 
@@ -308,6 +328,71 @@ mod tests {
         let g = gateway_boot("https://[::1]:4102", "t");
         assert_eq!(g["proxy"], "[::1]:4102");
         assert_eq!(g["server_name"], "::1");
+    }
+
+    // FIX-011 (C-192): agent override > runner defaults > docs/15 constants, then clamped.
+    fn caps(defaults: Option<Value>) -> RunnerCapabilities {
+        let mut v = json!({
+            "backend": "kubernetes", "home_durability": "resident",
+            "resources": {
+                "cpu": {"min": 250, "max": 4000}, "memory_mib": {"min": 512, "max": 8192},
+                "pids": {"min": 64, "max": 2048}, "home_gib": {"min": 1, "max": 100}
+            },
+            "max_sandboxes": 4, "harnesses": [], "max_attachment_bytes": 1024,
+        });
+        if let Some(d) = defaults {
+            v["defaults"] = d;
+        }
+        serde_json::from_value(v).unwrap()
+    }
+
+    fn flat(r: &SandboxResources, home: u32) -> (u32, u32, u32, u32) {
+        (r.cpu_millis, r.memory_mib, r.pids, home)
+    }
+
+    #[test]
+    fn profile_agent_override_wins_over_runner_defaults() {
+        let c = caps(Some(
+            json!({"cpu_millis": 1000, "memory_mib": 2048, "pids": 512, "home_gib": 10}),
+        ));
+        let o = json!({"cpu_millis": 3000, "memory_mib": 4096, "pids": 800, "home_gib": 20});
+        let (r, h) = profile(Some(&c), Some(&o));
+        assert_eq!(flat(&r, h), (3000, 4096, 800, 20));
+        // A partial override only replaces its own axis.
+        let (r, h) = profile(Some(&c), Some(&json!({"memory_mib": 1024})));
+        assert_eq!(flat(&r, h), (1000, 1024, 512, 10));
+    }
+
+    #[test]
+    fn profile_uses_the_runner_defaults_without_an_override() {
+        let c = caps(Some(
+            json!({"cpu_millis": 2000, "memory_mib": 3072, "pids": 700, "home_gib": 15}),
+        ));
+        let (r, h) = profile(Some(&c), None);
+        assert_eq!(flat(&r, h), (2000, 3072, 700, 15));
+    }
+
+    #[test]
+    fn profile_falls_back_to_the_docs_15_values_when_defaults_are_absent() {
+        let (r, h) = profile(Some(&caps(None)), None);
+        assert_eq!(flat(&r, h), (1000, 2048, 512, 10));
+        let (r, h) = profile(None, None);
+        assert_eq!(flat(&r, h), (1000, 2048, 512, 10));
+    }
+
+    #[test]
+    fn profile_still_clamps_to_the_runner_bounds() {
+        let c = caps(Some(
+            json!({"cpu_millis": 1000, "memory_mib": 2048, "pids": 512, "home_gib": 10}),
+        ));
+        let o = json!({"cpu_millis": 64000, "memory_mib": 1, "pids": 99999, "home_gib": 500});
+        let (r, h) = profile(Some(&c), Some(&o));
+        assert_eq!(flat(&r, h), (4000, 512, 2048, 100));
+        // Runner defaults outside the bounds are clamped too.
+        let c = caps(Some(
+            json!({"cpu_millis": 16000, "memory_mib": 2048, "pids": 512, "home_gib": 10}),
+        ));
+        assert_eq!(profile(Some(&c), None).0.cpu_millis, 4000);
     }
 
     fn app(id: &str, env: Value, stubs: Value) -> AppEntry {

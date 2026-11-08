@@ -40,6 +40,12 @@ fn fast_retry() -> RetryPolicy {
 fn settings(url: &str) -> RunnerSettings {
     RunnerSettings {
         held_awake_ceiling: None,
+        defaults: Some(aurora_protocol::runner::SandboxDefaults {
+            cpu_millis: 1000,
+            memory_mib: 2048,
+            pids: 512,
+            home_gib: 10,
+        }),
         api_url: url.to_owned(),
         token: TOKEN.into(),
         version: "test".into(),
@@ -271,6 +277,12 @@ async fn registers_executes_start_and_stop_reports_and_retires() {
         .find(|r| r.url.path().ends_with("/register"))
         .unwrap();
     assert!(register.headers.get("x-aurora-replica").is_none());
+    // FIX-011 (C-191): the configured sandbox defaults ride on the registration.
+    let reg: Value = serde_json::from_slice(&register.body).unwrap();
+    assert_eq!(
+        reg["capabilities"]["defaults"],
+        json!({ "cpu_millis": 1000, "memory_mib": 2048, "pids": 512, "home_gib": 10 })
+    );
     let work = reqs
         .iter()
         .find(|r| r.url.path().ends_with("/work"))
