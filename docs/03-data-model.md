@@ -86,7 +86,7 @@ External identities linked to a user (OIDC).
 | governance | jsonb not null default `{}` | org LLM and egress governance document (`08 §11.2`); `{}` = defaults derived from the instance; (phase 1, RFE-003) `egress.open_lane` = `enabled` \| `allowlist_only` \| `disabled` (default `enabled`), the org open-lane posture, not below the instance minimum (`08 §11.2`); (phase 2, RFE-025) `byo` = `{ "posture"?: "enabled"\|"owners_only"\|"disabled", "source_cidrs"?: [cidr], "require_context_credentials"?: bool }`, the org BYO posture, default source list and require-context default (`08 §11.2`, `§11.9`) |
 | governance_revision | bigint not null default 0 | optimistic concurrency for governance edits |
 | external_id | text unique not null | 32 random hex chars at creation; immutable; exposed to plugins as context variable `org_external_id` (e.g. AWS external id) |
-| settings | jsonb not null default `{}` | `{ "max_agents"?: int, "max_members"?: int, "sandbox_overrides"?: ResourceProfile }` |
+| settings | jsonb not null default `{}` | `{ "max_agents"?: int, "max_members"?: int, "sandbox_overrides"?: ResourceProfile, "retention"?: { "conversations_days"?: int\|null, "attachments_days"?: int\|null, "attachment_quota_mib"?: int\|null } }`; `retention` (phase 2, RFE-010/015): per-org retention and attachment limits, null/absent = keep forever / unlimited |
 | frozen_at | timestamptz null | (phase 2, RFE-006) set ⇒ frozen at this level (`04 §Freeze`); effective freeze of an agent = agent ∨ workspace ∨ org |
 | frozen_by_user_id | uuid null FK→users (set null) | (phase 2, RFE-006) |
 | frozen_reason | text null | (phase 2, RFE-006) 1..500 chars, sanitized; required when `frozen_at` is set |
@@ -967,7 +967,7 @@ Phase 0 blob backend (`postgres`).
 | connector_id | text FK→connectors (restrict) | |
 | tenant_ref | text not null | platform tenant id; unique (connector_id, tenant_ref) |
 | tenant_label | text not null | |
-| config | jsonb not null | non-secret setup fields |
+| config | jsonb not null | non-secret setup fields, incl. `verified_email_autolink` (bool, default `false`; phase 1, RFE-001): org-admin opt-in to create `verified_email` user links from the connector's asserted `email`/`email_verified` (`13 §5.9`); requires the `email_verified` capability |
 | credentials_ref | text not null | SecretRef |
 | credentials_version | bigint not null default 1 | CAS for `credentials.update` |
 | shared_bot | jsonb null | `{ "platform_user_ref", "handle", "display_name" }` |
@@ -1175,25 +1175,15 @@ headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
 
-#### `channel_integrations` (jsonb key in `config`)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| `config.verified_email_autolink` | bool, default `false` | org-admin opt-in: the core may create `verified_email` user links from the connector's asserted `email`/`email_verified` (`13 §5.9`). Requires the `email_verified` capability. No column: `config` is `jsonb`. | 1 (RFE-001) |
-
 #### `users`
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| password_hash | (existing column) | cleared (`NULL`) by the phase-1 migration and ignored from phase 1 (RFE-004); the column is dropped by the contract migration in a later release (`15 §Upgrades`, expand → migrate → contract) | 1 → drop later (RFE-004) |
+| password_hash | (existing column) | cleared (`NULL`) by the phase-1 migration and ignored from phase 1 (RFE-004); the column is dropped by the contract migration in a later release (`15 §Upgrades`, expand → migrate → contract) | 1 → dropped by CONTRACT-001, the first phase-3 task (RFE-004; owner Q9, D-78) |
 
 #### `email_tokens`
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
-| (whole table) | — | unused from phase 1 (no e-mail verification or password reset, RFE-004); existing rows are ignored and the table is dropped by the contract migration in a later release | 1 → drop later (RFE-004) |
-
-#### `organizations` (jsonb key in `settings`)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| `settings.retention` | `{ "conversations_days"?: int\|null, "attachments_days"?: int\|null, "attachment_quota_mib"?: int\|null }` | per-org retention (RFE-010) and attachment limits (RFE-015); null/absent = keep forever / unlimited. No column: `settings` is `jsonb`. | 2 (RFE-010/015) |
+| (whole table) | — | unused from phase 1 (no e-mail verification or password reset, RFE-004); existing rows are ignored and the table is dropped by the contract migration in a later release | 1 → dropped by CONTRACT-001, the first phase-3 task (RFE-004; owner Q9, D-78) |
 
 #### `gateway_credentials` (token age and use)
 | Planned column | Type | Notes | Phase |

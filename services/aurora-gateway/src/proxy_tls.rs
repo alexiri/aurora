@@ -25,9 +25,11 @@ pub const LEAF_VALIDITY: Duration = Duration::from_secs(30 * 86_400);
 pub const RENEW_BELOW: Duration = Duration::from_secs(10 * 86_400);
 /// How often renewal / operator-file changes are checked.
 pub const REFRESH_INTERVAL: Duration = Duration::from_secs(300);
-/// Fixed compose address of the gateway (docs/15 §compose).
+/// The gateway's documented fixed address on the podman `aurora-sandbox` network (10.89.250.0/24,
+/// `docs/operator/runners.md`); added to the proxy certificate only when it is local. The compose
+/// stack that introduced it was removed in OPS-017 (I-42), the constant keeps its old name.
 pub const COMPOSE_GATEWAY_ADDR: &str = "10.89.250.2";
-/// In-cluster / compose service name of the gateway.
+/// In-cluster service name of the gateway, also the host alias sandboxes get for it.
 pub const SERVICE_NAME: &str = "aurora-gateway";
 
 #[derive(Debug, thiserror::Error)]

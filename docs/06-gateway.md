@@ -45,8 +45,9 @@ unencrypted.
   `gateway.advertised_proxy_url`; the host of `gateway.sandbox_proxy_url`, the
   sandbox-facing proxy address in the boot document (`11`, FIX-010); the in-cluster service names (`aurora-gateway`,
   `aurora-gateway.<ns>`, `aurora-gateway.<ns>.svc`,
-  `aurora-gateway.<ns>.svc.cluster.local`) and the fixed compose address
-  (`10.89.250.2`) when running there; and `gateway.proxy_tls.names` (extra DNS
+  `aurora-gateway.<ns>.svc.cluster.local`) and the gateway's fixed address on
+  the podman `aurora-sandbox` network (`10.89.250.2`, `docs/operator/runners.md`;
+  introduced by the phase-0 compose stack) when it is local; and `gateway.proxy_tls.names` (extra DNS
   names/IPs, e.g. a LoadBalancer hostname). A client connecting by a name not in
   the SAN set fails verification — operators add the name, they do not disable
   verification. Because `aurora-gateway generate-ca` mints the CA with

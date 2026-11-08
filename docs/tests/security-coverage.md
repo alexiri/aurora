@@ -1,6 +1,6 @@
 # Security invariant coverage (TEST-018)
 
-One row per invariant of `docs/17-security.md` (SEC-01..SEC-41). Test ids are
+One row per invariant of `docs/17-security.md` (SEC-01..SEC-60). Test ids are
 `path::test_name` relative to the repo root, with these prefixes:
 `api` = `services/aurora-api/tests`, `gw` = `services/aurora-gateway/tests`,
 `sup` = `services/aurora-supervisor/tests`, `run` = `services/aurora-runner`,
