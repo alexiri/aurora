@@ -1,0 +1,386 @@
+package:
+  id: github
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: GitHub
+  description: Repositories, issues, pull requests, files and Actions runs on github.com and GitHub Enterprise Server (REST API v3, GraphQL and git over HTTPS), connected with a token or OAuth
+  homepage: https://github.com
+oauth_clients:
+  - id: github
+    authorize_url: https://github.com/login/oauth/authorize
+    token_url: https://github.com/login/oauth/access_token
+    pkce: true
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: Client ID }
+      - { name: client_secret, label: Client secret, secret: true }
+    setup_note: "On GitHub open Settings, Developer settings, OAuth Apps and register a new OAuth app (or use an organization's). Set the authorization callback URL to the Aurora redirect URI and generate a client secret."
+  - id: github-ghes
+    authorize_url: "https://{instance}/login/oauth/authorize"
+    token_url: "https://{instance}/login/oauth/access_token"
+    pkce: true
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: Client ID }
+      - { name: client_secret, label: Client secret, secret: true }
+    setup_note: "Register an OAuth app on your GitHub Enterprise Server (Settings, Developer settings, OAuth Apps). Every GitHub Enterprise Server instance has its own OAuth app."
+apps:
+  - about:
+      id: github
+      name: GitHub
+      description: Work with repositories, issues, pull requests, files, Actions runs and search on github.com
+      category: development
+      api_docs: https://docs.github.com/en/rest
+      api_spec: https://github.com/github/rest-api-description/raw/main/descriptions/api.github.com/api.github.com.yaml
+      web_hosts: [github.com]
+      connect_note:
+        text: "Connects to github.com. For GitHub Enterprise Server use the GitHub Enterprise Server app. Prefer the GitHub App package where you can: it uses fine-grained, repository-scoped permissions."
+        url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+      label_hint: GitHub username
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: login }
+    connect:
+      - id: token
+        kind: fields
+        fields:
+          - name: access_token
+            label: Personal access token
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "Fine-grained or classic personal access token"
+            help_url: https://github.com/settings/personal-access-tokens
+        probe:
+          method: GET
+          url: "https://api.github.com/user"
+          expect_status: [200]
+          label: /login
+          metadata: { login: /login }
+      - id: oauth
+        kind: oauth2
+        client: github
+        scopes:
+          - { scope: "read:user", name: Read your profile, access: read }
+          - { scope: "read:org", name: Read your organization and team membership, access: read }
+          - { scope: repo, name: "Private and public repositories: read AND write code, issues and pull requests (GitHub offers no read-only repository scope)", access: write }
+          - { scope: public_repo, name: "Public repositories: read AND write code, issues and pull requests", access: write }
+          - { scope: workflow, name: Add and update GitHub Actions workflow files, access: write }
+        default_scopes: ["read:user", "read:org"]
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://api.github.com/user"
+          expect_status: [200]
+          label: /login
+          metadata: { login: /login }
+    hosts:
+      - match: { host: api.github.com }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: github.com }
+        inject:
+          - basic: { user: x-access-token, password: "{credentials.access_token}" }
+    token:
+      kind: oauth2_refresh
+      client: github
+      refresh_field: refresh_token
+      rotate_refresh_token: true
+      max_lifetime_secs: 28800
+      stale_codes:
+        - { status: 401, body_contains: Bad credentials }
+      reauth_codes: [bad_refresh_token]
+    tools:
+      read:
+        items:
+          - { id: get_authenticated_user, name: Get the connected user, host: api.github.com, path: /user, methods: [GET] }
+          - { id: list_user_repos, name: List your repositories, host: api.github.com, path: /user/repos, methods: [GET] }
+          - { id: get_repo, name: Get a repository, host: api.github.com, path: "/repos/*/*", methods: [GET] }
+          - { id: list_issues, name: List issues, host: api.github.com, path: "/repos/*/*/issues", methods: [GET] }
+          - { id: get_issue, name: Get an issue, host: api.github.com, path: "/repos/*/*/issues/*", methods: [GET] }
+          - { id: list_issue_comments, name: List issue and pull request comments, host: api.github.com, path: "/repos/*/*/issues/*/comments", methods: [GET] }
+          - { id: list_pulls, name: List pull requests, host: api.github.com, path: "/repos/*/*/pulls", methods: [GET] }
+          - { id: get_pull, name: Get a pull request, host: api.github.com, path: "/repos/*/*/pulls/*", methods: [GET] }
+          - { id: list_pull_files, name: List pull request files, host: api.github.com, path: "/repos/*/*/pulls/*/files", methods: [GET] }
+          - { id: get_contents, name: Get repository contents, host: api.github.com, path: "/repos/*/*/contents/**", methods: [GET] }
+          - { id: list_commits, name: List commits, host: api.github.com, path: "/repos/*/*/commits", methods: [GET] }
+          - { id: search_issues, name: Search issues and pull requests, host: api.github.com, path: /search/issues, methods: [GET] }
+          - { id: search_code, name: Search code, host: api.github.com, path: /search/code, methods: [GET] }
+          - { id: graphql_query, name: GraphQL query, host: api.github.com, path: /graphql, methods: [POST], graphql: query }
+          - { id: git_fetch, name: Clone and fetch over HTTPS, host: github.com, path: "/*/*/**", methods: [GET, POST], git: fetch }
+      write:
+        items:
+          - { id: create_issue, name: Create an issue, host: api.github.com, path: "/repos/*/*/issues", methods: [POST] }
+          - { id: update_issue, name: Update or close an issue, host: api.github.com, path: "/repos/*/*/issues/*", methods: [PATCH] }
+          - { id: create_issue_comment, name: Comment on an issue or pull request, host: api.github.com, path: "/repos/*/*/issues/*/comments", methods: [POST] }
+          - { id: create_pull, name: Create a pull request, host: api.github.com, path: "/repos/*/*/pulls", methods: [POST] }
+          - { id: merge_pull, name: Merge a pull request, host: api.github.com, path: "/repos/*/*/pulls/*/merge", methods: [PUT] }
+          - { id: write_contents, name: "Create, change or delete a repository file", host: api.github.com, path: "/repos/*/*/contents/**", methods: [PUT, DELETE] }
+          - { id: create_ref, name: Create a branch or tag, host: api.github.com, path: "/repos/*/*/git/refs", methods: [POST] }
+          - { id: graphql_mutation, name: GraphQL mutation, host: api.github.com, path: /graphql, methods: [POST], graphql: mutation }
+          - { id: git_push, name: Push code over HTTPS, host: github.com, path: "/*/*/**", methods: [GET, POST], git: push }
+    approvals:
+      create_issue:
+        title: Create issue
+        fields:
+          - { label: Owner, source: path, segment: 2 }
+          - { label: Repository, source: path, segment: 3 }
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+        link: "https://github.com/{path.2}/{path.3}/issues"
+      update_issue:
+        title: Update issue
+        fields:
+          - { label: Owner, source: path, segment: 2 }
+          - { label: Repository, source: path, segment: 3 }
+          - { label: Issue, source: path, segment: 5 }
+          - { label: State, source: body, steps: [ { json: /state } ] }
+        link: "https://github.com/{path.2}/{path.3}/issues/{path.5}"
+      create_issue_comment:
+        title: Comment on issue or pull request
+        fields:
+          - { label: Owner, source: path, segment: 2 }
+          - { label: Repository, source: path, segment: 3 }
+          - { label: Issue, source: path, segment: 5 }
+          - { label: Comment, source: body, steps: [ { json: /body } ] }
+        link: "https://github.com/{path.2}/{path.3}/issues/{path.5}"
+      create_pull:
+        title: Create pull request
+        fields:
+          - { label: Owner, source: path, segment: 2 }
+          - { label: Repository, source: path, segment: 3 }
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: From, source: body, steps: [ { json: /head } ] }
+          - { label: Into, source: body, steps: [ { json: /base } ] }
+        link: "https://github.com/{path.2}/{path.3}/pulls"
+      merge_pull:
+        title: Merge pull request
+        fields:
+          - { label: Owner, source: path, segment: 2 }
+          - { label: Repository, source: path, segment: 3 }
+          - { label: Pull request, source: path, segment: 5 }
+          - { label: Method, source: body, steps: [ { json: /merge_method } ] }
+        link: "https://github.com/{path.2}/{path.3}/pull/{path.5}"
+      write_contents:
+        title: Change repository file
+        fields:
+          - { label: Owner, source: path, segment: 2 }
+          - { label: Repository, source: path, segment: 3 }
+          - { label: File, source: path, segment: 5 }
+          - { label: Branch, source: body, steps: [ { json: /branch } ] }
+          - { label: Message, source: body, steps: [ { json: /message } ] }
+      create_ref:
+        title: Create branch or tag
+        fields:
+          - { label: Owner, source: path, segment: 2 }
+          - { label: Repository, source: path, segment: 3 }
+          - { label: Ref, source: body, steps: [ { json: /ref } ] }
+          - { label: From, source: body, steps: [ { json: /sha } ] }
+      graphql_mutation:
+        title: GraphQL mutation
+        fields:
+          - { label: Operation, source: body, steps: [ { graphql: operation_name } ] }
+          - { label: Fields, source: body, steps: [ { graphql: field_names } ] }
+      git_push:
+        title: Push code
+        fields:
+          - { label: Owner, source: path, segment: 1 }
+          - { label: Repository, source: path, segment: 2 }
+    agent:
+      instructions: |
+        GitHub (github.com) is connected. Use the REST API at https://api.github.com (for example
+        https://api.github.com/repos/<owner>/<repo>/issues), GraphQL at https://api.github.com/graphql
+        and git over HTTPS (clone URLs of the form https://github.com/<owner>/<repo>.git). Aurora adds
+        the credentials; never ask for or write a token. Send JSON request bodies so approvals can show
+        what a change does. A token can only do what its owner allowed: if a request answers 403 or 404
+        for a repository you expect to exist, the connection lacks access to it. Pull requests are issues
+        too: comment on them through the issue comment endpoint.
+  - about:
+      id: github-ghes
+      name: GitHub Enterprise Server
+      description: Work with repositories, issues, pull requests, files and Actions runs on a registered GitHub Enterprise Server
+      category: development
+      api_docs: https://docs.github.com/en/enterprise-server@latest/rest
+      connect_note:
+        text: "An administrator registers the GitHub Enterprise Server host first (Instances); then choose it when connecting."
+        url: https://docs.github.com/en/enterprise-server@latest/rest
+      label_hint: GitHub username
+    instances:
+      label: GitHub Enterprise Server host
+      probe: { method: GET, path: /api/v3/meta, expect_status: [200, 401] }
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: login }
+    connect:
+      - id: token
+        kind: fields
+        fields:
+          - name: access_token
+            label: Personal access token
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "Fine-grained or classic personal access token"
+        probe:
+          method: GET
+          url: "https://{instance}/api/v3/user"
+          expect_status: [200]
+          label: /login
+          metadata: { login: /login }
+      - id: oauth
+        kind: oauth2
+        client: github-ghes
+        scopes:
+          - { scope: "read:user", name: Read your profile, access: read }
+          - { scope: "read:org", name: Read your organization and team membership, access: read }
+          - { scope: repo, name: "Private and public repositories: read AND write code, issues and pull requests (GitHub offers no read-only repository scope)", access: write }
+          - { scope: public_repo, name: "Public repositories: read AND write code, issues and pull requests", access: write }
+          - { scope: workflow, name: Add and update GitHub Actions workflow files, access: write }
+        default_scopes: ["read:user", "read:org"]
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://{instance}/api/v3/user"
+          expect_status: [200]
+          label: /login
+          metadata: { login: /login }
+    hosts:
+      - match: { host: "{instance}", path_prefix: /api/v3 }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: "{instance}", path_prefix: /api/graphql }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: "{instance}" }
+        inject:
+          - basic: { user: x-access-token, password: "{credentials.access_token}" }
+    token:
+      kind: oauth2_refresh
+      client: github-ghes
+      refresh_field: refresh_token
+      rotate_refresh_token: true
+      max_lifetime_secs: 28800
+      stale_codes:
+        - { status: 401, body_contains: Bad credentials }
+      reauth_codes: [bad_refresh_token]
+    tools:
+      read:
+        items:
+          - { id: get_authenticated_user, name: Get the connected user, host: "{instance}", path: /api/v3/user, methods: [GET] }
+          - { id: list_user_repos, name: List your repositories, host: "{instance}", path: /api/v3/user/repos, methods: [GET] }
+          - { id: get_repo, name: Get a repository, host: "{instance}", path: "/api/v3/repos/*/*", methods: [GET] }
+          - { id: list_issues, name: List issues, host: "{instance}", path: "/api/v3/repos/*/*/issues", methods: [GET] }
+          - { id: get_issue, name: Get an issue, host: "{instance}", path: "/api/v3/repos/*/*/issues/*", methods: [GET] }
+          - { id: list_issue_comments, name: List issue and pull request comments, host: "{instance}", path: "/api/v3/repos/*/*/issues/*/comments", methods: [GET] }
+          - { id: list_pulls, name: List pull requests, host: "{instance}", path: "/api/v3/repos/*/*/pulls", methods: [GET] }
+          - { id: get_pull, name: Get a pull request, host: "{instance}", path: "/api/v3/repos/*/*/pulls/*", methods: [GET] }
+          - { id: list_pull_files, name: List pull request files, host: "{instance}", path: "/api/v3/repos/*/*/pulls/*/files", methods: [GET] }
+          - { id: get_contents, name: Get repository contents, host: "{instance}", path: "/api/v3/repos/*/*/contents/**", methods: [GET] }
+          - { id: list_commits, name: List commits, host: "{instance}", path: "/api/v3/repos/*/*/commits", methods: [GET] }
+          - { id: search_issues, name: Search issues and pull requests, host: "{instance}", path: /api/v3/search/issues, methods: [GET] }
+          - { id: search_code, name: Search code, host: "{instance}", path: /api/v3/search/code, methods: [GET] }
+          - { id: graphql_query, name: GraphQL query, host: "{instance}", path: /api/graphql, methods: [POST], graphql: query }
+          - { id: git_fetch, name: Clone and fetch over HTTPS, host: "{instance}", path: "/*/*/**", methods: [GET, POST], git: fetch }
+      write:
+        items:
+          - { id: create_issue, name: Create an issue, host: "{instance}", path: "/api/v3/repos/*/*/issues", methods: [POST] }
+          - { id: update_issue, name: Update or close an issue, host: "{instance}", path: "/api/v3/repos/*/*/issues/*", methods: [PATCH] }
+          - { id: create_issue_comment, name: Comment on an issue or pull request, host: "{instance}", path: "/api/v3/repos/*/*/issues/*/comments", methods: [POST] }
+          - { id: create_pull, name: Create a pull request, host: "{instance}", path: "/api/v3/repos/*/*/pulls", methods: [POST] }
+          - { id: merge_pull, name: Merge a pull request, host: "{instance}", path: "/api/v3/repos/*/*/pulls/*/merge", methods: [PUT] }
+          - { id: write_contents, name: "Create, change or delete a repository file", host: "{instance}", path: "/api/v3/repos/*/*/contents/**", methods: [PUT, DELETE] }
+          - { id: create_ref, name: Create a branch or tag, host: "{instance}", path: "/api/v3/repos/*/*/git/refs", methods: [POST] }
+          - { id: graphql_mutation, name: GraphQL mutation, host: "{instance}", path: /api/graphql, methods: [POST], graphql: mutation }
+          - { id: git_push, name: Push code over HTTPS, host: "{instance}", path: "/*/*/**", methods: [GET, POST], git: push }
+    approvals:
+      create_issue:
+        title: Create issue
+        fields:
+          - { label: Owner, source: path, segment: 4 }
+          - { label: Repository, source: path, segment: 5 }
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+        link: "https://{request.host}/{path.4}/{path.5}/issues"
+      update_issue:
+        title: Update issue
+        fields:
+          - { label: Owner, source: path, segment: 4 }
+          - { label: Repository, source: path, segment: 5 }
+          - { label: Issue, source: path, segment: 7 }
+          - { label: State, source: body, steps: [ { json: /state } ] }
+        link: "https://{request.host}/{path.4}/{path.5}/issues/{path.7}"
+      create_issue_comment:
+        title: Comment on issue or pull request
+        fields:
+          - { label: Owner, source: path, segment: 4 }
+          - { label: Repository, source: path, segment: 5 }
+          - { label: Issue, source: path, segment: 7 }
+          - { label: Comment, source: body, steps: [ { json: /body } ] }
+        link: "https://{request.host}/{path.4}/{path.5}/issues/{path.7}"
+      create_pull:
+        title: Create pull request
+        fields:
+          - { label: Owner, source: path, segment: 4 }
+          - { label: Repository, source: path, segment: 5 }
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: From, source: body, steps: [ { json: /head } ] }
+          - { label: Into, source: body, steps: [ { json: /base } ] }
+        link: "https://{request.host}/{path.4}/{path.5}/pulls"
+      merge_pull:
+        title: Merge pull request
+        fields:
+          - { label: Owner, source: path, segment: 4 }
+          - { label: Repository, source: path, segment: 5 }
+          - { label: Pull request, source: path, segment: 7 }
+          - { label: Method, source: body, steps: [ { json: /merge_method } ] }
+        link: "https://{request.host}/{path.4}/{path.5}/pull/{path.7}"
+      write_contents:
+        title: Change repository file
+        fields:
+          - { label: Owner, source: path, segment: 4 }
+          - { label: Repository, source: path, segment: 5 }
+          - { label: File, source: path, segment: 7 }
+          - { label: Branch, source: body, steps: [ { json: /branch } ] }
+          - { label: Message, source: body, steps: [ { json: /message } ] }
+      create_ref:
+        title: Create branch or tag
+        fields:
+          - { label: Owner, source: path, segment: 4 }
+          - { label: Repository, source: path, segment: 5 }
+          - { label: Ref, source: body, steps: [ { json: /ref } ] }
+          - { label: From, source: body, steps: [ { json: /sha } ] }
+      graphql_mutation:
+        title: GraphQL mutation
+        fields:
+          - { label: Operation, source: body, steps: [ { graphql: operation_name } ] }
+          - { label: Fields, source: body, steps: [ { graphql: field_names } ] }
+      git_push:
+        title: Push code
+        fields:
+          - { label: Owner, source: path, segment: 1 }
+          - { label: Repository, source: path, segment: 2 }
+    agent:
+      instructions: |
+        GitHub Enterprise Server is connected. Use the REST API at https://<host>/api/v3 (for example
+        https://<host>/api/v3/repos/<owner>/<repo>/issues), GraphQL at https://<host>/api/graphql and
+        git over HTTPS (https://<host>/<owner>/<repo>.git), where <host> is the host of the GitHub
+        Enterprise Server connection. Aurora adds the credentials; never ask for or write a token, and
+        never send a request for this connection to another host. Send JSON request bodies so approvals
+        can show what a change does. Pull requests are issues too: comment on them through the issue
+        comment endpoint.

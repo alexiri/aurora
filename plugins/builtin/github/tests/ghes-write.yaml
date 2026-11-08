@@ -1,0 +1,101 @@
+# GitHub Enterprise Server write tools: classified on the registered host, with approval summaries.
+# All credentials are fake.
+- name: "ghes create_issue: summary shows repository and title"
+  connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://github.example.com/api/v3/repos/example/demo/issues"
+    headers: { content-type: application/json }
+    body: '{"title":"Broken build"}'
+  expect:
+    app: github-ghes
+    tool: create_issue
+    summary: { title: "Create issue", fields: { Owner: example, Repository: demo, Title: "Broken build" } }
+- name: "ghes update_issue"
+  connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PATCH
+    url: "https://github.example.com/api/v3/repos/example/demo/issues/7"
+    headers: { content-type: application/json }
+    body: '{"state":"closed"}'
+  expect:
+    app: github-ghes
+    tool: update_issue
+    summary: { title: "Update issue", fields: { Owner: example, Repository: demo, Issue: "7", State: closed } }
+- name: "ghes create_issue_comment"
+  connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://github.example.com/api/v3/repos/example/demo/issues/7/comments"
+    headers: { content-type: application/json }
+    body: '{"body":"Fixed in the next release"}'
+  expect:
+    app: github-ghes
+    tool: create_issue_comment
+    summary: { title: "Comment on issue or pull request", fields: { Owner: example, Repository: demo, Issue: "7", Comment: "Fixed in the next release" } }
+- name: "ghes create_pull"
+  connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://github.example.com/api/v3/repos/example/demo/pulls"
+    headers: { content-type: application/json }
+    body: '{"title":"Add feature","head":"feature-x","base":"main"}'
+  expect:
+    app: github-ghes
+    tool: create_pull
+    summary: { title: "Create pull request", fields: { Owner: example, Repository: demo, Title: "Add feature", From: feature-x, Into: main } }
+- name: "ghes merge_pull"
+  connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://github.example.com/api/v3/repos/example/demo/pulls/12/merge"
+    headers: { content-type: application/json }
+    body: '{"merge_method":"squash"}'
+  expect:
+    app: github-ghes
+    tool: merge_pull
+    summary: { title: "Merge pull request", fields: { Owner: example, Repository: demo, "Pull request": "12", Method: squash } }
+- name: "ghes write_contents"
+  connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://github.example.com/api/v3/repos/example/demo/contents/README.md"
+    headers: { content-type: application/json }
+    body: '{"message":"Update readme","content":"aGVsbG8=","branch":"feature-x"}'
+  expect:
+    app: github-ghes
+    tool: write_contents
+    summary: { title: "Change repository file", fields: { Owner: example, Repository: demo, File: "README.md", Branch: feature-x, Message: "Update readme" } }
+- name: "ghes create_ref"
+  connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://github.example.com/api/v3/repos/example/demo/git/refs"
+    headers: { content-type: application/json }
+    body: '{"ref":"refs/heads/feature-x","sha":"abc123"}'
+  expect:
+    app: github-ghes
+    tool: create_ref
+    summary: { title: "Create branch or tag", fields: { Owner: example, Repository: demo, Ref: "refs/heads/feature-x", From: abc123 } }
+- name: "ghes graphql_mutation"
+  connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://github.example.com/api/graphql"
+    headers: { content-type: application/json }
+    body: '{"query":"mutation AddStar { addStar(input: {starrableId: \"R_example\"}) { clientMutationId } }","operationName":"AddStar"}'
+  expect:
+    app: github-ghes
+    tool: graphql_mutation
+    summary: { title: "GraphQL mutation", fields: { Operation: AddStar, Fields: addStar } }
+- name: "ghes git_push"
+  connection: { instance_host: github.example.com, credentials: { access_token: "tok-git-1" } }
+  request: { method: POST, url: "https://github.example.com/example/demo.git/git-receive-pack" }
+  expect:
+    app: github-ghes
+    tool: git_push
+    summary: { title: "Push code", fields: { Owner: example, Repository: demo.git } }
+- name: "ghes negative create_issue: PUT on the issues path selects no tool"
+  connection: { instance_host: github.example.com, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://github.example.com/api/v3/repos/example/demo/issues" }
+  expect: { app: github-ghes }

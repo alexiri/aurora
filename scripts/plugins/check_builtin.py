@@ -122,7 +122,26 @@ def check_hooks(manifest, hooks, paired, err):
                 any("error" in e for e in hook_steps(c)) for c, _ in mine):
             err(f"hook {point}: no passing fixture where the hook fails (an `expect: {{ error: ... }}` case)")
         hosts = egress.get(point) or []
+        static = [h.lower() for h in hosts if h != "{instance}"]
+        inst_apps = {a["about"]["id"] for a in manifest["apps"] if a.get("instances")}
+
+        def reaches_instance(c):
+            # `{instance}` (D-74) is the connection's registered instance host: reached only by a
+            # case of an instance-bound app whose `egress_override` stands for the resolved list
+            # and whose recorded request goes to a host of it that no static pattern covers.
+            h = c["hook"]
+            app_id = h.get("app_id") or (manifest["apps"][0]["about"]["id"] if len(manifest["apps"]) == 1 else None)
+            ov = [e.lower() for e in h.get("egress_override") or []]
+            return app_id in inst_apps and any(
+                (host := url_parts(rec["request"]["url"])[0]) in ov
+                and not any(fnmatch.fnmatchcase(host, s) for s in static)
+                for rec in h.get("http_cassette") or [])
+
         for pattern in hosts:
+            if pattern == "{instance}":
+                if not any(reaches_instance(c) for c, _ in mine):
+                    err(f"hook {point}: egress host {pattern} is not reached by any recorded request (http_cassette)")
+                continue
             if not any(fnmatch.fnmatchcase(url_parts(rec["request"]["url"])[0], pattern.lower())
                        for c, _ in mine for rec in c["hook"].get("http_cassette") or []):
                 err(f"hook {point}: egress host {pattern} is not reached by any recorded request (http_cassette)")

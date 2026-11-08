@@ -1,0 +1,63 @@
+# Token lifecycle against recorded HTTP (docs/09 §12) for github.com. GitHub only issues refresh
+# tokens to OAuth apps that opted in to expiring user tokens; the refresh request is a form POST to
+# https://github.com/login/oauth/access_token (docs: "Refreshing an access token with a refresh
+# token"). All values are fake.
+- name: "token: a refreshed token is injected on the API host"
+  connection:
+    credentials: { access_token: "tok-fixture-2", refresh_token: "refresh-fixture-2" }
+  request: { method: GET, url: "https://api.github.com/user" }
+  expect:
+    app: github
+    tool: get_authenticated_user
+    upstream: { headers: { authorization: "Bearer tok-fixture-2" } }
+- name: "token: refresh after a stale 401 retries with the new token"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://api.github.com/user" }
+  token:
+    upstream: { status: 401, body: '{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest"}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://github.com/login/oauth/access_token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-1", client_id: "client-fixture" }
+        response:
+          status: 200
+          body: '{"access_token":"tok-fixture-new","expires_in":28800,"refresh_token":"refresh-fixture-2","refresh_token_expires_in":15897600,"scope":"","token_type":"bearer"}'
+    expect:
+      outcome: refreshed
+      request_url: "https://github.com/login/oauth/access_token"
+      credentials: { access_token: "tok-fixture-new", refresh_token: "refresh-fixture-2" }
+      retried:
+        url: "https://api.github.com/user"
+        headers: { authorization: "Bearer tok-fixture-new" }
+  expect: { app: github, tool: get_authenticated_user }
+- name: "token: a refused refresh token needs re-authorization and nothing is retried"
+  # GitHub documents the error code (bad_refresh_token) but not its HTTP status. Aurora only maps
+  # 4xx answers to re-authorization, so this case records the code on a 400.
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://api.github.com/user" }
+  token:
+    upstream: { status: 401, body: '{"message":"Bad credentials"}' }
+    http_cassette:
+      - request: { method: POST, url: "https://github.com/login/oauth/access_token", form: { grant_type: refresh_token } }
+        response:
+          status: 400
+          body: '{"error":"bad_refresh_token","error_description":"The refresh token passed is incorrect or expired."}'
+    expect: { outcome: reauth_required, request_url: "https://github.com/login/oauth/access_token" }
+  expect: { app: github }
+- name: "token: a 503 from the token endpoint keeps the connection and retries nothing"
+  connection:
+    credentials: { access_token: "tok-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://api.github.com/user" }
+  token:
+    upstream: { status: 401, body: '{"message":"Bad credentials"}' }
+    http_cassette:
+      - request: { method: POST, url: "https://github.com/login/oauth/access_token" }
+        response: { status: 503, body: "upstream unavailable" }
+    expect: { outcome: unavailable }
+  expect: { app: github }
