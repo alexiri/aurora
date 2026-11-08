@@ -37,6 +37,7 @@ Five small, independent gaps. Each has its own tests. Contract numbers: **C-195.
 ## (f) App icon fallback (owner report, 2026-11-08)
 `web/src/components/apps/apps-tab.tsx` renders `<img src="/v1/apps/{id}/icon">` with no fallback, so a failed or missing icon shows the browser's broken-image glyph.
 - Add a shared `AppIcon` primitive in `web/src/components/ui`, modelled on `AgentAvatar`. It renders the icon and falls back on `onError`, or when the app has no icon, to a monogram tile: the app name's first letter on a token background, in both themes.
+- In the dark theme, use the package's dark icon when the API says it has one: `assets/icon-dark.png`, `has_dark_icon` and the dark variant of the icon route in `services/aurora-api/src/domains/apps/assets.rs`. Check how the route selects the variant. Near-black brand glyphs (GitHub, Notion) are invisible on dark surfaces otherwise.
 - Use it everywhere an app or package icon appears: the apps tab, connections, the approvals/activity rows if they show app icons, and the catalogue.
 - Tests: a vitest for the fallback.
 
