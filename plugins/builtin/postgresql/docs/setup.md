@@ -25,17 +25,18 @@ Then grant the connection to the agents that may use it, like any other app.
 
 ## How an agent connects
 
-The agent's workspace already holds the connection settings: the environment variables
-`PGSERVICEFILE`, `PGPASSFILE` and `PGSSLROOTCERT` point at files that Aurora maintains. The agent runs
+The agent's workspace already holds the connection settings: the environment variable
+`PGSERVICEFILE` points at a service file that Aurora maintains. The agent runs
 
 ```
 psql service=orders-prod -c 'select 1'
 ```
 
-and no secret appears on the command line. The password file holds the agent's **gateway
-credential**, not your database password, and the connection is always encrypted and verified
-against the Aurora gateway's certificate authority. Other PostgreSQL drivers can read the same
-service name (`service=orders-prod`) through libpq.
+and no secret appears on the command line or in any file: the service points at a small relay inside
+the sandbox that logs in to the Aurora gateway for the agent, over TLS that it verifies against the
+gateway's certificate authority. Neither your database password nor any gateway credential is
+readable by the agent. Other PostgreSQL drivers can read the same service name
+(`service=orders-prod`) through libpq.
 
 ## What agents can do
 

@@ -1130,29 +1130,43 @@ async fn s11_database_lane_psql_service_read_allowed_write_needs_approval() {
         st.log_tails()
     );
 
-    // The libpq files: service file, gateway credential in the password file, no database password.
-    let (_, files) = exec_in(
-        cn,
-        "cd /workspace/.aurora/pg && ls -l && cat pg_service.conf && cut -d: -f1-4 pgpass",
-    );
+    // The libpq service file points at the loopback relay; there is no password file.
+    let (_, files) = exec_in(cn, "cd /workspace/.aurora/pg && ls && cat pg_service.conf");
     assert!(
-        files.contains(&format!("[{service}]")) && files.contains("sslmode=verify-full"),
+        files.contains(&format!("[{service}]"))
+            && files.contains("host=127.0.0.1")
+            && files.contains("sslmode=disable"),
         "{files}"
     );
     assert!(files.contains(&format!("user={conn}")), "{files}");
-    let (_, pw_leak) = exec_in(
-        cn,
-        &format!(
-            "grep -rIl '{DB_PASSWORD}' /workspace /tmp /run /etc /home 2>/dev/null | head; cat /proc/[0-9]*/environ 2>/dev/null | tr '\\0' '\\n' | grep -c '{DB_PASSWORD}'"
-        ),
+    assert!(
+        !files.contains("pgpass") && !files.contains("root.crt"),
+        "{files}"
     );
-    assert_eq!(
-        pw_leak.trim(),
-        "0",
-        "the database password reached the sandbox: {pw_leak}"
-    );
-    let (_, mode) = exec_in(cn, "stat -c %a /workspace/.aurora/pg/pgpass");
-    assert_eq!(mode.trim(), "600");
+    // Neither the database password nor any gateway credential (the boot token `aub_`, a turn
+    // context credential `auc_`) is in a file or in the environment of any process an agent can
+    // read (everything below runs as the agent's uid).
+    let boot_token = boot_doc(cn)["gateway"]["boot_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(boot_token.starts_with("aub_"), "{boot_token}");
+    for needle in [
+        DB_PASSWORD,
+        boot_token.as_str(),
+        "au[bc]_[A-Za-z0-9_-]\\{8,\\}",
+    ] {
+        let (_, leak) = exec_in(
+            cn,
+            &format!(
+                "grep -rIl -e '{needle}' /workspace /tmp /run /etc /home 2>/dev/null | head; cat /proc/[0-9]*/environ 2>/dev/null | tr '\\0' '\\n' | grep -c -e '{needle}'; env | grep -c -e '{needle}'"
+            ),
+        );
+        assert!(
+            leak.lines().all(|l| l.trim() == "0"),
+            "a credential reached the sandbox ({needle}): {leak}"
+        );
+    }
 
     // A write is held for approval; the row appears only after it.
     psql(

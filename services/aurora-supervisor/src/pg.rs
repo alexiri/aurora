@@ -1,23 +1,17 @@
-//! libpq files for the database lane (P2-DBL-2, C-231; `docs/21 §Phase 2 — Database lane`).
+//! libpq service file for the database lane (P2-DBL-2, C-232; `docs/21 §Phase 2 — Database lane`).
 //!
 //! For each database connection granted to the agent the home projection holds a `[service]`
-//! section, so `psql service=<name>` needs nothing on the command line:
-//!
-//! - `.aurora/pg/pg_service.conf` (`PGSERVICEFILE`, 0644, no secret): host and port of the
-//!   **gateway** (the same sandbox-side address the boot document names), user = connection id,
-//!   `sslmode=verify-full` against the gateway CA;
-//! - `.aurora/pg/pgpass` (`PGPASSFILE`, 0600): the **gateway credential** of this sandbox (the
-//!   boot credential), never the database password, which no sandbox ever receives;
-//! - `.aurora/pg/root.crt` (`PGSSLROOTCERT`, 0644): the gateway CA.
-//!
-//! The files are regenerated at every boot and every home sync, so a new boot credential replaces
-//! the old one. TLS verification is never relaxed: the gateway presents the proxy listener's
-//! certificate (host in its SAN set) or a CA leaf for `<connection_id>.db.aurora.internal`.
+//! section in `.aurora/pg/pg_service.conf` (`PGSERVICEFILE`, 0644), so `psql service=<name>` needs
+//! nothing on the command line. Every section points at the **loopback relay** of the supervisor
+//! (`crate::pgrelay`, 127.0.0.1 only, `sslmode=disable` on that leg): user = connection id, no
+//! password. There is no password file and no CA file: the relay holds the gateway credential and
+//! verifies the gateway's TLS itself, so nothing in the sandbox's files or environment is a
+//! credential. A `pgpass` or `root.crt` left by an earlier version is removed on the next sync.
 
 use std::fmt::Write as _;
 use std::fs;
 use std::io::Write as _;
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -26,49 +20,10 @@ use uuid::Uuid;
 /// Directory of the files, relative to the home.
 pub const PG_DIR: &str = ".aurora/pg";
 const SERVICE_FILE: &str = "pg_service.conf";
-const PASS_FILE: &str = "pgpass";
-const ROOT_FILE: &str = "root.crt";
+/// Files an earlier version wrote; deleted on every sync.
+const STALE_FILES: [&str; 3] = ["pgpass", "root.crt", "pg_service.conf.tmp"];
 /// Most services written (the API sends far fewer; a bound against a malformed sync).
 const SERVICES_MAX: usize = 256;
-
-/// How a sandbox reaches the gateway, from the boot document.
-#[derive(Clone)]
-pub struct PgGateway {
-    /// Host the proxy certificate is verified against (name or IP, no brackets).
-    pub host: String,
-    pub port: u16,
-    /// The sandbox's gateway credential (`aub_...`).
-    pub credential: String,
-    pub ca_pem: String,
-}
-
-impl std::fmt::Debug for PgGateway {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PgGateway")
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .finish_non_exhaustive()
-    }
-}
-
-impl PgGateway {
-    /// From the boot document's `gateway.proxy` (`host:port`, IPv6 in brackets) and its
-    /// verification name.
-    pub fn from_boot(
-        proxy: &str,
-        verify_name: &str,
-        credential: &str,
-        ca_pem: &str,
-    ) -> Option<Self> {
-        let port = proxy.rsplit_once(':')?.1.parse().ok()?;
-        Some(Self {
-            host: verify_name.to_owned(),
-            port,
-            credential: credential.to_owned(),
-            ca_pem: ca_pem.to_owned(),
-        })
-    }
-}
 
 /// One `databases` entry of the `render_inputs` part.
 #[derive(Debug, Clone, Deserialize)]
@@ -84,50 +39,9 @@ fn service_ok(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
-/// A value of the service file: refuses anything that could add a key or a section.
-fn value_ok(s: &str) -> bool {
-    !s.is_empty()
-        && !s
-            .chars()
-            .any(|c| c.is_control() || c.is_whitespace() || c == '\'' || c == '"')
-}
-
-/// A `pgpass` field: `\` and `:` escaped.
-fn pass_field(s: &str) -> String {
-    s.replace('\\', "\\\\").replace(':', "\\:")
-}
-
-fn write_file(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    let _ = fs::remove_file(&tmp);
-    // Created 0600: the file never exists with wider permissions than its final mode.
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&tmp)?;
-    f.write_all(bytes)?;
-    f.set_permissions(fs::Permissions::from_mode(mode))?;
-    f.sync_all()?;
-    fs::rename(&tmp, path)
-}
-
-/// The three file contents. Pure, for tests.
-pub fn render_files(
-    root: &Path,
-    gw: &PgGateway,
-    dbs: &[PgDatabase],
-) -> Option<(String, String, String)> {
-    if !value_ok(&gw.host) || gw.credential.is_empty() {
-        return None;
-    }
-    let dir = root.join(PG_DIR);
-    let dir = dir.display().to_string();
-    if !value_ok(&dir) {
-        return None;
-    }
+/// The service file. Pure, for tests.
+pub fn render_service(relay_port: u16, dbs: &[PgDatabase]) -> String {
     let mut service = String::from("# Managed by Aurora. Do not edit.\n");
-    let mut pass = String::new();
     let mut seen: Vec<&str> = Vec::new();
     for d in dbs.iter().take(SERVICES_MAX) {
         if !service_ok(&d.service) || seen.contains(&d.service.as_str()) {
@@ -137,54 +51,50 @@ pub fn render_files(
         seen.push(&d.service);
         let _ = write!(
             service,
-            "\n[{svc}]\nhost={host}\nport={port}\nuser={user}\ndbname={svc}\nsslmode=verify-full\n\
-             sslrootcert={dir}/{ROOT_FILE}\npassfile={dir}/{PASS_FILE}\nconnect_timeout=15\n",
+            "\n[{svc}]\nhost=127.0.0.1\nport={relay_port}\nuser={user}\ndbname={svc}\nsslmode=disable\n\
+             connect_timeout=15\n",
             svc = d.service,
-            host = gw.host,
-            port = gw.port,
             user = d.connection_id,
         );
-        let _ = writeln!(
-            pass,
-            "{}:{}:*:{}:{}",
-            pass_field(&gw.host),
-            gw.port,
-            d.connection_id,
-            pass_field(&gw.credential)
-        );
     }
-    Some((service, pass, gw.ca_pem.clone()))
+    service
 }
 
-/// Writes (or, without databases, removes) the files under `root/.aurora/pg`.
-pub fn write(root: &Path, gw: &PgGateway, dbs: &[PgDatabase]) -> std::io::Result<()> {
+fn write_file(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    let _ = fs::remove_file(&tmp);
+    let mut f = fs::File::create(&tmp)?;
+    f.write_all(bytes)?;
+    f.set_permissions(fs::Permissions::from_mode(mode))?;
+    f.sync_all()?;
+    fs::rename(&tmp, path)
+}
+
+/// Writes (or, without databases, removes) the service file under `root/.aurora/pg`.
+pub fn write(root: &Path, relay_port: u16, dbs: &[PgDatabase]) -> std::io::Result<()> {
     let dir = root.join(PG_DIR);
     if dbs.is_empty() {
         let _ = fs::remove_dir_all(&dir);
         return Ok(());
     }
-    let Some((service, pass, ca)) = render_files(root, gw, dbs) else {
-        tracing::warn!("gateway address unusable for libpq files; none written");
-        let _ = fs::remove_dir_all(&dir);
-        return Ok(());
-    };
     fs::create_dir_all(&dir)?;
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o755))?;
-    write_file(&dir.join(SERVICE_FILE), service.as_bytes(), 0o644)?;
-    write_file(&dir.join(ROOT_FILE), ca.as_bytes(), 0o644)?;
-    write_file(&dir.join(PASS_FILE), pass.as_bytes(), 0o600)
+    for f in STALE_FILES {
+        let _ = fs::remove_file(dir.join(f));
+    }
+    write_file(
+        &dir.join(SERVICE_FILE),
+        render_service(relay_port, dbs).as_bytes(),
+        0o644,
+    )
 }
 
-/// Environment of every agent-run process: where libpq finds the files. Only the variables whose
-/// files exist matter to `psql service=...`; setting them unconditionally is harmless.
+/// Environment of every agent-run process: where libpq finds the service file.
 pub fn env(root: &Path) -> Vec<(String, String)> {
-    let dir = root.join(PG_DIR);
-    let p = |f: &str| dir.join(f).display().to_string();
-    vec![
-        ("PGSERVICEFILE".into(), p(SERVICE_FILE)),
-        ("PGPASSFILE".into(), p(PASS_FILE)),
-        ("PGSSLROOTCERT".into(), p(ROOT_FILE)),
-    ]
+    vec![(
+        "PGSERVICEFILE".into(),
+        root.join(PG_DIR).join(SERVICE_FILE).display().to_string(),
+    )]
 }
 
 #[cfg(test)]
@@ -192,38 +102,24 @@ pub fn env(root: &Path) -> Vec<(String, String)> {
 mod tests {
     use super::*;
 
-    fn gw() -> PgGateway {
-        PgGateway {
-            host: "aurora-gateway".into(),
-            port: 4102,
-            credential: "aub_fixture".into(),
-            ca_pem: "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n".into(),
-        }
-    }
-
     #[test]
-    fn renders_service_pass_and_never_a_database_password() {
+    fn renders_the_loopback_service_and_no_secret() {
         let id = Uuid::now_v7();
         let dbs = [PgDatabase {
             service: "prod".into(),
             connection_id: id,
         }];
-        let (svc, pass, ca) = render_files(Path::new("/workspace"), &gw(), &dbs).unwrap();
-        assert!(
-            svc.contains("[prod]\nhost=aurora-gateway\nport=4102\n"),
-            "{svc}"
-        );
+        let svc = render_service(3130, &dbs);
+        assert!(svc.contains("[prod]\nhost=127.0.0.1\nport=3130\n"), "{svc}");
         assert!(svc.contains(&format!("user={id}\n")));
-        assert!(svc.contains("sslmode=verify-full"));
-        assert!(svc.contains("sslrootcert=/workspace/.aurora/pg/root.crt"));
-        assert!(svc.contains("passfile=/workspace/.aurora/pg/pgpass"));
-        assert!(!svc.contains("password"));
-        assert_eq!(pass, format!("aurora-gateway:4102:*:{id}:aub_fixture\n"));
-        assert!(ca.contains("BEGIN CERTIFICATE"));
+        assert!(svc.contains("sslmode=disable"));
+        for banned in ["password", "passfile", "sslrootcert", "aub_", "auc_"] {
+            assert!(!svc.contains(banned), "{banned} in {svc}");
+        }
     }
 
     #[test]
-    fn refuses_unsafe_service_names_and_hosts() {
+    fn refuses_unsafe_and_duplicate_service_names() {
         let id = Uuid::now_v7();
         let dbs = [
             PgDatabase {
@@ -239,49 +135,39 @@ mod tests {
                 connection_id: id,
             },
         ];
-        let (svc, _, _) = render_files(Path::new("/workspace"), &gw(), &dbs).unwrap();
+        let svc = render_service(3130, &dbs);
         assert!(!svc.contains("evil"));
         assert_eq!(svc.matches("[ok]").count(), 1);
-        let mut bad = gw();
-        bad.host = "h\nsslmode=disable".into();
-        assert!(render_files(Path::new("/workspace"), &bad, &dbs).is_none());
     }
 
     #[test]
-    fn pgpass_escapes_colon_and_backslash() {
-        assert_eq!(pass_field("a:b\\c"), "a\\:b\\\\c");
-    }
-
-    #[test]
-    fn from_boot_parses_host_and_port() {
-        let g =
-            PgGateway::from_boot("aurora-gateway:4102", "aurora-gateway", "aub_x", "ca").unwrap();
-        assert_eq!((g.host.as_str(), g.port), ("aurora-gateway", 4102));
-        let g = PgGateway::from_boot("[::1]:4102", "::1", "aub_x", "ca").unwrap();
-        assert_eq!((g.host.as_str(), g.port), ("::1", 4102));
-        assert!(PgGateway::from_boot("nohostport", "n", "t", "ca").is_none());
-    }
-
-    #[test]
-    fn write_sets_modes_and_removes_when_empty() {
+    fn write_removes_stale_password_files_and_the_dir_when_empty() {
         let d = std::env::temp_dir().join(format!("aurora-pg-{}", Uuid::now_v7()));
-        std::fs::create_dir_all(&d).unwrap();
+        let dir = d.join(PG_DIR);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("pgpass"), "h:1:*:u:aub_old\n").unwrap();
+        fs::write(dir.join("root.crt"), "ca").unwrap();
         let dbs = [PgDatabase {
             service: "prod".into(),
             connection_id: Uuid::now_v7(),
         }];
-        write(&d, &gw(), &dbs).unwrap();
-        let mode = |f: &str| {
-            std::fs::metadata(d.join(PG_DIR).join(f))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777
-        };
-        assert_eq!(mode(PASS_FILE), 0o600);
-        assert_eq!(mode(SERVICE_FILE), 0o644);
-        write(&d, &gw(), &[]).unwrap();
-        assert!(!d.join(PG_DIR).exists());
-        let _ = std::fs::remove_dir_all(&d);
+        write(&d, 3130, &dbs).unwrap();
+        assert!(!dir.join("pgpass").exists() && !dir.join("root.crt").exists());
+        let mode = fs::metadata(dir.join(SERVICE_FILE))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o644);
+        write(&d, 3130, &[]).unwrap();
+        assert!(!dir.exists());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn only_the_service_file_variable_is_set() {
+        let e = env(Path::new("/workspace"));
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].0, "PGSERVICEFILE");
     }
 }

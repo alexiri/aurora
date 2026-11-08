@@ -48,6 +48,7 @@ the sandbox (`11 §The boot document`).
 |----------|------------------|------|---------|
 | `127.0.0.1:3128` (machine proxy) | boot token `aub_` | MITM | everything that reads `HTTPS_PROXY` from the container env: shells, background processes, tools started outside harness sessions |
 | `127.0.0.1:3129` (open proxy) | boot token, username `open` | open | browsers (configured in the Chromium wrapper); CONNECT only — absolute-form requests get 405 so it can never become an injecting proxy. (phase 1, RFE-003) **Started only when the boot document's `capabilities` contains `browser`** (`11 §The boot document`); otherwise nothing listens on 3129 and the Chromium wrapper reports "browsing is disabled for this workspace". |
+| `127.0.0.1:3130` (database relay, phase 2, P2-DBL-2, D-89) | boot token `aub_` as the PostgreSQL **password**, or the turn context credential `auc_` while exactly one turn is active | PostgreSQL | `psql service=<name>` and any libpq client (`PGSERVICEFILE`). Started only while the home sync carries `databases`; see §Database relay |
 | per-session ephemeral port | the session's **current turn context credential** `auc_` (boot token between turns) | MITM | the harness process of that conversation (its `HTTPS_PROXY` points here) |
 
 Context credentials therefore attribute every request made by a harness during
@@ -276,27 +277,39 @@ files whose checksum trailer fails (or that are new) are uploaded with
 optional YAML front matter). Invalid keys are reported back as a notice to the
 next turn. Files stay in place until superseded by the canonical render.
 
-## Database files (phase 2, P2-DBL-2, D-89)
+## Database relay and files (phase 2, P2-DBL-2, D-89)
 
 For each database connection the agent is granted (an app with a `database` section) the API puts
 `databases: [{service, connection_id}]` in the `render_inputs` entry of the home sync (`API_CONTRACTS`
 C-231), and the instruction file names the service under the account (`psql service=<name>`). The
-supervisor turns that list into libpq files under `.aurora/pg/` at boot and after every sync
-(`aurora-supervisor::pg`, C-232):
+supervisor turns that list into one file, `.aurora/pg/pg_service.conf` (`PGSERVICEFILE`, 0644,
+`aurora-supervisor::pg`, C-232): a section per service with `host=127.0.0.1`, `port=3130` (the
+relay), `user=<connection id>` and `sslmode=disable`. **No password file, no CA file, no credential
+of any kind is in the sandbox's files or environment**: agent processes never see a gateway
+credential (`11 §The boot document`, SEC-01). A `pgpass` or `root.crt` of an earlier version is
+removed on the next sync, and the directory goes with the last database grant.
 
-- `pg_service.conf` (`PGSERVICEFILE`): a section per service with the gateway's sandbox-side address
-  and verification name from the boot document, `user=<connection id>`, `sslmode=verify-full`,
-  `sslrootcert`, `passfile`;
-- `pgpass` (`PGPASSFILE`, 0600): `host:port:*:<connection id>:<gateway credential>`. The
-  password is the sandbox's **gateway credential** (the boot credential); the database password is
-  never in the sandbox;
-- `root.crt` (`PGSSLROOTCERT`): the gateway CA.
+**Database relay** (`aurora-supervisor::pgrelay`, `127.0.0.1:3130`, started while the installed home
+carries databases and stopped when none remain). Per client connection:
 
-Every agent process (harness session, `process_start`, gates) is started with the three variables, so
-`psql service=<name> -c 'select 1'` works with nothing on the command line. TLS is always verified
-(`verify-full`: the gateway presents its proxy certificate unless the SNI is the connection's
-`<id>.db.aurora.internal` name). With no database grant the directory is removed. A failure to write
-the files is logged and does not fail the sync. The sandbox image ships the `psql` client.
+1. `SSLRequest` and `GSSENCRequest` from the client are answered `N`: the loopback leg is plaintext,
+   the same documented exception as the HTTP forwarders.
+2. The relay validates that the user is a UUID, dials the gateway proxy address of the boot document,
+   sends `SSLRequest` and verifies TLS against `ca_pem` with the server name
+   `<connection_id>.db.aurora.internal` (the gateway presents a CA leaf for it, `06 §Database lane`).
+   Verification is never relaxed; on failure the client gets a FATAL `08006` and **no credential is
+   sent**.
+3. The client's `StartupMessage` (user = connection id) is forwarded. When the gateway asks for the
+   cleartext password the relay answers it itself with the credential the HTTP forwarders use: the boot
+   token, overridden by the turn context credential while exactly one turn is active (with several
+   concurrent turns a process cannot be attributed to one, so the boot token is used). The
+   authentication request is never passed to the client.
+4. From `AuthenticationOk` on, bytes are relayed untouched. A `CancelRequest` is forwarded over the
+   same verified TLS (the gateway maps its own keys).
+
+Every agent process (harness session, `process_start`, gates) is started with `PGSERVICEFILE`, so
+`psql service=<name> -c 'select 1'` works with nothing on the command line. A failure to write the
+file is logged and does not fail the sync. The sandbox image ships the `psql` client.
 
 ## Process manager
 

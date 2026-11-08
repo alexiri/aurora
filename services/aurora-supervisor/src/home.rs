@@ -27,7 +27,16 @@ use serde_json::{Map, Value};
 
 use crate::harvest::{INDEX_FILE, MEMORY_DIR, seal, verify};
 use crate::instructions::{RenderInputs, render};
-use crate::pg::{PgDatabase, PgGateway};
+use crate::pg::PgDatabase;
+
+/// The `databases` of an installed `render_inputs.json`.
+pub fn installed_databases(raw: &[u8]) -> Vec<PgDatabase> {
+    serde_json::from_slice::<Value>(raw)
+        .ok()
+        .and_then(|v| v.get("databases").cloned())
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default()
+}
 
 const AURORA_DIR: &str = ".aurora";
 const SYNC_DIR: &str = ".aurora/sync";
@@ -49,9 +58,9 @@ pub struct HomeConfig {
     pub skills_dir: Option<String>,
     /// Instruction file names, relative to the root.
     pub instruction_files: Vec<String>,
-    /// How this sandbox reaches the gateway; when set, the `databases` of the render inputs become
-    /// libpq files under `.aurora/pg` (`crate::pg`, P2-DBL-2).
-    pub pg: Option<PgGateway>,
+    /// Loopback port of the database relay; when set, the `databases` of the render inputs become
+    /// a libpq service file under `.aurora/pg` (`crate::pg`, P2-DBL-2).
+    pub pg: Option<u16>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -377,14 +386,10 @@ impl HomeProjector {
             Err(_) => return Ok(()),
         };
         let inputs: RenderInputs = serde_json::from_slice(&raw)?;
-        if let Some(gw) = &self.cfg.pg {
-            let dbs: Vec<PgDatabase> = serde_json::from_slice::<Value>(&raw)?
-                .get("databases")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or_default();
+        if let Some(port) = self.cfg.pg {
             // A failure here must not block the sync: the agent only loses `psql service=`.
-            if let Err(e) = crate::pg::write(&self.cfg.root, gw, &dbs) {
-                tracing::warn!(error = %e, "libpq files not written");
+            if let Err(e) = crate::pg::write(&self.cfg.root, port, &installed_databases(&raw)) {
+                tracing::warn!(error = %e, "libpq service file not written");
             }
         }
         let text = render(&inputs);

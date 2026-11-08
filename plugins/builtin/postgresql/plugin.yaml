@@ -87,9 +87,9 @@ apps:
         Each PostgreSQL connection granted to you is a libpq service. Use
         `psql service=<name> -c 'select 1'` (the name is listed under the account above), or
         any PostgreSQL driver with the service file the environment already points at
-        (`PGSERVICEFILE`, `PGPASSFILE`, `PGSSLROOTCERT`). Do not look for or ask for a database
-        password: you connect to the Aurora gateway, which holds the real login and checks every
-        statement.
+        (`PGSERVICEFILE`). Do not look for or ask for a database password: there is none for you;
+        the connection goes through the Aurora gateway, which holds the real login and checks
+        every statement.
         Reads (SELECT, SHOW, EXPLAIN) are allowed by default. INSERT/UPDATE/DELETE, schema changes
         (CREATE, ALTER, DROP) and administration (VACUUM, SET of server settings, DO, CALL, most
         functions) are held for a person's approval, and a refused statement answers with SQLSTATE

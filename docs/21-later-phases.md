@@ -56,9 +56,11 @@ tool catalogue and policy engine (all phase 0).
 - Prepared statement names and portals are tracked so server state stays
   consistent after a refusal; cancel requests use gateway-generated keys mapped
   to server keys that never leave the gateway.
-- Sandboxes get libpq service and password files (`PGSERVICEFILE`,
-  `PGPASSFILE`, `PGSSLROOTCERT`) per granted database connection through home
-  sync, so `psql service=<label>` works with no secrets on the command line.
+- Sandboxes get a libpq service file (`PGSERVICEFILE`) per granted database
+  connection through home sync, pointing at a loopback relay in the supervisor
+  that logs in to the gateway with the gateway credential (which no agent
+  process can read), so `psql service=<label>` works with no secrets on the
+  command line or in any file (P2-DBL-2, D-89).
 - The engine-agnostic core (policy mapping, approval, audit, dial) is separate
   from the Postgres wire adapter so a second engine is an adapter.
 

@@ -203,6 +203,12 @@ with the same set. The supervisor starts the open proxy `127.0.0.1:3129` **only
 if `browser` is present**; the gateway independently refuses the open lane for a
 credential without it (`06`). An image without the label never gets a tunnel.
 
+(phase 2, P2-DBL-2, D-89) While the home sync carries database connections the supervisor also
+listens on `127.0.0.1:3130`, a PostgreSQL relay that logs in to the gateway's database lane with the
+boot credential (or the turn context credential) as the password. The container environment gains
+only `PGSERVICEFILE` (set by the supervisor for the processes it starts); the boot credential stays
+out of every file and environment the agent can read (`12 §Database relay and files`).
+
 (phase 1, RFE-002) `gateway.proxy` is **always dialled with TLS**: the
 forwarder verifies the gateway's proxy certificate against `ca_pem` and the name
 `gateway.server_name` (default: the host part of `proxy`, which MUST be in the
