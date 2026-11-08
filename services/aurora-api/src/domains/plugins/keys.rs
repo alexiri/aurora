@@ -12,10 +12,12 @@ use uuid::Uuid;
 
 /// Base64 ed25519 public key of the Aurora project (publisher `aurora`).
 ///
-/// Phase 0 ships no project key: while this is empty, packages signed with
-/// `builtin` (or with a key claiming the project publisher) are refused. It is
-/// replaced at release time by the real key.
-pub const AURORA_PROJECT_PUBLIC_KEY: &str = "";
+/// Set by the owner on 2026-11-08. The private half is the GitHub Actions
+/// secret `AURORA_PROJECT_SIGNING_KEY` (environment `release`), used by the
+/// built-in package signing step (P2-CAT-0). Only packages of publisher
+/// `aurora` signed with this key (key id `builtin` or the key itself) are
+/// trusted as project packages; rotating it means a new release.
+pub const AURORA_PROJECT_PUBLIC_KEY: &str = "H+zP/3e/AvDIupz+XgxH31uErU7l4ySFFV9lv9qiOpk=";
 
 pub const REVOKED_REASON: &str = "signing_key_revoked";
 

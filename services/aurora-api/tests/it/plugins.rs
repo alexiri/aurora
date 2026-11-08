@@ -147,7 +147,7 @@ async fn untrusted_builtin_and_non_admin_refused() {
         v["error"]["details"]["violations"][0]["code"],
         "signature_untrusted"
     );
-    // `builtin` signatures are refused while no project key is compiled in.
+    // A `builtin` signature made with any key other than the compiled-in project key is refused.
     let mut b = PackageBuilder::new(&yaml("aurora", "1.0.0", &["api.acme.example"]));
     b.sign(&k, "builtin");
     let (s, v) = a.upload(&b.build().unwrap()).await;
