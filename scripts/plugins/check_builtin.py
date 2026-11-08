@@ -11,17 +11,26 @@ import json
 import os
 import subprocess
 import sys
+import tarfile
+import tempfile
 from urllib.parse import urlsplit
 
 import yaml
 
 
-def run(aurora, *args):
-    p = subprocess.run([aurora, "plugin", *args], capture_output=True, text=True, timeout=300)
+def run(aurora, *args, timeout=300):
+    p = subprocess.run([aurora, "plugin", *args], capture_output=True, text=True, timeout=timeout)
     return p.returncode, p.stdout, p.stderr
 
 
 def check_package(aurora, pdir):
+    # Build the archive once (`aurora plugin build` compiles hooks/ to hooks.wasm for a package
+    # with hooks), then run every check on that archive: what is checked is what ships.
+    with tempfile.TemporaryDirectory(prefix="check-builtin-") as tmp:
+        return check_archive(aurora, pdir, os.path.join(tmp, "package.aurora-plugin"))
+
+
+def check_archive(aurora, pdir, archive):
     errs = []
     name = os.path.basename(pdir.rstrip("/"))
 
@@ -35,14 +44,29 @@ def check_package(aurora, pdir):
     if manifest["package"]["publisher"] != "aurora":
         err("publisher must be `aurora` (the project key only signs that publisher)")
 
+    hooks = (manifest.get("permissions") or {}).get("hooks") or []
+
+    # 0. build: hooks/ (source crate) is compiled to hooks.wasm; the archive carries hooks.wasm
+    # exactly when permissions.hooks is non-empty
+    rc, out, serr = run(aurora, "build", pdir, "--out", archive, timeout=1800)
+    if rc != 0:
+        err(f"aurora plugin build failed:\n{serr or out}")
+        return errs
+    with tarfile.open(archive) as tf:
+        members = tf.getnames()
+    if ("hooks.wasm" in members) != bool(hooks):
+        err(f"archive {'lacks' if hooks else 'contains'} hooks.wasm but permissions.hooks is "
+            f"{'non-empty' if hooks else 'empty'}")
+        return errs
+
     # 1. validate (unsigned allowed: the release pipeline signs)
-    rc, out, _ = run(aurora, "validate", pdir, "--allow-unsigned")
+    rc, out, _ = run(aurora, "validate", archive, "--allow-unsigned")
     if rc != 0:
         err(f"aurora plugin validate failed:\n{out}")
         return errs
 
     # 2. test
-    rc, out, serr = run(aurora, "test", pdir)
+    rc, out, serr = run(aurora, "test", archive)
     try:
         report = json.loads(out)
     except ValueError:
@@ -54,7 +78,7 @@ def check_package(aurora, pdir):
         err("aurora plugin test failed: " + "; ".join(f"{r['name']}: {r.get('failures')}" for r in bad[:5]))
         return errs
     if fx.get("skipped"):
-        err("fixtures were skipped; built-ins have no hooks, every case must run")
+        err("fixtures were skipped; every case, hook cases included, must run")
 
     # fixtures, in the runner's order (files sorted by name, cases in file order)
     cases = []
@@ -70,8 +94,43 @@ def check_package(aurora, pdir):
 
     for app in manifest["apps"]:
         check_app(app, paired, err)
-    check_docs(aurora, pdir, err)
+    check_hooks(manifest, hooks, paired, err)
+    check_docs(aurora, archive, err)
     return errs
+
+
+def hook_steps(c):
+    """The `expect` of every call of a hook case (one, or one per `steps` entry)."""
+    h = c["hook"]
+    return [s.get("expect") or {} for s in h["steps"]] if h.get("steps") else [h.get("expect") or {}]
+
+
+def check_hooks(manifest, hooks, paired, err):
+    """Coverage of hook points (docs/09 §8): every declared point has a passing success case and,
+    except approval.summarize, a passing failure case; every egress host is reached by a recorded
+    request; egress enforcement is shown by a denied case. Hook cases for undeclared points fail."""
+    cases = [(c, r) for c, r in paired if c.get("hook")]
+    for c, _ in cases:
+        if c["hook"].get("point") not in hooks:
+            err(f"hook case `{c['name']}` targets `{c['hook'].get('point')}`, which permissions.hooks does not declare")
+    egress = (manifest.get("permissions") or {}).get("egress") or {}
+    for point in hooks:
+        mine = [(c, r) for c, r in cases if c["hook"].get("point") == point and r["status"] == "pass"]
+        if not any(all("error" not in e for e in hook_steps(c)) for c, _ in mine):
+            err(f"hook {point}: no passing fixture where the hook succeeds")
+        if point != "approval.summarize" and not any(
+                any("error" in e for e in hook_steps(c)) for c, _ in mine):
+            err(f"hook {point}: no passing fixture where the hook fails (an `expect: {{ error: ... }}` case)")
+        hosts = egress.get(point) or []
+        for pattern in hosts:
+            if not any(fnmatch.fnmatchcase(url_parts(rec["request"]["url"])[0], pattern.lower())
+                       for c, _ in mine for rec in c["hook"].get("http_cassette") or []):
+                err(f"hook {point}: egress host {pattern} is not reached by any recorded request (http_cassette)")
+        if hosts and not any(c["hook"].get("egress_override") is not None
+                             and any(e.get("error") == "egress-denied" for e in hook_steps(c))
+                             for c, _ in mine):
+            err(f"hook {point}: no fixture shows egress outside the allow-list being denied "
+                "(`egress_override` + `expect: { error: egress-denied }`)")
 
 
 def url_parts(url):

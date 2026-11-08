@@ -14,10 +14,20 @@ fi
 export AURORA_GATEWAY_BIN="${AURORA_GATEWAY_BIN:-$ROOT/target/debug/aurora-gateway}"
 AURORA="${AURORA_BIN:-$ROOT/target/debug/aurora}"
 
+# Besides plugins/builtin/*, the test-only built-in-shaped packages that prove framework features
+# are checked too (plugins/fixtures/hook-example: hook-capable built-ins, P2-CAT-H). They are never
+# shipped: scripts/plugins/build-builtin.sh only packs plugins/builtin/*.
+EXTRA=(plugins/fixtures/hook-example)
+
 dirs=()
 if [ "$#" -gt 0 ]; then
-  for p in "$@"; do dirs+=("plugins/builtin/$p"); done
+  for p in "$@"; do
+    if [ -d "plugins/builtin/$p" ]; then dirs+=("plugins/builtin/$p")
+    elif [ -d "plugins/fixtures/$p" ]; then dirs+=("plugins/fixtures/$p")
+    else echo "no such built-in package: $p" >&2; exit 2; fi
+  done
 else
   for d in plugins/builtin/*/; do dirs+=("${d%/}"); done
+  dirs+=("${EXTRA[@]}")
 fi
 exec python3 -I scripts/plugins/check_builtin.py "$AURORA" "${dirs[@]}"

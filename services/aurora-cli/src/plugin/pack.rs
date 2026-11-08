@@ -83,16 +83,98 @@ pub fn identity(dir: &Path) -> Result<Identity> {
     })
 }
 
-/// Build the archive bytes from `dir`; `hooks.wasm` is never compiled here (I-02).
+/// Compile the hook guest crate at `src` (a standalone cargo project whose `cdylib` implements
+/// `aurora-plugin-sdk`'s hooks) to a WebAssembly component for `wasm32-wasip2` and return it.
+/// `--locked` keeps the build reproducible: `Cargo.lock` is part of the source. The target
+/// directory is cargo's default (`<src>/target`) or `CARGO_TARGET_DIR` when the caller sets it.
+fn compile_hooks(src: &Path) -> Result<Vec<u8>> {
+    use std::process::{Command, Stdio};
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let out = Command::new(&cargo)
+        .current_dir(src)
+        .args([
+            "build",
+            "--release",
+            "--locked",
+            "--target",
+            "wasm32-wasip2",
+            "--message-format=json-render-diagnostics",
+        ])
+        // The host's link flags (lld, ...) are for native targets only.
+        .env("RUSTFLAGS", "")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .stderr(Stdio::inherit())
+        .output()
+        .with_context(|| {
+            format!(
+                "cannot run {} (is the Rust toolchain installed?)",
+                cargo.to_string_lossy()
+            )
+        })?;
+    if !out.status.success() {
+        bail!(
+            "compiling {} failed (needs the `wasm32-wasip2` target: `rustup target add wasm32-wasip2`, \
+             and a committed Cargo.lock)",
+            src.display()
+        );
+    }
+    let mut wasm: Vec<std::path::PathBuf> = Vec::new();
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v["reason"] != "compiler-artifact"
+            || !v["target"]["kind"]
+                .as_array()
+                .is_some_and(|k| k.iter().any(|k| k == "cdylib"))
+        {
+            continue;
+        }
+        for f in v["filenames"].as_array().into_iter().flatten() {
+            if let Some(p) = f.as_str().filter(|p| p.ends_with(".wasm")) {
+                wasm.push(p.into());
+            }
+        }
+    }
+    let [path] = wasm.as_slice() else {
+        bail!(
+            "{}: expected exactly one cdylib (`crate-type = [\"cdylib\"]`) producing a .wasm, found {}",
+            src.display(),
+            wasm.len()
+        );
+    };
+    std::fs::read(path).with_context(|| path.display().to_string())
+}
+
+/// Build the archive bytes from `dir`. A package that declares hooks ships `hooks.wasm`: either
+/// compiled from the source project in `<dir>/hooks/` (built-ins, docs/09 §12), or a prebuilt
+/// `<dir>/hooks.wasm` (never both).
 pub fn build_dir(dir: &Path, key: Option<&SigningKey>) -> Result<Vec<u8>> {
     let id = identity(dir)?;
-    if id.has_hooks && !dir.join("hooks.wasm").is_file() {
+    let src = dir.join("hooks");
+    let compiled = if src.join("Cargo.toml").is_file() {
+        if !id.has_hooks {
+            bail!("hooks/ holds a hook guest crate but permissions.hooks is empty in plugin.yaml");
+        }
+        if dir.join("hooks.wasm").exists() {
+            bail!(
+                "both hooks/ (source) and hooks.wasm exist: keep only the source, the build compiles it"
+            );
+        }
+        Some(compile_hooks(&src)?)
+    } else {
+        None
+    };
+    if id.has_hooks && compiled.is_none() && !dir.join("hooks.wasm").is_file() {
         bail!(
-            "permissions.hooks is non-empty but hooks.wasm is missing: compile it with \
-             `cargo component build --release --target wasm32-wasip2` and copy it next to plugin.yaml"
+            "permissions.hooks is non-empty but there is no hook guest: put the crate in hooks/ \
+             (Cargo.toml with crate-type cdylib, Cargo.lock) or a prebuilt hooks.wasm next to plugin.yaml"
         );
     }
     let mut b = builder_from_dir(dir)?;
+    if let Some(w) = &compiled {
+        b.set_file("hooks.wasm", w);
+    }
     if let Some(k) = key {
         b.sign(k, &PackageBuilder::key_id(k));
     }

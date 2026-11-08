@@ -215,7 +215,9 @@ pub fn test(path: &Path, pubkeys: &[PathBuf], reserved: &Reserved, core: &str) -
     let mut out = json!({ "validate": { "ok": v.is_empty(), "violations": violations_json(&v) } });
     if ok {
         let c = compiled(&pkg, core)?;
-        let r = run_check_snapshot(&pkg, &c.json)?;
+        let mut r = run_check_snapshot(&pkg, &c.json)?;
+        // The gateway runner reports `hook:` cases as skipped; run them in the embedded hook host.
+        super::hooktest::run_into_report(&pkg, &c.json, &mut r)?;
         ok = r["ok"].as_bool().unwrap_or(false);
         out["compile"] = json!({ "ok": true, "snapshot_hash": c.hash });
         out["fixtures"] = r;

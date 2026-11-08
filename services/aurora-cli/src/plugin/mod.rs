@@ -2,6 +2,7 @@
 //! offline; validation, compilation and fixture runs reuse the registry and gateway code.
 
 mod cmds;
+mod hooktest;
 mod pack;
 
 use anyhow::Result;

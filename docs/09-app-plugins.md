@@ -697,11 +697,14 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
   `log` helpers, and test utilities (recorded HTTP cassettes, sample inputs).
 - `aurora plugin` (CLI subcommands):
   - `new <id>` — scaffold a package;
-  - `build` — compile `hooks.wasm` (cargo component build) and assemble;
+  - `build` — compile the guest crate in `hooks/` (`cargo build --release --locked --target
+    wasm32-wasip2`; a cdylib on that target already is a component, no `cargo component`) into
+    `hooks.wasm`, or take a prebuilt `hooks.wasm`, and assemble (D-76);
   - `validate` — run the linter;
   - `compile` — print the snapshot fragment this package contributes;
   - `test` — run `tests/*.yaml` through `aurora-gateway check-snapshot` and
-    hooks through an embedded hook-host runtime against recorded HTTP;
+    hooks through an embedded hook-host runtime against recorded HTTP (`hook:` cases with an
+    `http_cassette`; format in `plugins/builtin/README.md`);
   - `sign --key <file>` — write `SIGNATURE`; `keygen` — create an ed25519 pair;
   - `docs` — render setup guide + permissions table to HTML/Markdown.
 

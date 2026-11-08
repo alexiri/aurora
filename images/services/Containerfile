@@ -65,6 +65,13 @@ sccache --show-stats || true
 sccache --stop-server >/dev/null 2>&1 || true
 exit $rc
 WRAP
+# P2-CAT-H: hook-capable built-ins compile their guest crate to a WebAssembly component
+# (`aurora plugin build`, docs/09 §12). The only extra toolchain is the wasm32-wasip2 rust-std of
+# this image's own rustc (no `cargo component`: a cdylib on wasm32-wasip2 is already a component).
+# rustup downloads it over HTTPS and verifies its SHA-256 against the channel manifest of the
+# pinned toolchain; it lives in the build stages only. Installed here (not in plugin-archives) so
+# this layer is cached across source changes.
+RUN rustup target add wasm32-wasip2 && rustc --version && rustup target list --installed
 WORKDIR /build
 ENV SQLX_OFFLINE=true CARGO_TERM_COLOR=never CARGO_INCREMENTAL=0 \
     RUSTFLAGS="-C link-arg=-fuse-ld=lld"
@@ -114,8 +121,26 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/root/.cache/sccache \
     with-sccache cargo build --release --locked -p aurora-cli
+# Step 1 compiles: `aurora plugin build` runs `cargo build --locked --target wasm32-wasip2` over the
+# hook guest crate of every built-in that has hooks (plugins/builtin/<id>/hooks), which executes
+# third-party build scripts and proc-macros. So this step has NO access to the signing key. The
+# hook example (plugins/fixtures/hook-example, test-only, never shipped) is compiled too, so a
+# broken wasm toolchain fails this image build even while no built-in has hooks yet.
+# The toolchain (the wasm32-wasip2 rust-std, installed in the `chef` stage) exists only in these
+# build stages; the `api` runtime image below copies nothing but /out-plugins.
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/root/.cache/sccache \
+    --mount=type=secret,id=actions_results_url \
+    --mount=type=secret,id=actions_runtime_token \
+    with-sccache sh -c 'set -eu; \
+      bash scripts/plugins/build-builtin.sh --build-only --out /out-plugins --aurora target/release/aurora; \
+      target/release/aurora plugin build plugins/fixtures/hook-example --out /tmp/hook-example.aurora-plugin; \
+      tar -tzf /tmp/hook-example.aurora-plugin | grep -qx hooks.wasm; \
+      echo "hook toolchain ok: hooks.wasm compiled and packed"; rm -f /tmp/hook-example.aurora-plugin'
+# Step 2 signs the archives of step 1 (no cargo runs here, the key never meets build code).
 RUN --mount=type=secret,id=aurora_project_signing_key,required=false \
-    bash scripts/plugins/build-builtin.sh --out /out-plugins --aurora target/release/aurora \
+    bash scripts/plugins/build-builtin.sh --sign-only --out /out-plugins --aurora target/release/aurora \
       --key-file /run/secrets/aurora_project_signing_key
 
 FROM gcr.io/distroless/cc-debian12:nonroot AS api

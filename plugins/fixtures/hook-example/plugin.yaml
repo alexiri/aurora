@@ -1,0 +1,47 @@
+package:
+  id: hook-example
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: Hook example
+  description: Test-only, built-in-shaped package with a token.mint and an approval.summarize hook (P2-CAT-H); never shipped
+permissions:
+  hooks: [token.mint, approval.summarize]
+  egress:
+    token.mint: [auth.hook-example.example.test]
+apps:
+  - about:
+      id: hook-example
+      name: Hook example
+      description: Service whose short-lived token is minted by a plugin hook
+      category: testing
+      web_hosts: [app.hook-example.example.test]
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: installation_id }
+    connect:
+      - id: installation
+        kind: fields
+        fields:
+          - { name: installation_id, label: Installation ID, type: text, store: credentials, required: true }
+    hosts:
+      - match: { host: api.hook-example.example.test }
+        inject:
+          - bearer: "{credentials.access_token}"
+    token:
+      kind: hook
+      max_lifetime_secs: 3600
+    tools:
+      read:
+        items:
+          - { id: list_items, name: List items, host: api.hook-example.example.test, path: /v1/items, methods: [GET] }
+      write:
+        items:
+          - { id: create_item, name: Create item, host: api.hook-example.example.test, path: /v1/items, methods: [POST] }
+    approvals:
+      create_item:
+        title: Create item
+        fields:
+          - { label: Name, source: body, steps: [ { json: /name } ] }
+        summarize: hook

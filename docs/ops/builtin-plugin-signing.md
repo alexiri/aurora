@@ -23,9 +23,12 @@ Nobody else needs the private key, and it is never committed. Rotating it means 
    0600 temp file in `$RUNNER_TEMP` (an empty file when the secret is absent).
 2. The file is passed to the image build as the secret `aurora_project_signing_key`
    (`secret-files`). Nothing is passed as an argument or logged.
-3. In the Containerfile stage `plugin-archives`, `scripts/plugins/build-builtin.sh` builds each
-   package, runs `aurora plugin sign <archive> --key <file>` and then verifies the archive against
-   the public key in `keys.rs`. A secret that is not the private half of that key fails the build.
+3. In the Containerfile stage `plugin-archives` two steps run. First `build-builtin.sh --build-only`
+   builds each package (a package with hooks compiles its `hooks/` crate for `wasm32-wasip2` with
+   third-party build scripts, so this step has **no secret**; D-76). Then `build-builtin.sh
+   --sign-only` runs `aurora plugin sign <archive> --key <file>` on those archives (no cargo runs) and
+   verifies each against the public key in `keys.rs`. A secret that is not the private half of that
+   key fails the build.
 4. The job deletes the temp file (`if: always()`).
 5. **No secret** (for example a fork, or the secret was not created): signing is skipped with a
    warning (`signing SKIPPED ...`), the archives are unsigned, and the API refuses them. Production

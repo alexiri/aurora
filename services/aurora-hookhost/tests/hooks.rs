@@ -125,6 +125,7 @@ async fn setup() -> Option<Env> {
         .await;
     let rt = Runtime::new(FetchPolicy {
         insecure_local: true,
+        ..Default::default()
     })
     .unwrap();
     let catalog = Catalog::new(&api.uri(), bearer(), rt);

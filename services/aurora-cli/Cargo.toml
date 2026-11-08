@@ -17,6 +17,8 @@ path = "src/main.rs"
 clap = { workspace = true }
 aurora-client = { workspace = true }
 aurora-crypto = { workspace = true }
+# the embedded hook-host runtime of `aurora plugin test` (docs/09 §12)
+aurora-hookhost = { workspace = true }
 aurora-policy = { workspace = true }
 aurora-registry = { workspace = true }
 ed25519-dalek = { workspace = true }

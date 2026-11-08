@@ -9,7 +9,7 @@ package:
 permissions:
   hooks: [connect.authorize, connect.exchange, token.mint, approval.summarize]
   egress:
-    connect.exchange: [auth.hooks.example.test]
+    connect.exchange: [auth.hooks.example.test, app.hooks.example.test]  # the second is the continue-url host
     token.mint: [auth.hooks.example.test]
   context: [org_id, instance_url]
 apps:

@@ -27,6 +27,82 @@ pub struct FetchResponse {
 pub struct FetchPolicy {
     /// Allow `http://` and loopback/private destinations (tests only).
     pub insecure_local: bool,
+    /// Recorded responses (`aurora plugin test`): requests that pass every egress check below are
+    /// answered from the cassette instead of the network. Production never sets it.
+    pub cassette: Option<Cassette>,
+}
+
+/// One recorded exchange.
+#[derive(Debug)]
+struct CassetteEntry {
+    method: String,
+    url: String,
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+    used: bool,
+}
+
+/// `(method, url, status, headers, body)` of one recorded exchange.
+pub type Recorded = (String, String, u16, Vec<(String, String)>, Vec<u8>);
+
+/// Recorded HTTP, replayed in order: each request consumes the first unused entry with the same
+/// method and URL. Clones share state, so one cassette spans several calls of a case.
+#[derive(Debug, Clone, Default)]
+pub struct Cassette(std::sync::Arc<std::sync::Mutex<Vec<CassetteEntry>>>);
+
+fn norm_url(u: &str) -> String {
+    reqwest::Url::parse(u).map_or_else(|_| u.to_owned(), |p| p.to_string())
+}
+
+impl Cassette {
+    /// `(method, url, status, headers, body)` per entry.
+    pub fn new(entries: Vec<Recorded>) -> Self {
+        let c = Self::default();
+        c.reset(entries);
+        c
+    }
+
+    /// Replace the recorded entries (a runtime keeps one cassette across the cases of a package).
+    pub fn reset(&self, entries: Vec<Recorded>) {
+        let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        *g = entries
+            .into_iter()
+            .map(|(m, u, status, headers, body)| CassetteEntry {
+                method: m.to_ascii_uppercase(),
+                url: norm_url(&u),
+                status,
+                headers,
+                body,
+                used: false,
+            })
+            .collect();
+    }
+
+    fn replay(&self, method: &str, url: &str) -> Result<FetchResponse, FetchFail> {
+        let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let e = g
+            .iter_mut()
+            .find(|e| !e.used && e.method == method && e.url == url)
+            .ok_or_else(|| {
+                FetchFail::Network(format!("no recorded response for {method} {url}"))
+            })?;
+        e.used = true;
+        Ok(FetchResponse {
+            status: e.status,
+            headers: e.headers.clone(),
+            body: e.body.clone(),
+        })
+    }
+
+    /// `METHOD url` of every recorded entry that no request consumed.
+    pub fn unused(&self) -> Vec<String> {
+        let g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        g.iter()
+            .filter(|e| !e.used)
+            .map(|e| format!("{} {}", e.method, e.url))
+            .collect()
+    }
 }
 
 fn v4_public(a: Ipv4Addr) -> bool {
@@ -116,7 +192,8 @@ impl Egress {
                 "host `{host}` not in egress list"
             )));
         }
-        let method = match method.to_ascii_uppercase().as_str() {
+        let method_name = method.to_ascii_uppercase();
+        let method = match method_name.as_str() {
             "GET" => reqwest::Method::GET,
             "POST" => reqwest::Method::POST,
             "PUT" => reqwest::Method::PUT,
@@ -130,6 +207,9 @@ impl Egress {
             .is_some_and(|b| b.len() > HOOK_FETCH_RESPONSE_MAX)
         {
             return Err(FetchFail::TooLarge);
+        }
+        if let Some(c) = &self.policy.cassette {
+            return c.replay(&method_name, url.as_str());
         }
         let host_bare = host.trim_start_matches('[').trim_end_matches(']');
         let addrs: Vec<SocketAddr> = if let Ok(ip) = host_bare.parse::<IpAddr>() {
@@ -208,6 +288,63 @@ fn map_err(e: reqwest::Error) -> FetchFail {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rec(method: &str, url: &str, status: u16, body: &str) -> Recorded {
+        (
+            method.into(),
+            url.into(),
+            status,
+            vec![],
+            body.as_bytes().to_vec(),
+        )
+    }
+
+    #[tokio::test]
+    async fn cassette_replays_in_order_after_the_egress_checks() {
+        let cassette = Cassette::new(vec![
+            rec("post", "https://auth.example.test/mint", 200, "one"),
+            rec("POST", "https://auth.example.test/mint", 200, "two"),
+            rec("GET", "https://auth.example.test/never", 200, ""),
+        ]);
+        let e = Egress::new(
+            &["auth.example.test".to_owned()],
+            FetchPolicy {
+                insecure_local: false,
+                cassette: Some(cassette.clone()),
+            },
+        );
+        let t = Duration::from_secs(1);
+        let url = "https://auth.example.test/mint";
+        assert_eq!(
+            e.fetch("POST", url, &[], None, t).await.unwrap().body,
+            b"one"
+        );
+        assert_eq!(
+            e.fetch("POST", url, &[], None, t).await.unwrap().body,
+            b"two"
+        );
+        // exhausted: no network fallback
+        assert!(matches!(
+            e.fetch("POST", url, &[], None, t).await,
+            Err(FetchFail::Network(m)) if m.contains("no recorded response")
+        ));
+        // the recording never widens egress: https, host list and credentials still apply
+        assert!(matches!(
+            e.fetch("GET", "http://auth.example.test/never", &[], None, t)
+                .await,
+            Err(FetchFail::Denied(_))
+        ));
+        assert!(matches!(
+            e.fetch("GET", "https://other.example.test/never", &[], None, t)
+                .await,
+            Err(FetchFail::Denied(_))
+        ));
+        assert_eq!(
+            cassette.unused(),
+            vec!["GET https://auth.example.test/never"]
+        );
+    }
+
     #[test]
     fn guard() {
         for ip in [
