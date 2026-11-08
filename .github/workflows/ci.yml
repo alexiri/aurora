@@ -244,11 +244,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      # OPS-023: sccache's GitHub Actions cache backend needs the runner's cache URL/token, which only actions
-      # (not `run:` steps) can see. They go into the build as BuildKit SECRETS (files under /run/secrets for the
-      # compile RUN steps only), never as build args: nothing lands in a layer, the cache export or provenance.
-      - name: expose the Actions cache runtime (for sccache)
-        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      # No sccache GitHub Actions backend here (OPS-023 measured it: 0 hits on consecutive runs and the builder
+      # went from ~15 to ~32 min, because its entries compete with the layer cache for the repository's 10 GB
+      # Actions cache). The Containerfile's with-sccache then uses its local directory, which CI does not keep.
       - name: build the shared Rust builder stage (no push)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -256,9 +254,6 @@ jobs:
           file: images/services/Containerfile
           target: builder
           push: false
-          secrets: |
-            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
-            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
           cache-from: type=gha,scope=services
           cache-to: type=gha,scope=services,mode=max
 
@@ -299,11 +294,6 @@ jobs:
           fi
           echo "newest=$newest" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      # OPS-023: sccache's GitHub Actions cache backend needs the runner's cache URL/token, which only actions
-      # (not `run:` steps) can see. They go into the build as BuildKit SECRETS (files under /run/secrets for the
-      # compile RUN steps only), never as build args: nothing lands in a layer, the cache export or provenance.
-      - name: expose the Actions cache runtime (for sccache)
-        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
       - &images-login
         name: log in to ghcr.io (publishing runs only)
         if: steps.prep.outputs.push == 'true'
@@ -337,9 +327,6 @@ jobs:
           file: images/services/Containerfile
           target: ${{ matrix.image }}
           push: ${{ steps.prep.outputs.push == 'true' }}
-          secrets: |
-            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
-            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=services

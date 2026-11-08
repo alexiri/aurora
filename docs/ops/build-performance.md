@@ -220,7 +220,8 @@ CI timings (`ghcr.io` publish, cold and warm gha cache) are recorded here after 
    verified per architecture) in the `chef` stage; the cargo-chef `cook` and the release `build` run through
    `with-sccache`, which sets `RUSTC_WRAPPER=sccache` and prints `sccache --show-stats` at the end of the step.
    - Local / plain `podman build`: `--mount=type=cache,target=/root/.cache/sccache`.
-   - CI: GitHub Actions cache backend (`SCCACHE_GHA_ENABLED`). `crazy-max/ghaction-github-runtime` exposes
+   - CI: **removed after measuring** (see "CI measurement" below). What follows describes the mechanism as it
+     was built, kept for reference: GitHub Actions cache backend (`SCCACHE_GHA_ENABLED`). `crazy-max/ghaction-github-runtime` exposes
      `ACTIONS_RESULTS_URL` / `ACTIONS_RUNTIME_TOKEN`, which `docker/build-push-action` passes as BuildKit
      **secrets** (`actions_results_url`, `actions_runtime_token`, `images-builder` and `images-services`). They are
      mounted as files for those two RUN steps only. Not build args, so not in a layer, the `type=gha` layer cache or the
@@ -253,16 +254,23 @@ still took 8.5 min, because the six service binaries (never cacheable: `crate-ty
 contract and was not changed. If the CI numbers confirm that linking dominates, the next options are
 `lto = false` for the connector/fake binaries or building the six binaries in parallel jobs; neither is done here.
 
-### CI measurement (to be filled in by the coordinator after the first pushes)
+### CI measurement
 
-| Push | `images-builder` before | after | sccache hits |
-|---|---|---|---|
-| baseline (run 42400978710, `COPY . .` invalidated) | 15.5 min, 782 s compiling | | |
-| first push with this change (cold GHA cache) | | | |
-| `aurora-api`-only change | | | |
-| `aurora-db` change | | | |
+| Run | `images-builder` | cook step (deps) | build step (workspace) | sccache hits |
+|---|---|---|---|---|
+| 42400978710 (baseline, before OPS-023) | 15.5 min | layer cached | 782 s | — |
+| 42417975590 (first run with the GHA backend) | 32.2 min | 10 m 01 s, recompiled | 17 m 10 s | 0 / 909 (cook), 0 / 20 (build) |
+| 42422594408 (next push) | 32.0 min | 10 m 19 s, recompiled again | 17 m 39 s | 0 / 909, 0 / 20 |
 
-What to check on the first CI run: jobs `images-builder` and `images-services (*)`; in the step
+**Result: removed from CI** (2026-11-08). The backend never hit across consecutive runs, and the cook layer that
+the BuildKit `type=gha` cache had kept before (~44 s) was rebuilt every time. The repository's Actions cache is
+capped at 10 GB and was already at ~10.8 GB (BuildKit layers 6.9 GB, the `rust-build` job's Rust cache 3.9 GB), so
+sccache's entries and the layer cache evicted each other. `ci.yml` no longer exposes the Actions runtime or passes
+the secrets; `with-sccache` then uses its local directory (empty in CI, negligible cost). Local builds keep sccache
+through the cache mount. If CI image time matters again: shrink what competes for the 10 GB (e.g. `mode=min` for
+the layer cache, or a smaller Rust cache), or move the release link out of the critical path (see the finding above).
+
+Original checklist for a CI run with the backend (kept for reference): jobs `images-builder` and `images-services (*)`; in the step
 "build the shared Rust builder stage (no push)" the log lines `with-sccache: backend = GitHub Actions cache` (twice:
 cook and build) and the `sccache --show-stats` blocks (`Cache hits`, `Cache misses`, `Cache write errors`,
 `Cache location  ... GitHub Actions`). Cold run: all misses, writes without errors. Second push: hits on every
