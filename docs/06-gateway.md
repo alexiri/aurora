@@ -145,7 +145,9 @@ absolute-form request (the identity cache carries the inputs; no DB on the hot p
    identity (invalidated by scopes `agent`, `workspace`, `org`); on such an
    invalidation the gateway closes the live tunnels and WebSockets of the affected
    BYO credentials and answers requests held for approval with 403 `byo_disabled`
-   (approvals `abandoned`), exactly as for `frozen`.
+   (approvals `abandoned`), exactly as for `frozen`. The order is: the 403 is
+   answered, the approval is abandoned (never released upstream), then the tunnel
+   closes (D-97).
 2. **Source address.** If the agent has an **effective source list**
    (`08 §11.9`), the client address must lie inside one of its CIDRs, else **403
    `source_not_permitted`** (`details.source` = the address the gateway saw,

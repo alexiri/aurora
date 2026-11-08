@@ -95,6 +95,9 @@ struct Target {
     port: u16,
     /// Closes the tunnel (and its WebSockets) when its BYO admission changes (RFE-025).
     kill: Option<watch::Receiver<bool>>,
+    /// The answer owed to in-flight requests when the tunnel is closed by a freeze or a BYO
+    /// tightening (P2-FU-2); set before `kill` fires.
+    closed_by: Option<crate::byo::ClosedByRx>,
 }
 
 impl Proxy {
@@ -160,6 +163,37 @@ impl Proxy {
         }
     }
 
+    /// (P2-FU-2) The answer of a request caught in the pipeline by a freeze or BYO tightening:
+    /// the refusal a new request would get, counted in the same refusal counter, then the
+    /// connection closes after it (`Connection: close`; a tunnel is shut by its task).
+    fn answer_closed(
+        &self,
+        t: &Target,
+        c: &crate::byo::ClosedBy,
+        method: &str,
+        http1: bool,
+    ) -> Response<Body> {
+        match c.reason {
+            None => metrics::counter!("aurora_gateway_frozen_refused_total").increment(1),
+            Some(reason) => {
+                metrics::counter!("aurora_gateway_byo_refused_total", "reason" => reason.label())
+                    .increment(1);
+                if self.refusals.should_log(t.identity.credential_id) {
+                    self.handler
+                        .byo_refused(&t.identity, method, &t.host, reason, &c.error);
+                }
+            }
+        }
+        let mut res = guidance::response(&c.error);
+        if http1 {
+            res.headers_mut().insert(
+                http::header::CONNECTION,
+                http::HeaderValue::from_static("close"),
+            );
+        }
+        res
+    }
+
     fn track(&self) -> LiveGuard {
         self.live.count.fetch_add(1, Ordering::SeqCst);
         LiveGuard(self.live.clone())
@@ -212,9 +246,18 @@ impl Proxy {
             }
         };
         let body: Body = body.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync();
-        let outcome = self
-            .handler
-            .handle(PipelineRequest {
+        let method_name = parts.method.as_str().to_owned();
+        let http1 = parts.version <= http::Version::HTTP_11;
+        let mut closed_by = t.closed_by.clone();
+        // (P2-FU-2) A freeze or BYO tightening that arrives while the request is in the pipeline
+        // (held for approval, among others) refuses it with the admission answer. Dropping the
+        // pipeline future abandons its approval and never releases it upstream.
+        let outcome = tokio::select! {
+            biased;
+            c = crate::byo::closed_by(&mut closed_by) => {
+                return self.answer_closed(t, &c, &method_name, http1);
+            }
+            o = self.handler.handle(PipelineRequest {
                 identity: t.identity.clone(),
                 lane: t.lane,
                 scheme: t.scheme,
@@ -227,8 +270,8 @@ impl Proxy {
                 aurora_headers,
                 upgrade,
                 body,
-            })
-            .await;
+            }) => o,
+        };
         let prepared = match outcome {
             Outcome::Respond(r) => return r,
             Outcome::Forward(p) => p,

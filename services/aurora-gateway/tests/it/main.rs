@@ -8,6 +8,7 @@ mod credentials;
 mod database;
 mod governance;
 mod governance_db;
+mod held_closure;
 mod hold;
 mod listener_binds;
 mod open_lane;

@@ -27,6 +27,13 @@ impl Proxy {
         if let Err(e) = self.byo_gate(&identity, client, req.method().as_str(), &host) {
             return guidance::response(&e);
         }
+        // (P2-FU-2) Registered for the request's life so that a freeze or BYO tightening
+        // refuses it if it is held for approval at that moment.
+        let guard = self
+            .byo
+            .tunnels
+            .as_ref()
+            .and_then(|r| r.register(&identity, client));
         let t = Target {
             identity,
             lane,
@@ -34,7 +41,10 @@ impl Proxy {
             host,
             port,
             kill: None,
+            closed_by: guard.as_ref().map(crate::byo::TunnelGuard::closed_by),
         };
-        self.process(&t, req).await
+        let res = self.process(&t, req).await;
+        drop(guard);
+        res
     }
 }

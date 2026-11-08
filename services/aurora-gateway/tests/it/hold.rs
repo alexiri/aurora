@@ -6,13 +6,14 @@ use aurora_config::{LlmSection, SecretsSection};
 use aurora_core::Secret;
 use aurora_db::repo::gateway::{PolicyRuleRow, RequestLogRow, ScopePolicyRows, SecretMetaRow};
 use aurora_gateway::auth::{CredentialKind, CredentialResolver, RequestIdentity, ResolveError};
+use aurora_gateway::byo::TunnelRegistry;
 use aurora_gateway::ca;
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
 use aurora_gateway::guard::Guard;
 use aurora_gateway::hold::Holds;
 use aurora_gateway::invalidation::Hub;
 use aurora_gateway::plaintext::PlaintextCache;
-use aurora_gateway::proxy::{Proxy, ProxyParts};
+use aurora_gateway::proxy::{ByoParts, Proxy, ProxyParts};
 use aurora_gateway::reqlog::{LogWriter, RequestLog};
 use aurora_gateway::resolve::{PolicySource, Resolver};
 use aurora_secrets::{
@@ -41,10 +42,10 @@ use uuid::Uuid;
 
 const TOKEN: &str = "aug_good";
 
-struct World {
-    org: Uuid,
-    ws: Uuid,
-    agent: Uuid,
+pub(crate) struct World {
+    pub(crate) org: Uuid,
+    pub(crate) ws: Uuid,
+    pub(crate) agent: Uuid,
 }
 
 struct Static(Arc<World>);
@@ -73,7 +74,7 @@ impl CredentialResolver for Static {
 }
 
 #[derive(Default)]
-struct Rows {
+pub(crate) struct Rows {
     org: ScopePolicyRows,
     ws: ScopePolicyRows,
     secrets: Vec<SecretMetaRow>,
@@ -151,18 +152,26 @@ impl LogWriter for Capture {
 }
 
 #[allow(dead_code)]
-struct Env {
-    w: Arc<World>,
-    proxy: SocketAddr,
-    up: SocketAddr,
+pub(crate) struct Env {
+    pub(crate) w: Arc<World>,
+    pub(crate) proxy: SocketAddr,
+    pub(crate) up: SocketAddr,
     src: Arc<Src>,
     resolver: Arc<Resolver>,
     log: Arc<RequestLog>,
     captured: Arc<Capture>,
     gets: Arc<AtomicUsize>,
-    pool: sqlx::PgPool,
+    pub(crate) pool: sqlx::PgPool,
     shutdown: tokio::sync::watch::Sender<bool>,
+    /// Connections accepted by the upstream mock (P2-FU-2: nothing may reach it).
+    pub(crate) up_hits: Arc<AtomicUsize>,
+    pub(crate) gw_ca_pem: String,
+    /// Live-tunnel registry of the proxy, when `start_with` got a custom resolver.
+    pub(crate) tunnels: Option<Arc<TunnelRegistry>>,
 }
+
+/// Builds the proxy's credential resolver from the world (P2-FU-2).
+pub(crate) type CustomResolver = Box<dyn FnOnce(Arc<World>) -> Arc<dyn CredentialResolver>>;
 
 async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
     let mut out = format!(
@@ -239,6 +248,18 @@ async fn start(
     pool: sqlx::PgPool,
     timeout: Duration,
 ) -> Env {
+    start_with(mk, llm, pool, timeout, None).await
+}
+
+/// [`start`] with an optional custom credential resolver; with one, the proxy also runs a
+/// live-tunnel registry over it (`Env::tunnels`).
+pub(crate) async fn start_with(
+    mk: impl FnOnce(&World, &SecretRef) -> Rows,
+    llm: LlmSection,
+    pool: sqlx::PgPool,
+    timeout: Duration,
+    custom: Option<CustomResolver>,
+) -> Env {
     let w = world();
     let mem = Arc::new(MemoryStore::new("mem"));
     mem.preload("k1", None, b"s3cr3t");
@@ -256,9 +277,12 @@ async fn start(
     let src = Arc::new(Src(Mutex::new(mk(&w, &vref))));
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let up = l.local_addr().unwrap();
+    let up_hits = Arc::new(AtomicUsize::new(0));
+    let hits = up_hits.clone();
     tokio::spawn(async move {
         loop {
             let (s, _) = l.accept().await.unwrap();
+            hits.fetch_add(1, Ordering::SeqCst);
             tokio::spawn(async move {
                 let _ = auto::Builder::new(TokioExecutor::new())
                     .serve_connection(TokioIo::new(s), service_fn(upstream))
@@ -295,19 +319,38 @@ async fn start(
     let proxy = pl.local_addr().unwrap();
     let guard = Arc::new(Guard::new(&["127.0.0.0/8".to_owned()], vec![proxy]).unwrap());
     let (gw_ca, gw_tls) = crate::common::gateway_tls(&gw, proxy);
-    let p = Proxy::new(ProxyParts {
-        ca: gw_ca,
-        tls: gw_tls,
-        resolver: Arc::new(Static(w.clone())),
-        handler,
-        guard,
-        header_timeout: Duration::from_secs(5),
-        extra_ca_pem: None,
-        egress_proxy: None,
-    })
+    let (cred_resolver, byo, tunnels): (Arc<dyn CredentialResolver>, ByoParts, _) = match custom {
+        Some(c) => {
+            let r = c(w.clone());
+            let t = TunnelRegistry::new(r.clone(), "https://aurora.test");
+            let byo = ByoParts {
+                external_url: "https://aurora.test".into(),
+                tunnels: Some(t.clone()),
+                ..ByoParts::default()
+            };
+            (r, byo, Some(t))
+        }
+        None => (Arc::new(Static(w.clone())), ByoParts::default(), None),
+    };
+    let p = Proxy::with_byo(
+        ProxyParts {
+            ca: gw_ca,
+            tls: gw_tls,
+            resolver: cred_resolver,
+            handler,
+            guard,
+            header_timeout: Duration::from_secs(5),
+            extra_ca_pem: None,
+            egress_proxy: None,
+        },
+        byo,
+    )
     .unwrap();
     tokio::spawn(p.run(pl, std::future::pending()));
     Env {
+        up_hits,
+        gw_ca_pem: gw.cert_pem.clone(),
+        tunnels,
         w,
         proxy,
         up,
@@ -321,7 +364,7 @@ async fn start(
     }
 }
 
-fn no_llm() -> LlmSection {
+pub(crate) fn no_llm() -> LlmSection {
     LlmSection {
         enabled_providers: vec![],
         provider_preference: vec![],
@@ -391,7 +434,7 @@ fn dechunk(b: &str) -> String {
     if out.is_empty() { b.to_owned() } else { out }
 }
 
-fn approval_env(w: &World, v: &SecretRef) -> Rows {
+pub(crate) fn approval_env(w: &World, v: &SecretRef) -> Rows {
     let s = secret(w, "s", json!({"kind":"bearer"}), v);
     let mut rows = Rows::default();
     let mut r = allow_secret(&s);
@@ -429,7 +472,7 @@ async fn decide(pool: &sqlx::PgPool, id: Uuid, status: &str, ws: Uuid, notify: b
     }
 }
 
-async fn pending_for(pool: &sqlx::PgPool, ws: Uuid) -> (Uuid, Value, String) {
+pub(crate) async fn pending_for(pool: &sqlx::PgPool, ws: Uuid) -> (Uuid, Value, String) {
     for _ in 0..100 {
         if let Some(r) = sqlx::query_as::<_, (Uuid, Value, String)>(
             "SELECT id, summary, status FROM approvals WHERE workspace_id=$1",
@@ -454,7 +497,7 @@ async fn status_of(pool: &sqlx::PgPool, id: Uuid) -> String {
         .unwrap()
 }
 
-async fn wait_status(pool: &sqlx::PgPool, id: Uuid, want: &str) {
+pub(crate) async fn wait_status(pool: &sqlx::PgPool, id: Uuid, want: &str) {
     for _ in 0..100 {
         if status_of(pool, id).await == want {
             return;
