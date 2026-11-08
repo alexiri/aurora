@@ -1,0 +1,6 @@
+# Files under plugins/builtin that may contain a throw-away private key (no-live-tokens.sh).
+# Only the PRIVATE KEY pattern is waived for them; every other pattern still applies. Each file
+# must carry this exact line, or the guard fails:
+#   # aurora-fixture-key: throw-away, generated for fixtures, never valid upstream
+# One repo-relative path per line.
+plugins/builtin/github-app/tests/hooks.yaml

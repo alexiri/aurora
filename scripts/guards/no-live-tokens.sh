@@ -25,8 +25,40 @@ patterns=(
 )
 
 fail=0
+
+# Throw-away fixture keys (e.g. an RSA key that signs a GitHub App JWT in a hook fixture) are
+# exempt from the PRIVATE KEY pattern ONLY, and only for files listed in fixture-keys.allow (one
+# repo-relative path per line, `#` comments). Every other pattern still applies to them. A listed
+# file must exist and carry the marker line, so the exemption is explicit and reviewable.
+KEY_PATTERN='-----BEGIN [A-Z ]*PRIVATE KEY-----'
+MARKER='# aurora-fixture-key: throw-away, generated for fixtures, never valid upstream'
+allowed=()
+if [ -f scripts/guards/fixture-keys.allow ]; then
+  while IFS= read -r line; do
+    line="${line%%#*}"; line="$(echo "$line" | xargs)"
+    [ -n "$line" ] || continue
+    if [ ! -f "$line" ]; then
+      echo "fixture-keys.allow lists a missing file: $line" >&2; fail=1; continue
+    fi
+    if ! grep -qxF -e "$MARKER" "$line"; then
+      echo "fixture-keys.allow: $line lacks the marker line: $MARKER" >&2; fail=1; continue
+    fi
+    allowed+=("$line")
+  done < scripts/guards/fixture-keys.allow
+fi
+
 for p in "${patterns[@]}"; do
   if hits="$(grep -rInE --exclude='*.png' -e "$p" plugins/builtin 2>/dev/null)"; then
+    if [ "$p" = "$KEY_PATTERN" ] && [ "${#allowed[@]}" -gt 0 ]; then
+      kept=""
+      while IFS= read -r h; do
+        skip=""
+        for a in "${allowed[@]}"; do [ "${h%%:*}" = "$a" ] && skip=1; done
+        [ -n "$skip" ] || kept+="$h"$'\n'
+      done <<< "$hits"
+      [ -n "$kept" ] || continue
+      hits="${kept%$'\n'}"
+    fi
     echo "possible live credential under plugins/builtin (pattern: $p):" >&2
     # Show the location only, never the value.
     echo "$hits" | cut -d: -f1,2 | sed 's/^/  /' >&2
