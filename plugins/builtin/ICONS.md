@@ -34,8 +34,8 @@ Monograms: rounded tile in `--subtle`/`--line-strong` with the letter in `--prim
 | `postgresql` | Simple Icons 16.37.0 | `postgresql` | `#4169E1` | `c8ccadbd88c9312c2ad3734c4861b31d3485ce179ee91d64793143f83cfa745c` | same as light (3.65:1) |
 | `sentry` | Simple Icons 16.37.0 | `sentry` | `#362D59` | `8ba32902ffbac503784607374f57df5e3cbcf57a99d0adff03e735575500adc6` | white (1.41:1) |
 | `microsoft-365` | monogram "M" | none | n/a | n/a | monogram, dark theme colours |
-| `aws-keys` | official vendor source (AWS), see below | none | n/a | see below | AWS's own dark variant |
-| `aws-role` | official vendor source (AWS), see below | none | n/a | see below | AWS's own dark variant |
+| `aws-keys` | official vendor source (AWS), see below | none | n/a | see below | AWS's own dark-squid-ink tile |
+| `aws-role` | official vendor source (AWS), see below | none | n/a | see below | AWS's own dark-squid-ink tile |
 | `indico` | official vendor source (Indico repository), see below | none | n/a | see below | same file as light |
 
 Simple Icons 16.37.0 has no Microsoft 365 / Microsoft, Amazon Web Services or Indico icon (vendors
@@ -52,11 +52,12 @@ All fetched on 2026-11-08 from the vendor's own domain; only the rendered PNG is
 - Page: <https://aws.amazon.com/architecture/icons/>
 - Package: `https://d1.awsstatic.com/onedam/marketing-channels/website/public/shared/architecture-icon-release/Icon-package_07312026.5846e92413caa21490223536cc97f1269e44fa92.zip`
   (sha256 `d2d166c453526471749d520e0db022c459abef759d2946cf2dd1d1c992dc6526`).
-- Files used: `Architecture-Group-Icons_07312026/AWS-Cloud-logo_32.svg` (sha256
-  `63d73df1aac59dab323df732f82e196e359fb7b6370c0ca8e51e7b897cd350be`) for `icon.png`, and
-  `AWS-Cloud-logo_32_Dark.svg` (sha256 `1c5db2de7a100b1a5e51fcd4bdfd2c5ed76600b3c8b64677d614fa3c402b124c`)
-  for `icon-dark.png`: AWS's own light and dark variants, rendered unaltered (scale only, with
-  `rsvg-convert`) to 256×256. The square tile includes AWS's own background; no extra padding.
+- Files used: `Architecture-Group-Icons_07312026/AWS-Cloud-logo_32_Dark.svg` (sha256
+  `1c5db2de7a100b1a5e51fcd4bdfd2c5ed76600b3c8b64677d614fa3c402b124c`, white tile with the dark logo)
+  for `icon.png` (light theme), and `AWS-Cloud-logo_32.svg` (sha256
+  `63d73df1aac59dab323df732f82e196e359fb7b6370c0ca8e51e7b897cd350be`, dark squid-ink tile) for
+  `icon-dark.png` (dark theme), so neither theme shows a glaring square. Both are AWS's own variants,
+  rendered unaltered (scale only, with `rsvg-convert`) to 256×256. The square tile includes AWS's own background; no extra padding.
 - Terms: the AWS Trademark Guidelines <https://aws.amazon.com/trademark-guidelines/> §9: logos must
   not be altered (proportion, colour, font, elements added or removed), must appear by themselves
   with reasonable spacing, and not on a background that hurts readability. §4 limits use to
