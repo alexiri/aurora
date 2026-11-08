@@ -298,6 +298,39 @@ done when its tests exist, pass in CI, and the security invariants it touches
   creator is removed and stop when no active owner exists or the agent is frozen,
   members and agents cannot anchor, audit rows (`automation.reassign`) are atomic.
 - Security probes inside a real sandbox (SEC-01, 02, 09, 26, 34).
+- (P2-TEST-1) `process_start` environment probe (SEC-34 / I-23): a process started through
+  the supervisor's `process_start` tool has no `AURORA_BOOT`, no `aub_`/`aup_`/`auc_`
+  value and neither the bootstrap nor the gateway boot token in its environment, read from
+  inside the process and from another agent-uid process (`/proc/<pid>/environ`). A negative
+  control proves the matcher fires on an environment that does carry them (a `podman exec`
+  process gets the container's configured environment, `AURORA_BOOT` included, by podman's
+  design, so a sweep over every PID is not a valid probe).
+- (P2-TEST-1) Chromium wrapper on the **full** sandbox image (`browser` capability label,
+  SEC-41, FU-P1-003b): boot document carries `browser`, the open proxy listens on 3129, the
+  wrapper starts Chromium behind it, an open-lane `allowlist_only` host is fetched through
+  the gateway and another host is refused (`403 blocked_by_egress_policy`, nothing reaches
+  the page server). Runs only with `AURORA_E2EH_FULL_IMAGE=1` (otherwise the scenario
+  prints `SKIPPED`): `hosted.sh` then builds `--target sandbox` as
+  `localhost/<prefix>-sandbox-full:0.1.0`. The build is about 10 minutes when the supervisor
+  layer is not cached (dnf Chromium, Claude Code CLI); `SKIP_IMAGE_BUILD=1` reuses it.
+- (P2-TEST-1) Memory checksum trailer across crates (FUP-M5): `aurora-api` integration test
+  `home_checksum` renders memory with the API's real `home::render`, installs the generation
+  with the supervisor's real `HomeProjector` (which seals the trailer) and scans with the
+  real `Harvester`: an unmodified projection is not harvested, and an appended line, a
+  changed body under the old trailer, an altered digest and a removed trailer each are. It
+  lives in `aurora-api` because that crate already depends on `aurora-supervisor`.
+- (P2-TEST-1) **Running hosted e2e next to another run.** Every name and address of
+  `scripts/e2e/hosted.sh` derives from `AURORA_E2EH_PREFIX` (default `aurora-e2eh`:
+  networks `<prefix>-sbx`/`-db`, containers `-pg`/`-dbtarget`/`-anchor`, image
+  `<prefix>-sandbox:0.1.0` unless the prefix is the default, and the installation token, so
+  the `aurora.installation` label differs per run). Addresses: `AURORA_E2EH_SBX_BASE`
+  (sandbox /24, default `10.89.251`), `AURORA_E2EH_DB_BASE` (default `10.89.252`),
+  `AURORA_E2EH_API_IP` and `AURORA_E2EH_OPS_IP` (loopbacks in the shared rootless netns,
+  defaults `127.0.0.41`/`.42`). Two concurrent runs need different values for all of them.
+  Scenario s9 (session purge) no longer uses a 10 s idle stop: a `podman exec` right after
+  a turn raced the idle stop (rc 125 once the container was gone), so it runs with the
+  default idle window and parks the sandbox through the restart endpoint; the idle stop
+  itself is covered by s4.
 
 ### Self-contained deprovision (phase 3, RFE-024, SEC-58)
 - Atomicity: delete of an agent/workspace/org with dedicated presences commits the
@@ -368,6 +401,10 @@ done when its tests exist, pass in CI, and the security invariants it touches
   machine planes, webhooks), config overrides and multiplier, startup validation,
   idle-bucket eviction; dashboard client retry behaviour (idempotent reads retried,
   writes not).
+- (P2-TEST-1) The limiter refills on the wall clock, so a test that spends a burst and
+  expects the next request to be refused must remove the refill (class overrides of one
+  token an hour keep the default burst sizes); `each_class_has_its_own_limit` did not and
+  failed once under load (the default `write` class refills 2 tokens a second).
 
 ### Identity
 - Permission matrix test generated from `04 §Permission matrix` (every route ×

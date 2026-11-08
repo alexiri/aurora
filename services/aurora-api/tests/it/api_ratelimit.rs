@@ -111,9 +111,32 @@ async fn message_class_burst_then_429_with_full_envelope() {
     );
 }
 
+/// The real default bursts, with a refill so slow (1 token an hour) that no token can come back
+/// while a test runs.
+///
+/// P2-TEST-1 (the `each_class_has_its_own_limit` flake): the limiter refills on the wall clock
+/// (`Instant`), and the default `write` class refills 2 tokens a second (120/min, burst 30). The
+/// test spends the whole burst and expects the next request to be refused; on a loaded machine
+/// (load ~17) the 31 requests took longer than 0.5 s, one token came back, and the 31st request
+/// was answered instead of refused. `upload`/`simulate` (20/min) and `search` (30/min) have the
+/// same window, only wider. Time is not injectable into the limiter, so the test removes the
+/// refill instead: the burst sizes under test are the defaults, only the refill rate differs.
+fn real_bursts_no_refill(c: &mut ApiConfig) {
+    c.ratelimit.api.multiplier = 1.0;
+    for name in ["write", "message", "upload", "simulate", "search", "export"] {
+        c.ratelimit.api.classes.insert(
+            name.into(),
+            RateClassOverride {
+                per_hour: Some(1),
+                ..Default::default()
+            },
+        );
+    }
+}
+
 #[tokio::test]
 async fn each_class_has_its_own_limit() {
-    let w = world(real_limits).await;
+    let w = world(real_bursts_no_refill).await;
     let ws = Uuid::now_v7();
     let cases: [(Method, String, u32, &str); 5] = [
         (

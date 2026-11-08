@@ -444,7 +444,7 @@ async fn world() -> W {
         "mattermost-connector",
         "aurora-connector-mattermost",
         &[
-            ("AURORA_API_URL".into(), format!("http://{API_IP}:4101")),
+            ("AURORA_API_URL".into(), format!("http://{}:4101", api_ip())),
             ("AURORA_CONNECTOR_TOKEN".into(), kit.token.clone()),
             (
                 "AURORA_CONNECTOR_LISTEN".into(),

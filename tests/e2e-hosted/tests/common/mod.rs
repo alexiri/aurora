@@ -3,7 +3,7 @@
 //! `aurora-runner` (backend `podman`) child processes plus real sandbox containers.
 //!
 //! Networking: see `scripts/e2e/hosted.sh`. The whole suite runs inside podman's rootless network
-//! namespace; the gateway and runner bind on the sandbox-network bridge IP (`BRIDGE`), which
+//! namespace; the gateway and runner bind on the sandbox-network bridge IP (`bridge()`), which
 //! sandboxes reach through `/etc/hosts` entries (`aurora-gateway`, `aurora-runner`).
 
 use aurora_testkit::TestDb;
@@ -15,10 +15,38 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::process::{Child, Command};
 
-pub const API_IP: &str = "127.0.0.41";
-pub const BRIDGE: &str = "10.89.251.1";
+/// The addresses of one suite run. The defaults are the historical ones; `scripts/e2e/hosted.sh`
+/// overrides them (`AURORA_E2EH_API_IP`, `AURORA_E2EH_BRIDGE`, `AURORA_E2EH_OPS_IP`) when it runs
+/// under its own `AURORA_E2EH_PREFIX`, so two runs in the shared rootless network namespace do not
+/// bind the same address.
+fn addr_env(k: &str, default: &str) -> String {
+    std::env::var(k).unwrap_or_else(|_| default.to_owned())
+}
+
+/// The API's listen address.
+pub fn api_ip() -> String {
+    addr_env("AURORA_E2EH_API_IP", "127.0.0.41")
+}
+
+/// The sandbox network's bridge address: the gateway and the runner listen here.
+pub fn bridge() -> String {
+    addr_env("AURORA_E2EH_BRIDGE", "10.89.251.1")
+}
+
 /// Non-sandbox address for the gateway :4103 / runner :4106 listeners (SEC-09).
-pub const OPS_IP: &str = "127.0.0.42";
+pub fn ops_ip() -> String {
+    addr_env("AURORA_E2EH_OPS_IP", "127.0.0.42")
+}
+
+/// The address of the platform database container (reachable from the test, not from sandboxes).
+pub fn pg_ip() -> String {
+    addr_env("AURORA_E2EH_PG_IP", "10.89.252.5")
+}
+
+/// An address on the sandbox network other than the bridge (the SEC-02 "other host" probe).
+pub fn sbx_other_ip() -> String {
+    addr_env("AURORA_E2EH_SBX_OTHER_IP", "10.89.251.2")
+}
 const ORIGIN: &str = "http://localhost:4100";
 
 /// Origin sent by `Api` requests: `AURORA_KIND_ORIGIN` when the suite runs against a Kubernetes stack whose
@@ -42,6 +70,8 @@ fn env(k: &str) -> String {
 #[derive(Default, Clone)]
 pub struct Opts {
     pub idle_stop_secs: Option<u64>,
+    /// Sandbox image for this stack instead of `AURORA_E2EH_IMAGE` (the full image scenario).
+    pub image: Option<String>,
 }
 
 pub struct Stack {
@@ -164,15 +194,20 @@ impl Stack {
         assert!(st.status.success(), "generate-ca failed");
         let ca_pem = std::fs::read_to_string(dir.join("ca/ca.pem")).unwrap();
         let idle = o.idle_stop_secs.unwrap_or(1800);
+        let (api_ip, bridge, ops_ip) = (api_ip(), bridge(), ops_ip());
+        let image = o.image.clone().unwrap_or_else(|| {
+            std::env::var("AURORA_E2EH_IMAGE")
+                .unwrap_or_else(|_| "localhost/aurora-sandbox:0.1.0".into())
+        });
         let toml = format!(
             r#"[server]
 external_url = "{ORIGIN}"
 bind = "BIND"
 
 [runner]
-ops_bind = "{OPS_IP}"
+ops_bind = "{ops_ip}"
 backend = "podman"
-api_url = "http://{API_IP}:4101"
+api_url = "http://{api_ip}:4101"
 podman_socket = "{sock}"
 sandbox_network = "{net}"
 image = "{image}"
@@ -181,8 +216,8 @@ reconcile_interval_secs = 600
 capacity_wait_secs = 5
 
 [runner.sandbox_hosts]
-aurora-gateway = "{BRIDGE}"
-aurora-runner = "{BRIDGE}"
+aurora-gateway = "{bridge}"
+aurora-runner = "{bridge}"
 
 [hosted]
 enabled = true
@@ -201,13 +236,13 @@ issuer = "{idp_issuer}"
 log_level = "info"
 
 [gateway]
-internal_bind = "{OPS_IP}"
+internal_bind = "{ops_ip}"
 allowed_private = ["127.0.0.1/32"{db_target_allowed}]
 ca_dir = "{ca}"
 advertised_proxy_url = "https://aurora-gateway:4102"
 
 [gateway.proxy_tls]
-names = ["{BRIDGE}"]
+names = ["{bridge}"]
 
 # RFE-017: suites poll and hammer one principal far above real use; keep the limiter on, scaled up.
 [ratelimit.api]
@@ -218,8 +253,6 @@ hookhost_url = "http://127.0.0.1:9"
 "#,
             sock = env("AURORA_E2EH_SOCK"),
             net = env("AURORA_E2EH_NETWORK"),
-            image = std::env::var("AURORA_E2EH_IMAGE")
-                .unwrap_or_else(|_| "localhost/aurora-sandbox:0.1.0".into()),
             ca = dir.join("ca").display(),
             // P2-DBL-2: the throw-away PostgreSQL that database connections point at is a private
             // address; the guarded dial may reach exactly that one.
@@ -230,7 +263,7 @@ hookhost_url = "http://127.0.0.1:9"
         let mut stack = Stack {
             idp,
             db: Some(db),
-            api_addr: format!("{API_IP}:4101"),
+            api_addr: format!("{api_ip}:4101"),
             ca_pem,
             children: vec![],
             logs: vec![],
@@ -258,20 +291,20 @@ hookhost_url = "http://127.0.0.1:9"
         .await
         .unwrap();
         for (name, ip, exe) in [
-            ("api", API_IP, "aurora-api"),
-            ("gateway", BRIDGE, "aurora-gateway"),
-            ("runner", BRIDGE, "aurora-runner"),
+            ("api", api_ip.as_str(), "aurora-api"),
+            ("gateway", bridge.as_str(), "aurora-gateway"),
+            ("runner", bridge.as_str(), "aurora-runner"),
         ] {
             let cfg = stack.dir.join(format!("{name}.toml"));
             std::fs::write(&cfg, toml.replace("BIND", ip)).unwrap();
             let _ = &stack.cfg;
             stack.spawn(name, exe, &cfg);
             if name == "api" {
-                stack.wait_ok(&format!("http://{API_IP}:4101/readyz")).await;
+                stack.wait_ok(&format!("http://{api_ip}:4101/readyz")).await;
             }
         }
-        stack.wait_ok(&format!("http://{OPS_IP}:4103/readyz")).await;
-        stack.wait_ok(&format!("http://{OPS_IP}:4106/readyz")).await;
+        stack.wait_ok(&format!("http://{ops_ip}:4103/readyz")).await;
+        stack.wait_ok(&format!("http://{ops_ip}:4106/readyz")).await;
         stack
     }
 
@@ -559,16 +592,20 @@ impl Api {
     }
 
     pub async fn set_policy(&self, default_action: &str, rules: Value) {
+        self.set_policy_with(default_action, rules, json!({})).await;
+    }
+
+    /// As [`Api::set_policy`], with extra draft fields (e.g. `open_lane_posture`).
+    pub async fn set_policy_with(&self, default_action: &str, rules: Value, extra: Value) {
         let base = format!("/v1/workspaces/{}/policy", self.ws);
         let (s, doc) = self.get(&base).await;
         assert_eq!(s, 200, "{doc}");
         let rev = doc["draft"]["draft_revision"].as_i64().unwrap();
-        let (s, d) = self
-            .put(
-                &format!("{base}/draft"),
-                json!({"revision": rev, "default_action": default_action, "rules": rules}),
-            )
-            .await;
+        let mut body = json!({"revision": rev, "default_action": default_action, "rules": rules});
+        for (k, v) in extra.as_object().unwrap() {
+            body[k] = v.clone();
+        }
+        let (s, d) = self.put(&format!("{base}/draft"), body).await;
         assert_eq!(s, 200, "{d}");
         let rev = d["draft_revision"].as_i64().unwrap();
         let (s, p) = self
@@ -755,7 +792,7 @@ impl Stack {
         let f = std::fs::File::create(&log).unwrap();
         let child = Command::new(bin("aurora-connector-fake"))
             .arg("serve")
-            .env("AURORA_CORE_URL", format!("http://{API_IP}:4101"))
+            .env("AURORA_CORE_URL", format!("http://{}:4101", api_ip()))
             .env("AURORA_CONNECTOR_TOKEN", &kit.token)
             .env("AURORA_FAKE_CONTROL", "true")
             .env("AURORA_FAKE_PORT", port.to_string())
