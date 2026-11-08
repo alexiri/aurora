@@ -12,8 +12,11 @@ cd "$ROOT"
 
 fail() { echo "no-dev-idp-in-release: FAIL: $*" >&2; exit 1; }
 
-# 1. aurora-testkit is only ever a dev-dependency.
-cargo metadata --format-version 1 --offline --locked 2>/dev/null | python3 -I -c '
+# 1. aurora-testkit is only ever a dev-dependency. `--no-deps` lists the workspace members with their
+# declared dependencies (and kinds) without resolving the registry, so this works on a cold CI runner.
+meta_json="$(cargo metadata --format-version 1 --no-deps --locked)" \
+  || fail "cargo metadata failed (see the error above); cannot check the aurora-testkit dependency kind"
+printf '%s' "$meta_json" | python3 -I -c '
 import json, sys
 meta = json.load(sys.stdin)
 members = set(meta["workspace_members"])
