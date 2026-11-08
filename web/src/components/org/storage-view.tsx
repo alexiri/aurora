@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
+import { Meter } from "@/components/ui/meter";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
@@ -27,16 +28,15 @@ export function UsageBar({ used, quota }: { used: number; quota: number | null |
   const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 100;
   return (
     <div>
-      <div
+      <Meter
         role="progressbar"
         aria-label="Attachment storage used"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={pct}
-        className="h-2 w-full overflow-hidden rounded-full bg-subtle"
-      >
-        <div className={pct >= 100 ? "h-full bg-danger-ink" : pct >= 80 ? "h-full bg-pending-ink" : "h-full bg-accent-ink"} style={{ width: `${pct}%` }} />
-      </div>
+        ratio={pct / 100}
+        tone={pct >= 100 ? "danger" : pct >= 80 ? "pending" : "accent-ink"}
+      />
       <p className="mt-1 text-sm text-ink-2">
         {formatBytes(used)} of {formatBytes(quota)} ({pct} %)
       </p>
