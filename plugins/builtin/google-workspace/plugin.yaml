@@ -1,0 +1,372 @@
+package:
+  id: google-workspace
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: Google Workspace
+  description: Gmail, Google Calendar and Google Drive through the Google APIs, with one Google OAuth client, read-only scopes by default and approval summaries for Drive uploads, downloads and sharing
+  homepage: https://workspace.google.com
+permissions:
+  # Drive approval summaries are built by a hook. approval.summarize never has egress.
+  hooks: [approval.summarize]
+oauth_clients:
+  - id: google
+    authorize_url: https://accounts.google.com/o/oauth2/v2/auth
+    token_url: https://oauth2.googleapis.com/token
+    # Google's web server flow documents a client secret and no PKCE parameters.
+    pkce: false
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: Client ID }
+      - { name: client_secret, label: Client secret, secret: true }
+    setup_note: "In the Google Cloud console create an OAuth client of type Web application, register the Aurora redirect URI, enable the Gmail, Google Calendar and Google Drive APIs, and configure the OAuth consent screen with only the scopes you will offer."
+apps:
+  - about:
+      id: gmail
+      name: Gmail
+      description: Read Gmail messages, threads and labels, and send mail, create drafts or change labels when you allow it
+      category: productivity
+      api_docs: https://developers.google.com/workspace/gmail/api/reference/rest
+      web_hosts: [mail.google.com]
+      connect_note:
+        text: "Most Gmail scopes are Google restricted scopes, and gmail.send is sensitive. An unverified OAuth client is limited to test users; production use needs Google's verification (and a security assessment for restricted scopes). See the setup guide."
+        url: https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification
+      label_hint: Google account email
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: account }
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: google
+        scopes:
+          - { scope: "https://www.googleapis.com/auth/gmail.readonly", name: "Read your Gmail messages, threads and labels (Google restricted scope)", access: read }
+          - { scope: "https://www.googleapis.com/auth/gmail.send", name: Send mail as you (Google sensitive scope), access: write }
+          - { scope: "https://www.googleapis.com/auth/gmail.compose", name: "Create, read, update and send drafts and mail (Google restricted scope)", access: write }
+          - { scope: "https://www.googleapis.com/auth/gmail.modify", name: Read mail and change labels (Google restricted scope), access: write }
+        default_scopes: ["https://www.googleapis.com/auth/gmail.readonly"]
+        authorize_params: { access_type: offline, prompt: consent, include_granted_scopes: "true" }
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+          expect_status: [200]
+          label: /emailAddress
+          metadata: { account: /emailAddress }
+    hosts:
+      - match: { host: gmail.googleapis.com, path_prefix: /gmail/v1 }
+        inject:
+          - bearer: "{credentials.access_token}"
+    token:
+      kind: oauth2_refresh
+      client: google
+      refresh_field: refresh_token
+      max_lifetime_secs: 3600
+      stale_codes:
+        - { status: 401 }
+      reauth_codes: [invalid_grant]
+    tools:
+      read:
+        items:
+          - { id: get_profile, name: Get the mailbox profile, host: gmail.googleapis.com, path: "/gmail/v1/users/*/profile", methods: [GET] }
+          - { id: list_messages, name: List and search messages, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages", methods: [GET] }
+          - { id: get_message, name: Read a message, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages/*", methods: [GET] }
+          - { id: list_threads, name: List and search threads, host: gmail.googleapis.com, path: "/gmail/v1/users/*/threads", methods: [GET] }
+          - { id: get_thread, name: Read a thread, host: gmail.googleapis.com, path: "/gmail/v1/users/*/threads/*", methods: [GET] }
+          - { id: list_labels, name: List labels, host: gmail.googleapis.com, path: "/gmail/v1/users/*/labels", methods: [GET] }
+          - { id: get_label, name: Get a label, host: gmail.googleapis.com, path: "/gmail/v1/users/*/labels/*", methods: [GET] }
+      write:
+        items:
+          - { id: send_message, name: Send mail, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages/send", methods: [POST] }
+          - { id: create_draft, name: Create a draft, host: gmail.googleapis.com, path: "/gmail/v1/users/*/drafts", methods: [POST] }
+          - { id: send_draft, name: Send a draft, host: gmail.googleapis.com, path: "/gmail/v1/users/*/drafts/send", methods: [POST] }
+          - { id: modify_message, name: Add or remove labels on a message, host: gmail.googleapis.com, path: "/gmail/v1/users/*/messages/*/modify", methods: [POST] }
+    approvals:
+      send_message:
+        title: Send mail
+        fields:
+          - { label: To, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_header: To } ] }
+          - { label: Subject, source: body, steps: [ { json: /raw }, { base64url: {} }, { mime_header: Subject } ] }
+        link: "https://mail.google.com/mail/u/0/#sent"
+      create_draft:
+        title: Create a mail draft
+        fields:
+          - { label: To, source: body, steps: [ { json: /message/raw }, { base64url: {} }, { mime_header: To } ] }
+          - { label: Subject, source: body, steps: [ { json: /message/raw }, { base64url: {} }, { mime_header: Subject } ] }
+        link: "https://mail.google.com/mail/u/0/#drafts"
+      send_draft:
+        title: Send a draft
+        fields:
+          - { label: Draft, source: body, steps: [ { json: /id } ] }
+        link: "https://mail.google.com/mail/u/0/#drafts"
+      modify_message:
+        title: Change labels on a message
+        fields:
+          - { label: Message, source: path, segment: 6 }
+          - { label: Add label, source: body, steps: [ { json: /addLabelIds/0 } ] }
+          - { label: Remove label, source: body, steps: [ { json: /removeLabelIds/0 } ] }
+    agent:
+      instructions: |
+        Gmail is connected through the Gmail API (https://gmail.googleapis.com/gmail/v1). Aurora adds the
+        credentials; never ask for or write a token. Use the user id "me". Search with
+        GET /gmail/v1/users/me/messages?q=... (the Gmail search syntax), then read a message with
+        ?format=metadata&metadataHeaders=Subject or ?format=full. Sending takes a JSON body
+        {"raw": "<base64url of an RFC 5322 message>"} with content-type application/json, so approvals can
+        show the recipient and subject. Deleting mail is not available.
+      env:
+        - { name: GMAIL_API_URL, value: "https://gmail.googleapis.com/gmail/v1" }
+
+  - about:
+      id: calendar
+      name: Google Calendar
+      description: Read calendars and events, and create, change or delete events when you allow it
+      category: productivity
+      api_docs: https://developers.google.com/workspace/calendar/api/v3/reference
+      web_hosts: [calendar.google.com]
+      connect_note:
+        text: "All Google Calendar scopes are Google sensitive scopes. An unverified OAuth client is limited to test users; production use needs Google's verification (no security assessment). See the setup guide."
+        url: https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification
+      label_hint: Google account email
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: account }
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: google
+        scopes:
+          - { scope: "https://www.googleapis.com/auth/calendar.readonly", name: See your calendars and their events (Google sensitive scope), access: read }
+          - { scope: "https://www.googleapis.com/auth/calendar.events.readonly", name: "See events on your calendars, without the calendar list (Google sensitive scope)", access: read }
+          - { scope: "https://www.googleapis.com/auth/calendar.events", name: "Create, change and delete events (Google sensitive scope)", access: write }
+          - { scope: "https://www.googleapis.com/auth/calendar", name: Full access to your calendars (Google sensitive scope), access: write }
+        default_scopes: ["https://www.googleapis.com/auth/calendar.readonly"]
+        authorize_params: { access_type: offline, prompt: consent, include_granted_scopes: "true" }
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          # events.list works with calendar.readonly and with calendar.events.readonly; the
+          # response's `summary` is the title of the primary calendar (the account email).
+          method: GET
+          url: "https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=1"
+          expect_status: [200]
+          label: /summary
+          metadata: { account: /summary }
+    hosts:
+      - match: { host: www.googleapis.com, path_prefix: /calendar/v3 }
+        inject:
+          - bearer: "{credentials.access_token}"
+    token:
+      kind: oauth2_refresh
+      client: google
+      refresh_field: refresh_token
+      max_lifetime_secs: 3600
+      stale_codes:
+        - { status: 401 }
+      reauth_codes: [invalid_grant]
+    tools:
+      read:
+        items:
+          - { id: list_calendars, name: List calendars, host: www.googleapis.com, path: /calendar/v3/users/me/calendarList, methods: [GET] }
+          - { id: get_calendar, name: Get a calendar, host: www.googleapis.com, path: "/calendar/v3/calendars/*", methods: [GET] }
+          - { id: list_events, name: List and search events, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events", methods: [GET] }
+          - { id: get_event, name: Get an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events/*", methods: [GET] }
+      write:
+        items:
+          # freeBusy.query is a read over POST; read tools must be GET, so it is held for approval (D-93).
+          - { id: query_freebusy, name: Query free and busy times (a read over POST), host: www.googleapis.com, path: /calendar/v3/freeBusy, methods: [POST] }
+          - { id: create_event, name: Create an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events", methods: [POST] }
+          - { id: update_event, name: Change an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events/*", methods: [PATCH] }
+          - { id: delete_event, name: Delete an event, host: www.googleapis.com, path: "/calendar/v3/calendars/*/events/*", methods: [DELETE] }
+    approvals:
+      query_freebusy:
+        title: Query free and busy times
+        fields:
+          - { label: From, source: body, steps: [ { json: /timeMin } ] }
+          - { label: Until, source: body, steps: [ { json: /timeMax } ] }
+      create_event:
+        title: Create calendar event
+        fields:
+          - { label: Calendar, source: path, segment: 4 }
+          - { label: Title, source: body, steps: [ { json: /summary } ] }
+          - { label: Starts, source: body, steps: [ { json: /start/dateTime } ] }
+        link: "https://calendar.google.com/calendar/"
+      update_event:
+        title: Change calendar event
+        fields:
+          - { label: Calendar, source: path, segment: 4 }
+          - { label: Event, source: path, segment: 6 }
+          - { label: Title, source: body, steps: [ { json: /summary } ] }
+        link: "https://calendar.google.com/calendar/"
+      delete_event:
+        title: Delete calendar event
+        fields:
+          - { label: Calendar, source: path, segment: 4 }
+          - { label: Event, source: path, segment: 6 }
+        link: "https://calendar.google.com/calendar/"
+    agent:
+      instructions: |
+        Google Calendar is connected through the Calendar API v3 (https://www.googleapis.com/calendar/v3).
+        Aurora adds the credentials; never ask for or write a token. The calendar id "primary" is the
+        user's main calendar. List events with timeMin and timeMax (RFC 3339) and singleEvents=true to
+        expand recurring events. Send JSON bodies with content-type application/json so approvals can
+        show what a change does. Free/busy queries and every change are held for approval.
+      env:
+        - { name: GOOGLE_CALENDAR_API_URL, value: "https://www.googleapis.com/calendar/v3" }
+
+  - about:
+      id: drive
+      name: Google Drive
+      description: Read Drive file metadata, download and export files, and upload, change, copy or share files when you allow it
+      category: productivity
+      api_docs: https://developers.google.com/workspace/drive/api/reference/rest/v3
+      web_hosts: [drive.google.com]
+      connect_note:
+        text: "drive.readonly and drive are Google restricted scopes; drive.file is not sensitive. An unverified OAuth client is limited to test users; production use of restricted scopes needs Google's verification and a security assessment. See the setup guide."
+        url: https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification
+      label_hint: Google account email
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: account }
+    connect:
+      - id: oauth
+        kind: oauth2
+        client: google
+        scopes:
+          - { scope: "https://www.googleapis.com/auth/drive.readonly", name: See and download all your Drive files (Google restricted scope), access: read }
+          - { scope: "https://www.googleapis.com/auth/drive.metadata.readonly", name: "See file names and metadata, without content (Google restricted scope)", access: read }
+          - { scope: "https://www.googleapis.com/auth/drive.file", name: Create files and change only the files this app creates or you open with it, access: write }
+          - { scope: "https://www.googleapis.com/auth/drive", name: "See, edit, create and delete all your Drive files (Google restricted scope)", access: write }
+        default_scopes: ["https://www.googleapis.com/auth/drive.readonly"]
+        authorize_params: { access_type: offline, prompt: consent, include_granted_scopes: "true" }
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://www.googleapis.com/drive/v3/about?fields=user"
+          expect_status: [200]
+          label: /user/emailAddress
+          metadata: { account: /user/emailAddress }
+    hosts:
+      - match: { host: www.googleapis.com, path_prefix: /drive/v3 }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: www.googleapis.com, path_prefix: /upload/drive/v3 }
+        inject:
+          - bearer: "{credentials.access_token}"
+    token:
+      kind: oauth2_refresh
+      client: google
+      refresh_field: refresh_token
+      max_lifetime_secs: 3600
+      stale_codes:
+        - { status: 401 }
+      reauth_codes: [invalid_grant]
+    tools:
+      read:
+        items:
+          - { id: get_about, name: Get the Drive user and storage quota, host: www.googleapis.com, path: /drive/v3/about, methods: [GET] }
+          - { id: list_files, name: List and search files, host: www.googleapis.com, path: /drive/v3/files, methods: [GET] }
+          - { id: get_file, name: "Get file metadata, or download the content with alt=media", host: www.googleapis.com, path: "/drive/v3/files/*", methods: [GET] }
+          - { id: export_file, name: "Export a Google Docs, Sheets or Slides file to another format", host: www.googleapis.com, path: "/drive/v3/files/*/export", methods: [GET] }
+          - { id: list_permissions, name: List who a file is shared with, host: www.googleapis.com, path: "/drive/v3/files/*/permissions", methods: [GET] }
+      write:
+        items:
+          - { id: create_file, name: Create a file or folder (metadata only), host: www.googleapis.com, path: /drive/v3/files, methods: [POST] }
+          - { id: upload_file, name: Upload a new file, host: www.googleapis.com, path: /upload/drive/v3/files, methods: [POST] }
+          - { id: update_file, name: "Change file metadata, rename, move or trash", host: www.googleapis.com, path: "/drive/v3/files/*", methods: [PATCH] }
+          - { id: upload_file_content, name: Replace the content of a file, host: www.googleapis.com, path: "/upload/drive/v3/files/*", methods: [PATCH] }
+          - { id: copy_file, name: Copy a file, host: www.googleapis.com, path: "/drive/v3/files/*/copy", methods: [POST] }
+          - { id: create_permission, name: Share a file (create a permission), host: www.googleapis.com, path: "/drive/v3/files/*/permissions", methods: [POST] }
+    approvals:
+      # The hook is tried first; the template is the fallback when the hook cannot read the request
+      # (for example a multipart body that is not JSON). Neither shows file content.
+      get_file:
+        title: Download Drive file
+        summarize: hook
+        fields:
+          - { label: File, source: path, segment: 4 }
+          - { label: Mode, source: query, name: alt }
+      export_file:
+        title: Export Drive file
+        summarize: hook
+        fields:
+          - { label: File, source: path, segment: 4 }
+          - { label: Export as, source: query, name: mimeType }
+      create_file:
+        title: Create Drive file or folder
+        summarize: hook
+        fields:
+          - { label: Name, source: body, steps: [ { json: /name } ] }
+          - { label: MIME type, source: body, steps: [ { json: /mimeType } ] }
+        link: "https://drive.google.com/drive/"
+      upload_file:
+        title: Upload Drive file
+        summarize: hook
+        fields:
+          - { label: Upload type, source: query, name: uploadType }
+        link: "https://drive.google.com/drive/"
+      update_file:
+        title: Change Drive file
+        summarize: hook
+        fields:
+          - { label: File, source: path, segment: 4 }
+          - { label: Name, source: body, steps: [ { json: /name } ] }
+        link: "https://drive.google.com/drive/"
+      upload_file_content:
+        title: Replace Drive file content
+        summarize: hook
+        fields:
+          - { label: File, source: path, segment: 5 }
+          - { label: Upload type, source: query, name: uploadType }
+        link: "https://drive.google.com/drive/"
+      copy_file:
+        title: Copy Drive file
+        summarize: hook
+        fields:
+          - { label: File, source: path, segment: 4 }
+          - { label: Name, source: body, steps: [ { json: /name } ] }
+        link: "https://drive.google.com/drive/"
+      create_permission:
+        title: Share Drive file
+        summarize: hook
+        fields:
+          - { label: File, source: path, segment: 4 }
+          - { label: Role, source: body, steps: [ { json: /role } ] }
+          - { label: Type, source: body, steps: [ { json: /type } ] }
+          - { label: Email, source: body, steps: [ { json: /emailAddress } ] }
+          - { label: Domain, source: body, steps: [ { json: /domain } ] }
+        link: "https://drive.google.com/drive/"
+    agent:
+      instructions: |
+        Google Drive is connected through the Drive API v3 (https://www.googleapis.com/drive/v3; uploads go to
+        https://www.googleapis.com/upload/drive/v3). Aurora adds the credentials; never ask for or write a
+        token. Find files with GET /drive/v3/files?q=...&fields=files(id,name,mimeType,parents). Download
+        binary files with GET /drive/v3/files/{id}?alt=media; Google Docs, Sheets and Slides cannot be
+        downloaded that way, use GET /drive/v3/files/{id}/export?mimeType=... instead. Send JSON metadata
+        with content-type application/json, and multipart uploads (uploadType=multipart) with the JSON
+        metadata as the first part, so approvals can show the file name, type and folder. Sharing and
+        every change are held for approval. Deleting files permanently is not available (trash a file with
+        PATCH {"trashed": true}).
+      env:
+        - { name: GOOGLE_DRIVE_API_URL, value: "https://www.googleapis.com/drive/v3" }

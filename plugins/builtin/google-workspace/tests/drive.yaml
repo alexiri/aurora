@@ -1,0 +1,166 @@
+# Google Drive: every tool has a positive case and a `negative <tool>:` case. All credentials are fake.
+# The approval summaries asserted here are the manifest templates (the fallback). The hook summaries
+# (file name, MIME type, parents, size, permissions) are asserted in hooks.yaml.
+- name: "get_about: bearer is injected under /drive/v3"
+  connection: { credentials: { access_token: "tok-fixture-1" }, metadata: { account: "alice@example.com" } }
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/about?fields=user" }
+  expect:
+    app: drive
+    tool: get_about
+    upstream: { url: "https://www.googleapis.com/drive/v3/about?fields=user", headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative get_about: POST selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://www.googleapis.com/drive/v3/about" }
+  expect: { app: drive }
+- name: "negative get_about: the older Drive API version is not claimed"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/drive/v2/about" }
+  expect: { unmatched: true }
+- name: "negative get_about: the Drive API on another Google host is not claimed"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://content.googleapis.com/drive/v3/about" }
+  expect: { unmatched: true }
+- name: "negative get_about: drive.google.com is a web host, not an API host"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://drive.google.com/drive/v3/about" }
+  expect: { unmatched: true }
+- name: "list_files: search query"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/files?q=name%20contains%20%27report%27&fields=files(id%2Cname%2CmimeType)" }
+  expect: { tool: list_files }
+- name: "negative list_files: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://www.googleapis.com/drive/v3/files" }
+  expect: { app: drive }
+- name: "get_file: metadata"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture?fields=id%2Cname%2CmimeType%2Cparents" }
+  expect: { tool: get_file }
+- name: "get_file: alt=media download shows the file id in the approval template"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture?alt=media" }
+  expect:
+    tool: get_file
+    summary: { title: "Download Drive file", fields: { File: "1FileIdFixture", Mode: "media" } }
+- name: "negative get_file: DELETE (permanent delete) selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture" }
+  expect: { app: drive }
+- name: "export_file: summary shows the file id and the export MIME type"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/files/1DocIdFixture/export?mimeType=application%2Fpdf" }
+  expect:
+    tool: export_file
+    summary: { title: "Export Drive file", fields: { File: "1DocIdFixture", "Export as": "application/pdf" } }
+- name: "negative export_file: POST selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://www.googleapis.com/drive/v3/files/1DocIdFixture/export" }
+  expect: { app: drive }
+- name: "list_permissions"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture/permissions?fields=permissions(role%2Ctype)" }
+  expect: { tool: list_permissions }
+- name: "negative list_permissions: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture/permissions" }
+  expect: { app: drive }
+# Write tools.
+- name: "create_file: a folder, summary template shows name and MIME type"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://www.googleapis.com/drive/v3/files"
+    headers: { content-type: application/json }
+    body: '{"name":"Reports","mimeType":"application/vnd.google-apps.folder","parents":["1ParentFixture"]}'
+  expect:
+    tool: create_file
+    summary: { title: "Create Drive file or folder", fields: { Name: "Reports", "MIME type": "application/vnd.google-apps.folder" } }
+- name: "negative create_file: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://www.googleapis.com/drive/v3/files" }
+  expect: { app: drive }
+- name: "upload_file: the upload prefix carries the bearer too"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
+    headers: { content-type: "multipart/related; boundary=fixture_boundary" }
+    body: "--fixture_boundary\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n{\"name\":\"notes.txt\",\"parents\":[\"1ParentFixture\"]}\r\n--fixture_boundary\r\ncontent-type: text/plain\r\n\r\nhello\r\n--fixture_boundary--"
+  expect:
+    tool: upload_file
+    upstream: { url: "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", headers: { authorization: "Bearer tok-fixture-1" } }
+    summary: { title: "Upload Drive file", fields: { "Upload type": "multipart" } }
+- name: "negative upload_file: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://www.googleapis.com/upload/drive/v3/files" }
+  expect: { app: drive }
+- name: "negative upload_file: the Gmail upload path on the shared host is not claimed"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://www.googleapis.com/upload/gmail/v1/users/me/messages/send" }
+  expect: { unmatched: true }
+- name: "update_file: summary template shows the file and new name"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PATCH
+    url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture?addParents=1DestFixture&removeParents=1SrcFixture"
+    headers: { content-type: application/json }
+    body: '{"name":"Renamed.txt"}'
+  expect:
+    tool: update_file
+    summary: { title: "Change Drive file", fields: { File: "1FileIdFixture", Name: "Renamed.txt" } }
+- name: "negative update_file: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture" }
+  expect: { app: drive }
+- name: "upload_file_content: summary template shows the file"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PATCH
+    url: "https://www.googleapis.com/upload/drive/v3/files/1FileIdFixture?uploadType=media"
+    headers: { content-type: text/plain }
+    body: "new content"
+  expect:
+    tool: upload_file_content
+    summary: { title: "Replace Drive file content", fields: { File: "1FileIdFixture", "Upload type": "media" } }
+- name: "negative upload_file_content: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://www.googleapis.com/upload/drive/v3/files/1FileIdFixture" }
+  expect: { app: drive }
+- name: "copy_file: summary template shows the source and the copy's name"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture/copy"
+    headers: { content-type: application/json }
+    body: '{"name":"Copy of notes"}'
+  expect:
+    tool: copy_file
+    summary: { title: "Copy Drive file", fields: { File: "1FileIdFixture", Name: "Copy of notes" } }
+- name: "negative copy_file: GET selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture/copy" }
+  expect: { app: drive }
+- name: "create_permission: summary template shows file, role, type and email"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture/permissions"
+    headers: { content-type: application/json }
+    body: '{"role":"reader","type":"user","emailAddress":"bob@example.com"}'
+  expect:
+    tool: create_permission
+    summary: { title: "Share Drive file", fields: { File: "1FileIdFixture", Role: "reader", Type: "user", Email: "bob@example.com" } }
+- name: "create_permission: summary template shows a domain share"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture/permissions"
+    headers: { content-type: application/json }
+    body: '{"role":"reader","type":"domain","domain":"example.com"}'
+  expect:
+    tool: create_permission
+    summary: { title: "Share Drive file", fields: { File: "1FileIdFixture", Role: "reader", Type: "domain", Domain: "example.com" } }
+- name: "negative create_permission: PUT selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://www.googleapis.com/drive/v3/files/1FileIdFixture/permissions" }
+  expect: { app: drive }
