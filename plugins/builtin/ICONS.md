@@ -61,9 +61,9 @@ All fetched on 2026-11-08 from the vendor's own domain; only the rendered PNG is
 - Terms: the AWS Trademark Guidelines <https://aws.amazon.com/trademark-guidelines/> §9: logos must
   not be altered (proportion, colour, font, elements added or removed), must appear by themselves
   with reasonable spacing, and not on a background that hurts readability. §4 limits use to
-  materials approved in advance by AWS. **Open risk:** the dashboard must show these tiles
-  unaltered (no recolouring, no extra overlay) and the owner should confirm the §4 approval
-  position for a connector listing.
+  materials approved in advance by AWS. **Owner decision (2026-11-08):** keep the official logo
+  for the connector listing after reviewing §4. The dashboard must show these tiles unaltered
+  (no recolouring, no extra overlay).
 
 ### `indico`: Indico project logo
 
