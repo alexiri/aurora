@@ -25,7 +25,16 @@ if [ "${1:-}" = "--up" ]; then
   bash deploy/dev/kind-dev.sh up --llm-mock || { echo "kind-up --llm-mock failed" >&2; exit 1; }
 fi
 
-curl -fsS -o /dev/null "$URL/v1/instance" || { echo "no Aurora on $URL: run 'just kind-up --llm-mock' first (or pass --up)" >&2; exit 1; }
+# Pods report Running before the ingress routes to them (nightly CI hit a 503 right after kind-up),
+# so wait up to FIRST_RUN_READY_SECS (default 300) for the API to answer through the ingress.
+ready_deadline=$(( $(date +%s) + ${FIRST_RUN_READY_SECS:-300} ))
+until curl -fsS -o /dev/null "$URL/v1/instance"; do
+  if [ "$(date +%s)" -ge "$ready_deadline" ]; then
+    echo "no Aurora on $URL: run 'just kind-up --llm-mock' first (or pass --up)" >&2
+    exit 1
+  fi
+  sleep 5
+done
 # The journey needs the --llm-mock profile: the mock, and the sandbox image that holds the claude-code CLI.
 k -n aurora-dev-mock get deploy litellm >/dev/null 2>&1 || { echo "the llm-mock profile is not installed in $CTX: 'just kind-up --llm-mock'" >&2; exit 1; }
 k -n aurora get cm -o yaml 2>/dev/null | grep -q "aurora-sandbox-llm" || { echo "runner.image is not the claude-code sandbox image: re-run 'just kind-up --llm-mock'" >&2; exit 1; }

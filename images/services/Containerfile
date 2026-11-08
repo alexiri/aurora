@@ -40,31 +40,9 @@ RUN set -eu; arch=$(uname -m); \
     tar -xzf /tmp/sccache.tgz -C /tmp; install -m 0755 /tmp/$n/sccache /usr/local/bin/sccache; \
     rm -rf /tmp/sccache.tgz /tmp/$n; sccache --version
 # `with-sccache <cmd...>`: run a command with sccache as rustc wrapper and print the hit statistics.
-COPY --chmod=0755 <<'WRAP' /usr/local/bin/with-sccache
-#!/bin/sh
-set -u
-if [ -r /run/secrets/actions_results_url ] && [ -r /run/secrets/actions_runtime_token ]; then
-  ACTIONS_RESULTS_URL=$(cat /run/secrets/actions_results_url)
-  ACTIONS_RUNTIME_TOKEN=$(cat /run/secrets/actions_runtime_token)
-  export ACTIONS_RESULTS_URL ACTIONS_RUNTIME_TOKEN SCCACHE_GHA_ENABLED=true
-  echo "with-sccache: backend = GitHub Actions cache"
-else
-  echo "with-sccache: backend = local directory ${SCCACHE_DIR:-/root/.cache/sccache}"
-fi
-if sccache --start-server >/dev/null 2>&1; then
-  export RUSTC_WRAPPER=sccache
-else
-  # a failing GHA backend (revoked token, outage): retry on the local directory
-  echo "with-sccache: backend did not start; retrying on the local directory" >&2
-  unset ACTIONS_RESULTS_URL ACTIONS_RUNTIME_TOKEN SCCACHE_GHA_ENABLED
-  if sccache --start-server >/dev/null 2>&1; then export RUSTC_WRAPPER=sccache
-  else echo "with-sccache: sccache unavailable; building without it" >&2; fi
-fi
-"$@"; rc=$?
-sccache --show-stats || true
-sccache --stop-server >/dev/null 2>&1 || true
-exit $rc
-WRAP
+# A plain file, not a heredoc: podman/buildah 4.9 (CI runners) cannot parse `COPY <<EOF`.
+COPY images/services/with-sccache.sh /usr/local/bin/with-sccache
+RUN chmod 0755 /usr/local/bin/with-sccache
 # P2-CAT-H: hook-capable built-ins compile their guest crate to a WebAssembly component
 # (`aurora plugin build`, docs/09 §12). The only extra toolchain is the wasm32-wasip2 rust-std of
 # this image's own rustc (no `cargo component`: a cdylib on wasm32-wasip2 is already a component).
