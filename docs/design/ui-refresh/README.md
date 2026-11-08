@@ -18,7 +18,8 @@ https://claude.ai/artifact/P7qkWpLXqMnfAQLHzM98U8
 | `Brand.html` | — | Lockups, app icons, usage rules | `brand/`, `AuroraMark`, `AuroraLogo`, favicon and app icons |
 | `Overview.html` | `OverviewDark.html` | Workspace overview inside the sidebar shell | `/o/<org>/w/<ws>` + `app-shell.tsx` |
 | `Approvals.html` | `ApprovalsDark.html` | Pending approvals (batch group, cards, conflict state) | `/o/<org>/w/<ws>/approvals` |
-| `Agent.html` | `AgentDark.html` | Agent page, Chat tab, access side panel | `/o/<org>/w/<ws>/agents/<handle>` |
+| `Agent.html` | `AgentDark.html` | Agent page, Chat tab (chat v2, D-102): conversation list and thread panes, grouped bubbles, folded tool calls, inline approval, attachments, queued follow-up, pinned composer | `/o/<org>/w/<ws>/agents/<handle>` + `components/chat/*` |
+| `AgentPhone.html` | — | Chat tab at 390 px: thread view with back button, single-row composer | same |
 | `SignIn.html` | — | Auth pages (split layout with brand panel) | `auth-card.tsx` and `/auth/*` |
 
 The theme switch in each sidebar links the light and dark version of the same
@@ -36,6 +37,13 @@ Known differences:
   `Overview.html` are not part of the design to implement.
 - In the mock-ups the theme switch is made of links. In the dashboard it is a
   real radio group that changes the theme in place (I-41).
+- The chat boards show several states at once, which the real screen never
+  combines. `Agent.html` has a running turn with a held approval, a queued
+  follow-up and a failed upload. `AgentDark.html` shows the Archived list, a
+  `Reconnecting…` pill, the open actions menu, a redacted message and a
+  `no_model_key` error. Titles, times and requests are sample data.
+- The chat boards were redrawn on 2026-11-08 (D-102, task P2-UI-5). They replace the
+  earlier chat board, which had a separate access side panel.
 - The mock-ups show the logo with `<img>`. The dashboard renders it inline
   (`AuroraLogo`) so it follows the theme.
 - The mock-ups use Google Fonts and inline `style` attributes. The dashboard

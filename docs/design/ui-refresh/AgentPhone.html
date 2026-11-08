@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Aurora — Daneel · Chat (390 px)</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0;background:#F6F7F9}
+a{color:#0F766E;text-decoration:none}a:hover{color:#0B5F58;text-decoration:underline}
+button,textarea{font:inherit}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; font-family: Inter, system-ui, sans-serif; color: #0E1525; background: #FFFFFF; font-size: 14px; line-height: 1.45">
+
+  <div style="flex: none; display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 8px 0 16px; border-bottom: 1px solid #E4E7EC; background: #FFFFFF">
+    <img src="brand/aurora-lockup-horizontal.svg" alt="Aurora" style="display: block; height: 28px; width: auto">
+    <button type="button" aria-label="Open navigation" style="margin-left: auto; width: 44px; height: 44px; border: 0; border-radius: 8px; background: transparent; color: #0E1525; display: grid; place-items: center; cursor: pointer"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16"></path><path d="M4 12h16"></path><path d="M4 17h16"></path></svg></button>
+  </div>
+
+  <div style="flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 16px 0">
+    <span style="width: 32px; height: 32px; border-radius: 9px; background: #E7F5F2; color: #0B5F58; display: grid; place-items: center; font-family: 'Space Grotesk', Inter, sans-serif; font-weight: 600">D</span>
+    <h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 20px; font-weight: 600">Daneel</h1>
+    <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5B6576">@daneel</span>
+  </div>
+  <div style="flex: none; overflow-x: auto; border-bottom: 1px solid #E4E7EC; padding: 0 8px">
+    <div role="tablist" aria-label="Agent" style="display: flex; gap: 2px; min-width: max-content">
+      <button type="button" role="tab" aria-selected="true" style="min-height: 44px; padding: 0 10px; border: 0; border-bottom: 2px solid #0F766E; margin-bottom: -1px; background: transparent; color: #0E1525; font-weight: 600">Chat</button>
+      <button type="button" role="tab" aria-selected="false" style="min-height: 44px; padding: 0 10px; border: 0; background: transparent; color: #475569">Instructions</button>
+      <button type="button" role="tab" aria-selected="false" style="min-height: 44px; padding: 0 10px; border: 0; background: transparent; color: #475569">Memory</button>
+      <button type="button" role="tab" aria-selected="false" style="min-height: 44px; padding: 0 10px; border: 0; background: transparent; color: #475569">Skills</button>
+      <button type="button" role="tab" aria-selected="false" style="min-height: 44px; padding: 0 10px; border: 0; background: transparent; color: #475569">Schedules</button>
+    </div>
+  </div>
+
+  <div style="flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 8px 6px 4px; border-bottom: 1px solid #E4E7EC">
+    <a href="#conversations" aria-label="Back to conversations" style="width: 44px; height: 44px; border-radius: 8px; display: grid; place-items: center; color: #0E1525"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg></a>
+    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+      <h2 style="margin: 0; font-size: 15px; font-weight: 600">Direct chat</h2>
+      <p style="margin: 0; display: flex; align-items: center; gap: 4px; font-size: 12px; color: #5B6576; white-space: nowrap; overflow: hidden; text-overflow: ellipsis"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>You and workspace owners</p>
+    </div>
+    <span role="status" aria-label="Live" style="width: 8px; height: 8px; border-radius: 999px; background: #0F766E; margin-right: 6px"></span>
+    <button type="button" aria-label="Conversation actions" aria-haspopup="menu" style="width: 44px; height: 44px; border: 0; border-radius: 8px; background: transparent; color: #475569; display: grid; place-items: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg></button>
+  </div>
+
+  <div role="log" aria-label="Messages" style="flex: 1; min-height: 0; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; background: #FFFFFF">
+    <div role="separator" style="display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 500; color: #5B6576"><span style="flex: 1; height: 1px; background: #E4E7EC"></span>Today<span style="flex: 1; height: 1px; background: #E4E7EC"></span></div>
+
+    <div style="align-self: flex-end; max-width: 85%; display: flex; flex-direction: column; align-items: flex-end; gap: 4px">
+      <div style="font-size: 12px; color: #5B6576"><span style="font-weight: 600; color: #0E1525">You</span> · 10:41</div>
+      <p style="margin: 0; padding: 10px 14px; border-radius: 14px 4px 14px 14px; background: #0E1525; color: #FFFFFF">The login test keeps failing on CI. Can you file an issue for it in acme/web?</p>
+    </div>
+
+    <div style="display: flex; gap: 10px">
+      <span style="flex: none; width: 28px; height: 28px; border-radius: 999px; background: #E7F5F2; color: #0B5F58; display: grid; place-items: center; font-weight: 600; font-size: 12px">D</span>
+      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+        <div style="font-size: 12px; color: #5B6576"><span style="font-weight: 600; color: #0E1525">Daneel</span> · 10:42</div>
+        <div style="display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 10px; border: 1px solid #E4E7EC; border-radius: 10px; font-size: 13px; color: #475569">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-.5-.5-2.5z"></path></svg>
+          <span style="font-weight: 500; color: #0E1525">Used 2 tools</span><span>· 1.4 s</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-left: auto"><path d="m6 9 6 6 6-6"></path></svg>
+        </div>
+        <p style="margin: 0; align-self: flex-start; padding: 10px 14px; border-radius: 4px 14px 14px 14px; background: #EEF1F4">The redirect after sign-in fires twice, so the assertion sees the wrong URL. I'll open an issue.</p>
+        <section aria-label="Approval requested" style="border: 1px solid #FDECC8; background: #FFF8EA; border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px">
+          <div style="display: flex; align-items: center; gap: 8px">
+            <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; padding: 2px 7px; border-radius: 999px; background: #FDECC8; color: #7A3E06">HELD</span>
+            <h3 style="margin: 0; font-size: 14px; font-weight: 600">Approval requested</h3>
+            <span style="margin-left: auto; font-size: 12px; color: #7A3E06; font-variant-numeric: tabular-nums">4:12</span>
+          </div>
+          <p style="margin: 0; font-size: 12px; font-family: 'JetBrains Mono', monospace; color: #475569; overflow-wrap: anywhere"><span style="font-weight: 500; color: #7A3E06">POST</span> api.github.com/repos/acme/web/issues</p>
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px">
+            <button type="button" style="min-height: 44px; border-radius: 8px; border: 1px solid #D5DAE1; background: #FFFFFF; color: #0E1525; font-weight: 500">Deny</button>
+            <button type="button" style="min-height: 44px; border-radius: 8px; border: 0; background: #0F766E; color: #FFFFFF; font-weight: 500">Approve</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex: none; padding: 8px 12px 12px; border-top: 1px solid #E4E7EC; background: #FFFFFF">
+    <form style="display: flex; align-items: flex-end; gap: 6px">
+      <button type="button" aria-label="Attach files" style="flex: none; width: 44px; height: 44px; border: 0; border-radius: 8px; background: transparent; color: #475569; display: grid; place-items: center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"></path></svg></button>
+      <label for="msg-m" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Message Daneel</label>
+      <textarea id="msg-m" rows="1" placeholder="Add a follow-up…" style="flex: 1; min-width: 0; min-height: 44px; box-sizing: border-box; padding: 11px 12px; border: 1px solid #D5DAE1; border-radius: 12px; resize: none; color: #0E1525; background: #FFFFFF"></textarea>
+      <button type="button" aria-label="Stop" style="flex: none; width: 44px; height: 44px; border: 1px solid #D5DAE1; border-radius: 8px; background: #FFFFFF; color: #0E1525; display: grid; place-items: center"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"></rect></svg></button>
+      <button type="submit" aria-label="Send" style="flex: none; width: 44px; height: 44px; border: 0; border-radius: 8px; background: #0E1525; color: #FFFFFF; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path></svg></button>
+    </form>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

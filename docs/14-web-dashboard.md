@@ -71,7 +71,7 @@ colours (`neutral-*`, `red-*`, `amber-*`, …) are not allowed in components.
 | `line` / `line-strong` | `#E4E7EC` / `#D5DAE1` | `#252E44` / `#34405A` | dividers / control borders |
 | `canvas` | `#F6F7F9` | `#0B1020` | app background; input wells in dark |
 | `surface` | `#FFFFFF` | `#121829` | cards, sidebar |
-| `subtle` | `#EEF1F4` | `#1C2438` | active nav item, neutral pills, segmented-tab track |
+| `subtle` | `#EEF1F4` | `#1C2438` | active nav item, neutral pills, segmented-tab track, agent chat bubble, selected conversation |
 | `primary` / `on-primary` | `#0E1525` / `#FFFFFF` | `#E8ECF3` / `#0B1020` | primary button, user chat bubble (dark: `#23304A` / `ink`) |
 | `accent` / `on-accent` | `#0F766E` / `#FFFFFF` | `#2DD4BF` / `#042F2B` | Approve, focus ring, active-nav icon, progress |
 | `link` | `#0F766E` | `#5EEAD4` | links |
@@ -227,12 +227,139 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   A batch group header carries "Approve all N" / "Deny all". The "already
   decided" conflict renders inline as a `pending` notice and disables both
   buttons.
-- **Agent page**: header with large avatar, name, `@handle`, kind/default
-  badges and a sandbox-state pill; an underline tab strip. Chat shows user
-  turns as right-aligned `primary` bubbles (a muted slate in dark), agent text unboxed with a small avatar,
-  tool/gateway calls as compact mono rows, and inline approvals as a `pending`
-  panel. The composer is a bordered box with attach and send icon buttons
-  (both with `aria-label`).
+- **Agent page**: header with a 44 px avatar, then name, `@handle`,
+  kind/default badges and a sandbox-state pill on one wrapping line, with the
+  header actions (Freeze) on the right; an underline tab strip below it.
+- **Agent chat** (D-102, task P2-UI-5; mock-ups `Agent.html`, `AgentDark.html`,
+  `AgentPhone.html`). The chat is a messaging layout. It is not a stack of
+  cards, banners and button rows.
+  - **Layout.** One `ChatPanel` card fills the rest of the viewport height
+    (at least 560 px). The page itself does not scroll. The conversation list
+    and the transcript scroll inside the panel, and the composer stays pinned
+    to the bottom of the thread.
+    - From 768 px the panel has two panes: the list (272–320 px, `line`
+      divider) and the thread.
+    - Below 768 px the list and the thread are two views. The list shows when
+      no conversation is selected. The thread header starts with a 44 px
+      "Back to conversations" button. The selected conversation is in the
+      URL, so the browser's back button returns to the list.
+  - **Conversation list** (`ConversationList`, `ConversationRow`):
+    - The pane has the heading "Conversations", a filter input and a
+      segmented **Active / Archived** switch (`archived=false|true`). The
+      filter matches titles in the loaded list on the client; there is no
+      search API.
+    - A row is at least 56 px high. It shows a round 36 px kind tile (one
+      icon and tint per `kind`: direct, group, schedule, webhook, watch, peer,
+      api), the title (`title`, or a kind label such as "Direct chat"), the
+      kind as a muted second line, and `last_activity_at` on the right (the
+      time today, the weekday this week, a date before that).
+    - A conversation with an `active_turn` shows a **Working** live dot
+      (`accent`) in place of the kind line.
+    - The selected row has the `subtle` background and `aria-current`.
+    - The caller's direct conversation comes first; the rest are sorted by
+      `last_activity_at`, newest first.
+    - Owners get a caps-labelled group, "Other members' direct chats". Each
+      row has the member's initials avatar and "Read-only" with an eye icon.
+    - Rows show no unread counts, previews or presence, because the API has
+      none.
+  - **Thread header**:
+    - The conversation title (16/600) and one muted meta line. The meta line
+      joins the visibility note (lock icon and "Only you and workspace owners
+      can see this conversation", on direct conversations), the kind (on
+      other conversations), the archived date, and the org retention window
+      ("Deleted after N days without activity") when one is set. This line
+      replaces the separate retention and visibility banners.
+    - On the right: a connection pill and a "Conversation actions" icon
+      button. The pill reads `Live` (`accent-soft`) or `Reconnecting…`
+      (`pending-soft`); connection state is never a loose line of text.
+    - The actions button opens a `Menu`: Archive (or Unarchive), Export JSON,
+      Export with files (zip), a separator, then "Delete conversation…" in
+      `danger-ink`, which opens the typed confirmation.
+    - On another member's direct conversation the composer is replaced by a
+      neutral `Notice` saying that the view is read-only and audited.
+  - **Transcript** (`role="log"`, `aria-live="polite"`):
+    - Date dividers (Today, Yesterday, then weekday and date) separate days.
+    - Messages are grouped by sender. The first bubble of a group carries a
+      meta line: the sender name (12/600 `ink`), the time, and the door chip.
+      Messages from the same sender within 5 minutes share that line.
+    - Person turns are right-aligned in a `primary` bubble (dark: `#23304A` /
+      `ink`). The bubble's radius is 14 px with a 4 px top-right corner, and
+      its maximum width is min(78 %, 620 px).
+    - Turns started by a schedule, webhook or peer render on the same side,
+      with their source name and door chip.
+    - Agent turns are left-aligned, with a 32 px avatar aligned to the top of
+      the meta line. The bubble is `subtle`, with a 14 px radius, a 4 px
+      top-left corner and a maximum width of min(88 %, 720 px).
+    - Bubbles render markdown in safe mode. Inline code and code blocks sit on
+      `surface` (dark: `canvas`) with a `line` border, and code blocks scroll
+      horizontally inside themselves.
+  - **Message actions.** Hovering or focusing a message shows a small toolbar
+    (`surface`, `line` border) at the bubble's top corner. It holds Copy
+    message and a "More message actions" menu with Redact…, which opens the
+    existing redact dialog. On touch screens, tapping a message shows the
+    toolbar.
+  - **Tool calls.**
+    - A turn's consecutive tool and gateway calls fold into one
+      `ToolCallGroup`: a `<details>` row reading "Used N tools · total
+      duration", with a wrench icon and a chevron.
+    - The group is open while the turn runs and collapses when the turn
+      ends.
+    - Each expanded row shows a decision chip (`ALLOW`, `HELD`, `DENY`, or a
+      neutral `TOOL` for non-gateway tools), the mono method, host and path
+      (or the tool name and argument), and the duration or result size,
+      right-aligned in tabular numerals.
+    - A group that contains a denied or failed call shows the `DENY` chip in
+      its summary line.
+  - **Inline approval.** The card sits in the agent column, under the message
+    that caused it:
+    - It is a `pending` panel: `#FFF8EA` with a `pending-soft` border (dark:
+      panel `#221B0F`, border `#4A3712`).
+    - It shows a `HELD` badge, the title, an "Expires in m:ss" countdown, the
+      summary, the request line (`METHOD` chip followed by the mono host and
+      path) and the rule name.
+    - Approve (`approve`) and Deny (`outline`) are 40 px high. At 390 px they
+      are a two-column grid of 44 px buttons.
+    - Members without `can_approve` see the same card with "Waiting for an
+      approver" and no buttons.
+    - Once decided, the card collapses to one line with the decision chip.
+  - **Attachments.**
+    - In a message, a file is a card: a type-icon tile, the name, the size
+      and type, and a Download icon button with an `aria-label`. An image
+      shows a thumbnail (at most 240 px) instead.
+    - A purged attachment shows a muted "Expired" chip.
+    - In the composer, chips above the text field show a thumbnail or icon,
+      the name, the size and a Remove button. An upload in progress shows its
+      progress. A failed upload is a `danger` chip with the reason, for
+      example "Upload failed: quota reached".
+  - **Live activity.** While a turn runs, a typing row (`role="status"`)
+    shows the agent avatar and a `subtle` bubble holding three dots and the
+    activity line, such as "Waiting for approval" or "Reading report.md".
+  - **Redacted events** show as a dashed, muted row: "Message redacted ·
+    date".
+  - **Errors.** A turn error is a `danger` block in the agent column
+    (`role="alert"`) with the error copy and the deep link that fixes it (for
+    `no_model_key`: "Open LLM keys").
+  - **Queued follow-ups.** Each queued follow-up shows above the composer as
+    a dashed row: a `QUEUED` badge, the text on one line (ellipsis), and
+    "Send now".
+  - **Composer** (`Composer`):
+    - A bordered box (`line-strong`, radius 12 px) at the bottom of the
+      thread.
+    - Attachment chips sit above an auto-growing textarea, which grows from 2
+      to 8 lines and then scrolls.
+    - The toolbar holds Attach (icon button), the hint "Enter to send ·
+      Shift+Enter for a new line" (hidden below 768 px), Stop (`outline`,
+      only while a turn runs) and Send (`primary` icon button, disabled while
+      the box is empty).
+    - The placeholder is "Message <agent>…", or "Add a follow-up…" while a
+      turn runs.
+    - At 390 px the composer is a single row of Attach, text field, Stop and
+      Send, each 44 px.
+    - Icon-only buttons carry an `aria-label`.
+  - **Empty conversation.** The middle of the transcript shows the agent's
+    large avatar, "Start a conversation with <name>" and the agent's brief
+    when it has one, and the composer has focus. There is no dashed
+    `EmptyState` box.
 - **Auth pages** (`/auth/*`, `/join`, `/link/channel`, `/setup-error`): split
   layout. A dark brand panel (`#0E1525` in both themes) sits on the left. It
   carries the dark horizontal logo with the tagline beneath it, a one-line
@@ -264,6 +391,7 @@ here, add it here and document it.
 | Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The strip scrolls within itself at 390 px. |
 | Buttons | `Button` (`primary`, `outline`, `approve`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. |
 | Auth layout | `AuthCard` | Split layout with the dark brand panel, for every public auth view. |
+| Chat | `ChatPanel`, `ConversationList` + `ConversationRow`, `MessageGroup`, `ToolCallGroup`, `Composer` (in `web/src/components/chat`) | The agent Chat tab (see **Agent chat** above): a fixed-height panel with the list pane and the thread pane, sender-grouped bubbles, folded tool calls and a pinned composer. Inline approvals reuse the approval card in a compact variant. |
 
 ## Information architecture
 
