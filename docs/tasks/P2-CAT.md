@@ -13,24 +13,31 @@ Add the first built-in package set (`19 §Phase 2`), one lane per group below. E
 - You own only `plugins/builtin/<your packages>/**`. Shared files (guards, CI, the README) are P2-CAT-0's; report needed changes instead of making them.
 - Acceptance: `aurora plugin validate`, `aurora plugin test` and the P2-CAT-0 checks pass for every package of your group; the dev stack lists them; guards pass.
 
+## Prerequisite: P2-CAT-H — hook-capable built-ins
+P2-CAT-0 built the framework for packages **without hooks**: `scripts/plugins/check-builtin.sh` and `scripts/plugins/build-builtin.sh` refuse hooks, and the image build has no `wasm32-wasip2` / `cargo component` toolchain. Lanes that need a hook wait for **P2-CAT-H**, which adds:
+- the hook source layout for built-ins (`09 §2`, `§8`; build with `aurora plugin build` as `§12` describes), compiled in the image build (`plugin-archives` stage: install the pinned toolchain) and in CI's built-in checks;
+- `check-builtin.sh` support for hooks: build them, run hook fixtures through the embedded hook-host runtime against recorded HTTP (`§12 aurora plugin test`), and keep the coverage rules;
+- one small example hook in a fixture or in the first package that needs it.
+Needed by: CAT-1 (`github-app` webhook verification), CAT-3 (Drive MIME summaries), CAT-5b (`aws-role` assume-role minting through a `token.mint` hook).
+
 ## Lanes
 
-### P2-CAT-1 — GitHub (OAuth) and GitHub App (hooks)
+### P2-CAT-1 — GitHub (OAuth) and GitHub App (hooks; `github-app` after P2-CAT-H)
 - `github`: OAuth app (authorization code), REST v3 + GraphQL (read tools; issues/PR writes marked), git over HTTPS.
 - `github-app`: GitHub App installation tokens minted from the app's private key (the mint mechanism of `09 §5`), webhook signature verification through a hook (`09 §8`). This is the hooks example of the catalogue.
 
 ### P2-CAT-2 — Jira and Confluence (shared OAuth client)
 - One package with two apps sharing one Atlassian OAuth 2.0 (3LO) client (`09 §3.3 oauth_clients`); cloud id discovery as connection metadata. Jira REST v3 (issues, search, transitions marked write) and Confluence REST v2 (pages, spaces; writes marked).
 
-### P2-CAT-3 — Google Workspace
+### P2-CAT-3 — Google Workspace (after P2-CAT-H for the Drive hook)
 - One package: Gmail, Calendar, Drive under one Google OAuth client with incremental, narrow scopes (read-only by default; send/modify marked). Drive download summaries by MIME type through a hook, as `19` states.
 
 ### P2-CAT-4 — Microsoft 365
 - One package over Microsoft Graph (Entra ID OAuth; tenant as connection metadata): mail, calendar, OneDrive/SharePoint files; read-only by default, writes marked.
 
-### P2-CAT-5 — AWS keys and AWS role
-- `aws-keys`: SigV4 request signing with an access key pair (the signing mechanism of `09 §5`), region/service derived from the host.
-- `aws-role`: assume-role minting of short-lived credentials (mint mechanism), then SigV4. Start with a small set of services (S3, STS, a read-only EC2 subset) and say which.
+### P2-CAT-5 — AWS keys (and P2-CAT-5b — AWS role, after P2-CAT-H)
+- `aws-keys`: SigV4 request signing with an access key pair (the signing mechanism of `09 §5`). `aws_sigv4` takes the service as a literal and the region from a template, so one host entry per service with the region from connection metadata (a host/metadata region mismatch fails at AWS; documented). S3, STS GetCallerIdentity, a read-only EC2 subset.
+- `aws-role` (**P2-CAT-5b, after P2-CAT-H**): there is no declarative mint mechanism, so assume-role minting is a `token.mint` hook (SigV4-signed `sts:AssumeRole`, egress `sts.amazonaws.com`), then SigV4 with the session credentials.
 
 ### P2-CAT-6 — Sentry, Notion, Linear
 - `sentry` (auth token; org/project slugs as metadata), `notion` (OAuth public integration, `Notion-Version` header), `linear` (OAuth, GraphQL single endpoint with per-operation tool classification as the GraphQL fixture shows).
