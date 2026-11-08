@@ -49,6 +49,7 @@ impl Proxy {
             host,
             port,
             kill: guard.as_ref().map(crate::byo::TunnelGuard::killed),
+            closed_by: guard.as_ref().map(crate::byo::TunnelGuard::closed_by),
         };
         let on_upgrade = hyper::upgrade::on(&mut req);
         match lane {
@@ -115,6 +116,7 @@ impl Proxy {
                 tokio::spawn(async move {
                     let _live = live;
                     let mut kill = guard.as_ref().map(crate::byo::TunnelGuard::killed);
+                    let closed_by = guard.as_ref().map(crate::byo::TunnelGuard::closed_by);
                     let work = async {
                         let Ok(up) = on_upgrade.await else { return };
                         let Ok(tls) = TlsAcceptor::from(cfg).accept(TokioIo::new(up)).await else {
@@ -123,12 +125,19 @@ impl Proxy {
                         this.serve_tunneled(tls, t).await;
                     };
                     // (RFE-025) The BYO admission of this tunnel changed: drop the connection at
-                    // any stage (handshake or request loop); a request held for approval is
-                    // abandoned with it.
+                    // any stage (handshake or request loop). A freeze or BYO tightening first
+                    // answers what is in flight (a request held for approval is refused 403 with
+                    // its approval abandoned, P2-FU-2): `serve_tunneled` shuts the connection
+                    // down gracefully after the answer; this is the hard stop, CLOSE_GRACE later.
                     match kill.as_mut() {
                         Some(k) => {
                             tokio::select! {
-                                () = crate::byo::killed(k) => {}
+                                () = async {
+                                    crate::byo::killed(k).await;
+                                    if closed_by.as_ref().is_some_and(|c| c.borrow().is_some()) {
+                                        tokio::time::sleep(crate::byo::CLOSE_GRACE).await;
+                                    }
+                                } => {}
                                 () = work => {}
                             }
                         }
@@ -146,6 +155,8 @@ impl Proxy {
         IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
         let this = self.clone();
+        let mut kill = t.kill.clone();
+        let closed_by = t.closed_by.clone();
         let svc = service_fn(move |req: Request<Incoming>| {
             let this = this.clone();
             let t = t.clone();
@@ -155,8 +166,25 @@ impl Proxy {
         let conn = builder.serve_connection_with_upgrades(TokioIo::new(io), svc);
         tokio::pin!(conn);
         let mut stop = self.stop.subscribe();
+        // Closed by a freeze or BYO tightening: let the answers go out, then shut the connection.
+        let answered_close = async {
+            match kill.as_mut() {
+                Some(k) => {
+                    crate::byo::killed(k).await;
+                    if closed_by.as_ref().is_some_and(|c| c.borrow().is_some()) {
+                        return;
+                    }
+                    std::future::pending::<()>().await;
+                }
+                None => std::future::pending::<()>().await,
+            }
+        };
         tokio::select! {
             r = conn.as_mut() => { if let Err(e) = r { tracing::debug!(error = %e, "tunnel connection ended"); } }
+            () = answered_close => {
+                conn.as_mut().graceful_shutdown();
+                let _ = tokio::time::timeout(crate::byo::CLOSE_GRACE, conn).await;
+            }
             () = stopped(&mut stop) => {
                 conn.as_mut().graceful_shutdown();
                 let _ = conn.await;
