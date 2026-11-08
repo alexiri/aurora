@@ -55,6 +55,17 @@
         "backend": {
           "type": "string"
         },
+        "defaults": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SandboxDefaults"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "(FIX-011, D-90) The runner's configured sandbox defaults (`runner.sandbox_cpus`,\n`sandbox_memory_mib`, `sandbox_pids`, `home_gib`): the API uses them when neither the\nagent nor the org overrides a resource axis. Absent from older runners."
+        },
         "harnesses": {
           "items": {
             "$ref": "#/$defs/HarnessId"
@@ -108,6 +119,38 @@
         "max_sandboxes",
         "harnesses",
         "max_attachment_bytes"
+      ],
+      "type": "object"
+    },
+    "SandboxDefaults": {
+      "description": "Per-sandbox resource defaults of a runner (FIX-011, D-90).",
+      "properties": {
+        "cpu_millis": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "home_gib": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "memory_mib": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pids": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpu_millis",
+        "memory_mib",
+        "pids",
+        "home_gib"
       ],
       "type": "object"
     }

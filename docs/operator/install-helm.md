@@ -126,6 +126,10 @@ Chart defaults that you may set in `config`: `server.bind`, `server.trusted_prox
 `runner.ops_bind` (both `0.0.0.0`, acceptable only because the NetworkPolicies block
 sandbox ingress to 4103 and 4106), `hosted.enabled`, `telemetry.log_level`.
 
+### Sandbox size
+
+Each hosted sandbox gets `config.runner.sandbox_cpus` (default 1) CPUs, `sandbox_memory_mib` (2048), `sandbox_pids` (512) and `home_gib` (10) unless an agent overrides them; requests equal limits, and the sandbox namespace quota still applies. Size them to your nodes: a sandbox that does not fit stays `Unschedulable`, and the runner logs the scheduler's reason when its capacity wait expires.
+
 ### Gateway proxy addresses
 
 Two addresses reach the gateway proxy listener (port 4102), for two audiences:

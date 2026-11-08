@@ -776,6 +776,14 @@ Rule: `04 §Freeze`, `05 §Conventions`, `06 §Credential authentication`, `10 �
 - C-301 **Config** `gateway.sandbox_proxy_url` (optional; api and gateway): `https://host[:port]` only (no path, query, fragment or credentials; startup names the key otherwise). Unset: `runner.backend = kubernetes` → `https://aurora-gateway:4102`; `podman` and `fake` → the resolved `gateway.advertised_proxy_url`. The gateway adds its host to the proxy certificate SANs.
 - C-302 **BYO**: `container_config.proxy_url` and every other BYO-facing proxy URL keep using `gateway.advertised_proxy_url` (external host); no API response exposes the sandbox address.
 
+### FIX-011 runner sandbox defaults (C-190..C-194, D-90)
+
+- C-190 **`RunnerCapabilities.defaults`** (optional; `POST /v1/runner/register`): `{ cpu_millis, memory_mib, pids, home_gib }`, all `u32`, omitted when absent (`skip_serializing_if`); an older runner that omits it still registers.
+- C-191 **Runner**: fills `defaults` at registration, for every backend, from `runner.sandbox_cpus × 1000`, `runner.sandbox_memory_mib`, `runner.sandbox_pids` and `runner.home_gib` (docs/15: 1 / 2048 / 512 / 10).
+- C-192 **Resource profile** (`sandbox.start` `resources`, `home_gib`): per axis, agent override > `caps.defaults` > constants equal to the docs/15 defaults (1000 / 2048 / 512 / 10), then clamped to the runner's bounds. The org override of docs/11 §Start does not exist in the code yet and is not part of the chain. No route, status code or response shape changes.
+- C-193 **Fallback constants** in `boot::profile` are 1000 m / 2048 MiB / 512 pids / 10 GiB (they were 2000 / 4096 / 1024 / 10).
+- C-194 **Capacity log**: when the Kubernetes backend fails a start because the capacity wait expired, the runner logs (`warn`) the last blocking reason (scheduler or quota message). `sandbox.status` is unchanged.
+
 ### W9 hook-host JSON encoding (C-18, C-19)
 
 - C-18 Internal snapshot route returns the exact canonical bytes so consumers verify `sha256(body) == x-snapshot-hash` without re-serialization.

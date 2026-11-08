@@ -31,6 +31,32 @@ fn rt<T: DeserializeOwned + Serialize>(v: Value) -> Result<T, Box<dyn std::error
     Ok(t)
 }
 
+/// FIX-011 (C-190): `defaults` round-trips; an older runner (field absent) still parses and
+/// re-serializes without it.
+#[test]
+fn register_defaults_roundtrip_and_old_runner_without_them() -> R {
+    let mut v = json!({
+        "version": "0.1.0", "backend": "kubernetes", "advertised_host": "runner-1",
+        "capabilities": {
+            "backend": "kubernetes", "home_durability": "resident",
+            "resources": {"cpu": {"min": 250, "max": 4000}, "memory_mib": {"min": 256, "max": 8192},
+                "pids": {"min": 64, "max": 2048}, "home_gib": {"min": 1, "max": 100}},
+            "max_sandboxes": 4, "harnesses": ["claude-code"], "max_attachment_bytes": 1048576
+        }
+    });
+    let old = rt::<RegisterRequest>(v.clone())?;
+    assert!(old.capabilities.defaults.is_none());
+    v["capabilities"]["defaults"] =
+        json!({"cpu_millis": 1000, "memory_mib": 2048, "pids": 512, "home_gib": 10});
+    let new = rt::<RegisterRequest>(v)?;
+    let d = new.capabilities.defaults.ok_or("defaults missing")?;
+    assert_eq!(
+        (d.cpu_millis, d.memory_mib, d.pids, d.home_gib),
+        (1000, 2048, 512, 10)
+    );
+    Ok(())
+}
+
 #[test]
 fn register_roundtrip() -> R {
     rt::<RegisterRequest>(json!({

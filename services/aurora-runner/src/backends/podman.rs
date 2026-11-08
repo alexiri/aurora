@@ -450,6 +450,7 @@ impl Backend for PodmanBackend {
             // Filled in by the runner from `runner.image` at registration.
             image: None,
             held_awake_ceiling: None,
+            defaults: None,
             image_capabilities: vec![],
         }
     }

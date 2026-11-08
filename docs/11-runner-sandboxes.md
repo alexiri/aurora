@@ -233,7 +233,11 @@ Sandbox states: `unprovisioned → starting → running → stopping → stopped
  bootstrap token (hash stored), resets per-boot fields
  (`channel_replica_id`, `listening_ports`, `home_applied_generation = 0`,
  `stop_*`, failure fields), computes the resource profile (agent override &gt;
- org override &gt; runner default, clamped to runner bounds) → `sandbox.start`.
+ org override &gt; runner default, clamped to runner bounds) → `sandbox.start`. The runner
+ default is `RunnerCapabilities.defaults` (`runner.sandbox_cpus × 1000`,
+ `sandbox_memory_mib`, `sandbox_pids`, `home_gib`, sent at registration); a runner that
+ sends none gets the `docs/15` values (1000 m / 2048 MiB / 512 pids / 10 GiB). There is no
+ org override in the code yet.
 2. Runner: `provision_home` (idempotent) → `start` (with hold callback) → reports
  `sandbox.status running|failed` with `container_ref`.
 3. API on `running`: opens a `runtime_intervals` row, stamps `last_active_at`.

@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use aurora_config::{OrphanReap, RunnerConfig};
 use aurora_protocol::runner::{
-    Capacity, MAX_WAIT_SECS, RegisterRequest, ReportBody, WorkRequest, frame_report_id,
+    Capacity, MAX_WAIT_SECS, RegisterRequest, ReportBody, SandboxDefaults, WorkRequest,
+    frame_report_id,
 };
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -35,6 +36,8 @@ pub enum RunnerError {
 pub struct RunnerSettings {
     /// `runner.held_awake_ceiling` (resolved), advertised at registration.
     pub held_awake_ceiling: Option<u32>,
+    /// `runner.sandbox_*` / `runner.home_gib`, advertised at registration (FIX-011, D-90).
+    pub defaults: Option<SandboxDefaults>,
     pub api_url: String,
     pub token: String,
     pub version: String,
@@ -50,6 +53,12 @@ impl RunnerSettings {
     pub fn from_config(cfg: &RunnerConfig) -> Self {
         Self {
             held_awake_ceiling: Some(cfg.held_awake_ceiling),
+            defaults: Some(SandboxDefaults {
+                cpu_millis: cfg.runner.sandbox_cpus.saturating_mul(1000),
+                memory_mib: cfg.runner.sandbox_memory_mib,
+                pids: cfg.runner.sandbox_pids,
+                home_gib: cfg.runner.home_gib,
+            }),
             api_url: cfg.api_url.clone(),
             token: cfg.token.expose().clone(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -103,6 +112,7 @@ impl Runner {
         let mut caps = self.backend.capabilities();
         caps.image.clone_from(&self.settings.executor.image);
         caps.held_awake_ceiling = self.settings.held_awake_ceiling;
+        caps.defaults = self.settings.defaults;
         if let Some(image) = &self.settings.executor.image {
             caps.image_capabilities = self.backend.image_capabilities(image).await;
         }

@@ -207,6 +207,12 @@ impl CapacityWait {
         }
         let since = *self.since.get_or_insert_with(tokio::time::Instant::now);
         if tokio::time::Instant::now() >= since + self.wait {
+            // The last blocking reason is a scheduler/quota message (no secrets): D-90.
+            tracing::warn!(
+                reason = why,
+                wait_secs = self.wait.as_secs(),
+                "wake capacity wait expired"
+            );
             return Err(BackendError::WakeCapacityTimeout);
         }
         Ok(())
@@ -452,6 +458,7 @@ impl Backend for KubernetesBackend {
             // Filled in by the runner from `runner.image` at registration.
             image: None,
             held_awake_ceiling: None,
+            defaults: None,
             image_capabilities: vec![],
         }
     }
