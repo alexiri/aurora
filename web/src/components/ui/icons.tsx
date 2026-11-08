@@ -58,3 +58,14 @@ export const ClockIcon = make(<><circle cx="12" cy="12" r="9"/><path d="M12 7v5l
 export const PlugsIcon = make(<><path d="M4 12h6M14 12h6M10 8v8M14 8v8"/></>);
 export const LinkIcon = make(<><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3A4 4 0 0011 18.7l1-1"/></>);
 export const CheckIcon = make(<><path d="M5 12l5 5 9-10"/></>);
+export const WrenchIcon = make(<><path d="M14.5 6.5a4 4 0 005 5L20 12l-8 8a2.1 2.1 0 01-3-3l8-8z"/><path d="M14.5 6.5l3 3"/></>);
+export const ChevronDownIcon = make(<><path d="M6 9l6 6 6-6"/></>);
+export const DownloadIcon = make(<><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></>);
+export const FileIcon = make(<><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></>);
+export const EyeIcon = make(<><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></>);
+export const MoreIcon = make(<><path d="M5 12h.01M12 12h.01M19 12h.01"/></>);
+export const CopyIcon = make(<><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></>);
+export const ArrowLeftIcon = make(<><path d="M19 12H5M11 6l-6 6 6 6"/></>);
+export const SearchIcon = make(<><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></>);
+export const StopIcon = make(<><rect x="6" y="6" width="12" height="12" rx="2"/></>);
+export const CalendarIcon = make(<><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></>);

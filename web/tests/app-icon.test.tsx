@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { AttachmentLink, EventView } from "@/components/agents/chat-tab";
+import { AttachmentCard } from "@/components/chat/attachments";
+import { TranscriptView } from "@/components/chat/transcript-view";
 import { AppIcon, appIconUrl } from "@/components/ui/app-icon";
 import { emptyTranscript, loadHistory, type TranscriptState } from "@/lib/chat/transcript";
 
@@ -65,19 +66,19 @@ describe("AppIcon", () => {
 
 describe("expired attachments (FU-P2-015a, C-196)", () => {
   it("renders a chip, never a link, download or thumbnail", () => {
-    const { container } = render(<AttachmentLink id="a1" filename="report.png" contentType="image/png" size={10} purged="retention" />);
+    const { container } = render(<AttachmentCard id="a1" filename="report.png" contentType="image/png" size={10} purged="retention" />);
     expect(screen.getByText("Expired by retention")).toBeTruthy();
     expect(screen.getByText("report.png")).toBeTruthy();
     expect(container.querySelector("a, img, button")).toBeNull();
   });
 
   it("says removed for a file a person deleted", () => {
-    render(<AttachmentLink id="a1" filename="x.txt" purged="deleted" />);
+    render(<AttachmentCard id="a1" filename="x.txt" purged="deleted" />);
     expect(screen.getByText("Removed")).toBeTruthy();
   });
 
   it("a live attachment keeps its download link", () => {
-    const { container } = render(<AttachmentLink id="a1" filename="x.txt" />);
+    const { container } = render(<AttachmentCard id="a1" filename="x.txt" />);
     expect(container.querySelector("a")?.getAttribute("href")).toBe("/v1/attachments/a1/content");
   });
 
@@ -91,13 +92,7 @@ describe("expired attachments (FU-P2-015a, C-196)", () => {
       purged_attachments: [{ id: "a-old", reason: "retention" }],
     }), emptyTranscript);
     expect(s.purged).toEqual({ "a-old": "retention" });
-    const ev = (i: number) => (s.events[i] as never);
-    const { container } = render(
-      <>
-        <EventView ev={ev(0)} state={s} wsId="w" base="/b" convId="c" />
-        <EventView ev={ev(1)} state={s} wsId="w" base="/b" convId="c" />
-      </>,
-    );
+    const { container } = render(<TranscriptView state={s} wsId="w" base="/b" convId="c" />);
     expect(screen.getAllByTestId("attachment-expired")).toHaveLength(2);
     const links = Array.from(container.querySelectorAll("a")).map((a) => a.getAttribute("href"));
     expect(links).toEqual(["/v1/attachments/a-new/content"]);

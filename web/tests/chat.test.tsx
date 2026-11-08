@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApprovalCard } from "@/components/agents/chat-tab";
+import { ApprovalCard } from "@/components/chat/approval-card";
 import type { TranscriptEvent } from "@/lib/api/conversations";
 import {
   activeTurnId,

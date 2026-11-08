@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { useSandbox } from "@/lib/api/conversations";
+import { cn } from "@/lib/utils";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
 
 import { AccessTab } from "./access-tab";
@@ -43,7 +44,10 @@ export function AgentPage() {
   const wsId = resolved.data?.workspace?.id;
   const agents = useAgents(wsId);
   const workspace = useWorkspace(wsId);
-  const [tab, setTab] = useState<"chat" | "instructions" | "access" | "connect" | "computer" | "memory" | "skills" | "schedules" | "webhooks" | "peers" | "channels">("instructions");
+  // A deep link to a conversation (`?c=<id>`, D-102) opens the Chat tab.
+  const [tab, setTab] = useState<"chat" | "instructions" | "access" | "connect" | "computer" | "memory" | "skills" | "schedules" | "webhooks" | "peers" | "channels">(() =>
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).has("c") ? "chat" : "instructions",
+  );
 
   if (resolved.isPending || (wsId && agents.isPending)) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
@@ -72,12 +76,12 @@ export function AgentPage() {
   ];
 
   return (
-    <div className="max-w-4xl space-y-4">
+    <div className={cn("space-y-4", tab === "chat" && !byo ? "" : "max-w-4xl")}>
       <PageHeader
         breadcrumb={[{ label: "Agents", href: `/o/${org}/w/${ws}/agents` }, { label: agent.name }]}
         title={
           <span className="flex min-w-0 items-center gap-3">
-            <Avatar name={agent.name} url={agent.avatar_url} tintKey={agent.id} size={48} />
+            <Avatar name={agent.name} url={agent.avatar_url} tintKey={agent.id} size={44} />
             <span className="min-w-0 truncate">{agent.name}</span>
           </span>
         }
@@ -109,7 +113,7 @@ export function AgentPage() {
         idBase="agent"
       />
       <div role="tabpanel" id={tabPanelId("agent", tab)} aria-labelledby={tabId("agent", tab)} className="pt-2">
-        {tab === "chat" && !byo ? <ChatTab agentId={agent.id} wsId={wsId!} base={`/o/${org}/w/${ws}`} orgId={workspace.data?.org_id} agent={{ id: agent.id, name: agent.name, avatarUrl: agent.avatar_url }} /> : null}
+        {tab === "chat" && !byo ? <ChatTab agentId={agent.id} wsId={wsId!} base={`/o/${org}/w/${ws}`} orgId={workspace.data?.org_id} agent={{ id: agent.id, name: agent.name, avatarUrl: agent.avatar_url, brief: agent.brief }} /> : null}
         {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} memoryLanguage={workspace.data?.memory_language} /> : null}
         {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} /> : null}
         {tab === "schedules" && !byo ? <SchedulesTab agentId={agent.id} defaultTimezone={workspace.data?.timezone} wsId={workspace.data?.id} canOwn={workspace.data?.my_role === "owner"} /> : null}

@@ -2,7 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ChatPane, EventView } from "@/components/agents/chat-tab";
+import { ChatPane } from "@/components/agents/chat-tab";
+import { TranscriptView } from "@/components/chat/transcript-view";
 import { ActionApprovalCard, ApprovalsView } from "@/components/approvals/approvals-view";
 import type { TranscriptEvent } from "@/lib/api/conversations";
 import { applyEvents, emptyTranscript } from "@/lib/chat/transcript";
@@ -147,11 +148,12 @@ describe("chat attachments", () => {
 describe("transcript attachments", () => {
   const view = (e: TranscriptEvent) => {
     const state = applyEvents(emptyTranscript, [e]);
-    return wrap(<EventView ev={e} state={state} wsId="w" base="/b" convId="c1" />);
+    return wrap(<TranscriptView state={state} wsId="w" base="/b" convId="c1" />);
   };
   it("renders SVG only as a download link, never inline or as an image", () => {
     view(ev(1, "attachment", { attachment_id: "s1", filename: "x.svg", content_type: "image/svg+xml", size: 10 }));
-    expect(document.querySelector("img, svg, object, iframe, embed")).toBeNull();
+    // (the UI's own decorative icons are `svg[aria-hidden]`; attachment content is never inlined)
+    expect(document.querySelector('img, svg:not([aria-hidden="true"]), object, iframe, embed')).toBeNull();
     expect(screen.getByRole("link", { name: "x.svg" }).getAttribute("href")).toBe("/v1/attachments/s1/content");
   });
   it("raster images get an <img> of the download URL only", () => {
@@ -171,13 +173,13 @@ describe("app turn cap", () => {
     mockFetch({ "POST /v1/conversations/c1/continue": () => { called++; return json(200, { id: "c1" }); } });
     const cap = ev(1, "notice", { code: "app_turn_cap_reached", text: "Paused" });
     const state = applyEvents(emptyTranscript, [cap]);
-    const { unmount } = wrap(<EventView ev={cap} state={state} wsId="w" base="/b" convId="c1" />);
+    const { unmount } = wrap(<TranscriptView state={state} wsId="w" base="/b" convId="c1" />);
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(called).toBe(1));
     unmount();
     const reset = ev(2, "notice", { code: "app_turn_cap_reset", text: "Reset" });
     const state2 = applyEvents(emptyTranscript, [cap, reset]);
-    wrap(<EventView ev={cap} state={state2} wsId="w" base="/b" convId="c1" />);
+    wrap(<TranscriptView state={state2} wsId="w" base="/b" convId="c1" />);
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
   });
 });

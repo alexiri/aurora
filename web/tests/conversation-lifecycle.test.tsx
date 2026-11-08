@@ -54,6 +54,15 @@ afterEach(() => {
   events.list = [];
 });
 
+/** Open a Radix menu from its trigger (keyboard, which works in jsdom) and pick an item. */
+function pick(trigger: string, item: string | RegExp) {
+  fireEvent.keyDown(screen.getByRole("button", { name: trigger }), { key: "Enter" });
+  fireEvent.click(screen.getByRole("menuitem", { name: item }));
+}
+function openMenu(trigger: string) {
+  fireEvent.keyDown(screen.getByRole("button", { name: trigger }), { key: "Enter" });
+}
+
 const queued = (seq: number, text: string) => ({ seq, type: "turn.queued", ts: "t", payload: { turn_id: "t1", speaker_label: "Ann", door: "dashboard", text } });
 
 describe("redaction (RFE-010)", () => {
@@ -63,15 +72,15 @@ describe("redaction (RFE-010)", () => {
     ];
     mock({});
     wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} />);
-    expect(screen.getByText(/Content redacted by Ann \(pasted a password\)/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Redact message/ })).toBeNull();
+    expect(screen.getByText(/Message redacted by Ann \(pasted a password\)/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "More message actions" })).toBeNull();
   });
 
   it("warns that it is irreversible and posts the reason and the session reset", async () => {
     events.list = [queued(2, "my secret")];
     const calls = mock({ "POST /v1/conversations/c1/events/2/redact": () => json(200, { redacted_seqs: [2], session_reset: true }) });
     wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} />);
-    fireEvent.click(screen.getByRole("button", { name: "Redact message 2" }));
+    pick("More message actions", "Redact…");
     expect(await screen.findByText(/This is irreversible/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Reason (optional)"), { target: { value: "password" } });
     fireEvent.click(screen.getByLabelText(/reset the agent/));
@@ -84,7 +93,7 @@ describe("redaction (RFE-010)", () => {
     events.list = [queued(2, "x")];
     mock({ "POST /v1/conversations/c1/events/2/redact": () => json(403, { error: { code: "forbidden", message: "no" } }) });
     wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} />);
-    fireEvent.click(screen.getByRole("button", { name: "Redact message 2" }));
+    pick("More message actions", "Redact…");
     fireEvent.click(await screen.findByRole("button", { name: "Redact" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/not allowed/);
   });
@@ -105,7 +114,7 @@ describe("conversation actions", () => {
     const calls = mock({ "DELETE /v1/conversations/c1": () => json(204, null) });
     const gone = vi.fn();
     wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} onGone={gone} />);
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    pick("Conversation actions", "Delete conversation…");
     expect(await screen.findByText(/not deleted/)).toBeTruthy();
     const submit = screen.getByRole("button", { name: "Delete conversation" }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
@@ -119,7 +128,7 @@ describe("conversation actions", () => {
   it("delete refused while a turn runs shows the reason", async () => {
     mock({ "DELETE /v1/conversations/c1": () => json(409, { error: { code: "conversation_active", message: "active" } }) });
     wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} onGone={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    pick("Conversation actions", "Delete conversation…");
     fireEvent.change(await screen.findByLabelText(/Type "delete"/), { target: { value: "delete" } });
     fireEvent.click(screen.getByRole("button", { name: "Delete conversation" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/Stop it first/);
@@ -128,9 +137,10 @@ describe("conversation actions", () => {
   it("offers JSON and zip export links and Unarchive for an archived conversation", () => {
     mock({});
     wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} archived onGone={vi.fn()} />);
-    expect(screen.getByRole("link", { name: "Export JSON" }).getAttribute("href")).toBe("/v1/conversations/c1/export");
-    expect(screen.getByRole("link", { name: /zip/ }).getAttribute("href")).toBe("/v1/conversations/c1/export?attachments=zip");
-    expect(screen.getByRole("button", { name: "Unarchive" })).toBeTruthy();
+    openMenu("Conversation actions");
+    expect(screen.getByRole("menuitem", { name: "Export JSON" }).getAttribute("href")).toBe("/v1/conversations/c1/export");
+    expect(screen.getByRole("menuitem", { name: /zip/ }).getAttribute("href")).toBe("/v1/conversations/c1/export?attachments=zip");
+    expect(screen.getByRole("menuitem", { name: "Unarchive" })).toBeTruthy();
   });
 
   it("the Archived filter lists archived conversations and the banner states the retention window", async () => {
@@ -140,8 +150,8 @@ describe("conversation actions", () => {
       "GET /v1/orgs/o1/retention": () => json(200, { conversations_days: 90, conversations_days_max: null }),
     });
     wrap(<ChatTab agentId="a1" wsId="w" base="/o/x/w/y" orgId="o1" />);
-    expect(await screen.findByText(/deletes conversations after 90 days/)).toBeTruthy();
-    fireEvent.click(await screen.findByRole("button", { name: "Archived" }));
+    expect(await screen.findByText(/Deleted after 90 days without activity/)).toBeTruthy();
+    fireEvent.click(await screen.findByRole("tab", { name: "Archived" }));
     expect(await screen.findByText("Old room")).toBeTruthy();
     await waitFor(() => expect(calls.some((c) => c.path === "/v1/agents/a1/conversations" && c.search.includes("archived=true"))).toBe(true));
   });

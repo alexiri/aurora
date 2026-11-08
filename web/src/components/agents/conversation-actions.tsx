@@ -3,12 +3,13 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField } from "@/components/ui/form";
+import { MoreIcon } from "@/components/ui/icons";
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Notice } from "@/components/ui/notice";
-import { cn } from "@/lib/utils";
 import { ApiError } from "@/lib/api/client";
 import { chatApi, exportUrl } from "@/lib/api/conversations";
 
@@ -25,18 +26,24 @@ export function lifecycleError(err: unknown): string {
 
 export const CONFIRM_WORD = "delete";
 
-/** Per-conversation menu (RFE-010): archive/unarchive, export, delete with a typed confirmation. */
+/**
+ * The thread header's "Conversation actions" menu (RFE-010): archive/unarchive, export, and delete with a
+ * typed confirmation. The dialogs are unchanged; only the triggers moved into a menu (D-102).
+ */
 export function ConversationActions({
   agentId,
   convId,
   archived,
   onGone,
+  onError,
 }: {
   agentId: string;
   convId: string;
   archived: boolean;
-  /** The conversation no longer exists (deleted): the parent picks another. */
+  /** The conversation is no longer in this list (archived or deleted): the parent picks another. */
   onGone: () => void;
+  /** A failure from a menu action (shown by the parent as an alert); `null` clears it. */
+  onError?: (message: string | null) => void;
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -49,15 +56,18 @@ export function ConversationActions({
     void qc.invalidateQueries({ queryKey: ["agents", agentId, "direct"] });
   };
 
-  async function run(fn: () => Promise<unknown>, after?: () => void) {
+  async function run(fn: () => Promise<unknown>, after?: () => void, inDialog = false) {
     setBusy(true);
     setErr(null);
+    onError?.(null);
     try {
       await fn();
       refresh();
       after?.();
     } catch (e) {
-      setErr(lifecycleError(e));
+      const msg = lifecycleError(e);
+      if (inDialog) setErr(msg);
+      else onError?.(msg);
     } finally {
       setBusy(false);
     }
@@ -72,27 +82,41 @@ export function ConversationActions({
         setOpen(false);
         onGone();
       },
+      true,
     );
   }
 
   return (
-    <div role="group" aria-label="Conversation actions" className="flex flex-wrap items-center gap-2 text-sm">
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={busy}
-        onClick={() => void run(() => (archived ? chatApi.unarchive(convId) : chatApi.archive(convId)), archived ? undefined : onGone)}>
-        {archived ? "Unarchive" : "Archive"}
-      </Button>
-      <a className={cn(buttonVariants({ variant: "outline", size: "sm" }))} href={exportUrl(convId, "json")} download>
-        Export JSON
-      </a>
-      <a className={cn(buttonVariants({ variant: "outline", size: "sm" }))} href={exportUrl(convId, "zip")} download>
-        Export with files (zip)
-      </a>
-      <Button size="sm" variant="danger" onClick={() => setOpen(true)}>
-        Delete
-      </Button>
+    <>
+      {/* Non-modal: a modal menu aria-hides the rest of the page while its focusable controls stay reachable (axe: aria-hidden-focus). */}
+      <Menu modal={false}>
+        <MenuTrigger asChild>
+          <Button variant="ghost" size="sm" aria-label="Conversation actions" disabled={busy} className="size-11 min-h-11 px-0 md:size-9 md:min-h-9">
+            <MoreIcon width={20} height={20} />
+          </Button>
+        </MenuTrigger>
+        <MenuContent align="end">
+          <MenuItem
+            disabled={busy}
+            onSelect={() => void run(() => (archived ? chatApi.unarchive(convId) : chatApi.archive(convId)), archived ? undefined : onGone)}>
+            {archived ? "Unarchive" : "Archive"}
+          </MenuItem>
+          <MenuItem asChild>
+            <a href={exportUrl(convId, "json")} download>
+              Export JSON
+            </a>
+          </MenuItem>
+          <MenuItem asChild>
+            <a href={exportUrl(convId, "zip")} download>
+              Export with files (zip)
+            </a>
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem className="text-danger-ink data-[highlighted]:bg-danger-soft" onSelect={() => setOpen(true)}>
+            Delete conversation…
+          </MenuItem>
+        </MenuContent>
+      </Menu>
       <FormDialog
         open={open}
         onOpenChange={(o) => {
@@ -120,18 +144,12 @@ export function ConversationActions({
           </Notice>
         ) : null}
       </FormDialog>
-      {err && !open ? (
-        <Notice tone="danger" role="alert" className="w-full">
-          {err}
-        </Notice>
-      ) : null}
-    </div>
+    </>
   );
 }
 
-/** Per-message "Redact": replaces the content in place (irreversible); optionally resets the session. */
-export function RedactButton({ convId, seq }: { convId: string; seq: number }) {
-  const [open, setOpen] = useState(false);
+/** Redact dialog for one message: replaces the content in place (irreversible); optionally resets the session. Opened from the message toolbar. */
+export function RedactDialog({ convId, seq, open, onOpenChange }: { convId: string; seq: number; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [reason, setReason] = useState("");
   const [reset, setReset] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -146,7 +164,7 @@ export function RedactButton({ convId, seq }: { convId: string; seq: number }) {
       if (reason.trim()) body.reason = reason.trim();
       await chatApi.redact(convId, seq, body);
       // The event refreshes through the stream's `event.redacted`; close the dialog.
-      setOpen(false);
+      onOpenChange(false);
     } catch (e2) {
       setErr(lifecycleError(e2));
     } finally {
@@ -155,44 +173,30 @@ export function RedactButton({ convId, seq }: { convId: string; seq: number }) {
   }
 
   return (
-    <>
-      <button
-        type="button"
-        className="inline-flex min-h-6 items-center text-xs text-muted underline-offset-2 hover:text-ink hover:underline"
-        aria-label={`Redact message ${seq}`}
-        onClick={() => setOpen(true)}>
-        Redact
-      </button>
-      <FormDialog
-        open={open}
-        onOpenChange={(o) => {
-          setOpen(o);
-          setErr(null);
-        }}
-        title="Redact this message?"
-        description="The content is replaced for everyone and cannot be restored."
-        submitLabel={busy ? "Redacting…" : "Redact"}
-        danger
-        busy={busy}
-        onSubmit={(e) => void submit(e)}>
-        <Notice tone="pending" role="note">
-          This is irreversible. The agent may still remember what it read; tick the box below to start it with a fresh session.
+    <FormDialog
+      open={open}
+      onOpenChange={(o) => {
+        onOpenChange(o);
+        setErr(null);
+      }}
+      title="Redact this message?"
+      description="The content is replaced for everyone and cannot be restored."
+      submitLabel={busy ? "Redacting…" : "Redact"}
+      danger
+      busy={busy}
+      onSubmit={(e) => void submit(e)}>
+      <Notice tone="pending" role="note">
+        This is irreversible. The agent may still remember what it read; tick the box below to start it with a fresh session.
+      </Notice>
+      <Field id={`redact-reason-${seq}`} label="Reason (optional)">
+        <input id={`redact-reason-${seq}`} className={inputClass} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
+      </Field>
+      <CheckboxField id={`redact-reset-${seq}`} label="Also reset the agent's session (it forgets this conversation)" checked={reset} onChange={setReset} />
+      {err ? (
+        <Notice tone="danger" role="alert">
+          {err}
         </Notice>
-        <Field id={`redact-reason-${seq}`} label="Reason (optional)">
-          <input id={`redact-reason-${seq}`} className={inputClass} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
-        </Field>
-        <CheckboxField
-          id={`redact-reset-${seq}`}
-          label="Also reset the agent's session (it forgets this conversation)"
-          checked={reset}
-          onChange={setReset}
-        />
-        {err ? (
-          <Notice tone="danger" role="alert">
-            {err}
-          </Notice>
-        ) : null}
-      </FormDialog>
-    </>
+      ) : null}
+    </FormDialog>
   );
 }
