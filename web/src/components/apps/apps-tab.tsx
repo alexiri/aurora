@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Notice } from "@/components/ui/notice";
 import {
   connectWindowPath,
   openConnectWindow,
@@ -27,43 +28,47 @@ export function AppDetailBody({ app, workspaceId }: { app: string; workspaceId: 
   const writes = d.tools.filter((t) => t.group === "write");
   const group = (label: string, tools: typeof d.tools) =>
     tools.length ? (
-      <section aria-label={`${label} tools`}>
-        <h3 className="text-sm font-medium">{label} tools</h3>
-        <ul className="list-disc pl-5 text-sm">
+      <section aria-label={`${label} tools`} className="space-y-1.5">
+        <h3 className="font-display text-sm font-semibold text-ink">{label} tools</h3>
+        <ul className="list-disc space-y-0.5 pl-5 text-sm text-ink">
           {tools.map((t) => (
             <li key={t.id}>
               {t.name}
-              {t.description ? <span className="text-neutral-600"> — {t.description}</span> : null}
+              {t.description ? <span className="text-ink-2"> — {t.description}</span> : null}
             </li>
           ))}
         </ul>
       </section>
     ) : null;
   return (
-    <div className="space-y-4 text-sm">
-      <p>{d.description}</p>
-      {!d.available ? <p role="status" className="text-amber-700">This app is not available to this workspace.</p> : null}
+    <div className="space-y-4 text-sm text-ink">
+      <p className="text-ink-2">{d.description}</p>
+      {!d.available ? (
+        <Notice tone="pending" role="status">
+          This app is not available to this workspace.
+        </Notice>
+      ) : null}
       {group("Read", reads)}
       {group("Write", writes)}
-      <section aria-label="Hosts">
-        <h3 className="text-sm font-medium">Hosts</h3>
-        <ul className="space-y-1">
+      <section aria-label="Hosts" className="space-y-1.5">
+        <h3 className="font-display text-sm font-semibold text-ink">Hosts</h3>
+        <ul className="space-y-1.5">
           {d.hosts.map((h) => (
-            <li key={`${h.host}${h.path_prefix ?? ""}`}>
-              <code>{h.host}{h.path_prefix ?? ""}</code>
+            <li key={`${h.host}${h.path_prefix ?? ""}`} className="space-y-1">
+              <code className="break-all font-mono text-xs">{h.host}{h.path_prefix ?? ""}</code>
               {h.claim_status === "lost" ? (
-                <span className="ml-2 text-amber-700">
+                <Notice tone="pending" role="status" className="text-xs">
                   Another app currently claims this host, so credentials are not injected for this app.
-                </span>
+                </Notice>
               ) : null}
             </li>
           ))}
         </ul>
       </section>
       {d.agent_instructions ? (
-        <section aria-label="Agent instructions">
-          <h3 className="text-sm font-medium">Instructions shown to agents</h3>
-          <pre className="whitespace-pre-wrap rounded bg-neutral-50 p-2 text-xs">{d.agent_instructions}</pre>
+        <section aria-label="Agent instructions" className="space-y-1.5">
+          <h3 className="font-display text-sm font-semibold text-ink">Instructions shown to agents</h3>
+          <pre className="whitespace-pre-wrap rounded-control border border-line bg-subtle p-3 text-xs text-ink-2">{d.agent_instructions}</pre>
         </section>
       ) : null}
       {d.api_docs ? (
@@ -87,20 +92,20 @@ function AppCard({
   onConnect: () => void;
 }) {
   return (
-    <li className="flex flex-col gap-2 rounded-md border border-neutral-200 p-3">
-      <div className="flex items-center gap-2">
+    <li className="flex flex-col gap-3 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
+      <div className="flex items-center gap-3">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={`/v1/apps/${encodeURIComponent(app.app_id)}/icon`} alt="" width={32} height={32} className="h-8 w-8 rounded" />
-        <div>
-          <p className="font-medium">{app.name}</p>
-          <p className="text-xs text-neutral-500">
+        <img src={`/v1/apps/${encodeURIComponent(app.app_id)}/icon`} alt="" width={40} height={40} className="size-10 shrink-0 rounded-control border border-line bg-surface" />
+        <div className="min-w-0">
+          <p className="truncate font-display text-base font-semibold text-ink">{app.name}</p>
+          <p className="text-xs text-muted">
             {app.connection_count} connection{app.connection_count === 1 ? "" : "s"}
             {app.available ? "" : " · unavailable"}
           </p>
         </div>
       </div>
-      <p className="line-clamp-2 text-sm text-neutral-600">{app.description}</p>
-      <div className="mt-auto flex gap-2">
+      <p className="line-clamp-2 text-sm text-ink-2">{app.description}</p>
+      <div className="mt-auto flex flex-wrap gap-2">
         <Button size="sm" variant="outline" onClick={onOpen} aria-label={`Details of ${app.name}`}>Details</Button>
         {canOwn ? (
           <Button size="sm" disabled={!app.available} onClick={onConnect} aria-label={`Connect ${app.name}`}>Connect</Button>
@@ -127,7 +132,7 @@ export function AppsTab({ workspaceId, canOwn }: { workspaceId: string; canOwn: 
   if (items.length === 0) return <EmptyState title="No apps installed" />;
   return (
     <>
-      <ul aria-label="Apps" className="grid gap-3 sm:grid-cols-2">
+      <ul aria-label="Apps" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {items.map((a) => (
           <AppCard
             key={a.app_id}

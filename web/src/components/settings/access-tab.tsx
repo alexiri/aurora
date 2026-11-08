@@ -3,8 +3,13 @@
 import { useState } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { inputClass } from "@/components/ui/field";
+import { DataTable, Td, Th } from "@/components/ui/data-table";
+import { Field, inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
+import { Section } from "@/components/ui/section";
+import { cn } from "@/lib/utils";
 import {
   useAccess,
   useDeleteAccess,
@@ -43,60 +48,56 @@ function AddBinding({
   if (members.isPending || members.isError) return null;
   const candidates = members.data.items.filter((m) => !bound.has(m.user_id));
   if (candidates.length === 0) {
-    return <p className="text-sm text-neutral-600">Every active org member already has access.</p>;
+    return <p className="text-sm text-ink-2">Every active org member already has access.</p>;
   }
   return (
-    <form
-      aria-label="Add access"
-      className="flex flex-wrap items-end gap-2"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!user) return;
-        put.mutate({ user, role }, { onSuccess: () => setUser("") });
-      }}
-    >
-      <div>
-        <label htmlFor="acc-add-user" className="block text-sm font-medium">
-          Organization member
-        </label>
-        <select
-          id="acc-add-user"
-          className={inputClass}
-          value={user}
-          onChange={(e) => setUser(e.target.value)}
-        >
-          <option value="">Select a member…</option>
-          {candidates.map((m) => (
-            <option key={m.user_id} value={m.user_id}>
-              {m.display_name} ({m.email})
-            </option>
-          ))}
-        </select>
-      </div>
-      <div>
-        <label htmlFor="acc-add-role" className="block text-sm font-medium">
-          Role
-        </label>
-        <select
-          id="acc-add-role"
-          className={inputClass}
-          value={role}
-          onChange={(e) => setRole(e.target.value as Role)}
-        >
-          <option value="member">member</option>
-          <option value="approver">approver</option>
-          <option value="owner">owner</option>
-        </select>
-      </div>
-      <Button type="submit" disabled={!user || put.isPending}>
-        Add
-      </Button>
-      {put.error ? (
-        <p role="alert" className="basis-full text-sm text-red-700">
-          {errorMessage(put.error)}
-        </p>
-      ) : null}
-    </form>
+    <Section id="acc-add" title="Add access" description="Give an organization member a role in this workspace." card>
+      <form
+        aria-label="Add access"
+        className="flex flex-wrap items-start gap-x-4 gap-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!user) return;
+          put.mutate({ user, role }, { onSuccess: () => setUser("") });
+        }}
+      >
+        <Field id="acc-add-user" label="Organization member">
+          <select
+            id="acc-add-user"
+            className={cn(inputClass, "w-72 max-w-full")}
+            value={user}
+            onChange={(e) => setUser(e.target.value)}
+          >
+            <option value="">Select a member…</option>
+            {candidates.map((m) => (
+              <option key={m.user_id} value={m.user_id}>
+                {m.display_name} ({m.email})
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field id="acc-add-role" label="Role">
+          <select
+            id="acc-add-role"
+            className={cn(inputClass, "w-40 max-w-full")}
+            value={role}
+            onChange={(e) => setRole(e.target.value as Role)}
+          >
+            <option value="member">member</option>
+            <option value="approver">approver</option>
+            <option value="owner">owner</option>
+          </select>
+        </Field>
+        <Button type="submit" disabled={!user || put.isPending} className="sm:mt-[1.625rem]">
+          Add
+        </Button>
+        {put.error ? (
+          <Notice tone="danger" role="alert" className="basis-full">
+            {errorMessage(put.error)}
+          </Notice>
+        ) : null}
+      </form>
+    </Section>
   );
 }
 
@@ -119,23 +120,23 @@ function Row({
   const [confirm, setConfirm] = useState(false);
   const offboarding = useWorkspaceOffboarding(wsId, confirm ? b.user_id : null);
   return (
-    <tr className="border-t border-neutral-200">
-      <td className="py-2 pr-4">
+    <tr>
+      <Td>
         <div className="font-medium">{b.display_name}</div>
-        <div className="text-neutral-500">{b.email}</div>
-      </td>
-      <td className="py-2 pr-4">
+        <div className="text-xs text-muted">{b.email}</div>
+      </Td>
+      <Td>
         {b.implicit ? (
           <span>
             owner{" "}
-            <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs" title="Organization owner or admin">
+            <Badge title="Organization owner or admin" className="normal-case tracking-normal">
               Implicit (org)
-            </span>
+            </Badge>
           </span>
         ) : canOwn ? (
           <select
             aria-label={`Role for ${b.email}`}
-            className={inputClass}
+            className={cn(inputClass, "w-36")}
             value={b.role}
             disabled={busy}
             onChange={(e) =>
@@ -149,8 +150,8 @@ function Row({
         ) : (
           b.role
         )}
-      </td>
-      <td className="py-2">
+      </Td>
+      <Td className="text-right">
         {canOwn && !b.implicit ? (
           <Button
             variant="outline"
@@ -183,7 +184,7 @@ function Row({
             )
           }
         />
-      </td>
+      </Td>
     </tr>
   );
 }
@@ -204,33 +205,29 @@ export function AccessTab({
   const items = access.data.items;
   const bound = new Set(items.map((b) => b.user_id));
   return (
-    <div className="space-y-4">
-      {!canOwn ? (
-        <p className="rounded-md bg-neutral-100 p-3 text-sm text-neutral-700">
-          Only workspace owners can change who has access.
-        </p>
-      ) : null}
-      <ul aria-label="Roles" className="space-y-0.5 text-sm text-neutral-600">
+    <div className="space-y-6">
+      {!canOwn ? <Notice role="status">Only workspace owners can change who has access.</Notice> : null}
+      <ul aria-label="Roles" className="space-y-0.5 text-sm text-ink-2">
         {(Object.keys(ROLE_HELP) as Role[]).map((r) => (
           <li key={r}>{ROLE_HELP[r]}</li>
         ))}
       </ul>
       {err ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(err)}
-        </p>
+        </Notice>
       ) : null}
       {items.length === 0 ? (
         <EmptyState title="No one has access yet" />
       ) : (
-        <table className="w-full text-left text-sm">
-          <thead className="text-neutral-500">
+        <DataTable caption="People with access to this workspace">
+          <thead>
             <tr>
-              <th className="py-2 pr-4 font-medium">Person</th>
-              <th className="py-2 pr-4 font-medium">Role</th>
-              <th className="py-2 font-medium">
+              <Th>Person</Th>
+              <Th>Role</Th>
+              <Th>
                 <span className="sr-only">Actions</span>
-              </th>
+              </Th>
             </tr>
           </thead>
           <tbody>
@@ -247,7 +244,7 @@ export function AccessTab({
               />
             ))}
           </tbody>
-        </table>
+        </DataTable>
       )}
       {canOwn ? <AddBinding wsId={wsId} orgId={orgId} bound={bound} /> : null}
     </div>
