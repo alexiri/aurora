@@ -311,6 +311,14 @@ tools:
 ```
 `description` optional; tool ids are immutable; renaming = remove + add.
 
+**Which tool a request is.** A request is classified as the **first** catalogue tool that matches
+its host, method and path: `read` items are tried before `write` items, each in declaration order.
+There are no segment exclusions, so when two patterns overlap the order decides (for example
+`/export/categ/favorites*` must be declared before `/export/categ/*`, and `/rooms/api/rooms/search`
+before `/rooms/api/rooms/*`). Reordering `items` therefore changes which tool id a grant, an
+approval and the request log see; keep specific patterns first and cover each overlap with a
+fixture. Query strings never participate in matching.
+
 #### `approvals` — approval summaries (templates per tool)
 ```yaml
 approvals:
