@@ -25,6 +25,14 @@ Needed by: CAT-1 (`github-app` webhook verification), CAT-3 (Drive MIME summarie
 ### P2-CAT-1 — GitHub (OAuth) and GitHub App (hooks; `github-app` after P2-CAT-H)
 - `github`: OAuth app (authorization code), REST v3 + GraphQL (read tools; issues/PR writes marked), git over HTTPS.
 - `github-app`: GitHub App installation tokens minted from the app's private key (the mint mechanism of `09 §5`), webhook signature verification through a hook (`09 §8`). This is the hooks example of the catalogue.
+- **Coordinator correction (2026-11-08, D-91), replacing the webhook item above:** `09 §8.2` has no inbound-webhook hook point, and agent webhooks are core (`10 §Webhooks`: `hmac_sha256` over the raw body). `github-app` therefore uses `token.kind: hook` with a **`token.mint`** hook:
+  - It signs an RS256 app JWT in the guest with a pure-Rust signer. The JWT has `iat = now − 60`, `exp ≤ now + 600` and `iss = <app id>`; `now` comes from the host's `now-unix-seconds`.
+  - It calls `POST https://{host}/app/installations/{installation_id}/access_tokens` and returns the token. The expiry is GitHub's `expires_at`, capped by `max_lifetime_secs`.
+  - Egress is declared for `api.github.com`, and for the instance host on GHES (`/api/v3`).
+  - Connect is a form with these fields: app id, installation id (metadata), and the private key PEM (a credential field). It never goes into metadata, logs or summaries.
+  - An optional `connect.exchange` mints once to validate the form. Its error must not echo the key.
+  - Webhooks are out of scope. If GitHub's `X-Hub-Signature-256` matches core's `hmac_sha256` verification, the guide may say so in one line; otherwise report it as a follow-up.
+- Both packages declare GHES through `instances` (D-74; `gitlab` is the reference). The GHES API base is `https://{instance}/api/v3` and GraphQL is `https://{instance}/api/graphql`; git over HTTPS uses the instance host. `github.com`/`api.github.com` is the default host.
 
 ### P2-CAT-2 — Jira and Confluence (shared OAuth client)
 - One package with two apps sharing one Atlassian OAuth 2.0 (3LO) client (`09 §3.3 oauth_clients`); cloud id discovery as connection metadata. Jira REST v3 (issues, search, transitions marked write) and Confluence REST v2 (pages, spaces; writes marked).
