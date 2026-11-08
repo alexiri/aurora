@@ -129,3 +129,99 @@ fn build_requires_hooks_wasm_when_hooks_declared() {
     assert!(!o.status.success());
     assert!(String::from_utf8_lossy(&o.stderr).contains("hooks.wasm"));
 }
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let dst = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&e.path(), &dst);
+        } else {
+            std::fs::copy(e.path(), dst).unwrap();
+        }
+    }
+}
+
+/// A fresh copy of the built-in GitLab package (its recorded token exchanges are the subject).
+fn gitlab_copy() -> PathBuf {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/builtin/gitlab");
+    let dst = tmp().join("gitlab");
+    copy_dir(&root, &dst);
+    dst
+}
+
+fn token_report(src: &Path) -> (bool, serde_json::Value) {
+    let o = aurora(&["plugin", "test", s(src)]);
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    (o.status.success(), v)
+}
+
+/// P2-CAT-T: `aurora plugin test` replays refresh / re-auth / unavailable against the recorded
+/// token endpoint, and a deliberately broken recorded exchange fails the case.
+#[test]
+fn token_lifecycle_replays_and_a_broken_exchange_fails() {
+    let src = gitlab_copy();
+    let (ok_run, v) = token_report(&src);
+    assert!(ok_run, "{v}");
+    let results = v["fixtures"]["results"].as_array().unwrap();
+    let lifecycle: Vec<_> = results
+        .iter()
+        .filter(|r| r["observed"]["token"].is_object())
+        .collect();
+    assert_eq!(lifecycle.len(), 6, "{v}");
+    let outcomes: Vec<&str> = lifecycle
+        .iter()
+        .map(|r| r["observed"]["token"]["outcome"].as_str().unwrap())
+        .collect();
+    assert_eq!(outcomes.iter().filter(|o| **o == "refreshed").count(), 2);
+    assert_eq!(
+        outcomes.iter().filter(|o| **o == "reauth_required").count(),
+        2
+    );
+    assert_eq!(outcomes.iter().filter(|o| **o == "unavailable").count(), 2);
+    // The retried request carries the new token; the refresh token never left its instance.
+    assert!(lifecycle.iter().any(
+        |r| r["observed"]["token"]["retried"]["headers"]["authorization"]
+            == "Bearer tok-fixture-new"
+    ));
+    // Credentials of the refresh are not echoed into the report.
+    assert!(!v.to_string().contains("refresh-fixture-2"));
+
+    // Broken recording 1: the instance's token endpoint recorded under gitlab.com (the case would
+    // pass only if the request had been built for gitlab.com: SEC-59).
+    let f = src.join("tests/token.yaml");
+    let good = std::fs::read_to_string(&f).unwrap();
+    let wrong_host = good.replace(
+        "method: POST, url: \"https://gitlab.example.com/oauth/token\"",
+        "method: POST, url: \"https://gitlab.com/oauth/token\"",
+    );
+    assert_ne!(wrong_host, good);
+    std::fs::write(&f, wrong_host).unwrap();
+    let (ok_run, v) = token_report(&src);
+    assert!(!ok_run);
+    assert!(v["fixtures"]["failed"].as_u64().unwrap() >= 2, "{v}");
+    assert!(v.to_string().contains("unused cassette entry"), "{v}");
+
+    // Broken recording 2: the recorded request does not match the refresh the gateway builds.
+    let wrong_form = good.replace(
+        "form: { grant_type: refresh_token, refresh_token: \"refresh-fixture-1\", client_id: \"client-fixture\" }",
+        "form: { grant_type: refresh_token, refresh_token: \"someone-else\" }",
+    );
+    assert_ne!(wrong_form, good);
+    std::fs::write(&f, wrong_form).unwrap();
+    let (ok_run, v) = token_report(&src);
+    assert!(!ok_run);
+    assert!(v["fixtures"]["failed"].as_u64().unwrap() >= 2, "{v}");
+
+    // Broken recording 3: a stale answer the package does not declare is not refreshed.
+    let not_stale = good.replace(
+        "upstream: { status: 401, body: '{\"error\":\"invalid_token\"}' }",
+        "upstream: { status: 500, body: '{\"error\":\"invalid_token\"}' }",
+    );
+    assert_ne!(not_stale, good);
+    std::fs::write(&f, not_stale).unwrap();
+    let (ok_run, v) = token_report(&src);
+    assert!(!ok_run);
+    assert!(v.to_string().contains("stale_codes"), "{v}");
+}

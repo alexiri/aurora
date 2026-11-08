@@ -38,7 +38,10 @@ and replace the bucket name.
 }
 ```
 
-Add `s3:PutObject` and `s3:DeleteObject` on the bucket's objects only if agents must change objects.
+Add `s3:PutObject` and `s3:DeleteObject` on the bucket's objects only if agents must change objects
+(a `CopyObject` needs `s3:GetObject` on its source object as well, and `s3:PutObject` on its
+destination). Reading a specific object version needs `s3:GetObjectVersion`, which this policy does
+not grant.
 `sts:GetCallerIdentity` needs no permission at all, and the other policy statements are the only
 thing that limits what the keys can do: Aurora's approvals are a second layer, not a replacement.
 

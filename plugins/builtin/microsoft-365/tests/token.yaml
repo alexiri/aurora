@@ -1,0 +1,65 @@
+# Token lifecycle against recorded HTTP (P2-CAT-T, docs/09 §12): a stale Graph answer, the refresh
+# exchange against the Entra `common` token endpoint, and what the gateway does next. All values
+# are fake.
+- name: "token: refresh on the common endpoint after InvalidAuthenticationToken retries with the new token"
+  connection:
+    credentials: { access_token: "oauth-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/messages" }
+  token:
+    upstream: { status: 401, body: '{"error":{"code":"InvalidAuthenticationToken","message":"Access token has expired or is not yet valid."}}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-1", client_id: "client-fixture" }
+        response:
+          status: 200
+          body: '{"token_type":"Bearer","scope":"Mail.Read User.Read","expires_in":3599,"ext_expires_in":3599,"access_token":"oauth-fixture-new","refresh_token":"refresh-fixture-2"}'
+    expect:
+      outcome: refreshed
+      credentials: { access_token: "oauth-fixture-new", refresh_token: "refresh-fixture-2" }
+      retried:
+        url: "https://graph.microsoft.com/v1.0/me/messages"
+        headers: { authorization: "Bearer oauth-fixture-new" }
+  expect: { app: microsoft-365, tool: list_messages }
+- name: "token: invalid_grant needs re-authorization and nothing is retried"
+  connection:
+    credentials: { access_token: "oauth-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/messages" }
+  token:
+    upstream: { status: 401, body: '{"error":{"code":"InvalidAuthenticationToken"}}' }
+    http_cassette:
+      - request: { method: POST, url: "https://login.microsoftonline.com/common/oauth2/v2.0/token" }
+        response:
+          status: 400
+          body: '{"error":"invalid_grant","error_description":"AADSTS70000: The provided value for the input parameter refresh_token is not valid.","error_codes":[70000]}'
+    expect: { outcome: reauth_required }
+  expect: { app: microsoft-365 }
+- name: "token: interaction_required (Conditional Access) needs re-authorization"
+  connection:
+    credentials: { access_token: "oauth-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/messages" }
+  token:
+    upstream: { status: 401, body: '{"error":{"code":"InvalidAuthenticationToken"}}' }
+    http_cassette:
+      - request: { method: POST, url: "https://login.microsoftonline.com/common/oauth2/v2.0/token" }
+        response:
+          status: 400
+          body: '{"error":"interaction_required","error_description":"AADSTS50076: Due to a configuration change made by your administrator, you must use multi-factor authentication."}'
+    expect: { outcome: reauth_required }
+  expect: { app: microsoft-365 }
+- name: "token: a 503 from the token endpoint keeps the connection and retries nothing"
+  connection:
+    credentials: { access_token: "oauth-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/messages" }
+  token:
+    upstream: { status: 401, body: '{"error":{"code":"InvalidAuthenticationToken"}}' }
+    http_cassette:
+      - request: { method: POST, url: "https://login.microsoftonline.com/common/oauth2/v2.0/token" }
+        response: { status: 503, body: "service unavailable" }
+    expect: { outcome: unavailable }
+  expect: { app: microsoft-365 }

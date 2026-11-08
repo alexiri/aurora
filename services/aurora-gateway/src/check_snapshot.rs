@@ -31,6 +31,59 @@ struct Case {
     /// Hook-host cases are not runnable offline yet; reported as skipped.
     #[serde(default)]
     hook: Option<Value>,
+    /// (P2-CAT-T, D-80) Token lifecycle replay against a recorded token endpoint.
+    #[serde(default)]
+    token: Option<TokenCase>,
+}
+
+/// Recorded stale answer + token-endpoint cassette + expected outcome (docs/09 §12).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TokenCase {
+    /// The upstream's recorded first answer; it must match `token.stale_codes`.
+    upstream: RecordedAnswer,
+    #[serde(default)]
+    http_cassette: Vec<Recorded>,
+    expect: TokenExpect,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordedAnswer {
+    status: u16,
+    #[serde(default)]
+    body: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Recorded {
+    request: RecordedRequest,
+    response: RecordedAnswer,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordedRequest {
+    method: String,
+    url: String,
+    /// Subset match on the form/JSON parameters of the refresh request.
+    #[serde(default)]
+    form: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TokenExpect {
+    /// `refreshed` | `reauth_required` | `unavailable`.
+    outcome: String,
+    /// Subset of the refreshed credentials.
+    #[serde(default)]
+    credentials: BTreeMap<String, String>,
+    /// The retried request (only after `refreshed`).
+    retried: Option<ExpectUpstream>,
+    /// The URL the refresh request was built for (shown even when nothing matched).
+    request_url: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -40,6 +93,9 @@ struct Connection {
     credentials: serde_json::Map<String, Value>,
     #[serde(default)]
     metadata: Value,
+    /// (P2-CAT-T) The registered OAuth client's fields (fake values) for the refresh request.
+    #[serde(default)]
+    oauth_client: serde_json::Map<String, Value>,
     tenant_host: Option<String>,
     /// (D-74) The connection is bound to a registered app instance with this host: requests to
     /// exactly this host are served by the app's `{instance}` host entries, any other host is
@@ -152,10 +208,15 @@ fn run_case(l: &Loaded, c: &Case) -> Value {
         return json!({ "name": c.name, "status": "skipped", "reason": "hook cases need the hook host" });
     }
     let mut failures = Vec::new();
-    let observed = execute(l, c, &mut failures).unwrap_or_else(|e| {
+    let mut observed = execute(l, c, None, &mut failures).unwrap_or_else(|e| {
         failures.push(e);
         Value::Null
     });
+    if let Some(t) = &c.token
+        && failures.is_empty()
+    {
+        token_lifecycle(l, c, t, &mut observed, &mut failures);
+    }
     if failures.is_empty() {
         failures = compare(&c.expect, &observed);
     }
@@ -166,7 +227,14 @@ fn run_case(l: &Loaded, c: &Case) -> Value {
     })
 }
 
-fn execute(l: &Loaded, c: &Case, failures: &mut Vec<String>) -> Result<Value, String> {
+/// Runs the request through matcher, guards and injection. `creds_override` replaces the
+/// connection's credentials (the retry after a refresh).
+fn execute(
+    l: &Loaded,
+    c: &Case,
+    creds_override: Option<&serde_json::Map<String, Value>>,
+    failures: &mut Vec<String>,
+) -> Result<Value, String> {
     let method = Method::from_bytes(c.request.method.to_ascii_uppercase().as_bytes())
         .map_err(|_| "invalid request.method".to_owned())?;
     let uri: http::Uri = c
@@ -270,7 +338,7 @@ fn execute(l: &Loaded, c: &Case, failures: &mut Vec<String>) -> Result<Value, St
         }
     }
 
-    let creds = &c.connection.credentials;
+    let creds = creds_override.unwrap_or(&c.connection.credentials);
     let optional: BTreeSet<&str> = m
         .app
         .credentials
@@ -382,6 +450,174 @@ fn execute(l: &Loaded, c: &Case, failures: &mut Vec<String>) -> Result<Value, St
         );
     }
     Ok(obs)
+}
+
+/// Token lifecycle through the gateway's own refresh functions (`refresh::build_exchange`,
+/// `refresh::interpret_exchange`): stale answer -> refresh request against the recorded token
+/// endpoint -> outcome -> the retried request with the new credentials.
+fn token_lifecycle(
+    l: &Loaded,
+    c: &Case,
+    t: &TokenCase,
+    obs: &mut Value,
+    failures: &mut Vec<String>,
+) {
+    use crate::refresh::{RefreshError, build_exchange, interpret_exchange};
+    if obs.get("refused").is_some() {
+        failures.push("token case: the request was refused by the instance guard".into());
+        return;
+    }
+    let Some(app) = obs["app"].as_str().and_then(|a| l.snapshot.app(a)) else {
+        failures.push("token case: the request matched no app".into());
+        return;
+    };
+    let Some(token) = app
+        .token
+        .as_ref()
+        .filter(|k| k.kind == aurora_registry::manifest::TokenKind::Oauth2Refresh)
+    else {
+        failures.push(format!(
+            "token case: app `{}` has no oauth2_refresh token",
+            app.app_id
+        ));
+        return;
+    };
+    let stale = token.stale_codes.iter().any(|s| {
+        s.status == t.upstream.status
+            && s.body_contains
+                .as_ref()
+                .is_none_or(|n| t.upstream.body.contains(n.as_str()))
+    });
+    if !stale {
+        failures.push(format!(
+            "token case: the recorded upstream answer ({}) matches no token.stale_codes entry, so the gateway would not refresh",
+            t.upstream.status
+        ));
+        return;
+    }
+    let Some(client) = token.client.as_ref().and_then(|k| {
+        l.snapshot
+            .oauth_clients
+            .iter()
+            .find(|oc| oc.package_id == app.package_id && &oc.client_key == k)
+    }) else {
+        failures.push("token case: the app's token.client is not in the snapshot".into());
+        return;
+    };
+    let conn = &c.connection;
+    let mut used = vec![false; t.http_cassette.len()];
+    let mut tobs = json!({ "stale": true });
+    let outcome = match build_exchange(
+        client,
+        token,
+        &conn.credentials,
+        &serde_json::Map::new(),
+        &conn.oauth_client,
+        conn.tenant_host.as_deref(),
+        conn.instance_host.as_deref(),
+    ) {
+        // Fail closed before any request (e.g. no instance host to bind the token URL to).
+        Err(_) => "unavailable".to_owned(),
+        Ok(req) => {
+            let form: BTreeMap<&str, &str> = req
+                .params
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            tobs["request_url"] = json!(req.url);
+            let hit = t.http_cassette.iter().enumerate().find(|(i, r)| {
+                !used[*i]
+                    && r.request.method.eq_ignore_ascii_case("POST")
+                    && r.request.url == req.url
+                    && r.request
+                        .form
+                        .iter()
+                        .all(|(k, v)| form.get(k.as_str()) == Some(&v.as_str()))
+            });
+            match hit {
+                // No recorded answer = the request went somewhere that was not recorded.
+                None => "unavailable".to_owned(),
+                Some((i, rec)) => {
+                    used[i] = true;
+                    let body: Value =
+                        serde_json::from_str(&rec.response.body).unwrap_or(Value::Null);
+                    match interpret_exchange(token, &conn.credentials, rec.response.status, &body) {
+                        Ok((creds, _secs)) => {
+                            tobs["credentials"] = Value::Object(creds.clone());
+                            match execute(l, c, Some(&creds), failures) {
+                                Ok(r) => tobs["retried"] = r["upstream"].clone(),
+                                Err(e) => failures.push(e),
+                            }
+                            "refreshed".to_owned()
+                        }
+                        Err(RefreshError::Reauth) => "reauth_required".to_owned(),
+                        Err(_) => "unavailable".to_owned(),
+                    }
+                }
+            }
+        }
+    };
+    tobs["outcome"] = json!(outcome);
+    for (i, u) in used.iter().enumerate() {
+        if !u {
+            let r = &t.http_cassette[i].request;
+            failures.push(format!("unused cassette entry: {} {}", r.method, r.url));
+        }
+    }
+    let e = &t.expect;
+    if outcome != e.outcome {
+        failures.push(format!(
+            "token.outcome: expected `{}`, got `{outcome}`",
+            e.outcome
+        ));
+    }
+    if let Some(u) = &e.request_url
+        && tobs["request_url"].as_str() != Some(u)
+    {
+        failures.push(format!(
+            "token.request_url: expected `{u}`, got {}",
+            tobs["request_url"]
+        ));
+    }
+    for (k, v) in &e.credentials {
+        if tobs["credentials"][k].as_str() != Some(v) {
+            failures.push(format!(
+                "token.credentials.{k}: expected `{v}`, got {}",
+                tobs["credentials"][k]
+            ));
+        }
+    }
+    match (&e.retried, outcome.as_str()) {
+        (Some(r), "refreshed") => {
+            for (k, v) in &r.headers {
+                let have = tobs["retried"]["headers"][k.to_ascii_lowercase()].as_str();
+                if have != Some(v) {
+                    failures.push(format!(
+                        "token.retried.headers.{k}: expected `{v}`, got {have:?}"
+                    ));
+                }
+            }
+            if let Some(u) = &r.url
+                && tobs["retried"]["url"].as_str() != Some(u)
+            {
+                failures.push(format!(
+                    "token.retried.url: expected `{u}`, got {}",
+                    tobs["retried"]["url"]
+                ));
+            }
+        }
+        (Some(_), o) => failures.push(format!("token.retried: nothing is retried after `{o}`")),
+        (None, _) => {}
+    }
+    // Never echo credentials of the refresh back into reports beyond what the case asserts.
+    if let Some(m) = tobs.get_mut("credentials").and_then(Value::as_object_mut) {
+        for v in m.values_mut() {
+            *v = json!("[redacted]");
+        }
+    }
+    if let Some(o) = obs.as_object_mut() {
+        o.insert("token".into(), tobs);
+    }
 }
 
 fn compare(e: &Expect, o: &Value) -> Vec<String> {
