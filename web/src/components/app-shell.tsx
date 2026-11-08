@@ -87,9 +87,8 @@ function ContextSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: strin
       <MenuTrigger asChild>
         <button
           type="button"
-          aria-label={
-            orgName ? `Switch context: ${orgName}${wsName ? ` / ${wsName}` : ""}` : "Switch organization or workspace"
-          }
+          // No aria-label: the name comes from the visible text (WCAG 2.5.3 Label in Name; the avatar
+          // initial is visible text, so any other label fails axe's label-content-name-mismatch).
           className="flex min-h-11 w-full items-center gap-2.5 rounded-control border border-line bg-surface px-2.5 py-1.5 text-left hover:bg-subtle"
         >
           <Avatar name={orgName ?? "?"} tintKey={orgSlug} size={28} className="rounded-md" />
@@ -151,7 +150,7 @@ function UserMenu() {
         <button
           type="button"
           className="flex min-h-11 w-full items-center gap-2.5 rounded-control px-2.5 py-1.5 text-left hover:bg-subtle"
-          aria-label={name ? `Account menu for ${name}` : "Account menu"}
+          // No aria-label: the name comes from the visible text (WCAG 2.5.3, see the context switcher).
         >
           <Avatar name={name ?? "?"} tintKey={me.data?.user.email} size={28} />
           <span className="min-w-0 flex-1">
