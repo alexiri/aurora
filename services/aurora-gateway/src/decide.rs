@@ -1601,8 +1601,9 @@ impl DbAuthorizer for DbSession {
         let body_prefix = bytes[..bytes.len().min(limit)].to_vec();
         let truncated = bytes.len() > limit;
         let tool = app.and_then(|a| {
-            apps::identify_tool(
+            apps::identify_tool_in(
                 a,
+                false,
                 &self.host,
                 443,
                 &path,
@@ -1663,6 +1664,8 @@ impl DbAuthorizer for DbSession {
                     rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
                     batch: &crate::hygiene::AuroraHeaders::default(),
                     summary: &summary,
+                    // RFE-011a (D-56): the rule's approval timeout applies to statements too.
+                    rule_timeout_secs: d.approval_timeout_secs,
                 })
                 .await;
             match outcome {

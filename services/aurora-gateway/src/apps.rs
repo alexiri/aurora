@@ -276,10 +276,38 @@ pub fn identify_tool<'a>(
     body_prefix: &[u8],
     truncated: bool,
 ) -> Option<&'a ToolItem> {
+    identify_tool_in(
+        m.app,
+        m.instance,
+        host,
+        port,
+        path,
+        query,
+        method,
+        body_prefix,
+        truncated,
+    )
+}
+
+/// [`identify_tool`] for a known app without a host entry: the database lane resolves the app
+/// from the connection and matches its tools on the synthetic `<id>.db.aurora.internal` host
+/// (`instance` is `false` there: database apps are never instance-bound).
+#[allow(clippy::too_many_arguments)]
+pub fn identify_tool_in<'a>(
+    app: &'a AppEntry,
+    instance: bool,
+    host: &str,
+    port: u16,
+    path: &str,
+    query: Option<&str>,
+    method: &str,
+    body_prefix: &[u8],
+    truncated: bool,
+) -> Option<&'a ToolItem> {
     let gql = graphql::classify(body_prefix, truncated);
     let git = aurora_policy::git::classify(path, query);
-    tools(m.app).find(|t| {
-        serves(m.app, m.instance, t, host, port, path, method)
+    tools(app).find(|t| {
+        serves(app, instance, t, host, port, path, method)
             && t.graphql.is_none_or(|k| {
                 matches!(
                     (k, gql),
