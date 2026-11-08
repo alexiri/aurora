@@ -15,7 +15,10 @@ image:
 
 # Image used by the secrets and gateway-ca hook jobs (and the plugins seed init container):
 # must provide sh, cp, kubectl, base64, head, od, tr (no openssl needed).
-hookImage: docker.io/alpine/k8s:1.31.2
+# Pinned by the multi-arch index (manifest list) digest of tag 1.31.2 (amd64 + arm64), resolved with
+# `skopeo inspect --raw docker://docker.io/alpine/k8s:1.31.2 | sha256sum` (D-100). To bump: resolve the new tag
+# the same way, then update both the digest and the tag in this comment.
+hookImage: docker.io/alpine/k8s:1.31.2@sha256:d489e3c7a6221af7394bc54a1498b641ada49ca51c344630966a62411b91a3df
 
 # ---- Secrets ---------------------------------------------------------------
 secrets:

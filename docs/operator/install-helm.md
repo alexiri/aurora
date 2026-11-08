@@ -90,14 +90,26 @@ External PostgreSQL is expected in production.
 
 `postgres.enabled: true` renders a single-instance Postgres for evaluation. Its StatefulSet,
 Service and PVC are pre-install hook resources, so `helm uninstall` leaves them and the data
-stays on the PVC (FUP-M7). Hook delete policies cannot cover uninstall, so the chart documents
-it instead (`NOTES.txt` prints the cleanup commands). Delete them by hand:
+stays on the PVC (FUP-M7). This is deliberate (D-100): the database must exist before the `migrate`
+pre-install hook runs, which only a hook can guarantee, and Helm does not manage or delete hook
+resources. Rendering them as normal chart resources would not be safe for upgrades: a release that
+already has them as hooks would fail `helm upgrade` with "exists and cannot be imported into the current
+release", and the chart cannot adopt them. Evaluation installs therefore keep the hook form, and the
+chart documents the leftovers (`NOTES.txt` prints the cleanup commands).
+
+What stays behind after `helm uninstall`: the StatefulSet `<fullname>-postgres`, the Service
+`<fullname>-postgres` and the PVC `data-<fullname>-postgres-0` (all your evaluation data). `helm upgrade`
+never touches them (they exist only at install time), so changing `postgres.image` or `postgres.storage`
+on an existing release has no effect. Delete and reinstall, or edit the StatefulSet yourself. Remove
+everything by hand:
 
 ```bash
 # Release "aurora" (fullname "aurora"); otherwise the names start with <fullname>-postgres
 kubectl -n aurora delete statefulset,service aurora-postgres
 kubectl -n aurora delete pvc data-aurora-postgres-0
 ```
+
+Use an external PostgreSQL for anything that keeps its data.
 
 ## Gateway CA
 
@@ -181,8 +193,15 @@ Every workload runs as non-root (UID/GID 65532), with a read-only root filesyste
 capabilities dropped (`aurora.podSecurity`, `aurora.containerSecurity`). A
 PodDisruptionBudget is rendered for each (`podDisruptionBudget.enabled`, `minAvailable: 1`).
 
-The hook image defaults to `docker.io/alpine/k8s:1.31.2` (`hookImage`). It is a third-party
-image, and FUP-M7 suggests pinning a digest or building an Aurora tools image.
+The hook image (`hookImage`, used by the secrets and gateway-ca hook Jobs and the API `seed-plugins`
+init container) is `docker.io/alpine/k8s:1.31.2` **pinned by the multi-arch index digest**
+(`…:1.31.2@sha256:d489e3c7…`, amd64 and arm64), so a retagged or compromised upstream tag cannot
+change what runs in your cluster. It is still a third-party image: air-gapped or policy-restricted
+clusters should mirror it to their own registry by digest (`skopeo copy --all`) and set `hookImage` to the
+mirror, keeping the `@sha256:` suffix. It must provide `sh`, `cp`, `kubectl`, `base64`, `head`, `od` and `tr`.
+To bump it, resolve the new tag's index digest with
+`skopeo inspect --raw docker://docker.io/alpine/k8s:<tag> | sha256sum` (or `podman manifest inspect`) and
+update `values.yaml`. D-100 records why a pin was chosen over an Aurora-built tools image.
 
 ## Routing
 
@@ -319,6 +338,46 @@ database lives on a PVC in the release namespace, so it is reset too).
 A persistent dev cluster with the single URL, a mock model and fast image iteration is
 [install-kind-dev.md](install-kind-dev.md) (phase 1, OPS-017).
 
+## Real-cluster install checklist (AUDIT-002 / owner)
+
+Everything above is exercised on a local kind cluster only. P2-OPS-1 could not run it on a real cluster:
+nobody has provided one, and credentials were not available. This is the checklist to run on a real
+cluster, with a real ingress controller, a CNI that enforces NetworkPolicy, a default StorageClass and an
+external PostgreSQL 16. Record the date, the Kubernetes version, the CNI and the result of each line.
+
+1. **Preconditions.** `kubectl version`, `helm version` (3.x), `kubectl auth can-i create clusterrole`
+   (the chart needs namespace admin; see [Namespaces](#namespaces)). CNI enforces NetworkPolicy
+   (run steps 1 to 2 of the [kind script](#test-on-a-local-kind-cluster) logic by hand: a probe pod
+   reaches a server pod, a default-deny policy then blocks it). Images are pushed to a registry the nodes
+   can pull from, by digest or an immutable tag, and `image.registry`/`image.tag` point at them.
+   The hook image resolves from the nodes (or is mirrored, see [Workloads](#workloads)).
+2. **Inputs.** Create the namespaces, the Secrets ([Secrets](#secrets)), the database Secret, and a
+   `values.yaml` with `externalUrl`, `ingress.host`/`ingress.tls.secretName`, an OIDC provider under
+   `config.auth.oidc_providers`, `postgres.enabled: false`, `devIdp.enabled: false`.
+3. **Static checks.** `helm lint deploy/helm/aurora -f values.yaml` and
+   `helm template aurora deploy/helm/aurora -f values.yaml | kubeconform -strict -ignore-missing-schemas`.
+4. **Install.** `helm install aurora deploy/helm/aurora -n aurora -f values.yaml --wait --timeout 10m`.
+   Expect the hook Jobs (`secrets`, `gateway-ca`, `migrate`) to complete and every Deployment to be Ready
+   (`kubectl -n aurora get pods,jobs`). The hook image pulls by digest.
+5. **Edge.** `curl -fsS https://<host>/healthz` returns 200 over a valid certificate. The web UI loads
+   `/` and the OIDC sign-in redirects to the provider and back. The gateway proxy Service type matches
+   what you set (`ClusterIP`, or `LoadBalancer` with `loadBalancerSourceRanges`).
+6. **Bootstrap and first use.** `kubectl -n aurora exec deploy/aurora-api -- /usr/local/bin/aurora-api bootstrap-admin --email <you>`
+   (see [Post-install checks](#post-install-checks)), sign in, register a runner ([runners.md](runners.md)),
+   start a sandbox, send one chat turn, park it and wake it.
+7. **Isolation.** From inside a sandbox Pod, confirm the SEC-02 and SEC-09 probes from the kind e2e
+   (`tests/e2e-hosted/tests/k8s.rs`): no DNS, no route to the API, the database, hookhost or the cloud
+   metadata address; only the two allowed ports answer. If `runtimeClass` is set (gVisor, Kata),
+   run the same probes with it.
+8. **Upgrade.** Change one value (for example `web.replicas`) and `helm upgrade aurora deploy/helm/aurora -n aurora -f values.yaml --wait`.
+   Before the first upgrade from a release that predates the `-migrate` NetworkPolicy, apply the new policies first
+   (see [Known limits](#known-limits-in-the-chart)). Verify the pods roll and the chat from step 6 still works.
+9. **Uninstall.** `helm uninstall aurora -n aurora`; check what remains (the namespaces, the Secrets you
+   created, the PVCs, and with `postgres.enabled` the evaluation database, see [Database](#database)).
+10. **Backup and restore.** One restore drill from [backups.md](backups.md).
+
+Open limitation (P2-OPS-1): none of the lines above has been run on a real cluster yet.
+
 ## Post-install checks
 
 ```bash
@@ -342,7 +401,8 @@ Then register a runner ([runners.md](runners.md#add-a-runner)).
   `kubectl -n aurora rollout restart deploy/aurora-api`.
 - The bundled `postgres.enabled` database is evaluation-only and leaves its resources behind
   on uninstall (see [Database](#database)).
-- `helm upgrade` was not tested (separate task). The first upgrade from a release that predates the
+- `helm upgrade` from the previous chart to this one was run on a kind cluster (P2-OPS-1): it completes,
+  the pods and the evaluation database stay up. The first upgrade from a release that predates the
   `-migrate` NetworkPolicy runs its migrate hook before that policy exists, so it can hang
   (seen on kind). Apply the new NetworkPolicies first (`helm template ... -s templates/networkpolicy.yaml | kubectl apply -f -`), then upgrade.
 - The kind test runs a single node with `runtimeClass` unset, so gVisor and Kata are not covered.
