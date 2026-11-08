@@ -88,6 +88,11 @@ jobs:
       - run: sqlx migrate run --source crates/aurora-db/migrations
       - name: Fixture packages (plugins/fixtures/dist, needed by services/aurora-api/tests/connect.rs)
         run: bash scripts/fixtures/build.sh
+      # P2-CAT-0: every plugins/builtin/<id> must validate, pass its fixtures with full coverage, keep
+      # narrow default scopes and render its docs (plugins/builtin/README.md). Offline, no network;
+      # reuses the aurora and aurora-gateway binaries the fixture step just built.
+      - name: Built-in plugin checks (validate, test, coverage, scopes, docs)
+        run: SKIP_CARGO=1 bash scripts/plugins/check-builtin.sh
       - name: Build nextest archive
         run: >-
           cargo nextest archive --workspace --all-features
@@ -269,7 +274,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [api, gateway, hookhost, runner, connector-fake, connector-mattermost]
+        # `api` is built by images-api / images-api-pr below (it ships the signed built-in packages).
+        image: [gateway, hookhost, runner, connector-fake, connector-mattermost]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - &images-prep
@@ -332,6 +338,89 @@ jobs:
           cache-from: type=gha,scope=services
           provenance: mode=max
           sbom: true
+
+  # ---- P2-CAT-0: the api image ships the built-in app packages at /usr/share/aurora/plugins, signed with
+  # the project key (docs/ops/builtin-plugin-signing.md). The key is the secret AURORA_PROJECT_SIGNING_KEY of
+  # the `release` environment, which only the push job can read: pull requests (no environment, no secret)
+  # build the same image with UNSIGNED archives. Both jobs share these steps through YAML anchors.
+  images-api:
+    if: github.event_name == 'push'
+    environment: release
+    concurrency: { group: "images-api-${{ github.ref }}", cancel-in-progress: false }
+    needs: [images-builder]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [api]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - *images-prep
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - *images-login
+      - *images-meta
+      - &api-sign
+        # The `sign` step: the key goes into a 0600 temp file (never an argument or a log line), is mounted
+        # into the image build as the secret `aurora_project_signing_key`, where scripts/plugins/build-builtin.sh
+        # runs `aurora plugin sign <archive> --key <file>` and verifies the result against the compiled-in public
+        # key. Without the secret the file is empty and the build skips signing with a clear log line.
+        name: project signing key (skips cleanly when the secret is absent)
+        id: sign
+        env:
+          AURORA_PROJECT_SIGNING_KEY: ${{ secrets.AURORA_PROJECT_SIGNING_KEY }}
+        run: |
+          umask 077
+          keyfile="$(mktemp "${RUNNER_TEMP}/aurora-signing-key.XXXXXX")"
+          chmod 0600 "$keyfile"
+          if [ -n "${AURORA_PROJECT_SIGNING_KEY:-}" ]; then
+            printf '%s\n' "$AURORA_PROJECT_SIGNING_KEY" > "$keyfile"
+            echo "signing: AURORA_PROJECT_SIGNING_KEY present, built-in plugins will be signed"
+          else
+            echo "::warning::signing SKIPPED: AURORA_PROJECT_SIGNING_KEY is not available here; built-in plugins are UNSIGNED and the API refuses them"
+          fi
+          echo "keyfile=$keyfile" >> "$GITHUB_OUTPUT"
+      - &api-build
+        name: build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: images/services/Containerfile
+          target: api
+          push: ${{ steps.prep.outputs.push == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=services
+          secret-files: |
+            aurora_project_signing_key=${{ steps.sign.outputs.keyfile }}
+          provenance: mode=max
+          sbom: true
+      - &api-cleanup
+        name: delete the signing key file
+        if: always()
+        run: rm -f "${{ steps.sign.outputs.keyfile }}"
+
+  images-api-pr:
+    if: github.event_name == 'pull_request'
+    concurrency: { group: "images-api-pr-${{ github.ref }}", cancel-in-progress: false }
+    needs: [images-builder]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [api]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - *images-prep
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - *images-login
+      - *images-meta
+      - *api-sign
+      - *api-build
+      - *api-cleanup
 
   images-web:
     concurrency: { group: "images-web-${{ github.ref }}", cancel-in-progress: false }

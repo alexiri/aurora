@@ -16,10 +16,31 @@ const JOB: &str = "plugin_dir_scan";
 /// `(modified, len)` per file already processed, so unchanged files are skipped.
 pub type Seen = HashMap<PathBuf, (SystemTime, u64)>;
 
-/// Scan once; returns the number of newly created package rows.
+/// Scan `plugins.dir` once; returns the number of newly created package rows.
 pub async fn scan_once(state: &AppState, seen: &mut Seen) -> usize {
-    let dir = PathBuf::from(&state.config.plugins.dir);
-    let Ok(mut rd) = tokio::fs::read_dir(&dir).await else {
+    scan_dir(
+        state,
+        &PathBuf::from(&state.config.plugins.dir),
+        Source::Directory,
+        seen,
+    )
+    .await
+}
+
+/// Scan `plugins.builtin_dir` once (09 §10 `builtin`). Fail closed: only archives that verify
+/// against the compiled-in project key are loaded; anything else is refused and logged.
+pub async fn scan_builtin_once(state: &AppState, seen: &mut Seen) -> usize {
+    scan_dir(
+        state,
+        &PathBuf::from(&state.config.plugins.builtin_dir),
+        Source::Builtin,
+        seen,
+    )
+    .await
+}
+
+async fn scan_dir(state: &AppState, dir: &PathBuf, source: Source, seen: &mut Seen) -> usize {
+    let Ok(mut rd) = tokio::fs::read_dir(dir).await else {
         return 0;
     };
     let mut files = Vec::new();
@@ -37,7 +58,10 @@ pub async fn scan_once(state: &AppState, seen: &mut Seen) -> usize {
         files.push(path);
     }
     files.sort();
-    let actor = AuditActor::system("plugin-directory");
+    let actor = AuditActor::system(match source {
+        Source::Builtin => "plugin-builtin",
+        _ => "plugin-directory",
+    });
     let mut created = 0;
     for path in files {
         let Ok(meta) = tokio::fs::metadata(&path).await else {
@@ -59,14 +83,17 @@ pub async fn scan_once(state: &AppState, seen: &mut Seen) -> usize {
             seen.remove(&path);
             continue;
         };
-        match ingest::ingest(state, &bytes, Source::Directory, &actor).await {
+        match ingest::ingest(state, &bytes, source, &actor).await {
             Ok(r) if r.created => {
                 created += 1;
                 tracing::info!(file = %path.display(), status = %r.row.status, "plugin ingested");
             }
             Ok(_) => {}
             Err(e) => {
-                tracing::warn!(file = %path.display(), code = e.code(), "plugin file refused");
+                tracing::warn!(
+                    file = %path.display(), source = source.as_str(), code = e.code(),
+                    "plugin file refused"
+                );
             }
         }
     }
@@ -75,7 +102,12 @@ pub async fn scan_once(state: &AppState, seen: &mut Seen) -> usize {
 
 /// Singleton variant: `None` when another replica holds the lock.
 pub async fn scan_locked(state: &AppState, seen: &mut Seen) -> Option<usize> {
-    match aurora_db::jobs::try_singleton(&state.pool, JOB, || scan_once(state, seen)).await {
+    // Built-ins first so the catalogue is in place before operator directories are looked at.
+    let job = move || async move {
+        let b = scan_builtin_once(state, seen).await;
+        b + scan_once(state, seen).await
+    };
+    match aurora_db::jobs::try_singleton(&state.pool, JOB, job).await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(error = %e, "plugin scan failed");

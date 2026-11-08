@@ -1,0 +1,231 @@
+package:
+  id: gitlab
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: GitLab
+  description: Projects, issues, merge requests, pipelines and repository files on gitlab.com (REST API v4 and git over HTTPS)
+  homepage: https://gitlab.com
+oauth_clients:
+  - id: gitlab
+    authorize_url: https://gitlab.com/oauth/authorize
+    token_url: https://gitlab.com/oauth/token
+    pkce: true
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: Application ID }
+      - { name: client_secret, label: Secret, secret: true }
+    setup_note: "In GitLab open User settings, Applications, and add an application. Mark it Confidential, tick only the scopes you will offer, and register the Aurora redirect URI."
+apps:
+  - about:
+      id: gitlab
+      name: GitLab
+      description: Work with projects, issues, merge requests, pipelines and repository files on gitlab.com
+      category: development
+      api_docs: https://docs.gitlab.com/api/rest/
+      api_spec: https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/api/openapi/openapi_v2.yaml
+      web_hosts: [gitlab.com]
+      connect_note:
+        text: "This package covers gitlab.com. Self-managed instances arrive in a later release."
+        url: https://docs.gitlab.com/api/rest/
+      label_hint: GitLab username
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: username }
+    connect:
+      - id: token
+        kind: fields
+        fields:
+          - name: access_token
+            label: Access token
+            type: secret
+            store: credentials
+            required: true
+            placeholder: "glpat-…"
+            help_url: https://gitlab.com/-/user_settings/personal_access_tokens
+        probe:
+          method: GET
+          url: "https://gitlab.com/api/v4/user"
+          expect_status: [200]
+          label: /username
+          metadata: { username: /username }
+      - id: oauth
+        kind: oauth2
+        client: gitlab
+        scopes:
+          - { scope: read_user, name: Read your profile, access: read }
+          - { scope: read_api, name: "Read projects, issues, merge requests and pipelines", access: read }
+          - { scope: read_repository, name: Read repository files and clone over HTTPS, access: read }
+          - { scope: api, name: "Full API access (create and change issues, merge requests, pipelines)", access: write }
+          - { scope: write_repository, name: Push code over HTTPS, access: write }
+        default_scopes: [read_user, read_api, read_repository]
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://gitlab.com/api/v4/user"
+          expect_status: [200]
+          label: /username
+          metadata: { username: /username }
+    hosts:
+      - match: { host: gitlab.com, path_prefix: /api/v4 }
+        inject:
+          - bearer: "{credentials.access_token}"
+      - match: { host: gitlab.com }
+        inject:
+          - basic: { user: oauth2, password: "{credentials.access_token}" }
+    token:
+      kind: oauth2_refresh
+      client: gitlab
+      refresh_field: refresh_token
+      rotate_refresh_token: true
+      max_lifetime_secs: 7200
+      stale_codes:
+        - { status: 401, body_contains: invalid_token }
+      reauth_codes: [invalid_grant]
+    tools:
+      read:
+        items:
+          - { id: get_current_user, name: Get the connected user, host: gitlab.com, path: /api/v4/user, methods: [GET] }
+          - { id: list_projects, name: List projects, host: gitlab.com, path: /api/v4/projects, methods: [GET] }
+          - { id: get_project, name: Get a project, host: gitlab.com, path: "/api/v4/projects/*", methods: [GET] }
+          - { id: list_groups, name: List groups, host: gitlab.com, path: /api/v4/groups, methods: [GET] }
+          - { id: list_issues, name: List issues, host: gitlab.com, path: "/api/v4/projects/*/issues", methods: [GET] }
+          - { id: get_issue, name: Get an issue, host: gitlab.com, path: "/api/v4/projects/*/issues/*", methods: [GET] }
+          - { id: list_issue_notes, name: List issue comments, host: gitlab.com, path: "/api/v4/projects/*/issues/*/notes", methods: [GET] }
+          - { id: list_merge_requests, name: List merge requests, host: gitlab.com, path: "/api/v4/projects/*/merge_requests", methods: [GET] }
+          - { id: get_merge_request, name: Get a merge request, host: gitlab.com, path: "/api/v4/projects/*/merge_requests/*", methods: [GET] }
+          - { id: get_merge_request_diffs, name: Get merge request changes, host: gitlab.com, path: "/api/v4/projects/*/merge_requests/*/diffs", methods: [GET] }
+          - { id: list_merge_request_notes, name: List merge request comments, host: gitlab.com, path: "/api/v4/projects/*/merge_requests/*/notes", methods: [GET] }
+          - { id: list_pipelines, name: List pipelines, host: gitlab.com, path: "/api/v4/projects/*/pipelines", methods: [GET] }
+          - { id: get_pipeline, name: Get a pipeline, host: gitlab.com, path: "/api/v4/projects/*/pipelines/*", methods: [GET] }
+          - { id: list_pipeline_jobs, name: List pipeline jobs, host: gitlab.com, path: "/api/v4/projects/*/pipelines/*/jobs", methods: [GET] }
+          - { id: get_job_log, name: Read a job log, host: gitlab.com, path: "/api/v4/projects/*/jobs/*/trace", methods: [GET] }
+          - { id: list_repository_tree, name: List repository files, host: gitlab.com, path: "/api/v4/projects/*/repository/tree", methods: [GET] }
+          - { id: get_repository_file, name: Get a repository file, host: gitlab.com, path: "/api/v4/projects/*/repository/files/*", methods: [GET] }
+          - { id: get_repository_file_raw, name: Get a repository file (raw), host: gitlab.com, path: "/api/v4/projects/*/repository/files/*/raw", methods: [GET] }
+          - { id: list_branches, name: List branches, host: gitlab.com, path: "/api/v4/projects/*/repository/branches", methods: [GET] }
+          - { id: list_commits, name: List commits, host: gitlab.com, path: "/api/v4/projects/*/repository/commits", methods: [GET] }
+          - { id: search_projects, name: Search a project, host: gitlab.com, path: "/api/v4/projects/*/search", methods: [GET] }
+          - { id: git_fetch, name: Clone and fetch over HTTPS, host: gitlab.com, path: "/**", methods: [GET, POST], git: fetch }
+      write:
+        items:
+          - { id: create_issue, name: Create an issue, host: gitlab.com, path: "/api/v4/projects/*/issues", methods: [POST] }
+          - { id: update_issue, name: Update or close an issue, host: gitlab.com, path: "/api/v4/projects/*/issues/*", methods: [PUT] }
+          - { id: create_issue_note, name: Comment on an issue, host: gitlab.com, path: "/api/v4/projects/*/issues/*/notes", methods: [POST] }
+          - { id: create_merge_request, name: Create a merge request, host: gitlab.com, path: "/api/v4/projects/*/merge_requests", methods: [POST] }
+          - { id: update_merge_request, name: Update or close a merge request, host: gitlab.com, path: "/api/v4/projects/*/merge_requests/*", methods: [PUT] }
+          - { id: merge_merge_request, name: Merge a merge request, host: gitlab.com, path: "/api/v4/projects/*/merge_requests/*/merge", methods: [PUT] }
+          - { id: create_merge_request_note, name: Comment on a merge request, host: gitlab.com, path: "/api/v4/projects/*/merge_requests/*/notes", methods: [POST] }
+          - { id: create_pipeline, name: Run a pipeline, host: gitlab.com, path: "/api/v4/projects/*/pipeline", methods: [POST] }
+          - { id: retry_pipeline, name: Retry a pipeline, host: gitlab.com, path: "/api/v4/projects/*/pipelines/*/retry", methods: [POST] }
+          - { id: cancel_pipeline, name: Cancel a pipeline, host: gitlab.com, path: "/api/v4/projects/*/pipelines/*/cancel", methods: [POST] }
+          - { id: create_branch, name: Create a branch, host: gitlab.com, path: "/api/v4/projects/*/repository/branches", methods: [POST] }
+          - { id: delete_branch, name: Delete a branch, host: gitlab.com, path: "/api/v4/projects/*/repository/branches/*", methods: [DELETE] }
+          - { id: create_commit, name: Commit file changes, host: gitlab.com, path: "/api/v4/projects/*/repository/commits", methods: [POST] }
+          - { id: write_repository_file, name: "Create, change or delete a repository file", host: gitlab.com, path: "/api/v4/projects/*/repository/files/*", methods: [POST, PUT, DELETE] }
+          - { id: git_push, name: Push code over HTTPS, host: gitlab.com, path: "/**", methods: [GET, POST], git: push }
+    approvals:
+      create_issue:
+        title: Create issue
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+        link: "https://gitlab.com/dashboard/issues"
+      update_issue:
+        title: Update issue
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: Issue, source: path, segment: 6 }
+          - { label: Change, source: body, steps: [ { json: /state_event } ] }
+      create_issue_note:
+        title: Comment on issue
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: Issue, source: path, segment: 6 }
+          - { label: Comment, source: body, steps: [ { json: /body } ] }
+      create_merge_request:
+        title: Create merge request
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: From, source: body, steps: [ { json: /source_branch } ] }
+          - { label: Into, source: body, steps: [ { json: /target_branch } ] }
+        link: "https://gitlab.com/dashboard/merge_requests"
+      update_merge_request:
+        title: Update merge request
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: Merge request, source: path, segment: 6 }
+          - { label: Change, source: body, steps: [ { json: /state_event } ] }
+      merge_merge_request:
+        title: Merge merge request
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: Merge request, source: path, segment: 6 }
+      create_merge_request_note:
+        title: Comment on merge request
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: Merge request, source: path, segment: 6 }
+          - { label: Comment, source: body, steps: [ { json: /body } ] }
+      create_pipeline:
+        title: Run pipeline
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: Ref, source: query, name: ref }
+      retry_pipeline:
+        title: Retry pipeline
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: Pipeline, source: path, segment: 6 }
+      cancel_pipeline:
+        title: Cancel pipeline
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: Pipeline, source: path, segment: 6 }
+      create_branch:
+        title: Create branch
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: Branch, source: body, steps: [ { json: /branch } ] }
+          - { label: From, source: body, steps: [ { json: /ref } ] }
+      delete_branch:
+        title: Delete branch
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: Branch, source: path, segment: 7 }
+      create_commit:
+        title: Commit changes
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: Branch, source: body, steps: [ { json: /branch } ] }
+          - { label: Message, source: body, steps: [ { json: /commit_message } ] }
+      write_repository_file:
+        title: Change repository file
+        fields:
+          - { label: Project, source: path, segment: 4 }
+          - { label: File, source: path, segment: 7 }
+          - { label: Branch, source: body, steps: [ { json: /branch } ] }
+          - { label: Message, source: body, steps: [ { json: /commit_message } ] }
+      git_push:
+        title: Push code
+        fields:
+          - { label: Group or user, source: path, segment: 1 }
+    agent:
+      instructions: |
+        GitLab is connected for gitlab.com. Use the REST API v4 at https://gitlab.com/api/v4 and
+        git over HTTPS (clone URLs of the form https://gitlab.com/<group>/<project>.git). Aurora adds
+        the credentials; never ask for or write a token. Address a project by its numeric id or by
+        its full path with slashes encoded as %2F, for example group%2Fsubgroup%2Fproject. Send
+        request bodies as JSON so approvals can show what a change does.
+      env:
+        - { name: GITLAB_API_URL, value: "https://gitlab.com/api/v4" }

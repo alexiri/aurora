@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 /// Base64 ed25519 public key of the Aurora project (publisher `aurora`).
 ///
-/// Set by the owner on 2026-11-08. The private half is the GitHub Actions
+/// Set by the owner on 2026-11-08. The private half is the CI
 /// secret `AURORA_PROJECT_SIGNING_KEY` (environment `release`), used by the
 /// built-in package signing step (P2-CAT-0). Only packages of publisher
 /// `aurora` signed with this key (key id `builtin` or the key itself) are

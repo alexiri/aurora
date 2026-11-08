@@ -1,0 +1,199 @@
+# Write tools: each has a positive case with its approval summary and a `negative <tool>:` case.
+- name: "create_issue: summary shows project and title"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://gitlab.com/api/v4/projects/42/issues"
+    headers: { content-type: application/json }
+    body: '{"title":"Fix the login redirect","description":"Steps to reproduce"}'
+  expect:
+    app: gitlab
+    tool: create_issue
+    summary: { title: "Create issue", fields: { Project: "42", Title: "Fix the login redirect" } }
+- name: "negative create_issue: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/issues" }
+  expect: { app: gitlab }
+- name: "update_issue: closing"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://gitlab.com/api/v4/projects/42/issues/7"
+    headers: { content-type: application/json }
+    body: '{"state_event":"close"}'
+  expect:
+    tool: update_issue
+    summary: { title: "Update issue", fields: { Project: "42", Issue: "7", Change: "close" } }
+- name: "negative update_issue: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/issues/7" }
+  expect: { app: gitlab }
+- name: "create_issue_note"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://gitlab.com/api/v4/projects/42/issues/7/notes"
+    headers: { content-type: application/json }
+    body: '{"body":"Looks fixed on main"}'
+  expect:
+    tool: create_issue_note
+    summary: { title: "Comment on issue", fields: { Project: "42", Issue: "7", Comment: "Looks fixed on main" } }
+- name: "negative create_issue_note: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/issues/7/notes" }
+  expect: { app: gitlab }
+- name: "create_merge_request"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://gitlab.com/api/v4/projects/group%2Fdemo/merge_requests"
+    headers: { content-type: application/json }
+    body: '{"source_branch":"fix-login","target_branch":"main","title":"Fix login"}'
+  expect:
+    tool: create_merge_request
+    summary:
+      title: "Create merge request"
+      fields: { Project: "group%2Fdemo", Title: "Fix login", From: "fix-login", Into: "main" }
+- name: "negative create_merge_request: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/merge_requests" }
+  expect: { app: gitlab }
+- name: "update_merge_request"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://gitlab.com/api/v4/projects/42/merge_requests/3"
+    headers: { content-type: application/json }
+    body: '{"state_event":"close"}'
+  expect:
+    tool: update_merge_request
+    summary: { title: "Update merge request", fields: { Project: "42", "Merge request": "3", Change: "close" } }
+- name: "negative update_merge_request: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3" }
+  expect: { app: gitlab }
+- name: "merge_merge_request"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3/merge" }
+  expect:
+    tool: merge_merge_request
+    summary: { title: "Merge merge request", fields: { Project: "42", "Merge request": "3" } }
+- name: "negative merge_merge_request: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3/merge" }
+  expect: { app: gitlab }
+- name: "create_merge_request_note"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://gitlab.com/api/v4/projects/42/merge_requests/3/notes"
+    headers: { content-type: application/json }
+    body: '{"body":"Approved from my side"}'
+  expect:
+    tool: create_merge_request_note
+    summary: { title: "Comment on merge request", fields: { Project: "42", "Merge request": "3", Comment: "Approved from my side" } }
+- name: "negative create_merge_request_note: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3/notes" }
+  expect: { app: gitlab }
+- name: "create_pipeline: the ref comes from the query"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://gitlab.com/api/v4/projects/42/pipeline?ref=main" }
+  expect:
+    tool: create_pipeline
+    summary: { title: "Run pipeline", fields: { Project: "42", Ref: "main" } }
+- name: "negative create_pipeline: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/pipeline" }
+  expect: { app: gitlab }
+- name: "retry_pipeline"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://gitlab.com/api/v4/projects/42/pipelines/900/retry" }
+  expect:
+    tool: retry_pipeline
+    summary: { title: "Retry pipeline", fields: { Project: "42", Pipeline: "900" } }
+- name: "negative retry_pipeline: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/pipelines/900/retry" }
+  expect: { app: gitlab }
+- name: "cancel_pipeline"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://gitlab.com/api/v4/projects/42/pipelines/900/cancel" }
+  expect:
+    tool: cancel_pipeline
+    summary: { title: "Cancel pipeline", fields: { Project: "42", Pipeline: "900" } }
+- name: "negative cancel_pipeline: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/pipelines/900/cancel" }
+  expect: { app: gitlab }
+- name: "create_branch"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://gitlab.com/api/v4/projects/42/repository/branches"
+    headers: { content-type: application/json }
+    body: '{"branch":"feature-x","ref":"main"}'
+  expect:
+    tool: create_branch
+    summary: { title: "Create branch", fields: { Project: "42", Branch: "feature-x", From: "main" } }
+- name: "negative create_branch: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/branches" }
+  expect: { app: gitlab }
+- name: "delete_branch"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://gitlab.com/api/v4/projects/42/repository/branches/feature-x" }
+  expect:
+    tool: delete_branch
+    summary: { title: "Delete branch", fields: { Project: "42", Branch: "feature-x" } }
+- name: "negative delete_branch: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/branches/feature-x" }
+  expect: { app: gitlab }
+- name: "create_commit"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://gitlab.com/api/v4/projects/42/repository/commits"
+    headers: { content-type: application/json }
+    body: '{"branch":"feature-x","commit_message":"Add notes","actions":[{"action":"create","file_path":"NOTES.md","content":"hi"}]}'
+  expect:
+    tool: create_commit
+    summary: { title: "Commit changes", fields: { Project: "42", Branch: "feature-x", Message: "Add notes" } }
+- name: "negative create_commit: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/commits" }
+  expect: { app: gitlab }
+- name: "write_repository_file: update a file"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://gitlab.com/api/v4/projects/42/repository/files/docs%2Fsetup.md"
+    headers: { content-type: application/json }
+    body: '{"branch":"feature-x","commit_message":"Update setup","content":"text"}'
+  expect:
+    tool: write_repository_file
+    summary: { title: "Change repository file", fields: { Project: "42", File: "docs%2Fsetup.md", Branch: "feature-x", Message: "Update setup" } }
+- name: "negative write_repository_file: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/files/docs%2Fsetup.md" }
+  expect: { app: gitlab }
+- name: "git_push: receive-pack is the write tool and uses basic auth"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://gitlab.com/group/demo.git/git-receive-pack" }
+  expect:
+    tool: git_push
+    upstream: { headers: { authorization: "Basic b2F1dGgyOnRvay1maXh0dXJlLTE=" } }
+    summary: { title: "Push code", fields: { "Group or user": "group" } }
+- name: "negative git_push: upload-pack is a fetch, not a push"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://gitlab.com/group/demo.git/git-upload-pack" }
+  expect: { app: gitlab, tool: git_fetch }
+# Token lifecycle: the gateway refreshes the OAuth token (oauth2_refresh) and stores the new
+# access token; what the package must guarantee is that the stored field is the one injected.
+- name: "token: a refreshed OAuth access token is what gets injected"
+  connection: { credentials: { access_token: "oauth-fixture-2", refresh_token: "refresh-fixture-2" }, metadata: { username: "alice-example" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/issues" }
+  expect:
+    tool: list_issues
+    upstream: { headers: { authorization: "Bearer oauth-fixture-2" } }

@@ -52,6 +52,19 @@ fn toml_only_and_api_validates() {
     assert_eq!(api.keyring.active, "main");
 }
 
+// P2-CAT-0 (C-210): the built-in catalogue directory defaults to the image path, can be moved
+// and may not be empty.
+#[test]
+fn plugins_builtin_dir_default_override_and_empty() {
+    let raw = load_with(BASE, &[]).unwrap();
+    assert_eq!(raw.plugins.builtin_dir, "/usr/share/aurora/plugins");
+    let raw = load_with(BASE, &[("AURORA__PLUGINS__BUILTIN_DIR", "/opt/builtin")]).unwrap();
+    assert_eq!(raw.plugins.builtin_dir, "/opt/builtin");
+    assert!(raw.api_config().is_ok());
+    let raw = load_with(&format!("{BASE}[plugins]\nbuiltin_dir = \"\"\n"), &[]).unwrap();
+    assert!(raw.api_config().unwrap_err().has_key("plugins.builtin_dir"));
+}
+
 #[test]
 fn env_overrides_nested_and_typed() {
     let raw = load_with(

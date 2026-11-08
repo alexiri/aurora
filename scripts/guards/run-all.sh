@@ -20,4 +20,7 @@ bash scripts/guards/edge-routes.sh
 echo "== no-dev-idp-in-release (SEC-42)"
 bash scripts/guards/no-dev-idp-in-release.sh
 
+echo "== no-live-tokens (built-in plugin fixtures)"
+bash scripts/guards/no-live-tokens.sh
+
 echo "== all guards passed"

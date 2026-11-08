@@ -701,6 +701,12 @@ Rule: `07 §Rule anatomy`, `06 §Credential authentication`, `08 §7`, SEC-44; d
 - C-184 **Storage** (no route change): `gateway_credentials.speaker_user_id` (hosted context credentials of person-authored turns only) and `request_log.speaker_user_id`, both nullable (migration `20261110000050_policy_speaker.sql`). `request_log.speaker_user_id` is not part of the activity DTO in this phase.
 - C-185 **Gateway** (internal, no wire change): the request identity carries `speaker_user_id`; the roster `principals` is gone. A speaker is bound only for a hosted `context` credential of a non-BYO agent whose speaker still holds `can_use`, re-checked after every `user`, `workspace`, `org` or `agent` invalidation. The API now sends a `user` invalidation when a workspace access binding is removed or an org member's role changes.
 
+### Phase 2 — P2-CAT-0 (built-in catalogue, D-75)
+
+Reserved numbers C-210..C-219. No route or wire shape changes.
+
+- C-210 **Config** `[plugins] builtin_dir` (string, default `/usr/share/aurora/plugins`, must not be empty; env `AURORA__PLUGINS__BUILTIN_DIR`). The API scans it at startup and every 60 s (same singleton job and idempotence by digest as `plugins.dir`) with source `builtin`. Fail-closed: an archive is ingested only when its `SIGNATURE` verifies against the compiled-in project key (`AURORA_PROJECT_PUBLIC_KEY`, publisher `aurora`); `plugins.allow_unsigned` never applies, and a package signed by a trusted key is refused too (422 `package_invalid`, violation `builtin_not_project_signed`, or the underlying `signature_missing` / `signature_*` code). A refused file creates no row and is logged (`plugin file refused`, `source=builtin`, `code`). Project-signed packages activate on first sight and on upgrades that do not widen permissions (09 §10).
+
 ### W9 hook-host JSON encoding (C-18, C-19)
 
 - C-18 Internal snapshot route returns the exact canonical bytes so consumers verify `sha256(body) == x-snapshot-hash` without re-serialization.

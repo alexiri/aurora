@@ -1,0 +1,214 @@
+# Read tools: each has a positive case and a `negative <tool>:` case. All credentials are fake.
+- name: "get_current_user: bearer is injected on the API host"
+  connection: { credentials: { access_token: "tok-fixture-1" }, metadata: { username: "alice-example" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/user" }
+  expect:
+    app: gitlab
+    tool: get_current_user
+    upstream: { url: "https://gitlab.com/api/v4/user", headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative get_current_user: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/user" }
+  expect: { app: gitlab }
+- name: "agent supplied authorization is overwritten"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: GET
+    url: "https://gitlab.com/api/v4/user"
+    headers: { authorization: "Bearer agent-guess" }
+  expect:
+    tool: get_current_user
+    upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "list_projects: membership listing"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects?membership=true" }
+  expect:
+    tool: list_projects
+    upstream: { url: "https://gitlab.com/api/v4/projects?membership=true" }
+- name: "negative list_projects: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects" }
+  expect: { app: gitlab }
+- name: "get_project: numeric id"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42" }
+  expect: { tool: get_project }
+- name: "get_project: full path with encoded slashes is one segment"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/group%2Fsub%2Fdemo" }
+  expect: { tool: get_project }
+- name: "negative get_project: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42" }
+  expect: { app: gitlab }
+- name: "negative get_project: an unknown sub-resource selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/members/all" }
+  expect: { app: gitlab }
+- name: "list_groups"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/groups?min_access_level=10" }
+  expect: { tool: list_groups }
+- name: "negative list_groups: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/groups" }
+  expect: { app: gitlab }
+- name: "list_issues"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/issues?state=opened" }
+  expect: { tool: list_issues }
+- name: "negative list_issues: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/issues" }
+  expect: { app: gitlab }
+- name: "get_issue"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/issues/7" }
+  expect: { tool: get_issue }
+- name: "negative get_issue: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/issues/7" }
+  expect: { app: gitlab }
+- name: "list_issue_notes"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/issues/7/notes" }
+  expect: { tool: list_issue_notes }
+- name: "negative list_issue_notes: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/issues/7/notes" }
+  expect: { app: gitlab }
+- name: "list_merge_requests"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/merge_requests?state=opened" }
+  expect: { tool: list_merge_requests }
+- name: "negative list_merge_requests: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/merge_requests" }
+  expect: { app: gitlab }
+- name: "get_merge_request"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3" }
+  expect: { tool: get_merge_request }
+- name: "negative get_merge_request: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3" }
+  expect: { app: gitlab }
+- name: "get_merge_request_diffs"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3/diffs" }
+  expect: { tool: get_merge_request_diffs }
+- name: "negative get_merge_request_diffs: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3/diffs" }
+  expect: { app: gitlab }
+- name: "list_merge_request_notes"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3/notes" }
+  expect: { tool: list_merge_request_notes }
+- name: "negative list_merge_request_notes: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/merge_requests/3/notes" }
+  expect: { app: gitlab }
+- name: "list_pipelines"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/pipelines?status=failed" }
+  expect: { tool: list_pipelines }
+- name: "negative list_pipelines: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/pipelines" }
+  expect: { app: gitlab }
+- name: "get_pipeline"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/pipelines/900" }
+  expect: { tool: get_pipeline }
+- name: "negative get_pipeline: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/pipelines/900" }
+  expect: { app: gitlab }
+- name: "list_pipeline_jobs"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/pipelines/900/jobs" }
+  expect: { tool: list_pipeline_jobs }
+- name: "negative list_pipeline_jobs: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/pipelines/900/jobs" }
+  expect: { app: gitlab }
+- name: "get_job_log"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/jobs/55/trace" }
+  expect: { tool: get_job_log }
+- name: "negative get_job_log: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/jobs/55/trace" }
+  expect: { app: gitlab }
+- name: "list_repository_tree"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/repository/tree?path=src" }
+  expect: { tool: list_repository_tree }
+- name: "negative list_repository_tree: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/tree" }
+  expect: { app: gitlab }
+- name: "get_repository_file: the file path is one encoded segment"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/repository/files/src%2Fmain.rs?ref=main" }
+  expect: { tool: get_repository_file }
+- name: "negative get_repository_file: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/files/src%2Fmain.rs" }
+  expect: { app: gitlab }
+- name: "get_repository_file_raw"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/repository/files/README.md/raw?ref=main" }
+  expect: { tool: get_repository_file_raw }
+- name: "negative get_repository_file_raw: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/files/README.md/raw" }
+  expect: { app: gitlab }
+- name: "list_branches"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/repository/branches" }
+  expect: { tool: list_branches }
+- name: "negative list_branches: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/branches" }
+  expect: { app: gitlab }
+- name: "list_commits"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/repository/commits?ref_name=main" }
+  expect: { tool: list_commits }
+- name: "negative list_commits: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/repository/commits" }
+  expect: { app: gitlab }
+- name: "search_projects"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v4/projects/42/search?scope=blobs&search=needle" }
+  expect: { tool: search_projects }
+- name: "negative search_projects: PATCH selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://gitlab.com/api/v4/projects/42/search" }
+  expect: { app: gitlab }
+- name: "git_fetch: ref advertisement uses basic auth on the git paths"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/group/sub/demo.git/info/refs?service=git-upload-pack" }
+  expect:
+    app: gitlab
+    tool: git_fetch
+    # base64 of "oauth2:tok-fixture-1"
+    upstream: { headers: { authorization: "Basic b2F1dGgyOnRvay1maXh0dXJlLTE=" } }
+- name: "git_fetch: upload-pack"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://gitlab.com/group/demo.git/git-upload-pack" }
+  expect: { tool: git_fetch }
+- name: "negative git_fetch: a plain web page is not a git operation"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/group/demo/-/issues" }
+  expect: { app: gitlab }
+- name: "negative git_fetch: another GitLab host is not claimed"
+  request: { method: GET, url: "https://registry.gitlab.com/v2/" }
+  expect: { unmatched: true }
+- name: "negative get_project: the old API version is not the API host"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://gitlab.com/api/v3/projects/42" }
+  expect: { app: gitlab }

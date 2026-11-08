@@ -385,6 +385,46 @@ async fn directory_scan_picks_up_file_once() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+// P2-CAT-0 (C-210): the builtin dir is fail-closed. Unsigned (even with allow_unsigned), signed by a
+// non-project key (publisher `aurora` or a trusted publisher) and garbage are refused, never loaded.
+#[tokio::test]
+async fn builtin_dir_refuses_everything_but_the_project_key() {
+    let dir = std::env::temp_dir().join(format!("aurora-builtin-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let d = dir.to_string_lossy().into_owned();
+    let h = Harness::with_config(|c| {
+        c.plugins.builtin_dir = d;
+        c.plugins.allow_unsigned = true;
+    })
+    .await;
+    let other = generate_signing_key().unwrap();
+    std::fs::write(
+        dir.join("unsigned.aurora-plugin"),
+        unsigned(&yaml("aurora", "1.0.0", &["api.acme.example"])),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("otherkey.aurora-plugin"),
+        signed(&yaml("aurora", "1.0.1", &["api.acme.example"]), &other),
+    )
+    .unwrap();
+    std::fs::write(dir.join("junk.aurora-plugin"), b"not a package").unwrap();
+    let mut seen = Seen::new();
+    assert_eq!(scan::scan_builtin_once(&h.state, &mut seen).await, 0);
+    assert_eq!(count(&h).await, 0);
+    // The same archive in the operator directory is not a way around it either: a key trusted for
+    // publisher `acme` signs a package of publisher `acme`, which the builtin source still refuses.
+    setup(&h).await.trust("acme", &other).await;
+    std::fs::write(
+        dir.join("trusted.aurora-plugin"),
+        signed(&yaml("acme", "1.0.2", &["api.acme.example"]), &other),
+    )
+    .unwrap();
+    assert_eq!(scan::scan_builtin_once(&h.state, &mut seen).await, 0);
+    assert_eq!(count(&h).await, 0);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 async fn audit_n(h: &Harness, action: &str) -> i64 {
     for _ in 0..100 {
         let n: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = $1")

@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""Checks for every built-in package under plugins/builtin/ (P2-CAT-0, docs/09 §6, §12).
+
+  check_builtin.py <aurora-binary> <package-dir>...
+
+Per package: validate, test, fixture coverage, scopes, token, docs. Link checks are separate
+(check_links.py) because they need the network. Needs PyYAML (preinstalled on CI runners).
+"""
+import fnmatch
+import json
+import os
+import subprocess
+import sys
+from urllib.parse import urlsplit
+
+import yaml
+
+
+def run(aurora, *args):
+    p = subprocess.run([aurora, "plugin", *args], capture_output=True, text=True, timeout=300)
+    return p.returncode, p.stdout, p.stderr
+
+
+def check_package(aurora, pdir):
+    errs = []
+    name = os.path.basename(pdir.rstrip("/"))
+
+    def err(msg):
+        errs.append(f"{name}: {msg}")
+
+    with open(os.path.join(pdir, "plugin.yaml")) as f:
+        manifest = yaml.safe_load(f)
+    if manifest["package"]["id"] != name:
+        err(f"directory name must equal package id `{manifest['package']['id']}`")
+    if manifest["package"]["publisher"] != "aurora":
+        err("publisher must be `aurora` (the project key only signs that publisher)")
+
+    # 1. validate (unsigned allowed: the release pipeline signs)
+    rc, out, _ = run(aurora, "validate", pdir, "--allow-unsigned")
+    if rc != 0:
+        err(f"aurora plugin validate failed:\n{out}")
+        return errs
+
+    # 2. test
+    rc, out, serr = run(aurora, "test", pdir)
+    try:
+        report = json.loads(out)
+    except ValueError:
+        err(f"aurora plugin test produced no report: {serr or out}")
+        return errs
+    fx = report.get("fixtures") or {}
+    if rc != 0 or not report.get("ok"):
+        bad = [r for r in fx.get("results", []) if r["status"] != "pass"]
+        err("aurora plugin test failed: " + "; ".join(f"{r['name']}: {r.get('failures')}" for r in bad[:5]))
+        return errs
+    if fx.get("skipped"):
+        err("fixtures were skipped; built-ins have no hooks, every case must run")
+
+    # fixtures, in the runner's order (files sorted by name, cases in file order)
+    cases = []
+    tdir = os.path.join(pdir, "tests")
+    for fn in sorted(f for f in os.listdir(tdir) if f.endswith(".yaml")):
+        with open(os.path.join(tdir, fn)) as f:
+            cases += yaml.safe_load(f) or []
+    results = fx.get("results", [])
+    if len(cases) != len(results):
+        err(f"{len(cases)} fixture cases but {len(results)} results")
+        return errs
+    paired = list(zip(cases, results))
+
+    for app in manifest["apps"]:
+        check_app(app, paired, err)
+    check_docs(aurora, pdir, err)
+    return errs
+
+
+def url_parts(url):
+    u = urlsplit(url)
+    return (u.hostname or "").lower(), u.path or "/"
+
+
+def entry_matches(entry, host, path):
+    m = entry["match"]
+    if not fnmatch.fnmatchcase(host, m["host"].lower()):
+        return False
+    pre = m.get("path_prefix")
+    return pre is None or path == pre or path.startswith(pre.rstrip("/") + "/")
+
+
+def check_app(app, paired, err):
+    aid = app["about"]["id"]
+    hosts = app.get("hosts", [])
+    mine = [(c, r) for c, r in paired if (r.get("observed") or {}).get("app") == aid
+            or c.get("expect", {}).get("app") == aid]
+
+    # every host entry: a request that this entry (the most specific one) handles
+    def specificity(e):
+        return len(e["match"].get("path_prefix") or "")
+
+    for i, e in enumerate(hosts):
+        covered = False
+        for c, r in mine:
+            host, path = url_parts(c["request"]["url"])
+            cand = [x for x in hosts if entry_matches(x, host, path)]
+            if cand and max(cand, key=specificity) is e and r["status"] == "pass":
+                covered = True
+                break
+        if not covered:
+            err(f"app {aid}: hosts[{i}] ({e['match']}) is not exercised by any fixture")
+
+    tools = app.get("tools", {})
+    approvals = app.get("approvals", {})
+    for group in ("read", "write"):
+        for t in (tools.get(group) or {}).get("items", []):
+            tid = t["id"]
+            if not any(r["status"] == "pass" and (r.get("observed") or {}).get("tool") == tid
+                       and c.get("expect", {}).get("tool") == tid for c, r in paired):
+                err(f"app {aid}: tool {tid} has no positive fixture (expect.tool: {tid})")
+            neg = [(c, r) for c, r in paired if c["name"].startswith(f"negative {tid}:")]
+            if not neg:
+                err(f"app {aid}: tool {tid} has no negative fixture (name it `negative {tid}: ...`)")
+            for c, r in neg:
+                if (r.get("observed") or {}).get("tool") == tid:
+                    err(f"app {aid}: `{c['name']}` selects {tid} but must not")
+            if group == "read":
+                ok = (t.get("git") == "fetch" or t.get("graphql") == "query"
+                      or set(t["methods"]) <= {"GET", "HEAD"})
+                if not ok:
+                    err(f"app {aid}: read tool {tid} allows {t['methods']}; reads are GET/HEAD, git fetch or graphql query")
+            elif tid not in approvals:
+                err(f"app {aid}: write tool {tid} has no approvals template (clamped summary)")
+
+    # every summary template: a positive case that asserts the title
+    for tid, tpl in approvals.items():
+        if not any(c.get("expect", {}).get("tool") == tid and c["expect"].get("summary", {}).get("title")
+                   and r["status"] == "pass" for c, r in paired):
+            err(f"app {aid}: approvals.{tid} has no fixture asserting expect.summary.title")
+        want = {f["label"] for f in tpl.get("fields", [])}
+        seen = set()
+        for c, _ in paired:
+            if c.get("expect", {}).get("tool") == tid:
+                seen |= set((c["expect"].get("summary") or {}).get("fields", {}))
+        if want - seen:
+            err(f"app {aid}: approvals.{tid} fields never asserted by a fixture: {sorted(want - seen)}")
+
+    # scopes: narrowest by default, writes marked
+    for m in app.get("connect", []):
+        if m.get("kind") != "oauth2":
+            continue
+        by = {s["scope"]: s for s in m.get("scopes", [])}
+        for s in by.values():
+            if s.get("access") not in ("read", "write"):
+                err(f"app {aid}: scope {s['scope']} must declare access: read|write")
+        for d in m.get("default_scopes", []):
+            if by.get(d, {}).get("access") != "read":
+                err(f"app {aid}: default scope {d} is not a read scope (defaults must be the narrowest)")
+        if not m.get("default_scopes"):
+            err(f"app {aid}: oauth2 method {m['id']} needs explicit default_scopes")
+
+    # token lifecycle
+    tok = app.get("token")
+    if tok and tok.get("kind") == "oauth2_refresh":
+        if not tok.get("reauth_codes"):
+            err(f"app {aid}: oauth2_refresh needs reauth_codes")
+        if not any(r["status"] == "pass" and (c.get("connection", {}).get("credentials", {}) or {}).get(tok["refresh_field"])
+                   and "authorization" in ((c.get("expect", {}).get("upstream") or {}).get("headers") or {})
+                   for c, r in mine):
+            err(f"app {aid}: no fixture shows the refreshed token being injected (credentials incl. {tok['refresh_field']})")
+
+
+def check_docs(aurora, pdir, err):
+    outs = []
+    for _ in range(2):
+        rc, out, serr = run(aurora, "docs", pdir, "--format", "md")
+        if rc != 0:
+            err(f"aurora plugin docs failed: {serr}")
+            return
+        outs.append(out)
+    if outs[0] != outs[1]:
+        err("aurora plugin docs output is not deterministic")
+    if "## Permissions" not in outs[0] or "| hooks |" not in outs[0]:
+        err("rendered docs lack the permissions table")
+    rc, out, serr = run(aurora, "docs", pdir, "--format", "html")
+    if rc != 0 or "<table>" not in out:
+        err(f"aurora plugin docs --format html failed or has no table: {serr}")
+
+
+def main():
+    aurora, dirs = sys.argv[1], sys.argv[2:]
+    if not dirs:
+        print("no built-in packages found", file=sys.stderr)
+        return 1
+    errs = []
+    for d in dirs:
+        e = check_package(aurora, d)
+        print(("FAIL " if e else "ok   ") + os.path.basename(d.rstrip("/")))
+        errs += e
+    for e in errs:
+        print("  " + e, file=sys.stderr)
+    return 1 if errs else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
