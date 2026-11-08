@@ -1,5 +1,5 @@
-# Cases with `hook:` are skipped by `aurora plugin test` until HOOK-004 wires the embedded
-# hook-host runner; the non-hook cases run in check-snapshot today.
+# Cases with `hook:` run through the embedded hook-host runtime of `aurora plugin test`
+# (P2-CAT-H, services/aurora-cli/src/plugin/hooktest.rs) against the recorded `http_cassette`.
 - name: api host injects the minted token
   connection: { credentials: { access_token: "minted", installation_id: "7" } }
   request: { method: GET, url: "https://api.hooks.example.test/v1/items" }
@@ -36,7 +36,7 @@
     point: connect.exchange
     egress_override: [other.example.test]
     input: { source: { oauth_callback: { installation_id: "7" } }, continuation: "stage=2;installation=7" }
-    expect: { error: upstream, message_contains: "egress denied" }
+    expect: { error: egress-denied, message_contains: "egress denied" }
 - name: token.mint returns a fresh token
   request: { method: GET, url: "https://api.hooks.example.test/v1/items" }
   hook:

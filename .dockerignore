@@ -1,5 +1,6 @@
 .git
 target
+plugins/**/target
 **/node_modules
 web/.next
 web/out

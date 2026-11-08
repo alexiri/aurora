@@ -11,3 +11,4 @@
 
 /plugins/fixtures/dist/
 /plugins/fixtures/**/target/
+/plugins/builtin/**/target/

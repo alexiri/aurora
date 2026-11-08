@@ -67,6 +67,7 @@ aurora-connector-sdk = { path = "crates/aurora-connector-sdk" }
 aurora-testkit = { path = "crates/aurora-testkit" }
 aurora-hook-wit = { path = "crates/aurora-hook-wit" }
 aurora-plugin-sdk = { path = "crates/aurora-plugin-sdk" }
+aurora-hookhost = { path = "services/aurora-hookhost" }
 
 # runtime / http
 tokio = { version = "1.50", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-util", "fs", "process"] }

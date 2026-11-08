@@ -1,0 +1,26 @@
+- name: "list_items: injects the minted token"
+  connection: { credentials: { access_token: "tok-fixture-1", installation_id: "7" } }
+  request: { method: GET, url: "https://api.hook-example.example.test/v1/items" }
+  expect:
+    app: hook-example
+    tool: list_items
+    upstream: { headers: { authorization: "Bearer tok-fixture-1" } }
+- name: "negative list_items: another path selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1", installation_id: "7" } }
+  request: { method: GET, url: "https://api.hook-example.example.test/v1/other" }
+  expect: { app: hook-example }
+- name: "create_item: summary shows the name"
+  connection: { credentials: { access_token: "tok-fixture-1", installation_id: "7" } }
+  request:
+    method: POST
+    url: "https://api.hook-example.example.test/v1/items"
+    headers: { content-type: application/json }
+    body: '{"name":"Quarterly report"}'
+  expect:
+    app: hook-example
+    tool: create_item
+    summary: { title: "Create item", fields: { Name: "Quarterly report" } }
+- name: "negative create_item: DELETE selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1", installation_id: "7" } }
+  request: { method: DELETE, url: "https://api.hook-example.example.test/v1/items" }
+  expect: { app: hook-example }

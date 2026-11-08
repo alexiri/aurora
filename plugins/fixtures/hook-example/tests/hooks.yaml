@@ -1,0 +1,39 @@
+# Hook cases run `hooks.wasm` in the embedded hook host, with `fetch` answered from the recorded
+# `http_cassette` (docs/09 §12; format in services/aurora-cli/src/plugin/hooktest.rs).
+- name: token.mint returns a fresh token
+  request: { method: GET, url: "https://api.hook-example.example.test/v1/items" }
+  hook:
+    point: token.mint
+    http_cassette:
+      - request: { method: POST, url: "https://auth.hook-example.example.test/mint" }
+        response: { status: 200, body: "tok-fixture-2" }
+    input: { credentials: { installation_id: "7" } }
+    expect: { credentials: { access_token: "tok-fixture-2" } }
+- name: token.mint maps 401 to reauth-required
+  request: { method: GET, url: "https://api.hook-example.example.test/v1/items" }
+  hook:
+    point: token.mint
+    http_cassette:
+      - request: { method: POST, url: "https://auth.hook-example.example.test/mint" }
+        response: { status: 401, body: "" }
+    input: { credentials: { installation_id: "7" } }
+    expect: { error: reauth-required }
+- name: token.mint without an installation asks to reconnect
+  request: { method: GET, url: "https://api.hook-example.example.test/v1/items" }
+  hook:
+    point: token.mint
+    input: { credentials: {} }
+    expect: { error: reauth-required }
+- name: token.mint outside its egress list is denied
+  request: { method: GET, url: "https://api.hook-example.example.test/v1/items" }
+  hook:
+    point: token.mint
+    egress_override: [other.example.test]
+    input: { credentials: { installation_id: "7" } }
+    expect: { error: egress-denied, message_contains: "egress denied" }
+- name: approval.summarize builds the summary
+  request: { method: POST, url: "https://api.hook-example.example.test/v1/items" }
+  hook:
+    point: approval.summarize
+    input: { tool_id: create_item, method: POST, host: api.hook-example.example.test, path: /v1/items }
+    expect: { title: "Create item", fields: { Method: POST, Path: /v1/items } }

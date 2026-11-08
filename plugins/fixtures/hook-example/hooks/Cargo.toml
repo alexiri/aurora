@@ -1,0 +1,19 @@
+[package]
+name = "hook-example"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aurora-plugin-sdk = { path = "../../../../crates/aurora-plugin-sdk" }
+
+# Standalone project, not a member of the Aurora workspace: `aurora plugin build` compiles it for
+# wasm32-wasip2 (docs/09 §12) and ships the component as hooks.wasm.
+[workspace]
+
+[profile.release]
+opt-level = "s"
+panic = "abort"
