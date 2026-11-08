@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# SEC-33: core crates and services must not name chat-platform or app integrations.
+# SEC-33: core crates and services must not hard-code chat-platform or app integrations.
 # Scans crates/ and services/ (skipping any tests/ directories). connectors/,
-# plugins/, docs/ and tests/ are out of scope by design.
+# plugins/, docs/, web/ and tests/ are out of scope by design: packages, guides and the
+# dashboard (which renders manifest data) MUST use real product names such as "Jira Cloud",
+# never generic stand-ins such as "Issue tracker".
 # Exceptions live in scripts/guards/integration-names.allow as `path_regex:line_regex`.
 set -euo pipefail
 
