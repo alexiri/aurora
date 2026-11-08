@@ -179,6 +179,8 @@ for i in "${IMAGES[@]}"; do
   ref="$REGISTRY/$i:$TAG"
   podman image exists "$ref" || { echo "missing image $ref" >&2; exit 1; }
   log "loading $i into kind as $ref"
+  # `podman save -o` refuses an existing file; an interrupted earlier run can leave one behind.
+  rm -f "$WORK/archives/$i.tar"
   podman save -o "$WORK/archives/$i.tar" "$ref" >/dev/null || exit 1
   kind load image-archive "$WORK/archives/$i.tar" --name "$CLUSTER" >/dev/null || exit 1
   rm -f "$WORK/archives/$i.tar"

@@ -49,6 +49,9 @@ cluster_exists() { kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; }
 load_image() { # ref
   mkdir -p "$WORK/archives"
   local tar="$WORK/archives/$(echo "$1" | tr '/:' '__').tar"
+  # `podman save -o` refuses an existing file ("docker-archive doesn't support modifying existing
+  # images"), and an interrupted earlier run can leave one behind.
+  rm -f "$tar"
   podman save -o "$tar" "$1" >/dev/null && kind load image-archive "$tar" --name "$CLUSTER" >/dev/null
   local rc=$?; rm -f "$tar"; return $rc
 }
