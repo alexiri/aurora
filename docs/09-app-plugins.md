@@ -369,7 +369,10 @@ database: { engine: postgres }
 ```
 Marks a database app reached through the gateway database lane (`21`); its
 credentials must include `host`, `port`, `dbname`, `user`, `password`,
-optional `sslmode`, `ca_pem`.
+optional `sslmode`, `ca_pem`. Its tools match the synthetic host `*.db.aurora.internal` (path
+`/read`, `/write`, `/ddl`, `/admin`, method `POST`); the linter accepts that host without a
+`hosts[]` entry (P2-DBL-2, C-233). Fixtures send a SQL body to `https://<uuid>.db.aurora.internal/`
+and expect a `class` and `tool` (`plugins/builtin/postgresql/tests`).
 
 ## 4. Template substitution
 

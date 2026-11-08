@@ -130,6 +130,9 @@ struct Expect {
     refused: Option<String>,
     /// With `refused: host_mismatch`: the host the connection is bound to.
     expected_host: Option<String>,
+    /// (P2-DBL-2) Database statements: the class `aurora-sqlclass` gave the body
+    /// (`read` | `write` | `ddl` | `admin` | `transaction`).
+    class: Option<String>,
     upstream: Option<ExpectUpstream>,
     summary: Option<ExpectSummary>,
 }
@@ -265,6 +268,11 @@ fn execute(
         );
     }
     let body = c.request.body.as_deref().unwrap_or("").as_bytes();
+
+    // (P2-DBL-2) A database statement: the synthetic request of the database lane.
+    if let Some(obs) = database_case(l, &host, &path, method.as_str(), c.request.body.as_deref()) {
+        return Ok(obs);
+    }
 
     // A registered instance serves its exact host unless another app's static claim covers it.
     let instance_host = c
@@ -474,6 +482,62 @@ fn execute(
     Ok(obs)
 }
 
+/// (P2-DBL-2, docs/06 §Database lane) A request to `<connection id>.db.aurora.internal`. A path
+/// of `/` with a body is a SQL statement: it is classified by `aurora-sqlclass` (the gateway's own
+/// classifier) and the case then continues as `POST /<class>`. The tool is the app's tool for that
+/// host and path, exactly as `DbSession::authorize` identifies it; a `transaction` statement is
+/// never policy checked, so it selects no tool. Nothing is injected: the database lane never puts
+/// a stored secret on a request. `None` when the host is not a synthetic database host or the
+/// snapshot has no database app (the case then falls through to the HTTP lane).
+fn database_case(
+    l: &Loaded,
+    host: &str,
+    path: &str,
+    method: &str,
+    body: Option<&str>,
+) -> Option<Value> {
+    let id = host.strip_suffix(crate::db::HOST_SUFFIX)?;
+    uuid::Uuid::parse_str(id).ok()?;
+    let apps: Vec<_> = l
+        .snapshot
+        .apps
+        .iter()
+        .filter(|a| a.database.is_some())
+        .collect();
+    let first = *apps.first()?;
+    let mut class: Option<&'static str> = None;
+    let mut path = path.to_owned();
+    if path == "/"
+        && let Some(sql) = body.filter(|b| !b.is_empty())
+    {
+        match aurora_sqlclass::classify(sql) {
+            Ok(c) => {
+                class = Some(c.class.as_str());
+                path = format!("/{}", c.class.as_str());
+            }
+            Err(r) => {
+                return Some(json!({
+                    "app": first.app_id, "tool": null,
+                    "refused": { "code": "statement_refused", "message": r.message() }
+                }));
+            }
+        }
+    }
+    let transaction = class == Some("transaction");
+    let found = apps.iter().find_map(|a| {
+        if transaction {
+            return None;
+        }
+        crate::apps::identify_tool_in(a, false, host, 443, &path, None, method, &[], false)
+            .map(|t| (a.app_id.as_str(), t.id.as_str()))
+    });
+    Some(json!({
+        "app": found.map_or(first.app_id.as_str(), |(a, _)| a),
+        "tool": found.map(|(_, t)| t),
+        "class": class,
+    }))
+}
+
 /// Token lifecycle through the gateway's own refresh functions (`refresh::build_exchange`,
 /// `refresh::interpret_exchange`): stale answer -> refresh request against the recorded token
 /// endpoint -> outcome -> the retried request with the new credentials.
@@ -664,8 +728,13 @@ fn compare(e: &Expect, o: &Value) -> Vec<String> {
             }
         }
         (Some(want), have) => f.push(format!("expected refusal `{want}`, got {have:?}")),
-        (None, Some(have)) => f.push(format!("refused by the instance guard: {have}")),
+        (None, Some(have)) => f.push(format!("refused: {have}")),
         (None, None) => {}
+    }
+    if let Some(want) = &e.class
+        && got("class") != Some(want)
+    {
+        f.push(format!("class: expected `{want}`, got {:?}", got("class")));
     }
     if e.refused.is_some() {
         return f;

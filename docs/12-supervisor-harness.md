@@ -276,6 +276,28 @@ files whose checksum trailer fails (or that are new) are uploaded with
 optional YAML front matter). Invalid keys are reported back as a notice to the
 next turn. Files stay in place until superseded by the canonical render.
 
+## Database files (phase 2, P2-DBL-2, D-89)
+
+For each database connection the agent is granted (an app with a `database` section) the API puts
+`databases: [{service, connection_id}]` in the `render_inputs` entry of the home sync (`API_CONTRACTS`
+C-231), and the instruction file names the service under the account (`psql service=<name>`). The
+supervisor turns that list into libpq files under `.aurora/pg/` at boot and after every sync
+(`aurora-supervisor::pg`, C-232):
+
+- `pg_service.conf` (`PGSERVICEFILE`): a section per service with the gateway's sandbox-side address
+  and verification name from the boot document, `user=<connection id>`, `sslmode=verify-full`,
+  `sslrootcert`, `passfile`;
+- `pgpass` (`PGPASSFILE`, 0600): `host:port:*:<connection id>:<gateway credential>`. The
+  password is the sandbox's **gateway credential** (the boot credential); the database password is
+  never in the sandbox;
+- `root.crt` (`PGSSLROOTCERT`): the gateway CA.
+
+Every agent process (harness session, `process_start`, gates) is started with the three variables, so
+`psql service=<name> -c 'select 1'` works with nothing on the command line. TLS is always verified
+(`verify-full`: the gateway presents its proxy certificate unless the SNI is the connection's
+`<id>.db.aurora.internal` name). With no database grant the directory is removed. A failure to write
+the files is logged and does not fail the sync. The sandbox image ships the `psql` client.
+
 ## Process manager
 
 - Background processes run in their own process group as uid 1000 with the

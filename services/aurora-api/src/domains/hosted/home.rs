@@ -125,6 +125,7 @@ async fn render_inputs(
     // Apps with an effective grant: one entry per app, accounts = the granted connections.
     let snap = crate::domains::plugins::registry::active_typed(state).await?;
     let mut apps: Vec<Value> = Vec::new();
+    let mut databases: Vec<Value> = Vec::new();
     if let Some(snap) = snap {
         let av = crate::domains::apps::service::availability_of(
             state,
@@ -137,6 +138,22 @@ async fn render_inputs(
             .into_iter()
             .filter(|c| av.is_available(&c.app_id))
             .collect();
+        // (P2-DBL-2, C-231) libpq service names of the granted database connections of the whole
+        // agent (a name shared by two connections gets the id prefix on both).
+        let is_db = |app_id: &str| {
+            snap.apps
+                .iter()
+                .any(|a| a.app_id == app_id && a.database.is_some())
+        };
+        databases = aurora_core::pgservice::service_names(
+            conns
+                .iter()
+                .filter(|c| is_db(&c.app_id))
+                .map(|c| (c.connection_id, c.label.as_str())),
+        )
+        .into_iter()
+        .map(|(id, service)| json!({"service": service, "connection_id": id}))
+        .collect();
         let mut seen: Vec<&str> = Vec::new();
         for c in &conns {
             if seen.contains(&c.app_id.as_str()) {
@@ -149,7 +166,17 @@ async fn render_inputs(
             let accounts: Vec<Value> = conns
                 .iter()
                 .filter(|x| x.app_id == c.app_id)
-                .map(|x| json!({"id": x.connection_id, "label": x.label}))
+                .map(|x| {
+                    let mut a = json!({"id": x.connection_id, "label": x.label});
+                    // Only a database account carries its libpq service name (C-231).
+                    if let Some(d) = databases
+                        .iter()
+                        .find(|d| d["connection_id"] == json!(x.connection_id))
+                    {
+                        a["service"] = d["service"].clone();
+                    }
+                    a
+                })
                 .collect();
             let docs_links: Vec<&String> = [&app.about.api_docs, &app.about.api_spec]
                 .into_iter()
@@ -198,7 +225,7 @@ async fn render_inputs(
     Ok(json!({
         "agent": {"name": inputs.name, "handle": inputs.handle, "workspace": inputs.workspace_name},
         "brief": if inputs.brief.trim().is_empty() { Value::Null } else { json!(inputs.brief) },
-        "apps": apps, "channels": channels, "peers": peers,
+        "apps": apps, "databases": databases, "channels": channels, "peers": peers,
         "memory_language": inputs.memory_language,
         "schedules": schedules,
         "purges": purges,

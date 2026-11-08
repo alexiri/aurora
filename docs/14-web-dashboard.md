@@ -386,7 +386,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   SSE feed exist only for `can_approve` users; a plain member sees the waiting
   approval inline in their own chat as a read-only card ("waiting for an approver"). (phase 1, RFE-009) Items naming a direct conversation
   appear only for its user and owners.
-- **Credentials** — (phase 3, RFE-022: a connection in `reauth_required` because of a plugin major upgrade shows the reason and a Reconnect button) tabs: Apps (catalogue → connect window), Connections,
+- **Credentials** — (phase 2, P2-DBL-2: a connection of a database app (`Connection.database`, C-230) shows a neutral `Notice` under its row with the libpq service name and `psql service=<name> -c 'select 1'`, and says that a name shared by two granted connections gets the id prefix) (phase 3, RFE-022: a connection in `reauth_required` because of a plugin major upgrade shows the reason and a Reconnect button) tabs: Apps (catalogue → connect window), Connections,
   Secrets (generic; reference-mode secrets when a reference-capable store is
   configured), LLM keys (provider/endpoint picker from `/v1/llm/providers`),
   OAuth clients, agent-proposed secrets awaiting a value. The LLM key form

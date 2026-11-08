@@ -18,6 +18,7 @@ pub mod instructions;
 pub mod logging;
 pub mod mcp_bridge;
 pub mod outbound;
+pub mod pg;
 pub mod process;
 pub mod proxy;
 pub mod spawn;

@@ -119,7 +119,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         &doc.runner_url,
         doc.bootstrap_token.clone(),
     ));
+    let pg = aurora_supervisor::pg::PgGateway::from_boot(
+        &doc.gateway.proxy,
+        &doc.gateway.verify_name(),
+        &boot_token,
+        &doc.ca_pem,
+    );
     let mut cfg = SupervisorConfig::new(upstream, boot_token);
+    cfg.pg = pg;
     cfg.tools.socket = Some(PathBuf::from(aurora_supervisor::tools::DEFAULT_SOCKET));
     if let Ok(exe) = std::env::current_exe() {
         cfg.mcp_bridge_command = vec![exe.display().to_string(), "mcp-bridge".to_owned()];

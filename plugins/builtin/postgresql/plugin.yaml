@@ -1,0 +1,98 @@
+package:
+  id: postgresql
+  version: 1.0.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: PostgreSQL
+  description: Run SQL on a PostgreSQL database through the Aurora gateway without ever holding its password; every statement is classified and checked against your policy
+  homepage: https://www.postgresql.org
+apps:
+  - about:
+      id: postgresql
+      name: PostgreSQL
+      description: Let agents query and change a PostgreSQL database. The gateway holds the database login; agents connect to the gateway with psql or any PostgreSQL driver and each statement is checked against your rules and held for approval when it changes anything.
+      category: database
+      api_docs: https://www.postgresql.org/docs/current/sql.html
+      connect_note:
+        text: "Create a database role for Aurora with only the privileges agents need (for example a read-only role), and enter its login here. The server must be reachable from the Aurora gateway. The password stays with the gateway; agents never receive it."
+        url: https://www.postgresql.org/docs/current/user-manag.html
+      label_hint: A name for this database, for example "orders prod"; agents connect with it as the service name
+    credentials:
+      - { name: host, secret: false }
+      - { name: port, secret: false, optional: true }
+      - { name: dbname, secret: false }
+      - { name: user, secret: false }
+      - { name: password, secret: true }
+      - { name: sslmode, secret: false, optional: true }
+      - { name: ca_pem, secret: false, optional: true }
+    connect:
+      - id: login
+        kind: fields
+        fields:
+          - name: host
+            label: Server host
+            type: text
+            store: credentials
+            required: true
+            placeholder: "db.example.org"
+          - name: port
+            label: Port
+            type: text
+            store: credentials
+            placeholder: "5432"
+          - name: dbname
+            label: Database name
+            type: text
+            store: credentials
+            required: true
+          - name: user
+            label: Database user
+            type: text
+            store: credentials
+            required: true
+          - name: password
+            label: Database password
+            type: secret
+            store: credentials
+            required: true
+          - name: sslmode
+            label: TLS mode
+            type: select
+            store: credentials
+            required: true
+            options:
+              - { value: verify-full, label: "verify-full (verify the certificate and host name)" }
+              - { value: verify-ca, label: "verify-ca (verify the certificate chain)" }
+              - { value: require, label: "require (encrypt; verifies the chain only when a CA certificate is given)" }
+              - { value: prefer, label: "prefer (encrypt when the server supports it)", warning: "Falls back to an unencrypted connection when the server does not offer TLS." }
+              - { value: allow, label: "allow (encrypt only when the server insists)", warning: "Sends the password unencrypted unless the server demands TLS." }
+              - { value: disable, label: "disable (no encryption)", warning: "Everything, including the password, travels unencrypted." }
+          - name: ca_pem
+            label: CA certificate (PEM, for a private certificate authority)
+            type: file
+            store: credentials
+    tools:
+      read:
+        items:
+          - { id: read, name: "Read data (SELECT, SHOW, EXPLAIN)", host: "*.db.aurora.internal", path: /read, methods: [POST] }
+      write:
+        items:
+          - { id: write, name: "Change data (INSERT, UPDATE, DELETE, COPY FROM, SELECT FOR UPDATE)", host: "*.db.aurora.internal", path: /write, methods: [POST] }
+          - { id: ddl, name: "Change the schema (CREATE, ALTER, DROP, TRUNCATE, GRANT)", host: "*.db.aurora.internal", path: /ddl, methods: [POST] }
+          - { id: admin, name: "Administer (VACUUM, ANALYZE, SET, LISTEN, DO, CALL, unlisted functions)", host: "*.db.aurora.internal", path: /admin, methods: [POST] }
+    database: { engine: postgres }
+    agent:
+      instructions: |
+        Each PostgreSQL connection granted to you is a libpq service. Use
+        `psql service=<name> -c 'select 1'` (the name is listed under the account above), or
+        any PostgreSQL driver with the service file the environment already points at
+        (`PGSERVICEFILE`, `PGPASSFILE`, `PGSSLROOTCERT`). Do not look for or ask for a database
+        password: you connect to the Aurora gateway, which holds the real login and checks every
+        statement.
+        Reads (SELECT, SHOW, EXPLAIN) are allowed by default. INSERT/UPDATE/DELETE, schema changes
+        (CREATE, ALTER, DROP) and administration (VACUUM, SET of server settings, DO, CALL, most
+        functions) are held for a person's approval, and a refused statement answers with SQLSTATE
+        42501 and the reason. Some statements are never permitted: ALTER SYSTEM, SET ROLE, COPY to
+        a program or file, large-object file functions, dblink and file-reading functions. Send
+        one statement at a time and keep each under 1 MiB.

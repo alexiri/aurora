@@ -48,6 +48,9 @@ pub struct SupervisorConfig {
     pub harvest_interval: Duration,
     pub tools: ToolsConfig,
     pub process: ProcessConfig,
+    /// (P2-DBL-2) Gateway address and credential for the libpq files (`crate::pg`); `None` writes
+    /// none and sets no `PG*` variables.
+    pub pg: Option<crate::pg::PgGateway>,
 }
 
 impl SupervisorConfig {
@@ -64,6 +67,7 @@ impl SupervisorConfig {
             harvest_interval: Duration::from_secs(10),
             tools: ToolsConfig::default(),
             process: ProcessConfig::new(PathBuf::from("/workspace")),
+            pg: None,
         }
     }
 }
@@ -144,10 +148,15 @@ impl Supervisor {
                 root: cfg.working_dir.clone(),
                 skills_dir: caps.skills_dir.clone(),
                 instruction_files: caps.instruction_files.clone(),
+                pg: cfg.pg.clone(),
             }),
             harvester: Harvester::new(&cfg.working_dir),
         }));
-        let procs = ProcessManager::new(cfg.process.clone(), out.clone());
+        let mut process = cfg.process.clone();
+        if cfg.pg.is_some() {
+            process.env.extend(crate::pg::env(&cfg.working_dir));
+        }
+        let procs = ProcessManager::new(process, out.clone());
         let mut tools = cfg.tools.clone();
         tools.home = cfg.working_dir.clone();
         let hub = ToolHub::new(
@@ -567,6 +576,9 @@ impl Supervisor {
                 .map(|k| ((*k).to_owned(), url.clone()))
                 .collect();
         env.push(("NO_PROXY".into(), "localhost,127.0.0.1".into()));
+        if self.cfg.pg.is_some() {
+            env.extend(crate::pg::env(&self.cfg.working_dir));
+        }
         env.extend(d.model.client_env.iter().cloned());
         let session = self
             .adapter

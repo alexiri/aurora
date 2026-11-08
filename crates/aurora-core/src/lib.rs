@@ -8,6 +8,7 @@ pub mod cidr;
 pub mod error;
 pub mod ids;
 pub mod limits;
+pub mod pgservice;
 pub mod sanitize;
 pub mod secret;
 #[cfg(feature = "service")]

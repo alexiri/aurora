@@ -28,6 +28,7 @@ tokio-tungstenite = { workspace = true }
 chrono = { workspace = true }
 aurora-registry = { workspace = true }
 aurora-crypto = { workspace = true }
+aurora-secrets = { workspace = true }
 aurora-protocol = { workspace = true }
 aurora-connector-sdk = { workspace = true }
 aurora-connector-fake = { path = "../../connectors/fake" }

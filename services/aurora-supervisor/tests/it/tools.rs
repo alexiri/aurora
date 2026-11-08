@@ -461,6 +461,7 @@ fn skill_exec_bit_selects_0555_or_0444() {
         root: d.path().to_path_buf(),
         skills_dir: Some(".claude/skills".into()),
         instruction_files: vec!["AGENTS.md".into()],
+        pg: None,
     });
     let part = |i: u32, kind: &str, entries: Value| -> HomeSync {
         serde_json::from_value(json!({"generation":1,"part_index":i,"part_count":5,"part":{"kind":kind,"entries":entries}})).unwrap()

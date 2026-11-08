@@ -199,6 +199,8 @@ async fn render_inputs_carry_apps_channels_peers_and_schedules() {
     let apps = ri["apps"].as_array().unwrap();
     assert_eq!(apps.len(), 1, "{ri}");
     assert_eq!(apps[0]["name"], "Acme");
+    // (P2-DBL-2, C-231) No database app: no libpq services.
+    assert_eq!(ri["databases"], json!([]));
     assert_eq!(
         apps[0]["accounts"],
         json!([{"id": conn, "label": "work account"}])

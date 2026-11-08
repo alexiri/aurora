@@ -20,6 +20,7 @@ fn projector(root: &Path) -> HomeProjector {
         root: root.to_path_buf(),
         skills_dir: Some(".claude/skills".into()),
         instruction_files: vec!["AGENTS.md".into()],
+        pg: None,
     })
 }
 
@@ -398,4 +399,64 @@ async fn outbound_refuses_platform_dir() {
         .await;
         assert!(matches!(r, Err(OutboundError::Reserved)), "{r:?}");
     }
+}
+
+#[test]
+fn databases_in_render_inputs_become_libpq_files_and_disappear_with_the_grant() {
+    use aurora_supervisor::pg::PgGateway;
+    use std::os::unix::fs::PermissionsExt as _;
+    let d = TempDir::new();
+    let mut p = HomeProjector::new(HomeConfig {
+        root: d.path().to_path_buf(),
+        skills_dir: Some(".claude/skills".into()),
+        instruction_files: vec!["AGENTS.md".into()],
+        pg: PgGateway::from_boot(
+            "aurora-gateway:4102",
+            "aurora-gateway",
+            "aub_fixture",
+            "CAPEM\n",
+        ),
+    });
+    let conn = Uuid::now_v7();
+    let with = |g: u64, dbs: Value| -> Vec<HomeSync> {
+        let mut parts = generation(g, &[], &[]);
+        parts[2] = part(
+            g,
+            2,
+            6,
+            "render_inputs",
+            json!([{"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}, "databases": dbs}]),
+        );
+        parts
+    };
+    apply_all(
+        &mut p,
+        &with(1, json!([{"service": "prod", "connection_id": conn}])),
+    );
+    p.commit(1).unwrap();
+    let dir = d.path().join(".aurora/pg");
+    let svc = fs::read_to_string(dir.join("pg_service.conf")).unwrap();
+    assert!(
+        svc.contains("[prod]") && svc.contains(&format!("user={conn}")),
+        "{svc}"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("pgpass")).unwrap(),
+        format!("aurora-gateway:4102:*:{conn}:aub_fixture\n")
+    );
+    assert_eq!(fs::read_to_string(dir.join("root.crt")).unwrap(), "CAPEM\n");
+    assert_eq!(
+        fs::metadata(dir.join("pgpass"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    // No database password anywhere in the projection.
+    assert!(!svc.contains("password="));
+
+    apply_all(&mut p, &with(2, json!([])));
+    p.commit(2).unwrap();
+    assert!(!dir.exists());
 }
