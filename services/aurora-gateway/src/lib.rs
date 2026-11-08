@@ -6,6 +6,7 @@ pub mod auth;
 pub mod byo;
 pub mod ca;
 pub mod check_snapshot;
+pub mod db;
 pub mod decide;
 pub mod governance;
 pub mod guard;

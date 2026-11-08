@@ -228,6 +228,94 @@ published policy generation (no DB on the hot path; invalidation scopes `org`
 and `workspace`), so changing it takes effect for the next `CONNECT`; open
 tunnels end at the idle limit or when the client closes them.
 
+## Database lane (phase 2, P2-DBL-1, D-77)
+
+Spec: `21 §Phase 2 — Database lane`; invariant SEC-60. Code: `services/aurora-gateway/src/db/`
+(engine-agnostic core: synthetic request, stored endpoint, authorizer) and `db/pg/` (PostgreSQL
+wire adapter: `wire`, `server`, `relay`); classification is the `aurora-sqlclass` crate (links
+libpg_query, used by the gateway only).
+
+**Sniffing.** After the PROXY header (when present) and before the TLS check, the first 8 bytes
+decide: a PostgreSQL `SSLRequest`, `GSSENCRequest`, `CancelRequest` or protocol-3 `StartupMessage`
+(length and code consistent) enters the lane; a TLS record or HTTP goes where it went before. A
+`StartupMessage` without TLS is answered with a FATAL error (28000) and closed **before** any
+password is requested. `SSLRequest` → `S` and a TLS handshake whose certificate is chosen by SNI:
+`<connection_id>.db.aurora.internal` gets a leaf from the gateway CA, anything else the listener's
+own certificate. (Direct-TLS ALPN `postgresql` is not supported; clients use `SSLRequest`.)
+
+**Login.** User = connection id (a UUID), password = the agent's gateway credential, requested as
+cleartext password inside TLS; `database` and other startup parameters are ignored. Order: resolve
+the credential (unknown → 28P01; frozen → 28000 `frozen`; store down → 57P03), BYO posture and
+source address (`byo_gate`, as HTTP), then admission of the connection by id: it must belong to the
+credential's organization and workspace (or the org), be `active`, belong to an app with a
+`database: { engine: postgres }` section that the org's app posture allows, and be **selected for
+the agent by an allow rule** (grant). Unknown id and missing grant give the same answer (42501).
+Only then are the stored credentials opened (`host`, `port`, `dbname`, `user`, `password`,
+optional `sslmode` (default `require`), `ca_pem`) and the gateway opens **its own** server
+session through the guarded dial (the platform database is refused by address and port, SEC-06):
+`sslmode` `disable`, `allow`/`prefer` (TLS first, plaintext only if the server answers `N`),
+`require` (TLS; verifies the chain when `ca_pem` is stored, as libpq), `verify-ca`, `verify-full`;
+authentication with cleartext, MD5 or SCRAM-SHA-256. The server's outcome is relayed as a FATAL
+error (28P01 / 08006 / 08001); the exchange itself never is. The client then gets
+`AuthenticationOk`, the server's `ParameterStatus` messages, a **gateway-generated**
+`BackendKeyData` and `ReadyForQuery`. Live sessions are registered with the tunnel registry, so a
+freeze, a revoked credential or a tightened BYO posture ends them (FATAL 57P01).
+
+**Classification** (`aurora-sqlclass::classify`, off the async runtime through a bounded pool,
+1 MiB cap, parse tree walked completely). Classes, strictest wins for multi-statement strings:
+`transaction` (BEGIN/COMMIT/ROLLBACK/SAVEPOINT, `SET TRANSACTION`, `DEALLOCATE`, `CLOSE`, `FETCH`,
+`PREPARE` follows its body, safe session settings `extra_float_digits`, `application_name`,
+`timezone`, `datestyle`, `intervalstyle`, `bytea_output`, `client_min_messages`; never policy
+checked), `read` (SELECT without locking clause, data-modifying CTE or INTO; SHOW; `EXPLAIN`
+without `ANALYZE`; `COPY … TO STDOUT`), `write` (INSERT/UPDATE/DELETE/MERGE, `COPY FROM STDIN`,
+`SELECT … FOR UPDATE/SHARE`), `ddl` (CREATE/ALTER/DROP/TRUNCATE/COMMENT/GRANT/REVOKE/RENAME,
+CREATE TABLE AS, SELECT INTO, REFRESH MATERIALIZED VIEW), `admin` (everything else: VACUUM,
+ANALYZE, other `SET`/`RESET`, LISTEN/NOTIFY, DO, CALL, EXECUTE, `EXPLAIN ANALYZE`, any function
+not in the pure-function allow-list (unqualified or `pg_catalog`)). **Always refused** (SQLSTATE
+42501, never sent): `ALTER SYSTEM`, `SET ROLE`/`RESET ROLE`/`SET SESSION AUTHORIZATION`, `COPY …
+PROGRAM` and `COPY` to or from a server-side file, `LOAD`, `lo_import`/`lo_export`/`lo_from_bytea`/
+`lo_put`, `dblink*`, `postgres_fdw*`, `pg_read_*`, `pg_ls_*`, `pg_stat_file`, `pg_file_*`,
+`pg_reload_conf`, `pg_rotate_logfile`, `pg_promote`, `set_config`, `SET` of
+`standard_conforming_strings`/`backslash_quote`/`escape_string_warning`/`client_encoding` (they
+would make the server read the text differently from the classifier), foreign-data-wrapper, server
+and user-mapping DDL, `CREATE EXTENSION` of `dblink`/`postgres_fdw`/`file_fdw`/`adminpack`,
+fast-path function calls (`F`), anything unparsable (including statements the parser rejects
+because of nesting depth) and anything over 1 MiB. The gateway always starts its server session
+with `client_encoding=UTF8`.
+
+**Policy.** A statement of class *c* (not `transaction`, not an empty query) is the synthetic
+request `POST https://<connection_id>.db.aurora.internal/<c>` evaluated by the same policy engine
+(`decide.rs`): the connection is the winning credential, the app's tool whose host/path match
+(`*.db.aurora.internal`, `/read`, `/write`, `/ddl`, `/admin`) is the tool, the statement text is the
+body for rule conditions. Verdict handling is the HTTP one: allowed, needs approval (the card shows
+the statement redacted lexically of literals and comments and clamped to 2,000 characters; the
+agent's connection simply waits), blocked or rate limited. A refusal is an `ErrorResponse`
+(severity ERROR, SQLSTATE `42501`, the guidance message and `manage_url` text); policy or approval
+stores unavailable give `57P03`. Every decided statement writes a `request_log` row with
+`lane = db`, `method = POST`, the synthetic host and path, `connection_id`, `tool_id` and rule.
+
+**Protocol state.** Simple `Query`: classified and judged before it is forwarded. Extended
+protocol: `Parse` classifies (an always-refused or unparsable text is refused at once; a text that
+is merely not allowed by policy parses fine) and records the statement; `Bind` records the portal
+with the statement it was bound to; **`Execute` is where policy is applied**, once per portal (a
+suspended portal's repeated `Execute` is not re-judged), so each execution is one decided request.
+Name reuse the server would reject (`Parse` of an existing named statement, `Bind` to an existing
+named portal) is rejected by the gateway with the server's SQLSTATEs (42P05, 42P03), so the table
+the gateway judges by cannot diverge from what the server will run; `Bind`/`Execute` of unknown
+names are rejected (26000, 34000); portals are forgotten when the server is idle after a `Sync`.
+A refusal inside a pipeline follows PostgreSQL's error protocol: the gateway first has the server
+finish what was already sent (a synthetic `Sync`, whose `ReadyForQuery` it holds back), writes its
+`ErrorResponse` in order, discards messages up to the client's `Sync` and answers that with the
+status; if the server was inside a transaction it is aborted with a failing statement whose
+response is swallowed, so the server really is in the aborted state (`25P02`, `COMMIT` rolls back).
+Client messages above 16 MiB end the session; `Terminate` ends it; `COPY` data messages are
+relayed without inspection (the statement that started the copy was judged).
+
+**Cancel.** `BackendKeyData` carries a random gateway `(pid, key)`; the server's pair is kept in a
+registry (removed with the session). A `CancelRequest` (plain, or inside TLS) for a live gateway
+pair makes the gateway send the real `CancelRequest` over a fresh guarded connection; unknown pairs
+get no answer.
+
 ## MITM lane: connect-time resolution
 
 On `CONNECT host:port` the gateway builds a **ResolvedHost** for

@@ -1,0 +1,32 @@
+- { sql: "begin", class: transaction }
+- { sql: "begin isolation level serializable", class: transaction }
+- { sql: "start transaction read only", class: transaction }
+- { sql: "commit", class: transaction }
+- { sql: "end", class: transaction }
+- { sql: "rollback", class: transaction }
+- { sql: "abort", class: transaction }
+- { sql: "savepoint a", class: transaction }
+- { sql: "release savepoint a", class: transaction }
+- { sql: "rollback to savepoint a", class: transaction }
+- { sql: "set transaction isolation level repeatable read", class: transaction }
+- { sql: "set constraints all deferred", class: transaction }
+- { sql: "set extra_float_digits = 3", class: transaction }
+- { sql: "set application_name = 'psql'", class: transaction }
+- { sql: "set time zone 'UTC'", class: transaction }
+- { sql: "set timezone = 'Europe/Zurich'", class: transaction }
+- { sql: "set datestyle = 'ISO'", class: transaction }
+- { sql: "set client_min_messages = warning", class: transaction }
+- { sql: "set local bytea_output = 'hex'", class: transaction }
+- { sql: "reset application_name", class: transaction }
+- { sql: "deallocate all", class: transaction }
+- { sql: "deallocate s", class: transaction }
+- { sql: "declare c cursor for select 1", class: read }
+- { sql: "declare c cursor for select * from t for update", class: write }
+- { sql: "fetch 10 from c", class: transaction }
+- { sql: "move forward 5 in c", class: transaction }
+- { sql: "close c", class: transaction }
+- { sql: "begin; select 1; commit", class: read, statements: 3 }
+- { sql: "begin; update t set a = 1; commit", class: write, statements: 3 }
+- { sql: "", class: transaction, statements: 0 }
+- { sql: ";", class: transaction, statements: 0 }
+- { sql: "-- only a comment", class: transaction, statements: 0 }

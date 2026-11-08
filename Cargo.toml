@@ -7,6 +7,7 @@ members = [
   "crates/aurora-crypto",
   "crates/aurora-secrets",
   "crates/aurora-policy",
+  "crates/aurora-sqlclass",
   "crates/aurora-registry",
   "crates/aurora-llm",
   "crates/aurora-summary",
@@ -57,6 +58,7 @@ aurora-db = { path = "crates/aurora-db" }
 aurora-crypto = { path = "crates/aurora-crypto" }
 aurora-secrets = { path = "crates/aurora-secrets" }
 aurora-policy = { path = "crates/aurora-policy" }
+aurora-sqlclass = { path = "crates/aurora-sqlclass" }
 aurora-registry = { path = "crates/aurora-registry" }
 aurora-llm = { path = "crates/aurora-llm" }
 aurora-summary = { path = "crates/aurora-summary" }

@@ -4,6 +4,7 @@
 #  - aurora-api must not reach wasmtime (runtime isolation, docs/90-decisions.md I-02)
 #  - aurora-gateway must not reach wasmtime
 #  - aurora-policy must not reach aurora-db (policy is pure logic, no persistence)
+#  - aurora-api and aurora-hookhost must not reach pg_query (the gateway database lane is its only user)
 #  - aurora-hookhost must not reach aurora-db/-secrets/sqlx (SEC-13; aurora-crypto is linked only for signature verification via aurora-registry)
 # If a package is absent from the graph, cargo reports "did not match any packages";
 # that means the edge cannot exist and counts as a pass.
@@ -44,6 +45,10 @@ check aurora-policy aurora-db
 check aurora-hookhost aurora-db
 check aurora-hookhost aurora-secrets
 check aurora-hookhost sqlx
+# P2-DBL-1: libpg_query (C) is linked by the gateway's database lane only
+check aurora-api pg_query
+check aurora-hookhost pg_query
+check aurora-sqlclass aurora-db
 
 if [ "$fail" -ne 0 ]; then
     echo "dep-graph: FAIL" >&2

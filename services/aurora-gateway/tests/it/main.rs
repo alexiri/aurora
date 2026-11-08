@@ -5,6 +5,7 @@ mod byo;
 mod check_snapshot;
 mod common;
 mod credentials;
+mod database;
 mod governance;
 mod governance_db;
 mod hold;
