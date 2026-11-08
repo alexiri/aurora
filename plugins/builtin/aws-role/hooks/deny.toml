@@ -1,0 +1,30 @@
+# cargo-deny configuration for this hook crate (P2-OPS-1, D-100). Run by scripts/plugins/deny-hooks.sh.
+# Same policy as the workspace deny.toml, without the workspace-only advisory waivers. This crate has none.
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+allow = [
+  "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause",
+  "ISC", "Unicode-3.0", "Zlib", "CDLA-Permissive-2.0",
+  "0BSD", "BSL-1.0", "CC0-1.0",
+]
+confidence-threshold = 0.9
+# The path dependency aurora-plugin-sdk is a workspace crate (publish = false).
+private = { ignore = true }
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,0 +1,42 @@
+# cargo-deny configuration for this hook crate (P2-OPS-1, D-100). Run by scripts/plugins/deny-hooks.sh.
+# Same policy as the workspace deny.toml, plus one scoped waiver (below).
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+  # `rsa` 0.9 (no fixed release exists): the Marvin attack is a timing side channel that leaks the private key
+  # through repeated *decryption/signing* operations an attacker can time. This guest signs the GitHub App
+  # JWT (RS256, PKCS#1 v1.5, deterministic) inside a WebAssembly component in the hook host. Its only
+  # imports are the `aurora:plugin/host` functions (`fetch` restricted to the declared egress hosts,
+  # `now-unix-seconds`, `random-bytes`, `log`; D-91), and it does not use randomness for signing. Signing runs
+  # once per token mint (on expiry, under the gateway's refresh lock), the signed claims are chosen
+  # by the server, not by an attacker, and the only output is the JWT sent to GitHub. So an attacker
+  # can neither trigger many timed private-key operations nor observe their timing. The key is the
+  # operator's own App key, from the secret store. Revisit when rsa publishes a constant-time
+  # release; the waiver is per-crate and does not apply to any other hook (FU-P2-CAT-1b, D-100).
+  { id = "RUSTSEC-2023-0071", reason = "RS256 App-JWT signing in a hook-host wasm guest, once per mint, server-chosen claims; private-key timings are not attacker-observable or repeatable (D-91, D-100)" },
+]
+
+[licenses]
+version = 2
+allow = [
+  "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause",
+  "ISC", "Unicode-3.0", "Zlib", "CDLA-Permissive-2.0",
+  "0BSD", "BSL-1.0", "CC0-1.0",
+]
+confidence-threshold = 0.9
+# The path dependency aurora-plugin-sdk is a workspace crate (publish = false).
+private = { ignore = true }
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -88,3 +88,28 @@ jobs:
           sudo systemctl daemon-reload
       - name: Kubernetes e2e (scripts/e2e/kind.sh, release images as CI publishes them)
         run: bash scripts/e2e/kind.sh --release-images
+
+  # P2-OPS-1 (owner Q3: nightly): the connector conformance suite against the pinned Mattermost container
+  # (mattermost-preview by digest, scripts/mattermost/setup.sh; ~1.5 GB, host network, PostgreSQL on 127.0.0.1:5432).
+  mattermost-conformance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: The runner's own PostgreSQL service must not hold 5432 (the Mattermost image brings its own)
+        run: |
+          sudo systemctl stop postgresql 2>/dev/null || true
+          podman --version
+          ss -ltn | grep -E ':5432\b' && exit 1 || true
+      - name: Mattermost conformance (scripts/conformance.sh --mattermost)
+        run: bash scripts/conformance.sh --mattermost
+      - name: Mattermost container logs of a failed run
+        if: failure()
+        run: podman logs --tail=300 aurora-mm2-server >target/mattermost-failure.log 2>&1 || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: mattermost-conformance-failure
+          path: target/mattermost-failure.log
+          if-no-files-found: ignore

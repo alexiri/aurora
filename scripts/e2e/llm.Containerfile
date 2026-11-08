@@ -7,7 +7,8 @@ FROM ${BASE}
 USER root
 # Must match PINNED_VERSION in services/aurora-supervisor/src/adapters/claude_code/mod.rs.
 ARG CLAUDE_CODE_VERSION=2.1.319
-RUN dnf -y install --setopt=install_weak_deps=False nodejs npm \
+# retries/minrate/timeout only tolerate a slow mirror (P2-OPS-1, D-100); gpgcheck and repo verification are untouched.
+RUN dnf -y install --setopt=install_weak_deps=False --setopt=retries=10 --setopt=minrate=100 --setopt=timeout=120 nodejs npm \
  && mkdir -p /opt/aurora/harness/claude-code \
  && npm install --prefix /opt/aurora/harness/claude-code --no-audit --no-fund @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
  && /opt/aurora/harness/claude-code/node_modules/.bin/claude --version \
