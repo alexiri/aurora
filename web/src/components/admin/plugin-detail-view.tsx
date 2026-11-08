@@ -4,8 +4,12 @@ import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { inputClass } from "@/components/ui/field";
+import { Field, inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
 import { ErrorState, Loading } from "@/components/states";
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
@@ -16,7 +20,7 @@ import {
   type PluginPackage,
 } from "@/lib/api/plugins";
 
-import { ViolationList } from "./plugins-view";
+import { ViolationList, statusTone } from "./plugins-view";
 
 const SECTIONS = ["hooks", "egress", "context", "claims"] as const;
 type Section = (typeof SECTIONS)[number];
@@ -35,20 +39,20 @@ function Collapsible({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-md border border-neutral-200">
+    <section className="overflow-hidden rounded-card border border-line bg-surface shadow-card">
       <h3>
         <button
           type="button"
           aria-expanded={open}
           aria-controls={`sec-${id}`}
-          className="w-full px-3 py-2 text-left text-sm font-medium"
+          className="min-h-11 w-full px-4 py-2 text-left text-sm font-medium text-ink hover:bg-subtle"
           onClick={() => onToggle(id)}
         >
           {open ? "▾" : "▸"} {title}
         </button>
       </h3>
       {open ? (
-        <div id={`sec-${id}`} className="border-t border-neutral-200 px-3 py-2 text-sm">
+        <div id={`sec-${id}`} className="border-t border-line px-4 py-3 text-sm text-ink-2">
           {children}
         </div>
       ) : null}
@@ -56,7 +60,7 @@ function Collapsible({
   );
 }
 
-const none = <p className="text-neutral-500">None.</p>;
+const none = <p className="text-muted">None.</p>;
 
 export function PluginReview({ plugin }: { plugin: PluginPackage }) {
   const act = usePluginAction(plugin.id);
@@ -98,9 +102,9 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
 
   if (uninstalled) {
     return (
-      <p role="status">
-        Plugin uninstalled. <Link href="/admin/plugins" className="underline">Back to plugins</Link>
-      </p>
+      <Notice tone="accent" role="status" className="max-w-[880px]">
+        Plugin uninstalled. <Link href="/admin/plugins" className="font-medium underline">Back to plugins</Link>
+      </Notice>
     );
   }
 
@@ -113,42 +117,45 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
     uninstall.isError && liveCount === null ? uninstall.error : null;
 
   return (
-    <div className="space-y-4">
-      <div>
-        <Link href="/admin/plugins" className="text-sm underline">
-          Plugins
-        </Link>
-        <h1 className="text-xl font-semibold">
-          {plugin.package_id} <span className="text-neutral-500">{plugin.version}</span>
-        </h1>
-      </div>
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
-        <dt className="text-neutral-500">Status</dt>
-        <dd>
-          {plugin.status.replace("_", " ")}
-          {plugin.status_reason ? ` (${plugin.status_reason})` : ""}
-        </dd>
-        <dt className="text-neutral-500">Publisher</dt>
-        <dd>{plugin.publisher}</dd>
-        <dt className="text-neutral-500">Signer</dt>
-        <dd>
-          {plugin.signer.kind === "trusted_key"
-            ? `Trusted key ${plugin.signer.name ?? ""} ${plugin.signer.key_id ?? ""}`
-            : plugin.signer.kind}
-          {plugin.signer.kind === "unsigned" ? (
-            <span className="ml-2 text-amber-700">Unsigned package: development use only.</span>
-          ) : null}
-        </dd>
-        <dt className="text-neutral-500">Digest</dt>
-        <dd className="break-all font-mono text-xs">{plugin.digest}</dd>
-        <dt className="text-neutral-500">Apps</dt>
-        <dd>{plugin.apps.map((a) => a.name).join(", ") || "None"}</dd>
-      </dl>
+    <div className="max-w-[880px] space-y-5">
+      <PageHeader
+        title={
+          <>
+            {plugin.package_id} <span className="font-mono text-xl font-normal text-muted">{plugin.version}</span>
+          </>
+        }
+        breadcrumb={[{ label: "Plugins", href: "/admin/plugins" }, { label: plugin.package_id }]}
+        className="mb-6"
+      />
+      <Card>
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
+          <dt className="text-muted">Status</dt>
+          <dd>
+            <Badge tone={statusTone(plugin.status)}>{plugin.status.replace("_", " ")}</Badge>
+            {plugin.status_reason ? <span className="ml-2 text-ink-2">({plugin.status_reason})</span> : null}
+          </dd>
+          <dt className="text-muted">Publisher</dt>
+          <dd className="text-ink">{plugin.publisher}</dd>
+          <dt className="text-muted">Signer</dt>
+          <dd className="text-ink">
+            {plugin.signer.kind === "trusted_key"
+              ? `Trusted key ${plugin.signer.name ?? ""} ${plugin.signer.key_id ?? ""}`
+              : plugin.signer.kind}
+            {plugin.signer.kind === "unsigned" ? (
+              <span className="ml-2 text-pending-ink">Unsigned package: development use only.</span>
+            ) : null}
+          </dd>
+          <dt className="text-muted">Digest</dt>
+          <dd className="break-all font-mono text-xs text-ink-2">{plugin.digest}</dd>
+          <dt className="text-muted">Apps</dt>
+          <dd className="text-ink">{plugin.apps.map((a) => a.name).join(", ") || "None"}</dd>
+        </dl>
+      </Card>
 
       {plugin.violations.length > 0 ? <ViolationList violations={plugin.violations} /> : null}
 
       {plugin.widenings.length > 0 ? (
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+        <Notice tone="pending">
           <h2 className="font-medium">Changes versus the previously approved version</h2>
           <ul className="list-disc pl-5">
             {plugin.widenings.map((w, i) => (
@@ -157,11 +164,11 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
               </li>
             ))}
           </ul>
-        </div>
+        </Notice>
       ) : null}
 
       <div className="space-y-2">
-        <h2 className="font-medium">Permissions</h2>
+        <h2 className="font-display text-base font-semibold text-ink">Permissions</h2>
         <Collapsible id="hooks" title="Hooks" open={opened.has("hooks")} onToggle={onToggle}>
           {hooks.length ? (
             <ul className="list-disc pl-5">
@@ -217,17 +224,18 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
         {pending ? (
           <>
             <Button
+              variant="approve"
               disabled={!allSeen || act.isPending}
               onClick={() => act.mutate({ action: "approve" })}
             >
               Approve
             </Button>
             {!allSeen ? (
-              <span className="self-center text-xs text-neutral-500">
+              <span className="self-center text-xs text-muted">
                 Expand every permissions section to enable approval.
               </span>
             ) : null}
-            <Button variant="outline" disabled={act.isPending} onClick={() => setRejecting(true)}>
+            <Button variant="danger" disabled={act.isPending} onClick={() => setRejecting(true)}>
               Reject
             </Button>
           </>
@@ -242,29 +250,29 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
             Enable
           </Button>
         ) : null}
-        <Button variant="outline" disabled={uninstall.isPending} onClick={() => doUninstall(false)}>
+        <Button variant="danger" disabled={uninstall.isPending} onClick={() => doUninstall(false)}>
           Uninstall
         </Button>
       </div>
       {actionError ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {actionError instanceof ApiError && actionError.code === "claim_conflict_unresolved"
             ? "Resolve the host claim conflicts first."
             : errorMessage(actionError)}
           {actionError instanceof ApiError && actionError.code === "claim_conflict_unresolved" ? (
             <>
               {" "}
-              <Link href="/admin/host-claims" className="underline">
+              <Link href="/admin/host-claims" className="font-medium underline">
                 Host claims
               </Link>
             </>
           ) : null}
-        </p>
+        </Notice>
       ) : null}
       {uninstallErr ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(uninstallErr)}
-        </p>
+        </Notice>
       ) : null}
 
       <Dialog open={rejecting} onOpenChange={setRejecting}>
@@ -276,18 +284,19 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
               act.mutate({ action: "reject", reason: reason.trim() }, { onSuccess: () => setRejecting(false) });
             }}
           >
-            <label htmlFor="reject-reason" className="block text-sm font-medium">
-              Reason
-            </label>
-            <input
-              id="reject-reason"
-              className={inputClass}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            />
-            <Button type="submit" disabled={act.isPending}>
-              Confirm reject
-            </Button>
+            <Field id="reject-reason" label="Reason">
+              <input
+                id="reject-reason"
+                className={inputClass}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+              />
+            </Field>
+            <div className="flex justify-end">
+              <Button type="submit" variant="danger" disabled={act.isPending}>
+                Confirm reject
+              </Button>
+            </div>
           </form>
         </DialogContent>
       </Dialog>
@@ -297,11 +306,11 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
           title="Plugin has live connections"
           description={`${liveCount ?? 0} connection(s) use this plugin. Uninstalling will mark them orphaned.`}
         >
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button variant="outline" onClick={() => setLiveCount(null)}>
               Cancel
             </Button>
-            <Button disabled={uninstall.isPending} onClick={() => doUninstall(true)}>
+            <Button variant="danger" disabled={uninstall.isPending} onClick={() => doUninstall(true)}>
               Uninstall anyway
             </Button>
           </div>

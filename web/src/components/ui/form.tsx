@@ -28,6 +28,47 @@ export function Form({ className, ...props }: FormHTMLAttributes<HTMLFormElement
   return <form className={cn("max-w-xl space-y-5", className)} {...props} />;
 }
 
+/** A checkbox with its label (and optional hint) as one 36 px-high tap target. `id` links label and control. */
+export function CheckboxField({
+  id,
+  label,
+  hint,
+  checked,
+  onChange,
+  disabled,
+}: {
+  id: string;
+  label: ReactNode;
+  hint?: ReactNode;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        aria-describedby={hint ? `${id}-hint` : undefined}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 size-4 shrink-0 accent-accent"
+      />
+      <div className="min-w-0">
+        <label htmlFor={id} className="block text-sm font-medium text-ink">
+          {label}
+        </label>
+        {hint ? (
+          <p id={`${id}-hint`} className="text-xs text-muted">
+            {hint}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 /** Submit row: primary action first in the DOM, wraps on narrow screens. Status text goes in `children`. */
 export function FormActions({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={cn("flex flex-wrap items-center gap-3", className)}>{children}</div>;

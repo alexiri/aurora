@@ -19,7 +19,7 @@ function FieldControl({ f, value, error, onChange }: { f: FormField; value: stri
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
-        {warn ? <p role="status" className="text-xs text-amber-700">{warn}</p> : null}
+        {warn ? <p role="status" className="text-xs text-pending-ink">{warn}</p> : null}
       </>
     );
   } else if (f.type === "file" || f.type === "json_file") {
@@ -54,7 +54,7 @@ function FieldControl({ f, value, error, onChange }: { f: FormField; value: stri
     <Field id={id} label={f.label + (f.required ? "" : " (optional)")} error={error} hint={f.type === "select" ? undefined : hint}>
       {control}
       {help ? (
-        <a href={help} target="_blank" rel="noopener noreferrer" className="text-xs underline">
+        <a href={help} target="_blank" rel="noopener noreferrer" className="text-xs text-link underline">
           Where do I find this? ({help})
         </a>
       ) : null}

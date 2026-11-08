@@ -2,9 +2,13 @@
 
 import { useState } from "react";
 
-import { ErrorState, Loading } from "@/components/states";
+import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
 import { useAdminUsers, usePatchAdminUser, type AdminUser } from "@/lib/api/account";
 import { errorMessage } from "@/lib/api/errors";
 import { useSession } from "@/lib/api/queries";
@@ -13,9 +17,8 @@ import { fmtDate } from "./key-table";
 
 export function NotFoundPage() {
   return (
-    <div className="space-y-2">
-      <h1 className="text-xl font-semibold">404</h1>
-      <p className="text-sm text-neutral-600">This page could not be found.</p>
+    <div className="max-w-[880px]">
+      <PageHeader title="404" description="This page could not be found." />
     </div>
   );
 }
@@ -35,67 +38,69 @@ export function UsersTable({
     patch.mutate({ id: u.id, body }, { onError: (error) => setErr({ id: u.id, error }) });
   }
 
-  if (users.length === 0) return <p className="text-sm text-neutral-600">No users found.</p>;
+  if (users.length === 0) return <EmptyState title="No users found" />;
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <thead className="text-neutral-500">
-          <tr>
-            <th className="py-2 pr-4 font-medium">User</th>
-            <th className="py-2 pr-4 font-medium">Last login</th>
-            <th className="py-2 pr-4 font-medium">Status</th>
-            <th className="py-2 font-medium">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {users.map((u) => {
-            const disabled = !!u.disabled_at;
-            const isSelf = u.id === selfId;
-            return (
-              <tr key={u.id} className="border-t border-neutral-200 align-top">
-                <td className="py-2 pr-4">
-                  <div className="font-medium">{u.display_name}</div>
-                  <div className="text-neutral-500">{u.email}</div>
-                </td>
-                <td className="py-2 pr-4">{fmtDate(u.last_login_at)}</td>
-                <td className="py-2 pr-4">
-                  {u.is_instance_admin ? "Instance admin" : "User"}
-                  {disabled ? ", disabled" : ""}
-                </td>
-                <td className="space-y-1 py-2">
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={patch.isPending}
-                      onClick={() => change(u, { is_instance_admin: !u.is_instance_admin })}
-                      aria-label={`${u.is_instance_admin ? "Remove admin from" : "Make admin"} ${u.email}`}
-                    >
-                      {u.is_instance_admin ? "Remove admin" : "Make admin"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={patch.isPending}
-                      onClick={() => change(u, { disabled: !disabled })}
-                      aria-label={`${disabled ? "Enable" : "Disable"} ${u.email}`}
-                    >
-                      {disabled ? "Enable" : "Disable"}
-                    </Button>
-                  </div>
-                  {isSelf ? <p className="text-xs text-neutral-500">This is you.</p> : null}
-                  {err?.id === u.id ? (
-                    <p role="alert" className="text-xs text-red-700">
-                      {errorMessage(err.error)}
-                    </p>
-                  ) : null}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <DataTable caption="Users">
+      <thead>
+        <tr>
+          <Th>User</Th>
+          <Th>Last login</Th>
+          <Th>Status</Th>
+          <Th>Actions</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {users.map((u) => {
+          const disabled = !!u.disabled_at;
+          const isSelf = u.id === selfId;
+          return (
+            <tr key={u.id}>
+              <Td>
+                <div className="font-medium">{u.display_name}</div>
+                <div className="text-muted">{u.email}</div>
+              </Td>
+              <Td className="whitespace-nowrap text-ink-2">{fmtDate(u.last_login_at)}</Td>
+              <Td>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge tone={u.is_instance_admin ? "accent" : "neutral"}>
+                    {u.is_instance_admin ? "Instance admin" : "User"}
+                  </Badge>
+                  {disabled ? <Badge tone="danger">disabled</Badge> : null}
+                </div>
+              </Td>
+              <Td className="space-y-1">
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={patch.isPending}
+                    onClick={() => change(u, { is_instance_admin: !u.is_instance_admin })}
+                    aria-label={`${u.is_instance_admin ? "Remove admin from" : "Make admin"} ${u.email}`}
+                  >
+                    {u.is_instance_admin ? "Remove admin" : "Make admin"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={patch.isPending}
+                    onClick={() => change(u, { disabled: !disabled })}
+                    aria-label={`${disabled ? "Enable" : "Disable"} ${u.email}`}
+                  >
+                    {disabled ? "Enable" : "Disable"}
+                  </Button>
+                </div>
+                {isSelf ? <p className="text-xs text-muted">This is you.</p> : null}
+                {err?.id === u.id ? (
+                  <Notice tone="danger" role="alert" className="max-w-xs p-2 text-xs">
+                    {errorMessage(err.error)}
+                  </Notice>
+                ) : null}
+              </Td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </DataTable>
   );
 }
 
@@ -111,8 +116,8 @@ export function AdminUsersView() {
   if (!isAdmin) return <NotFoundPage />;
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Users</h1>
+    <div className="max-w-[1160px] space-y-4">
+      <PageHeader title="Users" description="Everyone on this instance. Admins can promote or disable accounts." className="mb-2" />
       <form
         role="search"
         className="flex max-w-md gap-2"

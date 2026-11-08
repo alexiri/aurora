@@ -6,6 +6,7 @@ import { SizeMeter } from "@/components/memory/size-meter";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import {
   SKILL_BODY_MAX,
@@ -52,12 +53,12 @@ export function SkillsEditor({ scope }: { scope: SkillScope }) {
               <button
                 type="button"
                 aria-current={selected === s.id}
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-neutral-50 aria-[current=true]:bg-neutral-100"
+                className="w-full rounded-control px-3 py-2 text-left text-sm text-ink hover:bg-subtle aria-[current=true]:bg-subtle aria-[current=true]:font-semibold"
                 onClick={() => { setSelected(s.id); setCreating(false); }}
               >
                 <span className="font-mono">{s.name}</span>
-                {!s.enabled ? <span className="ml-1 text-xs text-neutral-500">(disabled)</span> : null}
-                <span className="block truncate text-xs text-neutral-600">{s.description}</span>
+                {!s.enabled ? <span className="ml-1 text-xs text-muted">(disabled)</span> : null}
+                <span className="block truncate text-xs font-normal text-ink-2">{s.description}</span>
               </button>
             </li>
           ))}
@@ -67,7 +68,7 @@ export function SkillsEditor({ scope }: { scope: SkillScope }) {
           {!creating && current ? (
             <SkillEditor key={`${current.id}:${current.updated_at}`} scope={scope} skill={current} onDeleted={() => setSelected(null)} />
           ) : null}
-          {!creating && !current ? <p className="text-sm text-neutral-500">Select a skill to edit it.</p> : null}
+          {!creating && !current ? <p className="text-sm text-muted">Select a skill to edit it.</p> : null}
         </div>
       </div>
     </div>
@@ -96,7 +97,7 @@ function CreateSkill({ scope, onDone }: { scope: SkillScope; onDone: (id: string
     }
   }
   return (
-    <form onSubmit={(e) => void submit(e)} noValidate className="space-y-3">
+    <form onSubmit={(e) => void submit(e)} noValidate className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
       <Field id="sk-name" label="Name" hint="Immutable once created." error={err.includes("lowercase") || err.includes("reserved") ? err : undefined}>
         <input id="sk-name" className={inputClass} value={name} maxLength={SKILL_NAME_MAX} onChange={(e) => setName(e.target.value)} />
       </Field>
@@ -107,9 +108,9 @@ function CreateSkill({ scope, onDone }: { scope: SkillScope; onDone: (id: string
         <textarea id="sk-body" className={`${inputClass} font-mono`} rows={10} value={body} onChange={(e) => setBody(e.target.value)} />
       </Field>
       <SizeMeter label="Body" used={body.length} max={SKILL_BODY_MAX} />
-      {err && !err.includes("lowercase") && !err.includes("reserved") ? <p role="alert" className="text-sm text-red-700">{err}</p> : null}
-      {create.error ? <p role="alert" className="text-sm text-red-700">{errorMessage(create.error)}</p> : null}
-      <Button type="submit" disabled={create.isPending}>Create skill</Button>
+      {err && !err.includes("lowercase") && !err.includes("reserved") ? <Notice tone="danger" role="alert">{err}</Notice> : null}
+      {create.error ? <Notice tone="danger" role="alert">{errorMessage(create.error)}</Notice> : null}
+      <Button type="submit" size="lg" disabled={create.isPending}>Create skill</Button>
     </form>
   );
 }
@@ -132,7 +133,7 @@ function SkillEditor({ scope, skill, onDeleted }: { scope: SkillScope; skill: Sk
 
   return (
     <div className="space-y-6">
-      <form onSubmit={submit} noValidate className="space-y-3">
+      <form onSubmit={submit} noValidate className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
         <Field id="sk-name" label="Name" hint="The name cannot be changed.">
           <input id="sk-name" className={inputClass} value={skill.name} readOnly />
         </Field>
@@ -143,19 +144,19 @@ function SkillEditor({ scope, skill, onDeleted }: { scope: SkillScope; skill: Sk
           <textarea id="sk-body" className={`${inputClass} font-mono`} rows={10} value={body} onChange={(e) => setBody(e.target.value)} />
         </Field>
         <SizeMeter label="Body" used={body.length} max={SKILL_BODY_MAX} />
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled
+        <label className="flex items-center gap-2 text-sm font-medium text-ink">
+          <input type="checkbox" className="size-4 accent-accent" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled
         </label>
-        {failed ? <p role="alert" className="text-sm text-red-700">{errorMessage(failed)}</p> : null}
-        <div className="flex gap-2">
-          <Button type="submit" disabled={bodyOver || update.isPending}>Save</Button>
+        {failed ? <Notice tone="danger" role="alert">{errorMessage(failed)}</Notice> : null}
+        <div className="flex flex-wrap gap-2">
+          <Button type="submit" size="lg" disabled={bodyOver || update.isPending}>Save</Button>
           {confirmDel ? (
             <>
-              <Button type="button" variant="outline" onClick={() => void del.mutateAsync(skill.id).then(onDeleted)}>Confirm delete</Button>
+              <Button type="button" variant="danger" onClick={() => void del.mutateAsync(skill.id).then(onDeleted)}>Confirm delete</Button>
               <Button type="button" variant="ghost" onClick={() => setConfirmDel(false)}>Cancel</Button>
             </>
           ) : (
-            <Button type="button" variant="outline" onClick={() => setConfirmDel(true)}>Delete</Button>
+            <Button type="button" variant="danger" onClick={() => setConfirmDel(true)}>Delete</Button>
           )}
         </div>
       </form>
@@ -197,11 +198,11 @@ function SkillFiles({ scope, skill }: { scope: SkillScope; skill: Skill }) {
 
   return (
     <section aria-label="Files" className="space-y-3">
-      <h3 className="text-sm font-medium">Files</h3>
+      <h3 className="font-display text-base font-semibold text-ink">Files</h3>
       <SizeMeter label="Total size" used={skill.total_size} max={SKILL_TOTAL_MAX} />
-      {skill.files.length === 0 ? <p className="text-sm text-neutral-500">No extra files.</p> : <FileTree nodes={buildTree(skill.files)} onDelete={(p) => del.mutate(p)} onReplace={replace} />}
-      {del.error || put.error ? <p role="alert" className="text-sm text-red-700">{errorMessage(del.error ?? put.error)}</p> : null}
-      <form onSubmit={(e) => void add(e)} noValidate className="space-y-2 rounded-md border border-neutral-200 p-3">
+      {skill.files.length === 0 ? <p className="text-sm text-muted">No extra files.</p> : <FileTree nodes={buildTree(skill.files)} onDelete={(p) => del.mutate(p)} onReplace={replace} />}
+      {del.error || put.error ? <Notice tone="danger" role="alert">{errorMessage(del.error ?? put.error)}</Notice> : null}
+      <form onSubmit={(e) => void add(e)} noValidate className="space-y-3 rounded-card border border-line bg-surface p-4 shadow-card">
         <Field id="sf-path" label="File path" hint="Relative, for example scripts/run.sh" error={err || undefined}>
           <input id="sf-path" className={inputClass} value={path} onChange={(e) => setPath(e.target.value)} />
         </Field>
@@ -213,8 +214,8 @@ function SkillFiles({ scope, skill }: { scope: SkillScope; skill: Skill }) {
             <textarea id="sf-text" className={`${inputClass} font-mono`} rows={4} value={text} onChange={(e) => setText(e.target.value)} />
           </Field>
         ) : null}
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={exec} onChange={(e) => setExec(e.target.checked)} /> Executable
+        <label className="flex items-center gap-2 text-sm text-ink">
+          <input type="checkbox" className="size-4 accent-accent" checked={exec} onChange={(e) => setExec(e.target.checked)} /> Executable
         </label>
         <Button type="submit" size="sm" disabled={put.isPending}>Save file</Button>
       </form>
@@ -224,18 +225,18 @@ function SkillFiles({ scope, skill }: { scope: SkillScope; skill: Skill }) {
 
 function FileTree({ nodes, onDelete, onReplace }: { nodes: FileTreeNode[]; onDelete: (path: string) => void; onReplace: (path: string, exec: boolean) => (e: ChangeEvent<HTMLInputElement>) => void }) {
   return (
-    <ul className="space-y-1 pl-3 text-sm">
+    <ul className="space-y-1 pl-3 text-sm text-ink">
       {nodes.map((n) => (
         <li key={n.path}>
           {n.file ? (
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono">{n.name}</span>
-              <span className="text-xs text-neutral-500">{n.file.size.toLocaleString("en-US")} chars{n.file.executable ? ", executable" : ""}</span>
-              <label className="text-xs underline">
+              <span className="text-xs text-muted">{n.file.size.toLocaleString("en-US")} chars{n.file.executable ? ", executable" : ""}</span>
+              <label className="text-xs text-link underline">
                 {n.file.executable ? "Replace (keep executable)" : "Replace"}
                 <input type="file" className="sr-only" aria-label={`Replace ${n.path}`} onChange={onReplace(n.path, n.file.executable)} />
               </label>
-              <label className="text-xs underline">
+              <label className="text-xs text-link underline">
                 {n.file.executable ? "Replace as not executable" : "Replace as executable"}
                 <input type="file" className="sr-only" aria-label={`Replace ${n.path} as ${n.file.executable ? "not executable" : "executable"}`} onChange={onReplace(n.path, !n.file.executable)} />
               </label>
@@ -243,7 +244,7 @@ function FileTree({ nodes, onDelete, onReplace }: { nodes: FileTreeNode[]; onDel
             </div>
           ) : (
             <>
-              <span className="font-mono text-neutral-600">{n.name}/</span>
+              <span className="font-mono text-ink-2">{n.name}/</span>
               <FileTree nodes={n.children} onDelete={onDelete} onReplace={onReplace} />
             </>
           )}
@@ -258,15 +259,15 @@ export function OrgSkillsReadOnly({ orgId }: { orgId: string }) {
   const list = useOrgSkills(orgId);
   return (
     <section aria-label="Organization skills" className="space-y-2">
-      <h3 className="text-sm font-medium">Organization skills</h3>
-      <p className="text-xs text-neutral-500">Managed by organization owners and admins. An agent skill with the same name takes precedence.</p>
+      <h3 className="font-display text-base font-semibold text-ink">Organization skills</h3>
+      <p className="text-xs text-muted">Managed by organization owners and admins. An agent skill with the same name takes precedence.</p>
       {list.isPending ? <Loading /> : null}
       {list.isError ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : null}
-      {list.data && list.data.items.length === 0 ? <p className="text-sm text-neutral-500">None.</p> : null}
+      {list.data && list.data.items.length === 0 ? <p className="text-sm text-muted">None.</p> : null}
       <ul className="space-y-1">
         {list.data?.items.map((s) => (
-          <li key={s.id} className="text-sm">
-            <span className="font-mono">{s.name}</span> <span className="text-neutral-600">{s.description}</span>
+          <li key={s.id} className="text-sm text-ink">
+            <span className="font-mono">{s.name}</span> <span className="text-ink-2">{s.description}</span>
           </li>
         ))}
       </ul>

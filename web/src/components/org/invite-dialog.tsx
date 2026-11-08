@@ -5,6 +5,8 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
+import { cn } from "@/lib/utils";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { useCreateInvitation, validateInvite } from "@/lib/api/org";
 import { useWorkspaces } from "@/lib/api/queries";
@@ -54,19 +56,21 @@ export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => voi
         </select>
       </Field>
       {workspaces.data && workspaces.data.items.length > 0 ? (
-        <fieldset className="space-y-1">
-          <legend className="text-sm font-medium">Workspace access (optional)</legend>
-          <p className="text-xs text-neutral-600">
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium text-ink">Workspace access (optional)</legend>
+          <p className="text-xs text-muted">
             Member chats with agents. Approver also decides approvals.
           </p>
           {workspaces.data.items.map((w) => {
             const level = approverIds.includes(w.id) ? "approver" : wsIds.includes(w.id) ? "member" : "none";
             return (
-              <div key={w.id} className="flex items-center justify-between gap-2 text-sm">
-                <label htmlFor={`inv-ws-${w.id}`}>{w.name}</label>
+              <div key={w.id} className="flex items-center justify-between gap-3 text-sm">
+                <label htmlFor={`inv-ws-${w.id}`} className="min-w-0 truncate text-ink">
+                  {w.name}
+                </label>
                 <select
                   id={`inv-ws-${w.id}`}
-                  className={inputClass}
+                  className={cn(inputClass, "w-40 shrink-0")}
                   value={level}
                   onChange={(e) => {
                     const v = e.target.value;
@@ -84,12 +88,12 @@ export function InviteForm({ orgId, onDone }: { orgId: string; onDone: () => voi
         </fieldset>
       ) : null}
       {create.error && Object.keys(fe).length === 0 ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(create.error)}
-        </p>
+        </Notice>
       ) : null}
       <div className="flex justify-end">
-        <Button type="submit" disabled={create.isPending}>
+        <Button type="submit" size="lg" disabled={create.isPending}>
           {create.isPending ? "Inviting…" : "Send invitation"}
         </Button>
       </div>

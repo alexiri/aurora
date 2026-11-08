@@ -4,6 +4,8 @@ import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { Form, FormActions } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import {
   buildGenericCreate,
@@ -101,7 +103,7 @@ export function GenericSecretForm({ scope, onDone }: { scope: SecretScope; onDon
   }
 
   return (
-    <form onSubmit={(e) => void submit(e)} noValidate className="max-w-xl space-y-3" aria-label="New secret">
+    <Form onSubmit={(e) => void submit(e)} noValidate className="rounded-card border border-line bg-surface p-4 shadow-card sm:p-5" aria-label="New secret">
       <Field id="g-name" label="Name" error={fe.name}>
         <input id="g-name" className={inputClass} value={s.name} onChange={(e) => setS({ ...s, name: e.target.value })} />
       </Field>
@@ -159,13 +161,15 @@ export function GenericSecretForm({ scope, onDone }: { scope: SecretScope; onDon
         <ValueInput id="g-value" value={s.value} onChange={(value) => setS({ ...s, value })} error={fe.value} />
       )}
       {clientErr || create.error ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {clientErr || errorMessage(create.error)}
-        </p>
+        </Notice>
       ) : null}
-      <Button type="submit" disabled={create.isPending}>
-        {create.isPending ? "Saving…" : "Add secret"}
-      </Button>
-    </form>
+      <FormActions>
+        <Button type="submit" size="lg" disabled={create.isPending}>
+          {create.isPending ? "Saving…" : "Add secret"}
+        </Button>
+      </FormActions>
+    </Form>
   );
 }

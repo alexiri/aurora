@@ -14,7 +14,7 @@ export function DataTable({
   ...props
 }: { caption: string } & HTMLAttributes<HTMLTableElement>) {
   return (
-    <div className="max-w-full overflow-x-auto rounded-card border border-line bg-surface shadow-card">
+    <div className="relative max-w-full overflow-x-auto rounded-card border border-line bg-surface shadow-card">
       <table className={cn("w-full min-w-max text-left text-sm text-ink", className)} {...props}>
         <caption className="sr-only">{caption}</caption>
         {children}

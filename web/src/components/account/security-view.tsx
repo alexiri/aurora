@@ -3,6 +3,8 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
+import { Section } from "@/components/ui/section";
 import { revokeOtherSessions } from "@/lib/api/account";
 import { errorMessage } from "@/lib/api/errors";
 
@@ -27,37 +29,30 @@ export function SecurityView() {
   }
 
   return (
-    <div className="space-y-10">
-      <section aria-labelledby="signin-h" className="max-w-md space-y-3">
-        <h2 id="signin-h" className="text-lg font-medium">
-          Sign-in
-        </h2>
-        <p className="text-sm text-neutral-600">
+    <div className="space-y-8">
+      <Section id="signin" title="Sign-in" card>
+        <p className="text-sm text-ink-2">
           You sign in through your organization&apos;s identity provider, which also handles
           your password and multi-factor authentication. Aurora stores no password.
         </p>
-      </section>
-      <section aria-labelledby="sess-h" className="max-w-md space-y-3">
-        <h2 id="sess-h" className="text-lg font-medium">
-          Sessions
-        </h2>
-        <p className="text-sm text-neutral-600">
-          Sign out everywhere else. This browser stays signed in.
-        </p>
-        {revokeErr !== null ? (
-          <p role="alert" className="text-sm text-red-700">
-            {errorMessage(revokeErr)}
-          </p>
-        ) : null}
-        {revoked !== null ? (
-          <p role="status" className="text-sm text-green-700">
-            Signed out {revoked} other {revoked === 1 ? "session" : "sessions"}.
-          </p>
-        ) : null}
-        <Button variant="outline" disabled={revoking} onClick={() => void signOutOthers()}>
-          Sign out other sessions
-        </Button>
-      </section>
+      </Section>
+      <Section id="sess" title="Sessions" description="Sign out everywhere else. This browser stays signed in." card>
+        <div className="space-y-3">
+          {revokeErr !== null ? (
+            <Notice tone="danger" role="alert">
+              {errorMessage(revokeErr)}
+            </Notice>
+          ) : null}
+          {revoked !== null ? (
+            <Notice tone="accent" role="status">
+              Signed out {revoked} other {revoked === 1 ? "session" : "sessions"}.
+            </Notice>
+          ) : null}
+          <Button variant="outline" disabled={revoking} onClick={() => void signOutOthers()}>
+            Sign out other sessions
+          </Button>
+        </div>
+      </Section>
     </div>
   );
 }

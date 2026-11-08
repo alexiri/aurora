@@ -5,6 +5,10 @@ import { useState } from "react";
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
+import { CheckboxField } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
+import { ItemList, ListRow, Section } from "@/components/ui/section";
 import {
   useDeleteIntegration,
   useDeleteUserLink,
@@ -23,27 +27,25 @@ function UserLinks({ integration }: { integration: ChannelIntegration }) {
   const del = useDeleteUserLink(integration.id);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
-  if (q.data.items.length === 0) return <p className="text-sm text-neutral-500">No linked users yet.</p>;
+  if (q.data.items.length === 0) return <p className="text-sm text-muted">No linked users yet.</p>;
   return (
     <div className="space-y-2">
-      <ul aria-label={`User links for ${integration.tenant_label}`} className="divide-y divide-neutral-200 text-sm">
+      <ItemList aria-label={`User links for ${integration.tenant_label}`} className="shadow-none">
         {q.data.items.map((l) => (
-          <li key={l.id} className="flex items-center gap-3 py-1.5">
-            <span className="font-medium">{l.user.display_name}</span>
-            <code className="text-xs">{l.platform_user_ref}</code>
-            <span className="text-xs text-neutral-500">{l.method.replace(/_/g, " ")}</span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="ml-auto"
-              disabled={del.isPending}
-              onClick={() => del.mutate(l.id)}
-            >
-              Unlink
-            </Button>
-          </li>
+          <ListRow
+            key={l.id}
+            actions={
+              <Button variant="outline" size="sm" disabled={del.isPending} onClick={() => del.mutate(l.id)}>
+                Unlink
+              </Button>
+            }
+          >
+            <span className="text-sm font-medium text-ink">{l.user.display_name}</span>
+            <code className="font-mono text-xs text-ink-2">{l.platform_user_ref}</code>
+            <span className="text-xs text-muted">{l.method.replace(/_/g, " ")}</span>
+          </ListRow>
         ))}
-      </ul>
+      </ItemList>
       <MutationError error={del.error} />
     </div>
   );
@@ -65,19 +67,17 @@ function AutolinkSwitch({
   const on = (integration.config as Record<string, unknown>).verified_email_autolink === true;
   const [asking, setAsking] = useState<boolean | null>(null);
   return (
-    <div className="space-y-1">
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={on}
-          disabled={pending || asking !== null}
-          onChange={(e) => setAsking(e.target.checked)}
-        />
-        Link members automatically by verified email
-      </label>
+    <div className="space-y-2">
+      <CheckboxField
+        id={`autolink-${integration.id}`}
+        label="Link members automatically by verified email"
+        checked={on}
+        disabled={pending || asking !== null}
+        onChange={(v) => setAsking(v)}
+      />
       {asking !== null ? (
-        <div role="alertdialog" aria-label="Confirm automatic linking" className="space-y-2 rounded-md border border-amber-300 p-2">
-          <p className="text-sm text-amber-900">
+        <Notice tone="pending" role="alertdialog" aria-label="Confirm automatic linking" className="space-y-2">
+          <p>
             {asking ? AUTOLINK_WARNING : "Members will be asked to sign in to link their accounts. Existing links stay."}
           </p>
           <div className="flex gap-2">
@@ -95,7 +95,7 @@ function AutolinkSwitch({
               Cancel
             </Button>
           </div>
-        </div>
+        </Notice>
       ) : null}
     </div>
   );
@@ -118,25 +118,25 @@ function IntegrationRow({
   const [confirmDel, setConfirmDel] = useState(false);
   const disabled = integration.status === "disabled";
   return (
-    <li className="space-y-2 rounded-md border border-neutral-200 p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="font-medium">{integration.tenant_label}</h3>
-        <span className="text-sm text-neutral-600">{connector?.display_name ?? integration.connector_id}</span>
+    <li className="space-y-3 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h3 className="font-display text-base font-semibold text-ink">{integration.tenant_label}</h3>
+        <span className="text-sm text-ink-2">{connector?.display_name ?? integration.connector_id}</span>
         <StatusChip status={integration.status} />
-        <span className="ml-auto text-xs text-neutral-500">Added {fmtDate(integration.created_at)}</span>
+        <span className="text-xs text-muted sm:ml-auto">Added {fmtDate(integration.created_at)}</span>
       </div>
-      {integration.status_reason ? <p className="text-sm text-amber-800">{integration.status_reason}</p> : null}
-      <p className="text-sm text-neutral-700">
+      {integration.status_reason ? <Notice tone="pending">{integration.status_reason}</Notice> : null}
+      <p className="text-sm text-ink-2">
         Shared bot:{" "}
         {integration.shared_bot ? (
           <span>
-            {integration.shared_bot.display_name} <code className="text-xs">{integration.shared_bot.handle}</code>
+            {integration.shared_bot.display_name} <code className="font-mono text-xs">{integration.shared_bot.handle}</code>
           </span>
         ) : (
           "none"
         )}
       </p>
-      <p className="text-xs text-neutral-500">Credentials: stored</p>
+      <p className="text-xs text-muted">Credentials: stored</p>
       {connector && hasCapability(connector, "email_verified") ? (
         <AutolinkSwitch
           integration={integration}
@@ -170,7 +170,7 @@ function IntegrationRow({
         </Button>
         {confirmDel ? (
           <>
-            <Button size="sm" disabled={del.isPending} onClick={() => del.mutate(integration.id)}>
+            <Button variant="danger" size="sm" disabled={del.isPending} onClick={() => del.mutate(integration.id)}>
               Confirm remove
             </Button>
             <Button variant="outline" size="sm" onClick={() => setConfirmDel(false)}>
@@ -178,7 +178,7 @@ function IntegrationRow({
             </Button>
           </>
         ) : (
-          <Button variant="outline" size="sm" onClick={() => setConfirmDel(true)}>
+          <Button variant="danger" size="sm" onClick={() => setConfirmDel(true)}>
             Remove
           </Button>
         )}
@@ -203,18 +203,16 @@ export function ChannelsView({ orgId }: { orgId: string }) {
   const updatingConnector = updating ? (byId.get(updating.connector_id) ?? null) : null;
 
   return (
-    <div className="max-w-3xl space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold">Channels</h1>
-        <p className="text-sm text-neutral-600">
-          Connect chat platforms so people can talk to agents where they already work.
-        </p>
-      </div>
+    <div className="max-w-[1160px] space-y-8">
+      <PageHeader
+        title="Channels"
+        description="Connect chat platforms so people can talk to agents where they already work."
+        className="mb-6"
+      />
 
-      <section aria-label="Available connectors" className="space-y-2">
-        <h2 className="font-medium">Add an integration</h2>
+      <Section id="connectors" title="Add an integration">
         {connectors.data.items.length === 0 ? (
-          <p className="text-sm text-neutral-500">No connectors are available. Ask an instance administrator.</p>
+          <p className="text-sm text-muted">No connectors are available. Ask an instance administrator.</p>
         ) : (
           <ul className="flex flex-wrap gap-2">
             {connectors.data.items.map((c) => (
@@ -228,10 +226,9 @@ export function ChannelsView({ orgId }: { orgId: string }) {
             ))}
           </ul>
         )}
-      </section>
+      </Section>
 
-      <section aria-label="Integrations" className="space-y-2">
-        <h2 className="font-medium">Integrations</h2>
+      <Section id="integrations" title="Integrations">
         {integrations.data.items.length === 0 ? (
           <EmptyState title="No integrations yet">Pick a connector above to set one up.</EmptyState>
         ) : (
@@ -247,7 +244,7 @@ export function ChannelsView({ orgId }: { orgId: string }) {
             ))}
           </ul>
         )}
-      </section>
+      </Section>
 
       {adding ? <IntegrationDialog key={adding.id} orgId={orgId} connector={adding} onClose={() => setAdding(null)} /> : null}
       {updating ? (

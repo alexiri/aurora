@@ -7,7 +7,10 @@ import { MutationError } from "@/components/channels/shared";
 import { StatusChip } from "@/components/channels/shared";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { inputClass } from "@/components/ui/field";
+import { Field, inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
+import { Section } from "@/components/ui/section";
 import {
   formFields,
   useAdminConnectors,
@@ -57,26 +60,26 @@ export function diffManifest(approved: unknown, next: unknown) {
 
 function ChangeList({ label, change }: { label: string; change: Change }) {
   const rows: [string, string, string[]][] = [
-    ["Added", "text-red-800", change.added],
-    ["Removed", "text-green-800", change.removed],
-    ["Changed", "text-amber-800", change.changed],
+    ["Added", "text-danger-ink", change.added],
+    ["Removed", "text-accent-ink", change.removed],
+    ["Changed", "text-pending-ink", change.changed],
   ];
   const any = rows.some(([, , l]) => l.length);
   return (
     <div>
-      <h5 className="font-medium">{label}</h5>
+      <h5 className="font-medium text-ink">{label}</h5>
       {any ? (
         <ul className="list-disc pl-5">
           {rows.flatMap(([word, cls, list]) =>
             list.map((k) => (
               <li key={`${word}-${k}`} className={cls}>
-                {word}: <code>{k}</code>
+                {word}: <code className="font-mono">{k}</code>
               </li>
             )),
           )}
         </ul>
       ) : (
-        <p className="text-neutral-500">No changes.</p>
+        <p className="text-muted">No changes.</p>
       )}
     </div>
   );
@@ -87,7 +90,7 @@ export function ManifestDiff({ approved, manifest }: { approved: unknown; manife
   const d = diffManifest(approved, manifest);
   return (
     <div className="space-y-2 text-sm" data-testid="manifest-diff">
-      <h4 className="font-medium">Changes since the approved manifest</h4>
+      <h4 className="font-medium text-ink">Changes since the approved manifest</h4>
       <ChangeList label="Capabilities" change={d.capabilities} />
       <ChangeList label="Setup fields" change={d.fields} />
       <ChangeList label="Public callbacks" change={d.callbacks} />
@@ -104,36 +107,36 @@ export function ManifestSummary({ manifest }: { manifest: unknown }) {
   return (
     <div className="space-y-2 text-sm" data-testid="manifest-summary">
       <div>
-        <h4 className="font-medium">Capabilities</h4>
+        <h4 className="font-medium text-ink">Capabilities</h4>
         {caps.length ? (
           <ul className="flex flex-wrap gap-1">
             {caps.map((c) => (
-              <li key={c} className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-xs">
+              <li key={c} className="rounded-full bg-subtle px-2 py-0.5 font-mono text-xs text-ink-2">
                 {c}
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-neutral-500">None.</p>
+          <p className="text-muted">None.</p>
         )}
       </div>
       <div>
-        <h4 className="font-medium">Setup fields</h4>
+        <h4 className="font-medium text-ink">Setup fields</h4>
         {integ.length + pres.length ? (
           <ul className="list-disc pl-5">
             {integ.map((f) => (
               <li key={`i-${f.name}`}>
-                Integration: <code>{f.name}</code> ({f.type}, stored in {f.store})
+                Integration: <code className="font-mono">{f.name}</code> ({f.type}, stored in {f.store})
               </li>
             ))}
             {pres.map((f) => (
               <li key={`p-${f.name}`}>
-                Dedicated presence: <code>{f.name}</code> ({f.type}, stored in {f.store})
+                Dedicated presence: <code className="font-mono">{f.name}</code> ({f.type}, stored in {f.store})
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-neutral-500">None.</p>
+          <p className="text-muted">None.</p>
         )}
       </div>
     </div>
@@ -154,18 +157,18 @@ function ConnectorCard({
   const [reviewed, setReviewed] = useState(false);
   const pending = c.status === "pending_approval";
   return (
-    <li className="space-y-2 rounded-md border border-neutral-200 p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="font-medium">{c.display_name}</h3>
-        <code className="text-xs">{c.id}</code>
+    <li className="space-y-3 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h3 className="font-display text-base font-semibold text-ink">{c.display_name}</h3>
+        <code className="font-mono text-xs text-muted">{c.id}</code>
         <StatusChip status={c.status} />
-        {c.version ? <span className="text-xs text-neutral-500">v{c.version}</span> : null}
-        <span className="ml-auto text-xs text-neutral-500">
+        {c.version ? <span className="text-xs text-muted">v{c.version}</span> : null}
+        <span className="text-xs text-muted sm:ml-auto">
           {c.integration_count} integration(s) · {c.replicas.length} replica(s)
         </span>
       </div>
       {pending ? (
-        <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+        <Notice tone="pending" className="space-y-3">
           <h4 className="font-medium">Manifest awaiting approval</h4>
           {c.widening.length ? (
             <ul aria-label="Widening reasons" className="list-disc pl-5">
@@ -178,11 +181,12 @@ function ConnectorCard({
           )}
           {c.approved_manifest ? <ManifestDiff approved={c.approved_manifest} manifest={c.manifest} /> : null}
           <ManifestSummary manifest={c.manifest} />
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />
+          <label className="flex items-center gap-2 font-medium">
+            <input type="checkbox" className="size-4 accent-accent" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />
             I have reviewed these capabilities and setup fields
           </label>
           <Button
+            variant="approve"
             disabled={!reviewed || !c.manifest_digest || approve.isPending}
             onClick={() => {
               approve.mutate(
@@ -194,7 +198,7 @@ function ConnectorCard({
           >
             Approve manifest
           </Button>
-        </div>
+        </Notice>
       ) : null}
       <div className="flex flex-wrap gap-2">
         <Button
@@ -212,7 +216,7 @@ function ConnectorCard({
         </Button>
         {confirmDel ? (
           <>
-            <Button size="sm" disabled={del.isPending} onClick={() => del.mutate(c.id)}>
+            <Button variant="danger" size="sm" disabled={del.isPending} onClick={() => del.mutate(c.id)}>
               Confirm delete
             </Button>
             <Button variant="outline" size="sm" onClick={() => setConfirmDel(false)}>
@@ -220,7 +224,7 @@ function ConnectorCard({
             </Button>
           </>
         ) : (
-          <Button variant="outline" size="sm" onClick={() => setConfirmDel(true)}>
+          <Button variant="danger" size="sm" onClick={() => setConfirmDel(true)}>
             Delete
           </Button>
         )}
@@ -241,65 +245,65 @@ export function ConnectorsAdminView() {
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
 
   return (
-    <div className="max-w-3xl space-y-6">
-      <h1 className="text-xl font-semibold">Connectors</h1>
-      <form
-        className="flex flex-wrap items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          provision.mutate(
-            { id: id.trim(), display_name: name.trim() },
-            {
-              onSuccess: (r) => {
-                setSecret({ id: r.connector.id, token: r.token });
-                setId("");
-                setName("");
+    <div className="max-w-[1160px] space-y-8">
+      <PageHeader title="Connectors" description="Chat-platform connectors that organizations can build integrations on." className="mb-6" />
+      <Section id="conn-provision" title="Provision a connector" description="You get a registration token to give to the connector." card>
+        <form
+          className="flex flex-wrap items-start gap-x-4 gap-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            provision.mutate(
+              { id: id.trim(), display_name: name.trim() },
+              {
+                onSuccess: (r) => {
+                  setSecret({ id: r.connector.id, token: r.token });
+                  setId("");
+                  setName("");
+                },
               },
-            },
-          );
-        }}
-      >
-        <div>
-          <label htmlFor="conn-id" className="block text-sm font-medium">
-            Connector id
-          </label>
-          <input
-            id="conn-id"
-            className={inputClass}
-            pattern="[a-z][a-z0-9\-]{1,31}"
-            required
-            value={id}
-            onChange={(e) => setId(e.target.value)}
-          />
+            );
+          }}
+        >
+          <Field id="conn-id" label="Connector id">
+            <input
+              id="conn-id"
+              className={`${inputClass} w-56 max-w-full`}
+              pattern="[a-z][a-z0-9\-]{1,31}"
+              required
+              value={id}
+              onChange={(e) => setId(e.target.value)}
+            />
+          </Field>
+          <Field id="conn-name" label="Display name">
+            <input
+              id="conn-name"
+              className={`${inputClass} w-64 max-w-full`}
+              maxLength={80}
+              required
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </Field>
+          <Button type="submit" disabled={provision.isPending} className="sm:mt-[1.625rem]">
+            Provision
+          </Button>
+        </form>
+        <div className="mt-3 empty:hidden">
+          <MutationError error={provision.error} />
         </div>
-        <div>
-          <label htmlFor="conn-name" className="block text-sm font-medium">
-            Display name
-          </label>
-          <input
-            id="conn-name"
-            className={inputClass}
-            maxLength={80}
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
-        <Button type="submit" disabled={provision.isPending}>
-          Provision
-        </Button>
-      </form>
-      <MutationError error={provision.error} />
+      </Section>
 
-      {q.data.items.length === 0 ? (
-        <EmptyState title="No connectors">Provision one to get a registration token.</EmptyState>
-      ) : (
-        <ul className="space-y-3">
-          {q.data.items.map((c) => (
-            <ConnectorCard key={c.id} c={c} onToken={(cid, token) => setSecret({ id: cid, token })} />
-          ))}
-        </ul>
-      )}
+      <Section id="conn-list" title="Connectors">
+        {q.data.items.length === 0 ? (
+          <EmptyState title="No connectors">Provision one to get a registration token.</EmptyState>
+        ) : (
+          <ul className="space-y-4">
+            {q.data.items.map((c) => (
+              <ConnectorCard key={c.id} c={c} onToken={(cid, token) => setSecret({ id: cid, token })} />
+            ))}
+          </ul>
+        )}
+      </Section>
 
       <OneTimeKeyDialog
         secret={secret?.token ?? null}

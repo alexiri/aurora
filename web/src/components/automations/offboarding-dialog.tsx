@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import type { Offboarding, ReassignTarget } from "@/lib/api/automations";
 
@@ -54,15 +55,15 @@ export function OffboardingDialog({
           ) : null}
           {extra}
           {error ? (
-            <p role="alert" className="text-sm text-red-700">
+            <Notice tone="danger" role="alert">
               {errorMessage(error)}
-            </p>
+            </Notice>
           ) : null}
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button disabled={busy || query.isPending} onClick={() => onConfirm(target || undefined)}>
+            <Button variant="danger" disabled={busy || query.isPending} onClick={() => onConfirm(target || undefined)}>
               {confirmLabel}
             </Button>
           </div>

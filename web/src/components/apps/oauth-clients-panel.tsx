@@ -3,8 +3,11 @@
 import { useState, type FormEvent } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { Form, FormActions } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import {
   buildClientPatchFields,
@@ -47,9 +50,9 @@ function useDefinitions(scope: CredScope) {
 function RedirectUri({ uri }: { uri: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="flex items-center gap-2 text-xs">
+    <div className="flex flex-wrap items-center gap-2 text-xs text-ink-2">
       <span className="font-medium">Redirect URI:</span>
-      <code className="break-all rounded bg-neutral-100 px-1.5 py-0.5">{uri}</code>
+      <code className="break-all rounded-control border border-line bg-subtle px-1.5 py-0.5 font-mono text-ink">{uri}</code>
       <Button
         type="button"
         size="sm"
@@ -77,8 +80,8 @@ function DefinitionInputs({
   existing?: boolean;
 }) {
   return (
-    <div className="space-y-2">
-      {def.setup_note ? <p className="text-sm text-neutral-600">{def.setup_note}</p> : null}
+    <div className="space-y-3">
+      {def.setup_note ? <p className="text-sm text-ink-2">{def.setup_note}</p> : null}
       <RedirectUri uri={def.redirect_uri} />
       {def.fields.map((f) => {
         const id = `ocf-${def.client_key}-${f.name}`;
@@ -119,7 +122,7 @@ function CreateForm({ scope, onDone, defs }: { scope: CredScope; onDone: () => v
     }
   }
   return (
-    <form onSubmit={(e) => void submit(e)} className="space-y-3 rounded-md border border-neutral-200 p-3" aria-label="Add OAuth client">
+    <Form onSubmit={(e) => void submit(e)} className="rounded-card border border-line bg-surface p-4 shadow-card sm:p-5" aria-label="Add OAuth client">
       <Field id="oc-app" label="App">
         <select
           id="oc-app"
@@ -138,12 +141,12 @@ function CreateForm({ scope, onDone, defs }: { scope: CredScope; onDone: () => v
         </select>
       </Field>
       {selected ? <DefinitionInputs def={selected.def} values={values} onChange={setValues} /> : null}
-      {create.error ? <p role="alert" className="text-sm text-red-700">{errorMessage(create.error)}</p> : null}
-      <div className="flex gap-2">
-        <Button type="submit" size="sm" disabled={create.isPending || !selected}>Add</Button>
-        <Button type="button" size="sm" variant="outline" onClick={onDone}>Cancel</Button>
-      </div>
-    </form>
+      {create.error ? <Notice tone="danger" role="alert">{errorMessage(create.error)}</Notice> : null}
+      <FormActions>
+        <Button type="submit" disabled={create.isPending || !selected}>Add</Button>
+        <Button type="button" variant="outline" onClick={onDone}>Cancel</Button>
+      </FormActions>
+    </Form>
   );
 }
 
@@ -173,49 +176,50 @@ function ClientRow({ scope, c, canOwn, def }: { scope: CredScope; c: OAuthClient
     }
   }
   return (
-    <li className="space-y-2 rounded-md border border-neutral-200 p-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <span className="font-medium">{c.package_id}</span> <span className="text-xs text-neutral-500">{c.client_key} · {c.scope} · {c.connection_count} connection{c.connection_count === 1 ? "" : "s"}</span>
-          {!c.enabled ? <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs">Disabled</span> : null}
+    <li className="space-y-3 rounded-card border border-line bg-surface p-4 shadow-card">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="font-medium text-ink">{c.package_id}</span>{" "}
+          <span className="font-mono text-xs text-muted">{c.client_key} · {c.scope} · {c.connection_count} connection{c.connection_count === 1 ? "" : "s"}</span>
+          {!c.enabled ? <Badge>Disabled</Badge> : null}
         </div>
         {canOwn && mine ? (
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" disabled={patch.isPending} onClick={() => patch.mutate({ id: c.id, enabled: !c.enabled })}>{c.enabled ? "Disable" : "Enable"}</Button>
             <Button size="sm" variant="outline" onClick={startEdit}>Edit</Button>
-            <Button size="sm" variant="outline" onClick={() => setMode("delete")} aria-label={`Delete ${c.client_key}`}>Delete</Button>
+            <Button size="sm" variant="danger" onClick={() => setMode("delete")} aria-label={`Delete ${c.client_key}`}>Delete</Button>
           </div>
         ) : null}
       </div>
-      <dl className="text-xs text-neutral-600">
+      <dl className="break-all text-xs text-ink-2">
         {Object.entries(c.fields).map(([k, v]) => (
           <div key={k}><dt className="inline font-medium">{k}: </dt><dd className="inline">{v}</dd></div>
         ))}
       </dl>
       {mode === "edit" ? (
-        <form onSubmit={(e) => void save(e)} aria-label={`Edit ${c.client_key}`} className="space-y-2">
+        <Form onSubmit={(e) => void save(e)} aria-label={`Edit ${c.client_key}`} className="border-t border-line pt-3">
           {def ? (
             <DefinitionInputs def={def} values={edits} onChange={setEdits} existing />
           ) : (
-            <p className="text-sm text-neutral-600">No field definition is available for this client.</p>
+            <p className="text-sm text-ink-2">No field definition is available for this client.</p>
           )}
-          <p className="text-xs text-neutral-500">Secret values are never shown. Enter a new value to replace one.</p>
-          {patch.error ? <p role="alert" className="text-sm text-red-700">{errorMessage(patch.error)}</p> : null}
-          <div className="flex gap-2">
+          <p className="text-xs text-muted">Secret values are never shown. Enter a new value to replace one.</p>
+          {patch.error ? <Notice tone="danger" role="alert">{errorMessage(patch.error)}</Notice> : null}
+          <FormActions>
             <Button type="submit" size="sm" disabled={patch.isPending}>Save</Button>
             <Button type="button" size="sm" variant="outline" onClick={() => setMode("none")}>Cancel</Button>
-          </div>
-        </form>
+          </FormActions>
+        </Form>
       ) : null}
       {mode === "delete" ? (
-        <div role="alertdialog" aria-label={`Delete ${c.client_key}`} className="space-y-2 text-sm">
+        <Notice tone="danger" role="alertdialog" aria-label={`Delete ${c.client_key}`} className="space-y-2">
           <p>Delete this OAuth client?</p>
-          {del.error ? <p role="alert" className="text-red-700">{errorMessage(del.error)}</p> : null}
+          {del.error ? <p role="alert">{errorMessage(del.error)}</p> : null}
           <div className="flex gap-2">
-            <Button size="sm" disabled={del.isPending} onClick={() => del.mutate(c.id, { onSuccess: () => setMode("none") })}>Confirm delete</Button>
+            <Button size="sm" variant="danger" disabled={del.isPending} onClick={() => del.mutate(c.id, { onSuccess: () => setMode("none") })}>Confirm delete</Button>
             <Button size="sm" variant="outline" onClick={() => setMode("none")}>Cancel</Button>
           </div>
-        </div>
+        </Notice>
       ) : null}
     </li>
   );
@@ -233,13 +237,15 @@ export function OAuthClientsPanel({ scope, canOwn }: { scope: CredScope; canOwn:
         adding ? (
           <CreateForm scope={scope} defs={defs} onDone={() => setAdding(false)} />
         ) : (
-          <button type="button" className="text-sm underline" onClick={() => setAdding(true)}>Add an OAuth client</button>
+          <div>
+            <Button variant="outline" onClick={() => setAdding(true)}>Add an OAuth client</Button>
+          </div>
         )
       ) : null}
       {list.data.items.length === 0 ? (
         <EmptyState title="No OAuth clients yet" />
       ) : (
-        <ul className="space-y-2" aria-label="OAuth clients">
+        <ul className="space-y-3" aria-label="OAuth clients">
           {list.data.items.map((c) => (
             <ClientRow key={c.id} scope={scope} c={c} canOwn={canOwn} def={defs.get(`${c.package_id}|${c.client_key}`)?.def} />
           ))}

@@ -5,7 +5,9 @@ import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import {
   appKeys,
@@ -36,19 +38,15 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
   const lost = c.injecting.filter((i) => i.lost_to_app_id);
   const ok = c.injecting.filter((i) => !i.lost_to_app_id);
   return (
-    <li className="space-y-2 rounded-md border border-neutral-200 p-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <span className="font-medium">{c.label}</span>{" "}
-          <span className="text-xs text-neutral-500">{c.app_id}</span>{" "}
-          <span
-            className={bad ? "rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800" : "rounded bg-neutral-100 px-1.5 py-0.5 text-xs"}
-          >
-            {STATUS_LABEL[c.status] ?? c.status}
-          </span>
+    <li className="space-y-2 rounded-card border border-line bg-surface p-4 shadow-card">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="font-medium text-ink">{c.label}</span>
+          <span className="font-mono text-xs text-muted">{c.app_id}</span>
+          <Badge tone={bad ? "danger" : c.status === "active" ? "accent" : "neutral"}>{STATUS_LABEL[c.status] ?? c.status}</Badge>
         </div>
         {canOwn ? (
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-2">
             {org && ws && c.status !== "orphaned" ? (
               <Button size="sm" variant="outline" aria-label={`Reconnect ${c.label}`} onClick={() => openConnectWindow(connectWindowPath(org, ws, c.app_id, c.id))}>
                 Reconnect
@@ -64,37 +62,37 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
                 {c.status === "active" ? "Disable" : "Enable"}
               </Button>
             ) : null}
-            <Button size="sm" variant="outline" onClick={() => setConfirm(true)} aria-label={`Delete ${c.label}`}>Delete</Button>
+            <Button size="sm" variant="danger" onClick={() => setConfirm(true)} aria-label={`Delete ${c.label}`}>Delete</Button>
           </div>
         ) : null}
       </div>
-      {c.status_reason ? <p className="text-sm text-neutral-600">{c.status_reason}</p> : null}
-      <p className="text-xs text-neutral-500">
+      {c.status_reason ? <p className="text-sm text-ink-2">{c.status_reason}</p> : null}
+      <p className="text-xs text-muted">
         {c.scopes.length ? `Scopes: ${c.scopes.join(", ")} · ` : ""}
         {c.connected_by ? `Connected by ${c.connected_by.display_name} · ` : ""}
         {c.last_used_at ? `Last used ${new Date(c.last_used_at).toLocaleString()}` : "Never used"}
       </p>
       {c.missing_scopes.length ? (
-        <p role="status" className="text-xs text-amber-700">
+        <p role="status" className="text-xs text-pending-ink">
           Some requested scopes were not granted: {c.missing_scopes.join(", ")}. Reconnect and approve them to restore full access.
         </p>
       ) : null}
-      {ok.length ? <p className="text-xs">Injecting credentials for: {ok.map((i) => i.host).join(", ")}</p> : null}
+      {ok.length ? <p className="text-xs text-ink-2">Injecting credentials for: {ok.map((i) => i.host).join(", ")}</p> : null}
       {lost.length ? (
-        <p className="text-xs text-amber-700">
+        <p className="text-xs text-pending-ink">
           Not injecting for {lost.map((i) => `${i.host} (claimed by ${i.lost_to_app_id})`).join(", ")}
         </p>
       ) : null}
-      {patch.error ? <p role="alert" className="text-sm text-red-700">{errorMessage(patch.error)}</p> : null}
+      {patch.error ? <Notice tone="danger" role="alert">{errorMessage(patch.error)}</Notice> : null}
       {confirm ? (
-        <div role="alertdialog" aria-label={`Delete ${c.label}`} className="space-y-2 text-sm">
+        <Notice tone="danger" role="alertdialog" aria-label={`Delete ${c.label}`} className="space-y-2">
           <p>Delete connection {c.label}? Agents will lose access through it.</p>
-          {del.error ? <p role="alert" className="text-red-700">{errorMessage(del.error)}</p> : null}
+          {del.error ? <p role="alert">{errorMessage(del.error)}</p> : null}
           <div className="flex gap-2">
-            <Button size="sm" disabled={del.isPending} onClick={() => del.mutate(c.id, { onSuccess: () => setConfirm(false) })}>Confirm delete</Button>
+            <Button size="sm" variant="danger" disabled={del.isPending} onClick={() => del.mutate(c.id, { onSuccess: () => setConfirm(false) })}>Confirm delete</Button>
             <Button size="sm" variant="outline" onClick={() => setConfirm(false)}>Cancel</Button>
           </div>
-        </div>
+        </Notice>
       ) : null}
     </li>
   );

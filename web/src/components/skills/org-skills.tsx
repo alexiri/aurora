@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 
 import { OrgGate } from "@/components/org/org-gate";
+import { PageHeader } from "@/components/ui/page-header";
 
 import { SkillsEditor } from "./skills-view";
 
@@ -11,8 +12,8 @@ export function OrgSkills() {
   return (
     <OrgGate slug={slug} allow={["owner", "admin"]}>
       {(org) => (
-        <div className="max-w-4xl space-y-4">
-          <h1 className="text-xl font-semibold">Organization skills</h1>
+        <div className="max-w-[1160px]">
+          <PageHeader title="Organization skills" description="Skills every agent in this organization can use." />
           <SkillsEditor scope={{ kind: "organization", id: org.id }} />
         </div>
       )}

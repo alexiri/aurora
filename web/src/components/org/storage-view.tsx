@@ -5,9 +5,12 @@ import { useState, type FormEvent } from "react";
 import { ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
+import { Form, FormActions } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
+import { Section } from "@/components/ui/section";
 import { formatBytes } from "@/lib/api/attachments";
 import { errorMessage } from "@/lib/api/errors";
 import { useOrgStorage, usePutAttachmentLimits, useRetention } from "@/lib/api/org";
@@ -86,8 +89,7 @@ function LimitsForm({ orgId }: { orgId: string }) {
 
   const serverErr = put.error ? errorMessage(put.error) : undefined;
   return (
-    <form onSubmit={submit} noValidate aria-label="Attachment limits" className="max-w-md space-y-3">
-      <h2 className="text-lg font-medium">Attachment limits</h2>
+    <Form onSubmit={submit} noValidate aria-label="Attachment limits" className="max-w-md">
       <Field
         id="attachments-days"
         label="Delete file contents after (days)"
@@ -123,14 +125,16 @@ function LimitsForm({ orgId }: { orgId: string }) {
         />
       </Field>
       {saved ? (
-        <p role="status" className="text-sm text-green-700">
+        <Notice tone="accent" role="status">
           Limits saved.
-        </p>
+        </Notice>
       ) : null}
-      <Button type="submit" disabled={put.isPending}>
-        {put.isPending ? "Saving…" : "Save limits"}
-      </Button>
-    </form>
+      <FormActions>
+        <Button type="submit" size="lg" disabled={put.isPending}>
+          {put.isPending ? "Saving…" : "Save limits"}
+        </Button>
+      </FormActions>
+    </Form>
   );
 }
 
@@ -141,56 +145,51 @@ export function OrgStorageView({ orgId }: { orgId: string }) {
   const s = storage.data;
   const notice = NOTICE[s.notice] ?? NOTICE.clear;
   return (
-    <div className="max-w-4xl space-y-6">
-      <PageHeader title="Storage" description="Attachment bytes used by this organization, by workspace and direction." />
-      <Card className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-medium">Usage</h2>
-          <Badge tone={notice.tone}>{notice.label}</Badge>
-        </div>
-        <UsageBar used={s.used_bytes} quota={s.quota_bytes} />
-        {s.notice === "full" ? (
-          <p role="alert" className="text-sm text-danger-ink">
-            Your organization&apos;s attachment storage is full. Uploads and files sent by agents are refused until space is freed or the
-            quota is raised.
+    <div className="max-w-[1160px] space-y-8">
+      <PageHeader title="Storage" description="Attachment bytes used by this organization, by workspace and direction." className="mb-6" />
+      <Section id="usage" title="Usage" actions={<Badge tone={notice.tone}>{notice.label}</Badge>} card>
+        <div className="space-y-3">
+          <UsageBar used={s.used_bytes} quota={s.quota_bytes} />
+          {s.notice === "full" ? (
+            <Notice tone="danger" role="alert">
+              Your organization&apos;s attachment storage is full. Uploads and files sent by agents are refused until space is freed or the
+              quota is raised.
+            </Notice>
+          ) : null}
+          <p className="text-sm text-ink-2">
+            {s.files} files hold bytes, {s.purged_files} expired or deleted.
           </p>
-        ) : null}
-        <p className="text-sm text-ink-2">
-          {s.files} files hold bytes, {s.purged_files} expired or deleted.
-        </p>
-      </Card>
-      <Card>
-        <h2 className="mb-2 text-lg font-medium">By workspace</h2>
+        </div>
+      </Section>
+      <Section id="by-workspace" title="By workspace">
         {s.by_workspace.length === 0 ? (
           <p className="text-sm text-ink-2">No attachments stored.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="text-muted">
-                <tr>
-                  <th className="py-2 pr-4 font-medium">Workspace</th>
-                  <th className="py-2 pr-4 font-medium">Direction</th>
-                  <th className="py-2 pr-4 text-right font-medium">Files</th>
-                  <th className="py-2 text-right font-medium">Size</th>
+          <DataTable caption="Attachment bytes by workspace">
+            <thead>
+              <tr>
+                <Th>Workspace</Th>
+                <Th>Direction</Th>
+                <Th className="text-right">Files</Th>
+                <Th className="text-right">Size</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {s.by_workspace.map((r) => (
+                <tr key={`${r.workspace_id}-${r.direction}`}>
+                  <Td>{r.workspace_name}</Td>
+                  <Td>{r.direction === "in" ? "Uploaded by people" : "Sent by agents"}</Td>
+                  <Td className="text-right tabular-nums">{r.files}</Td>
+                  <Td className="text-right tabular-nums">{formatBytes(r.bytes)}</Td>
                 </tr>
-              </thead>
-              <tbody>
-                {s.by_workspace.map((r) => (
-                  <tr key={`${r.workspace_id}-${r.direction}`} className="border-t border-line">
-                    <td className="py-2 pr-4">{r.workspace_name}</td>
-                    <td className="py-2 pr-4">{r.direction === "in" ? "Uploaded by people" : "Sent by agents"}</td>
-                    <td className="py-2 pr-4 text-right tabular-nums">{r.files}</td>
-                    <td className="py-2 text-right tabular-nums">{formatBytes(r.bytes)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </DataTable>
         )}
-      </Card>
-      <Card>
+      </Section>
+      <Section id="attachment-limits" title="Attachment limits" card>
         <LimitsForm orgId={orgId} />
-      </Card>
+      </Section>
     </div>
   );
 }

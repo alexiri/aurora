@@ -46,11 +46,11 @@ export function OneTimeKeyDialog({
           <div className="space-y-4">
             <code
               data-testid="secret-key"
-              className="block break-all rounded-md bg-neutral-100 p-3 text-sm"
+              className="block break-all rounded-control border border-line bg-subtle p-3 font-mono text-sm text-ink"
             >
               {secret}
             </code>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
                 onClick={() => {
@@ -60,7 +60,7 @@ export function OneTimeKeyDialog({
                 Copy
               </Button>
               {copied ? (
-                <span role="status" className="text-sm text-green-700">
+                <span role="status" className="text-sm font-medium text-accent-ink">
                   Copied
                 </span>
               ) : null}

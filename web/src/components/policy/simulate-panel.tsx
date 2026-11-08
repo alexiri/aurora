@@ -5,21 +5,22 @@ import { useState, type FormEvent } from "react";
 import { ErrorState } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { Section } from "@/components/ui/section";
 import { useSimulate, type Simulation } from "@/lib/api/policy";
 import type { Agent } from "@/lib/api/queries";
 
 function TraceList({ title, trace }: { title: string; trace: Simulation["trace"]["workspace"] }) {
   return (
     <section aria-label={`${title} trace`} className="space-y-1">
-      <h4 className="text-sm font-medium">
+      <h4 className="text-sm font-medium text-ink">
         {title}: <span data-testid={`${title}-verdict`}>{trace.verdict ?? "no decision"}</span>
       </h4>
       {trace.considered.length === 0 ? (
-        <p className="text-xs text-neutral-500">No rules considered.</p>
+        <p className="text-xs text-muted">No rules considered.</p>
       ) : (
         <ul className="space-y-1 text-xs">
           {trace.considered.map((c, i) => (
-            <li key={`${c.rule_logical_id}-${i}`} className={c.matched ? "font-medium" : "text-neutral-600"}>
+            <li key={`${c.rule_logical_id}-${i}`} className={c.matched ? "font-medium text-ink" : "text-ink-2"}>
               {c.matched ? "Matched" : "Skipped"} · {c.rule_name} ({c.source}) — {c.reason}
             </li>
           ))}
@@ -31,14 +32,14 @@ function TraceList({ title, trace }: { title: string; trace: Simulation["trace"]
 
 export function SimulationResult({ sim }: { sim: Simulation }) {
   return (
-    <div className="space-y-3 rounded border border-neutral-200 p-3" aria-label="Simulation result">
+    <div className="space-y-3 rounded-card border border-line bg-surface p-4 text-ink shadow-card" aria-label="Simulation result">
       <p className="text-sm">
         Verdict: <strong data-testid="verdict">{sim.verdict}</strong>
-        {sim.reason ? <span className="text-neutral-600"> ({sim.reason})</span> : null}
+        {sim.reason ? <span className="text-ink-2"> ({sim.reason})</span> : null}
       </p>
       {sim.guidance_code ? (
         <p className="text-sm">
-          Guidance: <code>{sim.guidance_code}</code>
+          Guidance: <code className="font-mono">{sim.guidance_code}</code>
         </p>
       ) : null}
       <p className="text-sm">
@@ -48,7 +49,7 @@ export function SimulationResult({ sim }: { sim: Simulation }) {
             {sim.winning_credential.name} ({sim.winning_credential.kind})
           </span>
         ) : (
-          <span className="text-neutral-600">none</span>
+          <span className="text-ink-2">none</span>
         )}
       </p>
       <TraceList title="Organization" trace={sim.trace.organization} />
@@ -102,9 +103,9 @@ export function SimulatePanel({
   }
 
   return (
-    <section aria-label="Simulate" className="space-y-3">
-      <h2 className="text-lg font-medium">Simulate</h2>
-      <form onSubmit={submit} className="space-y-3">
+    <Section id="policy-simulate" title="Simulate" description="Try a request against the rules, with or without your saved draft.">
+      <div className="space-y-4">
+      <form onSubmit={submit} className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
         <Field id="sim-agent" label="Agent">
           <select id="sim-agent" className={inputClass} value={agentId} onChange={(e) => setAgentId(e.target.value)}>
             <option value="">Select an agent…</option>
@@ -116,7 +117,7 @@ export function SimulatePanel({
           </select>
         </Field>
         {tunnel ? (
-          <p className="text-xs text-neutral-600">Tunnels carry no speaker, so rules naming a person never match them.</p>
+          <p className="text-xs text-muted">Tunnels carry no speaker, so rules naming a person never match them.</p>
         ) : (
           <Field
             id="sim-speaker"
@@ -133,18 +134,18 @@ export function SimulatePanel({
             </select>
           </Field>
         )}
-        <fieldset className="flex gap-4 text-sm">
+        <fieldset className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink">
           <legend className="sr-only">Lane</legend>
-          <label className="flex items-center gap-1">
-            <input type="radio" name="sim-lane" checked={!tunnel} onChange={() => setTunnel(false)} />
+          <label className="flex items-center gap-1.5">
+            <input type="radio" name="sim-lane" className="size-4 accent-accent" checked={!tunnel} onChange={() => setTunnel(false)} />
             Request
           </label>
-          <label className="flex items-center gap-1">
-            <input type="radio" name="sim-lane" checked={tunnel} onChange={() => setTunnel(true)} />
+          <label className="flex items-center gap-1.5">
+            <input type="radio" name="sim-lane" className="size-4 accent-accent" checked={tunnel} onChange={() => setTunnel(true)} />
             Tunnel (browser, https://host[:port])
           </label>
         </fieldset>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <div className="w-28">
             <Field id="sim-method" label="Method">
               <select id="sim-method" className={inputClass} value={method} onChange={(e) => setMethod(e.target.value)}>
@@ -154,7 +155,7 @@ export function SimulatePanel({
               </select>
             </Field>
           </div>
-          <div className="flex-1">
+          <div className="min-w-0 flex-1 basis-48">
             <Field id="sim-url" label="URL">
               <input id="sim-url" className={inputClass} value={url} onChange={(e) => setUrl(e.target.value)} />
             </Field>
@@ -163,16 +164,17 @@ export function SimulatePanel({
         <Field id="sim-body" label="Body (optional)">
           <textarea id="sim-body" rows={3} className={inputClass} value={body} onChange={(e) => setBody(e.target.value)} />
         </Field>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={useDraft} onChange={(e) => setUseDraft(e.target.checked)} />
+        <label className="flex items-center gap-2 text-sm text-ink">
+          <input type="checkbox" className="size-4 accent-accent" checked={useDraft} onChange={(e) => setUseDraft(e.target.checked)} />
           Use saved draft
         </label>
-        <Button type="submit" disabled={!agentId || sim.isPending}>
+        <Button type="submit" size="lg" disabled={!agentId || sim.isPending}>
           {sim.isPending ? "Simulating…" : "Simulate"}
         </Button>
       </form>
       {sim.isError ? <ErrorState error={sim.error} /> : null}
       {sim.data ? <SimulationResult sim={sim.data} /> : null}
-    </section>
+      </div>
+    </Section>
   );
 }

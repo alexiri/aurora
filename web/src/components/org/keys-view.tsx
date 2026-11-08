@@ -7,6 +7,10 @@ import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
 import { ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
+import { Section } from "@/components/ui/section";
+import { cn } from "@/lib/utils";
 import { useRevokeApiKey } from "@/lib/api/account";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { orgKeys, useCreateOrgKey, useOrgKeys } from "@/lib/api/org";
@@ -44,46 +48,50 @@ export function OrgKeysView({ orgId }: { orgId: string }) {
   }
 
   return (
-    <div className="max-w-4xl space-y-6">
-      <h1 className="text-xl font-semibold">Organization API keys</h1>
-      <form onSubmit={(e) => void submit(e)} noValidate className="flex flex-wrap items-end gap-3">
-        <Field id="okey-name" label="Key name" error={clientErr || fe.name}>
-          <input
-            id="okey-name"
-            className={inputClass}
-            value={name}
-            maxLength={80}
-            onChange={(e) => setName(e.target.value)}
+    <div className="max-w-[1160px] space-y-8">
+      <PageHeader title="Organization API keys" description="Keys that act for the whole organization, for scripts and integrations." className="mb-6" />
+      <Section id="okey-create" title="Create a key" description="The key is shown once, right after you create it." card>
+        <form onSubmit={(e) => void submit(e)} noValidate className="flex flex-wrap items-start gap-x-4 gap-y-3">
+          <Field id="okey-name" label="Key name" error={clientErr || fe.name}>
+            <input
+              id="okey-name"
+              className={cn(inputClass, "w-64 max-w-full")}
+              value={name}
+              maxLength={80}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </Field>
+          <Field id="okey-exp" label="Expires (optional)" error={fe.expires_at}>
+            <input
+              id="okey-exp"
+              type="date"
+              className={cn(inputClass, "w-48 max-w-full")}
+              value={expires}
+              onChange={(e) => setExpires(e.target.value)}
+            />
+          </Field>
+          <Button type="submit" disabled={create.isPending} className="sm:mt-[1.625rem]">
+            Create key
+          </Button>
+          {create.error && Object.keys(fe).length === 0 ? (
+            <Notice tone="danger" role="alert" className="basis-full">
+              {errorMessage(create.error)}
+            </Notice>
+          ) : null}
+        </form>
+      </Section>
+      <Section id="okeys" title="Keys">
+        {keys.isPending ? <Loading /> : null}
+        {keys.isError ? <ErrorState error={keys.error} onRetry={() => keys.refetch()} /> : null}
+        {keys.data ? (
+          <KeyTable
+            keys={keys.data.items}
+            onRevoke={(id) => revoke.mutateAsync(id)}
+            revoking={revoke.isPending}
+            error={revoke.error}
           />
-        </Field>
-        <Field id="okey-exp" label="Expires (optional)" error={fe.expires_at}>
-          <input
-            id="okey-exp"
-            type="date"
-            className={inputClass}
-            value={expires}
-            onChange={(e) => setExpires(e.target.value)}
-          />
-        </Field>
-        <Button type="submit" disabled={create.isPending}>
-          Create key
-        </Button>
-        {create.error && Object.keys(fe).length === 0 ? (
-          <p role="alert" className="basis-full text-sm text-red-700">
-            {errorMessage(create.error)}
-          </p>
         ) : null}
-      </form>
-      {keys.isPending ? <Loading /> : null}
-      {keys.isError ? <ErrorState error={keys.error} onRetry={() => keys.refetch()} /> : null}
-      {keys.data ? (
-        <KeyTable
-          keys={keys.data.items}
-          onRevoke={(id) => revoke.mutateAsync(id)}
-          revoking={revoke.isPending}
-          error={revoke.error}
-        />
-      ) : null}
+      </Section>
       <OneTimeKeyDialog
         secret={created?.secret ?? null}
         name={created?.name}

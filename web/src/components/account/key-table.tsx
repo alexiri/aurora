@@ -3,8 +3,11 @@
 import { useState } from "react";
 
 import { EmptyState } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DataTable, Td, Th } from "@/components/ui/data-table";
+import { Notice } from "@/components/ui/notice";
 import type { ApiKey } from "@/lib/api/account";
 import { errorMessage } from "@/lib/api/errors";
 
@@ -15,6 +18,8 @@ function keyStatus(k: ApiKey): string {
   if (k.expires_at && new Date(k.expires_at) < new Date()) return "Expired";
   return "Active";
 }
+
+const statusTone = { Active: "accent", Revoked: "danger", Expired: "pending" } as const;
 
 /** List of API keys with a confirmed revoke action. */
 export function KeyTable({
@@ -35,81 +40,69 @@ export function KeyTable({
   const [target, setTarget] = useState<ApiKey | null>(null);
   if (keys.length === 0) return <EmptyState title="No API keys" />;
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {error ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(error)}
-        </p>
+        </Notice>
       ) : null}
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead className="text-neutral-500">
-            <tr>
-              <th className="py-2 pr-4 font-medium">Name</th>
-              <th className="py-2 pr-4 font-medium">Key</th>
-              {showWorkspace ? <th className="py-2 pr-4 font-medium">Scope</th> : null}
-              <th className="py-2 pr-4 font-medium">Created</th>
-              <th className="py-2 pr-4 font-medium">Last used</th>
-              <th className="py-2 pr-4 font-medium">Expires</th>
-              <th className="py-2 pr-4 font-medium">Status</th>
-              <th className="py-2 font-medium">
-                <span className="sr-only">Actions</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {keys.map((k) => (
-              <tr key={k.id} className="border-t border-neutral-200">
-                <td className="py-2 pr-4">{k.name}</td>
-                <td className="py-2 pr-4 font-mono">{k.display_prefix}…</td>
-                {showWorkspace ? (
-                  <td className="py-2 pr-4">{k.workspace_id ? "Workspace" : "Organization"}</td>
-                ) : null}
-                <td className="py-2 pr-4">{fmtDate(k.created_at)}</td>
-                <td className="py-2 pr-4">{fmtDate(k.last_used_at)}</td>
-                <td className="py-2 pr-4">{fmtDate(k.expires_at)}</td>
-                <td className="py-2 pr-4">{keyStatus(k)}</td>
-                <td className="py-2">
+      <DataTable caption="API keys">
+        <thead>
+          <tr>
+            <Th>Name</Th>
+            <Th>Key</Th>
+            {showWorkspace ? <Th>Scope</Th> : null}
+            <Th>Created</Th>
+            <Th>Last used</Th>
+            <Th>Expires</Th>
+            <Th>Status</Th>
+            <Th>
+              <span className="sr-only">Actions</span>
+            </Th>
+          </tr>
+        </thead>
+        <tbody>
+          {keys.map((k) => {
+            const status = keyStatus(k);
+            return (
+              <tr key={k.id}>
+                <Td className="font-medium">{k.name}</Td>
+                <Td className="font-mono text-xs text-ink-2">{k.display_prefix}…</Td>
+                {showWorkspace ? <Td>{k.workspace_id ? "Workspace" : "Organization"}</Td> : null}
+                <Td className="whitespace-nowrap text-ink-2">{fmtDate(k.created_at)}</Td>
+                <Td className="whitespace-nowrap text-ink-2">{fmtDate(k.last_used_at)}</Td>
+                <Td className="whitespace-nowrap text-ink-2">{fmtDate(k.expires_at)}</Td>
+                <Td>
+                  <Badge tone={statusTone[status as keyof typeof statusTone]}>{status}</Badge>
+                </Td>
+                <Td className="text-right">
                   {canRevoke && !k.revoked_at ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      aria-label={`Revoke ${k.name}`}
-                      onClick={() => setTarget(k)}
-                    >
+                    <Button variant="outline" size="sm" aria-label={`Revoke ${k.name}`} onClick={() => setTarget(k)}>
                       Revoke
                     </Button>
                   ) : null}
-                </td>
+                </Td>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <Dialog open={target !== null} onOpenChange={(o) => !o && setTarget(null)}>
-        <DialogContent
-          title="Revoke API key?"
-          description={`Anything using "${target?.name ?? ""}" will stop working immediately.`}
-        >
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setTarget(null)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={revoking}
-              onClick={() => {
-                if (!target) return;
-                void onRevoke(target.id).then(
-                  () => setTarget(null),
-                  () => setTarget(null),
-                );
-              }}
-            >
-              Revoke key
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+            );
+          })}
+        </tbody>
+      </DataTable>
+      <ConfirmDialog
+        open={target !== null}
+        onOpenChange={(o) => !o && setTarget(null)}
+        title="Revoke API key?"
+        description={`Anything using "${target?.name ?? ""}" will stop working immediately.`}
+        confirmLabel="Revoke key"
+        danger
+        busy={revoking}
+        onConfirm={() => {
+          if (!target) return;
+          void onRevoke(target.id).then(
+            () => setTarget(null),
+            () => setTarget(null),
+          );
+        }}
+      />
     </div>
   );
 }
