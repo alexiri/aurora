@@ -1,6 +1,6 @@
 package:
   id: aws-keys
-  version: 1.0.1
+  version: 1.0.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora

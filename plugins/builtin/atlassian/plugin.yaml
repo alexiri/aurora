@@ -1,6 +1,6 @@
 package:
   id: atlassian
-  version: 1.0.0
+  version: 1.0.1
   contract: 1
   min_core: 0.1.0
   publisher: aurora
