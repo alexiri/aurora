@@ -23,7 +23,7 @@ function inline(text: string, key: string): ReactNode[] {
       const href = safeHref(m[3]);
       out.push(
         href ? (
-          <a key={k} href={href} target="_blank" rel="noopener noreferrer nofollow" className="underline">
+          <a key={k} href={href} target="_blank" rel="noopener noreferrer nofollow" className="text-link underline">
             {m[2]} <span className="text-xs text-muted">({href})</span>
           </a>
         ) : (

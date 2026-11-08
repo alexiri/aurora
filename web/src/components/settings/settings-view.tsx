@@ -5,8 +5,9 @@ import { useState } from "react";
 
 import { WorkspaceFreeze } from "@/components/freeze/freeze-sections";
 import { ErrorState, Loading } from "@/components/states";
+import { PageHeader } from "@/components/ui/page-header";
+import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { useResolve, useWorkspace } from "@/lib/api/queries";
-import { cn } from "@/lib/utils";
 
 import { AccessTab } from "./access-tab";
 import { AuditTab } from "./audit-tab";
@@ -39,34 +40,32 @@ export function SettingsView({ org, ws }: { org: string; ws: string }) {
   const tabs = TABS.filter((t) => canOwn || !t.ownerOnly);
 
   return (
-    <div className="max-w-4xl space-y-4">
-      <h1 className="text-xl font-semibold">Settings</h1>
-      <div role="tablist" aria-label="Workspace settings" className="flex gap-1 border-b border-neutral-200">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            role="tab"
-            type="button"
-            id={`tab-${t.id}`}
-            aria-selected={tab === t.id}
-            aria-controls="settings-panel"
-            onClick={() => setTab(t.id)}
-            className={cn(
-              "-mb-px border-b-2 px-3 py-2 text-sm",
-              tab === t.id ? "border-neutral-900 font-medium" : "border-transparent",
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <div role="tabpanel" id="settings-panel" aria-labelledby={`tab-${tab}`} className="pt-2">
+    <div className="max-w-[1160px] space-y-4">
+      <PageHeader
+        title="Settings"
+        description="Name, access, API keys and audit trail for this workspace."
+        className="mb-2"
+      />
+      <Tabs
+        items={tabs.map((t) => ({ value: t.id, label: t.label }))}
+        value={tab}
+        onValueChange={(v) => setTab(v as (typeof TABS)[number]["id"])}
+        variant="underline"
+        label="Workspace settings"
+        idBase="ws-settings"
+      />
+      <div
+        role="tabpanel"
+        id={tabPanelId("ws-settings", tab)}
+        aria-labelledby={tabId("ws-settings", tab)}
+        className="pt-2"
+      >
         {tab === "general" ? <GeneralTab key={w.updated_at} workspace={w} canOwn={canOwn} /> : null}
         {tab === "access" && canOwn ? <AccessTab wsId={w.id} orgId={w.org_id} canOwn={canOwn} /> : null}
         {tab === "keys" && canOwn ? <KeysTab wsId={w.id} /> : null}
         {tab === "audit" && canOwn ? <AuditTab wsId={w.id} /> : null}
         {tab === "danger" && canOwn ? (
-          <div className="space-y-8">
+          <div className="space-y-6">
             <WorkspaceFreeze wsId={w.id} name={w.name} orgId={w.org_id} frozen={w.frozen} />
             <DangerTab wsId={w.id} slug={w.slug} onDeleted={() => router.replace(`/o/${org}`)} />
           </div>

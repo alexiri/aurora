@@ -4,9 +4,13 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Field, inputClass } from "@/components/ui/field";
+import { Form, FormActions } from "@/components/ui/form";
 import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
 import { errorMessage } from "@/lib/api/errors";
 import {
   buildConnectFields,
@@ -118,31 +122,33 @@ function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId:
 
   if (done)
     return (
-      <div role="status" className="space-y-2 text-sm">
-        <p>{app.name} is connected. You can close this window.</p>
-        {done.missing.length ? <p className="text-amber-700">Some requested scopes were not granted: {done.missing.join(", ")}.</p> : null}
+      <Card role="status" className="space-y-3 text-sm">
+        <p className="font-medium text-ink">{app.name} is connected. You can close this window.</p>
+        {done.missing.length ? (
+          <Notice tone="pending">Some requested scopes were not granted: {done.missing.join(", ")}.</Notice>
+        ) : null}
         <Button size="sm" variant="outline" onClick={() => window.close()}>Close window</Button>
-      </div>
+      </Card>
     );
 
   return (
-    <form onSubmit={(e) => void submit(e)} className="space-y-4" aria-label={`Connect ${app.name}`} noValidate>
+    <Form onSubmit={(e) => void submit(e)} className="max-w-xl rounded-card border border-line bg-surface p-4 shadow-card sm:p-5" aria-label={`Connect ${app.name}`} noValidate>
       {app.connect_note ? (
-        <p className="rounded bg-neutral-50 p-2 text-sm">
+        <Notice>
           {app.connect_note.text}
           {app.connect_note.url && safeHref(app.connect_note.url) ? (
             <>
               {" "}
-              <a className="underline" target="_blank" rel="noopener noreferrer" href={safeHref(app.connect_note.url)!}>
+              <a className="break-all text-link underline" target="_blank" rel="noopener noreferrer" href={safeHref(app.connect_note.url)!}>
                 {safeHref(app.connect_note.url)}
               </a>
             </>
           ) : null}
-        </p>
+        </Notice>
       ) : null}
       {guide.data ? (
-        <details className="rounded border border-neutral-200 p-2">
-          <summary className="cursor-pointer text-sm font-medium">Setup guide</summary>
+        <details className="rounded-control border border-line p-3">
+          <summary className="min-h-9 cursor-pointer text-sm font-semibold text-ink">Setup guide</summary>
           <div className="mt-2"><Markdown source={guide.data} /></div>
         </details>
       ) : null}
@@ -201,17 +207,18 @@ function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId:
             </Field>
           ) : null}
           {method.scopes.length > 0 ? (
-            <fieldset className="space-y-1">
-              <legend className="text-sm font-medium">Requested scopes</legend>
+            <fieldset className="min-w-0 space-y-2">
+              <legend className="mb-1 text-sm font-medium text-ink">Requested scopes</legend>
               {method.scopes.map((s) => (
-                <label key={s.scope} className="flex items-center gap-2 text-sm">
+                <label key={s.scope} className="flex min-h-9 items-center gap-2.5 text-sm text-ink">
                   <input
                     type="checkbox"
+                    className="size-4 shrink-0 accent-accent"
                     checked={scopes.includes(s.scope)}
                     onChange={(e) => setScopes((cur) => (e.target.checked ? [...cur, s.scope] : cur.filter((x) => x !== s.scope)))}
                   />
                   <span>{s.name}</span>
-                  <span className="rounded bg-neutral-100 px-1.5 text-xs">{s.access === "write" ? "Read and write" : "Read only"}</span>
+                  <Badge className="normal-case tracking-normal">{s.access === "write" ? "Read and write" : "Read only"}</Badge>
                 </label>
               ))}
             </fieldset>
@@ -228,11 +235,13 @@ function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId:
           ) : null}
         </>
       ) : null}
-      {submitError ? <p role="alert" className="text-sm text-red-700">{errorMessage(submitError)}</p> : null}
-      <Button type="submit" disabled={busy || !method}>
-        {busy ? "Connecting…" : method?.kind === "oauth2" ? "Continue to sign in" : reconnect ? "Reconnect" : "Connect"}
-      </Button>
-    </form>
+      {submitError ? <Notice tone="danger" role="alert">{errorMessage(submitError)}</Notice> : null}
+      <FormActions>
+        <Button type="submit" size="lg" disabled={busy || !method}>
+          {busy ? "Connecting…" : method?.kind === "oauth2" ? "Continue to sign in" : reconnect ? "Reconnect" : "Connect"}
+        </Button>
+      </FormActions>
+    </Form>
   );
 }
 
@@ -247,8 +256,11 @@ export function ConnectView() {
   if (detail.isError) return <ErrorState error={detail.error} onRetry={() => detail.refetch()} />;
   if (!detail.data) return <Loading />;
   return (
-    <div className="max-w-xl space-y-4">
-      <h1 className="text-xl font-semibold">Connect {detail.data.name}</h1>
+    <div className="max-w-xl">
+      <PageHeader
+        title={`Connect ${detail.data.name}`}
+        description="Give agents in this workspace access to this app through the gateway."
+      />
       {detail.data.available ? (
         <ConnectForm app={detail.data} workspaceId={wsId} orgId={resolved.data!.org.id} />
       ) : (
