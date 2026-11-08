@@ -44,6 +44,20 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
 Decision D-68. Reference mock-ups: `docs/design/ui-refresh/` (static HTML;
 where a mock-up and this section disagree, this section wins).
 
+**Scope: the whole dashboard.** This section is the dashboard's visual
+identity, not a restyle of individual screens. **Every** screen MUST follow
+it — the screens in the mock-ups and every other existing screen (org,
+workspace, agent tabs, account, admin, auth) as well as every screen added
+later: same tokens, typography, sidebar shell, `PageHeader`, the shared UI
+primitives (`web/src/components/ui`) and the page patterns derived from the
+mock-ups (sections and cards, lists and tables, forms and fields, empty /
+loading / error states, dialogs, status badges), in both themes and at 390 px
+without horizontal page scroll. The mock-up screens are the references from
+which those patterns are taken; a screen without a mock-up composes the same
+patterns. New UI MUST NOT introduce one-off styling where a primitive or
+pattern exists; when it needs a new one, the primitive or pattern is added to
+the shared set and documented here.
+
 **Tokens.** Colours are defined once, as CSS custom properties in
 `web/src/app/globals.css`, and exposed to Tailwind through `@theme`.
 Components use the token utilities only. Raw hex values and Tailwind palette

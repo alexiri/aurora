@@ -15,6 +15,7 @@ Do not invent requirements. If the master specification is absent, ask the user 
 ## Stack boundaries
 - Rust owns domain/business rules, authorization, invariant validation, persistence, transactions, and backend integrations. Discover the actual edition, workspace, framework, async runtime, DB library, and error conventions; never assume Axum/Actix/Tokio/SQLx/Diesel.
 - Next.js owns presentation, interaction, navigation, and UI state. Discover installed version and App Router/Pages Router structure. Respect Server/Client Component boundaries, existing TypeScript strictness, styling, and test conventions.
+- Every dashboard screen, existing or new, follows the visual identity in `docs/14-web-dashboard.md` §Visual design: tokens only, the shared UI primitives and page patterns, both themes, no horizontal scroll at 390 px. No one-off styling where a primitive or pattern exists; add missing ones to the shared set.
 - Frontend validation improves UX but backend validation remains authoritative.
 - `docs/05-control-plane-api.md` (et al) is canonical for routes, methods, auth, request/response schemas, errors, pagination, nullability, IDs, and timestamps. Define/update contracts before parallel backend/frontend work. Do not let agents independently invent the same API shape.
 
