@@ -383,5 +383,94 @@ async fn instance_registers_and_heartbeats() {
     assert!(stopped.is_some());
 }
 
+/// RFE-006 (SEC-45): a credential of an effectively frozen agent is refused (the broadest flag
+/// names the level), the refusal is never cached past an invalidation, and unfreezing restores
+/// the very same token at once.
+#[tokio::test]
+async fn frozen_agents_are_refused_at_every_level_and_unfreeze_is_instant() {
+    use aurora_gateway::auth::ResolveError;
+    let db = TestDb::new().await;
+    let p = db.pool();
+    let w = world(p).await;
+    let cid = cred(p, w.agent, "aug_f", "agent", "NULL").await;
+    cred(p, w.agent, "auc_f", "context", "now() + interval '1 hour'").await;
+    let (r, _hub) = live(p).await;
+    assert!(resolve(&r, "aug_f").await.is_some());
+    let set = |table: &'static str, id: Uuid, on: bool| async move {
+        let sql = if on {
+            format!(
+                "UPDATE {table} SET frozen_at = now(), frozen_reason = 'drill', frozen_authority = 'org_admin' WHERE id = $1"
+            )
+        } else {
+            format!(
+                "UPDATE {table} SET frozen_at = NULL, frozen_reason = NULL, frozen_authority = NULL, frozen_by_user_id = NULL WHERE id = $1"
+            )
+        };
+        sqlx::query(&sql).bind(id).execute(p).await.unwrap();
+    };
+    let wait_frozen = |want: Option<&'static str>| {
+        let r = r.clone();
+        async move {
+            for _ in 0..100 {
+                let got = match r.resolve("aug_f").await {
+                    Err(ResolveError::Frozen { level }) => Some(level),
+                    Ok(Some(_)) => None,
+                    other => panic!("{other:?}"),
+                };
+                if got == want {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            panic!("never reached {want:?}");
+        }
+    };
+    for (table, id, level) in [
+        ("agents", w.agent, "agent"),
+        ("workspaces", w.ws, "workspace"),
+        ("organizations", w.org, "org"),
+    ] {
+        set(table, id, true).await;
+        notify(
+            p,
+            Channel::GatewayInvalidate,
+            &json!({"scope": if level == "org" { "org" } else { level }, "id": id}),
+        )
+        .await
+        .unwrap();
+        wait_frozen(Some(level)).await;
+        // Every credential kind of the agent is refused, also by id (live-tunnel re-checks).
+        assert!(matches!(
+            r.resolve("auc_f").await,
+            Err(ResolveError::Frozen { .. })
+        ));
+        assert!(matches!(
+            r.resolve_credential(cid).await,
+            Err(ResolveError::Frozen { .. })
+        ));
+        set(table, id, false).await;
+        notify(
+            p,
+            Channel::GatewayInvalidate,
+            &json!({"scope": level, "id": id}),
+        )
+        .await
+        .unwrap();
+        wait_frozen(None).await;
+    }
+    // Broadest wins: org + agent frozen reports `org`; lifting the org leaves `agent`.
+    set("agents", w.agent, true).await;
+    set("organizations", w.org, true).await;
+    notify(p, Channel::GatewayInvalidate, &json!({"scope": "all"}))
+        .await
+        .unwrap();
+    wait_frozen(Some("org")).await;
+    set("organizations", w.org, false).await;
+    notify(p, Channel::GatewayInvalidate, &json!({"scope": "all"}))
+        .await
+        .unwrap();
+    wait_frozen(Some("agent")).await;
+}
+
 #[allow(non_camel_case_types)]
 type chrono_ts = sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>;

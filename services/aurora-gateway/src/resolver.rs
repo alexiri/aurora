@@ -29,6 +29,9 @@ struct Entry {
 struct Inner {
     entries: HashMap<Hash, Entry>,
     negative: HashMap<Hash, Instant>,
+    /// (RFE-006) Credentials of frozen agents, answered 403 `frozen` without a database read for
+    /// `NEGATIVE_TTL`; cleared by every invalidation (an unfreeze notifies).
+    frozen: HashMap<Hash, (Instant, &'static str)>,
     by_org: HashMap<Uuid, HashSet<Hash>>,
     by_workspace: HashMap<Uuid, HashSet<Hash>>,
     by_agent: HashMap<Uuid, HashSet<Hash>>,
@@ -106,6 +109,7 @@ impl Inner {
         self.by_credential.clear();
         self.by_user.clear();
         self.negative.clear();
+        self.frozen.clear();
     }
 }
 
@@ -119,6 +123,7 @@ pub struct IdentityCache {
 enum Lookup {
     Hit(Arc<RequestIdentity>),
     Denied,
+    Frozen(&'static str),
     Miss(u64),
 }
 
@@ -148,7 +153,25 @@ impl IdentityCache {
             }
             g.negative.remove(h);
         }
+        if let Some((until, level)) = g.frozen.get(h).copied() {
+            if until > now {
+                return Lookup::Frozen(level);
+            }
+            g.frozen.remove(h);
+        }
         Lookup::Miss(g.generation)
+    }
+
+    fn store_frozen(&self, h: Hash, level: &'static str, gen_seen: u64) {
+        let Ok(mut g) = self.inner.lock() else { return };
+        if g.generation != gen_seen {
+            return;
+        }
+        if g.frozen.len() >= MAX_NEGATIVE {
+            g.frozen.clear();
+        }
+        g.frozen
+            .insert(h, (Instant::now() + self.negative_ttl, level));
     }
 
     fn store(&self, h: Hash, found: Option<(Arc<RequestIdentity>, Option<f64>)>, gen_seen: u64) {
@@ -188,6 +211,7 @@ impl Invalidatable for IdentityCache {
         let Ok(mut g) = self.inner.lock() else { return };
         g.generation += 1;
         g.negative.clear();
+        g.frozen.clear();
         match ev.scope {
             Scope::All => g.clear(),
             Scope::Org(id) => {
@@ -273,6 +297,17 @@ impl DbCredentialResolver {
         row: repo::CredentialIdentityRow,
     ) -> Result<Option<(RequestIdentity, Option<f64>)>, ResolveError> {
         let unavailable = |e: aurora_db::DbError| ResolveError::Unavailable(e.to_string());
+        // (RFE-006) A frozen agent's credentials are refused whatever their kind; never cached
+        // as an identity.
+        if let Some(l) = row.frozen_level.as_deref() {
+            return Err(ResolveError::Frozen {
+                level: match l {
+                    "org" => "org",
+                    "workspace" => "workspace",
+                    _ => "agent",
+                },
+            });
+        }
         let kind = match row.kind.as_str() {
             "agent" => CredentialKind::Agent,
             "boot" => CredentialKind::Boot,
@@ -348,9 +383,16 @@ impl CredentialResolver for DbCredentialResolver {
         let gen_seen = match self.cache.lookup(&hash) {
             Lookup::Hit(i) => return Ok(Some((*i).clone())),
             Lookup::Denied => return Ok(None),
+            Lookup::Frozen(level) => return Err(ResolveError::Frozen { level }),
             Lookup::Miss(g) => g,
         };
-        let found = self.load(&hash).await?;
+        let found = match self.load(&hash).await {
+            Err(ResolveError::Frozen { level }) => {
+                self.cache.store_frozen(hash, level, gen_seen);
+                return Err(ResolveError::Frozen { level });
+            }
+            other => other?,
+        };
         let Some((identity, expires_in)) = found else {
             self.cache.store(hash, None, gen_seen);
             return Ok(None);

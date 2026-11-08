@@ -534,6 +534,62 @@ async fn channel_binding_and_unbound_mention() {
 
 // ------------------------------------------------------------------ speaker
 
+/// RFE-006 (docs/13 §5.1 step 2a): a frozen agent creates no turn and starts no sandbox; the
+/// person gets one platform-voice "paused" line per (space/thread, person) per interval.
+#[tokio::test]
+async fn frozen_agent_gets_no_turn_and_one_paused_reply_per_person_and_thread() {
+    let w = world().await;
+    let a = w.agent("rex").await;
+    w.presence(w.integ, a, "dedicated", Some("BD1")).await;
+    w.link(w.integ, "U1", w.member).await;
+    w.link(w.integ, "U2", w.owner).await;
+    // The workspace is frozen (not the agent): the check is effective, not per level.
+    sqlx::query(
+        "UPDATE workspaces SET frozen_at = now(), frozen_reason = 'drill', frozen_authority = 'org_admin' WHERE id = $1",
+    )
+    .bind(w.ws)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let paused = |ops: &[Value]| {
+        ops.iter()
+            .filter(|o| {
+                o["content"]["text"]
+                    .as_str()
+                    .is_some_and(|t| t.ends_with("rex is paused by an administrator."))
+            })
+            .count()
+    };
+    w.post(w.integ, "f1", dm("U1", "hello", "BD1")).await;
+    assert_eq!(w.outcome("f1").await["result"], "frozen_reply");
+    assert_eq!(w.count("SELECT count(*) FROM turns").await, 0);
+    assert_eq!(paused(&w.ops("message.post").await), 1);
+    // The same person in the same space/thread again: no second reply, still no turn.
+    w.post(w.integ, "f2", dm("U1", "anyone?", "BD1")).await;
+    let o = w.outcome("f2").await;
+    assert_eq!(
+        (o["result"].as_str(), o["reason"].as_str()),
+        (Some("ignored"), Some("frozen"))
+    );
+    assert_eq!(paused(&w.ops("message.post").await), 1);
+    // Another person is told once too.
+    let mut other = dm("U2", "hi", "BD1");
+    other["space"]["ref"] = json!("D1");
+    w.post(w.integ, "f3", other).await;
+    assert_eq!(paused(&w.ops("message.post").await), 2);
+    assert_eq!(w.count("SELECT count(*) FROM turns").await, 0);
+    assert_eq!(w.count("SELECT count(*) FROM conversations").await, 0);
+    // Unfreezing restores the door.
+    sqlx::query(
+        "UPDATE workspaces SET frozen_at = NULL, frozen_reason = NULL, frozen_authority = NULL",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    w.post(w.integ, "f4", dm("U1", "back", "BD1")).await;
+    assert_eq!(w.outcome("f4").await["result"], "turn_created");
+}
+
 #[tokio::test]
 async fn unlinked_speaker_gets_link_prompt_and_no_turn() {
     let w = world().await;

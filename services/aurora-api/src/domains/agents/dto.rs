@@ -29,6 +29,11 @@ pub struct Agent {
     /// (phase 2, RFE-025) BYO governance of a BYO agent; `null` for hosted agents and in
     /// responses that do not load it.
     pub byo: Option<super::byo::ByoView>,
+    /// (phase 2, RFE-006) The freeze that stops this agent (its own, its workspace's or its
+    /// organization's; the broadest wins), `level` = where it is set; `null` when not frozen.
+    pub frozen: Option<crate::domains::freeze::dto::Frozen>,
+    /// (phase 2, RFE-006) Agent ∨ workspace ∨ organization is frozen.
+    pub effective_frozen: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -55,6 +60,8 @@ impl From<AgentRow> for Agent {
                 .as_deref()
                 .map(super::avatar::public_path),
             byo: None,
+            frozen: None,
+            effective_frozen: false,
             created_at: a.created_at,
             updated_at: a.updated_at,
         }

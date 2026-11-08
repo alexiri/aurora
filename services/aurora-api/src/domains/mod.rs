@@ -19,6 +19,7 @@ pub mod connect;
 pub mod connections;
 pub mod connectors;
 pub mod conversations;
+pub mod freeze;
 pub mod governance;
 pub mod grants;
 pub mod hosted;

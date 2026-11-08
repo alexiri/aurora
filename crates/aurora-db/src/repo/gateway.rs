@@ -32,6 +32,9 @@ pub struct CredentialIdentityRow {
     /// `agents.byo_source_cidrs` / `byo_require_context` (RFE-025).
     pub agent_byo_source_cidrs: Option<Vec<String>>,
     pub agent_byo_require_context: bool,
+    /// (RFE-006) Where the freeze that stops this agent is set (`org` | `workspace` | `agent`,
+    /// broadest first); `None` when the agent is not effectively frozen.
+    pub frozen_level: Option<String>,
 }
 
 const IDENTITY_SELECT: &str = "SELECT c.id AS credential_id, c.kind, c.agent_id, a.workspace_id, w.org_id, \
@@ -40,7 +43,10 @@ const IDENTITY_SELECT: &str = "SELECT c.id AS credential_id, c.kind, c.agent_id,
                 a.kind AS agent_kind, o.slug AS org_slug, w.slug AS ws_slug, \
                 w.byo_posture AS ws_byo_posture, o.governance -> 'byo' AS org_byo, \
                 a.byo_source_cidrs AS agent_byo_source_cidrs, \
-                a.byo_require_context AS agent_byo_require_context \
+                a.byo_require_context AS agent_byo_require_context, \
+                CASE WHEN o.frozen_at IS NOT NULL THEN 'org' \
+                     WHEN w.frozen_at IS NOT NULL THEN 'workspace' \
+                     WHEN a.frozen_at IS NOT NULL THEN 'agent' END AS frozen_level \
          FROM gateway_credentials c \
          JOIN agents a ON a.id = c.agent_id \
          JOIN workspaces w ON w.id = a.workspace_id \

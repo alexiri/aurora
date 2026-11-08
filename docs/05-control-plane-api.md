@@ -566,6 +566,7 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`) |
 | GET `/v1/admin/registry/snapshot` | IA | active snapshot (JSON) |
 | POST `/v1/admin/orgs/{org}/freeze` `{ reason }`; POST `/v1/admin/orgs/{org}/unfreeze` | IA | (phase 2, RFE-006) operator kill-switch; `frozen_authority = instance_admin`; org data stays inaccessible |
+| GET `/v1/admin/orgs` (`frozen=true` filter, paginated) | IA | (phase 2, RFE-006, D-74) organizations with their freeze state: id, slug, name only |
 | GET/POST `/v1/admin/oauth-clients`; PATCH/DELETE `/v1/oauth-clients/{id}` | IA | instance-level OAuth clients (`08 §OAuth clients`) |
 
 ### Planes (machine callers)

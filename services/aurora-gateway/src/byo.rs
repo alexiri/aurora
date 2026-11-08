@@ -200,9 +200,11 @@ impl TunnelRegistry {
         self.len() == 0
     }
 
-    /// Registers a tunnel of a BYO credential; `None` for credentials not subject to BYO control.
+    /// Registers a live tunnel. Every credential's tunnel is registered (phase 2, RFE-006): BYO
+    /// admission changes (RFE-025) and freezes of the agent, its workspace or its organization
+    /// (RFE-006) both close it on the next invalidation. Always `Some`.
     pub fn register(self: &Arc<Self>, id: &RequestIdentity, source: IpAddr) -> Option<TunnelGuard> {
-        let b = id.byo.as_ref()?;
+        let require_context = id.byo.as_ref().is_some_and(|b| b.effective.require_context);
         let (tx, rx) = watch::channel(false);
         let n = self.next.fetch_add(1, Ordering::Relaxed);
         if let Ok(mut l) = self.live.lock() {
@@ -214,7 +216,7 @@ impl TunnelRegistry {
                     workspace: id.workspace_id,
                     org: id.org_id,
                     source,
-                    require_context: b.effective.require_context,
+                    require_context,
                     kill: tx,
                 },
             );
@@ -240,10 +242,16 @@ impl TunnelRegistry {
             let external = self.external_url.clone();
             let task = async move {
                 let keep = match resolver.resolve_credential(credential).await {
+                    // `admit` is a no-op for credentials without BYO control.
                     Ok(Some(id)) => {
-                        id.byo.is_some()
-                            && admit(&id, source, &external).is_ok()
+                        admit(&id, source, &external).is_ok()
                             && (was_required || !needs_context_credential(&id))
+                    }
+                    // (RFE-006) The agent, its workspace or its org is frozen: close.
+                    Err(crate::auth::ResolveError::Frozen { .. }) => {
+                        metrics::counter!("aurora_gateway_frozen_tunnels_closed_total")
+                            .increment(1);
+                        false
                     }
                     // Revoked, expired, gone, or the database is unreachable: fail closed.
                     _ => false,

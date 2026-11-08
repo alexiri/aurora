@@ -3,6 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { AgentFreeze } from "@/components/freeze/freeze-sections";
 import { ErrorState, Loading } from "@/components/states";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
@@ -61,6 +62,15 @@ export function AgentPage() {
       <h1 className="text-xl font-semibold">
         {agent.name} <span className="font-mono text-sm text-neutral-600">@{agent.handle}</span>
       </h1>
+      {workspace.data ? (
+        <AgentFreeze
+          agentId={agent.id}
+          name={agent.name}
+          orgId={workspace.data.org_id}
+          frozen={agent.frozen}
+          canOwn={workspace.data.my_role === "owner"}
+        />
+      ) : null}
       <div role="tablist" aria-label="Agent" className="flex gap-1 border-b border-neutral-200">
         {tabs.map((t) => (
           <button

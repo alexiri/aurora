@@ -171,6 +171,10 @@ impl Proxy {
         match self.resolver.resolve(&token).await {
             Ok(Some(id)) => Ok((Arc::new(id), lane)),
             Ok(None) => Err(guidance::proxy_auth_required()),
+            Err(crate::auth::ResolveError::Frozen { level }) => {
+                metrics::counter!("aurora_gateway_frozen_refused_total").increment(1);
+                Err(guidance::frozen(level))
+            }
             Err(e) => {
                 tracing::warn!(error = %e, "credential resolution failed");
                 Err(guidance::credential_store_unavailable())

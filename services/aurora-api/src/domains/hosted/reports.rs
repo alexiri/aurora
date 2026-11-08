@@ -523,6 +523,10 @@ async fn watch_fired(
     let Ok(wid) = Uuid::parse_str(watch_id) else {
         return Ok(res(r, ReportStatus::Invalid, Some("bad_watch_id")));
     };
+    // (phase 2, RFE-006) Armed watches of a frozen agent are kept, never fired.
+    if aurora_db::repo::freeze::is_agent_frozen(&mut *tx, facts.agent_id).await? {
+        return Ok(res(r, ReportStatus::Invalid, Some("frozen")));
+    }
     let Some(cid) = hosted::fire_watch(tx, wid, facts.agent_id).await? else {
         return Ok(res(r, ReportStatus::Duplicate, None));
     };

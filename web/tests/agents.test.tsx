@@ -39,7 +39,7 @@ afterEach(() => {
 const agent = (kind: "byo" | "hosted") => ({
   id: "a1", org_id: "o1", workspace_id: "w1", handle: "bot", name: "Bot", kind,
   is_default: false, harness: null, model_provider: null, model_endpoint_id: null, model_id: null,
-  effort: null, proactive_messaging: "ask", brief: "", created_at: "2026-01-01T00:00:00Z",
+  effort: null, proactive_messaging: "ask", brief: "", effective_frozen: false, created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 });
 const config = {

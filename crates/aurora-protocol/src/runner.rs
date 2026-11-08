@@ -80,6 +80,8 @@ open_vocab! {
     pub enum StopReason {
         Idle = "idle", Cap = "cap", Evict = "evict",
         Restart = "restart", Delete = "delete", Failure = "failure",
+        // (phase 2, RFE-006) the agent is effectively frozen: park, keep the home volume.
+        Frozen = "frozen",
     }
 }
 open_vocab! {

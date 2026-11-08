@@ -148,6 +148,16 @@ async fn fire_due(
     let Some(agent) = agents::get(&mut *conn, row.agent_id).await? else {
         return Ok(());
     };
+    // (phase 2, RFE-006, FU-P2-021a) A frozen agent is not fired, whatever the anchor: the
+    // schedule is neither disabled nor sent through the authority check; `next_fire_at` advances
+    // (missed fires coalesce, no catch-up burst) and a `skipped_frozen` run is written. Checked
+    // before the fire-time authority so a freeze never disables a schedule for authorization.
+    if aurora_db::repo::freeze::is_agent_frozen(&mut *conn, agent.id).await? {
+        let next = cron::next_after(&row.cron, &row.timezone, now).ok();
+        repo::insert_run(conn, row.id, None, "skipped_frozen").await?;
+        repo::record_fire(conn, row.id, next, false, "skipped_frozen", None).await?;
+        return Ok(());
+    }
     // Fire-time authority (04): the creator must still hold `can_use` on the workspace.
     // RFE-021: `anchor = workspace` is authorized by "an active owner exists" instead.
     let authorized = authz::automation_authorized(
@@ -205,6 +215,8 @@ pub async fn run_now(
     let agent = agents::get(&mut *conn, row.agent_id)
         .await?
         .ok_or_else(super::service::not_found)?;
+    // (phase 2, RFE-006) run-now starts agent work: 423 `frozen` for a frozen agent.
+    crate::domains::freeze::service::ensure_agent_active(&mut *conn, agent.id).await?;
     let Some(st) = start_run(conn, row, &agent).await? else {
         return Ok(None);
     };

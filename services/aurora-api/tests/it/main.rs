@@ -27,6 +27,7 @@ mod conversation_lifecycle;
 mod conversations;
 mod direct_visibility;
 mod foundation;
+mod freeze;
 mod governance;
 mod grants_connections;
 mod home_render_inputs;

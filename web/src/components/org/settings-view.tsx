@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import { OrgFreeze } from "@/components/freeze/freeze-sections";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
@@ -273,7 +274,8 @@ export function OrgSettingsView({ org }: { org: Org }) {
         </section>
       ) : null}
       {isOwner ? (
-        <section aria-label="Danger zone" className="border-t border-neutral-200 pt-6">
+        <section aria-label="Danger zone" className="space-y-8 border-t border-neutral-200 pt-6">
+          <OrgFreeze orgId={org.id} name={org.name} frozen={org.frozen} />
           <OrgDangerZone orgId={org.id} slug={org.slug} onDeleted={() => router.replace("/")} />
         </section>
       ) : null}

@@ -29,6 +29,8 @@ pub const EGRESS_ALLOWLIST_MAX: u32 = 500;
 pub const BYO_CIDR_MAX: usize = 32;
 /// (RFE-025) one log line and one request-log row per credential per interval for BYO refusals.
 pub const BYO_REFUSAL_LOG_INTERVAL: Duration = Duration::from_secs(60);
+/// (RFE-006) one "paused by an administrator" reply per (space/thread, person) per interval.
+pub const FREEZE_REPLY_INTERVAL: Duration = Duration::from_secs(600);
 pub const REFRESH_LOCK_WAIT: Duration = Duration::from_secs(10);
 /// Entries per signing-key / internal-secret ring (`08 §4`, RFE-007).
 pub const KEYRING_MAX: usize = 4;

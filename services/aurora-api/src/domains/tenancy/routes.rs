@@ -75,7 +75,13 @@ async fn list_orgs(
 ) -> Result<Json<Page<Org>>, ApiError> {
     let p = q.resolve()?;
     let rows = orgs::list_for_user(&s.pool, c.user_id, after(&p), p.fetch()).await?;
-    Ok(Json(page_of(rows, &p, |r| (r.created_at, r.id), Org::from)))
+    let mut page = page_of(rows, &p, |r| (r.created_at, r.id), Org::from);
+    let ids: Vec<Uuid> = page.items.iter().map(|o| o.id).collect();
+    let frozen = crate::domains::freeze::service::org_frozen(&s, &ids).await?;
+    for o in &mut page.items {
+        o.frozen = frozen.get(&o.id).cloned();
+    }
+    Ok(Json(page))
 }
 
 /// Create an organization with its default workspace and default agent.
@@ -132,10 +138,14 @@ async fn create_org(
 }
 
 async fn load_org(s: &AppState, org: Uuid, user: Uuid) -> Result<Org, ApiError> {
-    orgs::get(&s.pool, org, user)
+    let mut o = orgs::get(&s.pool, org, user)
         .await?
         .map(Org::from)
-        .ok_or_else(|| ApiError::not_found("Organization not found."))
+        .ok_or_else(|| ApiError::not_found("Organization not found."))?;
+    o.frozen = crate::domains::freeze::service::org_frozen(s, &[org])
+        .await?
+        .remove(&org);
+    Ok(o)
 }
 
 /// Get an organization.
@@ -339,7 +349,7 @@ async fn list_workspaces(
             .into_iter()
             .collect()
     };
-    Ok(Json(page_of(
+    let mut page = page_of(
         rows,
         &p,
         |r| (r.created_at, r.id),
@@ -353,7 +363,13 @@ async fn list_workspaces(
             };
             Workspace::new(w, role)
         },
-    )))
+    );
+    let ids: Vec<Uuid> = page.items.iter().map(|w| w.id).collect();
+    let frozen = crate::domains::freeze::service::workspace_frozen(&s, &ids).await?;
+    for w in &mut page.items {
+        w.frozen = frozen.get(&w.id).cloned();
+    }
+    Ok(Json(page))
 }
 
 /// Create a workspace (owner/admin, or member when allowed by org settings).
@@ -425,8 +441,12 @@ async fn with_effective_byo(
     let view =
         crate::domains::agents::byo::workspace_view(s, row.org_id, row.byo_posture.as_deref())
             .await?;
+    let id = row.id;
     let mut w = Workspace::new(row, role);
     w.effective_byo_posture = Some(view);
+    w.frozen = crate::domains::freeze::service::workspace_frozen(s, &[id])
+        .await?
+        .remove(&id);
     Ok(w)
 }
 

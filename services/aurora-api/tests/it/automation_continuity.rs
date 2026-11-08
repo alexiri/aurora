@@ -592,6 +592,115 @@ async fn offboarding_view_matches_what_the_removal_disables() {
     assert_eq!(v["schedules"].as_array().unwrap().len(), 0);
 }
 
+/// RFE-006 / FU-P2-021a: schedules and webhooks of a frozen agent stop — creator-anchored and
+/// workspace-anchored alike — without being disabled or counted as an authority failure, and
+/// resume on unfreeze.
+#[tokio::test]
+async fn schedules_and_webhooks_stop_while_the_agent_is_frozen_whatever_the_anchor() {
+    let r = rig().await;
+    let s_creator = r.schedule(r.alice, "by-creator", json!({})).await;
+    let s_anchor = r
+        .schedule(r.owner, "by-anchor", json!({"anchor": "workspace"}))
+        .await;
+    let (w_creator, url_creator) = r.webhook(r.alice, "hook-c", json!({})).await;
+    let (w_anchor, url_anchor) = r
+        .webhook(r.owner, "hook-a", json!({"anchor": "workspace"}))
+        .await;
+    let turns = |r: &Rig| {
+        let pool = r.h.pool().clone();
+        let agent = r.agent;
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM turns WHERE agent_id = $1")
+                .bind(agent)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    // Freezing the workspace (not the agent) must stop both anchors.
+    let (s, v) = r
+        .call(
+            r.owner,
+            Method::POST,
+            &format!("/v1/workspaces/{}/freeze", r.ws),
+            Some(json!({"reason": "drill"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    r.fire_due().await;
+    for id in [&s_creator, &s_anchor] {
+        assert_eq!(
+            r.last_run(id).await.as_deref(),
+            Some("skipped_frozen"),
+            "{id}"
+        );
+        let (enabled, reason, outcome, next_in_future): (
+            bool,
+            Option<String>,
+            Option<String>,
+            bool,
+        ) = sqlx::query_as(
+            "SELECT enabled, disabled_reason, last_outcome, next_fire_at > now()
+                 FROM schedules WHERE id = $1::uuid",
+        )
+        .bind(id)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+        assert!(
+            enabled && reason.is_none(),
+            "frozen is not an authority failure"
+        );
+        assert_eq!(outcome.as_deref(), Some("skipped_frozen"));
+        assert!(next_in_future, "next_fire_at advances: no catch-up burst");
+    }
+    assert_eq!(turns(&r).await, 0);
+    for (url, id, table) in [
+        (&url_creator, &w_creator, "webhooks"),
+        (&url_anchor, &w_anchor, "webhooks"),
+    ] {
+        assert_eq!(r.deliver(url).await, 410);
+        let (enabled, reason) = {
+            let a = r.authority(table, id).await;
+            (a.2, a.3)
+        };
+        assert!(enabled && reason.is_none(), "the webhook stays enabled");
+        let (status, why): (String, Option<String>) = sqlx::query_as(
+            "SELECT status, reason FROM webhook_deliveries WHERE webhook_id = $1::uuid
+             ORDER BY created_at DESC, id DESC LIMIT 1",
+        )
+        .bind(id)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            (status.as_str(), why.as_deref()),
+            ("paused", Some("frozen"))
+        );
+    }
+    assert_eq!(turns(&r).await, 0);
+    // Unfreeze: both anchors fire again.
+    let (s, _) = r
+        .call(
+            r.owner,
+            Method::POST,
+            &format!("/v1/workspaces/{}/unfreeze", r.ws),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200);
+    sqlx::query("UPDATE schedules SET next_fire_at = now() - interval '1 day'")
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    // The run conversations are separate, so both can fire in the same pass.
+    r.fire_due().await;
+    assert_eq!(r.last_run(&s_creator).await.as_deref(), Some("fired"));
+    assert_eq!(r.last_run(&s_anchor).await.as_deref(), Some("fired"));
+    assert_eq!(r.deliver(&url_creator).await, 202);
+    assert_eq!(r.deliver(&url_anchor).await, 202);
+}
+
 #[tokio::test]
 async fn anchored_automations_need_an_owner_and_outlive_their_creator() {
     let r = rig().await;
