@@ -435,6 +435,7 @@ Recorded follow-ups, each placed or deferred:
 | FU-P2-CAT-0c api image compiles the `aurora` CLI in release | deferred: build cost only |
 | FU-P2-CAT-5a parameter-level tool matching | Q8 (manifest-contract change, not in the spec) |
 | FU-P2-CAT-5b aws-keys endpoints written from knowledge, links unchecked | P2-CAT-T |
+| FU-P2-CAT-1a hook inputs lack the instance host (`mint-input` has only `tenant-host`), so `github-app`'s GHES app takes a `ghes_host` form field that egress-checks against `{instance}` (D-91); one instance-bound app can inject on only one exact host, so the GitHub packages split into SaaS and GHES apps | next hook-contract revision (WIT): pass `instance_host` in hook inputs, then derive `ghes_host` |
 | FUP-M2 configurable service ports | deferred: test convenience, no spec rule |
 | FUP-M3 pre-warm hook modules on snapshot load | deferred: performance, no spec rule |
 | FUP-M4 harness capabilities in `sandboxes.resource_profile`, `steer_delivered_at` reused as send-now marker | Q13 (needs a spec fix with a migration) |
