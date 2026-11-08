@@ -87,6 +87,7 @@ Each lane lists every route it restyled in its report, with a screenshot of each
 ### Stage 4: enforcement
 - Move anything stage 3 left on palette colours or hex literals to tokens (there should be little left).
 - Add the token-guard vitest and the Playwright accessibility (both themes), theme and narrow-shell tests from `18 §Dashboard visual design`. Add `@axe-core/playwright` as a dev dependency at an exact version. Extend the narrow-shell test to every route (no horizontal page scroll at 390 px).
+- **Inline styles**: the production CSP (`style-src 'self' 'nonce-…'`) blocks `style=` attributes; only dev allows them, so they silently break in production. Known cases: `components/org/storage-view.tsx` and `components/memory/size-meter.tsx` (meter widths). Add a shared `Meter` primitive that needs no inline style (e.g. an SVG `<rect width>` or stepped width classes), move both meters to it, and add a guard (vitest or `scripts/guards/`) that fails on any `style=` prop in `web/src`.
 - The guard and these tests are what keep future screens on the design (`14 §Visual design`, "Scope: the whole dashboard").
 
 ### Out of scope
