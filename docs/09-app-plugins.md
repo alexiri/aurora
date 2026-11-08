@@ -722,6 +722,37 @@ Fixture file format (`tests/*.yaml`):
   expect: { tool: close_task, summary: { title: "Complete task", fields: { Task: "123" } } }
 ```
 
+**Token lifecycle cases** (D-82; `token.kind: oauth2_refresh`). A case replays a stale upstream
+answer, the refresh exchange against a recorded token endpoint and what the gateway does next. It
+drives the gateway's own refresh functions (`build_exchange`, `interpret_exchange`), so the request
+the gateway builds, the stale-code match, `reauth_codes` and rotation behave as in production; only
+the network and the database are replaced by the recording.
+```yaml
+- name: refresh after a stale 401
+  connection:
+    instance_host: gitlab.example.com        # the connection's bound host (instance-bound apps)
+    credentials: { access_token: "tok-old", refresh_token: "refresh-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture" }   # fake fields of the registered OAuth client
+  request: { method: GET, url: "https://gitlab.example.com/api/v4/user" }
+  token:
+    upstream: { status: 401, body: '{"error":"invalid_token"}' }   # must match token.stale_codes
+    http_cassette:                            # each refresh request consumes the first matching entry; an unused entry fails the case
+      - request: { method: POST, url: "https://gitlab.example.com/oauth/token",
+                   form: { grant_type: refresh_token, refresh_token: "refresh-1" } }   # `form`: subset match on the request parameters
+        response: { status: 200, body: '{"access_token":"tok-new","refresh_token":"refresh-2","expires_in":7200}' }
+    expect:
+      outcome: refreshed                      # | reauth_required | unavailable
+      request_url: "https://gitlab.example.com/oauth/token"   # optional: where the refresh was sent
+      credentials: { access_token: "tok-new", refresh_token: "refresh-2" }   # subset (rotation)
+      retried: { url: "https://gitlab.example.com/api/v4/user", headers: { authorization: "Bearer tok-new" } }
+  expect: { app: gitlab, tool: get_current_user }
+```
+`outcome` is `refreshed` (the retried request carries the new credentials), `reauth_required` (a 4xx
+`invalid_grant` or a declared `reauth_codes` error; nothing is retried) or `unavailable` (any other
+failure, a request that no cassette entry answers, or a refresh the gateway refuses to build, for
+example without a valid instance host: nothing is retried). `retried` is only allowed after
+`refreshed`. Refreshed credentials are never echoed into the report.
+
 ## 13. Phase 0 fixture packages (`plugins/fixtures/`)
 
 Signed with a test key trusted only in test configurations. Each targets mock
