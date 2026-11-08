@@ -154,6 +154,21 @@ pub trait RequestHandler: Send + Sync + 'static {
     /// Called once per finished open-lane tunnel.
     fn tunnel_closed(&self, _report: TunnelReport) {}
 
+    /// (phase 2, P2-DBL-1) Admits a database login: resolves connection `connection_id` for
+    /// `identity` (granted, active, a database app), reads its stored credentials and returns
+    /// the endpoint plus the per-statement authorizer. Default: the lane is not available.
+    async fn db_open(
+        self: Arc<Self>,
+        _identity: &Arc<RequestIdentity>,
+        _connection_id: uuid::Uuid,
+    ) -> Result<crate::db::DbOpened, crate::db::DbOpenError> {
+        Err(crate::db::DbOpenError::Refused(ApiError::new(
+            http::StatusCode::FORBIDDEN,
+            "database_lane_unavailable",
+            "The database lane is not enabled on this gateway.",
+        )))
+    }
+
     /// (RFE-025) A BYO admission refusal that is due for a request-log row (the proxy rate
     /// limits to one per credential per minute and counts every refusal itself).
     fn byo_refused(

@@ -1,0 +1,22 @@
+- { sql: "insert into t (a) values (1)", class: write }
+- { sql: "insert into t select * from u", class: write }
+- { sql: "insert into t (a) values (1) on conflict (a) do update set a = excluded.a", class: write }
+- { sql: "insert into t (a) values (1) returning id", class: write }
+- { sql: "update t set a = 1 where id = 2", class: write }
+- { sql: "update t set a = u.a from u where t.id = u.id", class: write }
+- { sql: "delete from t where id = 1", class: write }
+- { sql: "delete from t using u where t.id = u.id", class: write }
+- { sql: "merge into t using u on t.id = u.id when matched then update set a = u.a when not matched then insert (id) values (u.id)", class: write }
+- { sql: "copy t from stdin", class: write }
+- { sql: "copy t (a, b) from stdin with (format csv, header)", class: write }
+- { sql: "select * from t for update", class: write }
+- { sql: "select * from t for share", class: write }
+- { sql: "select * from t for no key update skip locked", class: write }
+- { sql: "select * from (select * from t for update) s", class: write }
+- { sql: "with d as (delete from t returning *) select * from d", class: write }
+- { sql: "with i as (insert into t values (1) returning *) select * from i", class: write }
+- { sql: "with u as (update t set a = 1 returning *) select count(*) from u", class: write }
+- { sql: "select 1 where exists (with d as (delete from t returning 1) select 1 from d)", class: write }
+- { sql: "explain analyze false", refused: unparsable }
+- { sql: "select 1; insert into t values (1)", class: write, statements: 2 }
+- { sql: "insert into t values (1); select 1", class: write, statements: 2 }

@@ -146,6 +146,12 @@ impl ProxyTls {
         }))
     }
 
+    /// The listener's server configuration (the fallback for database logins whose SNI is not a
+    /// connection host).
+    pub fn server_config(&self) -> Arc<ServerConfig> {
+        self.config.clone()
+    }
+
     pub fn acceptor(&self) -> TlsAcceptor {
         TlsAcceptor::from(self.config.clone())
     }

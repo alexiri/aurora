@@ -102,6 +102,18 @@ impl Proxy {
                 .increment(1);
             return;
         }
+        // (phase 2, P2-DBL-1) A PostgreSQL SSLRequest / StartupMessage / CancelRequest as the
+        // first bytes (after the PROXY header, if any) enters the database lane, which is
+        // TLS-only as well: the password is requested only inside a TLS session. Everything
+        // else keeps its behaviour.
+        match tokio::time::timeout(HANDSHAKE_TIMEOUT, looks_like_pg(&stream)).await {
+            Ok(Ok(true)) => {
+                self.serve_db(stream, client).await;
+                return;
+            }
+            Ok(Ok(false)) => {}
+            _ => return,
+        }
         match tokio::time::timeout(HANDSHAKE_TIMEOUT, looks_like_tls(&stream)).await {
             Ok(Ok(true)) => {}
             Ok(Ok(false)) => {
@@ -162,6 +174,21 @@ async fn looks_like_tls(stream: &tokio::net::TcpStream) -> std::io::Result<bool>
         }
         if n >= 3 {
             return Ok(true);
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+/// Peeks until the first bytes are recognisably (or not) a PostgreSQL startup-phase packet.
+async fn looks_like_pg(stream: &tokio::net::TcpStream) -> std::io::Result<bool> {
+    let mut buf = [0u8; 8];
+    loop {
+        let n = stream.peek(&mut buf).await?;
+        if n == 0 {
+            return Ok(false);
+        }
+        if let Some(v) = crate::db::pg::sniff(&buf[..n]) {
+            return Ok(v);
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }

@@ -7,6 +7,7 @@
 
 use crate::apps::{self, Cand, Exec, Pick};
 use crate::auth::{CredentialKind, RequestIdentity as Ident};
+use crate::db::{DbAuthorizer, DbEndpoint, DbOpenError, DbOpened, DbVerdict};
 use crate::governance::{BackstopInfo, Governance};
 use crate::hold::{HoldOutcome, HoldRequest, Holds};
 use crate::inject::{self, Target};
@@ -1090,6 +1091,121 @@ impl RequestHandler for PolicyHandler {
         })
     }
 
+    async fn db_open(
+        self: Arc<Self>,
+        identity: &Arc<Ident>,
+        connection_id: Uuid,
+    ) -> Result<DbOpened, DbOpenError> {
+        let refuse = |code: &str, msg: &str| {
+            DbOpenError::Refused(ApiError::new(StatusCode::FORBIDDEN, code, msg))
+        };
+        let unavailable = || {
+            DbOpenError::Unavailable(ApiError::unavailable(
+                "policy_unavailable",
+                "Policy cannot be evaluated right now. Retry shortly.",
+            ))
+        };
+        // One message for "no such connection" and "not granted": no enumeration of ids.
+        let not_granted = || {
+            refuse(
+                "access_restricted",
+                "This agent has not been granted a database connection with this id. Ask a workspace admin to grant it.",
+            )
+        };
+        if crate::byo::needs_context_credential(identity) {
+            return Err(DbOpenError::Refused(crate::byo::context_required(
+                "/v1/agent/context-credentials",
+            )));
+        }
+        let dbc = match self.resolver.db_connection(identity, connection_id).await {
+            Ok(Some(c)) => c,
+            Ok(None) => return Err(not_granted()),
+            Err(e) => {
+                tracing::warn!(error = %e, "database connection resolution failed");
+                return Err(unavailable());
+            }
+        };
+        let host = crate::db::synthetic_host(connection_id);
+        let rv = match self.resolver.resolve(identity, &host, 443).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "policy resolution failed");
+                return Err(unavailable());
+            }
+        };
+        let cred = dbc.conn.credential();
+        let selected: HashSet<_> = selected_candidates(
+            rv.all_rules(),
+            &facts_identity(identity),
+            std::slice::from_ref(&cred),
+        );
+        if !selected.contains(&cred.key()) {
+            return Err(not_granted());
+        }
+        if dbc.unavailable {
+            return Err(refuse(
+                "app_unavailable",
+                "This app is not available to this workspace under the organization's app policy.",
+            ));
+        }
+        match dbc.status.as_str() {
+            "active" => {}
+            "disabled" => {
+                return Err(refuse(
+                    "connection_disabled",
+                    "This database connection is disabled. Ask a workspace admin to enable it.",
+                ));
+            }
+            _ => {
+                return Err(refuse(
+                    "reauth_required",
+                    "This database connection needs its credentials updated by a workspace admin.",
+                ));
+            }
+        }
+        let is_db = dbc
+            .registry
+            .as_ref()
+            .and_then(|l| l.snapshot.app(&dbc.conn.app_id))
+            .and_then(|a| a.database.as_ref())
+            .is_some_and(|d| d.engine == "postgres");
+        if !is_db {
+            return Err(refuse(
+                "not_a_database_connection",
+                "This connection is not a PostgreSQL database connection.",
+            ));
+        }
+        let raw = match self.plaintext.get_connection(&dbc.conn).await {
+            Ok(v) => v,
+            Err(PlaintextError::StoreUnavailable(_)) => {
+                return Err(DbOpenError::Unavailable(ApiError::unavailable(
+                    "secret_store_unavailable",
+                    "The secret store is unreachable. Retry shortly.",
+                )));
+            }
+            Err(PlaintextError::Unavailable) => {
+                return Err(DbOpenError::Unavailable(credential_unavailable(
+                    "connection",
+                )));
+            }
+        };
+        let endpoint = DbEndpoint::from_credentials(raw.expose()).map_err(|e| {
+            tracing::warn!(connection = %connection_id, error = %e, "unusable database credentials");
+            DbOpenError::Unavailable(credential_unavailable("connection"))
+        })?;
+        self.touch(dbc.conn.id);
+        Ok(DbOpened {
+            endpoint,
+            label: dbc.conn.label.clone(),
+            authorizer: Arc::new(DbSession {
+                handler: self.clone(),
+                identity: identity.clone(),
+                conn: dbc.conn,
+                host,
+            }),
+        })
+    }
+
     fn byo_refused(
         &self,
         identity: &Arc<Ident>,
@@ -1416,6 +1532,189 @@ impl PolicyHandler {
             connect_url,
             backstop,
         })
+    }
+}
+
+/// (phase 2, P2-DBL-1) The per-statement policy of one database session: each statement is the
+/// synthetic request `POST https://<connection_id>.db.aurora.internal/<class>`, decided by the
+/// same engine, approvals, rate limits and request log as HTTP.
+struct DbSession {
+    handler: Arc<PolicyHandler>,
+    identity: Arc<Ident>,
+    conn: Arc<apps::ConnCand>,
+    host: String,
+}
+
+#[async_trait::async_trait]
+impl DbAuthorizer for DbSession {
+    async fn authorize(&self, class: aurora_sqlclass::Class, statement: &str) -> DbVerdict {
+        let h = &self.handler;
+        let path = format!("/{}", class.as_str());
+        let mut ctx = Ctx {
+            identity: self.identity.clone(),
+            lane: "db",
+            method: "POST".to_owned(),
+            host: self.host.clone(),
+            path: path.clone(),
+            started: Instant::now(),
+            secret_id: None,
+            decision: "allow",
+            rule: None,
+            injected: 0,
+            app_id: Some(self.conn.app_id.clone()),
+            tool_id: None,
+            connection_id: Some(self.conn.id),
+        };
+        let rv = match h.resolver.resolve(&self.identity, &self.host, 443).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "policy resolution failed");
+                let err = ApiError::unavailable(
+                    "policy_unavailable",
+                    "Policy cannot be evaluated right now. Retry shortly.",
+                );
+                h.refuse(ctx, &err, "error");
+                return DbVerdict::Unavailable(err);
+            }
+        };
+        let fi = facts_identity(&self.identity);
+        let cred = self.conn.credential();
+        // The grant is re-checked per statement: a revoked grant ends access at once.
+        let selected: HashSet<_> =
+            selected_candidates(rv.all_rules(), &fi, std::slice::from_ref(&cred));
+        if !selected.contains(&cred.key()) {
+            let err = ApiError::new(
+                StatusCode::FORBIDDEN,
+                "access_restricted",
+                "This agent is no longer granted this database connection.",
+            );
+            h.refuse(ctx, &err, "blocked");
+            return DbVerdict::Deny(err);
+        }
+        let app = rv
+            .registry
+            .as_ref()
+            .and_then(|l| l.snapshot.app(&self.conn.app_id));
+        let limit = h.condition_body_limit;
+        let bytes = statement.as_bytes();
+        let body_prefix = bytes[..bytes.len().min(limit)].to_vec();
+        let truncated = bytes.len() > limit;
+        let tool = app.and_then(|a| {
+            apps::identify_tool(
+                a,
+                &self.host,
+                443,
+                &path,
+                None,
+                "POST",
+                &body_prefix,
+                truncated,
+            )
+        });
+        ctx.tool_id = tool.map(|t| t.id.clone());
+        let facts = RequestFacts {
+            host: self.host.clone(),
+            port: 443,
+            path: path.clone(),
+            query: None,
+            method: "POST".to_owned(),
+            body_prefix,
+            truncated,
+            app_id: ctx.app_id.clone(),
+            tool_id: ctx.tool_id.clone(),
+            tool_tags: tool.map(apps::tool_tags).unwrap_or_default(),
+            winning_credential: Some(cred),
+            is_llm_host: false,
+            identity: fi,
+            connect_time: false,
+            host_apps: Vec::new(),
+        };
+        let d = evaluate(&rv.org_policy, &rv.ws_policy, &facts, h.counters.as_ref());
+        ctx.rule = d.deciding_rule().map(|r| (r.logical_id, r.name.clone()));
+        if d.verdict == Verdict::NeedsApproval
+            && let Some(holds) = &h.holds
+        {
+            let summary = aurora_summary::ApprovalSummary {
+                title: format!("Database {} on {}", class.as_str(), self.conn.label),
+                fields: vec![
+                    aurora_summary::SummaryField {
+                        label: "Connection".into(),
+                        value: self.conn.label.clone(),
+                    },
+                    aurora_summary::SummaryField {
+                        label: "Class".into(),
+                        value: class.as_str().to_owned(),
+                    },
+                ],
+                // Literals are redacted lexically; the text is clamped by `clamp`.
+                text: Some(aurora_sqlclass::redact(statement, 2_000)),
+                link: None,
+                group: None,
+                source: aurora_summary::SummarySource::Generic,
+            }
+            .clamp();
+            let outcome = holds
+                .hold(HoldRequest {
+                    identity: &self.identity,
+                    method: "POST",
+                    host: &self.host,
+                    path: &path,
+                    rule: ctx.rule.as_ref().map(|(i, n)| (*i, n.as_str())),
+                    batch: &crate::hygiene::AuroraHeaders::default(),
+                    summary: &summary,
+                })
+                .await;
+            match outcome {
+                HoldOutcome::Approved => ctx.decision = "approved",
+                HoldOutcome::Denied(id) => {
+                    let err = ApiError::new(
+                        StatusCode::FORBIDDEN,
+                        "manual_approval_denied",
+                        "A reviewer denied this statement. Do not retry it unchanged.",
+                    )
+                    .with_details(json!({ "approval_id": id }));
+                    h.refuse(ctx, &err, "approval_denied");
+                    return DbVerdict::Deny(err);
+                }
+                HoldOutcome::Expired(id) => {
+                    let err = ApiError::new(
+                        StatusCode::FORBIDDEN,
+                        "manual_approval_expired",
+                        "No reviewer decided in time, so this statement was not sent.",
+                    )
+                    .with_details(json!({ "approval_id": id }));
+                    h.refuse(ctx, &err, "approval_expired");
+                    return DbVerdict::Deny(err);
+                }
+                HoldOutcome::Restarting => {
+                    ctx.decision = "error";
+                    h.log.record(ctx.row(503, None, Some("gateway_restarting")));
+                    return DbVerdict::Unavailable(ApiError::unavailable(
+                        "gateway_restarting",
+                        "The gateway is restarting while this statement awaited approval. Retry shortly.",
+                    ));
+                }
+                HoldOutcome::StoreUnavailable => {
+                    let err = ApiError::unavailable(
+                        "approval_store_unavailable",
+                        "The approval store is unavailable. Retry shortly.",
+                    );
+                    h.refuse(ctx, &err, "error");
+                    return DbVerdict::Unavailable(err);
+                }
+            }
+        } else if let Some((err, decision)) = h.verdict_error(&rv, &d, "POST", &path, &self.host) {
+            h.refuse(ctx, &err, decision);
+            return if err.status() == StatusCode::SERVICE_UNAVAILABLE {
+                DbVerdict::Unavailable(err)
+            } else {
+                DbVerdict::Deny(err)
+            };
+        }
+        h.apply_hits(&d);
+        h.touch(self.conn.id);
+        h.log.record(ctx.row(200, None, None));
+        DbVerdict::Allow
     }
 }
 

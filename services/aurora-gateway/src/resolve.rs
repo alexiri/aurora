@@ -100,6 +100,17 @@ impl ResolvedHost {
     }
 }
 
+/// A database connection resolved by id (see [`Resolver::db_connection`]).
+#[derive(Debug)]
+pub struct DbConnection {
+    pub conn: Arc<ConnCand>,
+    /// `active`, `disabled` or `reauth_required`.
+    pub status: String,
+    /// The org's `restricted` app posture removes the connection's app.
+    pub unavailable: bool,
+    pub registry: Option<Arc<Loaded>>,
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("resolution failed: {0}")]
 pub struct ResolveFailure(pub String);
@@ -126,6 +137,15 @@ pub trait PolicySource: Send + Sync + 'static {
     /// `active` app instances visible to the org: instance-wide and its own (default: none).
     async fn instances(&self, _org: Uuid) -> Result<Vec<InstanceHostRow>, String> {
         Ok(Vec::new())
+    }
+    /// One connection by id (database lane login; default: none).
+    async fn connection(
+        &self,
+        _org: Uuid,
+        _ws: Uuid,
+        _id: Uuid,
+    ) -> Result<Option<AppConnectionRow>, String> {
+        Ok(None)
     }
 }
 
@@ -165,6 +185,16 @@ impl PolicySource for DbSource {
     }
     async fn instances(&self, org: Uuid) -> Result<Vec<InstanceHostRow>, String> {
         repo::visible_instances(&self.0, org)
+            .await
+            .map_err(|e| e.to_string())
+    }
+    async fn connection(
+        &self,
+        org: Uuid,
+        ws: Uuid,
+        id: Uuid,
+    ) -> Result<Option<AppConnectionRow>, String> {
+        repo::app_connection_by_id(&self.0, org, ws, id)
             .await
             .map_err(|e| e.to_string())
     }
@@ -342,6 +372,39 @@ impl Resolver {
 
     pub fn llm(&self) -> &ProviderRegistry {
         &self.llm
+    }
+
+    /// (phase 2, P2-DBL-1) The database connection `id` as seen by `identity`: the connection
+    /// row (workspace's or organization's, any status), whether the org's app posture removes
+    /// its app, and the current registry snapshot. Resolution is by connection id only.
+    pub async fn db_connection(
+        &self,
+        id: &RequestIdentity,
+        conn_id: Uuid,
+    ) -> Result<Option<DbConnection>, ResolveFailure> {
+        let fail = |e: String| ResolveFailure(e);
+        let Some(row) = self
+            .source
+            .connection(id.org_id, id.workspace_id, conn_id)
+            .await
+            .map_err(fail)?
+        else {
+            return Ok(None);
+        };
+        let (restricted, available) = self
+            .source
+            .app_availability(id.org_id, id.workspace_id)
+            .await
+            .map_err(fail)?;
+        let unavailable = restricted && !available.contains(&row.app_id);
+        let status = row.status.clone();
+        let conn = ConnCand::from_row(row, id.org_id).map_err(fail)?;
+        Ok(Some(DbConnection {
+            conn: Arc::new(conn),
+            status,
+            unavailable,
+            registry: self.snapshots.as_ref().and_then(|s| s.current()),
+        }))
     }
 
     pub async fn resolve(

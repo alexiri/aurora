@@ -617,6 +617,28 @@ pub async fn app_connections(
     .await?)
 }
 
+/// One connection by id, if it belongs to the organization and is the workspace's or an
+/// organization-level one (database lane login, P2-DBL-1). Any status is returned; the caller
+/// refuses `disabled` and `reauth_required`.
+pub async fn app_connection_by_id(
+    pool: &sqlx::PgPool,
+    org_id: Uuid,
+    workspace_id: Uuid,
+    id: Uuid,
+) -> Result<Option<AppConnectionRow>, DbError> {
+    Ok(sqlx::query_as::<_, AppConnectionRow>(
+        "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
+                credentials_expires_at, metadata, tenant_host \
+         FROM app_connections \
+         WHERE id = $1 AND org_id = $2 AND (workspace_id IS NULL OR workspace_id = $3)",
+    )
+    .bind(id)
+    .bind(org_id)
+    .bind(workspace_id)
+    .fetch_optional(pool)
+    .await?)
+}
+
 /// `(restricted, available app ids)` for a workspace: `org_app_availability` rows with a
 /// NULL workspace apply to the whole organization.
 pub async fn app_availability(

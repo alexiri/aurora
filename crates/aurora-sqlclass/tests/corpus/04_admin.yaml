@@ -1,0 +1,38 @@
+- { sql: "vacuum", class: admin }
+- { sql: "vacuum (analyze) t", class: admin }
+- { sql: "analyze t", class: admin }
+- { sql: "set search_path = public", class: admin }
+- { sql: "set work_mem = '1GB'", class: admin }
+- { sql: "set statement_timeout = 0", class: admin }
+- { sql: "set local lock_timeout = 0", class: admin }
+- { sql: "reset all", class: admin }
+- { sql: "reset work_mem", class: admin }
+- { sql: "set session characteristics as transaction read write", class: admin }
+- { sql: "listen ch", class: admin }
+- { sql: "unlisten ch", class: admin }
+- { sql: "notify ch, 'p'", class: admin }
+- { sql: "do $$ begin perform 1; end $$", class: admin }
+- { sql: "call proc(1)", class: admin }
+- { sql: "execute stmt(1)", class: admin }
+- { sql: "lock table t", class: admin }
+- { sql: "cluster t", class: admin }
+- { sql: "reindex table t", class: admin }
+- { sql: "checkpoint", class: admin }
+- { sql: "discard all", class: admin }
+- { sql: "prepare transaction 'x'", class: admin }
+- { sql: "commit prepared 'x'", class: admin }
+- { sql: "explain analyze select 1", class: admin }
+- { sql: "explain (analyze, buffers) select 1", class: admin }
+- { sql: "explain (analyze true) update t set a = 1", class: admin }
+- { sql: "select nextval('s')", class: admin }
+- { sql: "select setval('s', 1)", class: admin }
+- { sql: "select user_defined_function(1)", class: admin }
+- { sql: "select public.lower('a')", class: admin }
+- { sql: "select myschema.count(*) from t", class: admin }
+- { sql: "select pg_terminate_backend(123)", class: admin }
+- { sql: "select pg_sleep(10)", class: admin }
+- { sql: "select pg_advisory_lock(1)", class: admin }
+- { sql: "select * from user_func_table(1)", class: admin }
+- { sql: "select * from t where a = unknown_fn(b)", class: admin }
+- { sql: "select 1; vacuum", class: admin, statements: 2 }
+- { sql: "select * from t for update; vacuum", class: admin }

@@ -1,0 +1,18 @@
+- { sql: "select 1; select 2; select 3", class: read, statements: 3 }
+- { sql: "select 1; insert into t values (1); select 2", class: write, statements: 3 }
+- { sql: "begin; insert into t values (1); drop table t; commit", class: ddl, statements: 4 }
+- { sql: "begin; select 1; vacuum", class: admin }
+- { sql: "select 1;;; select 2", class: read, statements: 2 }
+- { sql: "commit; rollback", class: transaction, statements: 2 }
+- { sql: "select 'x'; ; ", class: read, statements: 1 }
+- { sql: "select 1 -- a; drop table t", class: read, statements: 1 }
+- { sql: "select '; drop table t'", class: read, statements: 1 }
+- { sql: "select $$; drop table t$$", class: read, statements: 1 }
+- { sql: "select 1; create table x (a int); drop table x", class: ddl, statements: 3 }
+- { sql: "update t set a = 1; select pg_read_file('x')", refused: forbidden }
+- { sql: "select 1; select (", refused: unparsable }
+- { sql: "set extra_float_digits = 3; select 1", class: read, statements: 2 }
+- { sql: "set extra_float_digits = 3; set search_path = x", class: admin, statements: 2 }
+- { sql: "select 1; select nextval('s')", class: admin }
+- { sql: "select * from t for update; select 1", class: write }
+- { sql: "copy t from stdin; select 1", class: write }

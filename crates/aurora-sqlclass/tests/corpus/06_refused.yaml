@@ -1,0 +1,57 @@
+- { sql: "alter system set work_mem = '1GB'", refused: forbidden }
+- { sql: "alter system reset all", refused: forbidden }
+- { sql: "ALTER SYSTEM SET max_connections = 1", refused: forbidden }
+- { sql: "set role postgres", refused: forbidden }
+- { sql: "set local role postgres", refused: forbidden }
+- { sql: "set session role postgres", refused: forbidden }
+- { sql: "reset role", refused: forbidden }
+- { sql: "set session authorization postgres", refused: forbidden }
+- { sql: "set session authorization default", refused: forbidden }
+- { sql: "reset session_authorization", refused: forbidden }
+- { sql: "copy t from program 'id'", refused: forbidden }
+- { sql: "copy t to program 'cat > /tmp/x'", refused: forbidden }
+- { sql: "copy (select 1) to program 'sh'", refused: forbidden }
+- { sql: "copy t from '/etc/passwd'", refused: forbidden }
+- { sql: "copy t to '/tmp/out'", refused: forbidden }
+- { sql: "select lo_import('/etc/passwd')", refused: forbidden }
+- { sql: "select lo_export(1234, '/tmp/x')", refused: forbidden }
+- { sql: "select pg_catalog.lo_import('/etc/passwd')", refused: forbidden }
+- { sql: "select pg_read_file('/etc/passwd')", refused: forbidden }
+- { sql: "select pg_read_binary_file('/etc/passwd')", refused: forbidden }
+- { sql: "select pg_ls_dir('.')", refused: forbidden }
+- { sql: "select pg_ls_logdir()", refused: forbidden }
+- { sql: "select pg_stat_file('/etc/passwd')", refused: forbidden }
+- { sql: "select pg_file_write('/tmp/x', 'a', false)", refused: forbidden }
+- { sql: "select * from dblink('host=x', 'select 1') as t(a int)", refused: forbidden }
+- { sql: "select dblink_connect('host=x')", refused: forbidden }
+- { sql: "select dblink_exec('x', 'drop table t')", refused: forbidden }
+- { sql: "select postgres_fdw_get_connections()", refused: forbidden }
+- { sql: "select postgres_fdw_disconnect_all()", refused: forbidden }
+- { sql: "select set_config('standard_conforming_strings', 'off', false)", refused: forbidden }
+- { sql: "select pg_reload_conf()", refused: forbidden }
+- { sql: "set standard_conforming_strings = off", refused: forbidden }
+- { sql: "set backslash_quote = on", refused: forbidden }
+- { sql: "set client_encoding = 'SJIS'", refused: forbidden }
+- { sql: "set names 'latin1'", refused: forbidden }
+- { sql: "create extension dblink", refused: forbidden }
+- { sql: "create extension if not exists postgres_fdw", refused: forbidden }
+- { sql: "create server s foreign data wrapper postgres_fdw options (host 'x')", refused: forbidden }
+- { sql: "create foreign data wrapper w", refused: forbidden }
+- { sql: "create user mapping for current_user server s options (user 'u')", refused: forbidden }
+- { sql: "load 'auto_explain'", refused: forbidden }
+- { sql: "select 1; select pg_read_file('x')", refused: forbidden }
+- { sql: "explain select pg_read_file('x')", refused: forbidden }
+- { sql: "with x as (select lo_import('a')) select * from x", refused: forbidden }
+- { sql: "select 1; alter system set a = 1", refused: forbidden }
+- { sql: "select 1; set role x", refused: forbidden }
+- { sql: "select * from t where a = (select pg_read_file('x'))", refused: forbidden }
+- { sql: "do $$ begin end $$; copy t from program 'x'", refused: forbidden }
+- { sql: "create rule r as on insert to t do also select pg_read_file('x')", refused: forbidden }
+- { sql: "selec 1", refused: unparsable }
+- { sql: "select from from", refused: unparsable }
+- { sql: "select 'unterminated", refused: unparsable }
+- { sql: "select 1; selec 2", refused: unparsable }
+- { sql: "garbage ;;; ???", refused: unparsable }
+- { sql: "select (1", refused: unparsable }
+- { sql: "select 1 from t where", refused: unparsable }
+- { sql: "insert into", refused: unparsable }

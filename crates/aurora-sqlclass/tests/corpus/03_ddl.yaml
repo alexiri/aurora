@@ -1,0 +1,39 @@
+- { sql: "create table t (id int primary key, a text)", class: ddl }
+- { sql: "create temp table t (id int)", class: ddl }
+- { sql: "create table t as select * from u", class: ddl }
+- { sql: "select * into newt from t", class: ddl }
+- { sql: "create view v as select 1", class: ddl }
+- { sql: "create materialized view mv as select 1", class: ddl }
+- { sql: "refresh materialized view mv", class: ddl }
+- { sql: "create index i on t (a)", class: ddl }
+- { sql: "create unique index concurrently i on t (a)", class: ddl }
+- { sql: "create sequence s", class: ddl }
+- { sql: "create schema s", class: ddl }
+- { sql: "create function f() returns int language sql as 'select 1'", class: ddl }
+- { sql: "create trigger tr before insert on t for each row execute function f()", class: ddl }
+- { sql: "create type ty as enum ('a', 'b')", class: ddl }
+- { sql: "create domain d as int check (value > 0)", class: ddl }
+- { sql: "create extension pgcrypto", class: ddl }
+- { sql: "create role r login password 'x'", class: ddl }
+- { sql: "alter role r with password 'y'", class: ddl }
+- { sql: "alter table t add column b int", class: ddl }
+- { sql: "alter table t rename to u", class: ddl }
+- { sql: "alter table t drop column a", class: ddl }
+- { sql: "alter index i rename to j", class: ddl }
+- { sql: "drop table t", class: ddl }
+- { sql: "drop table if exists t cascade", class: ddl }
+- { sql: "drop schema s cascade", class: ddl }
+- { sql: "drop role r", class: ddl }
+- { sql: "truncate t", class: ddl }
+- { sql: "truncate t, u restart identity cascade", class: ddl }
+- { sql: "comment on table t is 'x'", class: ddl }
+- { sql: "grant select on t to r", class: ddl }
+- { sql: "grant r to s", class: ddl }
+- { sql: "revoke all on t from r", class: ddl }
+- { sql: "alter default privileges in schema s grant select on tables to r", class: ddl }
+- { sql: "create rule r as on insert to t do also notify x", class: ddl }
+- { sql: "create database d", class: ddl }
+- { sql: "drop owned by r", class: ddl }
+- { sql: "reassign owned by a to b", class: ddl }
+- { sql: "select 1; drop table t", class: ddl, statements: 2 }
+- { sql: "insert into t values (1); create table x (a int)", class: ddl }

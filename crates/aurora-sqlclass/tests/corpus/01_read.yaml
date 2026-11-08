@@ -1,0 +1,40 @@
+- { sql: "select 1", class: read, statements: 1 }
+- { sql: "SELECT * FROM public.users WHERE id = 7", class: read }
+- { sql: "select count(*), max(created_at) from orders group by status having count(*) > 2", class: read }
+- { sql: "select lower(name), upper(name), length(name) from t order by 1 limit 10 offset 5", class: read }
+- { sql: "select a from t1 union all select a from t2", class: read }
+- { sql: "select a from t1 intersect select a from t2 except select a from t3", class: read }
+- { sql: "with x as (select 1 as a) select * from x", class: read }
+- { sql: "with recursive r(n) as (select 1 union all select n+1 from r where n < 5) select * from r", class: read }
+- { sql: "select * from generate_series(1, 10)", class: read }
+- { sql: "select pg_catalog.lower('A')", class: read }
+- { sql: "select jsonb_build_object('a', 1) ->> 'a'", class: read }
+- { sql: "select now(), current_timestamp, current_date", class: read }
+- { sql: "select coalesce(a, 0), nullif(a, 1), greatest(a, 2) from t", class: read }
+- { sql: "select row_number() over (partition by a order by b) from t", class: read }
+- { sql: "select * from t where a in (select b from u) and exists (select 1 from v)", class: read }
+- { sql: "select t.a, u.b from t join u on t.id = u.id left join w using (id)", class: read }
+- { sql: "values (1, 'a'), (2, 'b')", class: read }
+- { sql: "table users", class: read }
+- { sql: "show search_path", class: read }
+- { sql: "show all", class: read }
+- { sql: "explain select * from t", class: read }
+- { sql: "explain (analyze false) select * from t", class: read }
+- { sql: "explain (costs off, verbose) delete from t where a = 1", class: read }
+- { sql: "explain update t set a = 1", class: read }
+- { sql: "select current_setting('server_version')", class: read }
+- { sql: "select * from pg_catalog.pg_tables", class: read }
+- { sql: "select * from information_schema.columns where table_name = 'x'", class: read }
+- { sql: "select pg_size_pretty(pg_database_size(current_database()))", class: read }
+- { sql: "select 1; select 2", class: read, statements: 2 }
+- { sql: "copy (select * from t) to stdout", class: read }
+- { sql: "copy t to stdout with (format csv)", class: read }
+- { sql: "select $1::int + $2", class: read }
+- { sql: "select 'a;b' as semi", class: read, statements: 1 }
+- { sql: "select * from t -- trailing comment", class: read }
+- { sql: "select /* c */ 1", class: read }
+- { sql: "select case when a > 1 then 'x' else 'y' end from t", class: read }
+- { sql: "select array_agg(a order by b) from t", class: read }
+- { sql: "select a::text, cast(b as numeric(10,2)) from t", class: read }
+- { sql: "select * from t tablesample system (10)", class: read }
+- { sql: "select * from only t", class: read }

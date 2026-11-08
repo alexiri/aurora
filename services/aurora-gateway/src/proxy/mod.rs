@@ -2,6 +2,7 @@
 
 mod absolute;
 mod connect;
+mod database;
 mod listener;
 mod tunnel;
 
@@ -80,6 +81,8 @@ pub struct Proxy {
     live: Arc<Live>,
     byo: ByoParts,
     refusals: crate::byo::RefusalLimiter,
+    /// (phase 2, P2-DBL-1) Cancel keys of live database sessions.
+    db_cancel: crate::db::pg::CancelRegistry,
 }
 
 /// Per-connection routing context.
@@ -123,6 +126,7 @@ impl Proxy {
             live: Arc::default(),
             byo,
             refusals: crate::byo::RefusalLimiter::default(),
+            db_cancel: crate::db::pg::CancelRegistry::default(),
         }))
     }
 
