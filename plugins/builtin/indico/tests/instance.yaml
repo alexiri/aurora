@@ -1,0 +1,36 @@
+# Instance binding (D-74): Indico has no default host. A connection bound to a registered
+# instance is served on that exact host only; any other host is refused or unmatched, and an
+# unregistered host injects nothing. All credentials are fake.
+- name: "instance: bearer is injected on the registered host"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/export/event/1234.json" }
+  expect:
+    app: indico
+    tool: get_event
+    upstream:
+      url: "https://indico.example.org/export/event/1234.json"
+      headers: { authorization: "Bearer tok-fixture-1" }
+- name: "instance: a write tool is classified and summarised on the registered host"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://indico.example.org/rooms/api/bookings/42/cancel" }
+  expect: { tool: cancel_booking, summary: { title: "Cancel room booking", fields: { Booking: "42" } } }
+- name: "instance: a second registered host is served the same way"
+  connection: { instance_host: indico.other.example, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.other.example/api/user/" }
+  expect: { app: indico, tool: get_current_user, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "token connect method: a personal API token is injected as the bearer"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/api/user/" }
+  expect: { app: indico, tool: get_current_user, upstream: { headers: { authorization: "Bearer tok-fixture-1" } } }
+- name: "oauth connect method: an OAuth access token (no refresh token, static) is injected as the bearer"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-oauth-1" } }
+  request: { method: GET, url: "https://indico.example.org/api/user/" }
+  expect: { app: indico, tool: get_current_user, upstream: { headers: { authorization: "Bearer tok-fixture-oauth-1" } } }
+- name: "negative instance: a connection of the instance is not injected on another host"
+  connection: { instance_host: indico.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.other.example/api/user/" }
+  expect: { unmatched: true }
+- name: "negative instance: an unregistered host injects nothing"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://indico.example.org/api/user/" }
+  expect: { unmatched: true }
