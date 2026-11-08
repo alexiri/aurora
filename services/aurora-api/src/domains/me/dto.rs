@@ -27,6 +27,11 @@ pub struct Me {
     pub default_org_id: Option<Uuid>,
     /// (phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`).
     pub approval_email: bool,
+    /// (P2-FU-1, C-195) The caller's own client address as this API resolves it: the socket peer,
+    /// or the rightmost untrusted `X-Forwarded-For` hop when the peer is in
+    /// `server.trusted_proxies`. A hint for allow-lists; the gateway may see another address
+    /// (NAT, load balancer, PROXY protocol). `null` when unknown. Set on `GET`/`PATCH /v1/me`.
+    pub client_address: Option<String>,
     pub memberships: Vec<MeMembership>,
 }
 

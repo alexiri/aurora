@@ -369,6 +369,95 @@ async fn retention_sweep_purges_bytes_keeps_the_row_and_downloads_answer_410() {
     assert!(purged.contains(&(young.to_string(), false)), "{purged:?}");
 }
 
+/// FU-P2-015a (C-196): the events page lists the purged attachments its events reference, with
+/// the reason, so the transcript can render "expired by retention" instead of a download link.
+#[tokio::test]
+async fn events_page_lists_the_purged_attachments_with_their_reason() {
+    use aurora_db::repo::transcript;
+    let f = fixture().await;
+    let conv = f.conv("group", None).await;
+    let other = f.conv("group", None).await;
+    let (old, _) = bound(&f, conv, 2000, 40).await;
+    let (young, _) = bound(&f, conv, 1000, 2).await;
+    let (gone, _) = bound(&f, conv, 500, 1).await;
+    let (foreign, _) = bound(&f, other, 700, 40).await;
+    let (t, ..) = f.turn(conv, Some(f.alice.0), "see files").await;
+    let mut c = f.h.pool().acquire().await.unwrap();
+    for (id, name) in [(old, "old.bin"), (young, "young.bin"), (gone, "gone.bin")] {
+        transcript::append_durable_event(
+            &mut c,
+            conv,
+            Some(t),
+            "attachment",
+            &json!({"turn_id": t, "attachment_id": id, "filename": name, "size": 1}),
+        )
+        .await
+        .unwrap();
+    }
+    // An id of another conversation in an event must not leak its state.
+    transcript::append_durable_event(
+        &mut c,
+        conv,
+        Some(t),
+        "turn.queued",
+        &json!({"turn_id": t, "text": "x", "attachments": [foreign]}),
+    )
+    .await
+    .unwrap();
+    drop(c);
+    assert_eq!(
+        f.call(
+            Method::PUT,
+            &format!("/v1/orgs/{}/retention", f.org),
+            &f.admin.1,
+            Some(json!({"attachments_days": 30})),
+        )
+        .await
+        .0,
+        200
+    );
+    let events = format!("/v1/conversations/{conv}/events");
+    let (s, v) = f.call(Method::GET, &events, &f.alice.1, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["purged_attachments"], json!([]));
+    sweep_now(&f).await;
+    assert_eq!(
+        f.call(
+            Method::DELETE,
+            &format!("/v1/attachments/{gone}"),
+            &f.owner.1,
+            None
+        )
+        .await
+        .0,
+        204
+    );
+    let (s, v) = f.call(Method::GET, &events, &f.alice.1, None).await;
+    assert_eq!(s, 200, "{v}");
+    let mut got: Vec<(String, String)> = v["purged_attachments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p["id"].as_str().unwrap().to_owned(),
+                p["reason"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    got.sort();
+    let mut want = vec![
+        (old.to_string(), "retention".to_owned()),
+        (gone.to_string(), "deleted".to_owned()),
+    ];
+    want.sort();
+    assert_eq!(
+        got, want,
+        "young stays out, the other conversation's file stays out"
+    );
+    let _ = young;
+}
+
 #[tokio::test]
 async fn the_instance_maximum_tightens_the_effective_window() {
     let f = fixture_with(|c| c.attachments.days_max = Some(30)).await;
@@ -557,6 +646,104 @@ async fn quota_notices_are_raised_once_per_crossing() {
     .await;
     assert_eq!(sweep_now(&f).await.notices, 1);
     assert_eq!(notices(&f).await, vec!["warning", "full", "clear"]);
+}
+
+/// FU-P2-015b (`02` `ATTACH_QUOTA_NOTICE`, D-81 (g)): the quota e-mails go to the org's owners
+/// and admins (not to plain members), once per threshold crossing, and carry no attachment data.
+#[tokio::test]
+async fn quota_notices_are_mailed_to_owners_and_admins_once_per_crossing() {
+    let f = fixture().await;
+    let boss = f.h.user("boss@x.io", false).await;
+    f.h.member(f.org, boss, "owner", "active").await;
+    let conv = f.conv("group", None).await;
+    assert_eq!(set_quota(&f, json!(1)).await.0, 200);
+    let mail = sweep::QuotaMail {
+        mailer: f.h.mail.clone(),
+        external_url: "https://aurora.example".to_owned(),
+    };
+    let run = || async {
+        sweep::run_with(f.h.pool(), &f.h.state.config.attachments, Some(&mail))
+            .await
+            .unwrap()
+    };
+    let recipients = |from: usize| {
+        let mut v: Vec<String> = f.h.mail.sent()[from..]
+            .iter()
+            .map(|m| m.to.clone())
+            .collect();
+        v.sort();
+        v
+    };
+    let both = vec!["admin@x.io".to_owned(), "boss@x.io".to_owned()];
+
+    let (a, _) = bound(&f, conv, 700 * KIB, 0).await; // 68 %
+    sqlx::query("UPDATE attachments SET filename = 'secret-plan-q3.pdf' WHERE id = $1")
+        .bind(a)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    run().await;
+    assert!(f.h.mail.sent().is_empty());
+
+    // 80 %: one mail to each owner and admin, none to the plain members.
+    let (b, _) = bound(&f, conv, 200 * KIB, 0).await; // 88 %
+    sqlx::query("UPDATE attachments SET filename = 'customer-list.csv' WHERE id = $1")
+        .bind(b)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    run().await;
+    assert_eq!(recipients(0), both);
+    let first = f.h.mail.sent()[0].clone();
+    assert!(first.subject.contains("80%"), "{}", first.subject);
+    run().await;
+    assert_eq!(f.h.mail.sent().len(), 2, "a repeat must not mail again");
+
+    // 100 %: one more each.
+    let (c, _) = bound(&f, conv, 124 * KIB, 0).await;
+    run().await;
+    assert_eq!(recipients(2), both);
+    assert!(f.h.mail.sent()[2].subject.contains("full"));
+    run().await;
+    assert_eq!(f.h.mail.sent().len(), 4);
+
+    // Dropping to 88 % is not a new 80 % crossing and mails nobody.
+    sqlx::query("DELETE FROM attachments WHERE id = $1")
+        .bind(c)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    run().await;
+    assert_eq!(f.h.mail.sent().len(), 4);
+
+    // Below 80 % and back above it notifies again.
+    sqlx::query("DELETE FROM attachments WHERE id = $1")
+        .bind(b)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    run().await;
+    assert_eq!(f.h.mail.sent().len(), 4);
+    bound(&f, conv, 200 * KIB, 0).await;
+    run().await;
+    assert_eq!(recipients(4), both);
+    assert!(f.h.mail.sent()[4].subject.contains("80%"));
+
+    // The mails say org, usage, quota and a link; never a file name or content.
+    for m in f.h.mail.sent() {
+        assert!(m.body.contains("MiB of 1 MiB"), "{}", m.body);
+        assert!(
+            m.link.starts_with("https://aurora.example/o/"),
+            "{}",
+            m.link
+        );
+        for banned in ["secret-plan", "customer-list", "f.bin", ".pdf", ".csv"] {
+            assert!(
+                !m.subject.contains(banned) && !m.body.contains(banned),
+                "{banned}"
+            );
+        }
+    }
 }
 
 #[tokio::test]

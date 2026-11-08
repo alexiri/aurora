@@ -793,6 +793,14 @@ Rule: `04 §Freeze`, `05 §Conventions`, `06 §Credential authentication`, `10 �
 - C-193 **Fallback constants** in `boot::profile` are 1000 m / 2048 MiB / 512 pids / 10 GiB (they were 2000 / 4096 / 1024 / 10).
 - C-194 **Capacity log**: when the Kubernetes backend fails a start because the capacity wait expired, the runner logs (`warn`) the last blocking reason (scheduler or quota message). `sandbox.status` is unchanged.
 
+### P2-FU-1 phase-2 spec gaps (C-195..C-199, D-96)
+
+- C-195 **`Me.client_address`** (`GET` and `PATCH /v1/me`; `string | null`, no new route): the caller's own client address **as this API resolves it** (`http/client_ip.rs`): the TCP peer, or the rightmost untrusted `X-Forwarded-For` hop when the peer is in `server.trusted_proxies`. An untrusted peer's `X-Forwarded-For` is ignored. `null` when the API has no peer address. It reveals nothing beyond the caller's own address. It is a hint for the agent Connect tab's source-list editor: the gateway may see another address (NAT, load balancer, PROXY protocol).
+- C-196 **`EventsPage.purged_attachments`** (`GET /v1/conversations/{id}/events`): `[{ id, reason: "retention" | "deleted" }]`, the attachments of **that conversation** referenced by the page's events (`attachment` events and `turn.queued.attachments`) whose bytes are gone (`attachments.purged_at`). Empty when none. The dashboard renders an "Expired by retention" (`deleted`: "Removed") chip instead of a link; content `GET` still answers 410 `attachment_purged` (C-170). The live stream is unchanged: a purge happens days after the event, so the next history load carries it.
+- C-197 **Attachment quota notices by e-mail** (FU-P2-015b, `02` `ATTACH_QUOTA_NOTICE`): through the RFE-011a mailer (`approvals.email_notifications`), to the org's **owners and admins** (active members, not disabled): one mail when usage rises from below 80 % to 80 % ("80% full") and one when it reaches 100 % ("full"). A drop from 100 % to 80..99 % mails nobody; a drop below 80 % and a new crossing mails again. De-duplication is the `attachment.quota_notice` audit row (C-176). The mail has the org name, used and quota in MiB and a link to `/o/{org}`; never an attachment name or content.
+- C-198 **`presence.provision`** payload is `{ agent: { handle, name, avatar_url } }` with `avatar_url` the absolute public avatar URL (as `presence.set_icon` and the config feed) or `null` (`13 §4.2`).
+- C-199 **App icon variants** (no change to the route): `GET /v1/apps/{app}/icon[?variant=light|dark]` (dark = `assets/icon-dark.png`, 404 when absent); `AppSummary` / `AppDetail.has_dark_icon` says whether it exists. The dashboard's `AppIcon` uses it in the dark theme and falls back to a monogram tile.
+
 ### W9 hook-host JSON encoding (C-18, C-19)
 
 - C-18 Internal snapshot route returns the exact canonical bytes so consumers verify `sha256(body) == x-snapshot-hash` without re-serialization.

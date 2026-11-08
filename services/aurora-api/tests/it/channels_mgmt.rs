@@ -850,6 +850,39 @@ async fn presence_no_shared_bot_and_unsupported_mode() {
     assert_eq!(w.attach(&w.owner, agent, integ, "shared").await.0, 400);
 }
 
+/// FUP-M7 (`13 §4.2`): `presence.provision` carries `agent.avatar_url`, the absolute public URL
+/// that `presence.set_icon` and the config feed use, and the connector protocol accepts it.
+#[tokio::test]
+async fn presence_provision_carries_the_agent_avatar_url() {
+    let w = W::new().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let agent = w.agent("a1").await;
+    sqlx::query(
+        "UPDATE agents SET avatar_blob_key = 'b', avatar_public_key = 'pubkey123' WHERE id = $1",
+    )
+    .bind(agent)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let (s, v) = w.attach(&w.owner, agent, integ, "dedicated").await;
+    assert_eq!(s, 201, "{v}");
+    let ops = w
+        .serve(&w.fake, 1, |_| {
+            json!({"outcome": "ok", "data": {
+                "platform_user_ref": "BOT-1", "handle": "h", "credentials": {"t": "x"}}})
+        })
+        .await;
+    let payload = &ops[0]["payload"];
+    let url = payload["agent"]["avatar_url"].as_str().unwrap();
+    assert!(
+        url.starts_with("http") && url.ends_with("/v1/public/avatars/pubkey123"),
+        "{url}"
+    );
+    let op: aurora_protocol::connector::PresenceProvisionOp =
+        serde_json::from_value(payload.clone()).unwrap();
+    assert_eq!(op.agent.avatar_url.as_deref(), Some(url));
+}
+
 #[tokio::test]
 async fn presence_dedicated_provision_and_detach() {
     let w = W::new().await;
@@ -864,6 +897,8 @@ async fn presence_dedicated_provision_and_detach() {
         .serve(&w.fake, 1, |op| {
             assert_eq!(op["kind"], "presence.provision");
             assert_eq!(op["payload"]["agent"]["handle"], "a1");
+            // No avatar: the field is present and null (`13 §4.2`).
+            assert_eq!(op["payload"]["agent"]["avatar_url"], Value::Null);
             json!({"outcome": "ok", "data": {
                 "platform_user_ref": "BOT-9", "handle": "a1-bot", "credentials": {"bot_token": SECRET}}})
         })

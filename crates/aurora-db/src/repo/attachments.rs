@@ -269,6 +269,26 @@ pub struct Purged {
     pub blob_key: String,
 }
 
+/// Which of `ids` (attachments of `conversation`) have been purged, with the purge reason
+/// (`retention` | `deleted`): the transcript's "expired" chips (FU-P2-015a).
+pub async fn purged_among(
+    exec: impl PgExecutor<'_>,
+    conversation: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<(Uuid, String)>, DbError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as(
+        "SELECT id, COALESCE(purge_reason, 'retention') FROM attachments \
+         WHERE conversation_id = $1 AND id = ANY($2) AND purged_at IS NOT NULL ORDER BY id",
+    )
+    .bind(conversation)
+    .bind(ids)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Mark one attachment purged (`reason`: `retention` | `deleted`) and clear its `blob_key`, so a
 /// blob that survives a failed delete is unreferenced and left to the orphan sweep. `None` when
 /// it holds no bytes (already purged, or `failed`).

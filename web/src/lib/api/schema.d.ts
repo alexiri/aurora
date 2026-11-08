@@ -4536,6 +4536,12 @@ export interface components {
             items: components["schemas"]["TranscriptEvent"][];
             /** Format: int64 */
             last_seq: number;
+            /**
+             * @description (P2-FU-1, C-196) The attachments referenced by `items` (`attachment` events and the
+             *     `attachments` of `turn.queued`) whose bytes are gone, so the transcript renders "expired"
+             *     instead of a download link. Empty when none.
+             */
+            purged_attachments: components["schemas"]["PurgedAttachment"][];
         };
         Features: {
             channels: boolean;
@@ -4841,6 +4847,13 @@ export interface components {
         Me: {
             /** @description (phase 2, RFE-011a) E-mail me approvals nobody is watching (default `true`). */
             approval_email: boolean;
+            /**
+             * @description (P2-FU-1, C-195) The caller's own client address as this API resolves it: the socket peer,
+             *     or the rightmost untrusted `X-Forwarded-For` hop when the peer is in
+             *     `server.trusted_proxies`. A hint for allow-lists; the gateway may see another address
+             *     (NAT, load balancer, PROXY protocol). `null` when unknown. Set on `GET`/`PATCH /v1/me`.
+             */
+            client_address?: string | null;
             /** Format: uuid */
             default_org_id?: string | null;
             memberships: components["schemas"]["MeMembership"][];
@@ -6341,6 +6354,12 @@ export interface components {
         PublishRequest: {
             /** Format: int64 */
             revision: number;
+        };
+        PurgedAttachment: {
+            /** Format: uuid */
+            id: string;
+            /** @description `retention` (expired by the org's window) | `deleted` (removed by a person). */
+            reason: string;
         };
         PutAccessRequest: {
             role: components["schemas"]["WorkspaceRole"];

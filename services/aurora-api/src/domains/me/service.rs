@@ -45,6 +45,7 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
     Ok(Me {
         default_org_id: user.default_org_id,
         approval_email,
+        client_address: None,
         user: user.into(),
         memberships,
     })

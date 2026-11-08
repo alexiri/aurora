@@ -375,7 +375,15 @@ pub async fn attach(
             .await
             .map_err(map_insert)?;
             if parsed.is_none() {
-                enqueue_provision(&mut tx, &integ.connector_id, integ.id, id, &agent).await?;
+                enqueue_provision(
+                    &mut tx,
+                    &s.config.external_url,
+                    &integ.connector_id,
+                    integ.id,
+                    id,
+                    &agent,
+                )
+                .await?;
             }
             memory::bump_agent_sync(&mut tx, agent_id).await?;
             tx.commit().await.map_err(DbError::from)?;
@@ -414,13 +422,20 @@ fn map_insert(e: DbError) -> ApiError {
     )
 }
 
+/// `presence.provision` carries the agent's avatar as the absolute public URL, the same shape as
+/// `presence.set_icon` and the config feed (`13 §4.2`); `null` when the agent has none.
 async fn enqueue_provision(
     tx: &mut PgConnection,
+    external_url: &str,
     connector_id: &str,
     integration: Uuid,
     presence: Uuid,
     agent: &agents::AgentRow,
 ) -> Result<(), ApiError> {
+    let avatar_url = agent
+        .avatar_public_key
+        .as_deref()
+        .map(|k| crate::domains::agents::avatar::public_url(external_url, k));
     ops::enqueue(
         tx,
         NewOp {
@@ -428,7 +443,9 @@ async fn enqueue_provision(
             connector_id: Some(connector_id.to_owned()),
             integration_id: Some(integration),
             presence_id: Some(presence),
-            payload: json!({"agent": {"handle": agent.handle, "name": agent.name}}),
+            payload: json!({"agent": {
+                "handle": agent.handle, "name": agent.name, "avatar_url": avatar_url,
+            }}),
             dedupe_key: None,
         },
     )
@@ -616,7 +633,15 @@ pub async fn reattach(
         if defs.is_empty() {
             let mut tx = s.pool.begin().await.map_err(DbError::from)?;
             repo::set_status(&mut *tx, id, "pending_setup", None).await?;
-            enqueue_provision(&mut tx, &integ.connector_id, integ.id, id, &agent).await?;
+            enqueue_provision(
+                &mut tx,
+                &s.config.external_url,
+                &integ.connector_id,
+                integ.id,
+                id,
+                &agent,
+            )
+            .await?;
             tx.commit().await.map_err(DbError::from)?;
         } else {
             let parsed = fields::parse(&defs, &fields_in.unwrap_or_default())?;

@@ -322,7 +322,8 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   attachment quota with the storage breakdown (by workspace and direction), a
   usage bar with the 80 %/100 % notices, validation against the instance maximum.
   Upload errors show "Your organization's attachment storage is full" with the
-  link to the usage page; expired attachments render as "expired by retention".
+  link to the usage page; expired attachments render as an "Expired by retention"
+  chip (a deleted one as "Removed"), never as a link (C-196).
 - **API keys**, **Audit log** (phase 2, RFE-008: a "security-critical only" filter; critical rows are badged), **Settings** (name, slug, members can create
   workspaces, limits), **Danger zone** (phase 2, RFE-006: **Freeze organization**
   for owners).
@@ -375,7 +376,9 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
     tab shows the effective BYO posture (phase 3, RFE-013: the token's **expiry** and **last used** time, a "Stale" / "Expiring" badge, and a Regenerate call to action; agent lists carry the same badges for owners) and, when set, its source ('Disabled by
     organization'); regenerate is hidden for non-owners under `owners_only`; a
     **Source restriction** card edits the agent's CIDR list (owners; shows the
-    inherited default list and the caller's current address as a hint; refuses
+    inherited default list and the caller's current address as a hint (`/v1/me`
+    `client_address`, C-195, with the note that the gateway may see another
+    address: NAT, load balancer, PROXY protocol); refuses
     entries outside it) and a **Require context credentials** switch (explains
     that every credentialed request will be attributed to a labelled run and that
     `aurora run` mints one). The agent create dialog offers BYO only as the

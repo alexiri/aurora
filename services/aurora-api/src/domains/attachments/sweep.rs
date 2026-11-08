@@ -26,7 +26,7 @@ pub struct SweepReport {
     pub notices: usize,
 }
 
-/// (FU-P2-015b, RFE-011a) The e-mail channel for quota notices: the owners of an org that
+/// (FU-P2-015b, RFE-011a) The e-mail channel for quota notices: the owners and admins of an org that
 /// crosses 80 % / 100 % are mailed (platform voice, numbers and a dashboard link only) in
 /// addition to the audit row. `None` = e-mail off (`approvals.email_notifications = false`).
 #[derive(Clone)]
@@ -215,8 +215,16 @@ async fn notices(
         audit::insert_tx(&mut tx, &ev).await?;
         tx.commit().await.map_err(db)?;
         r.notices += 1;
+        // One mail per threshold crossing: `warning` only when the org comes up from below 80 %
+        // (a drop from `full` to `warning` is not a new 80 % crossing), `full` on every arrival
+        // at 100 %.
+        let crossed = match level {
+            "warning" => last == "clear",
+            "full" => true,
+            _ => false,
+        };
         if let Some(m) = mail
-            && level != "clear"
+            && crossed
         {
             mail_quota_notice(pool, m, org, level, used, quota).await;
         }

@@ -14,9 +14,13 @@ export interface TranscriptState {
   deltas: Record<string, Delta>;
   /** Latest activity line per turn. */
   activity: Record<string, string>;
+  /** Attachments whose bytes are gone (C-196), by id: rendered as an "expired" chip, never a link. Optional so older fixtures stay valid. */
+  purged?: Record<string, PurgeReason>;
 }
 
-export const emptyTranscript: TranscriptState = { events: [], lastSeq: 0, deltas: {}, activity: {} };
+export type PurgeReason = "retention" | "deleted";
+
+export const emptyTranscript: TranscriptState = { events: [], lastSeq: 0, deltas: {}, activity: {}, purged: {} };
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
@@ -59,7 +63,7 @@ export function applyEvent(state: TranscriptState, ev: TranscriptEvent): Transcr
     delete a[turnId];
     activity = a;
   }
-  return { events, lastSeq: Math.max(state.lastSeq, ev.seq), deltas, activity };
+  return { ...state, events, lastSeq: Math.max(state.lastSeq, ev.seq), deltas, activity };
 }
 
 export function applyEvents(state: TranscriptState, evs: TranscriptEvent[]): TranscriptState {
@@ -68,7 +72,7 @@ export function applyEvents(state: TranscriptState, evs: TranscriptEvent[]): Tra
 
 /** Resume: fetch every durable event after `afterSeq`, paging until exhausted. */
 export async function loadHistory(
-  fetchPage: (afterSeq: number) => Promise<{ items: TranscriptEvent[]; last_seq: number }>,
+  fetchPage: (afterSeq: number) => Promise<{ items: TranscriptEvent[]; last_seq: number; purged_attachments?: { id: string; reason: string }[] }>,
   state: TranscriptState = emptyTranscript,
 ): Promise<TranscriptState> {
   let s = state;
@@ -77,6 +81,11 @@ export async function loadHistory(
     if (page.items.length === 0) break;
     const before = s.lastSeq;
     s = applyEvents(s, page.items);
+    if (page.purged_attachments?.length) {
+      const purged = { ...s.purged };
+      for (const p of page.purged_attachments) purged[p.id] = p.reason === "deleted" ? "deleted" : "retention";
+      s = { ...s, purged };
+    }
     if (s.lastSeq <= before || s.lastSeq >= page.last_seq) break;
   }
   return s;
