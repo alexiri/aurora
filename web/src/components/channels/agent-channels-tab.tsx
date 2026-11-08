@@ -7,6 +7,8 @@ import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { inputClass } from "@/components/ui/field";
+import { Notice } from "@/components/ui/notice";
+import { ItemList, Section } from "@/components/ui/section";
 import { defaultValues, validateFields, visibleFields, type FieldValues } from "@/lib/api/apps";
 import {
   useAttachPresence,
@@ -39,7 +41,7 @@ function AttachForm({ agentId }: { agentId: string }) {
   if (options.isError) return <ErrorState error={options.error} onRetry={() => options.refetch()} />;
   const usable = options.data.items.filter((o) => !o.attached);
   if (usable.length === 0) {
-    return <p className="text-sm text-neutral-500">No active integration is left to attach to.</p>;
+    return <p className="text-sm text-muted">No active integration is left to attach to.</p>;
   }
   const integration = usable.find((o) => o.integration_id === integrationId);
   const modes = integration?.modes ?? [];
@@ -67,10 +69,10 @@ function AttachForm({ agentId }: { agentId: string }) {
   }
 
   return (
-    <form className="space-y-3 rounded-md border border-neutral-200 p-3" onSubmit={submit} aria-busy={attach.isPending}>
-      <h3 className="font-medium">Attach to an integration</h3>
-      <div>
-        <label htmlFor="att-int" className="block text-sm font-medium">
+    <form className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5" onSubmit={submit} aria-busy={attach.isPending}>
+      <h3 className="font-display text-base font-semibold text-ink">Attach to an integration</h3>
+      <div className="space-y-1.5">
+        <label htmlFor="att-int" className="block text-sm font-medium text-ink">
           Integration
         </label>
         <select
@@ -93,10 +95,10 @@ function AttachForm({ agentId }: { agentId: string }) {
       </div>
       {integration ? (
         modes.length === 0 ? (
-          <p className="text-sm text-neutral-500">This integration offers no way to attach an agent.</p>
+          <p className="text-sm text-muted">This integration offers no way to attach an agent.</p>
         ) : (
-          <div>
-            <label htmlFor="att-mode" className="block text-sm font-medium">
+          <div className="space-y-1.5">
+            <label htmlFor="att-mode" className="block text-sm font-medium text-ink">
               Identity
             </label>
             <select
@@ -139,16 +141,20 @@ function PresenceRow({ agentId, p, connector }: { agentId: string; p: Presence; 
   const [values, setValues] = useState<FieldValues>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   return (
-    <li className="space-y-2 rounded-md border border-neutral-200 p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">{connector?.display_name ?? p.connector_id}</span>
-        <span className="text-sm text-neutral-600">{p.tenant_label}</span>
-        <span className="text-xs text-neutral-500">{p.mode}</span>
-        {p.handle ? <code className="text-xs">{p.handle}</code> : null}
+    <li className="space-y-3 p-3 sm:px-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="font-medium text-ink">{connector?.display_name ?? p.connector_id}</span>
+        <span className="text-sm text-ink-2">{p.tenant_label}</span>
+        <span className="text-xs text-muted">{p.mode}</span>
+        {p.handle ? <code className="font-mono text-xs text-ink-2">{p.handle}</code> : null}
         <StatusChip status={p.status} />
       </div>
-      {p.status_reason ? <p className="text-sm text-amber-800">{p.status_reason}</p> : null}
-      <div className="flex gap-2">
+      {p.status_reason ? (
+        <Notice tone="pending" role="status">
+          {p.status_reason}
+        </Notice>
+      ) : null}
+      <div className="flex flex-wrap gap-2">
         <Button
           variant="outline"
           size="sm"
@@ -163,7 +169,7 @@ function PresenceRow({ agentId, p, connector }: { agentId: string; p: Presence; 
       </div>
       {open && fields.length ? (
         <form
-          className="space-y-2"
+          className="space-y-4 rounded-card border border-line bg-subtle p-3 sm:p-4"
           onSubmit={(e) => {
             e.preventDefault();
             const errs = validateFields(fields, values);
@@ -197,19 +203,18 @@ function Presences({ agentId }: { agentId: string }) {
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const byId = new Map((connectors.data?.items ?? []).map((c) => [c.id, c]));
   return (
-    <section aria-label="Presences" className="space-y-3">
-      <h2 className="font-medium">Presences</h2>
+    <Section id="presences" title="Presences" description="Where this agent is present on chat platforms.">
       {q.data.items.length === 0 ? (
         <EmptyState title="Not attached anywhere">Attach this agent to a chat platform below.</EmptyState>
       ) : (
-        <ul className="space-y-2">
+        <ItemList aria-label="Presence list">
           {q.data.items.map((p) => (
             <PresenceRow key={p.id} agentId={agentId} p={p} connector={byId.get(p.connector_id)} />
           ))}
-        </ul>
+        </ItemList>
       )}
       <AttachForm agentId={agentId} />
-    </section>
+    </Section>
   );
 }
 
@@ -222,16 +227,15 @@ function Bindings({ agentId }: { agentId: string }) {
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   return (
-    <section aria-label="Space bindings" className="space-y-2">
-      <h2 className="font-medium">Space bindings</h2>
+    <Section id="space-bindings" title="Space bindings" description="Chat spaces this agent listens in.">
       {q.data.items.length === 0 ? (
-        <p className="text-sm text-neutral-500">No spaces are bound to this agent.</p>
+        <p className="text-sm text-muted">No spaces are bound to this agent.</p>
       ) : (
-        <ul className="divide-y divide-neutral-200">
+        <ItemList aria-label="Space binding list">
           {q.data.items.map((b) => (
-            <li key={b.id} className="flex flex-wrap items-center gap-3 py-2 text-sm">
-              <span className="font-medium">{b.space_label}</span>
-              <label className="flex items-center gap-1">
+            <li key={b.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 p-3 text-sm sm:px-4">
+              <span className="font-medium text-ink">{b.space_label}</span>
+              <label className="flex items-center gap-2 text-ink-2">
                 Listen
                 <select
                   aria-label={`Listen mode for ${b.space_label}`}
@@ -247,9 +251,10 @@ function Bindings({ agentId }: { agentId: string }) {
                   ))}
                 </select>
               </label>
-              <label className="flex items-center gap-1">
+              <label className="flex items-center gap-2 text-ink-2">
                 <input
                   type="checkbox"
+                  className="size-4 shrink-0 accent-accent"
                   checked={b.followups_need_mention}
                   disabled={patch.isPending}
                   onChange={(e) => patch.mutate({ id: b.id, body: { followups_need_mention: e.target.checked } })}
@@ -259,7 +264,7 @@ function Bindings({ agentId }: { agentId: string }) {
               <Button
                 variant="outline"
                 size="sm"
-                className="ml-auto"
+                className="sm:ml-auto"
                 aria-label={`Remove binding ${b.space_label}`}
                 disabled={del.isPending}
                 onClick={() => del.mutate(b.id)}
@@ -268,10 +273,10 @@ function Bindings({ agentId }: { agentId: string }) {
               </Button>
             </li>
           ))}
-        </ul>
+        </ItemList>
       )}
       <MutationError error={patch.error ?? del.error} />
-    </section>
+    </Section>
   );
 }
 
@@ -283,20 +288,20 @@ function Reach({ agentId, canOwn }: { agentId: string; canOwn: boolean }) {
   const pending = q.data.items.filter((g) => g.state === "pending");
   const history = q.data.items.filter((g) => g.state !== "pending");
   return (
-    <section aria-label="Reach requests" className="space-y-2">
-      <h2 className="font-medium">Reach requests</h2>
+    <Section id="reach-requests" title="Reach requests" description="People who asked to reach this agent from a chat platform.">
       {pending.length === 0 ? (
-        <p className="text-sm text-neutral-500">No pending requests.</p>
+        <p className="text-sm text-muted">No pending requests.</p>
       ) : (
-        <ul className="space-y-2">
+        <ItemList aria-label="Pending reach requests">
           {pending.map((g) => (
-            <li key={g.id} className="flex flex-wrap items-center gap-3 rounded-md border border-neutral-200 p-3 text-sm">
-              <span className="font-medium">{g.subject_label}</span>
-              <span className="text-xs text-neutral-500">{g.subject_kind}</span>
-              <span className="text-xs text-neutral-500">Requested {fmtDate(g.created_at)}</span>
+            <li key={g.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 p-3 text-sm sm:px-4">
+              <span className="font-medium text-ink">{g.subject_label}</span>
+              <span className="text-xs text-muted">{g.subject_kind}</span>
+              <span className="text-xs text-muted">Requested {fmtDate(g.created_at)}</span>
               {canOwn ? (
-                <span className="ml-auto flex gap-2">
+                <span className="flex gap-2 sm:ml-auto">
                   <Button
+                    variant="approve"
                     size="sm"
                     aria-label={`Approve ${g.subject_label}`}
                     disabled={decide.isPending}
@@ -317,33 +322,33 @@ function Reach({ agentId, canOwn }: { agentId: string; canOwn: boolean }) {
               ) : null}
             </li>
           ))}
-        </ul>
+        </ItemList>
       )}
       <MutationError error={decide.error} />
       {history.length ? (
-        <details>
-          <summary className="cursor-pointer text-sm">History ({history.length})</summary>
-          <ul aria-label="Reach history" className="divide-y divide-neutral-200 text-sm">
+        <details className="space-y-2">
+          <summary className="cursor-pointer text-sm font-medium text-ink">History ({history.length})</summary>
+          <ItemList aria-label="Reach history" className="mt-2 text-sm">
             {history.map((g) => (
-              <li key={g.id} className="flex flex-wrap items-center gap-3 py-1.5">
-                <span>{g.subject_label}</span>
+              <li key={g.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 p-3 sm:px-4">
+                <span className="text-ink">{g.subject_label}</span>
                 <StatusChip status={g.state} />
-                <span className="text-xs text-neutral-500">
+                <span className="text-xs text-muted">
                   {g.decided_by ? `${g.decided_by.display_name} · ` : ""}
                   {fmtDate(g.decided_at ?? g.created_at)}
                 </span>
               </li>
             ))}
-          </ul>
+          </ItemList>
         </details>
       ) : null}
-    </section>
+    </Section>
   );
 }
 
 export function AgentChannelsTab({ agentId, canOwn }: { agentId: string; orgId?: string; canOwn: boolean }) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <Presences agentId={agentId} />
       {canOwn ? <Bindings agentId={agentId} /> : null}
       <Reach agentId={agentId} canOwn={canOwn} />

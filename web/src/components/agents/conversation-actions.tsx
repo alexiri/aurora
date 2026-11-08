@@ -3,9 +3,12 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
+import { CheckboxField } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
+import { cn } from "@/lib/utils";
 import { ApiError } from "@/lib/api/client";
 import { chatApi, exportUrl } from "@/lib/api/conversations";
 
@@ -81,50 +84,46 @@ export function ConversationActions({
         onClick={() => void run(() => (archived ? chatApi.unarchive(convId) : chatApi.archive(convId)), archived ? undefined : onGone)}>
         {archived ? "Unarchive" : "Archive"}
       </Button>
-      <a className="underline" href={exportUrl(convId, "json")} download>
+      <a className={cn(buttonVariants({ variant: "outline", size: "sm" }))} href={exportUrl(convId, "json")} download>
         Export JSON
       </a>
-      <a className="underline" href={exportUrl(convId, "zip")} download>
+      <a className={cn(buttonVariants({ variant: "outline", size: "sm" }))} href={exportUrl(convId, "zip")} download>
         Export with files (zip)
       </a>
-      <Dialog
+      <Button size="sm" variant="danger" onClick={() => setOpen(true)}>
+        Delete
+      </Button>
+      <FormDialog
         open={open}
         onOpenChange={(o) => {
           setOpen(o);
           setTyped("");
           setErr(null);
-        }}>
-        <DialogTrigger asChild>
-          <Button size="sm" variant="outline">
-            Delete
-          </Button>
-        </DialogTrigger>
-        <DialogContent
-          title="Delete this conversation?"
-          description="This permanently deletes the messages, attachments and the agent's stored session for this conversation. It cannot be undone.">
-          <form onSubmit={confirmDelete} className="space-y-3">
-            <p className="text-sm text-ink-2">
-              Messages already posted to a chat platform, memories or skills the agent derived from this conversation, and exports you already downloaded are
-              not deleted.
-            </p>
-            <Field id="delete-confirm" label={`Type "${CONFIRM_WORD}" to confirm`}>
-              <input id="delete-confirm" className={inputClass} autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
-            </Field>
-            {err ? (
-              <p role="alert" className="text-sm text-danger-ink">
-                {err}
-              </p>
-            ) : null}
-            <Button type="submit" variant="danger" disabled={busy || typed.trim().toLowerCase() !== CONFIRM_WORD}>
-              {busy ? "Deleting…" : "Delete conversation"}
-            </Button>
-          </form>
-        </DialogContent>
-      </Dialog>
-      {err && !open ? (
-        <p role="alert" className="w-full text-danger-ink">
-          {err}
+        }}
+        title="Delete this conversation?"
+        description="This permanently deletes the messages, attachments and the agent's stored session for this conversation. It cannot be undone."
+        submitLabel={busy ? "Deleting…" : "Delete conversation"}
+        danger
+        busy={busy}
+        submitDisabled={typed.trim().toLowerCase() !== CONFIRM_WORD}
+        onSubmit={confirmDelete}>
+        <p className="text-sm text-ink-2">
+          Messages already posted to a chat platform, memories or skills the agent derived from this conversation, and exports you already downloaded are
+          not deleted.
         </p>
+        <Field id="delete-confirm" label={`Type "${CONFIRM_WORD}" to confirm`}>
+          <input id="delete-confirm" className={inputClass} autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
+        </Field>
+        {err ? (
+          <Notice tone="danger" role="alert">
+            {err}
+          </Notice>
+        ) : null}
+      </FormDialog>
+      {err && !open ? (
+        <Notice tone="danger" role="alert" className="w-full">
+          {err}
+        </Notice>
       ) : null}
     </div>
   );
@@ -156,39 +155,44 @@ export function RedactButton({ convId, seq }: { convId: string; seq: number }) {
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        setOpen(o);
-        setErr(null);
-      }}>
-      <DialogTrigger asChild>
-        <button type="button" className="text-xs text-muted underline" aria-label={`Redact message ${seq}`}>
-          Redact
-        </button>
-      </DialogTrigger>
-      <DialogContent title="Redact this message?" description="The content is replaced for everyone and cannot be restored.">
-        <form onSubmit={(e) => void submit(e)} className="space-y-3">
-          <p role="note" className="rounded-control border border-pending-line bg-pending-panel p-2 text-sm text-pending-ink">
-            This is irreversible. The agent may still remember what it read; tick the box below to start it with a fresh session.
-          </p>
-          <Field id={`redact-reason-${seq}`} label="Reason (optional)">
-            <input id={`redact-reason-${seq}`} className={inputClass} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
-          </Field>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={reset} onChange={(e) => setReset(e.target.checked)} />
-            Also reset the agent&apos;s session (it forgets this conversation)
-          </label>
-          {err ? (
-            <p role="alert" className="text-sm text-danger-ink">
-              {err}
-            </p>
-          ) : null}
-          <Button type="submit" variant="danger" disabled={busy}>
-            {busy ? "Redacting…" : "Redact"}
-          </Button>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <>
+      <button
+        type="button"
+        className="inline-flex min-h-6 items-center text-xs text-muted underline-offset-2 hover:text-ink hover:underline"
+        aria-label={`Redact message ${seq}`}
+        onClick={() => setOpen(true)}>
+        Redact
+      </button>
+      <FormDialog
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          setErr(null);
+        }}
+        title="Redact this message?"
+        description="The content is replaced for everyone and cannot be restored."
+        submitLabel={busy ? "Redacting…" : "Redact"}
+        danger
+        busy={busy}
+        onSubmit={(e) => void submit(e)}>
+        <Notice tone="pending" role="note">
+          This is irreversible. The agent may still remember what it read; tick the box below to start it with a fresh session.
+        </Notice>
+        <Field id={`redact-reason-${seq}`} label="Reason (optional)">
+          <input id={`redact-reason-${seq}`} className={inputClass} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
+        </Field>
+        <CheckboxField
+          id={`redact-reset-${seq}`}
+          label="Also reset the agent's session (it forgets this conversation)"
+          checked={reset}
+          onChange={setReset}
+        />
+        {err ? (
+          <Notice tone="danger" role="alert">
+            {err}
+          </Notice>
+        ) : null}
+      </FormDialog>
+    </>
   );
 }

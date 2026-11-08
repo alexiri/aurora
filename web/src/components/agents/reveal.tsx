@@ -25,11 +25,11 @@ export function AgentRevealDialog({
       description={`Agent "${revealed?.agentName ?? ""}" token. You won't see it again, so store it somewhere safe now.`}
     >
       {revealed?.config ? (
-        <div className="space-y-1">
-          <p className="text-sm font-medium">Container config</p>
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-ink">Container config</p>
           <pre
             data-testid="revealed-config"
-            className="max-h-48 overflow-auto rounded-control bg-subtle p-3 text-xs text-ink"
+            className="max-h-48 overflow-auto rounded-control border border-line bg-subtle p-3 font-mono text-xs text-ink"
           >
             {JSON.stringify(
               {

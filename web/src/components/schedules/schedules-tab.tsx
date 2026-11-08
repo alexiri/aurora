@@ -4,8 +4,13 @@ import { useState, type FormEvent } from "react";
 
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DataTable, Td, Th } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
+import { CheckboxField, FormActions } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
+import { ItemList, Section } from "@/components/ui/section";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import {
@@ -23,25 +28,24 @@ function Runs({ agentId, id }: { agentId: string; id: string }) {
   const q = useScheduleRuns(agentId, id, true);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
-  if (q.data.items.length === 0) return <p className="text-sm text-neutral-600">No runs yet.</p>;
+  if (q.data.items.length === 0) return <p className="text-sm text-muted">No runs yet.</p>;
   return (
-    <table className="w-full text-left text-sm">
-      <caption className="sr-only">Runs</caption>
-      <thead className="text-neutral-500">
+    <DataTable caption="Runs">
+      <thead>
         <tr>
-          <th className="py-1 pr-4 font-medium">Fired</th>
-          <th className="py-1 font-medium">Outcome</th>
+          <Th>Fired</Th>
+          <Th>Outcome</Th>
         </tr>
       </thead>
       <tbody>
         {q.data.items.map((r) => (
-          <tr key={r.id} className="border-t border-neutral-200">
-            <td className="py-1 pr-4">{fmtDate(r.fired_at)}</td>
-            <td className="py-1">{r.outcome}</td>
+          <tr key={r.id}>
+            <Td className="whitespace-nowrap">{fmtDate(r.fired_at)}</Td>
+            <Td>{r.outcome}</Td>
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -96,14 +100,14 @@ export function ScheduleForm({
   }
 
   return (
-    <form onSubmit={submit} aria-label={initial ? "Edit schedule" : "New schedule"} className="space-y-3 rounded-md border border-neutral-200 p-4">
+    <form onSubmit={submit} aria-label={initial ? "Edit schedule" : "New schedule"} className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
       <Field id="sch-name" label="Name" error={fe.name}>
         <input id="sch-name" className={inputClass} value={name} required onChange={(e) => setName(e.target.value)} />
       </Field>
       <Field id="sch-prompt" label="Prompt" error={fe.prompt}>
         <textarea id="sch-prompt" className={inputClass} rows={3} value={prompt} required onChange={(e) => setPrompt(e.target.value)} />
       </Field>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field id="sch-cron" label="Cron (5 fields)" error={fe.cron ?? localErr ?? undefined} hint="e.g. 0 9 * * 1-5">
           <input id="sch-cron" className={`${inputClass} font-mono`} value={cron} required onChange={(e) => setCron(e.target.value)} />
         </Field>
@@ -118,30 +122,22 @@ export function ScheduleForm({
         <input id="sch-gate-desc" className={inputClass} value={gateDescription} onChange={(e) => setGateDescription(e.target.value)} />
       </Field>
       {!initial && canOwn ? (
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={anchored} onChange={(e) => setAnchored(e.target.checked)} />
-          Anchor to workspace (outlives any single member)
-        </label>
+        <CheckboxField id="sch-anchored" label="Anchor to workspace (outlives any single member)" checked={anchored} onChange={setAnchored} />
       ) : null}
-      {initial ? (
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          Enabled
-        </label>
-      ) : null}
+      {initial ? <CheckboxField id="sch-enabled" label="Enabled" checked={enabled} onChange={setEnabled} /> : null}
       {mut.error && Object.keys(fe).length === 0 ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(mut.error)}
-        </p>
+        </Notice>
       ) : null}
-      <div className="flex gap-2">
+      <FormActions className="gap-2">
         <Button type="submit" disabled={pending}>
           {initial ? "Save" : "Create schedule"}
         </Button>
         <Button type="button" variant="outline" onClick={onDone}>
           Cancel
         </Button>
-      </div>
+      </FormActions>
     </form>
   );
 }
@@ -154,32 +150,41 @@ function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn }: { agentId: s
   const run = useRunScheduleNow(agentId);
   const del = useDeleteSchedule(agentId);
   const upd = useUpdateSchedule(agentId);
-  if (editing) return <ScheduleForm agentId={agentId} initial={s} defaultTimezone={defaultTimezone} onDone={() => setEditing(false)} />;
+  if (editing)
+    return (
+      <li className="bg-canvas p-3 sm:p-4">
+        <ScheduleForm agentId={agentId} initial={s} defaultTimezone={defaultTimezone} onDone={() => setEditing(false)} />
+      </li>
+    );
   const err = run.error ?? del.error ?? upd.error;
   return (
-    <li className="space-y-2 rounded-md border border-neutral-200 p-4">
-      <div className="flex flex-wrap items-baseline gap-2">
-        <h3 className="font-medium">{s.name}</h3>
-        <code className="text-xs">{s.cron}</code>
-        <span className="text-xs text-neutral-600">{s.timezone}</span>
-        <span className="ml-auto text-xs text-neutral-600">{s.enabled ? "Enabled" : `Disabled${s.disabled_reason ? ` (${s.disabled_reason})` : ""}`}</span>
+    <li className="space-y-3 p-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h3 className="font-display text-base font-semibold text-ink">{s.name}</h3>
+        <code className="font-mono text-xs text-ink-2">{s.cron}</code>
+        <span className="text-xs text-muted">{s.timezone}</span>
+        <Badge className="sm:ml-auto" tone={s.enabled ? "accent" : "neutral"}>
+          {s.enabled ? "Enabled" : `Disabled${s.disabled_reason ? ` (${s.disabled_reason})` : ""}`}
+        </Badge>
       </div>
-      <p className="whitespace-pre-wrap text-sm">{s.prompt}</p>
-      <p className="text-xs text-neutral-600">
+      <p className="whitespace-pre-wrap text-sm text-ink-2">{s.prompt}</p>
+      <p className="text-xs text-muted">
         Next: {s.next_fire_at ? fmtDate(s.next_fire_at) : "—"} · Last: {s.last_fired_at ? fmtDate(s.last_fired_at) : "never"} ·{" "}
         <OwnerLabel anchor={s.anchor} creator={s.created_by} />
       </p>
       {s.disabled_reason === "authorization" ? (
-        <p className="text-sm text-amber-800">Disabled because its owner lost access. Reassign it to a current member to bring it back.</p>
+        <Notice tone="pending" role="status">
+          Disabled because its owner lost access. Reassign it to a current member to bring it back.
+        </Notice>
       ) : null}
       {canOwn ? <AnchorSwitch name={s.name} anchor={s.anchor} busy={upd.isPending} onChange={(anchor) => upd.mutate({ id: s.id, body: { anchor } })} /> : null}
       {reassigning && wsId ? (
         <ReassignPanel agentId={agentId} wsId={wsId} kind="schedule" id={s.id} name={s.name} creatorId={s.created_by?.id} disabledReason={s.disabled_reason} onClose={() => setReassigning(false)} />
       ) : null}
       {err ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(err)}
-        </p>
+        </Notice>
       ) : null}
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" disabled={run.isPending} onClick={() => run.mutate(s.id)}>
@@ -200,7 +205,7 @@ function ScheduleRow({ agentId, s, defaultTimezone, wsId, canOwn }: { agentId: s
           {showRuns ? "Hide runs" : "Runs"}
         </Button>
         {confirm ? (
-          <Button size="sm" disabled={del.isPending} onClick={() => del.mutate(s.id)}>
+          <Button size="sm" variant="danger" disabled={del.isPending} onClick={() => del.mutate(s.id)}>
             Confirm delete {s.name}
           </Button>
         ) : (
@@ -220,22 +225,27 @@ export function SchedulesTab({ agentId, defaultTimezone, wsId, canOwn }: { agent
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   return (
-    <section aria-label="Schedules" className="space-y-4">
-      <div className="flex items-center">
-        <h2 className="font-medium">Schedules</h2>
-        {!creating ? (
-          <Button className="ml-auto" size="sm" onClick={() => setCreating(true)}>
+    <Section
+      id="schedules"
+      title="Schedules"
+      description="Wake the agent with a prompt on a cron."
+      actions={
+        !creating ? (
+          <Button size="sm" onClick={() => setCreating(true)}>
             New schedule
           </Button>
-        ) : null}
-      </div>
+        ) : null
+      }
+    >
       {creating ? <ScheduleForm agentId={agentId} defaultTimezone={defaultTimezone} canOwn={canOwn} onDone={() => setCreating(false)} /> : null}
       {q.data.items.length === 0 && !creating ? <EmptyState title="No schedules">Schedules wake the agent with a prompt on a cron.</EmptyState> : null}
-      <ul className="space-y-2">
-        {q.data.items.map((s) => (
-          <ScheduleRow key={s.id} agentId={agentId} s={s} defaultTimezone={defaultTimezone} wsId={wsId} canOwn={canOwn} />
-        ))}
-      </ul>
-    </section>
+      {q.data.items.length > 0 ? (
+        <ItemList aria-label="Schedule list">
+          {q.data.items.map((s) => (
+            <ScheduleRow key={s.id} agentId={agentId} s={s} defaultTimezone={defaultTimezone} wsId={wsId} canOwn={canOwn} />
+          ))}
+        </ItemList>
+      ) : null}
+    </Section>
   );
 }

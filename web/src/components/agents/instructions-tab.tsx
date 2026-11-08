@@ -4,6 +4,9 @@ import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
+import { Form, FormActions, FormSection } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
+import { Section } from "@/components/ui/section";
 import { usePatchAgent } from "@/lib/api/agents";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import { useModels } from "@/lib/api/conversations";
@@ -46,9 +49,12 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
   }
 
   return (
-    <div className="max-w-xl space-y-4">
-      <AvatarField agent={agent} wsId={wsId} />
-      <form onSubmit={(e) => void submit(e)} noValidate className="space-y-4">
+    <div className="space-y-6">
+      <Section id="avatar" title="Avatar" card>
+        <AvatarField agent={agent} wsId={wsId} />
+      </Section>
+      <Form onSubmit={(e) => void submit(e)} noValidate className="max-w-2xl">
+      <FormSection title="Details" description="What this agent is called and how it behaves.">
       <Field id="a-name" label="Name" error={clientErr || fe.name}>
         <input id="a-name" className={inputClass} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
       </Field>
@@ -98,12 +104,13 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
         </select>
       </Field>
       {patch.error && Object.keys(fe).length === 0 ? (
-        <p role="alert" className="text-sm text-danger-ink">
+        <Notice tone="danger" role="alert">
           {errorMessage(patch.error)}
-        </p>
+        </Notice>
       ) : null}
-      <div className="flex items-center gap-3">
-        <Button type="submit" disabled={patch.isPending}>
+      </FormSection>
+      <FormActions>
+        <Button type="submit" size="lg" disabled={patch.isPending}>
           {patch.isPending ? "Saving…" : "Save"}
         </Button>
         {saved ? (
@@ -111,8 +118,8 @@ export function InstructionsTab({ agent, wsId }: { agent: Agent; wsId: string })
             Saved
           </span>
         ) : null}
-      </div>
-      </form>
+      </FormActions>
+      </Form>
     </div>
   );
 }

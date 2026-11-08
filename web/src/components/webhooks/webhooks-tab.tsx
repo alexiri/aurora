@@ -5,8 +5,13 @@ import { useState, type FormEvent } from "react";
 import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
 import { fmtDate } from "@/components/account/key-table";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DataTable, Td } from "@/components/ui/data-table";
 import { Field, inputClass } from "@/components/ui/field";
+import { CheckboxField, FormActions } from "@/components/ui/form";
+import { Notice } from "@/components/ui/notice";
+import { ItemList, Section } from "@/components/ui/section";
 import { AnchorSwitch, OwnerLabel, ReassignPanel } from "@/components/automations/owner-controls";
 import { errorMessage, fieldErrors } from "@/lib/api/errors";
 import {
@@ -25,20 +30,19 @@ function Deliveries({ agentId, id }: { agentId: string; id: string }) {
   const q = useWebhookDeliveries(agentId, id, true);
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
-  if (q.data.items.length === 0) return <p className="text-sm text-neutral-600">No deliveries yet.</p>;
+  if (q.data.items.length === 0) return <p className="text-sm text-muted">No deliveries yet.</p>;
   return (
-    <table className="w-full text-left text-sm">
-      <caption className="sr-only">Deliveries</caption>
+    <DataTable caption="Deliveries">
       <tbody>
         {q.data.items.map((d) => (
-          <tr key={d.id} className="border-t border-neutral-200">
-            <td className="py-1 pr-4">{fmtDate(d.received_at)}</td>
-            <td className="py-1 pr-4">{d.status}</td>
-            <td className="py-1">{d.size} B</td>
+          <tr key={d.id}>
+            <Td className="whitespace-nowrap">{fmtDate(d.received_at)}</Td>
+            <Td>{d.status}</Td>
+            <Td className="whitespace-nowrap">{d.size} B</Td>
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -89,7 +93,7 @@ export function WebhookForm({
   }
 
   return (
-    <form onSubmit={submit} aria-label={initial ? "Edit webhook" : "New webhook"} className="space-y-3 rounded-md border border-neutral-200 p-4">
+    <form onSubmit={submit} aria-label={initial ? "Edit webhook" : "New webhook"} className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
       <Field id="wh-name" label="Name" error={fe.name}>
         <input id="wh-name" className={inputClass} value={name} required onChange={(e) => setName(e.target.value)} />
       </Field>
@@ -106,7 +110,7 @@ export function WebhookForm({
         </select>
       </Field>
       {kind !== "none" ? (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-2">
           <Field id="wh-header" label="Header (optional)">
             <input id="wh-header" className={inputClass} value={header} onChange={(e) => setHeader(e.target.value)} />
           </Field>
@@ -116,24 +120,21 @@ export function WebhookForm({
         </div>
       ) : null}
       {!initial && canOwn ? (
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={anchored} onChange={(e) => setAnchored(e.target.checked)} />
-          Anchor to workspace (outlives any single member)
-        </label>
+        <CheckboxField id="wh-anchored" label="Anchor to workspace (outlives any single member)" checked={anchored} onChange={setAnchored} />
       ) : null}
       {mut.error && Object.keys(fe).length === 0 ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(mut.error)}
-        </p>
+        </Notice>
       ) : null}
-      <div className="flex gap-2">
+      <FormActions className="gap-2">
         <Button type="submit" disabled={mut.isPending}>
           {initial ? "Save" : "Create webhook"}
         </Button>
         <Button type="button" variant="outline" onClick={onDone}>
           Cancel
         </Button>
-      </div>
+      </FormActions>
     </form>
   );
 }
@@ -146,31 +147,40 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
   const rotate = useRotateWebhook(agentId);
   const del = useDeleteWebhook(agentId);
   const upd = useUpdateWebhook(agentId);
-  if (editing) return <WebhookForm agentId={agentId} initial={w} onDone={() => setEditing(false)} onSecret={onSecret} />;
+  if (editing)
+    return (
+      <li className="bg-canvas p-3 sm:p-4">
+        <WebhookForm agentId={agentId} initial={w} onDone={() => setEditing(false)} onSecret={onSecret} />
+      </li>
+    );
   const err = rotate.error ?? del.error ?? upd.error;
   return (
-    <li className="space-y-2 rounded-md border border-neutral-200 p-4">
-      <div className="flex flex-wrap items-baseline gap-2">
-        <h3 className="font-medium">{w.name}</h3>
-        <code className="text-xs">{w.url_prefix}…</code>
-        <span className="text-xs text-neutral-600">verification: {w.verification.kind}</span>
-        <span className="ml-auto text-xs text-neutral-600">{w.enabled ? "Enabled" : `Disabled${w.disabled_reason ? ` (${w.disabled_reason})` : ""}`}</span>
+    <li className="space-y-3 p-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h3 className="font-display text-base font-semibold text-ink">{w.name}</h3>
+        <code className="break-all font-mono text-xs text-ink-2">{w.url_prefix}…</code>
+        <span className="text-xs text-muted">verification: {w.verification.kind}</span>
+        <Badge className="sm:ml-auto" tone={w.enabled ? "accent" : "neutral"}>
+          {w.enabled ? "Enabled" : `Disabled${w.disabled_reason ? ` (${w.disabled_reason})` : ""}`}
+        </Badge>
       </div>
-      <p className="whitespace-pre-wrap text-sm">{w.instructions}</p>
-      <p className="text-xs text-neutral-600">
+      <p className="whitespace-pre-wrap text-sm text-ink-2">{w.instructions}</p>
+      <p className="text-xs text-muted">
         Last delivery: {w.last_delivery_at ? fmtDate(w.last_delivery_at) : "never"} · <OwnerLabel anchor={w.anchor} creator={w.created_by} />
       </p>
       {w.disabled_reason === "authorization" ? (
-        <p className="text-sm text-amber-800">Disabled because its owner lost access. Reassign it to a current member to bring it back.</p>
+        <Notice tone="pending" role="status">
+          Disabled because its owner lost access. Reassign it to a current member to bring it back.
+        </Notice>
       ) : null}
       {canOwn ? <AnchorSwitch name={w.name} anchor={w.anchor} busy={upd.isPending} onChange={(anchor) => upd.mutate({ id: w.id, body: { anchor } })} /> : null}
       {reassigning && wsId ? (
         <ReassignPanel agentId={agentId} wsId={wsId} kind="webhook" id={w.id} name={w.name} creatorId={w.created_by?.id} disabledReason={w.disabled_reason} onClose={() => setReassigning(false)} />
       ) : null}
       {err ? (
-        <p role="alert" className="text-sm text-red-700">
+        <Notice tone="danger" role="alert">
           {errorMessage(err)}
-        </p>
+        </Notice>
       ) : null}
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
@@ -187,6 +197,7 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
         {confirm === "rotate" ? (
           <Button
             size="sm"
+            variant="danger"
             disabled={rotate.isPending}
             onClick={() =>
               rotate.mutate(w.id, {
@@ -209,7 +220,7 @@ function WebhookRow({ agentId, w, onSecret, wsId, canOwn }: { agentId: string; w
           {showDeliveries ? "Hide deliveries" : "Deliveries"}
         </Button>
         {confirm === "delete" ? (
-          <Button size="sm" disabled={del.isPending} onClick={() => del.mutate(w.id)}>
+          <Button size="sm" variant="danger" disabled={del.isPending} onClick={() => del.mutate(w.id)}>
             Confirm delete {w.name}
           </Button>
         ) : (
@@ -231,22 +242,27 @@ export function WebhooksTab({ agentId, wsId, canOwn }: { agentId: string; wsId?:
   if (q.isPending) return <Loading />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
   return (
-    <section aria-label="Webhooks" className="space-y-4">
-      <div className="flex items-center">
-        <h2 className="font-medium">Webhooks</h2>
-        {!creating ? (
-          <Button className="ml-auto" size="sm" onClick={() => setCreating(true)}>
+    <Section
+      id="webhooks"
+      title="Webhooks"
+      description="Give an external system a URL that wakes the agent."
+      actions={
+        !creating ? (
+          <Button size="sm" onClick={() => setCreating(true)}>
             New webhook
           </Button>
-        ) : null}
-      </div>
+        ) : null
+      }
+    >
       {creating ? <WebhookForm agentId={agentId} canOwn={canOwn} onDone={() => setCreating(false)} onSecret={(url, name) => setShown({ url, name })} /> : null}
       {q.data.items.length === 0 && !creating ? <EmptyState title="No webhooks">A webhook gives an external system a URL that wakes the agent.</EmptyState> : null}
-      <ul className="space-y-2">
-        {q.data.items.map((w) => (
-          <WebhookRow key={w.id} agentId={agentId} w={w} wsId={wsId} canOwn={canOwn} onSecret={(url, name) => setShown({ url, name })} />
-        ))}
-      </ul>
+      {q.data.items.length > 0 ? (
+        <ItemList aria-label="Webhook list">
+          {q.data.items.map((w) => (
+            <WebhookRow key={w.id} agentId={agentId} w={w} wsId={wsId} canOwn={canOwn} onSecret={(url, name) => setShown({ url, name })} />
+          ))}
+        </ItemList>
+      ) : null}
       <OneTimeKeyDialog
         secret={shown?.url ?? null}
         name={shown?.name}
@@ -254,6 +270,6 @@ export function WebhooksTab({ agentId, wsId, canOwn }: { agentId: string; wsId?:
         description={`Webhook${shown ? ` "${shown.name}"` : ""} URL. You won't see this again, so store it somewhere safe now.`}
         onClose={() => setShown(null)}
       />
-    </section>
+    </Section>
   );
 }

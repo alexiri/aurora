@@ -4,7 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { ErrorState, Loading } from "@/components/states";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
+import { Section } from "@/components/ui/section";
+import { cn } from "@/lib/utils";
 import {
   agentSnippets,
   probeGatewayCa,
@@ -20,21 +23,23 @@ import { AgentRevealDialog, type Revealed } from "./reveal";
 function Snippet({ label, text }: { label: string; text: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="space-y-1">
-      <p className="text-sm font-medium">{label}</p>
-      <pre className="overflow-auto rounded-control bg-subtle p-3 text-xs text-ink">{text}</pre>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => void navigator.clipboard?.writeText(text).then(() => setCopied(true))}
-      >
-        Copy {label}
-      </Button>
-      {copied ? (
-        <span role="status" className="ml-2 text-sm text-accent-ink">
-          Copied
-        </span>
-      ) : null}
+    <div className="space-y-2">
+      <p className="text-sm font-medium text-ink">{label}</p>
+      <pre className="overflow-auto rounded-control border border-line bg-subtle p-3 font-mono text-xs text-ink">{text}</pre>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void navigator.clipboard?.writeText(text).then(() => setCopied(true))}
+        >
+          Copy {label}
+        </Button>
+        {copied ? (
+          <span role="status" className="text-sm text-accent-ink">
+            Copied
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -66,23 +71,19 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
   }
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-3xl space-y-8">
       <ByoSettings agent={agent} wsId={wsId} canOwn={canOwn} />
-      <section className="space-y-2" aria-labelledby="tok-h">
-        <h2 id="tok-h" className="text-lg font-medium">
-          Agent token
-        </h2>
-        <p className="text-sm text-ink-2">
-          Regenerating revokes the current token and any context credentials.
-        </p>
+      <Section
+        id="tok"
+        title="Agent token"
+        description="Regenerating revokes the current token and any context credentials."
+      >
         {regenBlocked ? (
-          <p role="status" className="text-sm text-ink-2">
-            {regenBlocked}
-          </p>
+          <Notice role="status">{regenBlocked}</Notice>
         ) : confirming ? (
-          <div role="alertdialog" aria-label="Confirm token regeneration" className="space-y-2 rounded-control border border-pending-line bg-pending-panel p-3 text-sm text-ink">
+          <Notice tone="pending" role="alertdialog" aria-label="Confirm token regeneration" className="space-y-2 text-ink">
             <p>Regenerate the token for @{agent.handle}? The previous token stops working immediately.</p>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button onClick={() => void regenerate()} disabled={regen.isPending}>
                 {regen.isPending ? "Regenerating…" : "Yes, regenerate"}
               </Button>
@@ -90,27 +91,26 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
                 Cancel
               </Button>
             </div>
-          </div>
+          </Notice>
         ) : (
-          <Button variant="outline" onClick={() => setConfirming(true)}>
-            Regenerate token
-          </Button>
+          <div>
+            <Button variant="outline" onClick={() => setConfirming(true)}>
+              Regenerate token
+            </Button>
+          </div>
         )}
         {regen.error ? (
-          <p role="alert" className="text-sm text-danger-ink">
+          <Notice tone="danger" role="alert">
             {errorMessage(regen.error)}
-          </p>
+          </Notice>
         ) : null}
-      </section>
+      </Section>
 
-      <section className="space-y-3" aria-labelledby="cfg-h">
-        <h2 id="cfg-h" className="text-lg font-medium">
-          Container config
-        </h2>
+      <Section id="cfg" title="Container config" description="How to connect this agent's computer to the gateway.">
         {config.isPending ? <Loading /> : null}
         {config.isError ? <ErrorState error={config.error} onRetry={() => config.refetch()} /> : null}
         {config.data ? (
-          <pre data-testid="container-config" className="max-h-64 overflow-auto rounded-control bg-subtle p-3 text-xs text-ink">
+          <pre data-testid="container-config" className="max-h-64 overflow-auto rounded-control border border-line bg-subtle p-3 font-mono text-xs text-ink">
             {JSON.stringify(config.data, null, 2)}
           </pre>
         ) : null}
@@ -118,9 +118,9 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
         <Snippet label="aurora run" text={snippets.run} />
         {snippets.env ? <Snippet label="env exports" text={snippets.env} /> : null}
         {config.data?.notes?.map((n, i) => (
-          <p key={i} role="note" className="rounded-control bg-pending-panel p-3 text-sm text-pending-ink">
+          <Notice key={i} tone="pending" role="note">
             {n}
-          </p>
+          </Notice>
         ))}
         <p className="text-sm text-ink-2">
           Replace <code>&lt;AGENT_TOKEN&gt;</code> with your agent token
@@ -131,22 +131,25 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
           ) : null}
           .
         </p>
-      </section>
+      </Section>
 
-      <section className="space-y-2" aria-labelledby="ca-h">
-        <h2 id="ca-h" className="text-lg font-medium">
-          Gateway CA certificate
-        </h2>
+      <Section id="ca" title="Gateway CA certificate" description="Trust this certificate so the proxy can inspect TLS traffic.">
         {ca.isError ? (
-          <p role="alert" className="text-sm text-danger-ink">
+          <Notice tone="danger" role="alert">
             {errorMessage(ca.error)}
-          </p>
+          </Notice>
         ) : (
-          <a className="text-sm underline" href="/v1/gateway/ca.pem" download="aurora-gateway-ca.pem">
-            Download CA certificate
-          </a>
+          <div>
+            <a
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+              href="/v1/gateway/ca.pem"
+              download="aurora-gateway-ca.pem"
+            >
+              Download CA certificate
+            </a>
+          </div>
         )}
-      </section>
+      </Section>
 
       <AgentRevealDialog revealed={revealed} onClose={() => setRevealed(null)} />
     </div>
