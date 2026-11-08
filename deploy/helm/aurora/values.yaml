@@ -142,6 +142,11 @@ runner:
   nodeSelector: {}
   tolerations: []
   extraEnv: []
+  # Names (plain strings) of docker-registry Secrets for a private sandbox image, rendered as
+  # [runner.k8s] image_pull_secrets. The chart does NOT create them: they must exist in the
+  # sandboxes namespace (`sandboxes.namespace`); the top-level imagePullSecrets live in the
+  # release namespace and are not visible to sandbox Pods.
+  sandboxImagePullSecrets: []
   k8s:                    # rendered into [runner.k8s]
     storageClass: ""
     runtimeClass: ""      # gVisor / Kata recommended

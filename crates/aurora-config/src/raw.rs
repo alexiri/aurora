@@ -580,6 +580,10 @@ pub struct K8sSection {
     pub tolerations: Vec<toml::Table>,
     pub gateway_service: Option<String>,
     pub runner_service: Option<String>,
+    /// Names of `kubernetes.io/dockerconfigjson` Secrets in the sandbox namespace, set as the
+    /// sandbox Pods' `imagePullSecrets` (private sandbox image registry). Never read or created
+    /// by the runner. Each must be a DNS-1123 subdomain name. Default: none.
+    pub image_pull_secrets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

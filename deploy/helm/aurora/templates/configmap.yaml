@@ -6,6 +6,7 @@
 {{- with .Values.runner.k8s.runtimeClass }}{{ $_ := set $k8s "runtime_class" . }}{{ end -}}
 {{- with .Values.runner.k8s.nodeSelector }}{{ $_ := set $k8s "node_selector" . }}{{ end -}}
 {{- with .Values.runner.k8s.tolerations }}{{ $_ := set $k8s "tolerations" . }}{{ end -}}
+{{- with .Values.runner.sandboxImagePullSecrets }}{{ $_ := set $k8s "image_pull_secrets" . }}{{ end -}}
 {{- $_ := set $cfg "runner" (merge (dict "backend" "kubernetes" "api_url" (printf "http://%s-api:4101" $full) "k8s" $k8s) (default (dict) $cfg.runner)) -}}
 {{- $_ := set $cfg "database" (merge (dict "max_connections" .Values.database.maxConnections.api) (default (dict) $cfg.database)) -}}
 {{- if .Values.database.gatewayRole }}{{ $_ := set $cfg.database "gateway_role" .Values.database.gatewayRole }}{{ end -}}
