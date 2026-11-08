@@ -144,10 +144,9 @@ With the defaults (`max_sandboxes = 4`, `sandbox_memory_mib = 2048`), a runner h
 
 ## Known limitations
 
-From `docs/PROGRESS.md` (FUP-M7, RUN-004). These are open at this commit:
+Accepted by the owner on 2026-11-08 (FUP-M7, RUN-004). These are limits of Kubernetes itself, not of Aurora:
 
-- The API's `SandboxSpec.env` is empty. `AURORA_AGENT_HANDLE` and snapshot app env do not
-  reach sandboxes on any backend.
-- Sandboxes cannot use an `imagePullSecrets` setting. The config has no key for it.
-- The per-pod pid limit cannot be enforced on Kubernetes.
-- The `/run/aurora` emptyDir cannot be mounted `noexec`.
+- **No per-Pod process limit on Kubernetes.** The podman backend sets `--pids-limit` from `runner.sandbox_pids`. Kubernetes has no per-Pod field for it, so the value is only validated there. Kubernetes limits processes per Pod through the kubelet: set `podPidsLimit` in the KubeletConfiguration of the nodes that run sandboxes (for example 1024; kind accepts it through a `kubeadmConfigPatches` KubeletConfiguration patch). Without it, a sandbox can fork until the node's own limit stops it, which affects other Pods on that node. Run sandboxes on dedicated nodes (`runner.k8s.node_selector` / `tolerations`) if that matters to you.
+- **`/run/aurora` is not `noexec` on Kubernetes.** It is a small memory-backed `emptyDir` (16 MiB; `/tmp` is 512 MiB), and Kubernetes can't set mount options on an `emptyDir`. The sandbox container still runs as non-root with a read-only root filesystem, all capabilities dropped, no privilege escalation and the `RuntimeDefault` seccomp profile. So a file written there can run as the sandbox user, which can already run code in its own home. `/run/aurora` holds only the public gateway CA (`ca.pem`) and the supervisor's tools socket. Boot material never touches it: it arrives in the supervisor's environment, which the supervisor scrubs, and the supervisor is non-dumpable (SEC-34).
+
+Resolved since the first list: sandbox env and `AURORA_AGENT_HANDLE` reach every backend (FIX-002). Pod names are `sbx-<handle>-<boot>`. Private sandbox image registries get `runner.k8s.image_pull_secrets` (FIX-013, in progress).
