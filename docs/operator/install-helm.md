@@ -152,11 +152,46 @@ External PostgreSQL is expected in production.
   not create it when `postgres.enabled` is false.
 - `database.maxConnections.api` (default 20) and `database.maxConnections.gateway` (default 10)
   become `database.max_connections` for each service.
-- `database.gatewayRole` sets `database.gateway_role`. `aurora-api migrate` applies the
-  gateway-role grants when it is set (`services/aurora-api/src/main.rs`).
 - `database.cidrs` and `database.port` (default 5432) set the egress rule to the database in the NetworkPolicies.
-- No code reads `AURORA_GATEWAY_DATABASE_URL`. The gateway uses `AURORA_DATABASE_URL`, and
-  `database.gatewayRole` is the least-privilege switch.
+- No code reads `AURORA_GATEWAY_DATABASE_URL`. The gateway reads `AURORA_DATABASE_URL`: from the main
+  Secret by default, or from `database.gatewayExistingSecret` when you set the least-privilege pair below.
+
+### Least-privilege gateway role (recommended)
+
+The gateway is the most exposed service, so it should not log in as the API's full-privilege user.
+`database.gatewayRole` and `database.gatewayExistingSecret` go together: set both or neither
+(`helm install` fails with a message if only one is set). **Without the pair, the gateway uses the
+main database user (not least privilege).** `aurora-api migrate` only *grants* the role; it never
+creates it (creating a login role needs `CREATEROLE` and a password, which the API user should not
+hold). The DBA does this, in order, before `helm install`:
+
+1. Create the role with a password (as a Postgres superuser or a `CREATEROLE` user), in the same cluster
+   as the Aurora database:
+
+   ```sql
+   CREATE ROLE aurora_gateway LOGIN PASSWORD '<strong password>';
+   ```
+
+   Give it no other attributes. Do not grant it superuser, `CREATEROLE`, `CREATEDB` or any privilege on
+   the Aurora tables: `migrate` grants exactly the privileges in `docs/03 §Gateway database role grants`.
+2. Create the gateway Secret (same namespace as the release), with the same host and database as the
+   main URL but the gateway role's login:
+
+   ```bash
+   kubectl -n aurora create secret generic aurora-gateway-database \
+     --from-literal=AURORA_DATABASE_URL='postgres://aurora_gateway:<password>@db.example.org:5432/aurora'
+   ```
+3. Set both values (see the example values below): `database.gatewayRole: aurora_gateway` and
+   `database.gatewayExistingSecret: aurora-gateway-database`.
+4. `helm install`. The `migrate` hook runs `aurora-api migrate`, which applies the grants. If the role
+   is missing it stops with `gateway role "aurora_gateway" does not exist: create it (CREATE ROLE
+   aurora_gateway LOGIN PASSWORD '…') or unset database.gateway_role`.
+
+The evaluation Postgres (`postgres.enabled`) and the dev profile set neither value, so the gateway
+uses the main user there: it is the simplest correct option for a throwaway database, where nobody
+creates roles. To exercise the pair on the evaluation database anyway, mount an init script with
+`postgres.initScriptsConfigMap` (a ConfigMap with a `.sql` file containing the `CREATE ROLE`, run once on
+an empty data directory); `scripts/e2e/kind.sh` does this.
 
 `postgres.enabled: true` renders a single-instance Postgres for evaluation. Its StatefulSet,
 Service and PVC are pre-install hook resources, so `helm uninstall` leaves them and the data
@@ -462,7 +497,10 @@ ingress:
   tls: {secretName: aurora-tls}
 database:
   existingSecret: aurora-database       # must contain AURORA_DATABASE_URL
+  # The least-privilege gateway login: both or neither (see Database). The DBA creates the role and
+  # the Secret (key AURORA_DATABASE_URL, logging in as that role) first.
   gatewayRole: aurora_gateway
+  gatewayExistingSecret: aurora-gateway-database
 runner:
   k8s:
     storageClass: fast-rwo

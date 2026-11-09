@@ -59,7 +59,8 @@ securityContext:
 - {name: AURORA_CONFIG, value: /etc/aurora/{{ default "aurora.toml" .configFile }}}
 {{- if .db }}
 - name: AURORA_DATABASE_URL
-  valueFrom: {secretKeyRef: {name: {{ include "aurora.dbSecretName" .root }}, key: AURORA_DATABASE_URL}}
+  {{- /* FIX-016: with database.gatewayExistingSecret set, the gateway (gatewayDb) logs in as its least-privilege role. */}}
+  valueFrom: {secretKeyRef: {name: {{ if and .gatewayDb .root.Values.database.gatewayExistingSecret }}{{ .root.Values.database.gatewayExistingSecret }}{{ else }}{{ include "aurora.dbSecretName" .root }}{{ end }}, key: AURORA_DATABASE_URL}}
 {{- end }}
 {{- range $k := .keys }}
 - name: {{ $k }}

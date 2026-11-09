@@ -1147,17 +1147,24 @@ Posted interactive messages, so they can be updated/settled.
 
 ## Gateway database role grants
 
-When `database.gateway_role` is configured, the migrations grant that role:
+When `database.gateway_role` is configured, `aurora-api migrate` grants that role (it does not
+create it: the operator creates the login role, `15 §Postgres`; a missing role is an error).
+The gateway then connects as that role and nothing else (Helm: `database.gatewayExistingSecret`).
+The grants are:
 `SELECT` on identity/tenancy tables it needs (`organizations`, `workspaces`,
 `workspace_access`, `org_members`, `users` (id, email, disabled_at only via a
 view `gateway_users`), `api_keys`), `agents`, `gateway_credentials`, `secrets`,
 `app_connections`, `app_oauth_clients`, `app_instances`, `grants`, `derived_rules`,
 `policy_generations`, `policy_rules`, `registry_snapshots`, `plugin_packages`
 (status only via view), `host_claim_decisions`, `org_app_availability`;
-`INSERT, UPDATE` on `approvals`, `gateway_instances`; `INSERT` on
+`INSERT, UPDATE` on `approvals`, `gateway_instances`, plus the column-level
+`SELECT (id, status, gateway_instance_id)` on `approvals` and `SELECT (id)` on
+`gateway_instances` (an `UPDATE … WHERE` needs `SELECT` on the columns it filters on, and
+the gateway reads the hold's `status`; FIX-016); `INSERT` on
 `request_log`; `UPDATE (credentials_ref, credentials_version,
 credentials_expires_at, status, status_reason, reauth_required_at,
-last_used_at)` on `app_connections`; `UPDATE (last_used_at, origin)` on `secrets`; `UPDATE (last_used_at)` on
+last_used_at, updated_at)` on `app_connections` (`updated_at` is set by credential rotation
+and `reauth_required`; FIX-016); `UPDATE (last_used_at, origin)` on `secrets`; `UPDATE (last_used_at)` on
 `gateway_credentials`;
 `EXECUTE` on `pg_advisory_lock` family; `LISTEN` is implicit.
 

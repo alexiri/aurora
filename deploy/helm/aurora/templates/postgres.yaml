@@ -45,7 +45,15 @@ spec:
           volumeMounts:
             - {name: data, mountPath: /var/lib/postgresql/data}
             - {name: run, mountPath: /var/run/postgresql}
-      volumes: [{name: run, emptyDir: {}}]
+            {{- if .Values.postgres.initScriptsConfigMap }}
+            - {name: initdb, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+            {{- end }}
+      volumes:
+        - {name: run, emptyDir: {}}
+        {{- if .Values.postgres.initScriptsConfigMap }}
+        - name: initdb
+          configMap: {name: {{ .Values.postgres.initScriptsConfigMap | quote }}, defaultMode: 0444}
+        {{- end }}
   volumeClaimTemplates:
     - metadata: {name: data}
       spec:

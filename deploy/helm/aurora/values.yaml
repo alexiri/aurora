@@ -84,12 +84,18 @@ extraCaBundle:
 
 database:
   # External Postgres is expected in production. Supply a Secret with key
-  # AURORA_DATABASE_URL (postgres://user:pass@host:5432/aurora). Every service, the gateway
-  # included, reads that one key.
+  # AURORA_DATABASE_URL (postgres://user:pass@host:5432/aurora). The API, hook host and the
+  # migrate Job read that one key; the gateway too, unless gatewayRole/gatewayExistingSecret are set.
   existingSecret: ""     # default name when empty: <release>-aurora-database (you must create it)
   maxConnections: {api: 20, gateway: 10}
-  # Least-privilege role the gateway uses (rendered as database.gateway_role). Optional.
+  # Least-privilege gateway login (FIX-016). Set BOTH or neither (helm fails if only one is set).
+  # The DBA creates the role first (CREATE ROLE <r> LOGIN PASSWORD '...'; docs/operator/install-helm.md,
+  # Database); `aurora-api migrate` only grants it exactly what 03 lists (rendered as database.gateway_role).
   gatewayRole: ""
+  # A Secret you create, with key AURORA_DATABASE_URL, that logs in as gatewayRole. The gateway
+  # Deployment reads its AURORA_DATABASE_URL from it. Without the pair, the gateway runs as the main
+  # database user (not least privilege).
+  gatewayExistingSecret: ""
   # Egress CIDRs of the external database, used by NetworkPolicies (ignored if postgres.enabled).
   cidrs: []               # e.g. ["10.20.0.0/24"]
   port: 5432
@@ -102,6 +108,9 @@ postgres:
   image: docker.io/library/postgres:16
   storage: 5Gi
   storageClass: ""
+  # Optional ConfigMap of *.sql / *.sh files mounted at /docker-entrypoint-initdb.d (run once, on an
+  # empty data directory). Evaluation only; used to create the gateway role (database.gatewayRole).
+  initScriptsConfigMap: ""
 
 # ---- aurora.toml (rendered into a ConfigMap) ------
 # server.external_url and the runner/k8s keys are injected from the values above.

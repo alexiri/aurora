@@ -31,6 +31,8 @@ pub struct TestDb {
     url: String,
     pool: PgPool,
     cleaned: bool,
+    /// Gateway login role created by [`TestDb::gateway_role_url`]; dropped with the database.
+    gateway_role: Option<String>,
 }
 
 impl TestDb {
@@ -73,7 +75,41 @@ impl TestDb {
             url,
             pool,
             cleaned: false,
+            gateway_role: None,
         })
+    }
+
+    /// FIX-016: create a throwaway least-privilege login role, apply the gateway grants to it
+    /// (`aurora_db::grants::apply_gateway_grants`, exactly what `aurora-api migrate` does) and
+    /// return a connection URL for this database that logs in as that role. The role (cluster-wide)
+    /// is dropped with the database. Needs `CREATEROLE` on the test server user.
+    pub async fn gateway_role_url(&mut self) -> anyhow::Result<String> {
+        let role = format!("aurora_test_gw_{}", uuid::Uuid::now_v7().simple());
+        let password = uuid::Uuid::now_v7().simple().to_string();
+        let mut admin = PgConnection::connect(&self.server_url)
+            .await
+            .context("connecting to test server")?;
+        sqlx::query(&format!(
+            "CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE"
+        ))
+        .execute(&mut admin)
+        .await
+        .context("creating gateway test role")?;
+        admin.close().await.ok();
+        self.gateway_role = Some(role.clone());
+        aurora_db::grants::apply_gateway_grants(&self.pool, &role)
+            .await
+            .context("applying gateway grants")?;
+        // postgres://user:pass@host... -> swap the credentials.
+        let Some(scheme_end) = self.url.find("://").map(|i| i + 3) else {
+            bail!("test database URL has no scheme");
+        };
+        let rest = &self.url[scheme_end..];
+        let host_part = rest.rsplit_once('@').map_or(rest, |(_, h)| h);
+        Ok(format!(
+            "{}{role}:{password}@{host_part}",
+            &self.url[..scheme_end]
+        ))
     }
 
     /// Pool connected to this database (migrations applied).
@@ -100,7 +136,11 @@ impl TestDb {
     pub async fn cleanup(mut self) -> anyhow::Result<()> {
         self.cleaned = true;
         self.pool.close().await;
-        drop_database(&self.server_url, &self.name).await
+        let r = drop_database(&self.server_url, &self.name).await;
+        if let Some(role) = self.gateway_role.take() {
+            drop_role(&self.server_url, &role).await?;
+        }
+        r
     }
 }
 
@@ -113,12 +153,19 @@ impl Drop for TestDb {
         // so this works whether or not the caller's runtime is still alive.
         let server_url = self.server_url.clone();
         let name = self.name.clone();
+        let role = self.gateway_role.clone();
         let handle = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .ok()?;
-            rt.block_on(drop_database(&server_url, &name)).ok()
+            rt.block_on(async {
+                let r = drop_database(&server_url, &name).await.ok();
+                if let Some(role) = role {
+                    drop_role(&server_url, &role).await.ok();
+                }
+                r
+            })
         });
         let _ = handle.join();
     }
@@ -132,6 +179,19 @@ async fn drop_database(server_url: &str, name: &str) -> anyhow::Result<()> {
         .execute(&mut admin)
         .await
         .context("dropping test database")?;
+    admin.close().await.ok();
+    Ok(())
+}
+
+/// Drop a role created by [`TestDb::gateway_role_url`] (after its database is gone).
+async fn drop_role(server_url: &str, role: &str) -> anyhow::Result<()> {
+    let mut admin = PgConnection::connect(server_url)
+        .await
+        .context("connecting to test server for DROP ROLE")?;
+    sqlx::query(&format!("DROP ROLE IF EXISTS \"{role}\""))
+        .execute(&mut admin)
+        .await
+        .context("dropping gateway test role")?;
     admin.close().await.ok();
     Ok(())
 }

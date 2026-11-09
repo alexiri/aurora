@@ -68,7 +68,17 @@ fn bin(name: &str) -> PathBuf {
 
 impl Stack {
     pub async fn start(o: Opts) -> Stack {
-        let db = TestDb::new().await;
+        let mut db = TestDb::new().await;
+        // FIX-016: the gateways connect as the least-privilege role (03 §Gateway database role
+        // grants), never as the API's user, so a missing grant fails this suite. Set
+        // AURORA_E2E_GATEWAY_FULL_DB=1 only to compare against the full-privilege user.
+        let gw_db_url = if std::env::var_os("AURORA_E2E_GATEWAY_FULL_DB").is_some() {
+            db.url().to_owned()
+        } else {
+            db.gateway_role_url()
+                .await
+                .unwrap_or_else(|e| panic!("gateway role: {e:#}"))
+        };
         let idp = aurora_testkit::oidc::MockIdp::start().await;
         let idp_issuer = idp.issuer().to_owned();
         let dir = std::env::temp_dir().join(format!("aurora-e2e-gw-{}", uuid::Uuid::now_v7()));
@@ -184,6 +194,7 @@ api_internal_url = "http://{API_IP}:4111"
                 .args(&args)
                 .env("AURORA_CONFIG", &cfg)
                 .envs(secrets_env(stack.db.as_ref().unwrap().url()))
+                .envs((exe == "aurora-gateway").then(|| ("AURORA_DATABASE_URL", gw_db_url.clone())))
                 .stdout(Stdio::from(f.try_clone().unwrap()))
                 .stderr(Stdio::from(f))
                 .kill_on_drop(true)
@@ -263,6 +274,27 @@ api_internal_url = "http://{API_IP}:4111"
             let _ = c.kill().await;
         }
         self.children.clear();
+        // FIX-016: some gateway statements are best-effort (heartbeats, last_used_at, NOTIFY), so a
+        // missing grant need not fail a scenario. Any denial in a service log fails the suite.
+        let denied: Vec<String> = self
+            .logs
+            .iter()
+            .flat_map(|p| {
+                std::fs::read_to_string(p)
+                    .unwrap_or_default()
+                    .lines()
+                    .filter(|l| l.contains("permission denied"))
+                    .map(|l| format!("{}: {l}", p.display()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        if !denied.is_empty() {
+            let _ = std::fs::remove_dir_all(&self.dir);
+            panic!(
+                "database permission denied for a service role (missing grant?):\n{}",
+                denied.join("\n")
+            );
+        }
         if let Some(db) = self.db.take() {
             let _ = db.cleanup().await;
         }
