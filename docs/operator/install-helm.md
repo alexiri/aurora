@@ -313,8 +313,19 @@ Set the selectors for your cluster:
 - `networkPolicy.edgeNamespaceSelector` (default `kubernetes.io/metadata.name: ingress-nginx`),
   the namespace allowed to reach the API, web and connector callbacks;
 - `networkPolicy.dnsNamespaceSelector` (default `kube-system`);
-- `networkPolicy.kubeApiCidrs`, for runner egress to the Kubernetes API (empty allows any on 443 and 6443);
+- `networkPolicy.kubeApiCidrs`, for runner egress to the Kubernetes API (empty allows any), and
+  `networkPolicy.kubeApiPorts` (default `[443, 6443]`), the API server's endpoint port. Check it with
+  `kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes`;
 - `networkPolicy.externalEgress` (`cidr` and `except`), for OIDC, SMTP, LLM endpoints and secret stores.
+
+**Cilium:** set `networkPolicy.cilium.enabled: true`. Cilium never matches the API server or
+cluster nodes with a NetworkPolicy `ipBlock` (they are the `kube-apiserver` / `remote-node`
+entities), so without it the runner times out reaching the Kubernetes API at start:
+`kubernetes API: cannot list pods in namespace … ServiceError: client error (Connect)`. The option
+adds one `CiliumNetworkPolicy` that allows only runner → `toEntities: [kube-apiserver]` on
+`kubeApiPorts`. Cilium unions it with the NetworkPolicies, so nothing else opens. It needs the
+`cilium.io/v2` CRDs. Anything else that must reach a node address (a database on a node IP, a
+NodePort) has the same Cilium behaviour.
 
 Sandboxes can reach only gateway 4102 and runner 4105 (`docs/11 §kubernetes`). The kind test
 checks this from inside a sandbox Pod: no DNS, no route to the API, Postgres, hookhost, gateway

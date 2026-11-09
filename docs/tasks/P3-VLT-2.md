@@ -11,6 +11,10 @@ Finish the Vault store that P3-VLT-1 built:
 `21 §Phase 3 — HashiCorp Vault` ("CI: Vault dev server; migration inline → Vault and back; CAS race test") and `19 §Phase 3` are the spec. The contract C-375 covers the migrate CLI. Exit criterion: "a CI job against a Vault dev server runs `secrets migrate` inline → Vault → inline and the CAS race test".
 
 ## Scope
+0. **Wire the store into the services** (found by P3-VLT-1: nothing in the API or gateway builds the registry from config yet, so Vault is implemented but unusable).
+   - The API and the gateway build their `StoreRegistry` with `StoreRegistry::from_config_with_tls(…)` from `secrets.stores[]`, passing `tls.extra_ca_bundle`. Check whether the hookhost or the runner open secrets; they don't today.
+   - A failed store login at startup degrades per the spec (`StoreUnavailable` on use), never a crash loop. Say what the spec requires.
+   - Write the pending gateway test from the SEC-61 row: `refused_vault_reference_injects_nothing` (a reference outside scope is refused at open, 502 `credential_unavailable` per C-373, and nothing is injected). Run it against the dev-server container, and flip the SEC-61 row to fully proven.
 1. **Tests** in `crates/aurora-secrets/tests` (and the CLI's, if `secrets migrate` lives there):
    - **Migration round trip:** seeded inline secrets of every purpose → Vault → inline. Values, refs and versions are checked at each step; the gateway resolves them at each stage; nothing is left behind.
    - **CAS race:** concurrent writers to the same managed path. Exactly one wins per version, the loser retries or fails cleanly, and no value is lost or mixed.
@@ -23,7 +27,7 @@ Finish the Vault store that P3-VLT-1 built:
 
 ## Constraints
 - Starts **after P3-VLT-1 merges**.
-- **Owns:** `crates/aurora-secrets/tests` (and the CLI migrate tests), `.github/workflows/ci.yml` (the new job only), `deploy/helm/**` (Vault values and templates), `docs/operator/` (the Vault page and the README link).
+- **Owns:** the registry construction in `services/aurora-api` and `services/aurora-gateway` (startup only; P3-013 may be in the gateway's auth code, so stay out of it), a gateway test for SEC-61, `crates/aurora-secrets/tests` (and the CLI migrate tests), `.github/workflows/ci.yml` (the new job only), `deploy/helm/**` (Vault values and templates), `docs/operator/` (the Vault page and the README link).
 - Decision D-113 only if needed.
 
 ## Acceptance criteria
