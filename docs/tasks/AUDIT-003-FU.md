@@ -1,0 +1,20 @@
+# AUDIT-003-FU: Close the phase-3 audit's documentation and tracking findings
+
+## Goal
+`docs/audit/phase3-exit.md` (AUDIT-003) found every runnable check green but listed tracking and documentation gaps. Close F-2, F-3, F-4, F-5 and F-6 exactly as its "Open findings" table describes. Documentation only; no code.
+
+## Scope
+1. **F-2** `docs/tests/security-coverage.md`: add rows for **SEC-53, SEC-57, SEC-58** (status `proven`) citing the tests the audit's Steps 8/9 list (SEC-53: `api it/agent_token_age.rs` + gateway `byo`/`credentials` tests; SEC-57: `api it/plugins_upgrade.rs`, `connect::…credential_key_names…`, `gw refresh::flipped_connection_is_never_minted_or_refreshed`; SEC-58: `api it/channels_mgmt::deprovision_*`, `delete_is_refused_when_the_secret_store_is_unavailable`, conformance s13/s14) — check each name exists with `grep -rn` before citing it; delete the **six stale duplicate rows for SEC-34..SEC-39** (keep the current ones; compare both before deleting); add the D-118 tests to the **SEC-42** row (`oidc::trusted_email_domain_counts_as_verified_only_for_exact_domain`, config `oidc_trusted_email_domains_validation`); fix the header's range to the current highest SEC id.
+2. **F-3** `docs/03-data-model.md` §Planned changes: move the three phase-3 "no schema change" rows (`organizations.governance.agent_tokens.max_age_days` RFE-013, `turns.source_event_id` value convention RFE-018, `plugin_packages.status_reason = breaks_connections` RFE-022) into the Notes of the owning machine-checked tables (or a short prose note under them) and remove the planned sections. `python3 scripts/extract-schema.py --check` and `cargo test -p aurora-db --test it schema` must stay green.
+3. **F-4** `docs/FEATURES.md`: mark the phase-3 rows the audit names `done` with their evidence (test names, from Steps 3 and 8 of the report), and fix the stale header sentence ("phases 3 and 4 start on the owner's go").
+4. **F-5** new `docs/operator/outage-and-alerts.md`, indexed from `docs/operator/README.md`: the gateway `readyz` states (`ready`/`degraded`/`down`, `?strict=true`), what is served from cache and for how long (`gateway.resolve_cache_ttl_secs`), what is refused with which code (`gateway_degraded`, `approval_store_unavailable`, the database-lane `57P03`), recovery behaviour, and the alert rules from `docs/15 §Observability` (`aurora_gateway_state{state="degraded"} == 1` for 1 min, `aurora_channel_deprovision_failed_total`, `aurora_pg_notify_queue_usage` ≥ 0.5, others listed there), with a recovery check. Source of truth: `06 §Operation during a Postgres outage`, C-380..C-384, `15 §Observability`. Don't invent behaviour; cite.
+5. **F-6** `docs/operator/install-helm.md` §Images "Build and load": add the dev-IdP build (`podman build -f deploy/dev/dev-idp.Containerfile …`, as `scripts/e2e/kind.sh` does), say `devIdp.enabled` needs it, add the connector image targets (`connector-host`, `connector-mattermost`, `connector-fake`) for those who enable them, and update the "were not run" sentence (the audit ran them, exit 0).
+6. In `docs/audit/phase3-exit.md`, don't rewrite the audit; append a short "Follow-ups" section listing which findings this task closed (F-2..F-6), plus F-7 resolved: GitHub CI runs again since 2026-11-09 (later master runs complete), and F-1/F-8/F-9 → FIX-024.
+
+## Constraints
+- Owns `docs/tests/security-coverage.md`, `docs/03-data-model.md` (§Planned changes and the three owning tables' notes only), `docs/FEATURES.md` (phase-3 rows and header only), `docs/operator/**`, the appended section of `docs/audit/phase3-exit.md`. Other lanes (P4-IDP-1, P4-MCON-4) may touch `docs/04`, `docs/05`, `docs/13`, `API_CONTRACTS.md`, `security-coverage.md` (SEC-78 row): edit only the rows you own and expect the coordinator to merge.
+- Change files only with the Edit/Write tools; never python, sed, awk, perl, `cat >>` or heredocs. Run no e2e or perf scripts.
+
+## Acceptance
+- `bash scripts/guards/run-all.sh`, `python3 scripts/extract-schema.py --check`, `cargo test -p aurora-db --test it schema` pass.
+- Report: per finding, what changed (files and rows), and any cited test name you could not find.
