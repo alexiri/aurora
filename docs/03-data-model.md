@@ -1240,6 +1240,13 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | injection | (existing jsonb `InjectionRecipe`) | gains the LLM-only kinds `header`, `aws_sigv4 { region, service }`, `gcp_service_account_token { scope }`; fixed by the provider, read-only | 4 (P4-LLM) |
 | origin | (existing jsonb) | for `bedrock` `organization_id` is the AWS account id; for `vertex` `workspace_id` is the GCP project id and `user_id` the service-account e-mail; for `openai` the organization and project of the key (`08 §Phase 4 providers`) | 4 (P4-LLM) |
 
+#### `grants`, `plugin_packages` (app-level grant restrictions)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| grants.mode | (existing) | no schema change: a `full` row for a `custom_only` app cannot be written (`07`); activation of a package that introduces `custom_only` rewrites existing `full` rows to `custom` with `allow_tools` = the whole catalogue (`09 §10`) | 4 (P4-GRANTS) |
+| plugin_packages.status_reason | (existing open vocabulary) | gains `converts_grants`: an upgrade held in `pending_approval` because it would convert full grants | 4 (P4-GRANTS) |
+| registry snapshot `apps[].grants` | `{ custom_only, block_untooled }` booleans, in the snapshot JSON only | no table; copied from the manifest (`09 §9`). Tool entries may also carry `params` (Q8, `09 §3.4`) | 4 (P4-GRANTS) |
+
 #### `agents`, `conversations` (harness selection)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

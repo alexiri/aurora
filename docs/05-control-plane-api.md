@@ -529,7 +529,7 @@ connector, **P** public capability. Permission checks per `04`.
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET `/v1/agents/{agent}/grants` | S/K | |
-| PUT/DELETE `/v1/agents/{agent}/grants/connections/{conn}` | S/K | `{ mode, allow_tools, ask_tools }`; (phase 2, RFE-011a) optional `ask_timeout_secs` |
+| PUT/DELETE `/v1/agents/{agent}/grants/connections/{conn}` | S/K | `{ mode, allow_tools, ask_tools }`; (phase 2, RFE-011a) optional `ask_timeout_secs`; (phase 4, P4-GRANTS, D-123) `mode = full` for a connection of an app whose manifest has `grants.custom_only` → 422 `full_grant_forbidden` (`details: { app_id }`); the grant response and `GET …/grants` carry `app_restrictions: { custom_only, block_untooled }` so clients can explain it; a grant converted by an upgrade is audited `grant.converted_by_app` |
 | PUT/DELETE `/v1/agents/{agent}/grants/secrets/{secret}` | S/K | |
 | GET `/v1/connections/{id}/grants` | S/K | agents granted |
 | GET `/v1/agents/{agent}/effective` | S/K | effective credentials and per-tool decisions with `org_ceiling`; (phase 2, RFE-005) optional `?speaker=<user_id>\|none` |
@@ -627,7 +627,7 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 |---|---|---|
 | GET `/v1/admin/overview` | IA | versions, gateways, hook hosts, runners, connectors, active snapshot; (phase 4) `counters: { backend, state }` (P4-CNT, `15`) and `blobs: { backend, healthy }` (P4-S3) |
 | GET/PATCH `/v1/admin/users` | IA | list, instance-admin flag, disable |
-| GET/POST `/v1/admin/plugins` (multipart upload); GET `/v1/admin/plugins/{id}`; POST `…/approve`, `…/reject`, `…/disable`, `…/enable`; DELETE `…?force=` | IA | (phase 3, RFE-022) GET `{id}` of a pending major upgrade carries `impact` (`09 §10`: `connections_needing_reauth`, `by_app`); `approve` activates and flips the failing connections to `reauth_required` in one transaction and returns the `PluginPackage` plus `connections_reauth: n` (phase 3, D-107) |
+| GET/POST `/v1/admin/plugins` (multipart upload); GET `/v1/admin/plugins/{id}`; POST `…/approve`, `…/reject`, `…/disable`, `…/enable`; DELETE `…?force=` | IA | (phase 3, RFE-022) GET `{id}` of a pending major upgrade carries `impact` (`09 §10`: `connections_needing_reauth`, `by_app`); (phase 4, P4-GRANTS) `impact` also carries `grants_to_convert` (count, by app and workspace) for an upgrade that introduces `grants.custom_only`, and approval then converts them atomically (`09 §10`, reason `converts_grants`); `approve` activates and flips the failing connections to `reauth_required` in one transaction and returns the `PluginPackage` plus `connections_reauth: n` (phase 3, D-107) |
 | GET `/v1/admin/host-claims`; PUT `/v1/admin/host-claims/{claim_key}` | IA | conflicts and winners |
 | GET/POST/DELETE `/v1/admin/trusted-keys` | IA | |
 | GET/POST/DELETE `/v1/admin/connectors`; POST `…/{id}/approve`, `…/{id}/token` | IA | provision token, approve manifest |

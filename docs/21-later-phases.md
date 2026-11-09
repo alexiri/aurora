@@ -168,6 +168,14 @@ tokens), group → workspace access bindings, group identities in policy
   `org.aurora.harnesses`), and the switching rules. Implemented after P4-LLM. Owning
   sections: `12 §Harness selection and adapter contract`, `12 §Adapter codex`, `11
   §Sandbox image`, `10`, `05`, `15`, `16 §W5`, `18 §Harness adapters`.
+- **Custom grants only and parameter-level tool matching — specified (phase 4,
+  P4-GRANTS, D-123, D-124, SEC-67, SEC-68).** Manifest `apps[].grants { custom_only,
+  block_untooled }` and the tool classifier `params` (Q8), both additive in contract 1
+  and optional. Owning sections: `09 §3.4 grants` and `tools`, `§6`, `§10`, `07
+  §Grants and their compilation`, `06` (steps 4, 5, snapshot), `05` (grants and plugin
+  routes), `14` (Access tab), `18 §Custom grants only and parameter-level matching`.
+  Adoption (Indico `grants`, AWS `Describe*` tools) is a package change made at
+  implementation, not part of this specification.
 - Live narration cards in chat (steps list updated under the connector's write
   rate hint), user-token features (`user_tokens` capability).
 - **Slack connector**: decision deferred; if built, it is a connector covering

@@ -487,7 +487,15 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
     with "no runner offers this"; changing it asks for confirmation: "Starts fresh sessions for
     every conversation of this agent; the transcript is kept"; refused while a turn runs), model (from
     `/v1/agents/{a}/models`), effort, proactive messaging mode.
-  - **Access** — grants: connections (full / custom with allow/ask/block per
+  - **Access** — (phase 4, P4-GRANTS) for an app whose manifest is `custom_only` the grant
+    form has no "Full access" option, shows "This app only supports custom access: choose
+    the tools the agent may use" and starts with every tool on *block*; an app with
+    `block_untooled` shows the note "Requests that are not in the tool list are always
+    blocked" in the grant and in the effective view; the app catalogue and connection cards
+    carry a "Custom access only" badge; a conversion by an upgrade appears as a notice on the
+    affected agent's Access tab ("Access for <app> was converted from full to custom by an
+    app update"), and the plugin approval screen shows the "N agent grants will be converted"
+    banner next to the reconnect banner. Grants: connections (full / custom with allow/ask/block per
     tool, read/write groups, wildcard umbrellas only where valid, inert-tool
     flags), secrets, LLM keys; "effective" view with org-ceiling explanations.
   - **Channels** — presences (attach dedicated/shared per integration

@@ -280,6 +280,34 @@ grant write, and the gateway is invalidated (`agent` scope).
 | Connection `C`, mode `full` | 1. `allow` target `connection{C}` (all tools, including future ones) |
 | Connection `C`, mode `custom` | 1. `allow` target `connection{C, tools: allow_tools}` (if non-empty) · 2. `allow + require_approval` target `connection{C, tools: ask_tools}` (if non-empty; phase 2, RFE-011a: carrying the grant's optional `ask_timeout_secs` as `approval_timeout_secs`) · 3. `block` target `connection{C}` (everything else, including requests with no matching tool) |
 
+**App-level restrictions (phase 4, P4-GRANTS, D-123, SEC-67).** An app's manifest may
+declare `grants.custom_only` and `grants.block_untooled` (`09 §3.4 grants`). They are
+facts of the approved manifest, copied into the snapshot, and apply **below** the rules:
+
+- `custom_only`: creating or editing a grant of a connection of that app in mode `full` is
+  refused (422 `full_grant_forbidden`, `details: { app_id }`) on every path that writes grants
+  (routes, CLI, first-run and template flows, agent proposals); the table's `full` row is never
+  compiled for such an app. **Defence in depth** in the evaluator: for a request whose
+  winning credential is a connection of a `custom_only` app, a `connection` or
+  `app_connections` target **without `tools`** (whether in a derived or a hand-written rule)
+  matches nothing — it neither allows nor selects the credential for injection — so a stale
+  or hand-made full-style rule can never grant what the manifest forbids. Rules with
+  `tools` are unaffected. The warnings panel reports such a hand-written rule as inert
+  (`app_custom_only_target_inert`).
+- `block_untooled`: for a request whose winning credential is a connection of that app and
+  whose `tool_id` is `None`, the scope verdict is `block` before any rule is consulted
+  (403 `blocked_by_policy`, `details.reason = "app_untooled_blocked"`; reason
+  `app_untooled_blocked` in the trace and request log). No rule, allow or approval, can
+  override it, and it applies under every grant mode and to hand-written rules alike. It
+  does not apply at CONNECT time (no credential is injected there) and does not affect
+  requests to the same host without that connection as the winning credential.
+- **Composition.** The restrictions only tighten: they combine with grants, rules,
+  approvals, governance and the Default Rule by the usual strictness order (`block` wins), never
+  add an allow, and never change a custom grant's compilation (rules 1–3 above already block
+  untooled requests and unlisted tools). An `ask` tool still holds for approval; a `block`
+  entry still blocks. Activation of a package version that introduces `custom_only` converts
+  existing full grants (`09 §10`).
+
 (phase 2, RFE-011a) A grant may carry `ask_timeout_secs` (custom connection grants with `ask_tools`; validated like a rule's timeout, 422 `approval_timeout_out_of_range`).
 
 Validation laws (422): a custom grant needs ≥1 tool in `allow_tools ∪

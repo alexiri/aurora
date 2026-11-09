@@ -392,8 +392,13 @@ minted.
 5. **App and tool identification.** Look up the app serving (host, path) in the
    snapshot host index (longest path prefix wins among non-lost claims); find
    the matching tool in that app's catalogue (host, path, methods, GraphQL kind
-   via the fail-closed classifier, git operation). Unmatched requests to an app
-   host have `tool = None`.
+   via the fail-closed classifier, git operation; (phase 4, P4-GRANTS, Q8) a tool's
+   `params` conditions evaluated on the query, the urlencoded body prefix of step 4 or
+   `x-amz-target`, fail closed: an absent, repeated, conflicting, undecodable or truncated
+   parameter means the tool does not match, `09 §3.4 tools`). Unmatched requests to an app
+   host have `tool = None`. (phase 4, P4-GRANTS) The step-4 body prefix is also buffered when a
+   `form`-`params` tool may match, and the app's `grants` flags (`custom_only`,
+   `block_untooled`) are read from the snapshot for step 7 (`07 §Grants and their compilation`).
 6. **Credential selection (ids only, nothing decrypted).** Among the
    *selected* candidates (`07 §Injection selection`) that serve this request:
    - prefer the one named by `x-aurora-connection-id` (unknown/ungranted id →
@@ -699,7 +704,7 @@ never stay unseen behind a dead listener.
 
 At boot the gateway loads the active snapshot for the highest contract it
 supports (`09 §Registry snapshot`), validates that every mechanism, decoder and
-finalizer it names is known, builds the host index and tool matchers, and swaps
+finalizer (phase 4, Q8: and tool classifier, `params`) it names is known, builds the host index and tool matchers, and swaps
 the structures atomically (`ArcSwap`). A snapshot naming an unknown mechanism is
 refused (logged, metric `gateway_snapshot_rejected_total`) and the previous one
 kept. `readyz` is false until a snapshot is loaded (an empty snapshot is valid).

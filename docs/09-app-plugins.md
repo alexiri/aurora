@@ -321,7 +321,60 @@ There are no segment exclusions, so when two patterns overlap the order decides 
 `/export/categ/favorites*` must be declared before `/export/categ/*`, and `/rooms/api/rooms/search`
 before `/rooms/api/rooms/*`). Reordering `items` therefore changes which tool id a grant, an
 approval and the request log see; keep specific patterns first and cover each overlap with a
-fixture. Query strings never participate in matching.
+fixture. Query strings never participate in matching. (phase 4, P4-GRANTS, Q8, D-124: **except
+through `params`**, below; a tool without `params` is matched exactly as before.)
+
+**Parameter-level matching (phase 4, P4-GRANTS, Q8, D-124, SEC-68).** Some APIs put the
+operation in a parameter, not the path: AWS Query APIs (`POST https://ec2.<region>.amazonaws.com/`
+with `Action=DescribeInstances`, STS with `Action=GetCallerIdentity`), AWS JSON APIs (header
+`X-Amz-Target`). A tool may add an optional **`params`** list, a classifier like `graphql` and `git`:
+
+```yaml
+- { id: ec2_describe, name: Describe EC2 resources, host: "ec2.*.amazonaws.com", path: /, methods: [GET, POST],
+    params: [ { source: form, name: Action, match: { prefix: Describe } } ] }
+- { id: sts_get_caller_identity, name: Who am I, host: "sts.*.amazonaws.com", path: /, methods: [GET, POST],
+    params: [ { source: form, name: Action, match: { equals: GetCallerIdentity } } ] }
+- { id: dynamodb_query, name: Query a table, host: "dynamodb.*.amazonaws.com", path: /, methods: [POST],
+    params: [ { source: header, name: x-amz-target, match: { prefix: "DynamoDB_20120810.Query" } } ] }
+```
+
+- **Conditions.** `params` is a list of 1–4 conditions, all of which must hold (AND). `source`:
+  `query` (the URL query), `form` (the body, only when `Content-Type` is exactly
+  `application/x-www-form-urlencoded`, optional `charset=utf-8`) or `header` (only a header from a
+  fixed list, phase 4: `x-amz-target`; never `authorization`, `cookie`, `proxy-*`, `x-api-key` or any
+  header a mechanism injects). `name`: `[A-Za-z0-9_.-]`, ≤64 chars (case-sensitive for `query` and `form`,
+  case-insensitive for `header`). `match`: exactly one of `equals: "<v>"`, `in: [<v>, …]` (≤32), or
+  `prefix: "<v>"` (≥4 chars); values `[A-Za-z0-9_.:/-]`, ≤128 chars. No regular expressions, no
+  numeric or JSON-body matching (GraphQL stays the only structured-body classifier).
+- **Fail closed.** The value is extracted once per request: percent-decoded one time, `+` as
+  space in `form`, no case folding. The parameter must occur **exactly once** in its source, and a
+  `form` parameter must not also appear in the query. If it is missing, repeated, present in both
+  places, in a body that is not urlencoded, compressed (`Content-Encoding`), not valid UTF-8 or
+  **truncated beyond the buffer** (`CONDITION_BODY_BUFFER`), the condition is **unknown, the tool
+  does not match**, and classification continues down the catalogue (typically reaching the generic
+  write tool of the same endpoint, or `tool = None`). Doubt therefore never produces a `read`
+  classification. The linter requires, for every tool with `params`, fixtures for the positive case
+  and for each of: other value, missing, repeated, query/body conflict, wrong content type,
+  truncated body.
+- **Cost.** The gateway buffers the body prefix only for a request whose host, path and
+  method already match a `params` tool with a `form` condition (the existing *Body prefix* step 4 of the
+  `06` request pipeline); other requests are unaffected.
+- **Order and superset rules.** The first-match rule above is unchanged: a `params` tool is declared
+  before the generic tool that would also match (`ec2_describe` before `ec2_call`). A group wildcard
+  carries no `params` and remains a superset check on host/path/methods only; a tool with `params`
+  is a subset of what its host, path and methods allow.
+- **Approvals, effective views, simulation.** Summaries read parameters with the existing
+  `form` decoder; the effective view and the simulator build a tool's synthetic request from its
+  first example **including its `params`** (`equals` → the value, `in` → the first, `prefix` → the
+  prefix followed by `Example`).
+- **Compatibility.** Additive in contract 1: a package without `params` is untouched. A core that
+  does not know `params` rejects the package (unknown key, and `min_core`); a **gateway** that does
+  not know the classifier refuses the snapshot that names it, exactly like an unknown mechanism
+  (`06 §Registry snapshot`), and keeps the previous snapshot, so a rolling upgrade can never run a
+  `params` tool as a path-only tool. Existing packages need no change. Adopting `params` in a
+  package that already has a broader tool (splitting `ec2_call` into `ec2_describe` + `ec2_call`)
+  changes which tool id the carved-out requests get: new tools arrive **blocked** in existing custom
+  grants (fail closed), so the package's release notes say so and its fixtures cover both.
 
 #### `approvals` — approval summaries (templates per tool)
 ```yaml
@@ -362,6 +415,37 @@ agent:
 (`PATH`, `HOME`, `USER`, `SHELL`, `TZ`, `LANG`, anything starting with `AURORA_`,
 proxy and CA variables, LLM client variables). Stub paths are relative to the
 home and confined to it.
+
+#### `grants` (phase 4, P4-GRANTS, D-123, SEC-67)
+```yaml
+grants:
+  custom_only: true      # default false: `full` grants are not offered and are refused for this app
+  block_untooled: true   # default false: a request that matches no catalogue tool is blocked under every grant
+```
+Optional, per app; **absent = both `false` = today's behaviour**, so no existing package
+must change. For apps whose credential is far broader than their catalogue (Indico's
+`full:everything` token), the author can say "only what the catalogue names":
+
+- `custom_only` — `full` mode is not available for this app's connections: the API
+  refuses it (422 `full_grant_forbidden`), the dashboard does not offer it, and the
+  evaluator never lets a target without `tools` allow a connection of this app
+  (`07 §Grants and their compilation`). Custom grants (allow / ask / block per tool;
+  new tools arrive blocked; unmatched requests blocked) are the only way to use the
+  app. Requires at least one tool in the catalogue (linter error `custom_only_without_tools`).
+- `block_untooled` — whatever grants exist, a request on which the app's connection
+  would be the winning credential but **no catalogue tool matches** (`tool = None`) is
+  blocked (403 `blocked_by_policy`, `details.reason = "app_untooled_blocked"`), and
+  no hand-written rule can allow it. With `custom_only` it is already implied for custom
+  grants; the flag matters for packages that keep `full` available but want it to cover
+  *catalogued* tools only (a `full` grant then means "every tool the catalogue names,
+  including future ones", never "anything the token can do").
+
+Both are properties of the manifest the instance admin approves (shown in the
+permissions review, `§10`), not of a grant, so a user cannot switch them off.
+They sit in contract 1 as an additive key: a core that does not know `grants` rejects the
+package (unknown key; packages that use it declare `min_core` of the release that
+introduces it), which fails closed. The linter also rejects unknown keys inside `grants` and
+non-boolean values. Both flags are copied into the snapshot's `apps[].grants` (`§9`).
 
 #### `database` (phase 2)
 ```yaml
@@ -449,6 +533,14 @@ if any of:
   an Azure resource host), so a package can never obtain a second, ungoverned way to
   inject on those hosts; the built-in AWS packages (`s3.*`, `ec2.*`) are unaffected;
 - unknown mechanism or decoder;
+- (phase 4, P4-GRANTS) `grants` with unknown keys or non-boolean values, `custom_only` on an
+  app with no tools (`custom_only_without_tools`); a tool `params` list that is empty, longer
+  than 4, has an unknown `source` or header name, a `match` without exactly one of `equals` /
+  `in` / `prefix`, an over-long or non-conforming value, a `prefix` shorter than 4 characters, a
+  `form` condition on a tool whose methods are all `GET`/`HEAD`, or a `params` tool declared
+  **after** a broader tool that would shadow it (the linter proves the order by testing the
+  tool's own first example against the earlier tools); a group wildcard carrying `params`; a
+  `params` tool missing any of the required fixtures (`§3.4 tools`);
 - `env` or stub paths violating the rules above.
 
 A host **conflict** with another active package is not a rejection: the package
@@ -594,7 +686,8 @@ content hash and activates it.
                   "egress": { "connect.exchange": ["…"] }, "context": ["…"] } ],
   "oauth_clients": [ { "package_id", "client_key", "authorize_url", "token_url", "pkce", "client_auth", "body_format", "fields": [] } ],
   "apps": [ { "app_id", "package_id", "about": {}, "credentials": [], "metadata": [], "connect": [],
-              "token": {}, "tools": { "read": {}, "write": {} }, "approvals": {}, "agent": {}, "database": null } ],
+              "token": {}, "tools": { "read": {}, "write": {} }, "approvals": {}, "agent": {}, "database": null,
+              "grants": { "custom_only": false, "block_untooled": false } } ],
   "hosts": [ { "host": "api.todoist.com", "path_prefix": "/rest", "app_id": "todoist", "claim_status": "active",
                "tenant": null, "rewrite_host": null, "inject": [ { "bearer": "{credentials.api_token}" } ],
                "finalize": null, "transform": null, "intercept": null, "passthrough": [] } ],
@@ -679,6 +772,18 @@ States: `pending_approval` → `active` (→ `superseded` by a newer active vers
   `pending_approval` (reason `breaks_connections`) until an instance admin approves,
   so the warning is always seen. A major upgrade with `needing_reauth = 0`
   follows the ordinary rules.
+- (phase 4, P4-GRANTS, D-123) **Activation that introduces `custom_only`** for an app that
+  has live `full` grants: in the activation transaction every such grant is **converted
+  to a custom grant** (`mode = custom`, `allow_tools` = every tool of the new version's
+  catalogue, `ask_tools` empty, `ask_timeout_secs` null) and its derived rules are recompiled,
+  so what each agent can do with catalogued tools today is unchanged and what it loses is exactly
+  what a full grant added: requests matching no tool, and tools added later. One audit row
+  `grant.converted_by_app` per grant (security-critical set, atomic). The permissions review
+  shows **"N agent grants will be converted from full to custom access"** (counts by app and
+  workspace, nothing else), and a built-in or uploaded upgrade with N > 0 is held
+  `pending_approval` (reason `converts_grants`) like `breaks_connections`, never auto-activated.
+  Activation that introduces `block_untooled` converts nothing (the evaluator applies it at
+  once). A later version that drops either flag converts nothing back: custom grants stay custom.
 - **Removing an app** (upgrade without it, or uninstall) with live connections
   is refused unless `force`; forced removal marks connections `orphaned`.
 - **New tools arrive blocked** in custom grants; removed tools make referencing
