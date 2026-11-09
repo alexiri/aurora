@@ -2,9 +2,10 @@
 # Sandbox image (docs/11 §Sandbox image).
 #   podman build -f images/sandbox/Containerfile --target sandbox-min -t aurora-sandbox-min:dev .
 # Targets: base (OS + tools), sandbox (base + supervisor + harness), sandbox-min (OS + supervisor, e2e).
-# The CERN AlmaLinux 10 base is the default; override with
-#   --build-arg ALMA_BASE=docker.io/library/almalinux:10
-ARG ALMA_BASE=gitlab-registry.cern.ch/linuxsupport/alma10-base
+# The public official AlmaLinux 10 image, pinned by digest, is the default; a deployment that needs
+# a private or mirrored base overrides it at build time (docs/15):
+#   --build-arg SANDBOX_BASE_IMAGE=<registry>/<image>:<tag>
+ARG SANDBOX_BASE_IMAGE=docker.io/library/almalinux:10@sha256:5a4b41a427c9717be8f4ac2a32aa22efbae5f9124fbcb79a6765394f312acfe8
 
 # ---- supervisor, built against an older glibc than the AlmaLinux runtime (OPS-020: cargo-chef deps
 # layer + lld, same design as images/services/Containerfile; target/ stays in layers for the gha cache)
@@ -36,7 +37,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     && mkdir /out && cp target/release/aurora-supervisor /out/
 
 # ---- OS: AlmaLinux 10 with the unprivileged `agent` user and an empty /workspace
-FROM ${ALMA_BASE} AS os
+FROM ${SANDBOX_BASE_IMAGE} AS os
 # `postgresql` is the psql client: `psql service=<name>` is how agents use database connections
 # (P2-DBL-2; the supervisor writes the libpq service, password and CA files).
 RUN dnf -y install --setopt=install_weak_deps=False shadow-utils glibc-common postgresql \

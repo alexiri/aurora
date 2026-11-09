@@ -1,0 +1,4 @@
+description: RFE-023 org Default Rule block, injected LLM key on an LLM host - the org scope reports the skip, the combined verdict is unchanged
+org: {default_action: block}
+facts: {host: llm.example.com, port: 443, path: /v1/chat, method: POST, is_llm_host: true, winning_credential: {type: secret, id: 00000000-0000-0000-0000-000000000051, kind: llm, scope: organization}, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: allow, trace_via: {organization: default_skipped_llm_host, workspace: nothing}}

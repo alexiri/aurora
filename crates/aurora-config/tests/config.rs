@@ -248,6 +248,50 @@ fn defaults_match_table() {
     assert_eq!(r.telemetry.log_level, "info");
 }
 
+// RFE-019 (D-63): the built-in default brief is neutral; empty = default; over-long fails naming the key.
+#[test]
+fn default_brief_is_neutral_and_validated() {
+    let neutral = RawConfig::default().agents.default_brief;
+    for banned in ["Daneel", "Olivaw", "CERN", "robot", "sassy", "positronic"] {
+        assert!(!neutral.contains(banned), "default brief mentions {banned}");
+    }
+    assert!(neutral.chars().count() < 600);
+    // unset and empty both resolve to the neutral default
+    let cfg = load_with(BASE, &[]).unwrap().api_config().unwrap();
+    assert_eq!(cfg.agents.default_brief, neutral);
+    let cfg = load_with(&format!("{BASE}[agents]\ndefault_brief = \"\"\n"), &[])
+        .unwrap()
+        .api_config()
+        .unwrap();
+    assert_eq!(cfg.agents.default_brief, neutral);
+    // a configured brief is used verbatim
+    let cfg = load_with(
+        &format!("{BASE}[agents]\ndefault_brief = \"Be brief.\"\n"),
+        &[],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap();
+    assert_eq!(cfg.agents.default_brief, "Be brief.");
+    // 20 000 chars is accepted, 20 001 is refused naming the key
+    let ok = "x".repeat(20_000);
+    assert!(
+        load_with(&format!("{BASE}[agents]\ndefault_brief = \"{ok}\"\n"), &[])
+            .unwrap()
+            .api_config()
+            .is_ok()
+    );
+    let long = "x".repeat(20_001);
+    let err = load_with(
+        &format!("{BASE}[agents]\ndefault_brief = \"{long}\"\n"),
+        &[],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap_err();
+    assert!(err.has_key("agents.default_brief"));
+}
+
 #[test]
 fn per_service_validation() {
     let raw = load_with("", &[]).unwrap();

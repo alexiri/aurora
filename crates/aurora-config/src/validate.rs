@@ -324,6 +324,7 @@ impl RawConfig {
         check_llm(&mut c, &self.llm, &self.governance);
         let governance = check_governance(&mut c, self);
         check_hosted(&mut c, &self.hosted);
+        let agents = check_agents(&mut c, &self.agents);
         check_approvals(&mut c, &self.approvals, &self.hosted);
         check_events(&mut c, &self.events);
         check_pos(
@@ -423,7 +424,7 @@ impl RawConfig {
             secrets: self.secrets.clone(),
             llm: self.llm.clone(),
             governance: governance.unwrap_or_else(|| resolve_governance_lossy(self)),
-            agents: self.agents.clone(),
+            agents,
             hosted: self.hosted.clone(),
             approvals: self.approvals.clone(),
             events: self.events.clone(),
@@ -721,6 +722,23 @@ impl RawConfig {
 #[derive(Default)]
 struct Ctx {
     errors: Vec<ConfigError>,
+}
+
+/// Longest brief an agent may carry (`10 §Default agent`).
+const MAX_BRIEF_CHARS: usize = 20_000;
+
+/// `agents.default_brief`: at most 20 000 characters; empty (or blank) means the built-in neutral default.
+fn check_agents(c: &mut Ctx, a: &AgentsSection) -> AgentsSection {
+    let mut out = a.clone();
+    if a.default_brief.trim().is_empty() {
+        out.default_brief = crate::raw::DEFAULT_AGENT_BRIEF.to_string();
+    } else if a.default_brief.chars().count() > MAX_BRIEF_CHARS {
+        c.err(
+            "agents.default_brief",
+            format!("must be at most {MAX_BRIEF_CHARS} characters"),
+        );
+    }
+    out
 }
 
 impl Ctx {

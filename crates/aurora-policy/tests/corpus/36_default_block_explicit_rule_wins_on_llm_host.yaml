@@ -1,0 +1,7 @@
+description: RFE-023 an explicit block rule naming the LLM host still wins over the skipped Default Rule
+workspace:
+  default_action: block
+  ordered_rules:
+    - {logical_id: 00000000-0000-0000-0000-0000000000a1, name: stop-llm, action: block, targets: [{type: network, host: llm.example.com}]}
+facts: {host: llm.example.com, port: 443, path: /v1/chat, method: POST, is_llm_host: true, winning_credential: {type: secret, id: 00000000-0000-0000-0000-000000000051, kind: llm, scope: workspace}, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+expect: {verdict: block, reason: rule, trace_via: {workspace: rule}}
