@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
+import { ACCESS_SCREENS, openAccess } from "./support/access";
 import { ROUTES } from "./support/mock-api";
 import { CONNECTOR_SCREENS, openConnectorScreen } from "./support/connectors";
 import { openRoute } from "./support/open";
@@ -47,6 +48,19 @@ for (const scheme of ["light", "dark"] as const) {
       for (const s of CONNECTOR_SCREENS) {
         test(`${s} has no serious or critical violations`, async ({ page }) => {
           await openConnectorScreen(page, s, scheme);
+          expect(await serious(page)).toEqual([]);
+        });
+      }
+    });
+  }
+
+  // FIX-022: the agent Access tab and the grant editor open (custom, and custom-only with block_untooled).
+  for (const width of [1280, 390]) {
+    test.describe(`${scheme} theme, agent Access tab, ${width} px`, () => {
+      test.use({ viewport: { width, height: 900 } });
+      for (const s of ACCESS_SCREENS) {
+        test(`${s} has no serious or critical violations`, async ({ page }) => {
+          await openAccess(page, s, scheme);
           expect(await serious(page)).toEqual([]);
         });
       }

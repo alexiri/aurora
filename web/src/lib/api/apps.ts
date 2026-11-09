@@ -117,6 +117,31 @@ export function appIsCustomOnly(app: unknown): boolean {
   return a.custom_only === true || a.grants?.custom_only === true;
 }
 
+export interface AppRestrictions {
+  custom_only: boolean;
+  block_untooled: boolean;
+}
+
+/**
+ * `app_restrictions: { custom_only, block_untooled }` as the grant response and `GET …/grants` carry it (05), read from
+ * the first source that has it: a grant item, the grants response, or the app detail (`grants`, or flat flags). The
+ * field is not in the generated schema yet, hence `unknown`; the editor also learns `custom_only` from a 422.
+ */
+export function appRestrictions(...sources: unknown[]): AppRestrictions {
+  const out: AppRestrictions = { custom_only: false, block_untooled: false };
+  for (const s of sources) {
+    if (typeof s !== "object" || s === null) continue;
+    const o = s as { app_restrictions?: unknown; grants?: unknown; custom_only?: unknown; block_untooled?: unknown };
+    for (const c of [o.app_restrictions, o.grants, o]) {
+      if (typeof c !== "object" || c === null) continue;
+      const r = c as { custom_only?: unknown; block_untooled?: unknown };
+      if (r.custom_only === true) out.custom_only = true;
+      if (r.block_untooled === true) out.block_untooled = true;
+    }
+  }
+  return out;
+}
+
 export function useAppGuide(app: string | undefined, enabled = true) {
   return useQuery({
     queryKey: appKeys.guide(app ?? ""),

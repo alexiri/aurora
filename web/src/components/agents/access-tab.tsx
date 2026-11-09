@@ -6,6 +6,7 @@ import { ItemList, ListRow, Section } from "@/components/ui/section";
 import { useEffective, useGrants, useToggleGrant } from "@/lib/api/policy";
 import { useSecrets } from "@/lib/api/secrets";
 
+import { ConnectionGrants, ConnectionGrantsReadOnly } from "./connection-grants";
 import { ModelReadinessSection } from "./model-readiness";
 
 /** Secret grants: workspace owners only (`GET …/grants` and the secret lists are `can_own`, I-27). */
@@ -72,6 +73,7 @@ export function AccessTab({
   return (
     <div className="space-y-8">
       {canOwn && hosted ? <ModelReadinessSection agentId={agentId} base={base} /> : null}
+      {canOwn ? <ConnectionGrants agentId={agentId} wsId={wsId} orgId={orgId} /> : <ConnectionGrantsReadOnly agentId={agentId} wsId={wsId} />}
       {canOwn ? <SecretGrants agentId={agentId} wsId={wsId} orgId={orgId} /> : null}
 
       <Section id="effective-access" title="Effective access" description="The credentials this agent can use right now, and why.">
