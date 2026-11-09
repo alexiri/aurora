@@ -127,6 +127,38 @@ export function useRemoveCredentialGrant(target: GrantTarget) {
   });
 }
 
+export type ConnectionGrant = S["ConnectionGrant"];
+export type PutConnectionGrant = S["PutConnectionGrant"];
+
+/** The agent-side per-connection editor: one agent's grant changed, so its views and the connection's list refresh. */
+function invalidateAgentGrant(qc: QueryClient, agentId: string, connectionId: string) {
+  invalidateGrants(qc, { kind: "connection", id: connectionId }, [agentId]);
+}
+
+/** `PUT /v1/agents/{agent}/grants/connections/{conn}` (create or replace). */
+export function usePutAgentConnectionGrant(agentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ connectionId, body }: { connectionId: string; body: PutConnectionGrant }) =>
+      unwrap(api.PUT("/v1/agents/{agent}/grants/connections/{conn}", { params: { path: { agent: agentId, conn: connectionId } }, body })),
+    onSuccess: (_r, v) => invalidateAgentGrant(qc, agentId, v.connectionId),
+  });
+}
+
+/** `DELETE /v1/agents/{agent}/grants/connections/{conn}`. */
+export function useRemoveAgentConnectionGrant(agentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (connectionId: string) => {
+      const { error, response } = await api.DELETE("/v1/agents/{agent}/grants/connections/{conn}", {
+        params: { path: { agent: agentId, conn: connectionId } },
+      });
+      if (error !== undefined || !response.ok) throw ApiError.fromBody(error, response.status);
+    },
+    onSuccess: (_r, connectionId) => invalidateAgentGrant(qc, agentId, connectionId),
+  });
+}
+
 /** The agent id a failed bulk grant names in `details.agent_id`, if any. */
 export function failingAgentId(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;

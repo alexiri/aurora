@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { ACCESS_SCREENS, openAccess } from "./support/access";
 import { CONNECTOR_SCREENS, openConnectorScreen } from "./support/connectors";
 
 // P2-UI stage 2: the designed screens never scroll horizontally at 390 px (the agent tab strip
@@ -62,6 +63,18 @@ test.describe("390 px", () => {
     test(`admin connectors › ${s} has no horizontal page scroll`, async ({ page }) => {
       await openConnectorScreen(page, s, "light");
       expect(await noPageScroll(page)).toBe(true);
+    });
+  }
+
+  // FIX-022: the Access tab with the grant editor open (the tool list must work at 390 px).
+  for (const s of ACCESS_SCREENS) {
+    test(`agent Access tab › ${s} has no horizontal page scroll`, async ({ page }) => {
+      await openAccess(page, s, "light");
+      expect(await noPageScroll(page)).toBe(true);
+      if (s !== "connections") {
+        const dlg = page.getByRole("dialog");
+        expect(await dlg.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+      }
     });
   }
 

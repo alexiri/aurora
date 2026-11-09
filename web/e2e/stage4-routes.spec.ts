@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
 
+import { mkdirSync } from "node:fs";
+
+import { ACCESS_SCREENS, openAccess } from "./support/access";
 import { ROUTES } from "./support/mock-api";
 import { CONNECTOR_SCREENS, openConnectorScreen } from "./support/connectors";
 import { CANVAS, openRoute, overflow } from "./support/open";
@@ -36,6 +39,31 @@ for (const width of [1280, 390]) {
           expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
           expect(await overflow(page), `${s} overflows horizontally`).toBeLessThanOrEqual(0);
           await page.screenshot({ path: `${SHOTS}/${s}-${scheme}-${width}.png`, fullPage: true });
+        });
+      }
+    }
+  });
+}
+
+// FIX-022: the agent Access tab (connection list) and the grant editor open, themed, no horizontal page scroll;
+// full-page screenshots for the coordinator.
+const ACCESS_SHOTS = "/tmp/aurora-screens/fix-022";
+mkdirSync(ACCESS_SHOTS, { recursive: true });
+for (const width of [1280, 390]) {
+  test.describe(`agent Access tab (${width} px)`, () => {
+    test.use({ viewport: { width, height: 900 } });
+    for (const scheme of ["light", "dark"] as const) {
+      for (const s of ACCESS_SCREENS) {
+        test(`${s}: themed, no horizontal page scroll (${scheme})`, async ({ page }) => {
+          await openAccess(page, s, scheme);
+          expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
+          expect(await overflow(page), `${s} overflows horizontally`).toBeLessThanOrEqual(0);
+          if (s !== "connections") {
+            // The dialog scrolls inside itself; nothing in it may be wider than the dialog.
+            const dlg = page.getByRole("dialog");
+            expect(await dlg.evaluate((el) => el.scrollWidth - el.clientWidth), `${s} dialog overflows`).toBeLessThanOrEqual(0);
+          }
+          await page.screenshot({ path: `${ACCESS_SHOTS}/${s}-${scheme}-${width}.png`, fullPage: s === "connections" });
         });
       }
     }
