@@ -116,7 +116,7 @@ function Bubble({
           "[&_pre]:border [&_pre]:border-line [&_pre]:bg-surface dark:[&_pre]:bg-canvas [&_pre_code]:border-0 [&_pre_code]:px-0",
         )}
       >
-        {side === "person" ? <p className="whitespace-pre-wrap">{text}</p> : <Markdown source={text} />}
+        <Markdown source={text} breaks={side === "person"} />
         {attachments.map((id) => (
           <AttachmentCard key={id} id={id} purged={state.purged?.[id]} />
         ))}

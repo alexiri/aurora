@@ -5,6 +5,8 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { FormDialog } from "@/components/ui/confirm-dialog";
 import { Field, inputClass } from "@/components/ui/field";
+import { MoreIcon } from "@/components/ui/icons";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import { authorityRank, type Frozen } from "@/lib/api/freeze";
@@ -72,6 +74,7 @@ export function FreezeControl({
   callerRank,
   freeze,
   unfreeze,
+  inMenu = false,
 }: {
   subject: FreezeSubject;
   name: string;
@@ -79,6 +82,8 @@ export function FreezeControl({
   callerRank: number;
   freeze: FreezeMutation;
   unfreeze: UnfreezeMutation;
+  /** Offer Freeze as an entry of an overflow menu instead of a button (the confirm dialog is the same). */
+  inMenu?: boolean;
 }) {
   const label = SUBJECT_LABEL[subject];
   const [open, setOpen] = useState(false);
@@ -132,9 +137,25 @@ export function FreezeControl({
 
   return (
     <>
-      <Button type="button" variant="danger" size="sm" onClick={() => setOpen(true)}>
-        Freeze {label}
-      </Button>
+      {inMenu ? (
+        // Non-modal: a modal menu aria-hides the rest of the page while its controls stay focusable (axe).
+        <Menu modal={false}>
+          <MenuTrigger asChild>
+            <Button variant="ghost" size="sm" aria-label={`${SUBJECT_LABEL[subject][0].toUpperCase()}${SUBJECT_LABEL[subject].slice(1)} actions`} className="size-11 min-h-11 px-0 md:size-9 md:min-h-9">
+              <MoreIcon width={20} height={20} />
+            </Button>
+          </MenuTrigger>
+          <MenuContent align="end">
+            <MenuItem className="text-danger-ink data-[highlighted]:bg-danger-soft" onSelect={() => setOpen(true)}>
+              Freeze {label}…
+            </MenuItem>
+          </MenuContent>
+        </Menu>
+      ) : (
+        <Button type="button" variant="danger" size="sm" onClick={() => setOpen(true)}>
+          Freeze {label}
+        </Button>
+      )}
       <FormDialog
         open={open}
         onOpenChange={setOpen}
