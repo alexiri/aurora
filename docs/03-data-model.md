@@ -219,8 +219,9 @@ Audit writes are best-effort and never fail the action (logged on failure). (pha
 | app_version | text not null | package version that created/last reconnected it |
 | label | text not null | sanitized; auto-filled from probe metadata |
 | status | text CHECK in (`active`,`reauth_required`,`disabled`,`orphaned`) | |
-| status_reason | text null | open vocabulary |
+| status_reason | text null (≤ 300 chars) | open vocabulary; a plugin major upgrade sets `plugin_major_upgrade: <package> <old> -> <new>; missing: <names>` (`09 §10`, ≤300 chars) |
 | credentials_ref | text not null | SecretRef of the credential JSON (fields per manifest `credentials`) |
+| credential_keys | text[] null | (phase 3, RFE-022) **names** (never values) of the fields present in the sealed credential JSON; maintained by the API/gateway wherever credentials are sealed (connect, reconnect, refresh, mint). Null = unknown (legacy rows: the upgrade check derives the names from the manifest of the row's `app_version`, else fails closed). Used by the plugin major-upgrade check (`09 §10`). The gateway role's column-level `UPDATE` list includes it |
 | credentials_version | bigint not null default 1 | CAS authority for refresh/mint writes |
 | credentials_expires_at | timestamptz null | access-token expiry (refresh trigger) |
 | scopes | text[] not null default `{}` | granted scopes |
@@ -1164,8 +1165,8 @@ view `gateway_users`), `api_keys`), `agents`, `gateway_credentials`, `secrets`,
 the gateway reads the hold's `status`; FIX-016); `INSERT` on
 `request_log`; `UPDATE (credentials_ref, credentials_version,
 credentials_expires_at, status, status_reason, reauth_required_at,
-last_used_at, updated_at)` on `app_connections` (`updated_at` is set by credential rotation
-and `reauth_required`; FIX-016); `UPDATE (last_used_at, origin)` on `secrets`; `UPDATE (last_used_at)` on
+last_used_at, updated_at, credential_keys)` on `app_connections` (`updated_at` is set by credential
+rotation and `reauth_required`, FIX-016; `credential_keys` by every reseal, RFE-022); `UPDATE (last_used_at, origin)` on `secrets`; `UPDATE (last_used_at)` on
 `gateway_credentials`;
 `EXECUTE` on `pg_advisory_lock` family; `LISTEN` is implicit.
 
@@ -1190,12 +1191,6 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | source_event_id | (existing column and partial unique index `(conversation_id, source_event_id)`) | no schema change. Phase 3 adds a **value convention**: turns and follow-ups created by `POST …/messages` with an `Idempotency-Key` store `api:<user_id>:<key>` (≤ 170 chars); connector event ids starting with `api:` are rejected (`13`). Promoted turns keep null (`10 §Turns`) | 3 (RFE-018) |
-
-#### `app_connections` (credential field names)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| credential_keys | text[] null | **names** (never values) of the fields present in the sealed credential JSON; maintained by the API/gateway/hook host wherever credentials are sealed (connect, reconnect, refresh, mint). Null = unknown (legacy rows; the phase-3 migration fills what it can by reading inline-store values once). Used by the plugin major-upgrade check (`09 §10`). Gateway role keeps its column-level `UPDATE` list plus `credential_keys` | 3 (RFE-022) |
-| status_reason | (existing column) | gains the open-vocabulary form `plugin_major_upgrade: <package> <old> -> <new>; missing: <names>` (≤300 chars) when set by an upgrade | 3 (RFE-022) |
 
 #### `plugin_packages` (activation hold)
 | Planned column | Type | Notes | Phase |

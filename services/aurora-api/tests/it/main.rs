@@ -51,6 +51,7 @@ mod peers_rig;
 mod permission_matrix;
 mod plugins;
 mod plugins_lifecycle;
+mod plugins_upgrade;
 mod policy;
 mod runner_plane;
 mod sandbox_env;

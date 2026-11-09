@@ -195,14 +195,16 @@ pub struct NewConnection<'a> {
     pub connected_by: Uuid,
     /// The registered app instance (D-74); immutable once set (a reconnect keeps it).
     pub instance_id: Option<Uuid>,
+    /// Names (never values) of the fields in the sealed credential JSON (RFE-022).
+    pub credential_keys: &'a [String],
 }
 
 pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Result<(), DbError> {
     sqlx::query(
         "INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, \
          label, status, credentials_ref, credentials_expires_at, scopes, metadata, tenant_host, \
-         oauth_client_id, connected_by, requested_scopes, instance_id) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,$13,$14,$15,$16)",
+         oauth_client_id, connected_by, requested_scopes, instance_id, credential_keys) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)",
     )
     .bind(n.id)
     .bind(n.org_id)
@@ -220,6 +222,7 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, n: &NewConnection<'_>) -> Re
     .bind(n.connected_by)
     .bind(n.requested_scopes)
     .bind(n.instance_id)
+    .bind(n.credential_keys)
     .execute(exec)
     .await?;
     Ok(())
@@ -249,6 +252,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
         "UPDATE app_connections SET credentials_ref = $3, credentials_version = credentials_version + 1, \
          credentials_expires_at = $4, scopes = $5, metadata = $6, tenant_host = $7, oauth_client_id = $8, \
          package_id = $9, app_version = $10, connected_by = $11, requested_scopes = $12, \
+         credential_keys = $14, \
          status_reason = CASE WHEN status IN ('reauth_required','orphaned') THEN NULL ELSE status_reason END, \
          status = CASE WHEN status IN ('reauth_required','orphaned') THEN 'active' ELSE status END, \
          reauth_required_at = NULL, updated_at = now() \
@@ -267,6 +271,7 @@ pub async fn reconnect_cas<'e, E: PgExecutor<'e>>(
     .bind(n.connected_by)
     .bind(n.requested_scopes)
     .bind(n.instance_id)
+    .bind(n.credential_keys)
     .execute(exec)
     .await?
     .rows_affected()

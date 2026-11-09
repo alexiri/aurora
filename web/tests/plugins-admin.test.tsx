@@ -72,6 +72,7 @@ const plugin: PluginPackage = {
   permissions: { hooks: ["token.mint"], egress: { "token.mint": ["api.acme.test"] }, context: ["org.name"] },
   host_claims: [],
   widenings: [{ kind: "egress", detail: "adds api.acme.test" }],
+  impact: null,
   approved_by: null,
   approved_at: null,
   created_at: "2026-01-01T00:00:00Z",
@@ -94,6 +95,50 @@ describe("PluginReview", () => {
     expect(screen.getByText("<b>Git</b>", { exact: false })).toBeInTheDocument();
     fireEvent.click(approve);
     await waitFor(() => expect(calls.some((c) => c.path === "/v1/admin/plugins/p1/approve")).toBe(true));
+  });
+
+  it("shows the impact banner and gates approval on the Impact section of a major upgrade", async () => {
+    const major: PluginPackage = {
+      ...plugin,
+      version: "2.0.0",
+      status_reason: "breaks_connections",
+      impact: {
+        major_upgrade: true,
+        from_version: "1.0.0",
+        connections_total: 5,
+        connections_needing_reauth: 3,
+        by_app: [{ app_id: "git", connections: 5, needing_reauth: 3 }],
+      },
+    };
+    const calls = mockFetch(() => json(200, { ...major, status: "active", connections_reauth: 3 }));
+    wrap(<PluginReview plugin={major} />);
+    expect(screen.getByRole("status", { name: "Upgrade impact" })).toHaveTextContent("3 connections will need reconnecting");
+    const approve = screen.getByRole("button", { name: "Approve" });
+    for (const name of [/Hooks/, /Egress per hook/, /Context variables/, /Host claims/]) {
+      fireEvent.click(screen.getByRole("button", { name }));
+    }
+    // The four permission sections are not enough: the Impact section is mandatory too.
+    expect(approve).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Impact on connections/ }));
+    expect(approve).toBeEnabled();
+    expect(screen.getByText(/3 of 5 to reconnect/)).toBeInTheDocument();
+    fireEvent.click(approve);
+    await waitFor(() => expect(calls.some((c) => c.path === "/v1/admin/plugins/p1/approve")).toBe(true));
+    expect(await screen.findByText(/Approved\. 3 connections will need reconnecting/)).toBeInTheDocument();
+  });
+
+  it("shows no impact banner or section for a non-major version", () => {
+    mockFetch(() => json(200, plugin));
+    wrap(
+      <PluginReview
+        plugin={{
+          ...plugin,
+          impact: { major_upgrade: false, from_version: "1.0.0", connections_total: 2, connections_needing_reauth: 0, by_app: [] },
+        }}
+      />,
+    );
+    expect(screen.queryByRole("status", { name: "Upgrade impact" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Impact on connections/ })).toBeNull();
   });
 
   it("asks for force confirmation on live_connections", async () => {

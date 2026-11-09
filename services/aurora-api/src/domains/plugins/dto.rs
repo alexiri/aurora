@@ -60,6 +60,38 @@ pub struct PluginUserRef {
     pub display_name: String,
 }
 
+/// Per-app share of a [`PluginImpact`]: counts only (C-340).
+#[derive(Serialize, ToSchema)]
+pub struct PluginImpactApp {
+    pub app_id: String,
+    /// Live connections (`active`, `reauth_required`) of this app in every organization.
+    pub connections: i64,
+    /// Of those, the ones failing the required-field check (`0` unless a major upgrade).
+    pub needing_reauth: i64,
+}
+
+/// What activating a pending version does to live connections (C-340, `09 §10`). Advisory:
+/// the activation recomputes. Counts only: no organization, workspace, connection id or label.
+#[derive(Serialize, ToSchema)]
+pub struct PluginImpact {
+    pub major_upgrade: bool,
+    /// The currently active version of the package (`null` for a first install).
+    pub from_version: Option<String>,
+    pub connections_total: i64,
+    pub connections_needing_reauth: i64,
+    /// The apps of the new version, ordered by `app_id`.
+    pub by_app: Vec<PluginImpactApp>,
+}
+
+/// `POST /v1/admin/plugins/{id}/approve` response (C-341): the package plus the number of
+/// connections the activation flipped to `reauth_required`.
+#[derive(Serialize, ToSchema)]
+pub struct PluginApproval {
+    #[serde(flatten)]
+    pub package: PluginPackage,
+    pub connections_reauth: i64,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct PluginPackage {
     pub id: Uuid,
@@ -79,6 +111,9 @@ pub struct PluginPackage {
     pub permissions: PluginPermissions,
     pub host_claims: Vec<PluginHostClaim>,
     pub widenings: Vec<PluginWidening>,
+    /// Always present (C-340): set on `GET /v1/admin/plugins/{id}` for a `pending_approval`
+    /// version, `null` otherwise and in lists.
+    pub impact: Option<PluginImpact>,
     pub approved_by: Option<PluginUserRef>,
     pub approved_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -132,6 +167,7 @@ impl PluginPackage {
                 })
                 .collect(),
             widenings: widenings.iter().map(widening).collect(),
+            impact: None,
             permissions: serde_json::from_value(r.permissions).unwrap_or_default(),
             violations: serde_json::from_value(r.violations).unwrap_or_default(),
             signer: PluginSigner {

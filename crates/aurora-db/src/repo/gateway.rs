@@ -764,17 +764,19 @@ pub async fn cas_connection_credentials<'e, E: PgExecutor<'e>>(
     new_ref: &str,
     read_version: i64,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    credential_keys: &[String],
 ) -> Result<bool, DbError> {
     Ok(sqlx::query(
         "UPDATE app_connections SET credentials_ref = $2, \
                 credentials_version = credentials_version + 1, \
-                credentials_expires_at = $4, updated_at = now() \
+                credentials_expires_at = $4, credential_keys = $5, updated_at = now() \
          WHERE id = $1 AND credentials_version = $3 AND status = 'active'",
     )
     .bind(id)
     .bind(new_ref)
     .bind(read_version)
     .bind(expires_at)
+    .bind(credential_keys)
     .execute(exec)
     .await?
     .rows_affected()

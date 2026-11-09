@@ -136,7 +136,7 @@ async fn get_plugin(
     Path(id): Path<Uuid>,
 ) -> Result<Json<PluginPackage>, ApiError> {
     let row = service::get_row(&s, id).await?;
-    Ok(Json(service::to_dto(&s, row).await?))
+    Ok(Json(service::to_detail_dto(&s, row).await?))
 }
 
 /// List trusted signing keys, including revoked ones.
@@ -210,7 +210,7 @@ macro_rules! action_route {
             Path(id): Path<Uuid>,
             Json(req): Json<PluginActionRequest>,
         ) -> Result<Json<PluginPackage>, ApiError> {
-            let row = lifecycle::act(
+            let (row, _) = lifecycle::act(
                 &s,
                 &AuditActor::instance_admin(&c),
                 c.user_id,
@@ -224,13 +224,36 @@ macro_rules! action_route {
     };
 }
 
-action_route!(
-    approve_plugin,
-    "/admin/plugins/{id}/approve",
-    "adminApprovePlugin",
-    Action::Approve,
-    "Approve a pending package and activate it."
-);
+/// Approve a pending package and activate it. A major upgrade flips every connection whose
+/// stored credential keys lack a required field of the new version to `reauth_required` in
+/// the same transaction (`connections_reauth`, C-341, C-342).
+#[utoipa::path(post, path = "/admin/plugins/{id}/approve", operation_id = "adminApprovePlugin",
+    tag = "plugins",
+    params(("id" = Uuid, Path, description = "Package row id")),
+    request_body = PluginActionRequest,
+    responses((status = 200, body = PluginApproval), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn approve_plugin(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<PluginActionRequest>,
+) -> Result<Json<PluginApproval>, ApiError> {
+    let (row, connections_reauth) = lifecycle::act(
+        &s,
+        &AuditActor::instance_admin(&c),
+        c.user_id,
+        id,
+        Action::Approve,
+        req.reason,
+    )
+    .await?;
+    Ok(Json(PluginApproval {
+        package: service::to_dto(&s, row).await?,
+        connections_reauth,
+    }))
+}
 action_route!(
     reject_plugin,
     "/admin/plugins/{id}/reject",

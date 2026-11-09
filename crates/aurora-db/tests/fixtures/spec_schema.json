@@ -73,6 +73,7 @@
       "app_id",
       "app_version",
       "connected_by",
+      "credential_keys",
       "credentials_expires_at",
       "credentials_ref",
       "credentials_version",

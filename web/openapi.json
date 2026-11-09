@@ -1248,7 +1248,7 @@
         "tags": [
           "plugins"
         ],
-        "summary": "Approve a pending package and activate it.",
+        "summary": "Approve a pending package and activate it. A major upgrade flips every connection whose\nstored credential keys lack a required field of the new version to `reauth_required` in\nthe same transaction (`connections_reauth`, C-341, C-342).",
         "operationId": "adminApprovePlugin",
         "parameters": [
           {
@@ -1278,7 +1278,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PluginPackage"
+                  "$ref": "#/components/schemas/PluginApproval"
                 }
               }
             }
@@ -26110,6 +26110,17 @@
                   "type": "string",
                   "format": "uuid"
                 },
+                "impact": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PluginImpact",
+                      "description": "Always present (C-340): set on `GET /v1/admin/plugins/{id}` for a `pending_approval`\nversion, `null` otherwise and in lists."
+                    }
+                  ]
+                },
                 "package_id": {
                   "type": "string"
                 },
@@ -27812,6 +27823,26 @@
           }
         }
       },
+      "PluginApproval": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PluginPackage"
+          },
+          {
+            "type": "object",
+            "required": [
+              "connections_reauth"
+            ],
+            "properties": {
+              "connections_reauth": {
+                "type": "integer",
+                "format": "int64"
+              }
+            }
+          }
+        ],
+        "description": "`POST /v1/admin/plugins/{id}/approve` response (C-341): the package plus the number of\nconnections the activation flipped to `reauth_required`."
+      },
       "PluginHostClaim": {
         "type": "object",
         "required": [
@@ -27834,6 +27865,67 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PluginImpact": {
+        "type": "object",
+        "description": "What activating a pending version does to live connections (C-340, `09 §10`). Advisory:\nthe activation recomputes. Counts only: no organization, workspace, connection id or label.",
+        "required": [
+          "major_upgrade",
+          "connections_total",
+          "connections_needing_reauth",
+          "by_app"
+        ],
+        "properties": {
+          "by_app": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginImpactApp"
+            },
+            "description": "The apps of the new version, ordered by `app_id`."
+          },
+          "connections_needing_reauth": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "connections_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "from_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The currently active version of the package (`null` for a first install)."
+          },
+          "major_upgrade": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PluginImpactApp": {
+        "type": "object",
+        "description": "Per-app share of a [`PluginImpact`]: counts only (C-340).",
+        "required": [
+          "app_id",
+          "connections",
+          "needing_reauth"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "connections": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Live connections (`active`, `reauth_required`) of this app in every organization."
+          },
+          "needing_reauth": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of those, the ones failing the required-field check (`0` unless a major upgrade)."
           }
         }
       },
@@ -27900,6 +27992,17 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "impact": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginImpact",
+                "description": "Always present (C-340): set on `GET /v1/admin/plugins/{id}` for a `pending_approval`\nversion, `null` otherwise and in lists."
+              }
+            ]
           },
           "package_id": {
             "type": "string"

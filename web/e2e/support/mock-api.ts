@@ -98,7 +98,7 @@ export async function mockApi(page: Page) {
       const pkg = PACKAGES.find((x) => x.id === p.split("/")[4]) ?? PACKAGES[3];
       return json({
         id: id(70), package_id: pkg.id, version: "1.0.0", contract: 1, digest: "sha256:0000", publisher: "aurora", source: "builtin", status: "approved",
-        created_at: now, signer: { kind: "builtin", name: "Aurora" }, apps: [{ app_id: pkg.id, name: pkg.name }], host_claims: [], violations: [], widenings: [],
+        created_at: now, signer: { kind: "builtin", name: "Aurora" }, apps: [{ app_id: pkg.id, name: pkg.name }], host_claims: [], violations: [], widenings: [], impact: null,
         permissions: { hooks: [], context: [], egress: { "api.github.com": ["GET"] } },
       });
     }
