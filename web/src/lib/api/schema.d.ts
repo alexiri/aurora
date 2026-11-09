@@ -1008,6 +1008,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/skills/effective": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The effective skill set an agent receives, plus every skill it does not (shadowed or
+         *     disabled).
+         */
+        get: operations["listEffectiveAgentSkills"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/space-bindings": {
         parameters: {
             query?: never;
@@ -3386,6 +3406,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a workspace's skills (workspace tier). */
+        get: operations["listWorkspaceSkills"];
+        put?: never;
+        /** Create a workspace-tier skill (`can_own`, org owners/admins included); 409 `skill_exists`. */
+        post: operations["createWorkspaceSkill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/unfreeze": {
         parameters: {
             query?: never;
@@ -3580,6 +3618,12 @@ export interface components {
         };
         AgentLinkList: {
             items: components["schemas"]["AgentLink"][];
+        };
+        AgentRef: {
+            handle: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
         };
         AgentToken: {
             container_config: components["schemas"]["ContainerConfig"];
@@ -4500,6 +4544,18 @@ export interface components {
             endpoints: components["schemas"]["EffectiveEndpoint"][];
             posture: components["schemas"]["Sourced_String"];
         };
+        EffectiveSkill: {
+            /** @description Always true: a disabled skill never wins. */
+            enabled: boolean;
+            /** @description Every lower-tier skill of this name (enabled or not). */
+            shadows: components["schemas"]["TierRef"][];
+            skill: components["schemas"]["Skill"];
+            tier: string;
+        };
+        EffectiveSkills: {
+            items: components["schemas"]["EffectiveSkill"][];
+            shadowed: components["schemas"]["ShadowedSkill"][];
+        };
         EffectiveTool: {
             app_id: string;
             /**
@@ -5201,6 +5257,12 @@ export interface components {
             allowed_team_ids: string[];
             allowed_workspace_ids: string[];
             method: string;
+        };
+        /** @description An agent that overrides a workspace skill with an enabled agent-tier skill of the same name. */
+        OverriddenAgent: {
+            agent: components["schemas"]["AgentRef"];
+            /** Format: uuid */
+            skill_id: string;
         };
         Page_AccessBinding: {
             items: {
@@ -5927,12 +5989,21 @@ export interface components {
                 name: string;
                 /** Format: uuid */
                 org_id: string;
-                /** @description `agent` | `organization`. */
+                /**
+                 * @description Workspace tier only: the agents of the workspace whose own enabled skill of this name
+                 *     overrides it; null for the other tiers.
+                 */
+                overridden_in?: components["schemas"]["OverriddenAgent"][] | null;
+                /** @description `agent` | `workspace` | `organization` (kept for compatibility, D-107). */
                 scope: string;
+                /** @description `agent` | `workspace` | `org`. */
+                tier: string;
                 /** @description Body plus files, in characters (binary counted as base64 length). */
                 total_size: number;
                 /** Format: date-time */
                 updated_at: string;
+                /** Format: uuid */
+                workspace_id?: string | null;
             }[];
             next_cursor?: string | null;
         };
@@ -6867,6 +6938,12 @@ export interface components {
         };
         /** @enum {string} */
         SettableStatus: "active" | "disabled";
+        ShadowedSkill: {
+            enabled: boolean;
+            shadowed_by?: null | components["schemas"]["TierRef"];
+            skill: components["schemas"]["Skill"];
+            tier: string;
+        };
         SharedBotInfo: {
             display_name: string;
             handle: string;
@@ -6938,12 +7015,21 @@ export interface components {
             name: string;
             /** Format: uuid */
             org_id: string;
-            /** @description `agent` | `organization`. */
+            /**
+             * @description Workspace tier only: the agents of the workspace whose own enabled skill of this name
+             *     overrides it; null for the other tiers.
+             */
+            overridden_in?: components["schemas"]["OverriddenAgent"][] | null;
+            /** @description `agent` | `workspace` | `organization` (kept for compatibility, D-107). */
             scope: string;
+            /** @description `agent` | `workspace` | `org`. */
+            tier: string;
             /** @description Body plus files, in characters (binary counted as base64 length). */
             total_size: number;
             /** Format: date-time */
             updated_at: string;
+            /** Format: uuid */
+            workspace_id?: string | null;
         };
         SkillFile: {
             executable: boolean;
@@ -7073,6 +7159,11 @@ export interface components {
             path?: string | null;
             /** @enum {string} */
             type: "network";
+        };
+        TierRef: {
+            /** Format: uuid */
+            id: string;
+            tier: string;
         };
         TokenRequest: {
             device_code: string;
@@ -10553,6 +10644,44 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listEffectiveAgentSkills: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EffectiveSkills"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18370,6 +18499,110 @@ export interface operations {
             };
             /** @description secret_store_unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWorkspaceSkills: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_Skill"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createWorkspaceSkill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSkillRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Skill"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -494,6 +494,14 @@ const ROWS: &[Row] = &[
     ),
     r("GET", "/v1/agents/{agent}/skills", G::WsUse, false),
     r("POST", "/v1/agents/{agent}/skills", G::WsUse, false),
+    r(
+        "GET",
+        "/v1/agents/{agent}/skills/effective",
+        G::WsUse,
+        false,
+    ),
+    r("GET", "/v1/workspaces/{ws}/skills", G::WsUse, false),
+    r("POST", "/v1/workspaces/{ws}/skills", G::WsOwn, false),
     r("GET", "/v1/orgs/{org}/skills", G::Member, false),
     r("POST", "/v1/orgs/{org}/skills", G::Admin, false),
     // skills addressed by their own id: owner scope unknown, only authentication is asserted
@@ -937,7 +945,10 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         ("POST", "/v1/agents/{agent}/schedules") => {
             json!({"name": "s", "prompt": "p", "cron": "0 * * * *"})
         }
-        ("POST", "/v1/agents/{agent}/skills" | "/v1/orgs/{org}/skills") => {
+        (
+            "POST",
+            "/v1/agents/{agent}/skills" | "/v1/orgs/{org}/skills" | "/v1/workspaces/{ws}/skills",
+        ) => {
             json!({"name": "s", "description": "d", "body": "b"})
         }
         ("POST", "/v1/agents/{agent}/webhooks") => json!({"name": "w", "instructions": "i"}),

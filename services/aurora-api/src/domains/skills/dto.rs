@@ -1,4 +1,4 @@
-use super::service::SkillView;
+use super::service::{self, SkillView};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -12,12 +12,29 @@ pub struct SkillFile {
     pub executable: bool,
 }
 
+/// An agent that overrides a workspace skill with an enabled agent-tier skill of the same name.
+#[derive(Serialize, ToSchema, Clone)]
+pub struct OverriddenAgent {
+    pub agent: AgentRef,
+    pub skill_id: Uuid,
+}
+
+#[derive(Serialize, ToSchema, Clone)]
+pub struct AgentRef {
+    pub id: Uuid,
+    pub handle: String,
+    pub name: String,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct Skill {
     pub id: Uuid,
-    /// `agent` | `organization`.
+    /// `agent` | `workspace` | `org`.
+    pub tier: &'static str,
+    /// `agent` | `workspace` | `organization` (kept for compatibility, D-107).
     pub scope: &'static str,
     pub agent_id: Option<Uuid>,
+    pub workspace_id: Option<Uuid>,
     pub org_id: Uuid,
     pub name: String,
     pub description: String,
@@ -27,6 +44,9 @@ pub struct Skill {
     pub files: Vec<SkillFile>,
     /// Body plus files, in characters (binary counted as base64 length).
     pub total_size: usize,
+    /// Workspace tier only: the agents of the workspace whose own enabled skill of this name
+    /// overrides it; null for the other tiers.
+    pub overridden_in: Option<Vec<OverriddenAgent>>,
     pub updated_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
 }
@@ -34,15 +54,15 @@ pub struct Skill {
 impl From<SkillView> for Skill {
     fn from(v: SkillView) -> Self {
         let r = v.row;
+        let tier = service::tier_of(&r);
         Self {
             id: r.id,
-            scope: if r.agent_id.is_some() {
-                "agent"
-            } else {
-                "organization"
-            },
+            tier,
+            scope: if tier == "org" { "organization" } else { tier },
             agent_id: r.agent_id,
+            workspace_id: r.workspace_id,
             org_id: r.org_id,
+            overridden_in: None,
             name: r.name,
             description: r.description,
             body: r.body,
@@ -61,6 +81,37 @@ impl From<SkillView> for Skill {
             created_at: r.created_at,
         }
     }
+}
+
+#[derive(Serialize, ToSchema, Clone)]
+pub struct TierRef {
+    pub id: Uuid,
+    pub tier: &'static str,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct EffectiveSkill {
+    pub skill: Skill,
+    pub tier: &'static str,
+    /// Always true: a disabled skill never wins.
+    pub enabled: bool,
+    /// Every lower-tier skill of this name (enabled or not).
+    pub shadows: Vec<TierRef>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ShadowedSkill {
+    pub skill: Skill,
+    pub tier: &'static str,
+    pub enabled: bool,
+    /// The winner of this name; null for a disabled skill whose name has no enabled skill.
+    pub shadowed_by: Option<TierRef>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct EffectiveSkills {
+    pub items: Vec<EffectiveSkill>,
+    pub shadowed: Vec<ShadowedSkill>,
 }
 
 #[derive(Deserialize, ToSchema)]

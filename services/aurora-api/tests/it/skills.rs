@@ -3,6 +3,9 @@
 
 use crate::common::*;
 use http::Method;
+
+#[path = "skills_workspace.rs"]
+mod workspace_tier;
 use serde_json::{Value, json};
 use uuid::Uuid;
 

@@ -1,5 +1,7 @@
 use aurora_core::{ApiError, FieldError, limits};
 use aurora_db::DbError;
+use aurora_db::repo::agents;
+pub use aurora_db::repo::skills::Owner;
 use aurora_db::repo::skills::{self as repo, SkillRow};
 use base64::Engine as _;
 use sqlx::{PgConnection, PgPool};
@@ -140,12 +142,132 @@ fn check_total(body: &str, files: &[repo::FileRow]) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Bumps the sync generation of the agent (agent tier) or of every agent in the org.
-async fn bump(conn: &mut PgConnection, s: &SkillRow) -> Result<(), DbError> {
-    match s.agent_id {
-        Some(a) => repo::bump_agent(conn, a).await,
-        None => repo::bump_org(conn, s.org_id).await,
+/// `agent` | `workspace` | `org`.
+pub fn tier_of(r: &SkillRow) -> &'static str {
+    if r.agent_id.is_some() {
+        "agent"
+    } else if r.workspace_id.is_some() {
+        "workspace"
+    } else {
+        "org"
     }
+}
+
+/// Precedence rank: lower wins (agent > workspace > org).
+fn rank(r: &SkillRow) -> u8 {
+    match tier_of(r) {
+        "agent" => 0,
+        "workspace" => 1,
+        _ => 2,
+    }
+}
+
+/// Bumps the sync generation of the agent (agent tier), of the workspace (workspace tier,
+/// reaching only its agents) or of every agent in the org.
+async fn bump(conn: &mut PgConnection, s: &SkillRow) -> Result<(), DbError> {
+    match (s.agent_id, s.workspace_id) {
+        (Some(a), _) => repo::bump_agent(conn, a).await,
+        (None, Some(w)) => repo::bump_workspace(conn, w).await,
+        (None, None) => repo::bump_org(conn, s.org_id).await,
+    }
+}
+
+pub struct EffectiveItem {
+    pub view: SkillView,
+    /// Every lower-tier skill of the name (enabled or not): `(id, tier)`.
+    pub shadows: Vec<(Uuid, &'static str)>,
+}
+
+pub struct ShadowedItem {
+    pub view: SkillView,
+    pub enabled: bool,
+    pub shadowed_by: Option<(Uuid, &'static str)>,
+}
+
+pub struct Effective {
+    pub items: Vec<EffectiveItem>,
+    pub shadowed: Vec<ShadowedItem>,
+}
+
+/// The effective set of an agent (RFE-020): per name the highest *enabled* tier wins
+/// (agent > workspace > org); a disabled skill never vetoes a lower tier.
+pub async fn effective(pool: &PgPool, agent: &agents::AgentRow) -> Result<Effective, ApiError> {
+    let mut c = pool.acquire().await.map_err(DbError::from)?;
+    let rows = repo::list_reaching(&mut c, agent.org_id, agent.workspace_id, agent.id).await?;
+    let mut views = view_many(&mut c, rows).await?;
+    // Group by name (rows are ordered by name); within a name order by tier rank.
+    views.sort_by(|a, b| {
+        (a.row.name.as_str(), rank(&a.row)).cmp(&(b.row.name.as_str(), rank(&b.row)))
+    });
+    let mut out = Effective {
+        items: Vec::new(),
+        shadowed: Vec::new(),
+    };
+    let mut it = views.into_iter().peekable();
+    while let Some(first) = it.next() {
+        let mut group = vec![first];
+        while it.peek().is_some_and(|n| n.row.name == group[0].row.name) {
+            group.extend(it.next());
+        }
+        match group.iter().position(|v| v.row.enabled) {
+            Some(w) => {
+                let win = group.remove(w);
+                let by = (win.row.id, tier_of(&win.row));
+                let shadows = group
+                    .iter()
+                    .filter(|v| rank(&v.row) > rank(&win.row))
+                    .map(|v| (v.row.id, tier_of(&v.row)))
+                    .collect();
+                out.items.push(EffectiveItem { view: win, shadows });
+                for v in group {
+                    let enabled = v.row.enabled;
+                    out.shadowed.push(ShadowedItem {
+                        view: v,
+                        enabled,
+                        shadowed_by: Some(by),
+                    });
+                }
+            }
+            None => {
+                for v in group {
+                    out.shadowed.push(ShadowedItem {
+                        view: v,
+                        enabled: false,
+                        shadowed_by: None,
+                    });
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The enabled agent-tier skills of the workspace's agents that override a workspace skill.
+pub async fn overridden_in(
+    pool: &PgPool,
+    row: &SkillRow,
+) -> Result<Option<Vec<super::dto::OverriddenAgent>>, ApiError> {
+    let Some(ws) = row.workspace_id else {
+        return Ok(None);
+    };
+    let mut c = pool.acquire().await.map_err(DbError::from)?;
+    let rows = repo::agent_overrides(&mut c, ws, &row.name).await?;
+    Ok(Some(
+        rows.into_iter()
+            .map(|(id, handle, name, skill_id)| super::dto::OverriddenAgent {
+                agent: super::dto::AgentRef { id, handle, name },
+                skill_id,
+            })
+            .collect(),
+    ))
+}
+
+/// A DTO with `overridden_in` filled (workspace tier).
+pub async fn dto(pool: &PgPool, v: SkillView) -> Result<super::dto::Skill, ApiError> {
+    let ov = overridden_in(pool, &v.row).await?;
+    let mut s = super::dto::Skill::from(v);
+    s.overridden_in = ov;
+    Ok(s)
 }
 
 fn views(rows: Vec<SkillRow>, files: Vec<repo::FileRow>) -> Vec<SkillView> {
@@ -196,6 +318,12 @@ pub async fn list_org(pool: &PgPool, org: Uuid) -> Result<Vec<SkillView>, ApiErr
     view_many(&mut c, rows).await
 }
 
+pub async fn list_workspace(pool: &PgPool, ws: Uuid) -> Result<Vec<SkillView>, ApiError> {
+    let mut c = pool.acquire().await.map_err(DbError::from)?;
+    let rows = repo::list_workspace(&mut c, ws).await?;
+    view_many(&mut c, rows).await
+}
+
 /// Raw row lookup (authorization is the caller's job).
 pub async fn row(pool: &PgPool, id: Uuid) -> Result<SkillRow, ApiError> {
     let mut c = pool.acquire().await.map_err(DbError::from)?;
@@ -241,7 +369,7 @@ pub async fn read_file(pool: &PgPool, id: Uuid, path: &str) -> Result<String, Ap
 pub async fn create(
     pool: &PgPool,
     org: Uuid,
-    agent: Option<Uuid>,
+    owner: Owner,
     n: &NewSkill<'_>,
     created_by: &str,
 ) -> Result<SkillView, ApiError> {
@@ -252,7 +380,7 @@ pub async fn create(
     let row = repo::insert(
         &mut tx,
         org,
-        agent,
+        owner,
         n.name,
         n.description,
         n.body,
