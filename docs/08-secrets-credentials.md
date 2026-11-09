@@ -75,6 +75,10 @@ inline:v1:<key_id>:<base64url(nonce‖ciphertext‖tag)>
 ext:<store_id>:<percent-encoded path>[#<field>]@<version>   (managed or reference)
 ```
 
+(phase 3, D-107) `<version>` may be the literal `latest` for a reference ref: the
+store reads the current version at every open and never pins one (HashiCorp
+Vault reference refs are always stored this way, `21`).
+
 - `inline` refs carry their ciphertext (the "store" is the column itself).
 - `ext` refs name an external store id from configuration. A row with an `ext`
   ref whose store is not configured fails with `StoreNotConfigured` (never
@@ -109,7 +113,7 @@ auth = { method = "kubernetes", role = "aurora", mount = "kubernetes" }
 kv_mount = "secret"
 managed_prefix = "aurora"                # managed values at <kv_mount>/data/<prefix>/<org>/<purpose>/<owner>
 [[secrets.stores.reference_scopes]]     # which tenants may reference which paths
-org_slug = "physics"
+org_id = "0190f6a2-7c1e-7b3a-9d4e-5f6a7b8c9d0e"   # (phase 3, D-107) the org's immutable id, never its slug
 paths = ["teams/physics/*"]
 ```
 
