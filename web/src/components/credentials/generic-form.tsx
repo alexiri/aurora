@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
+import { GiveAccessStep } from "./give-access";
 import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Form, FormActions } from "@/components/ui/form";
@@ -77,8 +78,9 @@ const initial = (): GenericFormState => ({
   ref: { store_id: "", path: "", field: "" },
 });
 
-export function GenericSecretForm({ scope, onDone }: { scope: SecretScope; onDone?: () => void }) {
+export function GenericSecretForm({ scope, orgId, onDone }: { scope: SecretScope; orgId: string; onDone?: () => void }) {
   const create = useCreateSecret(scope);
+  const [saved, setSaved] = useState<{ id: string; name: string } | null>(null);
   const stores = useSecretStores();
   const refStores = (stores.data?.items ?? []).filter((s) => s.capabilities.references);
   const canRef = referencesAvailable(stores.data?.items);
@@ -94,13 +96,26 @@ export function GenericSecretForm({ scope, onDone }: { scope: SecretScope; onDon
       return setClientErr("Choose a store and enter a path.");
     setClientErr("");
     try {
-      await create.mutateAsync(buildGenericCreate(s));
+      const created = await create.mutateAsync(buildGenericCreate(s));
       setS(initial());
-      onDone?.();
+      // The form gives way to the "Give agents access" step (D-137); Skip or Done ends the add flow.
+      setSaved({ id: created.id, name: created.name });
     } catch {
       setS((p) => ({ ...p, value: "" }));
     }
   }
+
+  if (saved)
+    return (
+      <GiveAccessStep
+        subject={{ target: { kind: "secret", id: saved.id }, scope, orgId }}
+        savedLabel={saved.name}
+        onDone={() => {
+          setSaved(null);
+          onDone?.();
+        }}
+      />
+    );
 
   return (
     <Form onSubmit={(e) => void submit(e)} noValidate className="rounded-card border border-line bg-surface p-4 shadow-card sm:p-5" aria-label="New secret">

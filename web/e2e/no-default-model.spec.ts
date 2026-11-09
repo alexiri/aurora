@@ -51,9 +51,9 @@ test("owner's endpoint shape: no_default_model, then a reply after choosing a mo
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText(/no model is chosen|no_default_model/i).first()).toBeVisible({ timeout: 60_000 });
   // Stream: the API stream opens in milliseconds, delivers `turn.queued`, `error` and `turn.finished`,
-  // and stays open (probed with fetch). The dashboard pill nevertheless flips to "Reconnecting…" on any
-  // failed turn: `web/src/lib/chat/use-transcript.ts` sets `es.onerror`, which also fires for an SSE event
-  // NAMED `error` (readyState stays OPEN). A client bug, not the API stream, so not asserted here.
+  // and stays open (probed with fetch). Until FIX-021 the dashboard pill flipped to "Reconnecting…" on any
+  // failed turn: `es.onerror` also fires for an SSE event NAMED `error` (readyState stays OPEN). Fixed in
+  // `use-transcript.ts` (covered by `web/tests/use-transcript-live.test.tsx`), so it is not asserted here.
   const sandbox = await (await api.get(`/v1/agents/${agent}/sandbox`)).json();
   expect(["unprovisioned", "stopped"]).toContain(sandbox.state);
 

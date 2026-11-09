@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
 import {
-  ANN_DIRECT, DEFAULT, ERRORED, MINE, NIGHTLY, OLD, RUNNING, SENTRY, TEAM, openChat,
+  ANN_DIRECT, DEFAULT, ERRORED, MINE, NIGHTLY, NO_MODEL, OLD, RUNNING, SENTRY, TEAM, openChat,
   type Ev, type Fixture,
 } from "./support/chat-mock";
 import { overflow } from "./support/open";
@@ -28,6 +28,7 @@ const fixtures: Record<string, Fixture> = {
   running: { ...DEFAULT, direct: working as never, active: [working as never, NIGHTLY, SENTRY, TEAM, ANN_DIRECT], events: { [MINE.id]: RUNNING } },
   empty: { ...DEFAULT, events: {} },
   error: { ...DEFAULT, events: { [MINE.id]: ERRORED } },
+  noModel: { ...DEFAULT, events: { [MINE.id]: NO_MODEL } },
   owner: {
     ...DEFAULT,
     events: {
@@ -71,7 +72,28 @@ const states: { name: string; fx: Fixture; query: (narrow: boolean) => string; p
   },
   { name: "empty-conversation", fx: fixtures.empty, query: () => `?c=${MINE.id}`, prepare: async (page) => { await expect(page.getByText("Start a conversation with Daneel")).toBeVisible(); } },
   { name: "owner-read-only", fx: fixtures.owner, query: () => `?c=${ANN_DIRECT.id}`, prepare: async (page) => { await expect(page.getByText(/Read-only view/)).toBeVisible(); } },
-  { name: "error-block", fx: fixtures.error, query: () => `?c=${MINE.id}`, prepare: async (page) => { await expect(page.getByRole("link", { name: "Open LLM keys" })).toBeVisible(); } },
+  {
+    name: "error-block",
+    fx: fixtures.error,
+    query: () => `?c=${MINE.id}`,
+    prepare: async (page) => {
+      // FIX-021: the link opens the LLM keys tab, owners also get "Agent access", the reason counts show under the copy.
+      await expect(page.getByRole("link", { name: "Open LLM keys" })).toHaveAttribute("href", /\/credentials\?tab=llm$/);
+      await expect(page.getByRole("link", { name: "Agent access" })).toHaveAttribute("href", /\?tab=access$/);
+      await expect(page.getByText("1 granted key not usable (origin_unverified)")).toBeVisible();
+    },
+  },
+  {
+    name: "error-block-no-default-model",
+    fx: fixtures.noModel,
+    query: () => `?c=${MINE.id}`,
+    prepare: async (page) => {
+      await expect(page.getByText("This agent has an LLM key but no model is chosen.")).toBeVisible();
+      await expect(page.getByRole("link", { name: "Choose a model" })).toHaveAttribute("href", /\?tab=instructions$/);
+      // The named `error` event must not flip the pill to "Reconnecting…" (the chat mock stream stays open).
+      await expect(page.getByText("Reconnecting")).toHaveCount(0);
+    },
+  },
   { name: "phone-list", fx: DEFAULT, query: () => "", phoneOnly: true },
   {
     name: "phone-thread",

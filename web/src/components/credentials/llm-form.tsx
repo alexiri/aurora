@@ -16,6 +16,7 @@ import {
   type SecretScope,
 } from "@/lib/api/secrets";
 
+import { GiveAccessStep } from "./give-access";
 import { OriginView } from "./origin-view";
 import { ValueInput } from "./value-input";
 
@@ -60,6 +61,18 @@ export function LlmKeyForm({ scope, orgId }: { scope: SecretScope; orgId: string
     return <Notice tone="danger" role="alert">{errorMessage(providers.error)}</Notice>;
   if (endpoints.length === 0)
     return <Notice role="status">Your organization&apos;s governance does not permit any LLM endpoints.</Notice>;
+
+  // The key exists: the form gives way to the "Give agents access" step (skippable, nothing preselected).
+  if (saved)
+    return (
+      <GiveAccessStep
+        subject={{ target: { kind: "secret", id: saved.id }, scope, orgId }}
+        savedLabel={saved.name}
+        onDone={() => setSaved(null)}
+      >
+        <OriginView origin={saved.origin} />
+      </GiveAccessStep>
+    );
 
   return (
     <div className="space-y-3">
@@ -120,12 +133,6 @@ export function LlmKeyForm({ scope, orgId }: { scope: SecretScope; orgId: string
           </Button>
         </FormActions>
       </Form>
-      {saved ? (
-        <Notice tone="accent" role="status" className="max-w-xl">
-          <p className="font-medium">Saved {saved.name}</p>
-          <OriginView origin={saved.origin} />
-        </Notice>
-      ) : null}
     </div>
   );
 }

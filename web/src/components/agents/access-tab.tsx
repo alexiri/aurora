@@ -6,6 +6,8 @@ import { ItemList, ListRow, Section } from "@/components/ui/section";
 import { useEffective, useGrants, useToggleGrant } from "@/lib/api/policy";
 import { useSecrets } from "@/lib/api/secrets";
 
+import { ModelReadinessSection } from "./model-readiness";
+
 /** Secret grants: workspace owners only (`GET …/grants` and the secret lists are `can_own`, I-27). */
 function SecretGrants({ agentId, wsId, orgId }: { agentId: string; wsId: string; orgId: string }) {
   const wsSecrets = useSecrets({ kind: "workspace", id: wsId });
@@ -48,11 +50,28 @@ function SecretGrants({ agentId, wsId, orgId }: { agentId: string; wsId: string;
   );
 }
 
-export function AccessTab({ agentId, wsId, orgId, canOwn }: { agentId: string; wsId: string; orgId: string; canOwn: boolean }) {
+export function AccessTab({
+  agentId,
+  wsId,
+  orgId,
+  canOwn,
+  hosted = false,
+  base = "",
+}: {
+  agentId: string;
+  wsId: string;
+  orgId: string;
+  canOwn: boolean;
+  /** Hosted agents get the Model readiness section (owners only). */
+  hosted?: boolean;
+  /** `/o/{org}/w/{ws}`, for the links of the readiness fixes. */
+  base?: string;
+}) {
   const effective = useEffective(agentId);
 
   return (
     <div className="space-y-8">
+      {canOwn && hosted ? <ModelReadinessSection agentId={agentId} base={base} /> : null}
       {canOwn ? <SecretGrants agentId={agentId} wsId={wsId} orgId={orgId} /> : null}
 
       <Section id="effective-access" title="Effective access" description="The credentials this agent can use right now, and why.">
@@ -68,7 +87,7 @@ export function AccessTab({ agentId, wsId, orgId, canOwn }: { agentId: string; w
                 <div className="min-w-0 flex-1 space-y-1 text-sm">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-ink">{c.name}</span>
-                    <span className="text-xs text-muted">({c.kind}, {c.scope})</span>{" "}
+                    <span className="text-xs text-muted">({c.kind === "llm" ? "LLM key" : c.kind}, {c.scope})</span>{" "}
                     {c.selected ? <Badge tone="accent">selected</Badge> : <span className="text-muted">not selected</span>}
                   </div>
                   {c.selected_by.length ? (

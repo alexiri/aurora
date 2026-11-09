@@ -19,6 +19,7 @@ import {
 } from "@/lib/api/secrets";
 
 import { RecipeFieldsInput } from "./generic-form";
+import { AccessDialog } from "./give-access";
 import { OriginView } from "./origin-view";
 import { ValueInput } from "./value-input";
 
@@ -96,8 +97,9 @@ function EditMeta({ scope, secret, onClose }: { scope: SecretScope; secret: Secr
   );
 }
 
-export function SecretRow({ scope, secret, canOwn }: { scope: SecretScope; secret: Secret; canOwn: boolean }) {
+export function SecretRow({ scope, orgId, secret, canOwn }: { scope: SecretScope; orgId: string; secret: Secret; canOwn: boolean }) {
   const [mode, setMode] = useState<"none" | "replace" | "edit" | "delete">("none");
+  const [accessOpen, setAccessOpen] = useState(false);
   const del = useDeleteSecret(scope, secret.id);
   const verify = useVerifySecret(scope, secret.id);
   const close = () => setMode("none");
@@ -118,6 +120,9 @@ export function SecretRow({ scope, secret, canOwn }: { scope: SecretScope; secre
                 Re-verify
               </Button>
             ) : null}
+            <Button size="sm" variant="outline" aria-label={`Access to ${secret.name}`} onClick={() => setAccessOpen(true)}>
+              Access
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setMode("replace")}>Replace value</Button>
             <Button size="sm" variant="outline" onClick={() => setMode("edit")}>Edit</Button>
             <Button size="sm" variant="danger" onClick={() => setMode("delete")}>Delete</Button>
@@ -126,6 +131,14 @@ export function SecretRow({ scope, secret, canOwn }: { scope: SecretScope; secre
       </div>
       {secret.kind === "llm" ? <OriginView origin={secret.origin} /> : null}
       {verify.error ? <Notice tone="danger" role="alert">{errorMessage(verify.error)}</Notice> : null}
+      {canOwn ? (
+        <AccessDialog
+          subject={{ target: { kind: "secret", id: secret.id }, scope, orgId }}
+          title={secret.name}
+          open={accessOpen}
+          onOpenChange={setAccessOpen}
+        />
+      ) : null}
       {mode === "replace" ? <ReplaceValue scope={scope} secret={secret} onClose={close} /> : null}
       {mode === "edit" ? <EditMeta scope={scope} secret={secret} onClose={close} /> : null}
       {mode === "delete" ? (

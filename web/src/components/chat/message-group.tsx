@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { CheckIcon, CopyIcon, MoreIcon } from "@/components/ui/icons";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import type { TranscriptEvent } from "@/lib/api/conversations";
+import { useWorkspace } from "@/lib/api/queries";
 import { clockTime, type Block, type Row } from "@/lib/chat/layout";
 import type { TranscriptState } from "@/lib/chat/transcript";
 import { cn } from "@/lib/utils";
@@ -171,12 +172,18 @@ function BlockView({
     case "error": {
       const p = block.ev.payload;
       return block.ev.type === "error" ? (
-        <ErrorBlock code={s(p.code)} message={s(p.message)} base={base} />
+        <TurnError code={s(p.code)} message={s(p.message)} base={base} wsId={wsId} />
       ) : (
-        <ErrorBlock code={s(p.error_code)} base={base} />
+        <TurnError code={s(p.error_code)} base={base} wsId={wsId} />
       );
     }
   }
+}
+
+/** The error block, with the owner-only links ("Agent access") decided from the caller's role in the workspace. */
+function TurnError({ code, message, base, wsId }: { code: string; message?: string; base: string; wsId: string }) {
+  const ws = useWorkspace(wsId);
+  return <ErrorBlock code={code} message={message} base={base} canOwn={ws.data?.my_role === "owner"} />;
 }
 
 /** One sender group: the meta line (name, time, door chip) once, then that sender's blocks. */

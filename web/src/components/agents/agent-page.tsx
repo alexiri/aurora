@@ -1,7 +1,6 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
 
 import { AgentFreeze } from "@/components/freeze/freeze-sections";
 import { ErrorState, Loading } from "@/components/states";
@@ -13,6 +12,7 @@ import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { useSandbox } from "@/lib/api/conversations";
 import { cn } from "@/lib/utils";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
+import { useTabParam } from "@/lib/use-tab-param";
 
 import { AccessTab } from "./access-tab";
 import { ChatTab } from "./chat-tab";
@@ -27,6 +27,9 @@ import { SchedulesTab } from "@/components/schedules/schedules-tab";
 import { WebhooksTab } from "@/components/webhooks/webhooks-tab";
 
 import { InstructionsTab } from "./instructions-tab";
+
+type AgentTab = "chat" | "instructions" | "access" | "connect" | "computer" | "memory" | "skills" | "schedules" | "webhooks" | "peers" | "channels";
+const AGENT_TABS: readonly AgentTab[] = ["chat", "instructions", "access", "connect", "computer", "memory", "skills", "schedules", "webhooks", "peers", "channels"];
 
 /** Sandbox state of a hosted agent (existing sandbox endpoint); hidden while unknown or on error. */
 function SandboxPill({ agentId }: { agentId: string }) {
@@ -44,10 +47,12 @@ export function AgentPage() {
   const wsId = resolved.data?.workspace?.id;
   const agents = useAgents(wsId);
   const workspace = useWorkspace(wsId);
-  // A deep link to a conversation (`?c=<id>`, D-102) opens the Chat tab.
-  const [tab, setTab] = useState<"chat" | "instructions" | "access" | "connect" | "computer" | "memory" | "skills" | "schedules" | "webhooks" | "peers" | "channels">(() =>
-    typeof window !== "undefined" && new URLSearchParams(window.location.search).has("c") ? "chat" : "instructions",
-  );
+  // A deep link to a conversation (`?c=<id>`, D-102) opens the Chat tab. `?tab=` selects a tab (C-506: the chat error links use `?tab=access` and `?tab=instructions`); an unknown or
+  // unavailable value (a BYO agent has no Chat) falls back to Instructions.
+  const [requestedTab, setTab] = useTabParam<AgentTab>(AGENT_TABS, "instructions", {
+    initial: (p) => (p.has("c") ? "chat" : null),
+    drop: (t) => (t === "chat" ? [] : ["c"]),
+  });
 
   if (resolved.isPending || (wsId && agents.isPending)) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
@@ -75,6 +80,7 @@ export function AgentPage() {
       : [{ id: "computer" as const, label: "Computer" }]),
   ];
 
+  const tab: AgentTab = tabs.some((t) => t.id === requestedTab) ? requestedTab : "instructions";
   // The Chat tab is a fixed-height panel that must fit a 1280×800 window with its composer pinned, so
   // it gets the compact header (one title line, Freeze in the overflow menu). Other tabs keep the full one.
   const compact = tab === "chat" && !byo;
@@ -116,7 +122,7 @@ export function AgentPage() {
       <Tabs
         items={tabs.map((t) => ({ value: t.id, label: t.label }))}
         value={tab}
-        onValueChange={(v) => setTab(v as typeof tab)}
+        onValueChange={(v) => setTab(v as AgentTab)}
         variant="underline"
         label="Agent"
         idBase="agent"
@@ -137,7 +143,7 @@ export function AgentPage() {
           <InstructionsTab key={agent.updated_at} agent={agent} wsId={wsId!} />
         ) : null}
         {tab === "access" && workspace.data ? (
-          <AccessTab agentId={agent.id} wsId={wsId!} orgId={workspace.data.org_id} canOwn={workspace.data.my_role === "owner"} />
+          <AccessTab agentId={agent.id} wsId={wsId!} orgId={workspace.data.org_id} canOwn={workspace.data.my_role === "owner"} hosted={!byo} base={`/o/${org}/w/${ws}`} />
         ) : null}
         {tab === "access" && workspace.isPending ? <Loading /> : null}
         {tab === "connect" && byo ? (

@@ -206,13 +206,33 @@ describe("transcript", () => {
     expect(details().open).toBe(false);
   });
 
-  it("maps no_model_key to a danger alert with the LLM keys link", () => {
-    st.events = [e(1, "error", { turn_id: "t1", code: "no_model_key", message: "x" })];
+  it("maps no_model_key to a danger alert with the LLM keys link and the reason counts", () => {
+    st.events = [e(1, "error", { turn_id: "t1", code: "no_model_key", message: "No usable LLM key: 1 granted key not usable (origin_unverified)." })];
     mock();
     pane();
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("no usable LLM key");
-    expect(within(alert).getByRole("link", { name: "Open LLM keys" }).getAttribute("href")).toBe("/o/x/w/y/credentials");
+    expect(alert.textContent).toContain("1 granted key not usable (origin_unverified)");
+    expect(within(alert).getByRole("link", { name: "Open LLM keys" }).getAttribute("href")).toBe("/o/x/w/y/credentials?tab=llm");
+    // Not an owner (the workspace did not load): no "Agent access" link.
+    expect(within(alert).queryByRole("link", { name: "Agent access" })).toBeNull();
+  });
+
+  it("gives workspace owners the Agent access link next to Open LLM keys", async () => {
+    st.events = [e(1, "error", { turn_id: "t1", code: "no_model_key", message: "No LLM key is granted to this agent." })];
+    mock({ "GET /v1/workspaces/w": () => json(200, { id: "w", org_id: "o", my_role: "owner" }) });
+    pane();
+    const link = await screen.findByRole("link", { name: "Agent access" });
+    expect(link.getAttribute("href")).toBe("?tab=access");
+  });
+
+  it("maps no_default_model to 'Choose a model' on the Instructions tab", () => {
+    st.events = [e(1, "error", { turn_id: "t1", code: "no_default_model", message: "An LLM key is usable but no model is chosen." })];
+    mock();
+    pane();
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("This agent has an LLM key but no model is chosen.");
+    expect(within(alert).getByRole("link", { name: "Choose a model" }).getAttribute("href")).toBe("?tab=instructions");
   });
 
   it("renders an expired attachment as a muted chip, never a link (RFE-015, C-196)", () => {
