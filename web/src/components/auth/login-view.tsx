@@ -49,7 +49,7 @@ export function LoginView() {
             <Button key={p.id} asChild variant="outline" size="lg" className="w-full">
               {/* Full navigation to the API, which redirects to the provider. */}
               <a href={oidcStartUrl(p.id, { returnTo: next })}>
-                {p.id === DEV_PROVIDER ? p.display_name : `Continue with ${p.display_name}`}
+                {p.id === DEV_PROVIDER ? p.display_name : `Sign in with ${p.display_name}`}
               </a>
             </Button>
           ))}

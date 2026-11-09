@@ -73,7 +73,7 @@ describe("LoginView", () => {
     mockFetch({ "GET /v1/instance": () => json(200, instance) });
     wrap(<LoginView />);
     expect(screen.getByRole("alert")).toHaveTextContent(/single sign-on attempt expired/i);
-    const link = await screen.findByRole("link", { name: /Continue with Google/ });
+    const link = await screen.findByRole("link", { name: /Sign in with Google/ });
     expect(link).toHaveAttribute("href", "/v1/auth/oidc/g/start?return_to=%2Fo%2Facme");
     // RFE-004: no password form, no sign-up or reset links.
     expect(screen.queryByLabelText("Password")).toBeNull();
@@ -91,7 +91,7 @@ describe("LoginView", () => {
     mockFetch({ "GET /v1/instance": () => json(200, instance) });
     wrap(<LoginView />);
     expect(screen.getByRole("alert")).toHaveTextContent(text);
-    await screen.findByRole("link", { name: /Continue with Google/ });
+    await screen.findByRole("link", { name: /Sign in with Google/ });
   });
 
   it("labels the development provider with a banner", async () => {
