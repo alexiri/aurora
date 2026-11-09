@@ -81,7 +81,8 @@ Seam: `SecretStore` trait, `SecretRef`, reference mode, `secrets migrate`
 - **Reference mode**: `resolve_reference(path, field)` reads the latest version;
   allowed only if the path matches one of the org's `reference_scopes`
   (glob, configured by the operator) — otherwise `ReferenceNotPermitted`.
-  Reference refs omit `@version` and always read the latest (rotation in Vault
+  Reference refs pin no version: they are stored as `…@latest` (phase 3, D-107,
+  `08 §2`) and always read the latest (rotation in Vault
   is picked up within the gateway's 60 s plaintext cache).
 - Gateway and API both authenticate to Vault (separate roles recommended:
   the gateway needs read on managed and reference paths plus write on managed

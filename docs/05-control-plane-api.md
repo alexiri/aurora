@@ -196,11 +196,12 @@ index exists.
   stored for this conversation and user): nothing is created; the response has the
   **same status code and shape as the original** — `{ turn }` or `{ followup }`, the
   resource as it is **now** (its status may have advanced; a promoted follow-up
-  shows `promoted` and its new `turn_id`) — plus the header `Idempotent-Replayed:
+  shows `promoted` and its new turn's id in `Followup.promoted_turn_id`, phase 3, D-107) — plus the header `Idempotent-Replayed:
   true`. A replay after the turn finished, failed or was aborted returns that state;
   it never re-runs it.
 - **Mismatch**: a replay whose `text` or set of `attachment_ids` differs from the
-  stored turn's → 422 `idempotency_key_reused` (`details.turn_id`), nothing created.
+  stored turn's → 422 `idempotency_key_reused` (`details.turn_id` or, for a stored
+  follow-up, `details.followup_id`; phase 3, D-107), nothing created.
 - **Concurrency**: simultaneous requests with one key race on the unique index; the
   loser's transaction fails with the unique violation, re-reads the winner's row
   and answers as a replay (exactly one turn exists).
@@ -508,7 +509,7 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | POST `/v1/agents/{agent}/token` | S | BYO: regenerate, returns token once with `expires_at` (phase 3, RFE-013: null unless an agent-token maximum age applies, `08 §7`); (phase 2, RFE-025) same posture check as creation (`byo_not_permitted` / `byo_disabled`); audited `agent.token_regenerate` |
 | PUT `/v1/agents/{agent}/byo` | S/K | (phase 2, RFE-025) BYO only (hosted → 422 `not_byo`): `{ source_cidrs: [cidr..] \| null, require_context: bool }`; `can_own`; 422 `byo_cidr_invalid` (bad CIDR, `/0`, empty array, >32 entries) / `byo_cidr_outside_default`; live credentials are re-evaluated by invalidation scope `agent`; audited `agent.byo_settings.update` |
 | GET `/v1/agents/{agent}/container-config` | S/K | BYO bootstrap (`08 §BYO bootstrap`) |
-| GET `/v1/workspaces/{ws}/agent-tokens`; GET `/v1/orgs/{org}/agent-tokens` | S/K | (phase 3, RFE-013) BYO agent tokens without material: `{ items: [{ agent, workspace, created_at, expires_at, last_used_at, stale, expiring, display_prefix }] }`, filters `?stale=true`, `?expiring_within_days=n`; workspace route `can_own`, org route org `owner`/`admin` |
+| GET `/v1/workspaces/{ws}/agent-tokens`; GET `/v1/orgs/{org}/agent-tokens` | S/K | (phase 3, RFE-013) BYO agent tokens without material: `Page<{ agent, workspace, created_at, expires_at, last_used_at, stale, expiring, display_prefix }>` (phase 3, D-107: paginated, C-313), filters `?stale=true`, `?expiring_within_days=n`; workspace route `can_own`, org route org `owner`/`admin` |
 | GET `/v1/agent/container-config`; POST `/v1/agent/context-credentials` | A | BYO self-service (`08`) |
 | PUT/GET `/v1/agents/{agent}/avatar`; GET `/v1/public/avatars/{key}` | S/K; P | |
 | POST `/v1/agents/{agent}/restart` | S/K | restart sandbox |
@@ -541,8 +542,8 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | GET/POST `/v1/agents/{agent}/memories`; GET/PUT/DELETE `/v1/agents/{agent}/memories/{key}` | S/K | |
 | GET `…/memories/{key}/revisions`; POST `…/memories/{key}/restore`; POST `…/memories/{key}/revisions/{rev}/redact` | S/K | |
 | GET `/v1/agents/{agent}/memories/search?q=` | S/K | |
-| GET/POST `/v1/agents/{agent}/skills`, `/v1/orgs/{org}/skills`; GET/PATCH/DELETE `/v1/skills/{id}`; PUT/DELETE `/v1/skills/{id}/files/{path}` | S/K | the item routes work for every tier and authorize by the skill's tier (agent: `can_use`; org: org `owner`/`admin`; workspace, phase 3 RFE-020: `can_own`); items carry `tier: "agent"\|"workspace"\|"org"` |
-| GET/POST `/v1/workspaces/{ws}/skills` | S/K | (phase 3, RFE-020) list (`can_use`) / create (`can_own`) workspace-tier skills; same body as the other tiers; 409 `skill_name_taken` in the workspace tier, 422 for reserved/invalid names and size limits as elsewhere |
+| GET/POST `/v1/agents/{agent}/skills`, `/v1/orgs/{org}/skills`; GET/PATCH/DELETE `/v1/skills/{id}`; PUT/DELETE `/v1/skills/{id}/files/{path}` | S/K | the item routes work for every tier and authorize by the skill's tier (agent: `can_use`; org: org `owner`/`admin`; workspace, phase 3 RFE-020: `can_own`); items carry `tier: "agent"\|"workspace"\|"org"` (phase 3, D-107: next to the existing `scope`, which gains `"workspace"`) |
+| GET/POST `/v1/workspaces/{ws}/skills` | S/K | (phase 3, RFE-020) list (`can_use`) / create (`can_own`) workspace-tier skills; same body as the other tiers; 409 `skill_exists` in the workspace tier, 400 `invalid_request` for reserved/invalid names and 422 `skill_too_large` for size limits, as elsewhere (phase 3, D-107) |
 | GET `/v1/agents/{agent}/skills/effective` | S/K | (phase 3, RFE-020) the effective set the agent receives: `[{ skill, tier, enabled, shadows: [{ id, tier }] }]` plus the skills that lose (`shadowed_by`); `can_use` |
 | GET/POST `/v1/agents/{agent}/schedules`; GET/PATCH/DELETE `/v1/schedules/{id}`; GET `…/runs`; POST `…/run-now` | S/K | (phase 2, RFE-021) items expose `creator`, `anchor` (`creator`\|`workspace`); POST/PATCH accept `anchor` (`can_own` only; tool-created items are always `creator`) |
 | PUT `/v1/schedules/{id}/creator`, PUT `/v1/webhooks/{id}/creator` | S/K | (phase 2, RFE-021) `{ user_id, re_enable? }`; `can_own`; 422 `new_creator_unauthorized`; audited `automation.reassign` |
@@ -568,7 +569,7 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 |---|---|---|
 | GET `/v1/admin/overview` | IA | versions, gateways, hook hosts, runners, connectors, active snapshot |
 | GET/PATCH `/v1/admin/users` | IA | list, instance-admin flag, disable |
-| GET/POST `/v1/admin/plugins` (multipart upload); GET `/v1/admin/plugins/{id}`; POST `…/approve`, `…/reject`, `…/disable`, `…/enable`; DELETE `…?force=` | IA | (phase 3, RFE-022) GET `{id}` of a pending major upgrade carries `impact` (`09 §10`: `connections_needing_reauth`, `by_app`); `approve` activates and flips the failing connections to `reauth_required` in one transaction and returns `{ connections_reauth: n }` |
+| GET/POST `/v1/admin/plugins` (multipart upload); GET `/v1/admin/plugins/{id}`; POST `…/approve`, `…/reject`, `…/disable`, `…/enable`; DELETE `…?force=` | IA | (phase 3, RFE-022) GET `{id}` of a pending major upgrade carries `impact` (`09 §10`: `connections_needing_reauth`, `by_app`); `approve` activates and flips the failing connections to `reauth_required` in one transaction and returns the `PluginPackage` plus `connections_reauth: n` (phase 3, D-107) |
 | GET `/v1/admin/host-claims`; PUT `/v1/admin/host-claims/{claim_key}` | IA | conflicts and winners |
 | GET/POST/DELETE `/v1/admin/trusted-keys` | IA | |
 | GET/POST/DELETE `/v1/admin/connectors`; POST `…/{id}/approve`, `…/{id}/token` | IA | provision token, approve manifest |
