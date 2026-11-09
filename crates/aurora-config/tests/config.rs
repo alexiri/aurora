@@ -440,6 +440,43 @@ fn oidc_provider_defaults_alias_and_domain_validation() {
     assert!(err.contains("allowed_email_domains"), "{err}");
 }
 
+/// D-118: `trusted_email_domains` takes exact domains only.
+#[test]
+fn oidc_trusted_email_domains_validation() {
+    let p = "[[auth.oidc_providers]]\nid = \"corp\"\nissuer = \"https://idp.example.org\"\nclient_id = \"c\"\nclient_secret_env = \"CORP_SECRET\"\n";
+    let ok = load_with(
+        &format!("{BASE}{p}trusted_email_domains = [\"example.org\"]\n"),
+        &[("CORP_SECRET", "s3cret")],
+    )
+    .unwrap();
+    let a = ok.api_config().unwrap();
+    let o = a
+        .auth
+        .oidc_providers
+        .iter()
+        .find(|p| p.id == "corp")
+        .unwrap();
+    assert_eq!(o.trusted_email_domains, ["example.org"]);
+
+    for bad in [
+        "",
+        "@example.org",
+        "*.example.org",
+        "example",
+        ".example.org",
+        "a..org",
+        "ex ample.org",
+    ] {
+        let raw = load_with(
+            &format!("{BASE}{p}trusted_email_domains = [\"{bad}\"]\n"),
+            &[("CORP_SECRET", "s3cret")],
+        )
+        .unwrap();
+        let err = raw.api_config().unwrap_err().to_string();
+        assert!(err.contains("trusted_email_domains"), "{bad}: {err}");
+    }
+}
+
 #[test]
 fn internal_and_ops_bind_resolve_and_validate() {
     // Defaults fall back to server.bind.

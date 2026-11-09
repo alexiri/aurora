@@ -155,6 +155,10 @@ pub struct OidcProvider {
     /// startup; `true` is accepted and ignored.
     pub require_email_verified: Option<bool>,
     pub allowed_email_domains: Vec<String>,
+    /// (D-118) Domains this provider is authoritative for: an `email` in one of them (exact
+    /// domain, case-insensitive, no subdomains) counts as verified even when the ID token has no
+    /// `email_verified = true`. For IdPs that never send the claim. Empty = claim required.
+    pub trusted_email_domains: Vec<String>,
     pub jit: Option<OidcJit>,
 }
 impl Default for OidcProvider {
@@ -168,6 +172,7 @@ impl Default for OidcProvider {
             scopes: strs(&["openid", "email", "profile"]),
             require_email_verified: None,
             allowed_email_domains: vec![],
+            trusted_email_domains: vec![],
             jit: None,
         }
     }

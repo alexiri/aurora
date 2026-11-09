@@ -329,10 +329,13 @@ async fn exchange(
     let email = email
         .filter(|e| e.contains('@') && e.len() <= 254 && !e.chars().any(char::is_whitespace))
         .ok_or(FAILED)?;
+    // D-118: a provider without the claim may be declared authoritative for some domains.
+    let email_verified =
+        claims.email_verified() == Some(true) || domain_in(&p.trusted_email_domains, &email);
     Ok(Verified {
         sub: claims.subject().as_str().to_owned(),
         email,
-        email_verified: claims.email_verified().unwrap_or(false),
+        email_verified,
         name: claims
             .name()
             .and_then(|n| n.get(None))
@@ -342,15 +345,20 @@ async fn exchange(
 }
 
 fn domain_allowed(p: &OidcProvider, email: &str) -> bool {
-    if p.allowed_email_domains.is_empty() {
-        return true;
-    }
-    let domain = email.rsplit_once('@').map_or("", |(_, d)| d);
-    p.allowed_email_domains.iter().any(|d| {
-        d.trim()
-            .trim_start_matches('@')
-            .eq_ignore_ascii_case(domain)
-    })
+    p.allowed_email_domains.is_empty() || domain_in(&p.allowed_email_domains, email)
+}
+
+/// Exact, case-insensitive match of the e-mail's domain (no subdomains).
+fn domain_in(domains: &[String], email: &str) -> bool {
+    let Some((_, domain)) = email.rsplit_once('@') else {
+        return false;
+    };
+    !domain.is_empty()
+        && domains.iter().any(|d| {
+            d.trim()
+                .trim_start_matches('@')
+                .eq_ignore_ascii_case(domain)
+        })
 }
 
 fn display_name(v: &Verified) -> String {

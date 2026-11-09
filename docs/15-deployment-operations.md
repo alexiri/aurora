@@ -84,7 +84,7 @@ one new entry without activating it.
 | `auth.instance_admins` | `[]` | api | emails |
 | `auth.trusted_origins` | `[]` | api | extra origins for CSRF checks |
 | `auth.session_idle_secs` / `auth.session_absolute_secs` | 1209600 / 2592000 | api | |
-| `auth.oidc_providers[]` | — | api | `04 §OIDC`; (phase 1, RFE-004) **at least one required** (or `auth.dev_idp.enabled`), `require_email_verified` removed |
+| `auth.oidc_providers[]` | — | api | `04 §OIDC`; (phase 1, RFE-004) **at least one required** (or `auth.dev_idp.enabled`), `require_email_verified` removed; (D-118) `trusted_email_domains` (default `[]`): exact domains whose addresses count as verified without the `email_verified` claim |
 | `auth.dev_idp.enabled`, `auth.dev_idp.issuer`, `auth.dev_idp.internal_url` | `false`, —, `issuer` | api | (phase 1, RFE-004) registers the development provider `dev` served by `aurora-dev-idp`; `issuer` is the URL the browser reaches, `internal_url` (optional) where the API itself reaches the IdP (discovery, token, JWKS; the chart sets it to the Service); refused unless `server.external_url` is on `localhost`, `*.localhost`, `127.0.0.1` or `[::1]` (`04 §Development and end-to-end sign-in`) |
 | `email.smtp_url`, `email.from` | — | api | unset ⇒ log-only mode; used for invitations and (phase 2, RFE-011a) approval notifications. `email.from` (an e-mail address) is required when `email.smtp_url` is set, or startup fails |
 | `secrets.default_store`, `secrets.stores[]` | `inline` | api, gateway | `08 §2` |

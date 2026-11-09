@@ -252,6 +252,76 @@ async fn unverified_email_is_always_refused_and_never_links() {
     assert_eq!(location(&hd), "/auth/login?error=email_unverified");
 }
 
+/// D-118: `trusted_email_domains` makes an address in an exact listed domain count as verified
+/// when the provider sends no (or a false) `email_verified`. Other domains and subdomains are
+/// still refused, and nothing links to an existing user on them.
+#[tokio::test]
+async fn trusted_email_domain_counts_as_verified_only_for_exact_domain() {
+    let idp = MockIdp::start().await;
+    let h = harness(
+        &idp,
+        SignupMode::Open,
+        |p| p.trusted_email_domains = vec!["Example.com".into()],
+        &[],
+    )
+    .await;
+
+    // Claim missing: signs in, and the user's e-mail is recorded as verified.
+    idp.set(|c| {
+        c.sub = "t1".into();
+        c.email = Some("Marie.Curie@example.COM".into());
+        c.email_verified = None;
+    });
+    let (path, cookie) = authorize(&h, None).await;
+    let (st, hd) = callback(&h, &path, &cookie).await;
+    assert_eq!(st, StatusCode::FOUND);
+    assert!(has_session(&hd), "{:?}", location(&hd));
+    assert_eq!(
+        count(
+            &h,
+            "SELECT count(*) FROM users WHERE email = 'marie.curie@example.com' AND email_verified_at IS NOT NULL"
+        )
+        .await,
+        1
+    );
+
+    // Claim explicitly false: the operator declared the provider authoritative for the domain.
+    idp.identity("t2", "ada@example.com", false);
+    let (path, cookie) = authorize(&h, None).await;
+    let (_, hd) = callback(&h, &path, &cookie).await;
+    assert!(has_session(&hd), "{:?}", location(&hd));
+
+    // Another domain, a subdomain, and a lookalike suffix are still refused and never link.
+    h.user("victim@other.org", false).await;
+    for (sub, email) in [
+        ("t3", "victim@other.org"),
+        ("t4", "x@sub.example.com"),
+        ("t5", "x@badexample.com"),
+    ] {
+        idp.set(|c| {
+            c.sub = sub.into();
+            c.email = Some(email.into());
+            c.email_verified = None;
+        });
+        let (path, cookie) = authorize(&h, None).await;
+        let (_, hd) = callback(&h, &path, &cookie).await;
+        assert_eq!(
+            location(&hd),
+            "/auth/login?error=email_unverified",
+            "{email}"
+        );
+        assert!(!has_session(&hd), "{email}");
+    }
+    assert_eq!(
+        count(
+            &h,
+            "SELECT count(*) FROM user_identities WHERE subject IN ('t3', 't4', 't5')"
+        )
+        .await,
+        0
+    );
+}
+
 #[tokio::test]
 async fn wrong_audience_rejected() {
     let idp = MockIdp::start().await;

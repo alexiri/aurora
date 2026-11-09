@@ -17,6 +17,7 @@ At least one provider is required. Without one, and without the development IdP,
 | `auth.oidc_providers[].client_secret_env` | required | The **name** of an environment variable (or `<NAME>_FILE`) that holds the client secret. The API fails at startup if it is not set. The secret itself never goes in the TOML. |
 | `auth.oidc_providers[].scopes` | `["openid","email","profile"]` | |
 | `auth.oidc_providers[].allowed_email_domains` | `[]` | If set, only these e-mail domains may sign in. |
+| `auth.oidc_providers[].trusted_email_domains` | `[]` | Exact domains (e.g. `example.org`, no subdomains) this provider is **authoritative** for: an address in one of them counts as verified even when the ID token has no `email_verified = true`. Use it only for an IdP that never sends the claim, and only for domains whose mailboxes belong to the provider's own accounts. Other addresses still need the claim. See below. |
 | `auth.oidc_providers[].jit` | unset | `{ org_slug, role, workspace_slugs, workspace_role }`: where a first-time user lands under `auth.signup_mode = "sso_jit"`. `role` is `member` or `admin`; `workspace_role` is `member` (default) or `approver`. |
 | `auth.oidc_providers[].require_email_verified` | removed | An ID token without `email_verified = true` is always refused. Setting `false` fails startup; delete the key. |
 | `auth.signup_mode` | `invite_only` | `open`, `invite_only` or `sso_jit`. |
@@ -40,6 +41,19 @@ jit = { org_slug = "example", role = "member", workspace_slugs = ["general"] }
 ```
 
 With Helm, add the secret to the API pods: `api.extraEnv: [{name: AURORA_OIDC_CORP_SECRET, valueFrom: {secretKeyRef: {name: aurora-oidc, key: corp}}}]`. The migrate Job receives the same variables, since it validates the same configuration. Create the Secret before `helm install`, because the Job runs as a pre-install hook.
+
+**`email_unverified` with a provider that never sends `email_verified`.** Aurora signs a user in only when the ID token says the e-mail is verified, since there is no local credential and the e-mail links accounts and invitations. Some IdPs never send the claim (CERN SSO, for example, documents no `email_verified` claim). For those, declare the domains the provider is authoritative for:
+
+```toml
+[[auth.oidc_providers]]
+id = "cern"
+issuer = "https://auth.cern.ch/auth/realms/cern"
+client_id = "aurora"
+client_secret_env = "AURORA_CERN_OIDC_CLIENT_SECRET"
+trusted_email_domains = ["cern.ch"]
+```
+
+Addresses in other domains (for example the Google, GitHub, eduGAIN or guest accounts such an IdP also federates) are still refused with `email_unverified`. Add `allowed_email_domains = ["cern.ch"]` too if only those addresses may sign in at all.
 
 **First administrator.** `aurora-api bootstrap-admin --email <you>` pre-provisions an instance administrator with a verified e-mail and no credential. Their first OIDC sign-in with that e-mail binds the identity
 ([install-helm.md](install-helm.md#post-install-checks)). It refuses to run when no provider is configured.

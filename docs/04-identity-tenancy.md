@@ -31,7 +31,8 @@ Configuration `auth.signup_mode`:
 
 (phase 1, RFE-004) **Sign-up semantics under OIDC-only.** There is no separate
 registration form: a user row is created just-in-time at the first successful
-OIDC sign-in whose ID token carries a verified e-mail (`email_verified = true`;
+OIDC sign-in whose ID token carries a verified e-mail (`email_verified = true`,
+or an address in the provider's `trusted_email_domains`, D-118;
 `require_email_verified` is no longer configurable, see below). Whether the
 sign-in may create a user depends on `auth.signup_mode`:
 
@@ -125,7 +126,14 @@ Configured per provider (`auth.oidc_providers[]`, see `15`): `id`,
 `scopes` (default `openid email profile`), `require_email_verified` (default
 `true`; **removed in phase 1** — an ID token without `email_verified = true` is
 always refused with `email_unverified`, and a configuration that still sets
-`false` fails startup naming the key), `allowed_email_domains` (optional), `jit`
+`false` fails startup naming the key), `allowed_email_domains` (optional),
+`trusted_email_domains` (optional, D-118: exact domains the provider is
+authoritative for; an `email` in one of them counts as verified even when the
+ID token lacks `email_verified = true`, for IdPs that never send the claim.
+Exact, case-insensitive domain match, no subdomains; any other address still
+needs the claim. Only list domains whose mailboxes the provider's own accounts
+own: a federated IdP that also admits external accounts must not let them
+assert an address in the domain), `jit`
 (optional: `{ org_slug, role: member|admin, workspace_slugs: [] }`; phase 2, RFE-012: optional `workspace_role: member|approver`, default `member`).
 (phase 1, RFE-004) At least one provider MUST be configured, or startup fails
 (`no_oidc_provider`) unless the development IdP is enabled

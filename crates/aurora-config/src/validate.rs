@@ -1354,6 +1354,20 @@ fn check_auth(
                 "entries must be non-empty domains such as `example.com`",
             );
         }
+        // D-118: an exact domain (no `@`, wildcard, whitespace or empty label); trusting a
+        // malformed entry would either never match or trust more than the operator meant.
+        if p.trusted_email_domains.iter().any(|d| {
+            d.is_empty()
+                || d.contains(['@', '*'])
+                || d.contains(char::is_whitespace)
+                || d.split('.').any(str::is_empty)
+                || !d.contains('.')
+        }) {
+            c.err(
+                k("trusted_email_domains"),
+                "entries must be exact domains such as `example.com` (no `@`, wildcard or subdomain pattern)",
+            );
+        }
         if let Some(j) = &p.jit {
             if j.org_slug.is_empty() {
                 c.err(k("jit.org_slug"), "required");
