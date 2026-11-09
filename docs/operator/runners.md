@@ -160,6 +160,34 @@ sandbox occupies a slot permanently, so size for steady state, not peak.
 With the defaults (`max_sandboxes = 4`, `sandbox_memory_mib = 2048`), a runner host needs
 4 × 2048 MiB + 1 GiB = 9 GiB.
 
+## Sandbox resources
+
+Four keys set what **each** sandbox gets, and the runner reports them to the API at registration:
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `runner.sandbox_cpus` | `1` | CPUs (reported as `cpus × 1000` millicores). |
+| `runner.sandbox_memory_mib` | `2048` | Memory in MiB. |
+| `runner.sandbox_pids` | `512` | Process limit. Enforced by podman only (see [Known limitations](#known-limitations)). |
+| `runner.home_gib` | `10` | Size of the agent's home volume in GiB. |
+
+All four must be greater than 0 (startup fails naming the key). The effective profile of a sandbox is the agent's own override if an administrator set one, otherwise the runner default above, clamped to the runner's bounds
+([docs/11](../11-runner-sandboxes.md): an organization-level override is specified but not in the code yet). On Kubernetes, requests equal limits, so a sandbox that does not fit its node stays `Unschedulable`, and the
+chart's sandbox namespace adds a ResourceQuota and a LimitRange (`sandboxes.quota.*`, `sandboxes.limitRange.*`; the LimitRange maximum is 8 CPUs and 16 GiB by default). Size the quota to `runner.max_sandboxes` times these values.
+
+```toml
+[runner]
+backend = "kubernetes"
+max_sandboxes = 8
+sandbox_cpus = 2
+sandbox_memory_mib = 4096
+home_gib = 20
+```
+
+With Helm, put them under `config.runner` and keep `sandboxes.quota` at least `max_sandboxes` times the per-sandbox size.
+A sandbox image in a **private registry** is configured with `runner.k8s.image_pull_secrets`
+([Private sandbox registry](#private-sandbox-registry), FIX-013); the service images use the chart's `image.pullSecrets` instead.
+
 ## Known limitations
 
 Accepted by the owner on 2026-11-08 (FUP-M7, RUN-004). These are limits of Kubernetes itself, not of Aurora:
