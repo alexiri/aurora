@@ -248,13 +248,15 @@ describe("message actions", () => {
 
 describe("inline approval (RFE-012)", () => {
   const pending = e(2, "approval.pending", { turn_id: "t1", approval_id: "ap1", summary: "Merge pull request #42" });
-  const approval = {
+  // The deadline is computed when the route is called, not when the file is collected: earlier
+  // tests in this file can take seconds, which turned "2:05" into "1:59" on a busy machine.
+  const approval = () => ({
     id: "ap1", status: "pending", created_at: "2026-11-08T12:00:00Z", deadline: new Date(Date.now() + 125_000).toISOString(), host: "api.github.com",
     method: "PUT", path: "/repos/acme/web/pulls/42/merge", rule_name: "Ask before merging",
-  };
+  });
   const routes = (role: string) => ({
     "GET /v1/workspaces/w": () => json(200, { my_role: role }),
-    "GET /v1/workspaces/w/approvals": () => json(200, { items: [approval], next_cursor: null }),
+    "GET /v1/workspaces/w/approvals": () => json(200, { items: [approval()], next_cursor: null }),
   });
 
   it("shows HELD, the countdown, the request line and the rule, with Approve and Deny for an approver", async () => {
