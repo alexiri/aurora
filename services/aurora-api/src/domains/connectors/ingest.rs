@@ -72,6 +72,13 @@ async fn events(
             }
             Some(_) => {}
         }
+        // C-326: `api:` is reserved for `Idempotency-Key` values stored in `turns.source_event_id`.
+        if e.event_id.starts_with("api:") {
+            out.rejected.push(reject(
+                ErrorCode::from_wire("reserved_event_id").unwrap_or(ErrorCode::Invalid),
+            ));
+            continue;
+        }
         let fresh = inbox::insert(
             &mut *tx,
             &c.connector.id,

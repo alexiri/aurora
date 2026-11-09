@@ -358,6 +358,25 @@ pub async fn bind_attachments(
     Ok(done.rows_affected())
 }
 
+/// The turn a promoted follow-up became: the `turn_id` of the durable `turn.queued` event whose
+/// `promoted_from` is the follow-up's id (C-26, D-107). `None` if none (or swept by retention).
+pub async fn promoted_turn_id<'e, E: PgExecutor<'e>>(
+    exec: E,
+    conversation_id: Uuid,
+    followup_id: Uuid,
+) -> Result<Option<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT turn_id FROM transcript_events
+         WHERE conversation_id = $1 AND type = 'turn.queued'
+           AND payload->>'promoted_from' = $2::text AND turn_id IS NOT NULL
+         ORDER BY seq LIMIT 1",
+    )
+    .bind(conversation_id)
+    .bind(followup_id.to_string())
+    .fetch_optional(exec)
+    .await?)
+}
+
 /// The turn (or follow-up) a connector event already created in this conversation.
 pub async fn by_source_event(
     conn: &mut PgConnection,

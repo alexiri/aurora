@@ -44,6 +44,7 @@ mod key_rings;
 mod keys;
 mod me;
 mod memory;
+mod message_idempotency;
 mod oidc;
 mod peer_tasks;
 mod peers_rig;

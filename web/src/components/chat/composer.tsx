@@ -13,6 +13,13 @@ import { classifySend, pendingFollowups, type TranscriptState } from "@/lib/chat
 import { ComposerChip, UploadChip } from "./attachments";
 import { ErrorBlock, QueuedRow } from "./status-rows";
 
+/** A fresh `Idempotency-Key` (a UUID; falls back where `randomUUID` needs a secure context). */
+function newIdempotencyKey(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
 /**
  * The pinned composer: queued follow-ups above the box, then a bordered box with attachment chips, an
  * auto-growing textarea (2 to 8 lines, CSS only) and one toolbar row (Attach, the hint, Stop, Send). At 390 px it
@@ -46,6 +53,7 @@ export function Composer({
   const [uploading, setUploading] = useState<string[]>([]);
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
+  const keyRef = useRef<{ sig: string; key: string } | null>(null);
   const waiting = useMemo(() => pendingFollowups(followups, state), [followups, state]);
 
   useEffect(() => {
@@ -58,13 +66,21 @@ export function Composer({
     if (!t || busy || uploading.length > 0) return;
     setBusy(true);
     setSendErr(null);
+    // One key per message (RFE-018): a retry of the same text and attachments reuses it, so a lost response never
+    // makes a second turn; an edited message gets a fresh one (the server refuses a key reused with other content).
+    const ids = pending.map((a) => a.id);
+    const sig = JSON.stringify([convId, t, [...ids].sort()]);
+    if (keyRef.current?.sig !== sig) keyRef.current = { sig, key: newIdempotencyKey() };
     try {
-      const out = classifySend(await chatApi.send(convId, t, pending.map((a) => a.id)));
+      const out = classifySend(await chatApi.send(convId, t, ids, keyRef.current.key));
+      keyRef.current = null;
       if (out.kind === "followup") setFollowups((f) => [...f, out.followup]);
       setText("");
       setPending([]);
       void qc.invalidateQueries({ queryKey: ["agents", agentId, "conversations"] });
     } catch (err) {
+      // The server took the key for other content: never reuse it.
+      if (err instanceof ApiError && err.code === "idempotency_key_reused") keyRef.current = null;
       setSendErr(err);
     } finally {
       setBusy(false);

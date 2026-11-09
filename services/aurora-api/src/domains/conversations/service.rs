@@ -587,15 +587,110 @@ pub(super) async fn speaker_label(state: &AppState, c: &Caller) -> Result<String
     })
 }
 
+/// Longest accepted `Idempotency-Key` (C-320).
+const IDEMPOTENCY_KEY_MAX: usize = 128;
+
+fn invalid_key() -> ApiError {
+    ApiError::unprocessable(
+        "idempotency_key_invalid",
+        "Idempotency-Key must be 1-128 characters of A-Z a-z 0-9 . _ : ~ - and given once.",
+    )
+}
+
+/// C-320: validate the raw `Idempotency-Key` header values (none = no deduplication) and build the
+/// stored `api:<user_id>:<key>` form (C-321).
+fn stored_key(user_id: Uuid, raw: &[Vec<u8>]) -> Result<Option<String>, ApiError> {
+    let [v] = raw else {
+        return if raw.is_empty() {
+            Ok(None)
+        } else {
+            Err(invalid_key())
+        };
+    };
+    let ok = !v.is_empty()
+        && v.len() <= IDEMPOTENCY_KEY_MAX
+        && v.iter()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'~' | b'-'));
+    if !ok {
+        return Err(invalid_key());
+    }
+    let key = String::from_utf8_lossy(v);
+    Ok(Some(format!("api:{user_id}:{key}")))
+}
+
+/// The accepted-message body for a stored row, as it is now (C-323).
+async fn accepted_from_row(
+    conn: &mut PgConnection,
+    row: TurnRow,
+) -> Result<MessageAccepted, ApiError> {
+    if row.role == "followup" {
+        let promoted = if row.status == "promoted" {
+            turns::promoted_turn_id(&mut *conn, row.conversation_id, row.id).await?
+        } else {
+            None
+        };
+        let mut f = super::dto::Followup::from(row);
+        f.promoted_turn_id = promoted;
+        Ok(MessageAccepted {
+            turn: None,
+            followup: Some(f),
+        })
+    } else {
+        Ok(MessageAccepted {
+            turn: Some(row.into()),
+            followup: None,
+        })
+    }
+}
+
+/// Replay or mismatch for an existing row under a key (C-323, C-324).
+async fn replay(
+    conn: &mut PgConnection,
+    row: TurnRow,
+    text: &str,
+    attachment_ids: &[Uuid],
+) -> Result<MessageAccepted, ApiError> {
+    let mut stored = row.attachment_ids.clone();
+    stored.sort();
+    stored.dedup();
+    let mut wanted = attachment_ids.to_vec();
+    wanted.sort();
+    wanted.dedup();
+    if row.text != text || stored != wanted {
+        let is_followup = row.role == "followup";
+        return Err(ApiError::unprocessable(
+            "idempotency_key_reused",
+            "This Idempotency-Key was already used for a different message.",
+        )
+        .with_details(json!({
+            "turn_id": if is_followup { None } else { Some(row.id) },
+            "followup_id": if is_followup { Some(row.id) } else { None },
+        })));
+    }
+    accepted_from_row(conn, row).await
+}
+
+/// Create a message. `key_headers` are the raw `Idempotency-Key` header values (C-320). Returns
+/// the body and whether it is a replay (`Idempotent-Replayed: true`).
 pub async fn post_message(
     state: &AppState,
     c: &Caller,
     conversation_id: Uuid,
     text: &str,
     attachment_ids: &[Uuid],
-) -> Result<MessageAccepted, ApiError> {
-    check_text(text)?;
+    key_headers: &[Vec<u8>],
+) -> Result<(MessageAccepted, bool), ApiError> {
+    // C-322: authorization and visibility first, then the header, then the lookup.
     let conv = load_conversation_for_write(state, c, conversation_id).await?;
+    let key = stored_key(c.user_id, key_headers)?;
+    if let Some(k) = &key {
+        let mut conn = state.pool.acquire().await.map_err(DbError::from)?;
+        if let Some(row) = turns::by_source_event(&mut conn, conv.id, k).await? {
+            let body = replay(&mut conn, row, text, attachment_ids).await?;
+            return Ok((body, true));
+        }
+    }
+    check_text(text)?;
     let agent = agents::get(&state.pool, conv.agent_id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
@@ -626,22 +721,41 @@ pub async fn post_message(
             speaker_user_id: Some(c.user_id),
             speaker_label: &label,
             text,
-            source_event_id: None,
+            source_event_id: key.as_deref(),
             attachment_ids: &ids,
         },
     )
-    .await?;
+    .await;
+    let created = match created {
+        Ok(created) => created,
+        // A concurrent request with the same key won the race: answer as its replay (C-323).
+        Err(e) if key.is_some() && is_key_conflict(&e) => {
+            drop(tx); // rolls back
+            let mut conn = state.pool.acquire().await.map_err(DbError::from)?;
+            let k = key.as_deref().unwrap_or_default();
+            let row = turns::by_source_event(&mut conn, conv.id, k)
+                .await?
+                .ok_or(e)?;
+            let body = replay(&mut conn, row, text, attachment_ids).await?;
+            return Ok((body, true));
+        }
+        Err(e) => return Err(e),
+    };
     tx.commit().await.map_err(DbError::from)?;
-    Ok(match created {
-        Created::Turn(t) => MessageAccepted {
-            turn: Some(t.into()),
-            followup: None,
-        },
-        Created::Followup(f) => MessageAccepted {
-            turn: None,
-            followup: Some(f.into()),
-        },
-    })
+    let (Created::Turn(row) | Created::Followup(row)) = created;
+    Ok((
+        accepted_from_row(
+            &mut *state.pool.acquire().await.map_err(DbError::from)?,
+            row,
+        )
+        .await?,
+        false,
+    ))
+}
+
+/// The `turns_source_event_uq` violation `turns::create` surfaces as a 409 `conflict`.
+fn is_key_conflict(e: &ApiError) -> bool {
+    e.code() == "conflict"
 }
 
 pub(super) async fn load_turn(state: &AppState, c: &Caller, id: Uuid) -> Result<TurnRow, ApiError> {
