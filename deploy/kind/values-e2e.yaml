@@ -8,6 +8,13 @@ image:
 
 postgres:
   enabled: true           # evaluation Postgres bundled in the chart
+  initScriptsConfigMap: aurora-e2e-pg-init   # creates the gateway role (kind.sh creates this ConfigMap)
+
+# FIX-016: the gateway connects as its least-privilege role, never as the API's user. kind.sh creates
+# the Secret `aurora-gateway-database` (the DBA's step 2) before `helm install`.
+database:
+  gatewayRole: aurora_gateway
+  gatewayExistingSecret: aurora-gateway-database
 
 # kind has no ingress controller: the test reaches the API through `kubectl port-forward`.
 ingress:

@@ -196,6 +196,15 @@ if helm --kube-context "$CTX" status "$RELEASE" -n "$NS" >/dev/null 2>&1; then
 fi
 # The evaluation Postgres and the generated Secrets are not removed by `helm uninstall` (docs: Database).
 k delete ns "$NS" "$SBX_NS" --ignore-not-found --wait=true >/dev/null || exit 1
+# FIX-016: the DBA's steps (docs/operator/install-helm.md, Database), so the gateway runs as its
+# least-privilege role. The evaluation Postgres creates the role from an init script on its empty
+# data directory; the gateway Secret logs in as it. (Evaluation password: not a secret.)
+log "creating the gateway role init script and the gateway database Secret"
+k create ns "$NS" >/dev/null || exit 1
+k -n "$NS" create configmap aurora-e2e-pg-init \
+  --from-literal=10-gateway-role.sql="CREATE ROLE aurora_gateway LOGIN PASSWORD 'gwe2e-evaluation-pw';" >/dev/null || exit 1
+k -n "$NS" create secret generic aurora-gateway-database \
+  --from-literal=AURORA_DATABASE_URL="postgres://aurora_gateway:gwe2e-evaluation-pw@$FULL-postgres:5432/aurora" >/dev/null || exit 1
 log "helm install"
 helm --kube-context "$CTX" install "$RELEASE" deploy/helm/aurora -n "$NS" --create-namespace \
   -f deploy/kind/values-e2e.yaml --wait --timeout 8m || exit 1

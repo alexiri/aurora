@@ -10,7 +10,9 @@ use sqlx::PgPool;
 pub enum GrantsError {
     #[error("invalid gateway role name {0:?}: must match [a-z_][a-z0-9_]{{0,62}}")]
     InvalidRole(String),
-    #[error("gateway role {0:?} does not exist; create it before applying grants")]
+    #[error(
+        "gateway role {0:?} does not exist: create it (CREATE ROLE {0} LOGIN PASSWORD '…') or unset database.gateway_role"
+    )]
     RoleMissing(String),
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
@@ -96,10 +98,20 @@ pub async fn apply_gateway_grants(pool: &PgPool, role: &str) -> Result<(), Grant
     stmts.push(format!(
         "GRANT INSERT, UPDATE ON {s}.approvals, {s}.gateway_instances TO {r}"
     ));
+    // (FIX-016) `UPDATE … WHERE` needs SELECT on the columns it reads. Only those, not the tables:
+    // `get_approval_status` reads approvals.status; `expire_approval`, `abandon_approval` and
+    // `abandon_approvals` filter on id, status and gateway_instance_id; the instance heartbeat and
+    // stop statements filter gateway_instances on id.
+    stmts.push(format!(
+        "GRANT SELECT (id, status, gateway_instance_id) ON {s}.approvals TO {r}"
+    ));
+    stmts.push(format!("GRANT SELECT (id) ON {s}.gateway_instances TO {r}"));
     stmts.push(format!("GRANT INSERT ON {s}.request_log TO {r}"));
+    // (FIX-016) `updated_at`: `cas_connection_credentials` (mint/refresh rotation) and
+    // `mark_reauth_required` both set it.
     stmts.push(format!(
         "GRANT UPDATE (credentials_ref, credentials_version, credentials_expires_at, status, \
-         status_reason, reauth_required_at, last_used_at) ON {s}.app_connections TO {r}"
+         status_reason, reauth_required_at, last_used_at, updated_at) ON {s}.app_connections TO {r}"
     ));
     stmts.push(format!(
         "GRANT UPDATE (last_used_at, origin) ON {s}.secrets TO {r}"

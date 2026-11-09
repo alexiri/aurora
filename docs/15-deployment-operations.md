@@ -78,7 +78,7 @@ one new entry without activating it.
 | `runner.ops_bind` | `server.bind` | runner | address for the ops listener :4106; same rule |
 | `server.trusted_proxies` | `[]` | api | CIDRs whose `X-Forwarded-For` is trusted |
 | `database.max_connections` | 20 (api), 10 (gateway) | api, gateway | pool size |
-| `database.gateway_role` | — | api (migrations) | role to grant gateway privileges (`03`) |
+| `database.gateway_role` | — | api (migrations) | login role the **operator creates** (`CREATE ROLE <r> LOGIN PASSWORD '…'`); `migrate` only grants it the gateway privileges (`03`) and fails if it does not exist. The gateway must then connect as it (its own `AURORA_DATABASE_URL`; Helm `database.gatewayExistingSecret`) |
 | `auth.signup_mode` | `invite_only` | api | `open`, `invite_only`, `sso_jit` |
 | `auth.org_creation` | `instance_admins` | api | or `anyone` |
 | `auth.instance_admins` | `[]` | api | emails |
@@ -341,7 +341,9 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
 - **Sandboxes namespace**: ResourceQuota, LimitRange, PSA `restricted`, runner
   ServiceAccount + Role (`11 §kubernetes`).
 - **Postgres**: external database expected in production (values: URL secret,
-  gateway role); a bundled single-instance Postgres subchart is available for
+  and the least-privilege gateway login: `database.gatewayRole` plus
+  `database.gatewayExistingSecret`, set together; the DBA creates the role first and
+  `aurora-api migrate` grants it, `03 §Gateway database role grants`); a bundled single-instance Postgres subchart is available for
   evaluation only.
 - **Values highlights**: image registry/tag, replicas, resources, external
   URL, auth config, OIDC providers, LLM endpoints, secret stores, runner
