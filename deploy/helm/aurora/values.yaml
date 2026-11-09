@@ -296,6 +296,15 @@ networkPolicy:
     kubernetes.io/metadata.name: kube-system
   # Kubernetes API server CIDRs for runner egress (empty = any:443/6443).
   kubeApiCidrs: []
+  # Ports the API server listens on behind the `kubernetes` Service (its endpoint port).
+  kubeApiPorts: [443, 6443]
+  # Cilium does not match the API server or cluster nodes with a NetworkPolicy ipBlock (they are
+  # the `kube-apiserver` / `remote-node` entities), so the runner -> Kubernetes API rule above never
+  # matches there and the runner times out at start. `cilium.enabled` adds a CiliumNetworkPolicy
+  # that allows exactly that flow (toEntities: kube-apiserver on kubeApiPorts). Cilium unions it
+  # with the NetworkPolicies, so nothing else is opened. Requires the cilium.io/v2 CRDs.
+  cilium:
+    enabled: false
   # External egress (OIDC, SMTP, LLM endpoints...) for api/gateway/hookhost/connectors.
   externalEgress:
     cidr: 0.0.0.0/0

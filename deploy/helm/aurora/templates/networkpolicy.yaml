@@ -171,7 +171,28 @@ spec:
         {{- else }}
         - ipBlock: {cidr: 0.0.0.0/0}
         {{- end }}
-      ports: [{protocol: TCP, port: 443}, {protocol: TCP, port: 6443}]
+      ports:
+        {{- range (default (list 443 6443) $np.kubeApiPorts) }}
+        - {protocol: TCP, port: {{ . }}}
+        {{- end }}
+{{- if $np.cilium.enabled }}
+---
+# Cilium: the API server is the `kube-apiserver` entity, which no NetworkPolicy ipBlock matches
+# (values.yaml networkPolicy.cilium). Allows only runner -> Kubernetes API on kubeApiPorts.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: {{ $full }}-runner-kube-api, namespace: {{ $ns }}}
+spec:
+  endpointSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" . "component" "runner") | nindent 6 }}
+  egress:
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            {{- range (default (list 443 6443) $np.kubeApiPorts) }}
+            - {port: {{ . | quote }}, protocol: TCP}
+            {{- end }}
+{{- end }}
 {{- end }}
 {{- range .Values.connectors }}
 ---
