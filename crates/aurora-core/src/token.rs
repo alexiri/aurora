@@ -37,10 +37,12 @@ pub enum TokenPrefix {
     Invitation,
     /// Supervisor channel bootstrap token.
     Supervisor,
+    /// Connector host anchor token (P4-MCON).
+    ConnectorHost,
 }
 
 impl TokenPrefix {
-    pub const ALL: [TokenPrefix; 12] = [
+    pub const ALL: [TokenPrefix; 13] = [
         Self::Gateway,
         Self::Boot,
         Self::Context,
@@ -53,6 +55,7 @@ impl TokenPrefix {
         Self::Session,
         Self::Invitation,
         Self::Supervisor,
+        Self::ConnectorHost,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -69,6 +72,7 @@ impl TokenPrefix {
             Self::Session => "aus_",
             Self::Invitation => "aui_",
             Self::Supervisor => "aup_",
+            Self::ConnectorHost => "auh_",
         }
     }
 }
@@ -85,6 +89,17 @@ pub fn generate(prefix: TokenPrefix) -> Secret<String> {
     URL_SAFE_NO_PAD.encode_string(bytes, &mut token);
     bytes.zeroize();
     Secret::new(token)
+}
+
+/// A generated connector setting (P4-MCON, 13 §3.1): 32 random bytes from the OS RNG, standard
+/// base64. Panics if the CSPRNG fails, like [`generate`].
+#[allow(clippy::expect_used)]
+pub fn generate_setting() -> Secret<String> {
+    let mut bytes = [0u8; 32];
+    rand::fill(&mut bytes).expect("OS CSPRNG unavailable");
+    let s = base64::engine::general_purpose::STANDARD.encode(bytes);
+    bytes.zeroize();
+    Secret::new(s)
 }
 
 /// SHA-256 of the full token string (what is stored, as `bytea`).

@@ -19,7 +19,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 /// Where each purpose's ref lives: `(purpose, "SELECT <ref> FROM … WHERE id = $1")`.
-const REF_SQL: [(Purpose, &str); 7] = [
+const REF_SQL: [(Purpose, &str); 8] = [
     (
         Purpose::SecretValue,
         "SELECT value_ref FROM secrets WHERE id = $1",
@@ -47,6 +47,10 @@ const REF_SQL: [(Purpose, &str); 7] = [
     (
         Purpose::ChannelOpDeprovision,
         "SELECT payload->>'credentials_ref' FROM channel_ops WHERE id = $1",
+    ),
+    (
+        Purpose::ConnectorSettings,
+        "SELECT secret_refs->>'key' FROM connectors WHERE secret_owner = $1",
     ),
 ];
 
@@ -109,6 +113,7 @@ async fn world(vault: SecretVault) -> World {
             Purpose::SecretValue | Purpose::ConnectionCredentials => (Some(ws), org),
             Purpose::OauthClientSecret => (None, org),
             Purpose::WebhookVerification => (Some(ws), org),
+            Purpose::ConnectorSettings => (None, Uuid::nil()),
             _ => (None, org),
         };
         let ctx = SealContext {
@@ -153,6 +158,12 @@ async fn world(vault: SecretVault) -> World {
                 sqlx::query("INSERT INTO channel_ops (id, connector_id, kind, payload, status) VALUES ($1,'chat','presence.deprovision',$2,'pending')")
                     .bind(id)
                     .bind(json!({"credentials_ref": r, "org_id": org}))
+                    .execute(pool).await.unwrap();
+            }
+            Purpose::ConnectorSettings => {
+                sqlx::query("INSERT INTO connectors (id, display_name, status, managed, type_id, settings, secret_owner, secret_refs) VALUES ('managed-one','m','active',true,'managed-one','{}',$1,$2)")
+                    .bind(id)
+                    .bind(json!({"key": r}))
                     .execute(pool).await.unwrap();
             }
             Purpose::WebhookVerification => {
@@ -301,6 +312,70 @@ async fn round_trip_through_the_memory_store() {
     );
 }
 
+/// (P4-MCON) A managed connector seals several fields under one owner; paging one row at a time
+/// must still move every field of every connector exactly once.
+#[tokio::test]
+async fn connector_settings_with_several_fields_move_whole_with_small_pages() {
+    let mem = Arc::new(MemoryStore::new("memory"));
+    let mut sr = StoreRegistry::from_config(&SecretsSection::default(), keyring()).unwrap();
+    sr.register(mem.clone());
+    let vault = SecretVault::new(sr);
+    let h = Harness::new().await;
+    let inline = vault.registry().get("inline").unwrap().clone();
+    let mut expect = Vec::new();
+    for c in ["mc-a", "mc-b"] {
+        let owner = Uuid::now_v7();
+        let ctx = SealContext {
+            purpose: Purpose::ConnectorSettings,
+            owner_id: owner,
+            org_id: Uuid::nil(),
+            workspace_id: None,
+        };
+        let mut refs = serde_json::Map::new();
+        for f in ["k1", "k2", "k3"] {
+            let v = format!("{c}-{f}-value");
+            let r = inline
+                .put(&ctx, &Secret::new(v.clone().into_bytes()))
+                .await
+                .unwrap();
+            refs.insert(f.to_owned(), json!(r.to_column()));
+            expect.push((c, f, v, ctx));
+        }
+        sqlx::query("INSERT INTO connectors (id, display_name, status, managed, type_id, settings, secret_owner, secret_refs) VALUES ($1,$1,'active',true,$1,'{}',$2,$3)")
+            .bind(c)
+            .bind(owner)
+            .bind(serde_json::Value::Object(refs))
+            .execute(h.pool())
+            .await
+            .unwrap();
+    }
+    let mut o = World::quick("memory");
+    o.purpose = Some(Purpose::ConnectorSettings);
+    o.batch = 2;
+    let s = run(h.pool(), &vault, &o).await.unwrap();
+    assert_eq!(counts(&s, Purpose::ConnectorSettings), (6, 0, 0, 0));
+    for (c, f, v, ctx) in expect {
+        let col: String = sqlx::query_scalar("SELECT secret_refs->>$2 FROM connectors WHERE id=$1")
+            .bind(c)
+            .bind(f)
+            .fetch_one(h.pool())
+            .await
+            .unwrap();
+        let r: SecretRef = col.parse().unwrap();
+        assert_eq!(r.store_id(), Some("memory"), "{c}/{f}");
+        assert_eq!(
+            vault.open(&ctx, &r).await.unwrap().expose().as_slice(),
+            v.as_bytes()
+        );
+    }
+    let s = run(h.pool(), &vault, &o).await.unwrap();
+    assert_eq!(
+        counts(&s, Purpose::ConnectorSettings),
+        (0, 0, 0, 6),
+        "idempotent"
+    );
+}
+
 #[tokio::test]
 async fn round_trip_through_vault() {
     let Some(v) = vault_env() else { return };
@@ -405,7 +480,7 @@ async fn context_mismatch_fails_that_row_only() {
         .unwrap();
     assert_eq!(counts(&s, Purpose::OauthClientSecret), (0, 0, 1, 0));
     assert_eq!(s.failed(), 1);
-    assert_eq!(s.moved(), 6);
+    assert_eq!(s.moved(), 7);
     assert_eq!(
         w.col(&w.seeds[2]).await,
         bad,
@@ -702,7 +777,7 @@ async fn rekey_context_failure_fails_only_that_row_and_leaves_other_stores_alone
     let s = run(w.h.pool(), &rotated, &o).await.unwrap();
     assert_eq!(counts(&s, Purpose::OauthClientSecret), (0, 0, 1, 0));
     assert_eq!(s.failed(), 1);
-    assert_eq!(s.moved(), 6);
+    assert_eq!(s.moved(), 7);
     assert_eq!(
         w.col(&w.seeds[2]).await,
         bad,
@@ -751,7 +826,7 @@ async fn racing_migrators_leave_one_valid_ref_per_row_memory() {
     sr.register(mem.clone());
     let w = world(SecretVault::new(sr)).await;
     race(&w, "memory").await;
-    assert_eq!(mem.managed_count(), 7, "a losing migrator leaked a value");
+    assert_eq!(mem.managed_count(), 8, "a losing migrator leaked a value");
 }
 
 #[tokio::test]

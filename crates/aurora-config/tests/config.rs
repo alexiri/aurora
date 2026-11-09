@@ -717,6 +717,28 @@ fn dev_config_loads_for_host_processes() {
 }
 
 #[test]
+fn bootstrap_connector_host_token_must_be_an_auh_token() {
+    let ok = load_with(
+        BASE,
+        &[("AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN", "auh_abc123")],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap();
+    assert!(ok.bootstrap_connector_host_token.is_some());
+    let e = load_with(
+        BASE,
+        &[("AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN", "aun_abc123")],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap_err();
+    assert!(e.has_key("AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN"), "{e}");
+    let none = load_with(BASE, &[]).unwrap().api_config().unwrap();
+    assert!(none.bootstrap_connector_host_token.is_none());
+}
+
+#[test]
 fn bootstrap_connector_tokens_are_validated_and_resolved() {
     let ok = load_with(
         BASE,

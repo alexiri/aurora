@@ -1,0 +1,47 @@
+{
+  "$defs": {
+    "RejectReason": {
+      "enum": [
+        "signature",
+        "id_mismatch",
+        "invalid_manifest"
+      ],
+      "type": "string"
+    },
+    "RejectedType": {
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/RejectReason"
+        },
+        "type_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type_id",
+        "reason"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "poll_interval_secs": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "rejected": {
+      "items": {
+        "$ref": "#/$defs/RejectedType"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "poll_interval_secs",
+    "rejected"
+  ],
+  "title": "HostRegisterResponse",
+  "type": "object"
+}

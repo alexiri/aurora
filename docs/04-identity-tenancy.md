@@ -810,7 +810,7 @@ strings are the ones the API already used and are listed in `SECURITY_CRITICAL_A
 (D-83): `grant.put\|delete` is emitted as `grant.create\|delete`, `org_member.*` as
 `member.add\|update\|remove` (role changes and ownership hand-over are `member.update`),
 `workspace_access.put\|delete` as `workspace_access.set\|remove`, `runner.*` as
-`admin.runner_create\|rotate\|delete`, `connector.*` as `admin.connector_create\|rotate\|approve\|delete`,
+`admin.runner_create\|rotate\|delete`, `connector.*` as `admin.connector_create\|rotate\|approve\|delete` (phase 4, P4-MCON: managed create and PATCH are `connector.created` and `connector.updated`, field names only),
 `secret.value_replace` as `secret.value_update`, `trusted_key.add\|remove` as `trusted_key.create\|revoke`,
 `reach.decide` as `reach_grant.decide`, `agent_link.decide` as `agent_link.policy`,
 `app_availability.update` as `org.app_availability.update`, `host_claim.decide` as

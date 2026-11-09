@@ -1,5 +1,16 @@
 {
   "$defs": {
+    "InstanceSetup": {
+      "description": "`instance_setup`: the integration form-field schema (09 §3.4) plus the field types `url`,\n`number` and `generated_secret`, and an optional `default`. Fields stay raw JSON on the wire;\nthe API validates them (`services/aurora-api` `domains/connectors/setup.rs`).",
+      "properties": {
+        "fields": {
+          "default": [],
+          "items": true,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "ManifestAbout": {
       "properties": {
         "icon_png_b64": {
@@ -80,6 +91,17 @@
       "additionalProperties": true,
       "default": {},
       "type": "object"
+    },
+    "instance_setup": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/InstanceSetup"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "(P4-MCON, 13 §3) Connector-level settings an instance admin fills in when adding a\nmanaged connector. Absent = no instance settings (and the key is not serialized, so the\ndigest of an older manifest is unchanged)."
     },
     "integration_setup": {
       "default": null

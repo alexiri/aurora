@@ -129,6 +129,15 @@ fn setup_fields(m: &ConnectorManifest) -> Vec<(&'static str, Value)> {
     {
         out.push(("presence", f));
     }
+    // (P4-MCON) a new or changed `instance_setup` field is a widening too.
+    for f in m
+        .instance_setup
+        .as_ref()
+        .map(|s| s.fields.clone())
+        .unwrap_or_default()
+    {
+        out.push(("instance", f));
+    }
     out
 }
 
@@ -211,6 +220,12 @@ pub fn validate(m: &ConnectorManifest) -> Vec<FieldError> {
             64,
             &mut errs,
         );
+    }
+    if let Err(why) = super::setup::parse_fields(m) {
+        errs.push(FieldError::new(
+            "/manifest/instance_setup",
+            sanitize::one_line(&why, 200),
+        ));
     }
     let limits = aurora_registry::Limits::default();
     let mut vio = Vec::new();

@@ -1,7 +1,7 @@
 //! Instance administration and the public catalogue of connectors (C-31, C-32).
 
 use super::dto::*;
-use super::manifest;
+use super::{managed, manifest, setup};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use aurora_core::token::{self, TokenPrefix};
@@ -29,7 +29,13 @@ async fn view(s: &AppState, r: ConnectorRow, count: i64) -> Result<ConnectorAdmi
         _ => Vec::new(),
     };
     let approved = r.manifest.as_ref().and_then(manifest::approved_value);
+    let mv = managed::managed_view(s, &r).await?;
     Ok(ConnectorAdmin {
+        managed: r.managed,
+        type_id: r.type_id.clone(),
+        settings: mv.settings,
+        secrets: mv.secrets,
+        host_status: mv.host_status,
         id: r.id,
         display_name: r.display_name,
         status,
@@ -47,7 +53,7 @@ async fn view(s: &AppState, r: ConnectorRow, count: i64) -> Result<ConnectorAdmi
     })
 }
 
-async fn view_one(s: &AppState, r: ConnectorRow) -> Result<ConnectorAdmin, ApiError> {
+pub(super) async fn view_one(s: &AppState, r: ConnectorRow) -> Result<ConnectorAdmin, ApiError> {
     let n = integrations::count_for_connector(&s.pool, &r.id).await?;
     view(s, r, n).await
 }
@@ -74,7 +80,7 @@ fn valid_id(id: &str) -> bool {
 }
 
 /// Security-critical audit event of a connector change (RFE-008): committed with the change.
-fn event(actor: &AuditActor, action: &str, id: &str) -> AuditEvent {
+pub(super) fn event(actor: &AuditActor, action: &str, id: &str) -> AuditEvent {
     AuditEvent::new(actor.clone(), action, Outcome::Success).target("connector", id)
 }
 
@@ -83,11 +89,14 @@ pub async fn create(
     req: CreateConnectorRequest,
     actor: &AuditActor,
 ) -> Result<ConnectorWithToken, ApiError> {
+    if req.managed {
+        return managed::create(s, req, actor).await;
+    }
     let mut errs = Vec::new();
     if !valid_id(&req.id) {
         errs.push(FieldError::new("/id", "must match [a-z][a-z0-9-]{1,31}"));
     }
-    let name = sanitize::label(req.display_name.trim());
+    let name = sanitize::label(req.display_name.as_deref().unwrap_or("").trim());
     if name.is_empty() {
         errs.push(FieldError::new("/display_name", "must not be empty"));
     }
@@ -102,7 +111,7 @@ pub async fn create(
     audit::commit_critical(tx, &event(actor, "admin.connector_create", &req.id)).await?;
     Ok(ConnectorWithToken {
         connector: view_one(s, row).await?,
-        token: tok.expose().clone(),
+        token: Some(tok.expose().clone()),
     })
 }
 
@@ -121,6 +130,16 @@ pub async fn rotate(
     id: &str,
     actor: &AuditActor,
 ) -> Result<ConnectorToken, ApiError> {
+    // C-454: a managed connector has no `aun_` token.
+    let row = connectors::get(&s.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Connector not found."))?;
+    if row.managed {
+        return Err(ApiError::conflict(
+            "connector_managed",
+            "A managed connector has no token.",
+        ));
+    }
     let tok = token::generate(TokenPrefix::Connector);
     let mut tx = audit::begin(s).await?;
     if !connectors::set_token(&mut *tx, id, &token::hash(tok.expose())).await? {
@@ -160,6 +179,10 @@ pub async fn approve(
         "pending_approval" => {
             connectors::set_approved(&mut *tx, id, current, &manifest::to_approved(stored), by)
                 .await?;
+            if row.managed {
+                // The status is part of the host's assignments (C-456).
+                connectors::bump_revision(&mut *tx).await?;
+            }
         }
         // Already approved: idempotent.
         "active" => {}
@@ -184,9 +207,26 @@ pub async fn delete(s: &AppState, id: &str, actor: &AuditActor) -> Result<(), Ap
     if integrations::count_for_connector(&s.pool, id).await? > 0 {
         return Err(in_use());
     }
+    let existing = connectors::get(&s.pool, id).await?;
     let mut tx = audit::begin(s).await?;
     match connectors::delete(&mut *tx, id).await {
-        Ok(true) => audit::commit_critical(tx, &event(actor, "admin.connector_delete", id)).await,
+        Ok(true) => {
+            if existing.as_ref().is_some_and(|r| r.managed) {
+                connectors::bump_revision(&mut *tx).await?;
+            }
+            audit::commit_critical(tx, &event(actor, "admin.connector_delete", id)).await?;
+            // C-454: a managed connector's sealed settings are discarded after the commit
+            // (best effort: a failed discard is logged and never blocks).
+            if let Some(r) = existing.filter(|r| r.managed) {
+                managed::discard_refs(
+                    s,
+                    r.secret_owner,
+                    setup::refs_of(&r.secret_refs).into_values(),
+                )
+                .await;
+            }
+            Ok(())
+        }
         Ok(false) => Err(ApiError::not_found("Connector not found.")),
         Err(DbError::ForeignKeyViolation { .. }) => Err(in_use()),
         Err(e) => Err(e.into()),

@@ -7,6 +7,50 @@ use uuid::Uuid;
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
+/// (P4-MCON) `instance_setup` is optional and absent from the wire when unset, so the digest of
+/// a manifest without it is unchanged.
+#[test]
+fn manifest_instance_setup_is_optional_and_not_serialized_when_absent() -> R {
+    let base = json!({
+        "package": {"id": "x", "version": "1", "contract": 1, "publisher": "p"},
+        "about": {"name": "X"}
+    });
+    let m: ConnectorManifest = serde_json::from_value(base)?;
+    assert!(m.instance_setup.is_none());
+    assert!(serde_json::to_value(&m)?.get("instance_setup").is_none());
+    let with: ConnectorManifest = serde_json::from_value(json!({
+        "package": {"id": "x", "version": "1", "contract": 1, "publisher": "p"},
+        "about": {"name": "X"},
+        "instance_setup": {"fields": [{"name": "k", "type": "generated_secret"}]}
+    }))?;
+    assert_eq!(
+        with.instance_setup.as_ref().map(|s| s.fields.len()),
+        Some(1)
+    );
+    with.validate()?;
+    Ok(())
+}
+
+/// (P4-MCON, SEC-70) The decrypted secrets of an assignment never print.
+#[test]
+fn assignment_debug_redacts_secrets() {
+    use aurora_protocol::host::{Assignment, AssignmentsResponse};
+    let a = AssignmentsResponse {
+        revision: 1,
+        connectors: vec![Assignment {
+            id: "a".into(),
+            type_id: "a".into(),
+            display_name: "A".into(),
+            settings: json!({}),
+            secrets: [("k".to_owned(), "hunter2-secret".to_owned())].into(),
+            status: "active".into(),
+        }],
+    };
+    let shown = format!("{a:?}");
+    assert!(!shown.contains("hunter2"), "{shown}");
+    assert!(shown.contains("redacted"));
+}
+
 fn space() -> Space {
     Space {
         reference: "C1".into(),

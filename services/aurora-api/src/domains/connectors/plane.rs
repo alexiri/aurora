@@ -94,6 +94,21 @@ fn invalid(e: impl std::fmt::Display) -> ApiError {
     ApiError::invalid_request(e.to_string(), vec![])
 }
 
+/// Trust (13 §3): the detached signature covers sha256 of the canonical manifest JSON and must
+/// verify against the built-in project key or a trusted publisher key. Returns the digest (hex).
+/// Shared by connector `register` and the connector host's `register` (C-455).
+pub(super) async fn verify_manifest(
+    s: &AppState,
+    m: &aurora_protocol::connector::ConnectorManifest,
+    signature: &str,
+) -> Result<String, ApiError> {
+    let digest = manifest::digest(m).map_err(|e| ApiError::internal(e.to_string()))?;
+    let trust = crate::domains::plugins::keys::trust_store(&s.pool).await?;
+    verify_digest(signature.as_bytes(), &m.package.publisher, &digest, &trust)
+        .map_err(|v| ApiError::unprocessable(v.code, v.message))?;
+    Ok(manifest::hex(&digest))
+}
+
 async fn do_register(
     s: &AppState,
     conn: &ConnectorRow,
@@ -112,17 +127,7 @@ async fn do_register(
         return Err(ApiError::invalid_request("Invalid manifest.", errs));
     }
 
-    // Trust: the detached signature covers sha256 of the canonical manifest JSON.
-    let digest = manifest::digest(m).map_err(|e| ApiError::internal(e.to_string()))?;
-    let trust = crate::domains::plugins::keys::trust_store(&s.pool).await?;
-    verify_digest(
-        req.signature.as_bytes(),
-        &m.package.publisher,
-        &digest,
-        &trust,
-    )
-    .map_err(|v| ApiError::unprocessable(v.code, v.message))?;
-    let digest_hex = manifest::hex(&digest);
+    let digest_hex = verify_manifest(s, m, &req.signature).await?;
 
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
     let row = connectors::get_for_update(&mut *tx, &conn.id)
@@ -176,6 +181,10 @@ async fn do_register(
     .await?;
     let replica =
         connectors::insert_replica(&mut *tx, Uuid::now_v7(), &conn.id, &req.version).await?;
+    if row.managed && row.status != status {
+        // The status is part of the host's assignments (C-456).
+        connectors::bump_revision(&mut *tx).await?;
+    }
     tx.commit().await.map_err(DbError::from)?;
     Ok(RegisterResponse {
         connector_id: conn.id.clone(),

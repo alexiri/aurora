@@ -1,0 +1,178 @@
+{
+  "$defs": {
+    "ConnectorManifest": {
+      "description": "Connector manifest (13 §3). `capabilities` is an open vocabulary: a name\nmaps to `true`/`false` or an object (`files`); unknown names are ignored.",
+      "properties": {
+        "about": {
+          "$ref": "#/$defs/ManifestAbout"
+        },
+        "capabilities": {
+          "additionalProperties": true,
+          "default": {},
+          "type": "object"
+        },
+        "instance_setup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstanceSetup"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "(P4-MCON, 13 §3) Connector-level settings an instance admin fills in when adding a\nmanaged connector. Absent = no instance settings (and the key is not serialized, so the\ndigest of an older manifest is unchanged)."
+        },
+        "integration_setup": {
+          "default": null
+        },
+        "limits": {
+          "$ref": "#/$defs/ManifestLimits",
+          "default": {}
+        },
+        "package": {
+          "$ref": "#/$defs/ManifestPackage"
+        },
+        "presence_setup": {
+          "default": null
+        },
+        "public_callbacks": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "package",
+        "about"
+      ],
+      "type": "object"
+    },
+    "HostType": {
+      "description": "One built-in connector type a host can run.",
+      "properties": {
+        "manifest": {
+          "$ref": "#/$defs/ConnectorManifest"
+        },
+        "manifest_signature": {
+          "description": "Detached signature over sha256 of the canonical manifest JSON (as connector `register`).",
+          "type": "string"
+        },
+        "type_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type_id",
+        "manifest",
+        "manifest_signature"
+      ],
+      "type": "object"
+    },
+    "InstanceSetup": {
+      "description": "`instance_setup`: the integration form-field schema (09 §3.4) plus the field types `url`,\n`number` and `generated_secret`, and an optional `default`. Fields stay raw JSON on the wire;\nthe API validates them (`services/aurora-api` `domains/connectors/setup.rs`).",
+      "properties": {
+        "fields": {
+          "default": [],
+          "items": true,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "ManifestAbout": {
+      "properties": {
+        "icon_png_b64": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "setup_guide_md": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "ManifestLimits": {
+      "properties": {
+        "message_max_chars": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "writes_per_space_per_minute": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ManifestPackage": {
+      "properties": {
+        "contract": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "publisher": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "contract",
+        "publisher"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/connector-host/register` (C-455).",
+  "properties": {
+    "instance_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "types": {
+      "items": {
+        "$ref": "#/$defs/HostType"
+      },
+      "type": "array"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "instance_id",
+    "version",
+    "types"
+  ],
+  "title": "HostRegisterRequest",
+  "type": "object"
+}

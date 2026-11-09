@@ -19,6 +19,8 @@ pub enum Msg {
         op_id: Uuid,
     },
     Inbox,
+    /// A managed connector changed: the assignments revision advanced (C-456).
+    Assignments,
     /// Notifications may have been missed (listener reconnected, or receiver lagged).
     Resync,
 }
@@ -53,6 +55,9 @@ impl ConnectorBus {
                                         Some(c) => Msg::Ops {
                                             connector: c.to_owned(),
                                         },
+                                        None if payload.get("assignments").is_some() => {
+                                            Msg::Assignments
+                                        }
                                         None => continue,
                                     }
                                 }

@@ -938,7 +938,7 @@ other workspace); `skill_files` is unchanged.
 | Column | Type | Notes |
 |---|---|---|
 | id | text pk | connector id, e.g. `mattermost` (`[a-z][a-z0-9-]{1,31}`) |
-| token_hash | bytea unique | `aun_` |
+| token_hash | bytea null unique | `aun_`; null for a managed connector (CHECK: `managed` or not null) |
 | display_name | text not null | from manifest, sanitized |
 | version | text null | announced |
 | contract | int null | announced |
@@ -947,6 +947,37 @@ other workspace); `skill_files` is unchanged.
 | approved_manifest_digest | text null | |
 | status | text CHECK in (`awaiting_registration`,`pending_approval`,`active`,`disabled`) | |
 | approved_by | uuid null; approved_at timestamptz null | |
+| managed | bool not null default false | (phase 4, P4-MCON) added from the dashboard and run by a connector host (`13 §3.1`) |
+| type_id | text null | managed only: the built-in type (= `id` in phase 4) |
+| settings | jsonb null | managed only: non-secret `instance_setup` values (≤ 16 KiB), validated on write |
+| secret_owner | uuid not null default gen_random_uuid() | owner id of the sealed settings (purpose `connector.settings`, org = nil UUID) |
+| secret_refs | jsonb not null default '{}' | field name → sealed reference; never a value |
+| secret_updated_at | jsonb not null default '{}' | field name → RFC 3339 time the sealed value was last written (the `updated_at` of `secrets`, C-452) |
+
+### `connector_hosts`
+| Column | Type | Notes |
+|---|---|---|
+| instance_id | uuid pk | host process instance |
+| version | text not null | |
+| types | jsonb not null | `[{type_id, manifest, manifest_digest}]` with verified signatures only |
+| last_seen_at | timestamptz not null | heartbeat (`register`); churn column; rows older than 24 h are pruned |
+
+### `connector_host_tokens`
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| token_hash | bytea unique not null | `auh_`, from `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` |
+
+### `connector_host_status`
+| Column | Type | Notes |
+|---|---|---|
+| connector_id | text fk → connectors (cascade) | pk with `host_instance` |
+| host_instance | uuid | |
+| state | text CHECK in (`running`,`error`) | |
+| message | text null CHECK (char_length ≤ 300) | sanitized; never a secret; `updated_at` is a churn column (set on every report) |
+
+The assignments revision (`13 §3.1`, C-456) is the sequence `connector_assignments_rev`, advanced with
+`nextval` in the transaction of every managed connector change.
 
 ### `connector_replicas`
 | Column | Type | Notes |
@@ -1196,40 +1227,6 @@ tables above in the same change (and this section shrinks).
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|
 | status_reason | (existing column, open vocabulary) | gains the value `breaks_connections`: for a major upgrade held in `pending_approval` because it would set connections to `reauth_required` (`09 §10`) | 3 (RFE-022) |
-
-#### `connectors` (managed connectors)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| managed | bool not null default false | added from the dashboard and run by a connector host (`13 §3.1`) | 4 (P4-MCON) |
-| type_id | text null | managed only: the built-in type (= `id` in phase 4) | 4 (P4-MCON) |
-| settings | jsonb null | managed only: non-secret `instance_setup` values (≤ 16 KiB), validated on write | 4 (P4-MCON) |
-| secret_owner | uuid not null default gen_random_uuid() | owner id of the sealed settings (purpose `connector.settings`, org = nil UUID) | 4 (P4-MCON) |
-| secret_refs | jsonb not null default '{}' | field name → sealed reference; never a value | 4 (P4-MCON) |
-| token_hash | (existing) becomes **nullable** | a managed connector has no `aun_` | 4 (P4-MCON) |
-
-#### `connector_hosts` (new table)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| instance_id | uuid pk | host process instance | 4 (P4-MCON) |
-| version | text not null | | 4 (P4-MCON) |
-| types | jsonb not null | `[{type_id, manifest, manifest_digest}]` with verified signatures only | 4 (P4-MCON) |
-| last_seen_at | timestamptz not null | heartbeat (`register`); rows older than 24 h are pruned | 4 (P4-MCON) |
-
-#### `connector_host_tokens` (new table)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| id | uuid pk | | 4 (P4-MCON) |
-| token_hash | bytea unique not null | `auh_`, from `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` | 4 (P4-MCON) |
-| created_at | timestamptz not null default now() | | 4 (P4-MCON) |
-
-#### `connector_host_status` (new table)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| connector_id | text fk → connectors on delete cascade | pk with `host_instance` | 4 (P4-MCON) |
-| host_instance | uuid | | 4 (P4-MCON) |
-| state | text CHECK in (`running`,`error`) | | 4 (P4-MCON) |
-| message | text null CHECK (char_length ≤ 300) | sanitized; never a secret | 4 (P4-MCON) |
-| updated_at | timestamptz not null | | 4 (P4-MCON) |
 
 #### `rate_limit_windows` (shared fixed-window counters; the name reserved in §9)
 `UNLOGGED` table (counters are not a system of record: a Postgres crash or a failover to a standby that lacks unlogged data resets windows, which at worst grants one extra window of quota and is listed in `17` residual risks). Used only when `ratelimit.counters.backend = postgres` (`15 §Shared rate-limit counters`).

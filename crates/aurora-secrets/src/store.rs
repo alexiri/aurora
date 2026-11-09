@@ -15,10 +15,13 @@ pub enum Purpose {
     WebhookVerification,
     /// (RFE-024) The credential copy of a self-contained `presence.deprovision` op; owner = op id.
     ChannelOpDeprovision,
+    /// (P4-MCON, D-128) Secret and generated settings of a managed connector; owner =
+    /// `connectors.secret_owner`, org = nil UUID.
+    ConnectorSettings,
 }
 
 impl Purpose {
-    pub const ALL: [Purpose; 7] = [
+    pub const ALL: [Purpose; 8] = [
         Purpose::SecretValue,
         Purpose::ConnectionCredentials,
         Purpose::OauthClientSecret,
@@ -26,6 +29,7 @@ impl Purpose {
         Purpose::PresenceCredentials,
         Purpose::WebhookVerification,
         Purpose::ChannelOpDeprovision,
+        Purpose::ConnectorSettings,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -37,6 +41,7 @@ impl Purpose {
             Self::PresenceCredentials => "presence.credentials",
             Self::WebhookVerification => "webhook.verification",
             Self::ChannelOpDeprovision => "channel_op.deprovision",
+            Self::ConnectorSettings => "connector.settings",
         }
     }
 }

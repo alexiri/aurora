@@ -4,6 +4,7 @@
 use schemars::{Schema, schema_for};
 
 use crate::connector as c;
+use crate::host as h;
 use crate::runner as r;
 use crate::supervisor as s;
 use crate::tools as t;
@@ -192,6 +193,23 @@ pub fn all() -> Vec<(&'static str, Schema)> {
         (
             "connector_result_credentials_validate",
             schema_for!(c::CredentialsValidateResult),
+        ),
+        // P4-MCON (connector host plane)
+        (
+            "connector_host_register_request",
+            schema_for!(h::HostRegisterRequest),
+        ),
+        (
+            "connector_host_register_response",
+            schema_for!(h::HostRegisterResponse),
+        ),
+        (
+            "connector_host_assignments_response",
+            schema_for!(h::AssignmentsResponse),
+        ),
+        (
+            "connector_host_status_request",
+            schema_for!(h::HostStatusRequest),
         ),
         // W7
         ("tools_tool_call", schema_for!(t::ToolCall)),

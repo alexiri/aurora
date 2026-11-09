@@ -15,6 +15,9 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     // Keys and credentials
     "admin.connector_approve",
     "admin.connector_create",
+    // (P4-MCON, C-451, C-453) managed connector create and settings/secrets/enable changes
+    "connector.created",
+    "connector.updated",
     "admin.connector_delete",
     "admin.connector_rotate",
     "admin.runner_create",

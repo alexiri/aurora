@@ -232,6 +232,11 @@ fn read_env_secrets(
         connector_token: read_secret(env, "AURORA_CONNECTOR_TOKEN", errors),
         bootstrap_runner_token: read_secret(env, "AURORA_BOOTSTRAP_RUNNER_TOKEN", errors),
         bootstrap_connector_tokens: read_secret(env, "AURORA_BOOTSTRAP_CONNECTOR_TOKENS", errors),
+        bootstrap_connector_host_token: read_secret(
+            env,
+            "AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN",
+            errors,
+        ),
         oidc_client_secrets: BTreeMap::new(),
     };
     for p in &raw.auth.oidc_providers {

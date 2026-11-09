@@ -256,7 +256,7 @@ export function ConnectorsAdminView() {
               { id: id.trim(), display_name: name.trim() },
               {
                 onSuccess: (r) => {
-                  setSecret({ id: r.connector.id, token: r.token });
+                  setSecret({ id: r.connector.id, token: r.token ?? "" });
                   setId("");
                   setName("");
                 },

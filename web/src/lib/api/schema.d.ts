@@ -39,6 +39,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/connector-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Connector types announced by the live connector hosts (C-450). */
+        get: operations["adminListConnectorTypes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/connectors": {
         parameters: {
             query?: never;
@@ -49,7 +66,10 @@ export interface paths {
         /** List connectors with replicas, integration counts and widening reasons (instance administrators). */
         get: operations["adminListConnectors"];
         put?: never;
-        /** Provision a connector; the `aun_` token is returned once. */
+        /**
+         * Provision a self-hosted connector (the `aun_` token is returned once) or, with `managed: true`,
+         *     add a managed connector run by a connector host (no token; C-451).
+         */
         post: operations["adminCreateConnector"];
         delete?: never;
         options?: never;
@@ -71,7 +91,11 @@ export interface paths {
         delete: operations["adminDeleteConnector"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Edit a connector (C-453): name, `enabled`; for a managed connector also settings, secrets and
+         *     regeneration of generated secrets (write-only; no response carries a secret value).
+         */
+        patch: operations["adminUpdateConnector"];
         trace?: never;
     };
     "/v1/admin/connectors/{id}/approve": {
@@ -211,6 +235,23 @@ export interface paths {
         put?: never;
         /** Lift an organization freeze (instance administrators). */
         post: operations["adminUnfreezeOrg"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Instance overview (C-459): the connector hosts seen within 24 hours. */
+        get: operations["adminOverview"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3580,6 +3621,11 @@ export interface components {
             quota_bytes?: number | null;
             slug: string;
         };
+        /** @description `GET /v1/admin/overview` (C-459): this phase reports the connector hosts. */
+        AdminOverview: {
+            /** @description Connector hosts seen within 24 hours. */
+            connector_hosts: components["schemas"]["ConnectorHostInfo"][];
+        };
         /** @description `GET /admin/storage` (API_CONTRACTS C-172). */
         AdminStorage: {
             /**
@@ -4212,21 +4258,41 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             display_name: string;
+            /** @description Managed only: reports of hosts seen recently. */
+            host_status: components["schemas"]["HostStatusInfo"][];
             id: string;
             /** Format: int64 */
             integration_count: number;
+            /** @description Added from the dashboard and run by a connector host (13 §3.1). */
+            managed: boolean;
             /** @description The announced manifest (opaque JSON), `null` until the first registration. */
             manifest?: Record<string, never> | null;
             manifest_digest?: string | null;
             /** @description Live (not retired, recently seen) replicas. */
             replicas: components["schemas"]["ReplicaInfo"][];
+            /** @description Managed only: one entry per `secret` / `generated_secret` field; `{}` otherwise. */
+            secrets: {
+                [key: string]: components["schemas"]["ConnectorSecretInfo"];
+            };
+            /** @description Managed only: stored non-secret settings with defaults applied; `null` otherwise. */
+            settings?: Record<string, never> | null;
             status: components["schemas"]["ConnectorStatus"];
+            /** @description Managed only: the built-in type. */
+            type_id?: string | null;
             version?: string | null;
             /** @description Human-readable reasons approval is required (empty unless `pending_approval`). */
             widening: string[];
         };
         ConnectorAdminList: {
             items: components["schemas"]["ConnectorAdmin"][];
+        };
+        ConnectorHostInfo: {
+            /** Format: uuid */
+            instance_id: string;
+            /** Format: date-time */
+            last_seen_at: string;
+            types: string[];
+            version: string;
         };
         ConnectorInfo: {
             capabilities: Record<string, never>;
@@ -4243,6 +4309,13 @@ export interface components {
         ConnectorInfoList: {
             items: components["schemas"]["ConnectorInfo"][];
         };
+        /** @description State of one secret setting; the value is never returned. */
+        ConnectorSecretInfo: {
+            generated: boolean;
+            set: boolean;
+            /** Format: date-time */
+            updated_at?: string | null;
+        };
         /** @enum {string} */
         ConnectorStatus: "awaiting_registration" | "pending_approval" | "active" | "disabled";
         /** @description Returned once on rotation. */
@@ -4250,11 +4323,40 @@ export interface components {
             /** @description `aun_…`, shown once. */
             token: string;
         };
-        /** @description Returned once on provisioning. */
+        /** @description A connector type announced by live connector hosts (C-450). */
+        ConnectorType: {
+            /** @description A connector with this id already exists. */
+            added: boolean;
+            /**
+             * Format: int64
+             * @description Live hosts announcing exactly this digest.
+             */
+            hosts: number;
+            icon_png_b64?: string | null;
+            /** @description `{ fields: Field[] }`: the form-field schema plus `url`, `number`, `generated_secret`. */
+            instance_setup: Record<string, never>;
+            /** @description The manifest, icon stripped. */
+            manifest: Record<string, never>;
+            manifest_digest: string;
+            name: string;
+            publisher: string;
+            setup_guide_md?: string | null;
+            type_id: string;
+            version: string;
+        };
+        ConnectorTypeList: {
+            /** @description At least one connector host was seen within `CONNECTOR_HOST_STALE`. */
+            host_running: boolean;
+            items: components["schemas"]["ConnectorType"][];
+        };
+        /**
+         * @description Returned on provisioning (C-31, C-451): the `aun_` token is shown once and only for a
+         *     self-hosted connector.
+         */
         ConnectorWithToken: {
             connector: components["schemas"]["ConnectorAdmin"];
-            /** @description `aun_…`, shown once. */
-            token: string;
+            /** @description `aun_…`, shown once; absent for a managed connector. */
+            token?: string | null;
         };
         ContainerByo: {
             /** @description Effective posture: `enabled` | `owners_only` | `disabled`. */
@@ -4364,10 +4466,26 @@ export interface components {
             label: string;
         };
         CreateConnectorRequest: {
-            /** @description Name shown to administrators (1-80 chars). */
-            display_name: string;
-            /** @description Connector id: `[a-z][a-z0-9-]{1,31}`. */
+            /** @description Managed (required): the manifest digest the administrator reviewed. */
+            approve_manifest_digest?: string | null;
+            /**
+             * @description Name shown to administrators (1-80 chars). Required for a self-hosted connector; a
+             *     managed connector defaults to the manifest name.
+             */
+            display_name?: string | null;
+            /**
+             * @description Connector id: `[a-z][a-z0-9-]{1,31}`; for a managed connector, a type of
+             *     `GET /v1/admin/connector-types`.
+             */
             id: string;
+            /** @description `true`: add a managed connector run by a connector host (C-451). Default `false`. */
+            managed?: boolean;
+            /** @description Managed: values of the `secret` fields (write-only, at most 8 KiB each). */
+            secrets?: {
+                [key: string]: string;
+            } | null;
+            /** @description Managed: non-secret `instance_setup` values. */
+            settings?: Record<string, never> | null;
         };
         CreateIntegrationRequest: {
             /** @description Non-secret settings from the connector's `integration_setup` form. */
@@ -4798,6 +4916,17 @@ export interface components {
             claim_status: string;
             host: string;
             path_prefix?: string | null;
+        };
+        /** @enum {string} */
+        HostState: "running" | "error";
+        /** @description What one connector host reports for a managed connector. */
+        HostStatusInfo: {
+            /** Format: date-time */
+            at: string;
+            /** Format: uuid */
+            host_instance: string;
+            message?: string | null;
+            state: components["schemas"]["HostState"];
         };
         Identity: {
             /** Format: uuid */
@@ -6261,6 +6390,19 @@ export interface components {
             label?: string | null;
             /** @description `active` | `disabled`. */
             status?: string | null;
+        };
+        /** @description `PATCH /v1/admin/connectors/{id}` (C-453). */
+        PatchConnectorRequest: {
+            display_name?: string | null;
+            enabled?: boolean | null;
+            /** @description Managed only: `generated_secret` fields to generate again. */
+            regenerate?: string[] | null;
+            /** @description Managed only: a string replaces the secret, `null` clears it (not for required ones). */
+            secrets?: {
+                [key: string]: string | null;
+            } | null;
+            /** @description Managed only: merged per key; `null` restores the field default. */
+            settings?: Record<string, never> | null;
         };
         PatchIntegrationRequest: {
             /** @description Replaces the whole config (re-validated). */
@@ -7773,6 +7915,33 @@ export interface operations {
             };
         };
     };
+    adminListConnectorTypes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorTypeList"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminListConnectors: {
         parameters: {
             query?: never;
@@ -7845,6 +8014,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description secret_store_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     adminDeleteConnector: {
@@ -7882,6 +8060,65 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminUpdateConnector: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Connector id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchConnectorRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorAdmin"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description secret_store_unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8259,6 +8496,33 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOverview"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

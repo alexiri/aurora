@@ -277,6 +277,22 @@
       "user_code",
       "workspace_id"
     ],
+    "connector_host_status": [
+      "connector_id",
+      "host_instance",
+      "message",
+      "state"
+    ],
+    "connector_host_tokens": [
+      "id",
+      "token_hash"
+    ],
+    "connector_hosts": [
+      "instance_id",
+      "last_seen_at",
+      "types",
+      "version"
+    ],
     "connector_replicas": [
       "connector_id",
       "id",
@@ -291,10 +307,16 @@
       "contract",
       "display_name",
       "id",
+      "managed",
       "manifest",
       "manifest_digest",
+      "secret_owner",
+      "secret_refs",
+      "secret_updated_at",
+      "settings",
       "status",
       "token_hash",
+      "type_id",
       "version"
     ],
     "conversations": [
