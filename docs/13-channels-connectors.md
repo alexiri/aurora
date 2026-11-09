@@ -488,7 +488,12 @@ line says "needs an approver", and a click or `approve <code>` by a linked user
 who is not `can_approve` is refused with an ephemeral "Only approvers can decide
 this" and changes nothing (the card stays pending). On decision/expiry the card
 is settled with who decided and how. Action approvals, reach requests and agent
-link requests use the same pattern.
+link requests use the same pattern. (phase 4, RFE-011b) A card for a **parked** approval says
+"The agent has stopped waiting and will resume when this is approved (valid for <N> min after
+approval)"; it settles on approval ("Approved by X — <agent> will be told"), denial, deadline
+expiry and, if the grant is never used, "approval window ended" (an edit of the settled card, no
+new post). The reminder of `07 §Park and resume` is not a card (e-mail and push only).
+Clicker authorization is unchanged (`§5.5`).
 
 ### 5.7 Presence lifecycle
 

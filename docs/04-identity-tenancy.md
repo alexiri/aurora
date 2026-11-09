@@ -384,6 +384,7 @@ the frozen payload.
 | Create, rename, delete a group; add/remove members of a `manual` group; set or clear a group's org-role mapping (phase 4, P4-GRP-1) | org `owner`/`admin` (a mapping to `admin` is as powerful as granting `admin` by role change, which admins may already do; `owner` can never be mapped) |
 | List groups with names, source and member counts; read a group's members (phase 4, P4-GRP-1) | members and the impact view: org `owner`/`admin`; names and counts only (for the binding picker): `can_own` of any workspace of the org; a member sees only the groups they belong to (`/v1/me`) |
 | Bind / unbind / change the role of a **group** on a workspace, read the workspace's group bindings and the group-derived members (phase 4, P4-GRP-1) | `can_own` of the workspace (the same authority as user bindings, including granting `owner`); the group must belong to the workspace's org |
+| Register a Web Push subscription for the caller's browser, list, pause, remove one's own, send oneself a test (phase 4, RFE-011b) | any signed-in user, own subscriptions only; session only (an API key cannot register a browser); a push is delivered only to the live session that registered it |
 | Enable SCIM and set its e-mail domains / `exclusive`; create, list, revoke SCIM tokens; read Directory sync status (phase 4, P4-GRP-2) | org `owner` only; session only; enabling and token creation need a recent re-authentication (412 `reauth_required`) |
 | Plugins, trusted keys, host claims, connectors, runners | instance admin |
 

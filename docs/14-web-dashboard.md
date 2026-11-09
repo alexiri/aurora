@@ -418,7 +418,8 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 (personal workspace keys), chat platform links, DM defaults, delete account
 (phase 1: asks for a fresh OIDC sign-in first, `04 §OIDC`). (phase 4, P4-GRP-1) Profile
 lists the person's groups per organization (read-only) and the effective role with its
-source.
+source. (phase 4, RFE-011b) **Notifications**: the in-tab notification and e-mail switches
+and the Web Push device list (*Key flows*).
 
 ### Organization (`/o/<org>/*`) — owners/admins unless noted
 - **Workspaces** (all members: those they can access; owners/admins: all).
@@ -655,8 +656,48 @@ at 390 px).
   decide and only while the tab is hidden or unfocused; it shows agent, workspace
   and the sanitized title, `tag = approval id` (no duplicates), and clicking it
   focuses the tab at the Approvals page. This is **not** Web Push: it needs an open
-  tab (Web Push is RFE-011b, phase 4). Account also has the "E-mail me approvals
+  tab. Account also has the "E-mail me approvals
   nobody is watching" switch (`approval_email`).
+- **Web Push (phase 4, RFE-011b, D-134, SEC-75, SEC-76)**: shown only when `GET /v1/push/config`
+  says `available` (the operator set `push.enabled`). **Account → Notifications** gets a
+  **"Notify this device when an approval needs me, even when Aurora is closed"** card built from the
+  shared patterns (section card, toggle, list rows, `Badge`, dialogs): the control needs a user
+  gesture, explains in two sentences what is sent ("a notification that an approval is waiting; no
+  request details; you still decide in Aurora") and, on **Turn on**, registers the service worker,
+  calls `Notification.requestPermission()`, then `pushManager.subscribe({ userVisibleOnly: true,
+  applicationServerKey })` with the key of `config` and `POST /v1/me/push-subscriptions` with a label
+  derived from the user agent (editable). Below it the **device list** (label, "this device", created,
+  last delivery, state chip: Active / Paused / Not receiving — re-enable / Needs update), per device
+  **Show agent and workspace names in notifications** (default off, a one-line warning that names
+  appear on a lock screen), **Pause**, **Send test**, **Remove**. States are handled honestly: no
+  Push API ("This browser cannot receive push notifications"), an insecure origin (service workers
+  need https or localhost), permission denied ("Allowed in browser settings only"), and iOS/iPadOS,
+  where Web Push exists only for a site added to the Home Screen: the page shows that instruction and
+  the app serves a static `/manifest.webmanifest` (`display: standalone`, icons from the brand
+  folder, no tokens). On every dashboard load the page compares the device's `vapid_key_id` with
+  `config` and, if the key was rotated, re-subscribes silently and removes the old registration;
+  **signing out** removes this device's subscription first (best effort; the server-side session
+  binding ends delivery regardless, `07 §Web Push`). The in-tab notification above keeps working and
+  is what a user with the tab open sees (the server does not push to a user with a live watcher).
+  - **Service worker** `/aurora-push-sw.js` (static file of the web app, scope `/`, served with
+    `Cache-Control: no-cache`, listed in the edge routes and under a CSP that allows
+    `worker-src 'self'`): it has **no fetch handler, no cache, no network access and no access to
+    credentials**. `push`: parse the JSON defensively (a bad or unknown-version payload still shows
+    the generic notification: Chrome requires every push to display something), choose the text
+    locally from `type` (and `agent`/`workspace` only if present), `showNotification` with
+    `tag = approval_id` (or `aurora-digest`), no action buttons, `data.url`. `notificationclick`:
+    close, accept `data.url` **only** if it is a same-origin path starting with `/o/` (no scheme, no
+    `//`, no backslash) else go to `/`, focus an existing Aurora window and navigate it, else open one.
+    `pushsubscriptionchange` does nothing (the page re-syncs on its next load).
+- **Parked approvals (phase 4, RFE-011b)**: the Approvals page, the inline approval in the chat
+  and the workspace overview mark a parked approval with a **"Parked"** chip and the line "The agent
+  has stopped waiting. If you approve, it will be told and can repeat this exact request once within
+  <N> minutes", with the deadline countdown (`pending-soft` tokens like any pending item); the
+  approve dialog repeats that sentence; after approval the row shows "Approved — waiting for the
+  agent to retry (until <time>)", then "Used" or "Not used (window ended)" from `resume_state`; a
+  revoked grant (freeze) shows "Revoked". The transcript shows `approval.pending` with the chip and
+  the platform follow-up message (door chip "Approval") when the agent resumes. Held approvals look
+  as before. Everything follows §Visual design (tokens, primitives, both themes, 390 px).
 - **Policy editor**: draft/publish ("Apply changes"), drag reorder with
   stale-revision detection, identity and target pickers (apps/tools from the
   catalogue, connections, secrets, network patterns), conditions, modifiers,

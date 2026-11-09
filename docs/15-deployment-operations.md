@@ -179,6 +179,18 @@ one new entry without activating it.
 | `scim.allowed_email_domains` | `[]` | api | (phase 4, P4-GRP-2) optional instance allow-list of the e-mail domains an org may provision (exact, case-insensitive); empty = any domain the org owner lists. Entries must be domains (no `@`, wildcard or single label), else startup refuses naming the key |
 | `scim.rate_per_minute` | 600 | api | (phase 4, P4-GRP-2) `SCIM_RATE` per token (burst is a fifth of it), 30–6000 |
 | `scim.token_max_days` | 730 | api | (phase 4, P4-GRP-2) longest lifetime of an `aud_` token, 1–1825; the default offered in the dashboard is 365 (never above this) |
+| `approvals.park.enabled` | `false` | gateway, api | (phase 4, RFE-011b, D-133) park approvals with long deadlines instead of holding the connection (`07 §Park and resume`). Off = exactly phase 2 behaviour. The gateway and the API must agree (both read it from the shared configuration) |
+| `approvals.park.threshold_secs` | 900 | gateway | (phase 4, RFE-011b) effective timeouts above this park; 60–`approvals.park.max_timeout_secs` |
+| `approvals.park.max_timeout_secs` | 86400 | gateway, api | (phase 4, RFE-011b) longest deadline of a parked approval, 3600–604800 (also the upper bound of a rule's `approval_timeout_secs` when parking is enabled); requests that cannot park stay clamped to `approvals.max_timeout_secs` |
+| `approvals.park.resume_window_secs` | 1800 | api | (phase 4, RFE-011b) how long an approved parked request can be repeated once, 60–86400 |
+| `approvals.park.deny_cooldown_secs` | 900 | gateway | (phase 4, RFE-011b) a denied parked request repeated within it is answered `manual_approval_denied`, 0–86400 |
+| `approvals.park.max_body_bytes` | 262144 | gateway | (phase 4, RFE-011b) largest request body that can be parked (4096–1048576); larger requests are held |
+| `approvals.park.max_pending_per_agent` | 20 | gateway | (phase 4, RFE-011b) parked pending approvals per agent, 1–200 |
+| `push.enabled` | `false` | api | (phase 4, RFE-011b, D-134) Web Push; needs outbound HTTPS from the API to the push services. See *Approval park-and-resume and Web Push* below |
+| `push.vapid.subject` | the external URL | api | (phase 4, RFE-011b) VAPID `sub` claim: `mailto:` or `https:` contact for the push services |
+| `push.vapid.private_key_env` | unset | api | (phase 4, RFE-011b) name of an environment variable holding an operator-managed ES256 (P-256) VAPID private key (PKCS#8 PEM or raw base64url); unset = Aurora generates, seals and rotates its own key. Never the value |
+| `push.allowed_endpoint_hosts` | `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.services.mozilla.com`, `web.push.apple.com`, `*.push.apple.com`, `*.notify.windows.com` | api | (phase 4, RFE-011b) host patterns (`07 §Matching primitives`; a leading label wildcard only) a subscription endpoint may have; checked at registration and before every send; an empty list refuses startup; an entry that is not a host pattern refuses startup |
+| `push.concurrency`, `push.timeout_secs` | 16, 10 | api | (phase 4, RFE-011b) pushes in flight per replica (1–64) and per-request timeout (2–30) |
 | `blobs.backend` | `postgres` | api | (phase 4, P4-S3, D-120) where **new** attachment bytes go: `postgres` (the `blobs` table) or `s3`; existing rows keep their own backend (`attachments.blob_backend`); any other value refuses startup. See *S3-compatible blob store* |
 | `blobs.s3.bucket`, `blobs.s3.region` | — (required for `s3`) | api | (phase 4, P4-S3) bucket name (3–63 chars, DNS-compatible) and signing region (any non-empty string for S3-compatible servers that ignore it, e.g. `us-east-1`) |
 | `blobs.s3.endpoint` | unset (AWS S3 for the region) | api | (phase 4, P4-S3) `https://host[:port]` of an S3-compatible server (MinIO, Ceph, …), no userinfo, path or query; `http://` accepted only for a loopback host or with `allow_insecure_http = true` |
@@ -726,3 +738,40 @@ infrastructure**: the API serves it, state is in Postgres, rate limits use the c
   (`/o/<org>/members`) after the IdP removes them.
 - **Helm values**: `scim.enabled` (false), `scim.allowedEmailDomains` (`[]`), `scim.ratePerMinute`
   (600), `scim.tokenMaxDays` (730); no Secret is generated (tokens are created in the dashboard).
+
+## Approval park-and-resume and Web Push (phase 4, RFE-011b, D-133, D-134, SEC-74..SEC-76)
+
+Both are optional and off by default; an existing `aurora.toml` and Helm values change nothing.
+
+**Park and resume** (`approvals.park.*`). Neither infrastructure nor a migration beyond `03` is
+needed. Turn it on only when approvers realistically take longer than `approvals.max_timeout_secs`;
+set a rule's *Approval timeout* above `approvals.park.threshold_secs` (default 15 min) to use it. The
+gateway and the API read the same `approvals.park.*` values (`resume_window_secs` is the API's,
+`threshold_secs`/`max_body_bytes`/`max_pending_per_agent`/`deny_cooldown_secs` the gateway's); a
+rolling upgrade is safe because an older gateway simply holds (no `parked` row is ever created by it)
+and ignores grants. Operators should know the trade-off: the agent is *told* "not sent, wait for a
+message", so agents that cannot repeat a request byte-identically (timestamps or nonces in the body)
+will need a second approval. Metrics: `aurora_gateway_approvals_parked_total`,
+`aurora_gateway_approval_grants_consumed_total{result="consumed"|"no_match"|"expired"}`,
+`aurora_approvals_parked_pending`, `aurora_approvals_resume_expired_total`. Alert on a growing
+`aurora_approvals_parked_pending` (nobody is deciding).
+
+**Web Push** (`push.*`). Requirements: the external URL is **https** (service workers; `localhost`
+works for development), the API can make outbound HTTPS to the push services (Chrome/Edge/Android:
+FCM and WNS; Firefox: Mozilla autopush; Safari and iOS Home Screen web apps: Apple) — Helm
+`push.networkPolicy.egressTo` adds the peers the api may reach, and nothing else changes in the
+default-deny policy; behind an egress proxy configure it at the node or mesh (the destination guard
+resolves and pins the real addresses itself). No new Secret is needed: Aurora generates the VAPID key
+pair on first start and seals the private key with the usual store; to manage it yourself set
+`push.vapid.private_key_env` (Helm `push.vapid.existingSecret`/`key`).
+`push.vapid.subject` should be a monitored contact. **Rotate** with `aurora-api push rotate-vapid`:
+subscribers re-subscribe silently on their next visit and the old key is destroyed after 30 days
+(or earlier when unreferenced); with an operator-managed key a rotation is a redeploy and every
+user must re-enable notifications. `aurora-api push status` shows key ids, subscription counts by
+state and host. Metrics: `aurora_push_sent_total{result}`, `aurora_push_duration_seconds`,
+`aurora_push_subscriptions{state}`; alert on sustained `result=forbidden` (VAPID mismatch after a
+rotation or a wrong operator key) and on `result=rejected_host` (a push service moved to a host not
+in `push.allowed_endpoint_hosts`). Helm values: `approvals.park.*`, `push.enabled`, `push.vapid.*`,
+`push.allowedEndpointHosts`, `push.networkPolicy.egressTo`. A subscription (and so the notification)
+belongs to the browser profile and the Aurora session that created it: shared-computer users should
+sign out, which ends delivery.

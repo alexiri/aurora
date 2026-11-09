@@ -289,6 +289,14 @@ overridden by the named configuration key (`15`).
 | `RULE_GROUP_IDENTITIES_MAX` | (phase 4, P4-GRP-1) 20 `group` identities per policy rule | — | 07 |
 | `GROUP_IMPACT_LIST_MAX` | (phase 4, P4-GRP-1) 200 users listed in a group impact view (the total is always given) | — | 05 |
 | `ACCESS_NOTIFY_BULK` | (phase 4, P4-GRP-1) above 1 000 users changed in one transaction a single org-wide `access` notification replaces per-user ones | — | 04, 05 |
+| `PARK_THRESHOLD` / `PARK_MAX_TIMEOUT` | (phase 4, RFE-011b) 900 s: effective timeouts above it park, when parking is enabled / 86 400 s (at most 604 800) longest parked deadline | `approvals.park.threshold_secs` / `approvals.park.max_timeout_secs` | 06, 07, 15 |
+| `PARK_RESUME_WINDOW` / `PARK_DENY_COOLDOWN` | (phase 4, RFE-011b) 1 800 s a granted approval can be consumed (60–86 400) / 900 s a denied fingerprint is answered `manual_approval_denied` without a new approval | `approvals.park.resume_window_secs` / `approvals.park.deny_cooldown_secs` | 07 |
+| `PARK_BODY_MAX` / `PARK_BODY_READ_TIMEOUT` | (phase 4, RFE-011b) 256 KiB request body that may be parked (larger → held) / 10 s to read it | `approvals.park.max_body_bytes` | 06, 07 |
+| `PARK_PENDING_PER_AGENT` / `PARK_PER_AGENT_HOUR` | (phase 4, RFE-011b) 20 parked pending approvals per agent / 60 new parked approvals per agent per hour (403 `approval_limit_reached`) | `approvals.park.max_pending_per_agent` | 06, 07 |
+| `APPROVAL_PUSH_DELAY` / `PUSH_PER_USER_HOUR` | (phase 4, RFE-011b) 5 s grace before a push / 30 pushes per user per hour (rest digested) | — | 07 |
+| `PUSH_SUBSCRIPTIONS_PER_USER` / `PUSH_TEST_PER_HOUR` | (phase 4, RFE-011b) 10 devices per user / 3 test pushes per user per hour | — | 05, 07 |
+| `PUSH_TTL_MAX` / `PUSH_PAYLOAD_MAX` | (phase 4, RFE-011b) 24 h push-service TTL cap (≥ 60 s) / 1 KiB payload before encryption | — | 07, 16 |
+| `PUSH_VAPID_RETIRE` | (phase 4, RFE-011b) 30 days a retired VAPID key stays usable for the subscriptions that reference it | — | 07, 08 |
 | `SCIM_RATE` | (phase 4, P4-GRP-2) 600 requests / min per token, burst 120 (class `management`; `scim.rate_per_minute`) | `scim.rate_per_minute` | 04, 05, 16 |
 | `SCIM_BODY_MAX` / `SCIM_MAX_PATCH_OPS` / `SCIM_MAX_MEMBERS_PER_REQUEST` | (phase 4, P4-GRP-2) 1 MiB / 100 operations / 1 000 members | — | 04, 16 |
 | `SCIM_PAGE_MAX` / `SCIM_PAGE_DEFAULT` | (phase 4, P4-GRP-2) 100 / 50 resources per page | — | 16 |

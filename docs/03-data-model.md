@@ -1353,6 +1353,63 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 
 `effective_access(user, workspace)` is one statement: the user's `org_members` row (active), the maximum of `org_members.role` and `groups.org_role` over the user's groups, the direct `workspace_access` row, and the maximum role over `group_workspace_access ⋈ group_members` for the workspace, returning the strongest role and the list of sources (`04 §Groups`). The gateway database role gains `SELECT` on `groups`, `group_members` and `group_workspace_access` (the speaker's group set is resolved at credential resolution, `06 §Credential authentication`); it never writes them. The `workspace_access` table, its CHECK and the `can_*` meaning are unchanged: a deployment without groups reads the same rows as before.
 
+#### `approvals` (park and resume; phase 4)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| parked | bool not null default false | true for a parked approval: nobody holds the request (`07 §Park and resume`); excluded from the stale-holder sweep and from the stall exemption | 4 (RFE-011b) |
+| fp_salt | bytea null | 16 random bytes; set iff `parked` | 4 (RFE-011b) |
+| fingerprint | bytea null | `SHA-256(fp_salt ‖ canonical request)` (32 bytes), canonical form in `07`; never the request itself | 4 (RFE-011b) |
+| resume_state | text null CHECK in (`ready`,`consumed`,`expired`,`revoked`) | null while `pending`/`denied`/`expired`; `ready` from approval until the window ends; consumed by exactly one request (compare-and-set) | 4 (RFE-011b) |
+| resume_expires_at | timestamptz null | `decided_at + approvals.park.resume_window_secs` | 4 (RFE-011b) |
+| consumed_at | timestamptz null | | 4 (RFE-011b) |
+| resume_turn_id | uuid null | the system follow-up/turn queued at approval (tracing only; no FK, history survives) | 4 (RFE-011b) |
+| indexes | `(agent_id, conversation_id) WHERE resume_state = 'ready'`; `(resume_expires_at) WHERE resume_state = 'ready'`; `(agent_id, conversation_id) WHERE parked AND status = 'pending'` | grant lookup, resume-window expiry, pending-per-agent limits and de-duplication | 4 (RFE-011b) |
+
+The gateway database role's column-level `SELECT (id, status, gateway_instance_id)` on `approvals` gains `agent_id, conversation_id, parked, fp_salt, fingerprint, resume_state, resume_expires_at, method, host, path, rule_logical_id` and `UPDATE` stays as granted (it consumes with `resume_state`, `consumed_at`); it never writes `fingerprint`/`fp_salt` of a row it did not insert. Pending approval stays a closed `status` vocabulary: the resume lifecycle is `resume_state`, not a new status.
+
+#### `approval_push_claims` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| approval_id | uuid | gateway or action approval id; pk part (no FK: history survives) | 4 (RFE-011b) |
+| user_id | uuid FK→users (cascade) | pk part | 4 (RFE-011b) |
+| stage | text CHECK in (`initial`,`reminder`) | pk part | 4 (RFE-011b) |
+| kind | text CHECK in (`gateway`,`action`) | | 4 (RFE-011b) |
+| delivery | text CHECK in (`push`,`batch`,`digest`) | its own push; folded into the push of its `batch_id`; folded into the hourly digest (`PUSH_PER_USER_HOUR`) | 4 (RFE-011b) |
+| sent_at | timestamptz not null default now() | insert-on-conflict claim, idempotent across replicas; pruned daily with the other notification claims; index `(user_id, sent_at)` | 4 (RFE-011b) |
+
+#### `webpush_vapid_keys` (new table; instance-wide)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | the `vapid_key_id` of subscriptions | 4 (RFE-011b) |
+| public_key | text not null | base64url, 65-byte uncompressed P-256 point; the application server key | 4 (RFE-011b) |
+| private_ref | text not null | SecretRef, purpose `webpush.vapid` (`08 §1`); owner id = this id, org = nil UUID; never returned | 4 (RFE-011b) |
+| status | text CHECK in (`active`,`retired`) | exactly one `active` (partial unique index) | 4 (RFE-011b) |
+| created_at / retired_at | timestamptz | `retired_at` set at rotation; destroyed after `PUSH_VAPID_RETIRE` or when unreferenced | 4 (RFE-011b) |
+
+Absent when the operator supplies the key through `push.vapid.private_key_env` (nothing is stored). The gateway role has no access.
+
+#### `push_subscriptions` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (RFE-011b) |
+| user_id | uuid not null FK→users (cascade) | at most `PUSH_SUBSCRIPTIONS_PER_USER` (10) | 4 (RFE-011b) |
+| session_id | uuid not null FK→sessions (cascade) | the session that registered it; delivery only while that session is live (`07 §Web Push`) | 4 (RFE-011b) |
+| vapid_key_id | uuid null FK→webpush_vapid_keys (restrict) | null with an operator-managed key | 4 (RFE-011b) |
+| endpoint_hash | bytea unique not null | SHA-256 of the endpoint URL; one row per endpoint (re-registration under another user moves the row) | 4 (RFE-011b) |
+| endpoint_host | text not null | for the allow-list check and metrics; not secret | 4 (RFE-011b) |
+| secret_ref | text not null | SecretRef, purpose `webpush.subscription`, owner id = this id: sealed JSON `{ endpoint, p256dh, auth }` — the endpoint URL and keys are send capabilities and are never stored in clear or returned | 4 (RFE-011b) |
+| label | text not null | ≤ 80, sanitized, user-visible (e.g. "Firefox on Linux") | 4 (RFE-011b) |
+| show_details | bool not null default false | include agent and workspace names in the notification (`07 §Web Push`) | 4 (RFE-011b) |
+| paused_at | timestamptz null | | 4 (RFE-011b) |
+| expires_at | timestamptz null | the browser's `expirationTime` when given | 4 (RFE-011b) |
+| failure_count | int not null default 0 | consecutive; 5 sets `disabled_at` | 4 (RFE-011b) |
+| disabled_at | timestamptz null | | 4 (RFE-011b) |
+| last_success_at, last_failure_at | timestamptz null | churn columns | 4 (RFE-011b) |
+| created_at | timestamptz not null default now() | | 4 (RFE-011b) |
+| index | `(user_id)`, `(session_id)` | delivery and cascade | 4 (RFE-011b) |
+
+The gateway role has no access to any of these tables. Rows of revoked or expired sessions are removed by the daily session pruning (the foreign key cascades).
+
 #### `agents`, `conversations` (harness selection)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

@@ -177,6 +177,17 @@ first, or the harness cannot steer, or the steer is reported *missed*, the
 follow-up is **promoted**: its row becomes `promoted` and a new `queued` turn
 is created with its text (one promotion per follow-up, fenced by
 `promoted_at`).
+- **Approval resume follow-up** (phase 4, RFE-011b, `07 §Park and resume`): when a parked
+  approval is approved or denied the API creates, in the origin conversation, a **system
+  follow-up**: a `joining` row steered into the origin turn if it is still running and the
+  harness can steer, else a new `queued` turn with `speaker_kind = system` (door `approval`,
+  no speaker, so `user`/`group` identities never match, D-131), exactly the mechanism by which an
+  action-approval outcome reaches an agent. Its text is composed by the platform from the
+  approval's sanitized summary (never model or request text), states the decision, who made it
+  and, for an approval, the single-use window in which to repeat the identical request. It is
+  created only if the agent is not effectively frozen and the conversation still exists; the
+  sandbox is woken by the normal due-work arms (a parked approval is not a keep-awake reason,
+  `11`). An expired parked approval produces a `notice` and no turn.
 - **Send now** (`POST /v1/turns/{id}/send-now`): sets
 `send_now_requested_at`; delivered as `turn.send_now` (harness moves the
 blocking tool to the background if it declares `background_tool`).
@@ -191,7 +202,7 @@ turns become `aborted` immediately; dispatched/running ones get
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Supervisor never acknowledged (`STALE_DISPATCH`)   | back to `queued` once (`revived_at` fence), then `failed` `never_started`                                                                                    |
 | Cold-dead dispatch (sandbox died before any event) | revived once, then `failed` `agent_restarted`                                                                                                                |
-| No progress for `TURN_STALL`                       | `failed` `turn_stalled` (phase 2, RFE-011a: **exempt while the turn has a `pending` approval**; the clock restarts at its resolution, `07 §Approval deadlines`; `TURN_CEILING` still applies) |
+| No progress for `TURN_STALL`                       | `failed` `turn_stalled` (phase 2, RFE-011a: **exempt while the turn has a `pending` approval**, phase 4, RFE-011b: a *held* one, a parked approval does not exempt; the clock restarts at its resolution, `07 §Approval deadlines`; `TURN_CEILING` still applies) |
 | `TURN_CEILING − TURN_CEILING_WARNING` reached      | a platform notice is steered into the live run (once, `ceiling_warned_at`)                                                                                   |
 | `TURN_CEILING` reached                             | abort sent, `failed` `time_limit`                                                                                                                            |
 | Sandbox start failed                               | queued turns of that agent `failed` with the start reason (`image_unavailable`, `at_capacity` only after the capacity wait, `agent_start_failed`)            |
@@ -223,7 +234,7 @@ generically.
 | `correction`                                                 | yes     | `{ turn_id, message_id, action: "retract"|"replace", text? }`                       |
 | `message.joined`                                             | yes     | `{ turn_id, followup_id }`                                                          |
 | `message.sent_now`                                           | yes     | `{ turn_id }`                                                                       |
-| `approval.pending` / `approval.decided` / `approval.expired` | yes     | `{ approval_id, summary, decision?, decided_by_label?, via? }`                      |
+| `approval.pending` / `approval.decided` / `approval.expired` | yes     | `{ approval_id, summary, decision?, decided_by_label?, via? }`; (phase 4, RFE-011b) `approval.pending` also `{ expires_at, parked }`, `approval.decided` for a parked approval `{ resume_expires_at }`, `approval.expired` `{ reason: "deadline" \| "resume_window" }` |
 | `action_approval.pending` / `.decided`                       | yes     | `{ id, summary, decision? }`                                                        |
 | `attachment`                                                 | yes     | `{ turn_id, attachment_id, filename, size, caption? }` (agent `send_file`)          |
 | `notice`                                                     | yes     | `{ code, text }` — platform-authored only                                           |
@@ -465,7 +476,12 @@ sync. Order:
 1. **Platform preamble** (platform voice): identity (name, handle, workspace),
  the boundary map (what is the agent's, the platform's and the gateway's),
  how credentials work (never ask people for secrets; the gateway injects),
- how to read gateway refusals.
+ how to read gateway refusals. (phase 4, RFE-011b, only when parking is enabled) The
+ preamble includes the paragraph: *"If a request is refused with `approval_parked`, it was not
+ sent: a person must approve it and that may take hours. Do not retry it and do not look for another
+ route. Finish what you can, tell the user what you are waiting for, and end your turn. When you
+ get a message saying it was approved, repeat exactly the same request once, byte for byte; if it
+ was denied, do not try again."*
 2. **Operator's brief**, labelled "Instructions from your operator".
 3. **Capability fragments**, each owned by a core module: connected apps (per
  app: name, accounts, docs/spec links, how to choose an account with

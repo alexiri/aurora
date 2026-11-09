@@ -346,7 +346,9 @@ claim-based and safe to run everywhere.
 | Approval card fan-out (`13`) | `aurora_approval created` + every 10 s catch-up | claims (`channel_ops.dedupe_key`) |
 | Approval e-mail notification (phase 2, RFE-011a, `07 §Approvals`): pending approvals older than `APPROVAL_NOTIFY_DELAY` without a live surface → e-mail to deciders | every 10 s | claims (`approval_notifications`) |
 | Approval watcher heartbeat (phase 2, RFE-011a): each replica upserts `approval_watchers` for its open approvals SSE/long-poll connections; stale rows pruned | every 15 s | idempotent |
-| Approval expiry: `pending` past `deadline + 30 s` → `expired`; pending rows of gateway instances unseen for 60 s → `abandoned` | every 10 s | idempotent updates |
+| Approval expiry: `pending` past `deadline + 30 s` → `expired` (phase 4, RFE-011b: a **parked** approval expires at `deadline`, nobody holds it); pending rows of gateway instances unseen for 60 s → `abandoned` (phase 4: **never** `parked` rows) | every 10 s | idempotent updates |
+| Approval resume window (phase 4, RFE-011b): `resume_state = 'ready'` past `resume_expires_at` → `expired` (audit best-effort, transcript notice, no turn); parked approvals at 50 % of their time → one reminder | every 10 s | idempotent updates, claims (`approval_push_claims`) |
+| Web Push delivery (phase 4, RFE-011b, `07 §Web Push`): on `aurora_approval created` + `APPROVAL_PUSH_DELAY`, deciders with a live subscription and no watcher; failure handling, subscription disabling, retired-VAPID-key destruction (`PUSH_VAPID_RETIRE`) | event + every 10 s catch-up; daily | claims (`approval_push_claims`) |
 | Action-approval expiry | every 60 s | idempotent |
 | Attachment pending sweep (`ATTACH_PENDING_TTL`) | hourly | idempotent |
 | Conversation retention sweep (phase 2, RFE-010): delete conversations past the org window through the delete path; blob-orphan sweep | daily | singleton |
@@ -604,9 +606,25 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | GET `/v1/workspaces/{ws}/approvals?status=` | S/K | |
 | GET `/v1/approvals/pending?wait=` | S/K | long-poll across what the caller may decide |
 | GET `/v1/approvals/stream` | S | SSE of created/decided; (phase 2, RFE-011a) `created` carries `{ id, workspace, agent, title, kind: "gateway"\|"action", expires_at }` so the dashboard can raise a browser notification; counts as a live surface (`approval_watchers`) |
-| POST `/v1/approvals/{id}/decision` | S/K | `{ "decision": "approve"|"deny" }`; first decision wins (409 `already_decided`) |
+| POST `/v1/approvals/{id}/decision` | S/K | `{ "decision": "approve"|"deny" }`; first decision wins (409 `already_decided`); (phase 4, RFE-011b) for a parked approval the response carries `resume: { state, expires_at }` and the DTOs of the approvals feed, long-poll, SSE and history carry `parked: bool`, `resume_state`, `resume_expires_at` (never the fingerprint or salt) |
 | POST `/v1/approvals/batches/{batch_id}/decision` | S/K | all pending of the batch the caller may decide |
 | GET `/v1/workspaces/{ws}/action-approvals`; POST `/v1/action-approvals/{id}/decision` | S/K | |
+
+### Web Push (phase 4, RFE-011b, D-134)
+Own-resources only: every route acts on the caller's subscriptions; another user's subscription
+is 404. 404 `push_unavailable` on all of them while `push.enabled = false`. Writes are best-effort
+audited (`push_subscription.create|delete`).
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET `/v1/push/config` | S | `{ available, vapid_public_key, vapid_key_id, allowed_hosts }` for the browser's `pushManager.subscribe` (the key is public) |
+| GET `/v1/me/push-subscriptions` | S | the caller's devices: `{ id, label, show_details, paused, state: "active"\|"paused"\|"disabled"\|"expired"\|"stale_key", this_session, created_at, last_success_at }` — never the endpoint or keys |
+| POST `/v1/me/push-subscriptions` | SO | `{ endpoint, keys: { p256dh, auth }, expiration_time?, label?, show_details?, vapid_key_id }` → 201 `PushSubscription`; 422 `push_endpoint_not_allowed` (not https, host not in `push.allowed_endpoint_hosts`, over 2 048 chars), `push_keys_invalid` (`p256dh` not a 65-byte P-256 point, `auth` not 16 bytes), `push_subscription_limit_reached`, 409 `push_key_stale` (the `vapid_key_id` is retired: re-fetch `config`); an endpoint already registered by another user is **moved** to the caller and its session |
+| PATCH/DELETE `/v1/me/push-subscriptions/{id}` | SO | `{ label?, show_details?, paused? }`; DELETE is idempotent |
+| POST `/v1/me/push-subscriptions/{id}/test` | SO | sends a `test` push (`PUSH_TEST_PER_HOUR` 3 per user); 202, the outcome appears in the device state |
+
+CLI (operator): `aurora-api push rotate-vapid`, `aurora-api push status` (key ids and dates,
+subscription counts by state and host; never key material).
 
 ### Agents and sandboxes
 | Method & path | Auth | Purpose |

@@ -531,6 +531,37 @@ both directions.
 
 Decisions are written by the API (`07 §Approvals`); first decision wins.
 
+### Parking and grants (phase 4, RFE-011b, D-133, SEC-74)
+
+With `approvals.park.enabled` (default off) step 8 gains two branches **before** step 1 of the
+list above; with it off the hold is exactly as written.
+
+- **Grant lookup.** When the verdict is `needs_approval` (one database read, only on this slow
+  path), the gateway looks for an open approval of the same agent and conversation with
+  `resume_state = 'ready'` and an unexpired window; it recomputes the fingerprint with the row's
+  salt over the request (agent, conversation, method, host:port, normalized path and query, SHA-256
+  of the complete body, requiring rule `logical_id`, winning credential id, tool id — `07 §Park and
+  resume`) and on a match **consumes** it in one compare-and-set `UPDATE … RETURNING`; a consumed
+  grant continues the pipeline at step 9 as an approved hold would, the request-log row carries
+  `approval_id` and `resumed = true`. No match → the next branch. The grant never bypasses step 7:
+  it only replaces the *outcome* `needs_approval`, and only for the same rule and credential.
+- **Park.** If the approval is parkable (`07`: parking enabled, effective timeout above
+  `approvals.park.threshold_secs`, hosted context credential with conversation and turn, body
+  complete within `approvals.park.max_body_bytes` and `PARK_BODY_READ_TIMEOUT`, verdict independent
+  of the speaker, agent under its parked-approval limits), the gateway reads and hashes the body
+  (bounded), inserts the `approvals` row with `parked = true`, the salt and fingerprint, **no
+  holder is waiting** (`gateway_instance_id` is set for the NOT NULL but ignored by the holder
+  sweeps), `NOTIFY aurora_approval created`, and answers **at once** 403 `approval_parked`
+  (`x-should-retry: false`). An identical pending parked request gets the same answer with the
+  same `approval_id` and creates nothing. A request that is not parkable is held as before, with
+  its timeout clamped to `approvals.max_timeout_secs`.
+- **Not touched by parking:** SIGTERM and client disconnect never abandon a parked approval (nobody
+  is holding it); the stale-holder sweep (`gateway_instances` unseen for 60 s → `abandoned`,
+  `05 §Background jobs`) skips `parked` rows; a freeze or org suspension still abandons them (they
+  are `pending`, `07`). A store failure while inserting is 503 `approval_store_unavailable` as for
+  a hold (fail closed); during a database outage (`§Operation during a Postgres outage`) nothing
+  is parked or consumed.
+
 ## Guidance responses (agent-facing vocabulary)
 
 All refusals use the error envelope; definite verdicts carry
@@ -561,7 +592,9 @@ dashboard URL to fix the problem when one exists.
 | `llm_path_not_permitted` | 403 | (phase 4, P4-LLM) path outside the provider's inference set, or another Vertex project/location | `provider`, `endpoint_id` |
 | `llm_request_too_large` | 413 | (phase 4, P4-LLM) Bedrock request body above `LLM_SIGN_BODY_MAX` that must be buffered to be signed | `limit_bytes` |
 | `rate_limited` | 429 | rate-limit modifier | `limit`, `per` |
-| `manual_approval_denied` / `manual_approval_expired` | 403 | holds | `approval_id` |
+| `manual_approval_denied` / `manual_approval_expired` | 403 | holds; (phase 4, RFE-011b) also an identical retry within the deny cooldown of a denied parked approval | `approval_id` |
+| `approval_parked` | 403 | (phase 4, RFE-011b) the request needs an approval whose deadline is long: it was **not sent**, the agent should end its turn and will be messaged; carries `x-should-retry: false` | `approval_id`, `expires_at`, `resume_window_secs`, `manage_url` |
+| `approval_limit_reached` | 403 | (phase 4, RFE-011b) the agent has too many parked approvals pending or created too many this hour (`x-should-retry: false`) | `limit`, `per` |
 | `gateway_restarting` | 503 | shutdown during hold | — |
 | `approval_store_unavailable` | 503 | cannot persist hold | — |
 | `gateway_degraded` | 503 | (phase 3, RFE-014) database unreachable and the identity, host or credential value is not in cache (fail closed for new state); not for an invalid token | `reason` (`database_unavailable` \| `credential_store_unavailable`), `retry-after: 5` |

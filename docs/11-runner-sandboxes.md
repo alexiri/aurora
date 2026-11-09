@@ -266,6 +266,13 @@ A running sandbox is **kept awake** if any of:
 watch** — both only while `now − last_engaged_at < BACKGROUND_CAP`;
 - (phase 4) a lease-current SSH session.
 
+(phase 4, RFE-011b) A **parked approval is not a keep-awake reason** (`07 §Park and resume`):
+the agent was refused, its turn ends, and the pending decision lives in Postgres. The
+sandbox idles out and parks like any other; the resume follow-up (`10 §Turns`) is ordinary
+due work (start arm → new boot, harness session restored from `harness_session_ref`, home volume
+intact, processes of the old boot `parked`/`lost`). A *held* approval still keeps the sandbox awake
+through its active turn, as before.
+
 `last_engaged_at` is stamped by person/turn engagement (a turn created by a
 person, schedule, webhook or watch); it is distinct from `last_active_at`
 (stamped also by every boot). The same predicate feeds the stop arm, eviction

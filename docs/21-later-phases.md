@@ -198,6 +198,19 @@ tokens), group → workspace access bindings, group identities in policy
   routes), `14` (Access tab), `18 §Custom grants only and parameter-level matching`.
   Adoption (Indico `grants`, AWS `Describe*` tools) is a package change made at
   implementation, not part of this specification.
+- **Approval park-and-resume and Web Push — specified (phase 4, RFE-011b, D-133, D-134,
+  SEC-74, SEC-75, SEC-76).** Opt-in parking: a request whose approval deadline is long is
+  refused to the agent (`403 approval_parked`, not sent) and the approval becomes a
+  single-use, same-conversation grant for the identical request, delivered by a system
+  follow-up; nothing is suspended, the sandbox parks normally. Opt-in Web Push: VAPID key
+  generated and sealed by the API (rotation without dropping subscribers), per-device opt-in
+  bound to the registering session, payload with no request detail, delivery to deciders with
+  no live tab. Owning sections: `07 §Park and resume` and `§Web Push`, `06 §Approval holds`,
+  `03 §Planned changes`, `05` (Web Push routes, jobs), `08 §1` and `§4`, `10 §Turns` and
+  `§Agent instructions`, `11 §Keep-awake`, `12 §Provider refusal classification`, `13 §5.6`,
+  `14` (Notifications, parked approvals, service worker), `15 §Approval park-and-resume and Web
+  Push`, `16 §W16`, `18`. Not in phase 4: suspending a live harness process, parking BYO or
+  streamed requests, retraction of delivered pushes, mobile-app push, per-rule push routing.
 - Live narration cards in chat (steps list updated under the connector's write
   rate hint), user-token features (`user_tokens` capability).
 - **Slack connector**: decision deferred; if built, it is a connector covering

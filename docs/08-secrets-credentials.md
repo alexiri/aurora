@@ -15,6 +15,8 @@ Phase: **0** (inline store, LiteLLM, Anthropic) · **3** (HashiCorp Vault store,
 | Webhook verification secret | `webhooks.verification.secret_ref` | `webhook.verification` |
 | Credential copy of a self-contained deprovision op (RFE-024, owner = op id) | `channel_ops.payload.credentials_ref` | `channel_op.deprovision` |
 | Managed connector secret settings (phase 4, P4-MCON; owner = `connectors.secret_owner`, org = nil UUID) | `connectors.secret_refs` (one per field) | `connector.settings` |
+| Web Push VAPID private key (phase 4, RFE-011b; owner = the key id, org = nil UUID) | `webpush_vapid_keys.private_ref` | `webpush.vapid` |
+| Web Push subscription endpoint and keys (phase 4, RFE-011b; owner = the subscription id, org = nil UUID) | `push_subscriptions.secret_ref` | `webpush.subscription` |
 
 Every such column holds a **SecretRef**. Code never interprets a SecretRef
 outside `aurora-secrets`; it calls the **SecretVault** service:
@@ -175,6 +177,15 @@ record). The Redis backend's credentials are **never in `aurora.toml` or in a UR
 the configuration names environment variables (`username_env`, `password_env`),
 filled from a Secret (Helm `counters.redis.existingSecret`), exactly like the Vault
 `approle` variables (`15`).
+
+(phase 4, RFE-011b) **Web Push material** is opened only by the API: the VAPID private key
+(ES256) to sign a push request's JWT, and a subscription's sealed `{ endpoint, p256dh, auth }` to
+encrypt and address one push. Both live under the usual store registry (managed in the default
+store; an external store works the same), are never returned by a route, never logged and never
+sent to the gateway, a runner or a sandbox; an operator-managed VAPID key (`push.vapid.private_key_env`)
+is read from the environment at startup and never stored. The endpoint URL is sealed because it is a
+capability: with the subscription's keys it lets anyone who holds it push to that browser (VAPID
+limits it to this application server's key, but not to Aurora's payloads).
 
 (phase 4, P4-GRP-2) **SCIM directory tokens** (`aud_`, `00 §Token prefixes`) are plain
 capability tokens like every other prefix: 32 random bytes, shown once, stored only as a

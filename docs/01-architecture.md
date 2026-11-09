@@ -129,6 +129,12 @@ database, no keys, no ambient network. It is called only on slow paths.
     create or touch an owner, link a person by `externalId`, reach another org, or read any
     Aurora data. Its writes pass the same authorization, limits and critical audit as the
     dashboard's (SEC-72, SEC-73).
+12. **Browser push services** (phase 4, RFE-011b). When `push.enabled`, the **API** (only)
+    makes outbound HTTPS requests to the push service named by a user's subscription (FCM,
+    Mozilla, Apple, WNS), through the destination guard and only to allow-listed hosts. The push
+    service is untrusted for confidentiality: the payload is encrypted to the browser and
+    contains no secret, request detail or approval title (SEC-75); a subscription URL supplied by
+    a user is never trusted as a destination (SEC-76). No sandbox, gateway or runner takes part.
 
 ## End-to-end flows
 
@@ -187,6 +193,15 @@ Detail: `10`, `11`, `12`.
    (`UPDATE … WHERE status='pending'`) and `NOTIFY`s.
 4. The holding gateway replica wakes, releases or refuses the request; the card
    is updated to its settled state.
+
+(phase 4, RFE-011b, opt-in) **Long deadlines park instead of hold.** In step 1, for an approval
+whose deadline is above `approvals.park.threshold_secs`, the gateway does not hold: it records the
+approval as *parked* with a salted fingerprint of the request and answers the agent at once
+`403 approval_parked` ("not sent; end your turn, you will be messaged"). Steps 2–3 are unchanged
+(cards, dashboard, e-mail, Web Push). In step 4 the decision becomes a **single-use grant** and the
+API queues a system follow-up in the same conversation; the agent's next turn repeats the identical
+request and the gateway consumes the grant atomically. No container or connection is kept while
+people decide (`07 §Park and resume`).
 
 ### D. Connect an app (OAuth)
 
