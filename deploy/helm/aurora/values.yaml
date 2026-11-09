@@ -39,6 +39,49 @@ secrets:
     signing: false
     internal: false
 
+# ---- HashiCorp Vault secret store (phase 3; docs/operator/vault.md) ----------------------------
+# Renders a `kind = "hashicorp-vault"` store into [secrets.stores] of the api config and of a
+# gateway config of its own (so each service authenticates with its own Vault role). Nothing here
+# is secret: tokens come from a projected ServiceAccount token (kubernetes auth) or from an
+# existing Secret (AppRole). TLS to Vault is always verified; add a private CA with
+# `extraCaBundle` below (or `vault.caFile` for this store only).
+vault:
+  enabled: false
+  storeId: vault          # secrets.stores[].id (no ':'); stored in refs as ext:<storeId>:...
+  address: ""             # https://vault.example.org:8200 (required; http only for loopback)
+  kvMount: secret         # KV version 2 mount
+  managedPrefix: aurora   # where Aurora's own managed values live in the mount
+  caFile: ""              # PEM path inside the pods, for this store only (adds trust anchors)
+  makeDefault: false      # true: secrets.default_store = this store (new values go to Vault)
+  # Which orgs may reference which Vault paths (SEC-61). Keyed by the org's immutable id (UUID),
+  # never its slug. Example: [{orgId: "0197...-...", paths: ["teams/acme/*"]}]
+  referenceScopes: []
+  auth:
+    method: kubernetes    # kubernetes | approle (`token` is development only and not rendered)
+    mount: ""             # auth mount path; default: the method name (kubernetes / approle)
+    # kubernetes: roles bound to the chart's <release>-api and <release>-gateway ServiceAccounts
+    apiRole: aurora-api
+    gatewayRole: aurora-gateway
+    audience: vault       # audience of the projected token; must match the Vault role's audience
+    tokenExpirationSeconds: 3600   # >= 600
+    # approle: a Secret (never in values) with keys API_ROLE_ID, API_SECRET_ID, GATEWAY_ROLE_ID,
+    # GATEWAY_SECRET_ID; exposed to each service as AURORA_VAULT_ROLE_ID / AURORA_VAULT_SECRET_ID.
+    approle:
+      existingSecret: ""
+  # The NetworkPolicies deny private ranges: list the CIDR(s) of an in-cluster or private Vault.
+  # (A public address is already reachable through networkPolicy.externalEgress.)
+  egress:
+    cidrs: []             # e.g. ["10.30.0.0/24"]
+    port: 8200
+
+# Extra trusted CAs for all outbound TLS (tls.extra_ca_bundle; docs/15): an organization CA in
+# front of Vault, OIDC or an internal LLM endpoint. Give an existing ConfigMap OR Secret holding
+# a PEM bundle under `key`; it is mounted read-only into every workload.
+extraCaBundle:
+  existingConfigMap: ""
+  existingSecret: ""
+  key: ca-bundle.pem
+
 database:
   # External Postgres is expected in production. Supply a Secret with key
   # AURORA_DATABASE_URL (postgres://user:pass@host:5432/aurora). Every service, the gateway

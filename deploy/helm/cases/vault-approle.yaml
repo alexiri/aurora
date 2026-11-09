@@ -1,0 +1,18 @@
+# helm lint/template case: Vault with AppRole auth (credentials from an existing Secret), a CA Secret.
+config:
+  auth:
+    oidc_providers:
+      - {id: corp, issuer: "https://idp.example.org", client_id: aurora, client_secret_env: OIDC_SECRET}
+vault:
+  enabled: true
+  address: https://vault.example.org:8200
+  storeId: corp-vault
+  kvMount: kv
+  managedPrefix: aurora/prod
+  auth:
+    method: approle
+    approle:
+      existingSecret: aurora-vault-approle
+extraCaBundle:
+  existingSecret: org-ca
+  key: ca.crt

@@ -7,6 +7,7 @@
 
 mod seam;
 mod support;
+mod vault_cas;
 mod vault_managed;
 mod vault_mock;
 mod vault_reference;

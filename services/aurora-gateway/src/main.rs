@@ -180,7 +180,11 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         .join(",");
     let keyring = Arc::new(aurora_crypto::Keyring::parse(&keys, &cfg.keyring.active)?);
     let vault = Arc::new(aurora_secrets::SecretVault::new(
-        aurora_secrets::StoreRegistry::from_config(&cfg.secrets, keyring)?,
+        aurora_secrets::StoreRegistry::from_config_with_tls(
+            &cfg.secrets,
+            keyring,
+            cfg.tls.extra_ca_bundle.as_deref(),
+        )?,
     ));
     let governance = Arc::new(
         Governance::new(

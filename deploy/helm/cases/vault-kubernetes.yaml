@@ -1,0 +1,17 @@
+# helm lint/template case: Vault with kubernetes auth, org-scoped references, a private CA.
+config:
+  auth:
+    oidc_providers:
+      - {id: corp, issuer: "https://idp.example.org", client_id: aurora, client_secret_env: OIDC_SECRET}
+vault:
+  enabled: true
+  address: https://vault.example.org:8200
+  makeDefault: true
+  referenceScopes:
+    - orgId: 0197a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b
+      paths: ["teams/acme/*", "shared/api-key"]
+  egress:
+    cidrs: ["10.30.0.0/24"]
+    port: 8200
+extraCaBundle:
+  existingConfigMap: org-ca

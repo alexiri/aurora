@@ -50,6 +50,31 @@ enum Command {
         #[command(subcommand)]
         command: AdminCommand,
     },
+    /// Secret-store tooling (`docs/operator/vault.md`).
+    Secrets {
+        #[command(subcommand)]
+        command: SecretsCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum SecretsCommand {
+    /// Move every managed secret value into another store (`inline` or a Vault store id).
+    Migrate {
+        /// Target store id.
+        #[arg(long)]
+        to: String,
+        /// Only one purpose: secret.value, connection.credentials, oauth_client.secret,
+        /// integration.credentials, presence.credentials, webhook.verification.
+        #[arg(long, value_parser = aurora_api::secrets_migrate::parse_purpose)]
+        purpose: Option<aurora_secrets::Purpose>,
+        /// Report what would move; write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Seconds to wait before discarding old values (gateway caches reload on commit).
+        #[arg(long, default_value_t = 2)]
+        discard_grace_secs: u64,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -116,6 +141,15 @@ async fn main() -> ExitCode {
         Command::Admin {
             command: AdminCommand::Revoke { email },
         } => revoke_admin(cfg, &email).await,
+        Command::Secrets {
+            command:
+                SecretsCommand::Migrate {
+                    to,
+                    purpose,
+                    dry_run,
+                    discard_grace_secs,
+                },
+        } => secrets_migrate(cfg, to, purpose, dry_run, discard_grace_secs).await,
         Command::Openapi { .. } | Command::Keys { .. } => Ok(()),
     };
     service::telemetry_shutdown();
@@ -136,6 +170,27 @@ async fn migrate(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(role) = cfg.gateway_role.as_deref() {
         aurora_db::grants::apply_gateway_grants(&pool, role).await?;
         tracing::info!(role, "gateway grants applied");
+    }
+    Ok(())
+}
+
+async fn secrets_migrate(
+    cfg: ApiConfig,
+    to: String,
+    purpose: Option<aurora_secrets::Purpose>,
+    dry_run: bool,
+    discard_grace_secs: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = aurora_db::connect(cfg.database_url.expose(), 4).await?;
+    let state = aurora_api::app::AppState::try_new(pool.clone(), cfg)?;
+    let mut opts = aurora_api::secrets_migrate::Options::new(&to);
+    opts.purpose = purpose;
+    opts.dry_run = dry_run;
+    opts.discard_grace = std::time::Duration::from_secs(discard_grace_secs);
+    let summary = aurora_api::secrets_migrate::run(&pool, &state.vault, &opts).await?;
+    print!("{}", summary.render(dry_run));
+    if summary.failed() > 0 {
+        return Err(format!("{} row(s) failed; see the log", summary.failed()).into());
     }
     Ok(())
 }
