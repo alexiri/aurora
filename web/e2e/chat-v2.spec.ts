@@ -103,9 +103,9 @@ for (const scheme of ["light", "dark"] as const) {
   }
 }
 
-// (900 px tall: the agent header, tabs and page padding take about 280 px, and the panel is at least 560 px tall.)
+// (800 px tall: the Chat tab's compact agent header, tabs and page padding leave the panel at least 560 px.)
 test.describe("layout, 1280 px", () => {
-  test.use({ viewport: { width: 1280, height: 900 } });
+  test.use({ viewport: { width: 1280, height: 800 } });
 
   test("two panes; the page does not scroll and the composer does not move while the transcript grows", async ({ page }) => {
     await openChat(page, "light", DEFAULT);
@@ -134,6 +134,31 @@ test.describe("layout, 1280 px", () => {
     const after = await composer.boundingBox();
     expect(after).toEqual(before);
   });
+
+  for (const scheme of ["light", "dark"] as const) {
+    test(`P2-UI-5b: compact Chat header at 1280x800, long transcript, ${scheme} (screenshots)`, async ({ page }) => {
+      const dir = "/tmp/aurora-screens/p2-ui-5b";
+      mkdirSync(dir, { recursive: true });
+      await openChat(page, scheme, DEFAULT);
+      await page.evaluate(() => {
+        const es = (window as unknown as { __es: { emit: (t: string, e: unknown) => void } }).__es;
+        for (let i = 0; i < 30; i++) {
+          es.emit("text", {
+            seq: 100 + i, type: "text", ts: new Date().toISOString(),
+            payload: { turn_id: "t9", message_id: `inj${i}`, text: `Injected message ${i}: the GitHub pull request and the Linear issue are both up to date, nothing to do.` },
+          });
+        }
+      });
+      await expect(page.getByText("Injected message 29", { exact: false })).toBeVisible();
+      expect(await page.evaluate(() => document.scrollingElement!.scrollHeight - window.innerHeight), "page scrolls").toBeLessThanOrEqual(0);
+      await page.screenshot({ path: `${dir}/chat-${scheme}-1280x800.png` });
+      expect(await serious(page)).toEqual([]);
+      // Another tab keeps the full header.
+      await page.getByRole("tab", { name: "Instructions" }).click();
+      await expect(page.getByRole("button", { name: "Freeze agent" })).toBeVisible();
+      await page.screenshot({ path: `${dir}/instructions-${scheme}-1280x800.png` });
+    });
+  }
 
   test("the panel is at least 560 px tall and the list is 272-320 px wide", async ({ page }) => {
     await openChat(page, "light", DEFAULT);

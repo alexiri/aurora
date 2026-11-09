@@ -112,6 +112,53 @@ describe("empty conversation", () => {
   });
 });
 
+describe("markdown on both sides (P2-UI-5b)", () => {
+  const PERSON = "Line one\nline two\n\n**bold** and `inline`\n\n- GitHub\n- Linear\n\n```\nnpm run build && echo <ok>\n```";
+
+  it("renders a person's message as safe markdown and keeps a single typed newline as a line break", () => {
+    st.events = [e(1, "turn.queued", { turn_id: "t1", speaker_label: "Ann", text: PERSON })];
+    mock();
+    pane();
+    const log = screen.getByRole("log");
+    const p = within(log).getByText(/Line one/).closest("p")!;
+    expect(p.querySelectorAll("br")).toHaveLength(1);
+    expect(p.textContent).toBe("Line oneline two");
+    expect(within(log).getByText("bold", { selector: "strong" })).toBeTruthy();
+    expect(within(log).getByText("inline", { selector: "code" })).toBeTruthy();
+    expect(within(log).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["GitHub", "Linear"]);
+    expect(log.querySelector("pre code")!.textContent).toBe("npm run build && echo <ok>");
+  });
+
+  it("shows <script> and <img onerror> in a person's message as inert text", () => {
+    const evil = '<script>window.__pwn = 1</script>\n<img src=x onerror="window.__pwn = 2">';
+    st.events = [e(1, "turn.queued", { turn_id: "t1", speaker_label: "Ann", text: evil })];
+    mock();
+    pane();
+    const log = screen.getByRole("log");
+    expect(log.querySelector("script, img")).toBeNull();
+    expect(log.textContent).toContain("<script>window.__pwn = 1</script>");
+    expect(log.textContent).toContain('<img src=x onerror="window.__pwn = 2">');
+    expect((window as unknown as { __pwn?: number }).__pwn).toBeUndefined();
+  });
+
+  it("does not link a javascript: URL in a person's message", () => {
+    st.events = [e(1, "turn.queued", { turn_id: "t1", speaker_label: "Ann", text: "[click](javascript:alert(1)) [ok](https://example.com/x)" })];
+    mock();
+    pane();
+    const links = within(screen.getByRole("log")).getAllByRole("link");
+    expect(links.map((a) => a.getAttribute("href"))).toEqual(["https://example.com/x"]);
+  });
+
+  it("leaves agent rendering unchanged: a single newline still joins the paragraph", () => {
+    st.events = [e(1, "text", { turn_id: "t1", message_id: "m1", text: "Alpha\nbeta **bold**" })];
+    mock();
+    pane();
+    const p = within(screen.getByRole("log")).getByText(/Alpha/).closest("p")!;
+    expect(p.querySelectorAll("br")).toHaveLength(0);
+    expect(p.textContent).toBe("Alpha beta bold");
+  });
+});
+
 describe("transcript", () => {
   it("is a polite log; groups by sender; shows the door chip and the day divider", () => {
     st.events = [

@@ -234,7 +234,11 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   `AgentPhone.html`). The chat is a messaging layout. It is not a stack of
   cards, banners and button rows.
   - **Layout.** One `ChatPanel` card fills the rest of the viewport height
-    (at least 560 px). The page itself does not scroll. The conversation list
+    (at least 560 px). The page itself does not scroll, down to a 1280×800
+    window. For that, the Chat tab (only) uses a compact agent header: a
+    32 px avatar, the name, `@handle` and badges on one line, and Freeze in
+    the header's overflow menu ("Agent actions", same confirm dialog and
+    permission). The other tabs keep the full header. The conversation list
     and the transcript scroll inside the panel, and the composer stays pinned
     to the bottom of the thread.
     - From 768 px the panel has two panes: the list (272–320 px, `line`
@@ -290,7 +294,8 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     - Agent turns are left-aligned, with a 32 px avatar aligned to the top of
       the meta line. The bubble is `subtle`, with a 14 px radius, a 4 px
       top-left corner and a maximum width of min(88 %, 720 px).
-    - Bubbles render markdown in safe mode. Inline code and code blocks sit on
+    - Bubbles render markdown in safe mode. In a person's message a single
+      typed newline stays a line break. Inline code and code blocks sit on
       `surface` (dark: `canvas`) with a `line` border, and code blocks scroll
       horizontally inside themselves.
   - **Message actions.** Hovering or focusing a message shows a small toolbar

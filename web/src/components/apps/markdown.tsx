@@ -38,8 +38,11 @@ function inline(text: string, key: string): ReactNode[] {
   return out;
 }
 
-/** Minimal markdown: headings, paragraphs, lists, code blocks, bold, code, links. Raw HTML is shown as text. */
-export function Markdown({ source }: { source: string }) {
+/**
+ * Minimal markdown: headings, paragraphs, lists, code blocks, bold, code, links. Raw HTML is shown as text.
+ * `breaks` (GFM-style) keeps a single newline inside a paragraph as a line break; used for what a person typed.
+ */
+export function Markdown({ source, breaks = false }: { source: string; breaks?: boolean }) {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
   let i = 0;
@@ -79,7 +82,18 @@ export function Markdown({ source }: { source: string }) {
     } else {
       const para: string[] = [];
       while (i < lines.length && lines[i].trim() !== "" && !lines[i].startsWith("```") && !/^#{1,6}\s/.test(lines[i]) && !/^\s*([-*]|\d+\.)\s/.test(lines[i])) para.push(lines[i++]);
-      blocks.push(<p key={key}>{inline(para.join(" "), key)}</p>);
+      blocks.push(
+        <p key={key}>
+          {breaks
+            ? para.map((l, j) => (
+                <span key={j}>
+                  {j > 0 ? <br /> : null}
+                  {inline(l, `${key}-${j}`)}
+                </span>
+              ))
+            : inline(para.join(" "), key)}
+        </p>,
+      );
     }
   }
   return <div className="space-y-2 text-sm">{blocks}</div>;

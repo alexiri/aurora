@@ -75,13 +75,29 @@ export function AgentPage() {
       : [{ id: "computer" as const, label: "Computer" }]),
   ];
 
+  // The Chat tab is a fixed-height panel that must fit a 1280×800 window with its composer pinned, so
+  // it gets the compact header (one title line, Freeze in the overflow menu). Other tabs keep the full one.
+  const compact = tab === "chat" && !byo;
+  const freezeProps = workspace.data
+    ? {
+        agentId: agent.id,
+        name: agent.name,
+        orgId: workspace.data.org_id,
+        frozen: agent.frozen,
+        canOwn: workspace.data.my_role === "owner",
+      }
+    : null;
+  // A frozen agent shows its banner (full width) under the header; the menu only offers Freeze.
+  const menuFreeze = compact && freezeProps && freezeProps.canOwn && !agent.frozen;
+
   return (
-    <div className={cn("space-y-4", tab === "chat" && !byo ? "" : "max-w-4xl")}>
+    <div className={cn("space-y-4", compact ? "space-y-2" : "max-w-4xl")}>
       <PageHeader
+        compact={compact}
         breadcrumb={[{ label: "Agents", href: `/o/${org}/w/${ws}/agents` }, { label: agent.name }]}
         title={
           <span className="flex min-w-0 items-center gap-3">
-            <Avatar name={agent.name} url={agent.avatar_url} tintKey={agent.id} size={44} />
+            <Avatar name={agent.name} url={agent.avatar_url} tintKey={agent.id} size={compact ? 32 : 44} />
             <span className="min-w-0 truncate">{agent.name}</span>
           </span>
         }
@@ -93,17 +109,10 @@ export function AgentPage() {
             {byo ? null : <SandboxPill agentId={agent.id} />}
           </span>
         }
+        actions={menuFreeze ? <AgentFreeze {...freezeProps} inMenu /> : undefined}
         className="mb-2"
       />
-      {workspace.data ? (
-        <AgentFreeze
-          agentId={agent.id}
-          name={agent.name}
-          orgId={workspace.data.org_id}
-          frozen={agent.frozen}
-          canOwn={workspace.data.my_role === "owner"}
-        />
-      ) : null}
+      {freezeProps && !menuFreeze ? <AgentFreeze {...freezeProps} /> : null}
       <Tabs
         items={tabs.map((t) => ({ value: t.id, label: t.label }))}
         value={tab}

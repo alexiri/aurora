@@ -15,13 +15,47 @@ export function PageHeader({
   breadcrumb,
   actions,
   className,
+  compact = false,
 }: {
   title: ReactNode;
   description?: ReactNode;
   breadcrumb?: Crumb[];
   actions?: ReactNode;
   className?: string;
+  /** One-line variant for pages that must fit the viewport: the description sits on the title line. */
+  compact?: boolean;
 }) {
+  if (compact) {
+    return (
+      <header className={cn("mb-2", className)}>
+        {breadcrumb && breadcrumb.length > 0 ? (
+          <nav aria-label="Breadcrumb" className="mb-1 text-xs text-muted">
+            <ol className="flex flex-wrap items-center gap-1">
+              {breadcrumb.map((c, i) => (
+                <li key={`${c.label}-${i}`} className="flex items-center gap-1">
+                  {i > 0 ? <span aria-hidden="true">/</span> : null}
+                  {c.href ? (
+                    <Link href={c.href} className="hover:text-ink hover:underline">
+                      {c.label}
+                    </Link>
+                  ) : (
+                    <span aria-current="page">{c.label}</span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </nav>
+        ) : null}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+            <h1 className="min-w-0 font-display text-xl font-semibold leading-7 text-ink">{title}</h1>
+            {description ? <div className="text-sm text-ink-2">{description}</div> : null}
+          </div>
+          {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
+        </div>
+      </header>
+    );
+  }
   return (
     <header className={cn("mb-6", className)}>
       {breadcrumb && breadcrumb.length > 0 ? (
