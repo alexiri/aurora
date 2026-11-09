@@ -431,6 +431,76 @@ async fn secret_grant_derived_rule_and_simulate_granted_allow() {
     assert_eq!(v["winning_credential"], Value::Null);
 }
 
+// RFE-023 (D-66, C-350): a `block` Default Rule does not apply to a credentialed request to a
+// governed LLM host; simulate says so with a `matched: false` default entry, the verdict stays null
+// and no new top-level reason appears. A non-LLM credentialed request is still default-denied.
+#[tokio::test]
+async fn rfe023_simulate_reports_default_rule_skipped_for_llm_host() {
+    let w = world().await;
+    let llm = Uuid::now_v7();
+    sqlx::query("INSERT INTO secrets (id, org_id, workspace_id, name, kind, llm_provider, llm_auth_mode, llm_endpoint_id, host_pattern, injection, value_source, value_ref) VALUES ($1,$2,$3,'ant','llm','anthropic','api_key','anthropic','api.anthropic.com','{\"kind\":\"bearer\"}','managed','x:')")
+        .bind(llm).bind(w.org).bind(w.ws).execute(w.h.pool()).await.unwrap();
+    let generic = w.secret("api-key", false).await;
+    // Allow rules select both credentials (so they are injected) but their body condition is not
+    // met: no rule produces a verdict and the Default Rule `block` is what is left to decide.
+    let cond = json!([{"on": "body", "op": "contains", "value": "never-present"}]);
+    let rules = json!([
+        {"name": "llm-if", "action": "allow", "conditions": cond,
+         "targets": [{"type": "secret", "id": llm}]},
+        {"name": "generic-if", "action": "allow", "conditions": cond,
+         "targets": [{"type": "secret", "id": generic}]},
+    ]);
+    let (s, v) = w.put(&w.wsu("/draft"), 0, "block", rules).await;
+    assert_eq!(s, 200, "{v}");
+    let (s, _) = w
+        .call(
+            Method::POST,
+            &w.wsu("/publish"),
+            &w.owner,
+            Some(json!({"revision": 1})),
+        )
+        .await;
+    assert_eq!(s, 200);
+
+    let nil = "00000000-0000-0000-0000-000000000000";
+    let (s, v) = w
+        .sim(&w.owner, "https://api.anthropic.com/v1/messages")
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["winning_credential"]["id"], llm.to_string(), "{v}");
+    let ws_trace = &v["trace"]["workspace"];
+    assert_eq!(ws_trace["verdict"], Value::Null, "{v}");
+    let last = ws_trace["considered"].as_array().unwrap().last().unwrap();
+    assert_eq!(last["rule_logical_id"], nil);
+    assert_eq!(last["rule_name"], "Default rule");
+    assert_eq!(last["source"], "default");
+    assert_eq!(last["matched"], false);
+    assert_eq!(last["reason"], "default_rule_skipped_llm_host");
+    assert_ne!(v["reason"], "default_denied");
+    assert_ne!(v["guidance_code"], "blocked_by_default_policy");
+    // the org scope has no Default Rule: no entry there
+    assert!(
+        v["trace"]["organization"]["considered"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["reason"] != "default_rule_skipped_llm_host")
+    );
+
+    // a credentialed non-LLM host is still default-denied, with the ordinary default entry
+    let (_, v) = w.sim(&w.owner, "https://api.example.com/x").await;
+    assert_eq!(v["verdict"], "block", "{v}");
+    assert_eq!(v["reason"], "default_denied");
+    let last = v["trace"]["workspace"]["considered"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(last["reason"], "default_action");
+    assert_eq!(last["matched"], true);
+}
+
 #[tokio::test]
 async fn simulate_org_block_over_workspace_allow_and_egress_default() {
     let w = world().await;

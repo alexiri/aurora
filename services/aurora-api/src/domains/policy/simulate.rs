@@ -103,20 +103,24 @@ fn scope_trace(t: &aurora_policy::eval::ScopeTrace, derived: &HashSet<Uuid>) -> 
             reason: reason_str(c.result).to_owned(),
         })
         .collect();
+    // (matched, reason): the skipped Default Rule did not apply, so it is `matched: false` (C-350).
     let default = match t.via {
-        Via::Default => Some(("Default rule", "default_action")),
-        Via::Uncredentialed => Some(("Uncredentialed default", "uncredentialed_default")),
+        Via::Default => Some(("Default rule", "default_action", true)),
+        Via::DefaultSkippedLlmHost => {
+            Some(("Default rule", "default_rule_skipped_llm_host", false))
+        }
+        Via::Uncredentialed => Some(("Uncredentialed default", "uncredentialed_default", true)),
         Via::UncredentialedAllowlist => {
-            Some(("Uncredentialed allowlist", "uncredentialed_allowlist"))
+            Some(("Uncredentialed allowlist", "uncredentialed_allowlist", true))
         }
         Via::Rule | Via::Nothing => None,
     };
-    if let Some((name, reason)) = default {
+    if let Some((name, reason, matched)) = default {
         considered.push(TraceEntry {
             rule_logical_id: Uuid::nil(),
             rule_name: name.to_owned(),
             source: TraceSource::Default,
-            matched: true,
+            matched,
             reason: reason.to_owned(),
         });
     }

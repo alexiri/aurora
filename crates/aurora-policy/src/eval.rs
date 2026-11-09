@@ -155,6 +155,9 @@ pub struct RuleTrace {
 pub enum Via {
     Rule,
     Default,
+    /// The Default Rule is `block`, the request is credentialed, but the host is a governed LLM
+    /// host, so the Default Rule does not apply (no verdict).
+    DefaultSkippedLlmHost,
     Uncredentialed,
     UncredentialedAllowlist,
     Nothing,
@@ -347,6 +350,11 @@ fn eval_scope(p: &ScopePolicy, f: &RequestFacts, counters: &dyn RateCounter) -> 
             }),
             None,
         ),
+        // RFE-023 (D-66): a credentialed request to a governed LLM host is not subject to a `block`
+        // Default Rule (07 §Why the Default Rule skips LLM hosts); the trace says so.
+        DefaultAction::Block if f.injected() => {
+            finish(considered, None, Via::DefaultSkippedLlmHost, None, None)
+        }
         DefaultAction::Block => finish(considered, None, Via::Nothing, None, None),
     }
 }

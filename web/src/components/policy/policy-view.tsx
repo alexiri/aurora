@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
@@ -288,6 +289,7 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], cur
           <span className="mb-1.5 block font-medium text-ink">Default rule</span>
           <select
             aria-label="Default rule"
+            aria-describedby="default-rule-llm-note"
             className={inputClass}
             disabled={!canEdit}
             value={state.default_action}
@@ -297,6 +299,19 @@ export function PolicyView({ title, scope, canEdit, agents = [], users = [], cur
             <option value="allow">Allow</option>
             <option value="block">Block</option>
           </select>
+          {/* RFE-023 (D-66): the Default Rule skips governed LLM hosts; 07 §Why the Default Rule skips LLM hosts. */}
+          <span
+            id="default-rule-llm-note"
+            data-testid="default-rule-llm-note"
+            className="mt-1.5 block text-xs text-muted"
+            title="Agents call their model with an Aurora-injected key on every turn, so a default of Block would stop every agent. LLM traffic is controlled by Governance instead. An explicit block rule that names an LLM host still applies."
+          >
+            Does not affect LLM endpoints — see{" "}
+            <Link href={`/o/${orgId}/governance`} className="font-medium text-link underline">
+              Governance
+            </Link>
+            . An explicit block rule that names an LLM host still applies.
+          </span>
         </label>
         {workspace ? (
           <>

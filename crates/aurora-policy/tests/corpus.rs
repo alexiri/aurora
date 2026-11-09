@@ -59,6 +59,9 @@ struct Expect {
     graphql: Option<String>,
     #[serde(default)]
     git: Option<String>,
+    /// (RFE-023) how the scope decided, per scope: `{organization: <via>, workspace: <via>}`.
+    #[serde(default)]
+    trace_via: Option<std::collections::BTreeMap<String, String>>,
 }
 
 fn load_facts(mut v: serde_yaml::Value) -> RequestFacts {
@@ -149,6 +152,17 @@ fn run_case(label: &str, case: Case) {
         }
         if let Some(t) = e.approval_timeout_secs {
             assert_eq!(d.approval_timeout_secs, t, "{label}: approval timeout");
+        }
+        if let Some(tv) = &e.trace_via {
+            for (scope, want) in tv {
+                let t = match scope.as_str() {
+                    "organization" => &d.trace.organization,
+                    "workspace" => &d.trace.workspace,
+                    other => panic!("{label}: unknown scope {other}"),
+                };
+                let got = serde_json::to_value(t.via).unwrap();
+                assert_eq!(got.as_str(), Some(want.as_str()), "{label}: via {scope}");
+            }
         }
         if let Some(g) = &e.graphql {
             let got = serde_json::to_value(facts.graphql_kind()).unwrap();
