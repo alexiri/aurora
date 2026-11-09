@@ -188,7 +188,8 @@ turns become `aborted` immediately; dispatched/running ones get
 | `TURN_CEILING − TURN_CEILING_WARNING` reached      | a platform notice is steered into the live run (once, `ceiling_warned_at`)                                                                                   |
 | `TURN_CEILING` reached                             | abort sent, `failed` `time_limit`                                                                                                                            |
 | Sandbox start failed                               | queued turns of that agent `failed` with the start reason (`image_unavailable`, `at_capacity` only after the capacity wait, `agent_start_failed`)            |
-| No compatible granted LLM key                      | `failed` `no_model_key` (before any sandbox start)                                                                                                           |
+| No compatible granted LLM key                      | `failed` `no_model_key` (before any sandbox start); (phase 4, FIX-019, D-136) the message names the unusable keys' reasons by code and count (`08 §Model readiness`), never key names |
+| (phase 4, FIX-019) A usable key but no model (no agent override, no endpoint or provider default, no allow-list or static list) | `failed` `no_default_model` (before any sandbox start) |
 | (phase 4, P4-HAR) No runner offers the agent's harness | `failed` `harness_unavailable` (before any sandbox start)                                              |
 | Harness/provider terminal errors                   | `provider_auth`, `provider_rate_limited`, `provider_quota`, `provider_overloaded`, `provider_refusal`, `harness_failed` (classified by the supervisor, `12`) |
 | Restart requested                                  | active turns `failed` `agent_restarted`                                                                                                                      |

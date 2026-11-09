@@ -533,6 +533,9 @@ connector, **P** public capability. Permission checks per `04`.
 | PUT/DELETE `/v1/agents/{agent}/grants/connections/{conn}` | S/K | `{ mode, allow_tools, ask_tools }`; (phase 2, RFE-011a) optional `ask_timeout_secs`; (phase 4, P4-GRANTS, D-123) `mode = full` for a connection of an app whose manifest has `grants.custom_only` → 422 `full_grant_forbidden` (`details: { app_id }`); the grant response and `GET …/grants` carry `app_restrictions: { custom_only, block_untooled }` so clients can explain it; a grant converted by an upgrade is audited `grant.converted_by_app` |
 | PUT/DELETE `/v1/agents/{agent}/grants/secrets/{secret}` | S/K | |
 | GET `/v1/connections/{id}/grants` | S/K | agents granted |
+| POST `/v1/connections/{id}/grants` | S/K | (phase 4, FIX-020, D-137) bulk grant from the credential side: `{ agent_ids (1–`GRANT_BULK_MAX`), mode, allow_tools?, ask_tools?, ask_timeout_secs? }`; each agent passes exactly the checks of `PUT /v1/agents/{agent}/grants/connections/{conn}` (same service function, incl. 422 `full_grant_forbidden`); all-or-nothing, one audit row per new grant; an existing grant is left unchanged and reported `existing` (C-504) |
+| GET/POST `/v1/secrets/{id}/grants` | S/K | (phase 4, FIX-020, D-137) agents granted (only agents the caller can see) / bulk grant `{ agent_ids }` with exactly the checks of `PUT /v1/agents/{agent}/grants/secrets/{secret}`; all-or-nothing, idempotent (C-503) |
+| GET `/v1/agents/{agent}/model-readiness` | S/K | (phase 4, FIX-019, D-136) `can_own`: per granted LLM key `usable` or the failing reason, and the default model selection (`08 §Model readiness`, C-500) |
 | GET `/v1/agents/{agent}/effective` | S/K | effective credentials and per-tool decisions with `org_ceiling`; (phase 2, RFE-005) optional `?speaker=<user_id>\|none` |
 
 ### Policy

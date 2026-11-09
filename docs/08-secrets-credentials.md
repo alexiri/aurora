@@ -505,6 +505,37 @@ one. Like all credentials, LLM secrets are used only when granted.
   list only allowed models.
 - No compatible granted key → the turn fails with error code `no_model_key`
   and the dashboard deep-links to "store key → grant to agent".
+- (phase 4, FIX-019, D-136) A usable key but **no model** (no agent
+  override, and the chain above ends empty: no endpoint `default_model`, no
+  provider default, no allow-list, no static `models` — the normal case for a
+  LiteLLM endpoint configured with only `base_url`) → the turn fails with
+  `no_model_key`'s sibling **`no_default_model`** and the dashboard links to the
+  agent's model setting (Instructions). The live model listing is **never**
+  used to pick a model automatically: its order is not meaningful and it mixes
+  chat, embedding and image models.
+
+#### Model readiness (phase 4, FIX-019, D-136)
+
+One function computes, for an agent, every granted LLM key's readiness and the
+default selection; the dispatcher's `no_model_key` / `no_default_model`
+decision and `GET /v1/agents/{agent}/model-readiness` both use it, so the
+dashboard always explains exactly what the dispatcher decided. Per key, the
+first failing check in this order is its `reason`:
+
+| `reason` | Meaning | What fixes it |
+|---|---|---|
+| `not_active` | the secret is not `active` (pending proposal, rejected) | accept or replace the value |
+| `endpoint_unknown` | the key's endpoint is no longer in `llm.endpoints` | operator; or a new key on a configured endpoint |
+| `provider_disabled` | the endpoint's provider is not in `llm.enabled_providers` | operator |
+| `scope_not_permitted` | governance does not permit this key scope on the endpoint | org admin (Governance) |
+| `origin_unverified` | the endpoint has a key-origin rule and the key's origin is not `verified` for its current value version | Re-verify |
+| `origin_not_compliant` | verified, but the account is not in the effective allow-list | a key from an allowed account |
+| `no_shared_dialect` | the endpoint serves no dialect the agent's harness speaks | operator (`dialects`) or another harness |
+
+A key with no failing check is `usable`. `default` is what the next turn would
+use without an override (`{ endpoint_id, model_id }`), or `null` when no model
+resolves (`no_default_model`). An endpoint whose provider lists models live and
+that has no `default_model` logs a **warning at start** (`15`); it still starts.
 - The supervisor receives `{ provider, endpoint base URL, dialect, model,
   effort, client_env }`. `client_env` carries **placeholders only**; the
   gateway injects the real key.
@@ -787,6 +818,17 @@ secret's current `value_version`, and the stored ids satisfy the *current*
 effective rule: organization id ∈ allowed organizations (if listed), workspace
 id ∈ allowed workspaces (if listed), team id ∈ allowed teams (if listed).
 Method `endpoint` complies by construction once the key is validated.
+
+(phase 4, FIX-019, D-136) Method `litellm_team`: `GET <base>/key/info` with
+the key as bearer. A key whose info reports **no team** verifies with
+`team_id = null` when no `allowed_team_ids` applies (instance rule and org
+narrowing both empty), and is refused with reason `key_reports_no_team` when
+team ids are required. A refused or failed verification records **why**
+(`origin.detail`, ≤ 200 chars, no key material: `key_reports_no_team`, the
+HTTP status of `/key/info` such as `key_info_http_401`, `endpoint_unreachable`,
+`bad_response`), and the save / Re-verify error and the LLM key row show it.
+The call is covered against the LiteLLM version deployed by the kind mock with
+a **team key** and a **teamless key**, not only the master key.
 
 Verification happens at three points:
 

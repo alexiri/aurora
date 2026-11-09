@@ -343,7 +343,12 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     date".
   - **Errors.** A turn error is a `danger` block in the agent column
     (`role="alert"`) with the error copy and the deep link that fixes it (for
-    `no_model_key`: "Open LLM keys").
+    `no_model_key`: "Open LLM keys", which opens Credentials on the **LLM
+    keys** tab (`?tab=llm`), plus "Agent access" for workspace owners;
+    (phase 4, FIX-021, D-136) `no_default_model`: "This agent has an LLM key
+    but no model is chosen." with "Choose a model" → the agent's Instructions
+    tab; the `no_model_key` message names the failing reasons from the turn
+    error).
   - **Queued follow-ups.** Each queued follow-up shows above the composer as
     a dashed row: a `QUEUED` badge, the text on one line (ellipsis), and
     "Send now".
@@ -498,6 +503,13 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
     banner next to the reconnect banner. Grants: connections (full / custom with allow/ask/block per
     tool, read/write groups, wildcard umbrellas only where valid, inert-tool
     flags), secrets, LLM keys; "effective" view with org-ceiling explanations.
+    (phase 4, FIX-021, D-136) For hosted agents, a **Model readiness** section
+    (owners) from `GET /v1/agents/{a}/model-readiness`: each granted LLM key
+    with "Ready" or its reason in words and the fix as a link (`08 §Model
+    readiness`), the model the next turn will use, or "No model chosen —
+    choose one on Instructions" when `default` is null. The kind column says
+    "LLM key" for LLM secrets in the effective view too. (The connection grant
+    editor above is FIX-022: specified since phase 0, not yet built.)
   - **Channels** — presences (attach dedicated/shared per integration
     capabilities; status; re-attach/detach), space bindings, reach requests.
   - **Memory** — list, editor with revisions, restore, redact, search; banner
@@ -550,6 +562,26 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   required account ("Keys must belong to the corporate Anthropic
   organization"), shows the verified account after saving, and offers
   "Re-verify"; refused keys show the governance reason.
+  (phase 4, FIX-021, D-136/D-137)
+  - **Tabs are addressable**: `?tab=secrets|llm|proposals|apps|connections|oauth`
+    selects the tab on load and the tab control updates the URL (replace, not
+    push); an unknown value falls back to Secrets.
+  - **Origin display**: "Verified account" shows the method and the ids
+    (team, organization, workspace), or "Verified (endpoint)" for method
+    `endpoint`; a refused or failed verification shows `origin.detail` in words
+    ("This key belongs to no LiteLLM team", "LiteLLM refused the key-info call
+    (401)").
+  - **Give agents access**: after an LLM key, a secret or a connection is
+    created, the form is replaced by a step "Give agents access" listing the
+    agents the caller can grant (workspace scope: the workspace's agents; org
+    scope: grouped by the workspaces the caller owns), nothing preselected,
+    with "Give access" and "Skip". For a connection it grants full access; for
+    a `custom_only` app it first asks for the allowed tools (all others
+    blocked) and applies that custom grant to each selected agent. Agents that
+    already had access are shown as such. Errors name the agent.
+  - Every credential row has an **Access** action (owners): the agents that
+    have it (`GET …/grants`), "Remove" per agent (agent-side `DELETE`) and the
+    same add picker.
 - **Policy** — workspace rules editor. (phase 3, RFE-023) Its Default Rule control carries the same note ("Does not affect LLM endpoints — see Governance"); simulate shows `default_rule_skipped_llm_host` when the carve-out applied.
 - **Skills** (phase 3, RFE-020) — workspace skills editor (owners; members read-only): same editor as the agent tier, a banner "Applies to every agent in this workspace", and a per-skill list of the agents it reaches and any agent-level skill that overrides it.
 - **Activity** — request log (decision, rule name, app/tool, conversation

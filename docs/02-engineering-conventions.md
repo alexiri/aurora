@@ -184,6 +184,7 @@ overridden by the named configuration key (`15`).
 | `GATEWAY_LISTEN_GRACE` | (phase 3, RFE-014) 30 s of LISTEN loss (database reachable) before the gateway reports `degraded`; reconnect backoff 0.5 s → 10 s | — | 06 |
 | `REQUEST_LOG_OUTAGE_BUFFER` | (phase 3, RFE-014) 10 000 request-log rows buffered in memory during a database outage | — | 06 |
 | `APPROVAL_TIMEOUT` | 300 s (the default of rules without their own timeout) | `approvals.timeout_secs` | 06, 07 |
+| `GRANT_BULK_MAX` | (phase 4, FIX-020) 50 agents per credential-side bulk grant request | — | 05 |
 | `APPROVAL_TIMEOUT_MIN` / `APPROVAL_TIMEOUT_MAX` | (phase 2, RFE-011a) 60 s / 3 600 s default (configurable up to 14 400 s, always < `TURN_CEILING − TURN_CEILING_WARNING`) | `approvals.max_timeout_secs` | 07 |
 | `APPROVAL_NOTIFY_DELAY` / `APPROVAL_WATCHER_TTL` | (phase 2, RFE-011a) 20 s / 45 s | — | 07 |
 | `APPROVAL_EMAIL_PER_USER_HOUR` | (phase 2, RFE-011a) 20 e-mails per user per hour (rest digested) | — | 07 |

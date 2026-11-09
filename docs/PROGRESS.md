@@ -14,9 +14,9 @@ Counted from the task tables below. The coordinator updates this table at every 
 | 1 | 15 | 15 | 0 | 0 | 0 | 0 | §Phase 1 and 2 task graph (phase 1 rows) |
 | 2 | 52 | 51 | 1 (FIX-017: owner real-cluster install) | 0 | 0 | 0 | §Phase 2: remaining tasks |
 | 3 | 13 | 12 | 1 (AUDIT-003) | 0 | 0 | 0 | §Phase 3 tasks |
-| 4 | 21 | 0 | 2 (P4-MCON-1, SPEC-P4: SPEC-P4a) | 2 (P4-MCON-2, P4-MCON-3) | 15 | 2 (P4-NARR, P4-UTOK unscheduled, Q11) | §Phase 4 tasks |
+| 4 | 25 | 0 | 2 (P4-MCON-1, SPEC-P4: SPEC-P4a) | 5 (P4-MCON-2, P4-MCON-3, FIX-019, FIX-020, FIX-021) | 16 | 2 (P4-NARR, P4-UTOK unscheduled, Q11) | §Phase 4 tasks |
 | 5 | 3 | 0 | 0 | 0 | 2 (OPS-021, P5-SLACK) | 1 (OPS-022 deferred) | §Phase 5 tasks |
-| **All** | **216** | **185** | **4** | **2** | **17** | **8** | |
+| **All** | **220** | **185** | **4** | **5** | **18** | **8** | |
 
 **Phase 2 build work is complete (48/48, 2026-11-09).** AUDIT-002 (`docs/audit/phase2-exit.md`) found every runnable check green; its defect (F-1 → FIX-014) and doc findings (F-2..F-7) are closed. Not evidenced, pending the owner: the real-cluster Helm install and project-key signing (no cluster; CI-only key), and GitHub CI itself (replaced by local runs, owner-accepted). **Phase 3 started 2026-11-09** on the owner's "go on, don't stop". The open questions went to the coordinator's recommendations: the real-cluster install and real-key signing stay recorded as known gaps; chat v2 gets a compact header (P2-UI-5b); both sides of the chat render as Markdown (owner, 2026-11-09); image visibility waits for CI to return. CI on GitHub is not running (see §Blockers), so local verification is the merge gate.
 Ids per decision I-01. Task briefs live in `docs/tasks/<ID>.md`. Milestones
@@ -353,6 +353,10 @@ Start after AUDIT-002 (owner: phases 3 and 4 start when 1 and 2 are done; they m
 | P4-GSL | Git-backed skill library | `21 §Phase 4 — Git skill library` | M | both | SPEC-P4, a git-hosting package (GitLab or GitHub) | api skills (library source), background refresh job, web skills | needed | todo |
 | P4-NARR | Live narration cards | `21 §Other later items` | M | Rust | Q11 | channels cards, connector rate hint | needed | todo (Q11) |
 | P4-UTOK | User-token features (`user_tokens` capability) | `21 §Other later items` | M | Rust | Q11 | channels/connector contract | needed | todo (Q11) |
+| FIX-019 | Owner's production bug: granted, verified LiteLLM key → every turn `no_model_key`, sandbox never starts (endpoint has no `default_model`, so no model resolves). Per-key model readiness, `no_default_model`, `GET …/model-readiness`, start warning, `litellm_team` teamless keys + `origin.detail`, kind e2e of the owner's endpoint shape | owner 2026-11-09, D-136, `08 §Model readiness`, `10`, `15`, C-500..C-502 | M | Rust | — | api `domains/hosted/{model,dispatch}.rs`, `domains/secrets` (origin detail), `aurora-llm` litellm, `aurora-config`, OpenAPI | `docs/tasks/FIX-019.md` | ready (first in queue) |
+| FIX-020 | Credential-side bulk grants: `GET/POST /v1/secrets/{id}/grants`, `POST /v1/connections/{id}/grants`, one authorization path with the agent-side routes | owner 2026-11-09, D-137, C-503..C-505, SEC-77 | S–M | Rust | — | api `domains/grants/**`, `tests/it/grants_bulk.rs`, OpenAPI | `docs/tasks/FIX-020.md` | ready |
+| FIX-021 | Dashboard: Credentials `?tab=` (fixes "Open LLM keys" → Secrets), `no_default_model` copy, model readiness on Access, origin display, "Give agents access" after creating a key/secret/connection, row Access action | owner 2026-11-09, D-136, D-137, `14`, C-500..C-506 | M | Next.js | FIX-019, FIX-020 (points 1–4 can start earlier) | `web/src/components/{credentials,apps,agents,chat}/**`, `web/src/lib/**` | `docs/tasks/FIX-021.md` | ready |
+| FIX-022 | Agent Access tab connection-grant editor (specified in `14` since phase 0, never built) | `14` Access, `05`, `09 §3`, P4-GRANTS | M | Next.js | FIX-021 | `web/src/components/agents/access-tab.tsx` + new grant editor | `docs/tasks/FIX-022.md` (outline) | todo |
 | AUDIT-004 | Phase-4 exit verification | exit criteria below | M | audit | the selected phase-4 tasks | `docs/audit/phase4-exit.md` | needed | todo |
 
 ### Phase 5 tasks
@@ -408,6 +412,7 @@ Collisions serialized: **P3-013 after P3-014** (both rewrite gateway credential 
 
 | Batch | Lanes | Starts when |
 |---|---|---|
+| P4-FIX (priority) | FIX-019 and FIX-020 (Rust, disjoint), then FIX-021 (web), then FIX-022 | owner's production bugs, 2026-11-09: the first free lane slots go here, ahead of P4-MCON-2/3 |
 | P4-MCON | P4-MCON-1, then P4-MCON-2 and P4-MCON-3 in parallel (owner: first part of phase 4) | spec written (D-128) |
 | P4-B0 | SPEC-P4 (docs) | AUDIT-002; Q10 |
 | P4-B1 | P4-CNT, P4-S3, P4-LLM | SPEC-P4 merged |
