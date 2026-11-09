@@ -8,6 +8,7 @@ import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { useSecrets, type SecretScope } from "@/lib/api/secrets";
+import { useTabParam } from "@/lib/use-tab-param";
 
 import { AppsTab } from "@/components/apps/apps-tab";
 import { ConnectionsTab } from "@/components/apps/connections-tab";
@@ -18,6 +19,7 @@ import { ProposalsList } from "./proposals";
 import { SecretRow } from "./secret-row";
 
 type Tab = "secrets" | "llm" | "proposals" | "apps" | "connections" | "oauth";
+const TABS: readonly Tab[] = ["secrets", "llm", "proposals", "apps", "connections", "oauth"];
 
 export function CredentialsView({
   scope,
@@ -30,7 +32,9 @@ export function CredentialsView({
   canOwn: boolean;
   title: string;
 }) {
-  const [tab, setTab] = useState<Tab>("secrets");
+  // `?tab=` selects the tab (C-506); an unknown value, or Proposals/Apps on an org page, falls back to Secrets.
+  const [requested, setTab] = useTabParam<Tab>(TABS, "secrets");
+  const tab: Tab = requested === "proposals" || requested === "apps" ? (scope.kind === "workspace" ? requested : "secrets") : requested;
   const [adding, setAdding] = useState(false);
   const secrets = useSecrets(scope);
   const items = secrets.data?.items ?? [];
@@ -51,7 +55,7 @@ export function CredentialsView({
     return (
       <ul className="space-y-3" aria-label={kind === "llm" ? "LLM keys" : "Secrets"}>
         {rows.map((s) => (
-          <SecretRow key={s.id} scope={scope} secret={s} canOwn={canOwn} />
+          <SecretRow key={s.id} scope={scope} orgId={orgId} secret={s} canOwn={canOwn} />
         ))}
       </ul>
     );
@@ -77,7 +81,7 @@ export function CredentialsView({
           <>
             {canOwn ? (
               adding ? (
-                <GenericSecretForm scope={scope} onDone={() => setAdding(false)} />
+                <GenericSecretForm scope={scope} orgId={orgId} onDone={() => setAdding(false)} />
               ) : (
                 <div>
                   <Button variant="outline" onClick={() => setAdding(true)}>

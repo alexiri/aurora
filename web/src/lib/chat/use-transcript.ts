@@ -35,7 +35,10 @@ export function useTranscript(conversationId: string | undefined): TranscriptHoo
         const es = new EventSource(`/v1/conversations/${conversationId}/stream?after_seq=${hist.lastSeq}`);
         esRef.current = es;
         es.onopen = () => setLive(true);
-        es.onerror = () => {
+        es.onerror = (e?: Event) => {
+          // The C-501 SSE event *named* `error` also fires `onerror`; it carries `data` and is a transcript event
+          // (routed by the `error` listener below). Only a real connection error (no data) clears "Live".
+          if (typeof (e as MessageEvent | undefined)?.data === "string") return;
           setLive(false);
           // A refused connection (e.g. 429 too_many_streams) is CLOSED, not retried by the browser.
           if (es.readyState === EventSource.CLOSED) setRateNotice({ kind: "streams" });

@@ -20,6 +20,7 @@ import {
   useApp,
   useAppGuide,
   useAppInstances,
+  appIsCustomOnly,
   useOAuthClients,
   validateFields,
   type AppDetail,
@@ -27,6 +28,8 @@ import {
   type FieldValues,
 } from "@/lib/api/apps";
 import { useResolve } from "@/lib/api/queries";
+
+import { GiveAccessPanel } from "@/components/credentials/give-access";
 
 import { DynamicForm } from "./dynamic-form";
 import { Markdown, safeHref } from "./markdown";
@@ -50,7 +53,8 @@ function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId:
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState<{ missing: string[] } | null>(null);
+  const [done, setDone] = useState<{ missing: string[]; connectionId: string } | null>(null);
+  const [accessDone, setAccessDone] = useState(false);
   const guide = useAppGuide(app.app_id);
   const clients = useOAuthClients({ kind: "workspace", id: workspaceId });
   // An OAuth client bound to an instance serves only that instance; the default host uses unbound ones.
@@ -101,12 +105,9 @@ function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId:
       }
       if (window.opener) {
         (window.opener as Window).postMessage({ type: CONNECT_MESSAGE, connection_id: res.connection.id, missing_scopes: res.missing_scopes }, window.location.origin);
-        if (res.missing_scopes.length === 0) {
-          window.close();
-          return;
-        }
       }
-      setDone({ missing: res.missing_scopes });
+      // The window stays open for the "Give agents access" step (D-137); Skip or Done closes it.
+      setDone({ missing: res.missing_scopes, connectionId: res.connection.id });
     } catch (err) {
       setSubmitError(err);
     } finally {
@@ -123,11 +124,30 @@ function ConnectForm({ app, workspaceId, orgId }: { app: AppDetail; workspaceId:
   if (done)
     return (
       <Card role="status" className="space-y-3 text-sm">
-        <p className="font-medium text-ink">{app.name} is connected. You can close this window.</p>
+        <p className="font-medium text-ink">
+          {app.name} is connected.{accessDone ? " You can close this window." : ""}
+        </p>
         {done.missing.length ? (
           <Notice tone="pending">Some requested scopes were not granted: {done.missing.join(", ")}.</Notice>
         ) : null}
-        <Button size="sm" variant="outline" onClick={() => window.close()}>Close window</Button>
+        {!accessDone ? (
+          <GiveAccessPanel
+            subject={{
+              target: { kind: "connection", id: done.connectionId },
+              scope: { kind: "workspace", id: workspaceId },
+              orgId,
+              appId: app.app_id,
+              appWorkspaceId: workspaceId,
+              customOnly: appIsCustomOnly(app),
+            }}
+            onDismiss={() => {
+              setAccessDone(true);
+              // A window opened by the Connections tab closes itself once the step is over.
+              if (window.opener && done.missing.length === 0) window.close();
+            }}
+          />
+        ) : null}
+        {accessDone ? <Button size="sm" variant="outline" onClick={() => window.close()}>Close window</Button> : null}
       </Card>
     );
 

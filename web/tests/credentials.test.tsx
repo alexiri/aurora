@@ -72,7 +72,7 @@ describe("generic form", () => {
 
   it("hides reference fields when no store supports references", async () => {
     mockFetch({ "GET /v1/secret-stores": () => json(200, stores(false)) });
-    wrap(<GenericSecretForm scope={{ kind: "workspace", id: "w1" }} />);
+    wrap(<GenericSecretForm scope={{ kind: "workspace", id: "w1" }} orgId="o1" />);
     await screen.findByLabelText("Value");
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByLabelText("Value source")).toBeNull();
@@ -80,7 +80,7 @@ describe("generic form", () => {
 
   it("offers reference mode when available", async () => {
     mockFetch({ "GET /v1/secret-stores": () => json(200, stores(true)) });
-    wrap(<GenericSecretForm scope={{ kind: "workspace", id: "w1" }} />);
+    wrap(<GenericSecretForm scope={{ kind: "workspace", id: "w1" }} orgId="o1" />);
     expect(await screen.findByLabelText("Value source")).toBeTruthy();
   });
 
@@ -93,7 +93,7 @@ describe("generic form", () => {
         return json(409, { error: { code: "name_taken", message: "x" } });
       },
     });
-    wrap(<GenericSecretForm scope={{ kind: "workspace", id: "w1" }} />);
+    wrap(<GenericSecretForm scope={{ kind: "workspace", id: "w1" }} orgId="o1" />);
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "gh" } });
     fireEvent.change(screen.getByLabelText("Host pattern"), { target: { value: "api.github.com" } });
     const value = screen.getByLabelText("Value") as HTMLInputElement;

@@ -52,8 +52,15 @@ export const RUNNING: Ev[] = [
 
 export const ERRORED: Ev[] = [
   person(1, 5, "Summarise today's Sentry alerts."),
-  { seq: 2, type: "error", ts: minutesAgo(4), payload: { turn_id: "t1", code: "no_model_key", message: "No usable key" } },
+  { seq: 2, type: "error", ts: minutesAgo(4), payload: { turn_id: "t1", code: "no_model_key", message: "No usable LLM key: 1 granted key not usable (origin_unverified)." } },
   { seq: 3, type: "turn.finished", ts: minutesAgo(4), payload: { turn_id: "t1", status: "failed", error_code: "no_model_key" } },
+];
+
+/** FIX-021 (D-136): a usable key and no model chosen. */
+export const NO_MODEL: Ev[] = [
+  person(1, 5, "Summarise today's Sentry alerts."),
+  { seq: 2, type: "error", ts: minutesAgo(4), payload: { turn_id: "t1", code: "no_default_model", message: "An LLM key is usable but no model is chosen for this agent and its endpoint has no default model." } },
+  { seq: 3, type: "turn.finished", ts: minutesAgo(4), payload: { turn_id: "t1", status: "failed", error_code: "no_default_model" } },
 ];
 
 export const WITH_REDACTED: Ev[] = [

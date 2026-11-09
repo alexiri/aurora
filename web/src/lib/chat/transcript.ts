@@ -158,13 +158,39 @@ export function approvalStatus(state: TranscriptState, approvalId: string): { st
   return { status: "pending" };
 }
 
+/** Where an error link goes: the Credentials page (with `?tab=`), or a tab of the agent page the chat sits on (C-506). */
+export type ErrorLinkPath = "credentials" | "computer" | "instructions" | "access";
+
+export interface ErrorLink {
+  label: string;
+  path: ErrorLinkPath;
+  /** `?tab=` of the Credentials page. */
+  tab?: string;
+  /** Only workspace owners get the link (the Access tab's readiness is `can_own`). */
+  ownerOnly?: boolean;
+}
+
 export interface ErrorCopy {
   message: string;
-  link?: { label: string; path: "credentials" | "computer" };
+  link?: ErrorLink;
+  /** A second link next to the first. */
+  extra?: ErrorLink;
+  /** Show the server `message` (reason counts, never key names, C-501) under the copy. */
+  showServerMessage?: boolean;
 }
 
 const ERROR_COPY: Record<string, ErrorCopy> = {
-  no_model_key: { message: "This agent has no usable LLM key.", link: { label: "Add an LLM key", path: "credentials" } },
+  no_model_key: {
+    message: "This agent has no usable LLM key.",
+    link: { label: "Open LLM keys", path: "credentials", tab: "llm" },
+    extra: { label: "Agent access", path: "access", ownerOnly: true },
+    showServerMessage: true,
+  },
+  no_default_model: {
+    message: "This agent has an LLM key but no model is chosen.",
+    link: { label: "Choose a model", path: "instructions" },
+    showServerMessage: true,
+  },
   model_not_allowed: { message: "The selected model is not allowed. Choose another model." },
   hosted_disabled: { message: "Hosted agents are not enabled on this instance." },
   turn_finished: { message: "That turn has already finished." },

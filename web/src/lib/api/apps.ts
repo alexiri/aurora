@@ -107,6 +107,16 @@ export function useApp(app: string | undefined, workspaceId: string | undefined)
   });
 }
 
+/**
+ * An app that allows only custom grants (`custom_only`, P4-GRANTS, D-123). The field is not in the generated schema
+ * yet; until it is, the grant step also falls back on the 422 `full_grant_forbidden` (C-504).
+ */
+export function appIsCustomOnly(app: unknown): boolean {
+  if (typeof app !== "object" || app === null) return false;
+  const a = app as { custom_only?: unknown; grants?: { custom_only?: unknown } | null };
+  return a.custom_only === true || a.grants?.custom_only === true;
+}
+
 export function useAppGuide(app: string | undefined, enabled = true) {
   return useQuery({
     queryKey: appKeys.guide(app ?? ""),

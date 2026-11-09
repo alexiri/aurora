@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { AccessDialog } from "@/components/credentials/give-access";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
   const patch = usePatchConnection(scope);
   const del = useDeleteConnection(scope);
   const [confirm, setConfirm] = useState(false);
+  const [accessOpen, setAccessOpen] = useState(false);
   const bad = c.status === "reauth_required" || c.status === "orphaned";
   const lost = c.injecting.filter((i) => i.lost_to_app_id);
   const ok = c.injecting.filter((i) => !i.lost_to_app_id);
@@ -52,6 +54,11 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
         </div>
         {canOwn ? (
           <div className="flex flex-wrap gap-2">
+            {c.status === "active" ? (
+              <Button size="sm" variant="outline" aria-label={`Access to ${c.label}`} onClick={() => setAccessOpen(true)}>
+                Access
+              </Button>
+            ) : null}
             {org && ws && c.status !== "orphaned" ? (
               <Button size="sm" variant="outline" aria-label={`Reconnect ${c.label}`} onClick={() => openConnectWindow(connectWindowPath(org, ws, c.app_id, c.id))}>
                 Reconnect
@@ -71,6 +78,20 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
           </div>
         ) : null}
       </div>
+      {canOwn ? (
+        <AccessDialog
+          subject={{
+            target: { kind: "connection", id: c.id },
+            scope: { kind: scope.kind, id: scope.id },
+            orgId: c.org_id,
+            appId: c.app_id,
+            appWorkspaceId: c.workspace_id ?? (scope.kind === "workspace" ? scope.id : undefined),
+          }}
+          title={c.label}
+          open={accessOpen}
+          onOpenChange={setAccessOpen}
+        />
+      ) : null}
       {c.status_reason ? (
         <p className="text-sm text-ink-2">
           {c.status_reason === "instance_deleted"
