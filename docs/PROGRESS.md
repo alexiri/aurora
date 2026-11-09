@@ -14,8 +14,8 @@ Counted from the task tables below. The coordinator updates this table at every 
 | 1 | 15 | 15 | 0 | 0 | 0 | 0 | §Phase 1 and 2 task graph (phase 1 rows) |
 | 2 | 52 | 51 | 1 (FIX-017: owner real-cluster install) | 0 | 0 | 0 | §Phase 2: remaining tasks |
 | 3 | 13 | 12 | 1 (AUDIT-003) | 0 | 0 | 0 | §Phase 3 tasks |
-| 4 | 25 | 0 | 3 (P4-MCON-1, FIX-019, SPEC-P4: SPEC-P4a+b merged, P4c next) | 4 (P4-MCON-2, P4-MCON-3, FIX-020, FIX-021) | 16 | 2 (P4-NARR, P4-UTOK unscheduled, Q11) | §Phase 4 tasks |
-| 5 | 3 | 0 | 0 | 0 | 2 (OPS-021, P5-SLACK) | 1 (OPS-022 deferred) | §Phase 5 tasks |
+| 4 | 19 | 0 | 3 (P4-MCON-1, FIX-019, SPEC-P4: SPEC-P4a+b merged, P4c next) | 4 (P4-MCON-2, P4-MCON-3, FIX-020, FIX-021) | 10 | 2 (P4-NARR, P4-UTOK unscheduled, Q11) | §Phase 4 tasks (six items moved to phase 5 by the owner, 2026-11-09, D-138) |
+| 5 | 9 | 0 | 0 | 0 | 8 (OPS-021, P5-SLACK, P4-S3, P4-LLM, P4-011B, P4-SSH-1, P4-SSH-2, P4-EVAL) | 1 (OPS-022 deferred) | §Phase 5 tasks |
 | **All** | **220** | **185** | **5** | **4** | **18** | **8** | |
 
 **Phase 2 build work is complete (48/48, 2026-11-09).** AUDIT-002 (`docs/audit/phase2-exit.md`) found every runnable check green; its defect (F-1 → FIX-014) and doc findings (F-2..F-7) are closed. Not evidenced, pending the owner: the real-cluster Helm install and project-key signing (no cluster; CI-only key), and GitHub CI itself (replaced by local runs, owner-accepted). **Phase 3 started 2026-11-09** on the owner's "go on, don't stop". The open questions went to the coordinator's recommendations: the real-cluster install and real-key signing stay recorded as known gaps; chat v2 gets a compact header (P2-UI-5b); both sides of the chat render as Markdown (owner, 2026-11-09); image visibility waits for CI to return. CI on GitHub is not running (see §Blockers), so local verification is the merge gate.
@@ -337,19 +337,13 @@ Start after AUDIT-002 (owner: phases 3 and 4 start when 1 and 2 are done; they m
 | P4-MCON-2 | Managed connectors: `aurora-connector-host` service, built-in types runnable in it (Mattermost, fake), SDK delegated auth, image, Helm `connectorHost` (token, routing `/connectors`, NetworkPolicy), kind e2e round trip, operator docs | D-128, `13 §3.1`, `15`, `18` | L | Rust/ops | P4-MCON-1 | `crates/aurora-connector-sdk`, `connectors/*`, `services/aurora-connector-host`, `deploy/**`, images, `docs/operator/**` | `docs/tasks/P4-MCON-2.md` | todo |
 | P4-MCON-3 | Managed connectors: dashboard (Admin → Connectors: add flow, settings with secrets, enable/disable, approval, self-hosted advanced path) | D-128, `14 §Admin: connectors` | M | Next.js | P4-MCON-1 | `web/src/components/connectors/**`, `web/src/app/admin/connectors/**` | `docs/tasks/P4-MCON-3.md` | todo |
 | P4-GRANTS | App-level manifest option "custom grants only": forbid `full` grants (or always block untooled requests) for apps whose token is broad, such as Indico's `full:everything` (owner, 2026-11-08, D-84 Q-C; pairs with Q8 parameter-level matching) | D-84, `09 §3`, `07` | M | Rust + docs | SPEC-P4 | `09 §3`, registry/policy | needed (in SPEC-P4) | planned |
-| SPEC-P4 | Normative spec for the owner-selected phase-4 items and RFE-011b: `03 §Planned changes`, routes, limits, config keys, SEC invariants, `18` tests (shape of SPEC-RFE-P3) | `21 §Phase 4`, `80 §RFE-011`, `19 §Phase 4+` | L | docs (Sonnet + Opus review) | AUDIT-002; Q10 | `docs/0*`, `docs/1*`, `docs/21`, `docs/90` (new decisions) | split per batch: `docs/tasks/SPEC-P4a.md` (P4-CNT, P4-S3, P4-LLM, P4-HAR, P4-GRANTS + Q8; D-119..D-126, SEC-62..SEC-68, C-400..C-449 reserved); SPEC-P4b (groups/SCIM, RFE-011b; D-130..D-135, SEC-71..SEC-76, C-460..C-499) and SPEC-P4c (SSH, previews, evals, git skill library) follow. **SPEC-P4a merged** (8747e0f9: D-119..D-124, SEC-62..SEC-68; Q8 specified as additive `params` tool matching; S3 beside the Postgres blob store with `aurora-api blobs migrate`, no filesystem store existed) | in-progress (SPEC-P4a merged; **SPEC-P4b merged** 26ef98cd: D-130..D-135, SEC-71..SEC-76, `aud_` SCIM tokens; SPEC-P4c next) |
-| P4-011B | Approval park-and-resume and Web Push | `80 §RFE-011` Decision, `07`, `14` | L | both | SPEC-P4 | approvals/due-work park path, gateway hold, web push (service worker) | needed after SPEC-P4 | todo |
+| SPEC-P4 | Normative spec for the owner-selected phase-4 items and RFE-011b: `03 §Planned changes`, routes, limits, config keys, SEC invariants, `18` tests (shape of SPEC-RFE-P3) | `21 §Phase 4`, `80 §RFE-011`, `19 §Phase 4+` | L | docs (Sonnet + Opus review) | AUDIT-002; Q10 | `docs/0*`, `docs/1*`, `docs/21`, `docs/90` (new decisions) | split per batch: `docs/tasks/SPEC-P4a.md` (P4-CNT, P4-S3, P4-LLM, P4-HAR, P4-GRANTS + Q8; D-119..D-126, SEC-62..SEC-68, C-400..C-449 reserved); SPEC-P4b (groups/SCIM, RFE-011b; D-130..D-135, SEC-71..SEC-76, C-460..C-499) and SPEC-P4c (port previews and git skill library; SSH and evals moved to phase 5, D-138) follow. **SPEC-P4a merged** (8747e0f9: D-119..D-124, SEC-62..SEC-68; Q8 specified as additive `params` tool matching; S3 beside the Postgres blob store with `aurora-api blobs migrate`, no filesystem store existed) | in-progress (SPEC-P4a merged; **SPEC-P4b merged** 26ef98cd: D-130..D-135, SEC-71..SEC-76, `aud_` SCIM tokens; SPEC-P4c next) |
 | P4-CNT | Shared rate-limit counters (`CounterStore`; Postgres or Redis) | `21 §Other later items`, `19 §Phase 4+` | M | Rust | SPEC-P4 | gateway rate limiter, api `http/apilimit.rs` | needed | todo |
-| P4-S3 | S3-compatible `BlobStore` | `21 §Other later items`, D-54 | M | Rust | SPEC-P4 | api attachments `storage.rs` / BlobStore registry, config | needed | todo |
-| P4-LLM | Additional LLM providers (OpenAI, Azure OpenAI, Bedrock, Vertex, generic OpenAI-compatible) | `21 §Other later items`, `08` | L | Rust | SPEC-P4 | `crates/aurora-llm` (providers, governance origin checks) | needed | todo |
-| P4-HAR | Additional harness adapter (e.g. Codex) with `openai_*` dialects | `21 §Other later items`, `12` | M | Rust | P4-LLM | supervisor adapters, sandbox image | needed | todo |
+| P4-HAR | Additional harness adapter (e.g. Codex) with `openai_*` dialects | `21 §Other later items`, `12`, D-122 | M | Rust | SPEC-P4a merged (no longer after P4-LLM: `litellm` endpoints already serve `openai_chat` / `openai_responses`, D-138) | supervisor adapters, sandbox image | needed | todo |
 | P4-GRP-1 | Groups (manual), group → workspace bindings, group policy identities, group → org-role mappings | `21 §Phase 4 — Groups and SCIM` | L | both | SPEC-P4 | `crates/aurora-policy` principal set, api tenancy/access, migrations, web org members/groups | needed | todo |
 | P4-GRP-2 | SCIM 2.0 at `/scim/v2` | `21 §Phase 4 — Groups and SCIM` | M | Rust | P4-GRP-1 | new api `scim` domain, token storage | needed | todo |
-| P4-SSH-1 | User SSH keys, SSH CA, certificate mint route, mint counters | `21 §Phase 4 — SSH front door`, `00` `aut_`, `01` | M | both | SPEC-P4 | api ssh domain, migrations `ssh_keys`/`ssh_mint_counters`, web account SSH keys | needed | todo |
-| P4-SSH-2 | `aurora-terminator` (russh), session grant, wake, PTY/exec relay via podman/k8s exec, heartbeat/lease, Helm | `21 §Phase 4`, `11` keep-awake SSH arm | L | Rust/ops | P4-SSH-1 | new `services/aurora-terminator`, runner exec API, `ssh_sessions`, `deploy/helm` | needed | todo |
 | P4-PRV-1 | Port previews: shares, hostnames, visibility, wake relaunch | `21 §Phase 4 — Port previews` | M | both | SPEC-P4 | api previews domain, supervisor `ports.state` use, web agent previews | needed | todo |
-| P4-PRV-2 | `aurora-relay`, runner port-stream API multiplexed over the supervisor channel, credit-based flow control | `21 §Phase 4 — Port previews`, `16` | L | Rust | P4-PRV-1; after P4-SSH-2 (both edit the runner) | new `services/aurora-relay`, runner + supervisor channel, `aurora-protocol` | needed | todo |
-| P4-EVAL | Evals | `21 §Phase 4 — Evals` | L | both | SPEC-P4 | api evals domain, `eval` conversations, web agent evals | needed | todo |
+| P4-PRV-2 | `aurora-relay`, runner port-stream API multiplexed over the supervisor channel, credit-based flow control | `21 §Phase 4 — Port previews`, `16` | L | Rust | P4-PRV-1 (the P4-SSH-2 ordering is gone: SSH moved to phase 5, D-138) | new `services/aurora-relay`, runner + supervisor channel, `aurora-protocol` | needed | todo |
 | P4-GSL | Git-backed skill library | `21 §Phase 4 — Git skill library` | M | both | SPEC-P4, a git-hosting package (GitLab or GitHub) | api skills (library source), background refresh job, web skills | needed | todo |
 | P4-NARR | Live narration cards | `21 §Other later items` | M | Rust | Q11 | channels cards, connector rate hint | needed | todo (Q11) |
 | P4-UTOK | User-token features (`user_tokens` capability) | `21 §Other later items` | M | Rust | Q11 | channels/connector contract | needed | todo (Q11) |
@@ -366,6 +360,17 @@ Start after AUDIT-002 (owner: phases 3 and 4 start when 1 and 2 are done; they m
 | OPS-022 | Multi-arch images (amd64 + arm64) on native arm64 runners | `15 §Images`, `19 §Phase 5` | M | ops | OPS-020 | image jobs in `.github/workflows/ci.yml`, `images/**` | `docs/tasks/OPS-022.md` (its "Phase 1" line is stale: phase 5) | deferred (owner 2026-11-07) |
 | OPS-021 | Dependabot, grouped, with ignore rules and a review policy (moved from phase 4 by the owner, 2026-11-08) | owner (`docs/tasks/OPS-021.md`) | S | ops | OPS-019, OPS-020 | `.github/dependabot.yml`, `docs/ops/dependencies.md` | `docs/tasks/OPS-021.md` | planned (phase 5) |
 | P5-SLACK | Slack connector (was P4-SLACK; moved to phase 5 by the owner, 2026-11-08) | `21 §Other later items`, `19 §Phase 4+` | L | Rust | the connector contract (`13`) | new connector crate only (no core change per `21`) | needed | planned (phase 5) |
+
+Moved from phase 4 by the owner, 2026-11-09 (D-138). The ids keep their `P4-` prefix because the specs, decisions and SEC rows already cite them; their spec text keeps its "(phase 4, …)" tags as the spec batch they were written in, and they are implemented in phase 5.
+
+| Task | Scope (one line) | Spec sources | Size | Lane | Depends on | Owns | Brief | Status |
+|---|---|---|---|---|---|---|---|---|
+| P4-S3 | S3-compatible `BlobStore` beside the Postgres store, `aurora-api blobs migrate` | D-120, `10`, `15`, SEC-63 (specified in SPEC-P4a) | M | Rust | — | api attachments / BlobStore registry, config | needed | planned (phase 5) |
+| P4-LLM | Additional LLM providers (OpenAI, Azure OpenAI, Bedrock, Vertex, generic OpenAI-compatible) | D-121, `08`, SEC-64, SEC-65 (specified in SPEC-P4a) | L | Rust | — | `crates/aurora-llm` (providers, governance origin checks), gateway signing/minting | needed | planned (phase 5) |
+| P4-011B | Approval park-and-resume and Web Push | `80 §RFE-011`, D-133, D-134, `07`, `14`, SEC-74..SEC-76 (specified in SPEC-P4b) | L | both | — | approvals/due-work park path, gateway hold, web push (service worker) | needed | planned (phase 5) |
+| P4-SSH-1 | User SSH keys, SSH CA, certificate mint route, mint counters | `21 §Phase 4 — SSH front door`, `00` `aut_`, `01` (not yet specified: needs a spec batch) | M | both | spec | api ssh domain, migrations `ssh_keys`/`ssh_mint_counters`, web account SSH keys | needed | planned (phase 5) |
+| P4-SSH-2 | `aurora-terminator` (russh), session grant, wake, PTY/exec relay via podman/k8s exec, heartbeat/lease, Helm | `21 §Phase 4`, `11` keep-awake SSH arm (not yet specified) | L | Rust/ops | P4-SSH-1 | new `services/aurora-terminator`, runner exec API, `ssh_sessions`, `deploy/helm` | needed | planned (phase 5) |
+| P4-EVAL | Evals | `21 §Phase 4 — Evals` (not yet specified) | L | both | spec | api evals domain, `eval` conversations, web agent evals | needed | planned (phase 5) |
 
 ### Execution order
 
@@ -414,17 +419,15 @@ Collisions serialized: **P3-013 after P3-014** (both rewrite gateway credential 
 |---|---|---|
 | P4-FIX (priority) | FIX-019 and FIX-020 (Rust, disjoint), then FIX-021 (web), then FIX-022 | owner's production bugs, 2026-11-09: the first free lane slots go here, ahead of P4-MCON-2/3 |
 | P4-MCON | P4-MCON-1, then P4-MCON-2 and P4-MCON-3 in parallel (owner: first part of phase 4) | spec written (D-128) |
-| P4-B0 | SPEC-P4 (docs) | AUDIT-002; Q10 |
-| P4-B1 | P4-CNT, P4-S3, P4-LLM | SPEC-P4 merged |
-| P4-B2 | P4-GRP-1, P4-011B, P4-HAR | P4-HAR after P4-LLM |
-| P4-B3 | P4-SSH-1, P4-PRV-1, P4-GRP-2 | P4-GRP-2 after P4-GRP-1 |
-| P4-B4 | P4-SSH-2, P4-EVAL, P4-GSL | P4-SSH-2 after P4-SSH-1 |
-| P4-B5 | P4-PRV-2 (P4-NARR, P4-UTOK stay unscheduled per Q11) | P4-PRV-2 after P4-SSH-2 |
-| P4-B6 | AUDIT-004 | selected items merged |
+| P4-B0 | SPEC-P4 (docs): SPEC-P4a and SPEC-P4b merged; SPEC-P4c = port previews + git skill library only (SSH and evals moved to phase 5, D-138) | AUDIT-002; Q10 |
+| P4-B1 | P4-CNT, P4-GRANTS (+ Q8), P4-HAR | SPEC-P4a merged |
+| P4-B2 | P4-GRP-1, P4-PRV-1 | SPEC-P4b / SPEC-P4c merged |
+| P4-B3 | P4-GRP-2, P4-PRV-2, P4-GSL | P4-GRP-2 after P4-GRP-1; P4-PRV-2 after P4-PRV-1 |
+| P4-B4 | AUDIT-004 | every phase-4 task merged; then **stop** (owner, 2026-11-09: phase 5 starts later on the owner's word) |
 
-Collisions serialized: **P4-PRV-2 after P4-SSH-2** (both add a byte-stream API to the runner and the supervisor channel); **P4-HAR after P4-LLM** (dialects come from the providers); **P4-GRP-2 after P4-GRP-1** (SCIM writes the groups model).
+Collisions serialized: **P4-GRP-2 after P4-GRP-1** (SCIM writes the groups model); **P4-PRV-2 after P4-PRV-1**. P4-NARR and P4-UTOK stay unscheduled (Q11). **Moved to phase 5 (owner, 2026-11-09, D-138):** P4-SSH-1, P4-SSH-2, P4-LLM, P4-EVAL, P4-S3, P4-011B (park-and-resume and Web Push).
 
-**Phase 5**: OPS-022 alone, when the owner lifts the deferral.
+**Phase 5** (starts on the owner's word): OPS-022 (deferred), OPS-021, P5-SLACK, and the six items moved from phase 4; SSH and evals need a spec batch first.
 
 ### Number reservations (the coordinator assigns a block in every lane spec)
 
