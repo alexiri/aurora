@@ -68,6 +68,40 @@ const effective = {
   non_compliant_secrets: [],
 };
 
+// The real built-in connector (connectors/mattermost, name "Mattermost"). It ships no icon file yet
+// (`icon_png_b64: None`), so the page shows the monogram tile; the shape of the data is C-450/C-452.
+const mattermostSetup = [
+  { name: "server_url", label: "Server URL", type: "url", required: true, placeholder: "https://chat.example.org" },
+  { name: "request_timeout_secs", label: "Request timeout (seconds)", type: "number", required: false, default: 30, min: 1, max: 120 },
+  { name: "api_token", label: "API token", type: "secret", required: true },
+  { name: "admin_token", label: "Admin token", type: "secret", required: false },
+  { name: "signing_key", label: "Signing key", type: "generated_secret", required: false },
+];
+const mattermostManifest = {
+  package: { id: "mattermost" },
+  capabilities: { threads: true, files: true, reactions: true, edits: false },
+  public_callbacks: ["actions", "commands"],
+  integration_setup: { fields: [{ name: "server_url", label: "Server URL", type: "text", store: "metadata" }, { name: "bot_token", label: "Bot token", type: "secret", store: "credentials" }] },
+  instance_setup: { fields: mattermostSetup },
+};
+export const mattermostType = {
+  type_id: "mattermost", name: "Mattermost", version: "1.2.0", publisher: "Aurora", icon_png_b64: null,
+  setup_guide_md: "# Mattermost\n\nConnect a Mattermost team with a bot account so agents can chat there.",
+  manifest: mattermostManifest, manifest_digest: "sha256:aaaa", instance_setup: { fields: mattermostSetup }, hosts: 2, added: false,
+};
+export const mattermostConnector = {
+  id: "mattermost", display_name: "Mattermost", status: "active", version: "1.2.0", contract: 1, managed: true, type_id: "mattermost",
+  manifest: mattermostManifest, manifest_digest: "sha256:aaaa", approved_manifest_digest: "sha256:aaaa", approved_manifest: mattermostManifest, widening: [],
+  replicas: [], integration_count: 2, approved_at: now, created_at: now,
+  settings: { server_url: "https://chat.example.org", request_timeout_secs: 30 },
+  secrets: {
+    api_token: { set: true, generated: false, updated_at: now },
+    admin_token: { set: false, generated: false, updated_at: null },
+    signing_key: { set: true, generated: true, updated_at: now },
+  },
+  host_status: [{ host_instance: id(501), state: "running", message: null, at: now }],
+};
+
 export const user ={ id: id(99), display_name: "Ada Lovelace", email: "ada@example.test", is_instance_admin: true };
 
 export async function mockApi(page: Page) {
@@ -94,6 +128,9 @@ export async function mockApi(page: Page) {
         tables: [{ table: "events", bytes: 4_800_000 }],
       });
     }
+    if (p === "/v1/admin/connectors") return json({ items: [mattermostConnector] });
+    if (p === "/v1/admin/connector-types") return json({ host_running: true, items: [mattermostType] });
+    if (/^\/v1\/connectors\/[^/]+\/icon$/.test(p)) return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
     if (/^\/v1\/admin\/plugins\/[^/]+$/.test(p)) {
       const pkg = PACKAGES.find((x) => x.id === p.split("/")[4]) ?? PACKAGES[3];
       return json({

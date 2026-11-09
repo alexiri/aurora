@@ -15,10 +15,65 @@ const retry = (count: number, err: unknown) =>
   !(err instanceof ApiError && err.status !== undefined && err.status >= 400 && err.status < 500) &&
   count < 1;
 
+export type ConnectorType = S["ConnectorType"];
+export type ConnectorTypeList = S["ConnectorTypeList"];
+export type ConnectorSecretInfo = S["ConnectorSecretInfo"];
+export type PatchConnectorRequest = S["PatchConnectorRequest"];
+export type CreateConnectorRequest = S["CreateConnectorRequest"];
+
+/**
+ * An `instance_setup` field (C-450): the form-field schema plus `url`, `number` (`min`/`max`),
+ * `generated_secret` and a static `default`. The generated type lists the base schema only.
+ */
+export type SetupField = FormField & { default?: unknown; min?: number | null; max?: number | null };
+
 export const connectorKeys = {
   admin: ["admin", "connectors"] as const,
   info: ["connectors"] as const,
+  types: ["admin", "connector-types"] as const,
 };
+
+export function setupFields(section: unknown): SetupField[] {
+  return formFields(section) as SetupField[];
+}
+
+/** The connector's id is the type id; the icon route is shared with `ConnectorInfo.icon_url`. */
+export const connectorIconUrl = (id: string) => `/v1/connectors/${encodeURIComponent(id)}/icon`;
+
+export function useConnectorTypes() {
+  return useQuery({
+    queryKey: connectorKeys.types,
+    queryFn: () => unwrap(api.GET("/v1/admin/connector-types")),
+    retry,
+  });
+}
+
+/** Add a managed connector (C-451). The response has no token. */
+export function useCreateManagedConnector() {
+  const qc = useQueryClient();
+  return useMutation({
+    gcTime: 0,
+    mutationFn: (body: CreateConnectorRequest) =>
+      unwrap(api.POST("/v1/admin/connectors", { body: { ...body, managed: true } })),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: connectorKeys.admin });
+      void qc.invalidateQueries({ queryKey: connectorKeys.types });
+    },
+    // A stale digest means the type changed: reload it so Review shows the new manifest.
+    onError: () => qc.invalidateQueries({ queryKey: connectorKeys.types }),
+  });
+}
+
+/** Edit a connector (C-453): returns the bare connector. Secrets in the body are write-only. */
+export function usePatchConnector() {
+  const qc = useQueryClient();
+  return useMutation({
+    gcTime: 0,
+    mutationFn: ({ id, body }: { id: string; body: PatchConnectorRequest }) =>
+      unwrap(api.PATCH("/v1/admin/connectors/{id}", { params: { path: { id } }, body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: connectorKeys.admin }),
+  });
+}
 
 /** Fields of a manifest form section (`{ fields: FormField[] }`), tolerant of absent/odd shapes. */
 export function formFields(section: unknown): FormField[] {
@@ -94,6 +149,9 @@ export function useDeleteConnector() {
   return useMutation({
     mutationFn: (id: string) =>
       unwrap(api.DELETE("/v1/admin/connectors/{id}", { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: connectorKeys.admin }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: connectorKeys.admin });
+      void qc.invalidateQueries({ queryKey: connectorKeys.types });
+    },
   });
 }

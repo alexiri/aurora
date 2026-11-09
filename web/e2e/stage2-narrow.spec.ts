@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { CONNECTOR_SCREENS, openConnectorScreen } from "./support/connectors";
+
 // P2-UI stage 2: the designed screens never scroll horizontally at 390 px (the agent tab strip
 // scrolls within itself). The API is mocked, so no backend is needed.
 
@@ -50,6 +52,15 @@ test.describe("390 px", () => {
       await mockApi(page);
       await page.goto(path);
       await page.locator("h1").first().waitFor();
+      expect(await noPageScroll(page)).toBe(true);
+    });
+  }
+
+  // P4-MCON-3: the connector screens (list, add flow, detail, self-hosted) use the shared API mock
+  // with the real built-in connector (Mattermost).
+  for (const s of CONNECTOR_SCREENS) {
+    test(`admin connectors › ${s} has no horizontal page scroll`, async ({ page }) => {
+      await openConnectorScreen(page, s, "light");
       expect(await noPageScroll(page)).toBe(true);
     });
   }

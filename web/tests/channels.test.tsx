@@ -157,6 +157,7 @@ describe("ConnectorsAdminView", () => {
     manifest: { capabilities: { threads: true, files: true, edits: false }, integration_setup: { fields: [{ name: "bot_token", type: "secret", store: "credentials" }] } },
     manifest_digest: "sha256:new", approved_manifest_digest: "sha256:old", widening: ["adds capability files"],
     replicas: [], integration_count: 2, approved_at: null, created_at: T,
+    managed: false, host_status: [], secrets: {},
   };
 
   it("renders an old-vs-new manifest diff from approved_manifest", async () => {
@@ -235,6 +236,8 @@ describe("ConnectorsAdminView", () => {
       "POST /v1/admin/connectors": () => json(201, { connector: { ...pending, status: "awaiting_registration", manifest: null }, token: "aun_once" }),
     });
     wrap(<ConnectorsAdminView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add connector" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Self-hosted connector (advanced)" }));
     fireEvent.change(await screen.findByLabelText("Connector id"), { target: { value: "slack" } });
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Slack" } });
     fireEvent.click(screen.getByRole("button", { name: "Provision" }));

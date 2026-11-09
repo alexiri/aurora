@@ -2,6 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 import { ROUTES } from "./support/mock-api";
+import { CONNECTOR_SCREENS, openConnectorScreen } from "./support/connectors";
 import { openRoute } from "./support/open";
 
 // P2-UI stage 4 (docs/18 §Dashboard visual design): zero serious/critical axe violations,
@@ -38,6 +39,19 @@ for (const scheme of ["light", "dark"] as const) {
       });
     }
   });
+
+  // P4-MCON-3: every in-page screen of Admin → Connectors (list, add flow, detail, self-hosted).
+  for (const width of [1280, 390]) {
+    test.describe(`${scheme} theme, connector screens, ${width} px`, () => {
+      test.use({ viewport: { width, height: 900 } });
+      for (const s of CONNECTOR_SCREENS) {
+        test(`${s} has no serious or critical violations`, async ({ page }) => {
+          await openConnectorScreen(page, s, scheme);
+          expect(await serious(page)).toEqual([]);
+        });
+      }
+    });
+  }
 
   // The tabs that show the real built-in package icons (AppIcon), with the icons loaded.
   test.describe(`${scheme} theme, credentials tabs`, () => {

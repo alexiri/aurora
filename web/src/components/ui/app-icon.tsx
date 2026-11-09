@@ -36,9 +36,12 @@ export function AppIcon({
   hasIcon = true,
   size = 40,
   className,
+  src,
 }: {
   appId: string;
   name: string;
+  /** Another same-origin or `data:` image (a connector's icon); then there is no dark variant. */
+  src?: string;
   hasDarkIcon?: boolean;
   /** `false` when the app is known to ship no icon: the monogram is shown without a request. */
   hasIcon?: boolean;
@@ -63,12 +66,12 @@ export function AppIcon({
       </span>
     );
   }
-  const showDark = hasDarkIcon && !darkFailed;
+  const showDark = !src && hasDarkIcon && !darkFailed;
   return (
     <>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={appIconUrl(appId)}
+        src={src ?? appIconUrl(appId)}
         alt=""
         width={size}
         height={size}

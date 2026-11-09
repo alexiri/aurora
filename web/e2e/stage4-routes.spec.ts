@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { ROUTES } from "./support/mock-api";
+import { CONNECTOR_SCREENS, openConnectorScreen } from "./support/connectors";
 import { CANVAS, openRoute, overflow } from "./support/open";
 
 // P2-UI stage 4 (docs/18 §Dashboard visual design): on every dashboard route, in both themes,
@@ -21,6 +22,25 @@ test.describe("theme and narrow shell, every route (390 px)", () => {
     }
   }
 });
+
+// P4-MCON-3: the in-page screens of Admin → Connectors are themed and never scroll horizontally at
+// 390 px; full-page screenshots of the add flow and the detail view for the coordinator.
+const SHOTS = "/tmp/aurora-screens/p4-mcon-3";
+for (const width of [1280, 390]) {
+  test.describe(`connector screens (${width} px)`, () => {
+    test.use({ viewport: { width, height: 900 } });
+    for (const scheme of ["light", "dark"] as const) {
+      for (const s of CONNECTOR_SCREENS) {
+        test(`${s}: themed, no horizontal page scroll (${scheme})`, async ({ page }) => {
+          await openConnectorScreen(page, s, scheme);
+          expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
+          expect(await overflow(page), `${s} overflows horizontally`).toBeLessThanOrEqual(0);
+          await page.screenshot({ path: `${SHOTS}/${s}-${scheme}-${width}.png`, fullPage: true });
+        });
+      }
+    }
+  });
+}
 
 test.describe("sidebar background", () => {
   test.use({ viewport: { width: 1280, height: 720 } });
