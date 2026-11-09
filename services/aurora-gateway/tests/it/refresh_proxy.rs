@@ -259,6 +259,16 @@ struct Rig {
 
 /// `status`, `expires_in_secs` (negative = already expired).
 async fn start(status: &str, expires_in_secs: i64) -> Rig {
+    start_with(status, expires_in_secs, None).await
+}
+
+/// [`start`] with the outage state of RFE-014 attached to the token manager, the plaintext
+/// cache and the handler.
+async fn start_with(
+    status: &str,
+    expires_in_secs: i64,
+    health: Option<Arc<aurora_gateway::health::Health>>,
+) -> Rig {
     let db = TestDb::new().await;
     let p = db.pool();
     let w = World {
@@ -390,19 +400,25 @@ async fn start(status: &str, expires_in_secs: i64) -> Rig {
     rows.conns.push(row);
     let src = Arc::new(Src(Mutex::new(rows)));
     let resolver = Arc::new(Resolver::new(src, llm).with_snapshots(store));
-    let tokens = Arc::new(TokenManager::new(p.clone(), vault.clone(), None));
-    let plaintext = Arc::new(PlaintextCache::new(vault));
-    let handler = Arc::new(
-        PolicyHandler::new(PolicyHandlerParts {
-            resolver,
-            plaintext,
-            log: RequestLog::new(Arc::new(Null)),
-            external_url: "https://aurora.test/".into(),
-            holds: None,
-            touch_pool: Some(p.clone()),
-        })
-        .with_tokens(tokens),
-    );
+    let mut tokens = TokenManager::new(p.clone(), vault.clone(), None);
+    let mut plaintext = PlaintextCache::new(vault);
+    if let Some(h) = &health {
+        tokens = tokens.with_health(h.clone());
+        plaintext = plaintext.with_health(h.clone());
+    }
+    let mut handler = PolicyHandler::new(PolicyHandlerParts {
+        resolver,
+        plaintext: Arc::new(plaintext),
+        log: RequestLog::new(Arc::new(Null)),
+        external_url: "https://aurora.test/".into(),
+        holds: None,
+        touch_pool: Some(p.clone()),
+    })
+    .with_tokens(Arc::new(tokens));
+    if let Some(h) = health {
+        handler = handler.with_health(h);
+    }
+    let handler = Arc::new(handler);
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = pl.local_addr().unwrap();
@@ -434,6 +450,10 @@ struct Reply {
 }
 
 impl Reply {
+    fn json(&self) -> Value {
+        serde_json::from_str(&self.body).unwrap_or(Value::Null)
+    }
+
     fn code(&self) -> String {
         serde_json::from_str::<Value>(&self.body).map_or(String::new(), |v| {
             v["error"]["code"].as_str().unwrap_or("").to_owned()
@@ -550,6 +570,41 @@ async fn reauth_required_connection_is_refused_with_guidance() {
     assert_eq!(a.code(), "connection_reauth_required");
     assert!(a.body.contains("connect_url"), "{}", a.body);
     assert_eq!(r.hits.load(Ordering::SeqCst), 0);
+}
+
+/// (RFE-014) An OAuth refresh needs Postgres: while it is unreachable the request is refused as
+/// `gateway_degraded` / `credential_store_unavailable`, the provider is not called and nothing
+/// reaches the upstream.
+#[tokio::test]
+async fn refresh_is_refused_while_the_database_is_unreachable() {
+    let h = aurora_gateway::health::Health::new(|| true);
+    h.set_listener(true);
+    // Expired: a refresh is due.
+    let r = start_with("active", -5, Some(h.clone())).await;
+    h.report_db_error();
+    let a = get(&r.env, "/x", "").await;
+    assert_eq!(a.status, 503, "{}", a.body);
+    assert_eq!(a.code(), "gateway_degraded");
+    assert_eq!(
+        a.json()["error"]["details"]["reason"],
+        "credential_store_unavailable"
+    );
+    assert!(
+        a.head.to_ascii_lowercase().contains("retry-after: 5"),
+        "{}",
+        a.head
+    );
+    assert_eq!(r.prov.lock().unwrap().calls, 0, "no refresh was attempted");
+    assert_eq!(
+        r.hits.load(Ordering::SeqCst),
+        0,
+        "nothing reached the upstream"
+    );
+    // Recovered: the refresh happens.
+    h.probe_ok();
+    let a = get(&r.env, "/x", "").await;
+    assert_eq!(a.status, 200, "{}", a.body);
+    assert_eq!(r.prov.lock().unwrap().calls, 1);
 }
 
 #[tokio::test]

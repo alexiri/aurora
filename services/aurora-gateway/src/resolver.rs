@@ -4,7 +4,8 @@
 use crate::auth::{
     ByoAdmission, CredentialKind, CredentialResolver, RequestIdentity, ResolveError,
 };
-use crate::invalidation::{Invalidatable, Invalidate, Scope};
+use crate::health::{self, Health};
+use crate::invalidation::{CacheStats, Invalidatable, Invalidate, Scope};
 use aurora_db::PgPool;
 use aurora_db::repo::gateway as repo;
 use aurora_llm::governance::{ByoInputs, ByoInstance, OrgByo, effective_byo};
@@ -23,6 +24,7 @@ type Hash = [u8; 32];
 struct Entry {
     identity: Arc<RequestIdentity>,
     expires: Instant,
+    born: Instant,
 }
 
 #[derive(Default)]
@@ -91,6 +93,7 @@ impl Inner {
             Entry {
                 identity,
                 expires: Instant::now() + ttl,
+                born: Instant::now(),
             },
         );
     }
@@ -244,6 +247,17 @@ impl Invalidatable for IdentityCache {
             g.clear();
         }
     }
+
+    fn stats(&self) -> CacheStats {
+        let Ok(g) = self.inner.lock() else {
+            return CacheStats::default();
+        };
+        let now = Instant::now();
+        CacheStats {
+            entries: g.entries.len(),
+            oldest_age: g.entries.values().map(|e| now - e.born).max(),
+        }
+    }
 }
 
 pub struct DbCredentialResolver {
@@ -251,6 +265,22 @@ pub struct DbCredentialResolver {
     cache: Arc<IdentityCache>,
     /// (RFE-025) the instance level of BYO governance.
     byo: ByoInstance,
+    /// (RFE-014) Outage state: lookups are refused at once while the database is unreachable and
+    /// connection-class failures are reported.
+    health: Option<Arc<Health>>,
+    flights: crate::coalesce::Coalescer<Hash>,
+}
+
+/// A repository failure as a resolve error; a connection-class one is an outage signal.
+fn resolve_err(h: Option<&Arc<Health>>, e: &aurora_db::DbError) -> ResolveError {
+    if health::is_db_connection_error(e) {
+        if let Some(h) = h {
+            h.report_db_error();
+        }
+        ResolveError::DatabaseUnavailable
+    } else {
+        ResolveError::Unavailable(e.to_string())
+    }
 }
 
 impl DbCredentialResolver {
@@ -263,7 +293,16 @@ impl DbCredentialResolver {
             pool,
             cache: Arc::new(IdentityCache::new(ttl, negative_ttl)),
             byo: ByoInstance::default(),
+            health: None,
+            flights: crate::coalesce::Coalescer::default(),
         }
+    }
+
+    /// Reports outages to `h` and refuses cache misses while the database is unreachable.
+    #[must_use]
+    pub fn with_health(mut self, h: Arc<Health>) -> Self {
+        self.health = Some(h);
+        self
     }
 
     /// Sets the instance BYO configuration (`[byo]`, RFE-025).
@@ -282,7 +321,7 @@ impl DbCredentialResolver {
         &self,
         hash: &Hash,
     ) -> Result<Option<(RequestIdentity, Option<f64>)>, ResolveError> {
-        let unavailable = |e: aurora_db::DbError| ResolveError::Unavailable(e.to_string());
+        let unavailable = |e: aurora_db::DbError| resolve_err(self.health.as_ref(), &e);
         let Some(row) = repo::find_credential_identity(&self.pool, hash)
             .await
             .map_err(unavailable)?
@@ -296,7 +335,7 @@ impl DbCredentialResolver {
         &self,
         row: repo::CredentialIdentityRow,
     ) -> Result<Option<(RequestIdentity, Option<f64>)>, ResolveError> {
-        let unavailable = |e: aurora_db::DbError| ResolveError::Unavailable(e.to_string());
+        let unavailable = |e: aurora_db::DbError| resolve_err(self.health.as_ref(), &e);
         // (RFE-006) A frozen agent's credentials are refused whatever their kind; never cached
         // as an identity.
         if let Some(l) = row.frozen_level.as_deref() {
@@ -380,12 +419,34 @@ impl CredentialResolver for DbCredentialResolver {
             return Ok(None);
         }
         let hash = aurora_core::token::hash(token);
+        match self.cache.lookup(&hash) {
+            Lookup::Hit(i) => {
+                if self.health.as_ref().is_some_and(|h| h.is_degraded_fast()) {
+                    health::count_served("identity_cache");
+                }
+                return Ok(Some((*i).clone()));
+            }
+            Lookup::Denied => return Ok(None),
+            Lookup::Frozen(level) => return Err(ResolveError::Frozen { level }),
+            Lookup::Miss(_) => {}
+        }
+        // (RFE-014) Not cached and the database is unreachable: the gateway cannot tell an
+        // invalid token from an unreadable store, so it refuses (never 407) without asking.
+        if self.health.as_ref().is_some_and(|h| h.db_unreachable()) {
+            return Err(ResolveError::DatabaseUnavailable);
+        }
+        // Misses are coalesced per credential: one database read, the others wait for its
+        // result (a flush right after a reconnect turns every entry into a miss).
+        let _flight = self.flights.enter(&hash).await;
         let gen_seen = match self.cache.lookup(&hash) {
             Lookup::Hit(i) => return Ok(Some((*i).clone())),
             Lookup::Denied => return Ok(None),
             Lookup::Frozen(level) => return Err(ResolveError::Frozen { level }),
             Lookup::Miss(g) => g,
         };
+        if self.health.as_ref().is_some_and(|h| h.db_unreachable()) {
+            return Err(ResolveError::DatabaseUnavailable);
+        }
         let found = match self.load(&hash).await {
             Err(ResolveError::Frozen { level }) => {
                 self.cache.store_frozen(hash, level, gen_seen);
@@ -408,7 +469,7 @@ impl CredentialResolver for DbCredentialResolver {
     async fn resolve_credential(&self, id: Uuid) -> Result<Option<RequestIdentity>, ResolveError> {
         let Some(row) = repo::find_credential_identity_by_id(&self.pool, id)
             .await
-            .map_err(|e| ResolveError::Unavailable(e.to_string()))?
+            .map_err(|e| resolve_err(self.health.as_ref(), &e))?
         else {
             return Ok(None);
         };

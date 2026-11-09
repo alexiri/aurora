@@ -3,7 +3,7 @@
 
 use crate::apps::ConnCand;
 use crate::auth::RequestIdentity;
-use crate::invalidation::{Invalidatable, Invalidate, Scope};
+use crate::invalidation::{CacheStats, Invalidatable, Invalidate, Scope};
 use crate::snapshot::{Loaded, SnapshotStore};
 use async_trait::async_trait;
 use aurora_db::repo::gateway::{
@@ -115,6 +115,14 @@ pub struct DbConnection {
 #[error("resolution failed: {0}")]
 pub struct ResolveFailure(pub String);
 
+impl ResolveFailure {
+    /// (RFE-014) The failure is a connection-class database error, or the database is known to be
+    /// unreachable: answered 503 `gateway_degraded`.
+    pub fn is_db_unavailable(&self) -> bool {
+        crate::health::is_marked_db_err(&self.0)
+    }
+}
+
 /// Where the policy view comes from (the database in production).
 #[async_trait]
 pub trait PolicySource: Send + Sync + 'static {
@@ -156,17 +164,17 @@ impl PolicySource for DbSource {
     async fn scope_policy(&self, org: Uuid, ws: Option<Uuid>) -> Result<ScopePolicyRows, String> {
         repo::load_scope_policy(&self.0, org, ws)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| crate::health::db_err(&e))
     }
     async fn secrets(&self, org: Uuid, ws: Uuid) -> Result<Vec<SecretMetaRow>, String> {
         repo::active_secrets(&self.0, org, ws)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| crate::health::db_err(&e))
     }
     async fn slugs(&self, ws: Uuid) -> Result<Option<(String, String)>, String> {
         repo::scope_slugs(&self.0, ws)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| crate::health::db_err(&e))
     }
     async fn connections(
         &self,
@@ -176,17 +184,17 @@ impl PolicySource for DbSource {
     ) -> Result<Vec<AppConnectionRow>, String> {
         repo::app_connections(&self.0, org, ws, app_ids)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| crate::health::db_err(&e))
     }
     async fn app_availability(&self, org: Uuid, ws: Uuid) -> Result<(bool, Vec<String>), String> {
         repo::app_availability(&self.0, org, ws)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| crate::health::db_err(&e))
     }
     async fn instances(&self, org: Uuid) -> Result<Vec<InstanceHostRow>, String> {
         repo::visible_instances(&self.0, org)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| crate::health::db_err(&e))
     }
     async fn connection(
         &self,
@@ -196,7 +204,7 @@ impl PolicySource for DbSource {
     ) -> Result<Option<AppConnectionRow>, String> {
         repo::app_connection_by_id(&self.0, org, ws, id)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| crate::health::db_err(&e))
     }
 }
 
@@ -288,6 +296,7 @@ struct Key {
 struct Entry {
     value: Arc<ResolvedHost>,
     expires: Instant,
+    born: Instant,
 }
 
 #[derive(Default)]
@@ -303,6 +312,8 @@ pub struct Resolver {
     cache: Arc<ResolveCache>,
     governance: Option<Arc<crate::governance::Governance>>,
     snapshots: Option<Arc<SnapshotStore>>,
+    health: Option<Arc<crate::health::Health>>,
+    flights: crate::coalesce::Coalescer<Key>,
 }
 
 /// The invalidatable part (registered with the hub).
@@ -332,6 +343,17 @@ impl Invalidatable for ResolveCache {
             g.map.clear();
         }
     }
+
+    fn stats(&self) -> CacheStats {
+        let Ok(g) = self.inner.lock() else {
+            return CacheStats::default();
+        };
+        let now = Instant::now();
+        CacheStats {
+            entries: g.map.len(),
+            oldest_age: g.map.values().map(|e| now - e.born).max(),
+        }
+    }
 }
 
 impl Resolver {
@@ -351,7 +373,15 @@ impl Resolver {
             cache: Arc::new(ResolveCache::default()),
             governance: None,
             snapshots: None,
+            health: None,
+            flights: crate::coalesce::Coalescer::default(),
         }
+    }
+
+    /// (RFE-014) Reports outages and refuses cache misses while the database is unreachable.
+    pub fn with_health(mut self, h: Arc<crate::health::Health>) -> Self {
+        self.health = Some(h);
+        self
     }
 
     /// Apply org governance (08 §11): egress posture as the org uncredentialed default and
@@ -383,7 +413,18 @@ impl Resolver {
         id: &RequestIdentity,
         conn_id: Uuid,
     ) -> Result<Option<DbConnection>, ResolveFailure> {
-        let fail = |e: String| ResolveFailure(e);
+        if self.health.as_ref().is_some_and(|h| h.db_unreachable()) {
+            return Err(ResolveFailure(crate::health::db_unreachable_err()));
+        }
+        let health = &self.health;
+        let fail = |e: String| {
+            if crate::health::is_marked_db_err(&e)
+                && let Some(h) = health
+            {
+                h.report_db_error();
+            }
+            ResolveFailure(e)
+        };
         let Some(row) = self
             .source
             .connection(id.org_id, id.workspace_id, conn_id)
@@ -427,18 +468,25 @@ impl Resolver {
                 .and_then(|s| s.current())
                 .map(|l| l.hash.clone()),
         };
-        let gen_seen = {
-            let Ok(mut g) = self.cache.inner.lock() else {
-                return self.load(&key).await.map(Arc::new);
-            };
-            if let Some(e) = g.map.get(&key) {
-                if e.expires > Instant::now() {
-                    return Ok(e.value.clone());
-                }
-                g.map.remove(&key);
-            }
-            g.generation
+        let gen_seen = match self.lookup(&key) {
+            Ok(v) => return Ok(v),
+            Err(Some(g)) => g,
+            Err(None) => return self.load(&key).await.map(Arc::new),
         };
+        // (RFE-014) No entry within TTL and the database is unreachable: refuse without asking.
+        if self.health.as_ref().is_some_and(|h| h.db_unreachable()) {
+            return Err(ResolveFailure(crate::health::db_unreachable_err()));
+        }
+        // Misses are coalesced per key: one database read, the others wait for its result.
+        let _flight = self.flights.enter(&key).await;
+        let gen_seen = match self.lookup(&key) {
+            Ok(v) => return Ok(v),
+            Err(Some(g)) => g,
+            Err(None) => gen_seen,
+        };
+        if self.health.as_ref().is_some_and(|h| h.db_unreachable()) {
+            return Err(ResolveFailure(crate::health::db_unreachable_err()));
+        }
         let value = Arc::new(self.load(&key).await?);
         if let Ok(mut g) = self.cache.inner.lock()
             && g.generation == gen_seen
@@ -451,14 +499,41 @@ impl Resolver {
                 Entry {
                     value: value.clone(),
                     expires: Instant::now() + self.ttl,
+                    born: Instant::now(),
                 },
             );
         }
         Ok(value)
     }
 
+    /// `Ok` = a live entry; `Err(Some(generation))` = a miss; `Err(None)` = the cache lock is
+    /// poisoned (load without caching).
+    fn lookup(&self, key: &Key) -> Result<Arc<ResolvedHost>, Option<u64>> {
+        let Ok(mut g) = self.cache.inner.lock() else {
+            return Err(None);
+        };
+        if let Some(e) = g.map.get(key) {
+            if e.expires > Instant::now() {
+                if self.health.as_ref().is_some_and(|h| h.is_degraded_fast()) {
+                    crate::health::count_served("resolved_host");
+                }
+                return Ok(e.value.clone());
+            }
+            g.map.remove(key);
+        }
+        Err(Some(g.generation))
+    }
+
     async fn load(&self, k: &Key) -> Result<ResolvedHost, ResolveFailure> {
-        let fail = |e: String| ResolveFailure(e);
+        let health = &self.health;
+        let fail = |e: String| {
+            if crate::health::is_marked_db_err(&e)
+                && let Some(h) = health
+            {
+                h.report_db_error();
+            }
+            ResolveFailure(e)
+        };
         let org_rows = self.source.scope_policy(k.org, None).await.map_err(fail)?;
         let ws_rows = self
             .source

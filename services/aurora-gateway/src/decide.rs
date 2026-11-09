@@ -55,6 +55,9 @@ pub struct PolicyHandler {
     summarizer: Option<Arc<dyn crate::summarize_client::Summarizer>>,
     /// Body prefix buffered for condition evaluation (`gateway.condition_body_bytes`).
     condition_body_limit: usize,
+    /// (RFE-014) Outage state: churn writes are skipped and refresh failures map to
+    /// `gateway_degraded` while the database is unreachable.
+    health: Option<Arc<crate::health::Health>>,
 }
 
 pub struct PolicyHandlerParts {
@@ -313,7 +316,19 @@ impl PolicyHandler {
             tokens: None,
             summarizer: None,
             condition_body_limit: CONDITION_BODY_BUFFER,
+            health: None,
         }
+    }
+
+    /// (RFE-014) Attach the outage state.
+    #[must_use]
+    pub fn with_health(mut self, h: Arc<crate::health::Health>) -> Self {
+        self.health = Some(h);
+        self
+    }
+
+    fn db_down(&self) -> bool {
+        self.health.as_ref().is_some_and(|h| h.db_unreachable())
     }
 
     /// Set the condition body buffer (`gateway.condition_body_bytes`). Never below
@@ -349,6 +364,10 @@ impl PolicyHandler {
     }
 
     fn touch(&self, secret_id: Uuid) {
+        // (RFE-014) `last_used_at` writes are skipped while the database is unreachable.
+        if self.db_down() {
+            return;
+        }
         let Some(pool) = self.touch_pool.clone() else {
             return;
         };
@@ -505,10 +524,7 @@ impl RequestHandler for PolicyHandler {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(error = %e, "policy resolution failed");
-                let err = ApiError::unavailable(
-                    "policy_unavailable",
-                    "Policy cannot be evaluated right now. Retry shortly.",
-                );
+                let err = policy_unavailable(&e);
                 return Outcome::Respond(self.refuse(ctx, &err, "error"));
             }
         };
@@ -781,10 +797,14 @@ impl RequestHandler for PolicyHandler {
                     return Outcome::Respond(guidance::restarting());
                 }
                 HoldOutcome::StoreUnavailable => {
+                    if self.db_down() {
+                        crate::health::count_refused("approval_store_unavailable");
+                    }
                     let err = ApiError::unavailable(
                         "approval_store_unavailable",
                         "The approval store is unavailable. Retry shortly.",
-                    );
+                    )
+                    .with_details(json!({ "reason": "database_unavailable" }));
                     return Outcome::Respond(self.refuse(ctx, &err, "error"));
                 }
             }
@@ -896,6 +916,10 @@ impl RequestHandler for PolicyHandler {
                         "The secret store is unreachable. Retry shortly.",
                     )
                     .with_details(json!({ "store_id": store_id }));
+                    return Outcome::Respond(self.refuse(ctx, &err, "error"));
+                }
+                Err(PlaintextError::DatabaseUnavailable) => {
+                    let err = guidance::gateway_degraded("credential_store_unavailable");
                     return Outcome::Respond(self.refuse(ctx, &err, "error"));
                 }
                 Err(PlaintextError::Unavailable) => return unavailable(self, ctx),
@@ -1019,6 +1043,10 @@ impl RequestHandler for PolicyHandler {
                         "The secret store is unreachable. Retry shortly.",
                     )
                     .with_details(json!({ "store_id": store_id }));
+                    return Outcome::Respond(self.refuse(ctx, &err, "error"));
+                }
+                Err(PlaintextError::DatabaseUnavailable) => {
+                    let err = guidance::gateway_degraded("credential_store_unavailable");
                     return Outcome::Respond(self.refuse(ctx, &err, "error"));
                 }
                 Err(PlaintextError::Unavailable) => {
@@ -1184,6 +1212,11 @@ impl RequestHandler for PolicyHandler {
                     "The secret store is unreachable. Retry shortly.",
                 )));
             }
+            Err(PlaintextError::DatabaseUnavailable) => {
+                return Err(DbOpenError::Unavailable(guidance::gateway_degraded(
+                    "credential_store_unavailable",
+                )));
+            }
             Err(PlaintextError::Unavailable) => {
                 return Err(DbOpenError::Unavailable(credential_unavailable(
                     "connection",
@@ -1255,10 +1288,7 @@ impl RequestHandler for PolicyHandler {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(error = %e, "policy resolution failed");
-                let err = ApiError::unavailable(
-                    "policy_unavailable",
-                    "Policy cannot be evaluated right now. Retry shortly.",
-                );
+                let err = policy_unavailable(&e);
                 self.refuse(ctx, &err, "error");
                 return OpenLaneDecision::Deny(err);
             }
@@ -1481,6 +1511,11 @@ impl PolicyHandler {
                 "The secret store is unreachable. Retry shortly.",
             )
             .with_details(json!({ "store_id": store_id })),
+            // (RFE-014) A refresh needs the database; while it is unreachable the request is
+            // refused as degraded, not as a broken credential.
+            RefreshError::Unavailable if self.db_down() => {
+                guidance::gateway_degraded("credential_store_unavailable")
+            }
             RefreshError::Unavailable => credential_unavailable("connection"),
         }
     }
@@ -1570,10 +1605,7 @@ impl DbAuthorizer for DbSession {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(error = %e, "policy resolution failed");
-                let err = ApiError::unavailable(
-                    "policy_unavailable",
-                    "Policy cannot be evaluated right now. Retry shortly.",
-                );
+                let err = policy_unavailable(&e);
                 h.refuse(ctx, &err, "error");
                 return DbVerdict::Unavailable(err);
             }
@@ -1728,6 +1760,19 @@ fn pass_challenge(m: Option<&apps::AppMatch<'_>>) -> bool {
             .passthrough
             .contains(&aurora_registry::manifest::Passthrough::RegistryTokenChallenge)
     })
+}
+
+/// The refusal of a failed policy resolution: 503 `gateway_degraded` when the database is
+/// unreachable (RFE-014), else 503 `policy_unavailable`.
+fn policy_unavailable(e: &crate::resolve::ResolveFailure) -> ApiError {
+    if e.is_db_unavailable() {
+        guidance::gateway_degraded("database_unavailable")
+    } else {
+        ApiError::unavailable(
+            "policy_unavailable",
+            "Policy cannot be evaluated right now. Retry shortly.",
+        )
+    }
 }
 
 fn credential_unavailable(kind: &str) -> ApiError {

@@ -53,6 +53,8 @@ pub struct ByoParts {
     pub external_url: String,
     /// Live-tunnel registry (closes BYO tunnels when their admission changes).
     pub tunnels: Option<Arc<crate::byo::TunnelRegistry>>,
+    /// (phase 3, RFE-014) Outage state: new connections are refused while `down`.
+    pub health: Option<Arc<crate::health::Health>>,
 }
 
 #[derive(Default)]
@@ -203,6 +205,14 @@ impl Proxy {
         &self,
         headers: &HeaderMap,
     ) -> Result<(Arc<RequestIdentity>, Lane), ApiError> {
+        // (RFE-014, `down`) No snapshot loaded or draining: new connections are refused first,
+        // whatever the credential.
+        if let Some(r) = self.byo.health.as_ref().and_then(|h| h.down_reason()) {
+            return Err(match r {
+                crate::health::Reason::Draining => guidance::restarting_error(),
+                _ => guidance::gateway_degraded("snapshot_not_loaded"),
+            });
+        }
         let Some((lane, token)) = parse_proxy_authorization(headers) else {
             return Err(guidance::proxy_auth_required());
         };
@@ -212,6 +222,11 @@ impl Proxy {
             Err(crate::auth::ResolveError::Frozen { level }) => {
                 metrics::counter!("aurora_gateway_frozen_refused_total").increment(1);
                 Err(guidance::frozen(level))
+            }
+            // (RFE-014) The gateway cannot tell an invalid token from an unreadable store: 503,
+            // never 407.
+            Err(crate::auth::ResolveError::DatabaseUnavailable) => {
+                Err(guidance::gateway_degraded("database_unavailable"))
             }
             Err(e) => {
                 tracing::warn!(error = %e, "credential resolution failed");

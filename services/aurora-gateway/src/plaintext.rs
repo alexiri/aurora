@@ -2,7 +2,8 @@
 //! (docs/06 §Caches and invalidation). Plaintext is fetched lazily, after policy.
 
 use crate::apps::ConnCand;
-use crate::invalidation::{Invalidatable, Invalidate, Scope};
+use crate::health::Health;
+use crate::invalidation::{CacheStats, Invalidatable, Invalidate, Scope};
 use crate::resolve::SecretCand;
 use aurora_core::Secret;
 use aurora_secrets::{Purpose, SealContext, SecretError, SecretVault};
@@ -20,6 +21,9 @@ pub enum PlaintextError {
     StoreUnavailable(String),
     /// Anything else (missing value, malformed ref, ...).
     Unavailable,
+    /// (phase 3, RFE-014) Not cached, the value lives in the platform database and that is
+    /// unreachable: 503 `gateway_degraded` (`credential_store_unavailable`).
+    DatabaseUnavailable,
 }
 
 struct Entry {
@@ -27,12 +31,14 @@ struct Entry {
     org: Uuid,
     workspace: Option<Uuid>,
     expires: Instant,
+    born: Instant,
 }
 
 pub struct PlaintextCache {
     vault: Arc<SecretVault>,
     ttl: Duration,
     map: Mutex<HashMap<(String, i64), Entry>>,
+    health: Option<Arc<Health>>,
 }
 
 impl PlaintextCache {
@@ -45,7 +51,15 @@ impl PlaintextCache {
             vault,
             ttl,
             map: Mutex::new(HashMap::new()),
+            health: None,
         }
+    }
+
+    /// (RFE-014) Refuses an uncached inline value while the database is unreachable.
+    #[must_use]
+    pub fn with_health(mut self, h: Arc<Health>) -> Self {
+        self.health = Some(h);
+        self
     }
 
     pub async fn get(&self, c: &SecretCand) -> Result<Arc<Secret<Vec<u8>>>, PlaintextError> {
@@ -83,9 +97,17 @@ impl PlaintextCache {
             && let Some(e) = m.get(&key)
         {
             if e.expires > Instant::now() {
+                if self.health.as_ref().is_some_and(|h| h.is_degraded_fast()) {
+                    crate::health::count_served("plaintext_cache");
+                }
                 return Ok(e.value.clone());
             }
             m.remove(&key);
+        }
+        // (RFE-014) An inline value (and every refresh) needs the platform database; an
+        // external store does not and is tried as usual.
+        if vref.store_id().is_none() && self.health.as_ref().is_some_and(|h| h.db_unreachable()) {
+            return Err(PlaintextError::DatabaseUnavailable);
         }
         let value = match self.vault.open(ctx, vref).await {
             Ok(v) => Arc::new(v),
@@ -110,6 +132,7 @@ impl PlaintextCache {
                     org: ctx.org_id,
                     workspace: ctx.workspace_id,
                     expires: Instant::now() + self.ttl,
+                    born: Instant::now(),
                 },
             );
         }
@@ -131,6 +154,17 @@ impl Invalidatable for PlaintextCache {
     fn flush_all(&self) {
         if let Ok(mut m) = self.map.lock() {
             m.clear();
+        }
+    }
+
+    fn stats(&self) -> CacheStats {
+        let Ok(m) = self.map.lock() else {
+            return CacheStats::default();
+        };
+        let now = Instant::now();
+        CacheStats {
+            entries: m.len(),
+            oldest_age: m.values().map(|e| now - e.born).max(),
         }
     }
 }

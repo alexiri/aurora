@@ -7,6 +7,7 @@
 
 use crate::apps::AppMatch;
 use crate::auth::RequestIdentity;
+use crate::health::Health;
 use crate::hygiene::AuroraHeaders;
 use crate::invalidation::{Hub, stopped};
 use crate::snapshot::Loaded;
@@ -16,7 +17,7 @@ use aurora_db::repo::gateway::{self as repo, NewApproval};
 use aurora_summary::ApprovalSummary;
 use aurora_summary::template;
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::Instant;
 use uuid::Uuid;
@@ -167,6 +168,11 @@ pub struct Holds {
     max_timeout: Duration,
     poll: Duration,
     shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+    /// (RFE-014) Outage state: no hold is recorded while the database is unreachable.
+    health: Option<Arc<Health>>,
+    /// (RFE-014) Holds answered `manual_approval_expired` while the database was down: their
+    /// rows are expired on recovery (`UPDATE ... WHERE status = 'pending'`, retried).
+    unexpired: Mutex<Vec<(Uuid, Uuid)>>,
 }
 
 /// Marks the hold `abandoned` if the request future is dropped (client gone).
@@ -215,6 +221,82 @@ impl Holds {
             max_timeout: aurora_core::limits::APPROVAL_TIMEOUT_MAX,
             poll: POLL_INTERVAL,
             shutdown,
+            health: None,
+            unexpired: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// (RFE-014) Refuses new holds while the database is unreachable and reconciles the rows of
+    /// holds that expired without it.
+    #[must_use]
+    pub fn with_health(mut self, h: Arc<Health>) -> Self {
+        self.health = Some(h);
+        self
+    }
+
+    fn db_down(&self) -> bool {
+        self.health.as_ref().is_some_and(|h| h.db_unreachable())
+    }
+
+    fn report(&self, e: &aurora_db::DbError) {
+        if let Some(h) = &self.health
+            && crate::health::is_db_connection_error(e)
+        {
+            h.report_db_error();
+        }
+    }
+
+    /// Rows still to be expired after an outage (hold id, workspace id).
+    pub fn pending_expiry(&self) -> usize {
+        self.unexpired.lock().map_or(0, |u| u.len())
+    }
+
+    /// Expires the rows of holds that timed out while the database was down; what fails stays
+    /// queued for the next attempt. Idempotent: a row decided meanwhile is left alone.
+    pub async fn reconcile(&self) {
+        let todo: Vec<(Uuid, Uuid)> = match self.unexpired.lock() {
+            Ok(mut u) => std::mem::take(&mut *u),
+            Err(_) => return,
+        };
+        let mut failed = Vec::new();
+        for (id, ws) in todo {
+            match repo::expire_approval(&self.pool, id).await {
+                Ok(true) => self.emit(id, ws, "expired").await,
+                Ok(false) => {}
+                Err(e) => {
+                    self.report(&e);
+                    failed.push((id, ws));
+                }
+            }
+        }
+        if !failed.is_empty()
+            && let Ok(mut u) = self.unexpired.lock()
+        {
+            u.extend(failed);
+        }
+    }
+
+    /// Retries [`Holds::reconcile`] every `interval` while rows are queued and at once when the
+    /// database recovers, until `shutdown`.
+    pub async fn run_reconcile(
+        self: Arc<Self>,
+        interval: Duration,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) {
+        loop {
+            tokio::select! {
+                () = stopped(&mut shutdown) => return,
+                () = tokio::time::sleep(interval) => {}
+                () = async {
+                    match &self.health {
+                        Some(h) => h.wait_recovered().await,
+                        None => std::future::pending().await,
+                    }
+                } => {}
+            }
+            if self.pending_expiry() > 0 && !self.db_down() {
+                self.reconcile().await;
+            }
         }
     }
 
@@ -278,6 +360,10 @@ impl Holds {
 
     /// Records the hold and waits for its resolution.
     pub async fn hold(&self, r: HoldRequest<'_>) -> HoldOutcome {
+        // (RFE-014) A new hold cannot be persisted while the database is unreachable.
+        if self.db_down() {
+            return HoldOutcome::StoreUnavailable;
+        }
         let id = Uuid::now_v7();
         let ws = r.identity.workspace_id;
         let timeout = self.effective_timeout(r.rule_timeout_secs);
@@ -310,6 +396,7 @@ impl Holds {
         };
         if let Err(e) = repo::insert_approval(&self.pool, &row).await {
             tracing::error!(error = %e, "approval insert failed");
+            self.report(&e);
             return HoldOutcome::StoreUnavailable;
         }
         let mut guard = AbandonOnDrop {
@@ -337,6 +424,12 @@ impl Holds {
                     break HoldOutcome::Restarting;
                 }
                 () = tokio::time::sleep_until(deadline) => {
+                    // (RFE-014) The database is down: the hold expires in memory, its row on
+                    // recovery. A failed poll is never read as a decision.
+                    if self.db_down() {
+                        self.queue_expiry(id, ws);
+                        break HoldOutcome::Expired(id);
+                    }
                     match repo::expire_approval(&self.pool, id).await {
                         Ok(true) => {
                             self.emit(id, ws, "expired").await;
@@ -350,15 +443,22 @@ impl Holds {
                                 _ => HoldOutcome::Expired(id),
                             };
                         }
-                        // Fail closed; the API sweeper expires the row.
+                        // Fail closed; the row is expired on recovery (and by the API sweeper).
                         Err(e) => {
                             tracing::warn!(error = %e, approval_id = %id, "expiring approval failed");
+                            self.report(&e);
+                            self.queue_expiry(id, ws);
                             break HoldOutcome::Expired(id);
                         }
                     }
                 }
                 () = waiter.wait() => {}
                 () = tokio::time::sleep(self.poll) => {}
+            }
+            // While the database is down the poll is not attempted (it cannot answer); the
+            // hold keeps waiting until its deadline.
+            if self.db_down() {
+                continue;
             }
             match repo::get_approval_status(&self.pool, id).await {
                 Ok(Some(s)) => {
@@ -367,11 +467,20 @@ impl Holds {
                     }
                 }
                 Ok(None) => break HoldOutcome::StoreUnavailable,
-                Err(e) => tracing::warn!(error = %e, approval_id = %id, "approval poll failed"),
+                Err(e) => {
+                    tracing::warn!(error = %e, approval_id = %id, "approval poll failed");
+                    self.report(&e);
+                }
             }
         };
         guard.armed = false;
         out
+    }
+
+    fn queue_expiry(&self, id: Uuid, ws: Uuid) {
+        if let Ok(mut u) = self.unexpired.lock() {
+            u.push((id, ws));
+        }
     }
 
     /// Safety net at shutdown: abandon anything still pending for this instance.

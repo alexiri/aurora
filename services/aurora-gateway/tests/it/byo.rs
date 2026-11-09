@@ -285,6 +285,7 @@ async fn start(trusted: &[&str]) -> Env {
             trusted_proxies: trusted.iter().map(|c| Cidr::parse(c).unwrap()).collect(),
             external_url: "https://aurora.test".into(),
             tunnels: Some(tunnels.clone()),
+            ..ByoParts::default()
         },
     )
     .unwrap();

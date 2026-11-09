@@ -67,6 +67,11 @@ pub enum ResolveError {
     /// Backing store unreachable; the request is answered 503.
     #[error("credential store unavailable: {0}")]
     Unavailable(String),
+    /// (phase 3, RFE-014) The database is unreachable (connection-class failure, or known to be
+    /// down): answered 503 `gateway_degraded`, never 407 (`06 §Operation during a Postgres
+    /// outage`).
+    #[error("database unavailable")]
+    DatabaseUnavailable,
     /// (phase 2, RFE-006) The credential is valid but its agent is effectively frozen (agent,
     /// workspace or org flag; `level` = where the broadest one is set). Answered 403 `frozen`.
     #[error("agent is frozen at the {level} level")]
