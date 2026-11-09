@@ -14,9 +14,9 @@ Counted from the task tables below. The coordinator updates this table at every 
 | 1 | 15 | 15 | 0 | 0 | 0 | 0 | §Phase 1 and 2 task graph (phase 1 rows) |
 | 2 | 52 | 51 | 1 (FIX-017: owner real-cluster install) | 0 | 0 | 0 | §Phase 2: remaining tasks |
 | 3 | 13 | 12 | 1 (AUDIT-003) | 0 | 0 | 0 | §Phase 3 tasks |
-| 4 | 18 | 0 | 1 (SPEC-P4: SPEC-P4a) | 0 | 15 | 2 (P4-NARR, P4-UTOK unscheduled, Q11) | §Phase 4 tasks |
+| 4 | 21 | 0 | 2 (P4-MCON-1, SPEC-P4: SPEC-P4a) | 2 (P4-MCON-2, P4-MCON-3) | 15 | 2 (P4-NARR, P4-UTOK unscheduled, Q11) | §Phase 4 tasks |
 | 5 | 3 | 0 | 0 | 0 | 2 (OPS-021, P5-SLACK) | 1 (OPS-022 deferred) | §Phase 5 tasks |
-| **All** | **213** | **185** | **3** | **0** | **17** | **8** | |
+| **All** | **216** | **185** | **4** | **2** | **17** | **8** | |
 
 **Phase 2 build work is complete (48/48, 2026-11-09).** AUDIT-002 (`docs/audit/phase2-exit.md`) found every runnable check green; its defect (F-1 → FIX-014) and doc findings (F-2..F-7) are closed. Not evidenced, pending the owner: the real-cluster Helm install and project-key signing (no cluster; CI-only key), and GitHub CI itself (replaced by local runs, owner-accepted). **Phase 3 started 2026-11-09** on the owner's "go on, don't stop". The open questions went to the coordinator's recommendations: the real-cluster install and real-key signing stay recorded as known gaps; chat v2 gets a compact header (P2-UI-5b); both sides of the chat render as Markdown (owner, 2026-11-09); image visibility waits for CI to return. CI on GitHub is not running (see §Blockers), so local verification is the merge gate.
 Ids per decision I-01. Task briefs live in `docs/tasks/<ID>.md`. Milestones
@@ -333,6 +333,9 @@ Start after AUDIT-002 (owner: phases 3 and 4 start when 1 and 2 are done; they m
 
 | Task | Scope (one line) | Spec sources | Size | Lane | Depends on | Owns | Brief | Status |
 |---|---|---|---|---|---|---|---|---|
+| P4-MCON-1 | Managed connectors, API side: migration, `instance_setup` on the manifest, admin create/PATCH/catalogue, connector-host plane (`auh_`, register, assignments, status), delegated auth, sealed write-only settings, OpenAPI | owner 2026-11-09 (first part of phase 4), D-128, `13 §3.1`, C-450..C-459, SEC-69, SEC-70 | M–L | Rust | — (spec written by the coordinator) | api `domains/connectors`, `aurora-db` migration + repos, `aurora-protocol`, `aurora-secrets` purpose, OpenAPI + `schema.d.ts` | `docs/tasks/P4-MCON-1.md` | in-progress (lane p4-mcon-1) |
+| P4-MCON-2 | Managed connectors: `aurora-connector-host` service, built-in types runnable in it (Mattermost, fake), SDK delegated auth, image, Helm `connectorHost` (token, routing `/connectors`, NetworkPolicy), kind e2e round trip, operator docs | D-128, `13 §3.1`, `15`, `18` | L | Rust/ops | P4-MCON-1 | `crates/aurora-connector-sdk`, `connectors/*`, `services/aurora-connector-host`, `deploy/**`, images, `docs/operator/**` | `docs/tasks/P4-MCON-2.md` | todo |
+| P4-MCON-3 | Managed connectors: dashboard (Admin → Connectors: add flow, settings with secrets, enable/disable, approval, self-hosted advanced path) | D-128, `14 §Admin: connectors` | M | Next.js | P4-MCON-1 | `web/src/components/connectors/**`, `web/src/app/admin/connectors/**` | `docs/tasks/P4-MCON-3.md` | todo |
 | P4-GRANTS | App-level manifest option "custom grants only": forbid `full` grants (or always block untooled requests) for apps whose token is broad, such as Indico's `full:everything` (owner, 2026-11-08, D-84 Q-C; pairs with Q8 parameter-level matching) | D-84, `09 §3`, `07` | M | Rust + docs | SPEC-P4 | `09 §3`, registry/policy | needed (in SPEC-P4) | planned |
 | SPEC-P4 | Normative spec for the owner-selected phase-4 items and RFE-011b: `03 §Planned changes`, routes, limits, config keys, SEC invariants, `18` tests (shape of SPEC-RFE-P3) | `21 §Phase 4`, `80 §RFE-011`, `19 §Phase 4+` | L | docs (Sonnet + Opus review) | AUDIT-002; Q10 | `docs/0*`, `docs/1*`, `docs/21`, `docs/90` (new decisions) | split per batch: `docs/tasks/SPEC-P4a.md` (P4-CNT, P4-S3, P4-LLM, P4-HAR, P4-GRANTS + Q8; D-119..D-126, SEC-62..SEC-68, C-400..C-449 reserved); SPEC-P4b (groups/SCIM, RFE-011b) and SPEC-P4c (SSH, previews, evals, git skill library) follow | in-progress (lane spec-p4a) |
 | P4-011B | Approval park-and-resume and Web Push | `80 §RFE-011` Decision, `07`, `14` | L | both | SPEC-P4 | approvals/due-work park path, gateway hold, web push (service worker) | needed after SPEC-P4 | todo |
@@ -405,6 +408,7 @@ Collisions serialized: **P3-013 after P3-014** (both rewrite gateway credential 
 
 | Batch | Lanes | Starts when |
 |---|---|---|
+| P4-MCON | P4-MCON-1, then P4-MCON-2 and P4-MCON-3 in parallel (owner: first part of phase 4) | spec written (D-128) |
 | P4-B0 | SPEC-P4 (docs) | AUDIT-002; Q10 |
 | P4-B1 | P4-CNT, P4-S3, P4-LLM | SPEC-P4 merged |
 | P4-B2 | P4-GRP-1, P4-011B, P4-HAR | P4-HAR after P4-LLM |

@@ -125,6 +125,7 @@ logged. The first 12 characters (prefix + 8) are stored separately for display.
 | `aur_` | Runner anchor token | once (operator) |
 | `aun_` | Connector anchor token | once (instance admin) |
 | `aut_` | SSH terminator anchor token (phase 4) | once (operator) |
+| `auh_` | Connector host anchor token (phase 4, P4-MCON) | never (generated into a Secret by the chart; `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN`) |
 | `auw_` | Webhook capability token (in URL path) | once |
 | `aus_` | Session cookie value | never (cookie) |
 | `aui_` | Invitation / email-link / account-link token | in the link only |

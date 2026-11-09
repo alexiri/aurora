@@ -250,6 +250,7 @@ overridden by the named configuration key (`15`).
 | `SANDBOX_DEFAULTS` | 2 GiB RAM, 1 CPU, 512 PIDs, 10 GiB home | `runner.sandbox_*` | 11 |
 | `RUNNER_MAX_SANDBOXES` | 4 | `runner.max_sandboxes` | 11 |
 | `CONNECTOR_OPS_WAIT` | 25 s | — | 13 |
+| `CONNECTOR_HOST_STALE` | (phase 4, P4-MCON) 90 s without a host `register` heartbeat: the host leaves the catalogue and `host_running`; assignments long poll ≤ 30 s; managed settings ≤ 16 KiB, secret value ≤ 8 KiB, host status message ≤ 300 chars | — | 13 |
 | `INBOX_LEASE` / `OP_LEASE` | 60 s / 60 s | — | 13 |
 | `OP_MAX_ATTEMPTS` | 10 (exponential backoff 2 s → 10 min) | — | 13 |
 | `CHANNEL_LEDGER_RETENTION` | 7 days | — | 13 |

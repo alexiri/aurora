@@ -349,6 +349,30 @@ done when its tests exist, pass in CI, and the security invariants it touches
   `credential_dead` → failed with `presence.deprovision_failed` audit and metric;
   shared presence enqueues nothing; org deletion does not touch the shared bot.
 
+### Managed connectors (phase 4, P4-MCON, SEC-69, SEC-70)
+- Catalogue: a host's `register` lists its types; a bad signature or `package.id` mismatch is
+  rejected and omitted; a host older than `CONNECTOR_HOST_STALE` drops out (`host_running`).
+- Add: managed create with the reviewed digest → `awaiting_registration`, no token; unknown type
+  422; stale digest 409; missing required field 422 per field; supplied `generated_secret` 422;
+  the generated value exists and differs per connector.
+- Secrets (SEC-70): no admin response, audit row or captured log line contains a secret or
+  generated value; PATCH replace / clear (required → 422) / regenerate bump the revision; a
+  failing store → 503 and nothing changed; delete discards the sealed values.
+- Delegated auth (SEC-69): `auh_` + `Aurora-Connector` works for a managed enabled connector;
+  401 for self-hosted, disabled, unknown id, missing header; `aun_` + header ignored; disabling
+  stops the connector being served and removes it from `assignments`.
+- Assignments: long poll returns on change and on timeout; defaults applied (`public_url`);
+  only types the calling host announced.
+- Host (`aurora-connector-host` tests): runs only compiled types; starts, restarts on a new
+  revision and stops instances; callbacks of two connectors served under their prefixes;
+  status reported, sanitized.
+- E2E: `scripts/e2e/kind.sh` adds the `fake` type through the admin API with the chart's host
+  (`connectorHost.testTypes`), creates an integration and completes one message round trip;
+  `channels.sh`/conformance unchanged for self-hosted connectors.
+- Web: vitest for the add flow (type list, review, settings form with secret and generated
+  fields, field errors, stale digest), detail edit/replace/regenerate/disable; Playwright
+  `stage4-routes` and `stage4-axe` cover the new screens in both themes and at 390 px.
+
 ### Channels
 - Core with the fake connector: every scenario of the connector conformance
   suite plus routing matrix (dedicated vs shared, DM default, bindings, listen

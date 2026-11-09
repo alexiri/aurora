@@ -45,7 +45,8 @@ if any declared id lacks an implementation.
 | CLI / scripts | `Authorization: Bearer auk_…|auo_…` | `/v1/**` except session-only |
 | BYO agent | `Authorization: Bearer aug_…` (agent token; phase 3, RFE-013: 401 `agent_token_expired` once past a configured maximum age) | only `POST /v1/agent/context-credentials` and `GET /v1/agent/container-config` |
 | Runner | `Authorization: Bearer aur_…` + `X-Aurora-Replica: <id>` (after register) | `/v1/runner/**` |
-| Connector | `Authorization: Bearer aun_…` + `X-Aurora-Replica` | `/v1/connector/**` |
+| Connector | `Authorization: Bearer aun_…` + `X-Aurora-Replica` (phase 4, P4-MCON: or the connector host's `auh_…` + `Aurora-Connector: <id>` for a **managed** connector, C-458) | `/v1/connector/**` |
+| Connector host (phase 4, P4-MCON) | `Authorization: Bearer auh_…` | `/v1/connector-host/**` (C-455..C-457) |
 | Public capability | token in path | `POST /v1/hooks/{token}`, `GET /v1/public/avatars/{key}`, `GET /v1/oauth/callback`, OIDC callbacks |
 | Internal services (hook host) | `Authorization: Bearer <internal secret>` (phase 2, RFE-007: any key of the ring + `X-Aurora-Key-Id`) | `/internal/v1/**` |
 | Metrics / health | none | `/healthz`, `/readyz`, `/metrics` |
@@ -572,7 +573,8 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | GET/POST `/v1/admin/plugins` (multipart upload); GET `/v1/admin/plugins/{id}`; POST `…/approve`, `…/reject`, `…/disable`, `…/enable`; DELETE `…?force=` | IA | (phase 3, RFE-022) GET `{id}` of a pending major upgrade carries `impact` (`09 §10`: `connections_needing_reauth`, `by_app`); `approve` activates and flips the failing connections to `reauth_required` in one transaction and returns the `PluginPackage` plus `connections_reauth: n` (phase 3, D-107) |
 | GET `/v1/admin/host-claims`; PUT `/v1/admin/host-claims/{claim_key}` | IA | conflicts and winners |
 | GET/POST/DELETE `/v1/admin/trusted-keys` | IA | |
-| GET/POST/DELETE `/v1/admin/connectors`; POST `…/{id}/approve`, `…/{id}/token` | IA | provision token, approve manifest |
+| GET/POST/DELETE `/v1/admin/connectors`; POST `…/{id}/approve`, `…/{id}/token` | IA | provision token, approve manifest. (phase 4, P4-MCON) `POST` with `managed: true` adds a managed connector (no token; settings, secrets, reviewed digest approved, C-451); PATCH `/v1/admin/connectors/{id}` edits settings, secrets, `enabled` (C-453); `…/token` on a managed connector → 409 `connector_managed` |
+| GET `/v1/admin/connector-types` | IA | (phase 4, P4-MCON) catalogue of built-in connector types announced by live connector hosts (C-450) |
 | GET/POST/DELETE `/v1/admin/runners`; POST `…/{id}/token` | IA | |
 | GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`) |
 | GET `/v1/admin/registry/snapshot` | IA | active snapshot (JSON) |
@@ -582,4 +584,6 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 
 ### Planes (machine callers)
 Runner plane `/v1/runner/*` and connector plane `/v1/connector/*` are specified
-in `16 §W5` and `13 §Connector contract`.
+in `16 §W5` and `13 §Connector contract`. (phase 4, P4-MCON) Connector-host plane
+`/v1/connector-host/*` (`register`, `assignments` long poll, `status`) is specified in
+`13 §3.1` and C-455..C-457.

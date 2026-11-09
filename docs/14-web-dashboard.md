@@ -552,8 +552,35 @@ permissions review screen showing publisher, version, signer, hooks, egress per
 hook, context variables, host claims, and the diff against the previously
 approved version; reject/disable/uninstall with orphan warnings), **Host
 claims** (conflicts and winners), **Trusted keys**, **Connectors** (provision,
-token rotation, manifest approval with capability/setup-field diff), **Runners**
+token rotation, manifest approval with capability/setup-field diff; (phase 4, P4-MCON) see
+below), **Runners**
 (provision, token, replicas, capacity), **Instances** (instance-wide app instances, D-74), **OAuth clients** (instance-level).
+
+#### Admin: connectors (phase 4, P4-MCON, `13 §3.1`)
+The Connectors page lists every connector as a card: icon and name, **Managed** or
+**Self-hosted** badge, status chip (`Waiting for the connector host` / `Running` /
+`Error` with the host's message / `Needs approval` / `Disabled`), the number of integrations,
+and for managed ones the hosts reporting it. The primary action is **Add connector**:
+1. **Choose a type**: cards from `GET /v1/admin/connector-types` (icon, name, publisher,
+   version, short description from the setup guide; types already added are shown as added).
+   No connector host running: an empty state that says so and links the operator doc. A
+   secondary link, **Self-hosted connector (advanced)**, opens the phase-0..3 provision flow
+   (id, name, one-time token dialog).
+2. **Review**: the manifest summary used by the approval screen (capabilities, public
+   callbacks, integration setup fields), publisher and signature state.
+3. **Settings**: a form generated from `instance_setup` with the shared form-field components
+   (the ones the Apps connect window uses): text/url/number inputs with their defaults as
+   placeholders, `secret` as password inputs, `generated_secret` as a read-only "Generated
+   automatically" line. Validation errors from the API map to their fields.
+4. **Add**: one request (C-451). A 409 `stale_manifest` reloads the type and returns to step 2.
+
+A managed connector's detail view has **Settings** (same form; a set secret shows "Set ·
+updated <date>" with **Replace** and, if optional, **Clear**; generated secrets have
+**Regenerate** with a confirmation), **Enable / Disable**, **Delete** (blocked with the
+integration count while in use), the host status list, and, in `pending_approval`, the manifest
+diff with **Approve**. No secret value is ever displayed after entry. Everything follows
+§Visual design (tokens, shared primitives and page patterns, both themes, no horizontal scroll
+at 390 px).
 
 ## Key flows
 

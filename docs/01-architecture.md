@@ -12,6 +12,7 @@
 | **Runner** | `aurora-runner` | Starts/parks/reaps sandboxes via a backend; relays supervisor traffic | 4105 (sandbox-facing WebSocket) | none | supervisors only |
 | **Supervisor** | `aurora-supervisor` (in sandbox image) | Harness driver, home projection, platform-tool bridge, process manager, loopback proxies | loopback only | home volume | nothing (dials runner) |
 | **Connector** (per platform) | `aurora-connector-<id>` | Chat platform transport, translation, provisioning | platform callbacks only (e.g. 4110) | none | its chat platform only |
+| **Connector host** (phase 4, P4-MCON) | `aurora-connector-host` | Runs the built-in connector types as **managed connectors** added from the dashboard (`13 §3.1`); speaks the connector contract on their behalf | 4110 platform callbacks (`/connectors/<id>/…` via the edge); 4192 health/metrics | none | edge (platform callbacks) |
 | **SSH terminator** (phase 4) | `aurora-terminator` | Certificate-authenticated SSH into sandboxes | 2222 | none | users |
 | **PostgreSQL** | — | System of record, queue, event bus | 5432 | yes | API, gateway |
 | **Migrations job** | `aurora-api migrate` | Forward-only schema migrations before API starts | — | — | — |

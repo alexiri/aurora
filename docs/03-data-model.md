@@ -1197,3 +1197,37 @@ tables above in the same change (and this section shrinks).
 |---|---|---|---|
 | status_reason | (existing column, open vocabulary) | gains the value `breaks_connections`: for a major upgrade held in `pending_approval` because it would set connections to `reauth_required` (`09 §10`) | 3 (RFE-022) |
 
+#### `connectors` (managed connectors)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| managed | bool not null default false | added from the dashboard and run by a connector host (`13 §3.1`) | 4 (P4-MCON) |
+| type_id | text null | managed only: the built-in type (= `id` in phase 4) | 4 (P4-MCON) |
+| settings | jsonb null | managed only: non-secret `instance_setup` values (≤ 16 KiB), validated on write | 4 (P4-MCON) |
+| secret_owner | uuid not null default gen_random_uuid() | owner id of the sealed settings (purpose `connector.settings`, org = nil UUID) | 4 (P4-MCON) |
+| secret_refs | jsonb not null default '{}' | field name → sealed reference; never a value | 4 (P4-MCON) |
+| token_hash | (existing) becomes **nullable** | a managed connector has no `aun_` | 4 (P4-MCON) |
+
+#### `connector_hosts` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| instance_id | uuid pk | host process instance | 4 (P4-MCON) |
+| version | text not null | | 4 (P4-MCON) |
+| types | jsonb not null | `[{type_id, manifest, manifest_digest}]` with verified signatures only | 4 (P4-MCON) |
+| last_seen_at | timestamptz not null | heartbeat (`register`); rows older than 24 h are pruned | 4 (P4-MCON) |
+
+#### `connector_host_tokens` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (P4-MCON) |
+| token_hash | bytea unique not null | `auh_`, from `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` | 4 (P4-MCON) |
+| created_at | timestamptz not null default now() | | 4 (P4-MCON) |
+
+#### `connector_host_status` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| connector_id | text fk → connectors on delete cascade | pk with `host_instance` | 4 (P4-MCON) |
+| host_instance | uuid | | 4 (P4-MCON) |
+| state | text CHECK in (`running`,`error`) | | 4 (P4-MCON) |
+| message | text null CHECK (char_length ≤ 300) | sanitized; never a secret | 4 (P4-MCON) |
+| updated_at | timestamptz not null | | 4 (P4-MCON) |
+
