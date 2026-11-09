@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod error;
+mod hashicorp;
 mod inline;
 #[cfg(feature = "memory-store")]
 mod memory;
@@ -13,6 +14,7 @@ mod store;
 mod vault;
 
 pub use error::{Result, SecretError};
+pub use hashicorp::VaultStore;
 pub use inline::InlineStore;
 #[cfg(feature = "memory-store")]
 pub use memory::MemoryStore;

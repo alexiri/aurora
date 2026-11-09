@@ -1429,6 +1429,18 @@ fn check_secret_stores(c: &mut Ctx, s: &SecretsSection) {
         if st.kind.is_empty() {
             c.err(format!("secrets.stores[{i}].kind"), "required");
         }
+        if st.kind == crate::vault_store::VAULT_KIND
+            && let Err(errs) = crate::vault_store::VaultSettings::parse(st)
+        {
+            for (k, m) in errs {
+                let key = if k.is_empty() {
+                    format!("secrets.stores[{i}]")
+                } else {
+                    format!("secrets.stores[{i}].{k}")
+                };
+                c.err(key, m);
+            }
+        }
     }
     if s.default_store != "inline" && !ids.contains(s.default_store.as_str()) {
         c.err(

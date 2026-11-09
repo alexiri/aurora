@@ -343,6 +343,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.21",
  "toml",
+ "uuid",
 ]
 
 [[package]]
@@ -755,11 +756,16 @@ dependencies = [
  "base64 0.22.1",
  "percent-encoding",
  "regex",
+ "reqwest 0.12.28",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "toml",
+ "tracing",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]

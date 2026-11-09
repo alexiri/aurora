@@ -1233,3 +1233,196 @@ fn phase1_oidc_only_startup_rules() {
         assert!(e.has_key("auth.dev_idp.enabled"), "{bad}: {e}");
     }
 }
+
+// ---- Vault store (P3-VLT-1; 15 Vault rows, C-370..C-375, SEC-61) ----
+
+const ORG: &str = "0190f6a2-7c1e-7b3a-9d4e-5f6a7b8c9d0e";
+
+fn vault(extra: &str) -> String {
+    format!(
+        "{BASE}[[secrets.stores]]\nid = \"vault-prod\"\nkind = \"hashicorp-vault\"\naddress = \"https://vault.example.org:8200\"\nauth = {{ method = \"kubernetes\", role = \"aurora\" }}\n{extra}"
+    )
+}
+
+fn vault_err(extra: &str) -> aurora_config::ConfigErrors {
+    load_with(&vault(extra), &[])
+        .unwrap()
+        .api_config()
+        .unwrap_err()
+}
+
+#[test]
+fn vault_store_defaults_and_valid_scopes() {
+    let raw = load_with(
+        &vault(&format!(
+            "[[secrets.stores.reference_scopes]]\norg_id = \"{ORG}\"\npaths = [\"teams/physics/*\", \"shared/openai\"]\n[[secrets.stores.reference_scopes]]\norg_id = \"{ORG}\"\npaths = [\"more/*\"]\n"
+        )),
+        &[],
+    )
+    .unwrap();
+    raw.api_config().unwrap();
+    raw.gateway_config().unwrap();
+    let s = aurora_config::VaultSettings::parse(&raw.secrets.stores[0]).unwrap();
+    assert_eq!(s.kv_mount, "secret");
+    assert_eq!(s.managed_prefix, "aurora");
+    assert_eq!(
+        s.auth,
+        aurora_config::VaultAuthSettings::Kubernetes {
+            mount: "kubernetes".into(),
+            role: "aurora".into(),
+            jwt_path: "/var/run/secrets/kubernetes.io/serviceaccount/token".into()
+        }
+    );
+    // Several entries for one org id are unioned.
+    assert_eq!(s.reference_scopes.len(), 1);
+    assert_eq!(s.reference_scopes[0].paths.len(), 3);
+}
+
+#[test]
+fn vault_reference_scope_covering_managed_prefix_refuses_startup() {
+    for glob in [
+        "*",
+        "au*",
+        "aurora*",
+        "aurora/*",
+        "aurora/0190f6a2/*",
+        "aurora",
+        "aurora/x/y",
+    ] {
+        let e = vault_err(&format!(
+            "[[secrets.stores.reference_scopes]]\norg_id = \"{ORG}\"\npaths = [\"{glob}\"]\n"
+        ));
+        assert!(
+            e.has_key("secrets.stores[0].reference_scopes[0].paths[0]"),
+            "{glob}: {e}"
+        );
+    }
+    // The prefix is configurable; the rule follows it. A sibling name is fine.
+    let ok = format!(
+        "managed_prefix = \"vault-managed\"\n[[secrets.stores.reference_scopes]]\norg_id = \"{ORG}\"\npaths = [\"aurora/*\", \"vault-managedx/*\"]\n"
+    );
+    load_with(&vault(&ok), &[]).unwrap().api_config().unwrap();
+    let e = vault_err(&format!(
+        "managed_prefix = \"vault-managed\"\n[[secrets.stores.reference_scopes]]\norg_id = \"{ORG}\"\npaths = [\"vault-managed/*\"]\n"
+    ));
+    assert!(e.has_key("secrets.stores[0].reference_scopes[0].paths[0]"));
+}
+
+#[test]
+fn vault_reference_scope_non_uuid_org_id_refuses_startup() {
+    for bad in [
+        "acme",
+        "",
+        "0190f6a27c1e7b3a9d4e5f6a7b8c9d0e",
+        "urn:uuid:0190f6a2-7c1e-7b3a-9d4e-5f6a7b8c9d0e",
+    ] {
+        let e = vault_err(&format!(
+            "[[secrets.stores.reference_scopes]]\norg_id = \"{bad}\"\npaths = [\"a/*\"]\n"
+        ));
+        assert!(
+            e.has_key("secrets.stores[0].reference_scopes[0].org_id"),
+            "{bad:?}: {e}"
+        );
+    }
+    let e = vault_err("[[secrets.stores.reference_scopes]]\npaths = [\"a/*\"]\n");
+    assert!(e.has_key("secrets.stores[0].reference_scopes[0].org_id"));
+}
+
+#[test]
+fn vault_scope_glob_rules() {
+    for bad in [
+        "a/*/b", "a/b*c", "/a", "a//b", "a/../b", "a/./b", "a/", "**", "a/b/**",
+    ] {
+        let e = vault_err(&format!(
+            "[[secrets.stores.reference_scopes]]\norg_id = \"{ORG}\"\npaths = [\"{bad}\"]\n"
+        ));
+        assert!(
+            e.has_key("secrets.stores[0].reference_scopes[0].paths[0]"),
+            "{bad:?}: {e}"
+        );
+    }
+    let e = vault_err(&format!(
+        "[[secrets.stores.reference_scopes]]\norg_id = \"{ORG}\"\npaths = []\n"
+    ));
+    assert!(e.has_key("secrets.stores[0].reference_scopes[0].paths"));
+}
+
+#[test]
+fn vault_address_auth_and_mount_rules() {
+    let with = |address: &str, auth: &str, extra: &str| {
+        load_with(
+            &format!(
+                "{BASE}[[secrets.stores]]\nid = \"v\"\nkind = \"hashicorp-vault\"\naddress = \"{address}\"\nauth = {auth}\n{extra}"
+            ),
+            &[],
+        )
+        .unwrap()
+        .api_config()
+    };
+    let k8s = "{ method = \"kubernetes\", role = \"r\" }";
+    with("https://vault:8200", k8s, "").unwrap();
+    with(
+        "http://127.0.0.1:8200",
+        "{ method = \"token\", token_env = \"VAULT_TOKEN\" }",
+        "",
+    )
+    .unwrap();
+    with("http://localhost:8200", k8s, "").unwrap();
+    for bad in [
+        "http://vault.example.org:8200",
+        "https://u:p@vault:8200",
+        "https://vault:8200/v1",
+        "https://vault:8200?x=1",
+        "vault:8200",
+        "ftp://vault",
+    ] {
+        let e = with(bad, k8s, "").unwrap_err();
+        assert!(e.has_key("secrets.stores[0].address"), "{bad}: {e}");
+    }
+    for (auth, key) in [
+        ("{ method = \"kubernetes\" }", "secrets.stores[0].auth.role"),
+        ("{ method = \"ldap\" }", "secrets.stores[0].auth.method"),
+        ("{ role = \"r\" }", "secrets.stores[0].auth.method"),
+        (
+            "{ method = \"approle\", role_id_env = \"A\" }",
+            "secrets.stores[0].auth.secret_id_env",
+        ),
+        (
+            "{ method = \"approle\", role = \"r\", role_id_env = \"A\", secret_id_env = \"B\" }",
+            "secrets.stores[0].auth.role",
+        ),
+        ("{ method = \"token\" }", "secrets.stores[0].auth.token_env"),
+        (
+            "{ method = \"token\", token_env = \"T\", mount = \"m\" }",
+            "secrets.stores[0].auth.mount",
+        ),
+        (
+            "{ method = \"kubernetes\", role = \"r\", mount = \"/k8s\" }",
+            "secrets.stores[0].auth.mount",
+        ),
+    ] {
+        let e = with("https://vault:8200", auth, "").unwrap_err();
+        assert!(e.has_key(key), "{auth}: {e}");
+    }
+    for (extra, key) in [
+        ("kv_mount = \"/secret\"\n", "secrets.stores[0].kv_mount"),
+        ("kv_mount = \"secret/\"\n", "secrets.stores[0].kv_mount"),
+        (
+            "managed_prefix = \"a b\"\n",
+            "secrets.stores[0].managed_prefix",
+        ),
+        (
+            "managed_prefix = \"a/../b\"\n",
+            "secrets.stores[0].managed_prefix",
+        ),
+        (
+            "managed_prefix = \"\"\n",
+            "secrets.stores[0].managed_prefix",
+        ),
+    ] {
+        let e = with("https://vault:8200", k8s, extra).unwrap_err();
+        assert!(e.has_key(key), "{extra}: {e}");
+    }
+    // Unknown keys are refused, not ignored.
+    assert!(with("https://vault:8200", k8s, "adress = \"x\"\n").is_err());
+}

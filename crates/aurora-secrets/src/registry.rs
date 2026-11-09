@@ -15,8 +15,18 @@ pub struct StoreRegistry {
 impl StoreRegistry {
     /// `inline` is implicit. Unknown or not-yet-available kinds fail startup.
     pub fn from_config(cfg: &SecretsSection, keyring: Arc<Keyring>) -> Result<Self> {
+        Self::from_config_with_tls(cfg, keyring, None)
+    }
+
+    /// Like [`Self::from_config`]; `extra_ca_bundle` is `tls.extra_ca_bundle` (extra trust
+    /// anchors for outbound TLS, e.g. an organization CA in front of Vault).
+    pub fn from_config_with_tls(
+        cfg: &SecretsSection,
+        keyring: Arc<Keyring>,
+        extra_ca_bundle: Option<&str>,
+    ) -> Result<Self> {
         let mut stores: HashMap<String, Arc<dyn SecretStore>> = HashMap::new();
-        for s in &cfg.stores {
+        for (i, s) in cfg.stores.iter().enumerate() {
             if s.id.is_empty() || s.id.contains(':') {
                 return Err(SecretError::InvalidConfig(
                     "secrets.stores[].id must be non-empty and contain no ':'".into(),
@@ -24,11 +34,22 @@ impl StoreRegistry {
             }
             let store: Arc<dyn SecretStore> = match s.kind.as_str() {
                 "inline" => Arc::new(InlineStore::new(&s.id, keyring.clone())),
-                "hashicorp-vault" => {
-                    return Err(SecretError::InvalidConfig(format!(
-                        "secret store '{}': kind 'hashicorp-vault' is available in phase 3",
-                        s.id
-                    )));
+                aurora_config::VAULT_KIND => {
+                    let settings = aurora_config::VaultSettings::parse(s).map_err(|errs| {
+                        SecretError::InvalidConfig(
+                            errs.iter()
+                                .map(|(k, m)| {
+                                    if k.is_empty() {
+                                        format!("secrets.stores[{i}]: {m}")
+                                    } else {
+                                        format!("secrets.stores[{i}].{k}: {m}")
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join("; "),
+                        )
+                    })?;
+                    Arc::new(crate::VaultStore::new(settings, extra_ca_bundle)?)
                 }
                 #[cfg(feature = "memory-store")]
                 "memory" => Arc::new(crate::MemoryStore::new(&s.id)),
