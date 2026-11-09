@@ -7,3 +7,4 @@ pub mod domains;
 pub mod http;
 pub mod jobs;
 pub mod openapi;
+pub mod secrets_migrate;

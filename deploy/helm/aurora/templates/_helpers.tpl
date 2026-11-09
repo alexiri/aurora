@@ -56,7 +56,7 @@ securityContext:
 
 {{/* Common env for aurora services. Args: root, db (bool: needs database), runner (bool) */}}
 {{- define "aurora.env" -}}
-- {name: AURORA_CONFIG, value: /etc/aurora/aurora.toml}
+- {name: AURORA_CONFIG, value: /etc/aurora/{{ default "aurora.toml" .configFile }}}
 {{- if .db }}
 - name: AURORA_DATABASE_URL
   valueFrom: {secretKeyRef: {name: {{ include "aurora.dbSecretName" .root }}, key: AURORA_DATABASE_URL}}
@@ -96,6 +96,10 @@ spec:
       {{- if .serviceAccount }}
       serviceAccountName: {{ .serviceAccount }}
       automountServiceAccountToken: true
+      {{- else if and .vaultToken (include "aurora.vaultK8s" $r) }}
+      {{- /* Vault kubernetes auth: the identity is a projected token (below), not the API token. */}}
+      serviceAccountName: {{ $full }}-{{ .name }}
+      automountServiceAccountToken: false
       {{- else }}
       automountServiceAccountToken: false
       {{- end }}
@@ -162,6 +166,12 @@ spec:
             {{- if .proxyTlsSecret }}
             - {name: proxy-tls, mountPath: /var/lib/aurora/proxy-tls, readOnly: true}
             {{- end }}
+            {{- if or $r.Values.extraCaBundle.existingConfigMap $r.Values.extraCaBundle.existingSecret }}
+            - {name: extra-ca, mountPath: /etc/aurora-tls, readOnly: true}
+            {{- end }}
+            {{- if and .vaultToken (include "aurora.vaultK8s" $r) }}
+            - {name: vault-token, mountPath: /var/run/secrets/aurora-vault, readOnly: true}
+            {{- end }}
             {{- if and .pluginsMount (ne $r.Values.plugins.source "none") }}
             - {name: plugins, mountPath: {{ $r.Values.plugins.dir | quote }}, readOnly: true}
             {{- end }}
@@ -184,6 +194,23 @@ spec:
         {{- if .proxyTlsSecret }}
         - name: proxy-tls
           secret: {secretName: {{ .proxyTlsSecret | quote }}, defaultMode: 0440}
+        {{- end }}
+        {{- if $r.Values.extraCaBundle.existingConfigMap }}
+        - name: extra-ca
+          configMap: {name: {{ $r.Values.extraCaBundle.existingConfigMap | quote }}, defaultMode: 0444}
+        {{- else if $r.Values.extraCaBundle.existingSecret }}
+        - name: extra-ca
+          secret: {secretName: {{ $r.Values.extraCaBundle.existingSecret | quote }}, defaultMode: 0444}
+        {{- end }}
+        {{- if and .vaultToken (include "aurora.vaultK8s" $r) }}
+        - name: vault-token
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  audience: {{ $r.Values.vault.auth.audience | quote }}
+                  expirationSeconds: {{ int $r.Values.vault.auth.tokenExpirationSeconds }}
         {{- end }}
         {{- if and .pluginsMount (ne $r.Values.plugins.source "none") }}
         {{- if eq $r.Values.plugins.source "pvc" }}
@@ -237,6 +264,67 @@ spec:
         except: {{- toYaml . | nindent 10 }}
         {{- end }}
 {{- end -}}
+{{/* True ("true") when the Vault store uses kubernetes auth (projected token for api/gateway). */}}
+{{- define "aurora.vaultK8s" -}}
+{{- if and .Values.vault.enabled (eq .Values.vault.auth.method "kubernetes") }}true{{ end -}}
+{{- end -}}
+
+{{/* The [secrets] section with the Vault store added. Args: root, cfg (config so far), svc (api|gateway). Returns JSON. */}}
+{{- define "aurora.vaultSecrets" -}}
+{{- $v := .root.Values.vault -}}
+{{- $sec := deepCopy (default (dict) .cfg.secrets) -}}
+{{- if not $v.address }}{{ fail "vault.address is required when vault.enabled" }}{{ end -}}
+{{- if or (not $v.storeId) (contains ":" $v.storeId) }}{{ fail "vault.storeId must be non-empty and contain no ':'" }}{{ end -}}
+{{- if not (has $v.auth.method (list "kubernetes" "approle")) }}{{ fail "vault.auth.method must be kubernetes or approle (token auth is development only)" }}{{ end -}}
+{{- if and (eq $v.auth.method "approle") (not $v.auth.approle.existingSecret) }}{{ fail "vault.auth.approle.existingSecret is required for approle auth" }}{{ end -}}
+{{- if and (eq $v.auth.method "kubernetes") (lt (int $v.auth.tokenExpirationSeconds) 600) }}{{ fail "vault.auth.tokenExpirationSeconds must be at least 600" }}{{ end -}}
+{{- $auth := dict "method" $v.auth.method -}}
+{{- if eq $v.auth.method "kubernetes" -}}
+{{- $_ := set $auth "mount" (default "kubernetes" $v.auth.mount) -}}
+{{- $_ := set $auth "role" (ternary $v.auth.apiRole $v.auth.gatewayRole (eq .svc "api")) -}}
+{{- $_ := set $auth "jwt_path" "/var/run/secrets/aurora-vault/token" -}}
+{{- else -}}
+{{- $_ := set $auth "mount" (default "approle" $v.auth.mount) -}}
+{{- $_ := set $auth "role_id_env" "AURORA_VAULT_ROLE_ID" -}}
+{{- $_ := set $auth "secret_id_env" "AURORA_VAULT_SECRET_ID" -}}
+{{- end -}}
+{{- $store := dict "id" $v.storeId "kind" "hashicorp-vault" "address" $v.address "kv_mount" $v.kvMount "managed_prefix" $v.managedPrefix "auth" $auth -}}
+{{- with $v.caFile }}{{ $_ := set $store "ca_file" . }}{{ end -}}
+{{- if $v.referenceScopes -}}
+{{- $scopes := list -}}
+{{- range $v.referenceScopes -}}
+{{- if or (not .orgId) (not .paths) }}{{ fail "each vault.referenceScopes entry needs orgId (the org's id, a UUID) and paths" }}{{ end -}}
+{{- $scopes = append $scopes (dict "org_id" .orgId "paths" .paths) -}}
+{{- end -}}
+{{- $_ := set $store "reference_scopes" $scopes -}}
+{{- end -}}
+{{- range (default (list) $sec.stores) }}{{ if eq .id $v.storeId }}{{ fail "config.secrets.stores already defines a store with the id of vault.storeId" }}{{ end }}{{ end -}}
+{{- $_ := set $sec "stores" (append (default (list) $sec.stores) $store) -}}
+{{- if $v.makeDefault }}{{ $_ := set $sec "default_store" $v.storeId }}{{ end -}}
+{{- toJson $sec -}}
+{{- end -}}
+
+{{/* AppRole credentials for one service as env entries (empty unless approle auth). Args: root, svc */}}
+{{- define "aurora.vaultEnv" -}}
+{{- if and .root.Values.vault.enabled (eq .root.Values.vault.auth.method "approle") }}
+- name: AURORA_VAULT_ROLE_ID
+  valueFrom: {secretKeyRef: {name: {{ .root.Values.vault.auth.approle.existingSecret | quote }}, key: {{ upper .svc }}_ROLE_ID}}
+- name: AURORA_VAULT_SECRET_ID
+  valueFrom: {secretKeyRef: {name: {{ .root.Values.vault.auth.approle.existingSecret | quote }}, key: {{ upper .svc }}_SECRET_ID}}
+{{- end }}
+{{- end -}}
+
+{{/* Egress to a private Vault (the external-egress rule excludes private ranges). */}}
+{{- define "aurora.vaultEgress" -}}
+{{- if and .Values.vault.enabled .Values.vault.egress.cidrs }}
+- to:
+    {{- range .Values.vault.egress.cidrs }}
+    - ipBlock: {cidr: {{ . }}}
+    {{- end }}
+  ports: [{protocol: TCP, port: {{ .Values.vault.egress.port }}}]
+{{- end }}
+{{- end -}}
+
 {{- define "aurora.dbEgress" -}}
 {{- if .Values.postgres.enabled }}
 - to:

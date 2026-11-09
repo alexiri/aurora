@@ -232,6 +232,48 @@ jobs:
         run: pnpm gen:api && git diff --exit-code -- src/lib/api/schema.d.ts
 
   # No compile here: the schema_matches_spec test now runs inside the rust-test shards.
+  # P3-VLT-2 (docs/21 §Phase 3 — HashiCorp Vault): the Vault store, `aurora-api secrets migrate`
+  # (inline -> Vault -> inline over every purpose), the CAS race tests and the SEC-61 gateway test, all
+  # against a Vault dev server (service container, image pinned by digest = P3-VLT-1's pin), plus the
+  # Helm Vault cases. The dev server mounts KV v2 at `secret/` and takes the root token below (a
+  # throwaway test value; the container is discarded with the job). The image's default command is
+  # `server -dev`, listening on 0.0.0.0:8200.
+  vault:
+    runs-on: ubuntu-24.04
+    services:
+      postgres: *pg
+      vault:
+        image: docker.io/hashicorp/vault@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
+        env: { VAULT_DEV_ROOT_TOKEN_ID: aurora-dev-root }
+        ports: ["8200:8200"]
+        options: >-
+          --cap-add=IPC_LOCK
+          --health-cmd "VAULT_ADDR=http://127.0.0.1:8200 vault status" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      AURORA_TEST_VAULT: "1"
+      AURORA_TEST_VAULT_ADDR: http://127.0.0.1:8200
+      AURORA_TEST_VAULT_TOKEN: aurora-dev-root
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: rust-test, save-if: "false" }
+      - *sqlx-cache
+      - *sqlx-install
+      - run: sqlx migrate run --source crates/aurora-db/migrations
+      - name: Fixture packages (the API test binary builds against them)
+        run: bash scripts/fixtures/build.sh
+      - name: Vault store, managed and reference modes, CAS race
+        run: cargo test -p aurora-secrets
+      - name: secrets migrate inline -> Vault -> inline, racing migrators
+        run: cargo test -p aurora-api --test it secrets_migrate
+      - name: SEC-61, a refused reference injects nothing (gateway)
+        run: cargo test -p aurora-gateway --test it refused_vault_reference
+      - name: Helm Vault values (lint, template, rendered config validation)
+        run: |
+          cargo build -p aurora-api
+          bash deploy/helm/check-vault.sh
+
   guards:
     runs-on: ubuntu-24.04
     steps:

@@ -54,6 +54,7 @@ mod runner_plane;
 mod sandbox_env;
 mod schedules;
 mod secrets;
+mod secrets_migrate;
 mod skills;
 mod sse_revocation;
 mod tenancy;

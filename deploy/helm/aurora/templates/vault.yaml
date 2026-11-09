@@ -1,0 +1,16 @@
+{{- /* Vault kubernetes auth: one ServiceAccount per service, so the Vault roles (vault.auth.apiRole
+       / gatewayRole) can be bound to exactly these names in this namespace. The pods do not
+       mount the API token; they mount a projected, audience-bound token (see _helpers.tpl). */ -}}
+{{- if include "aurora.vaultK8s" . }}
+{{- $full := include "aurora.fullname" . }}
+{{- range $svc := list "api" "gateway" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $full }}-{{ $svc }}
+  labels: {{- include "aurora.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $svc }}
+automountServiceAccountToken: false
+---
+{{- end }}
+{{- end }}

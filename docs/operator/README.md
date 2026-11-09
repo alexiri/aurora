@@ -35,6 +35,7 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 | [limits-and-approvals.md](limits-and-approvals.md) | API rate limits (`ratelimit.api.*`), approval timeouts (`approvals.*`), approval e-mail (`email.*`) and streaming fan-out (`events.*`) |
 | [apps-and-catalogue.md](apps-and-catalogue.md) | The built-in catalogue (signing, icons) and app instances for self-hosted servers |
 | [deployment-defaults.md](deployment-defaults.md) | The neutral default agent brief (and the opt-in Daneel example) and the build-time `SANDBOX_BASE_IMAGE` override (phase 3, RFE-019) |
+| [vault.md](vault.md) | The HashiCorp Vault secret store (phase 3): Vault-side setup (KV v2, `max_versions`, policies, auth), `secrets.stores[]`, Helm values, org-id `reference_scopes`, outage behaviour, `aurora-api secrets migrate` and rollback |
 | [freeze.md](freeze.md) | The emergency freeze of an agent, workspace or organization |
 
 ## Phase 1 and 2 topics

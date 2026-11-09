@@ -25,11 +25,22 @@
 {{- if and (eq .Values.plugins.source "configMap") (not .Values.plugins.configMapName) }}{{ fail "plugins.configMapName is required when plugins.source is configMap" }}{{ end -}}
 {{- if and (eq .Values.plugins.source "pvc") (not .Values.plugins.pvcName) }}{{ fail "plugins.pvcName is required when plugins.source is pvc" }}{{ end -}}
 {{- $_ := set $cfg "plugins" (merge (dict "dir" .Values.plugins.dir) (default (dict) $cfg.plugins)) -}}
+{{- /* tls.extra_ca_bundle: the mounted PEM bundle (every workload trusts it for outbound TLS) */ -}}
+{{- if and .Values.extraCaBundle.existingConfigMap .Values.extraCaBundle.existingSecret }}{{ fail "extraCaBundle: set existingConfigMap or existingSecret, not both" }}{{ end -}}
+{{- if or .Values.extraCaBundle.existingConfigMap .Values.extraCaBundle.existingSecret }}
+{{- $_ := set $cfg "tls" (merge (dict "extra_ca_bundle" (printf "/etc/aurora-tls/%s" .Values.extraCaBundle.key)) (default (dict) $cfg.tls)) -}}
+{{- end -}}
 {{- if .Values.devIdp.enabled }}
 {{- if not (regexMatch "^https?://(localhost|127\\.0\\.0\\.1|\\[::1\\]|[A-Za-z0-9.-]+\\.localhost)(:[0-9]+)?/?$" .Values.externalUrl) }}{{ fail "devIdp.enabled is development only: externalUrl must be a loopback origin (localhost, *.localhost, 127.0.0.1, [::1])" }}{{ end -}}
 {{- $auth := default (dict) $cfg.auth -}}
 {{- $_ := set $auth "dev_idp" (dict "enabled" true "issuer" (default (printf "%s%s" (trimSuffix "/" .Values.externalUrl) .Values.devIdp.pathPrefix) .Values.devIdp.issuer) "internal_url" (printf "http://%s-dev-idp:4107%s" $full .Values.devIdp.pathPrefix)) -}}
 {{- $_ := set $cfg "auth" $auth -}}
+{{- end -}}
+{{- /* Vault store: api and gateway each get their own config (their own Vault role). */ -}}
+{{- $gwCfg := deepCopy $cfg -}}
+{{- if .Values.vault.enabled }}
+{{- $_ := set $cfg "secrets" (include "aurora.vaultSecrets" (dict "root" . "cfg" $cfg "svc" "api") | fromJson) -}}
+{{- $_ := set $gwCfg "secrets" (include "aurora.vaultSecrets" (dict "root" . "cfg" $gwCfg "svc" "gateway") | fromJson) -}}
 {{- end -}}
 # Pre-install hook: the migrate job needs the config before regular resources exist.
 apiVersion: v1
@@ -44,3 +55,7 @@ metadata:
 data:
   aurora.toml: |
     {{- regexReplaceAll "(?m)= (-?[0-9]+)\\.0$" (toToml $cfg) "= ${1}" | nindent 4 }}
+{{- if .Values.vault.enabled }}
+  aurora-gateway.toml: |
+    {{- regexReplaceAll "(?m)= (-?[0-9]+)\\.0$" (toToml $gwCfg) "= ${1}" | nindent 4 }}
+{{- end }}

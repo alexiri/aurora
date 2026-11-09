@@ -109,8 +109,12 @@ impl AppState {
                 .map_err(|e| format!("keyring: {e}"))?,
         );
         let vault = Arc::new(aurora_secrets::SecretVault::new(
-            aurora_secrets::StoreRegistry::from_config(&config.secrets, keyring)
-                .map_err(|e| format!("secrets: {e}"))?,
+            aurora_secrets::StoreRegistry::from_config_with_tls(
+                &config.secrets,
+                keyring,
+                config.tls.extra_ca_bundle.as_deref(),
+            )
+            .map_err(|e| format!("secrets: {e}"))?,
         ));
         let llm = Arc::new(
             aurora_llm::ProviderRegistry::from_config(&config.llm)

@@ -276,20 +276,34 @@ async fn start_with(
     llm: LlmSection,
     body_limit: Option<usize>,
 ) -> Env {
+    start_backed(mk, llm, body_limit, |w| {
+        let mem = Arc::new(MemoryStore::new("mem"));
+        mem.preload("k1", None, b"s3cr3t");
+        mem.allow_reference(w.org, "*");
+        let gets = Arc::new(AtomicUsize::new(0));
+        let keyring =
+            Arc::new(aurora_crypto::Keyring::parse(&format!("k1:{}", key_b64()), "k1").unwrap());
+        let mut reg = StoreRegistry::from_config(&SecretsSection::default(), keyring).unwrap();
+        reg.register(Arc::new(Counting {
+            inner: mem,
+            gets: gets.clone(),
+        }));
+        let _ = (Purpose::SecretValue,);
+        let vref = SecretRef::ext("mem", "k1", None, "1").unwrap();
+        (reg, vref, gets)
+    })
+    .await
+}
+
+/// `backing` builds the store registry, the ref the secret row points at, and a read counter.
+async fn start_backed(
+    mk: impl FnOnce(&World, &SecretRef) -> Rows,
+    llm: LlmSection,
+    body_limit: Option<usize>,
+    backing: impl FnOnce(&World) -> (StoreRegistry, SecretRef, Arc<AtomicUsize>),
+) -> Env {
     let w = world();
-    let mem = Arc::new(MemoryStore::new("mem"));
-    mem.preload("k1", None, b"s3cr3t");
-    mem.allow_reference(w.org, "*");
-    let gets = Arc::new(AtomicUsize::new(0));
-    let keyring =
-        Arc::new(aurora_crypto::Keyring::parse(&format!("k1:{}", key_b64()), "k1").unwrap());
-    let mut reg = StoreRegistry::from_config(&SecretsSection::default(), keyring).unwrap();
-    reg.register(Arc::new(Counting {
-        inner: mem,
-        gets: gets.clone(),
-    }));
-    let _ = (Purpose::SecretValue,);
-    let vref = SecretRef::ext("mem", "k1", None, "1").unwrap();
+    let (reg, vref, gets) = backing(&w);
     let src = Arc::new(Src(Mutex::new(mk(&w, &vref))));
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let up = l.local_addr().unwrap();
@@ -347,6 +361,107 @@ async fn start_with(
         captured,
         gets,
     }
+}
+
+/// Registry with a real Vault store whose `reference_scopes` grant `scoped_org` the whole
+/// `<unique>/` area; the secret row references `<unique>/api-key` (SEC-61).
+fn vault_backing(
+    addr: String,
+    unique: String,
+    scope_for_world_org: bool,
+) -> impl FnOnce(&World) -> (StoreRegistry, SecretRef, Arc<AtomicUsize>) {
+    move |w| {
+        let scoped = if scope_for_world_org {
+            w.org
+        } else {
+            Uuid::now_v7()
+        };
+        let cfg: aurora_config::SecretStoreConfig = serde_json::from_value(json!({
+            "id": "vault", "kind": "hashicorp-vault", "address": addr,
+            "managed_prefix": format!("{unique}-managed"),
+            "auth": {"method": "token", "token_env": "AURORA_TEST_VAULT_TOKEN"},
+            "reference_scopes": [{"org_id": scoped.to_string(), "paths": [format!("{unique}/*")]}],
+        }))
+        .unwrap();
+        let keyring =
+            Arc::new(aurora_crypto::Keyring::parse(&format!("k1:{}", key_b64()), "k1").unwrap());
+        let reg = StoreRegistry::from_config(
+            &SecretsSection {
+                stores: vec![cfg],
+                ..SecretsSection::default()
+            },
+            keyring,
+        )
+        .unwrap();
+        let vref = SecretRef::ext(
+            "vault",
+            &format!("{unique}/api-key"),
+            Some("value"),
+            "latest",
+        )
+        .unwrap();
+        (reg, vref, Arc::new(AtomicUsize::new(0)))
+    }
+}
+
+/// SEC-61: a reference outside the org's `reference_scopes` (here: scoped to another org id)
+/// injects nothing. The in-scope control shows the same row does inject when the scope covers
+/// the org. Runs against a Vault dev server when `AURORA_TEST_VAULT=1`.
+#[tokio::test]
+async fn refused_vault_reference_injects_nothing() {
+    if std::env::var("AURORA_TEST_VAULT").as_deref() != Ok("1") {
+        eprintln!("skipped: set AURORA_TEST_VAULT=1 (and the Vault dev server variables)");
+        return;
+    }
+    let addr =
+        std::env::var("AURORA_TEST_VAULT_ADDR").unwrap_or_else(|_| "http://127.0.0.1:18200".into());
+    let root = std::env::var("AURORA_TEST_VAULT_TOKEN").expect("AURORA_TEST_VAULT_TOKEN");
+    let unique = format!("gw-{}", Uuid::now_v7().simple());
+    let w = reqwest::Client::new()
+        .post(format!("{addr}/v1/secret/data/{unique}/api-key"))
+        .header("X-Vault-Token", root)
+        .json(&json!({"data": {"value": "VAULT-SECRET-VALUE"}}))
+        .send()
+        .await
+        .unwrap();
+    assert!(w.status().is_success());
+
+    // Control: in scope → injected.
+    let env = start_backed(
+        grant_env(json!({"kind":"bearer"})),
+        no_llm(),
+        None,
+        vault_backing(addr.clone(), unique.clone(), true),
+    )
+    .await;
+    let r = get(&env, "/x", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        r.body.contains("authorization: Bearer VAULT-SECRET-VALUE"),
+        "{}",
+        r.body
+    );
+
+    // Out of scope (the scope belongs to another org id) → nothing injected, nothing leaked.
+    let env = start_backed(
+        grant_env(json!({"kind":"bearer"})),
+        no_llm(),
+        None,
+        vault_backing(addr, unique, false),
+    )
+    .await;
+    let r = get(&env, "/x", "Authorization: Bearer agent-supplied\r\n").await;
+    assert_eq!(r.status, 502, "{}", r.body);
+    assert_eq!(
+        r.json()["error"]["code"],
+        "credential_unavailable",
+        "{}",
+        r.body
+    );
+    assert_eq!(r.json()["error"]["details"]["kind"], "secret", "{}", r.body);
+    assert!(!r.body.contains("VAULT-SECRET-VALUE"), "{}", r.body);
+    // The request never reached the upstream (its echo would list the headers).
+    assert!(!r.body.contains("path="), "{}", r.body);
 }
 
 fn no_llm() -> LlmSection {
