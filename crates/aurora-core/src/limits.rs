@@ -50,6 +50,16 @@ pub const LLM_ORIGIN_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 pub const EGRESS_ALLOWLIST_MAX: u32 = 500;
 /// (RFE-025) CIDRs per BYO source list (agent / org / instance).
 pub const BYO_CIDR_MAX: usize = 32;
+/// (phase 3, RFE-013) bounds of `governance.agent_tokens.max_age_days`.
+pub const AGENT_TOKEN_MAX_AGE_MIN: i64 = 1;
+pub const AGENT_TOKEN_MAX_AGE_MAX: i64 = 3650;
+/// (RFE-013) minimum remaining life (days) of an existing token when a maximum age is introduced
+/// or tightened.
+pub const AGENT_TOKEN_RETROFIT_GRACE_DAYS: i64 = 7;
+/// (RFE-013) a token unused (or never used, counted from creation) for this long is stale.
+pub const AGENT_TOKEN_STALE_DAYS: i64 = 30;
+/// (RFE-013) a token expiring within this many days is `expiring`.
+pub const AGENT_TOKEN_EXPIRING_DAYS: i64 = 14;
 /// (RFE-025) one log line and one request-log row per credential per interval for BYO refusals.
 pub const BYO_REFUSAL_LOG_INTERVAL: Duration = Duration::from_secs(60);
 /// (RFE-006) one "paused by an administrator" reply per (space/thread, person) per interval.

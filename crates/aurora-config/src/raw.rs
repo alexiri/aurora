@@ -267,6 +267,15 @@ pub struct KeyOrigin {
 pub struct GovernanceSection {
     pub llm: GovernanceLlm,
     pub egress: GovernanceEgress,
+    pub agent_tokens: GovernanceAgentTokens,
+}
+
+/// `[governance.agent_tokens]` (phase 3, RFE-013, C-317).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GovernanceAgentTokens {
+    /// Maximum age of BYO agent tokens in days (1..=3650); unset = none.
+    pub max_age_days: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

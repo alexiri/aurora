@@ -52,13 +52,29 @@ const IDENTITY_SELECT: &str = "SELECT c.id AS credential_id, c.kind, c.agent_id,
          JOIN workspaces w ON w.id = a.workspace_id \
          JOIN organizations o ON o.id = w.org_id \
          WHERE c.revoked_at IS NULL \
-           AND (c.expires_at IS NULL OR c.expires_at > now()) \
            AND EXISTS (SELECT 1 FROM org_members m \
                        WHERE m.org_id = o.id AND m.role = 'owner' AND m.status = 'active')";
+
+const NOT_EXPIRED: &str = " AND (c.expires_at IS NULL OR c.expires_at > now())";
 
 /// Live credential by SHA-256 hash: not revoked, not expired, agent/workspace/org
 /// present, and the org has at least one active owner.
 pub async fn find_credential_identity<'e, E: PgExecutor<'e>>(
+    exec: E,
+    token_hash: &[u8],
+) -> Result<Option<CredentialIdentityRow>, DbError> {
+    Ok(sqlx::query_as::<_, CredentialIdentityRow>(&format!(
+        "{IDENTITY_SELECT}{NOT_EXPIRED} AND c.token_hash = $1"
+    ))
+    .bind(token_hash)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// (RFE-013) Like [`find_credential_identity`] but an expired credential is returned too
+/// (`expires_in_secs <= 0`), so a caller can tell an expired agent token (`agent_token_expired`)
+/// from an unknown or revoked one.
+pub async fn find_credential_identity_incl_expired<'e, E: PgExecutor<'e>>(
     exec: E,
     token_hash: &[u8],
 ) -> Result<Option<CredentialIdentityRow>, DbError> {
@@ -75,12 +91,29 @@ pub async fn find_credential_identity_by_id<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<CredentialIdentityRow>, DbError> {
-    Ok(
-        sqlx::query_as::<_, CredentialIdentityRow>(&format!("{IDENTITY_SELECT} AND c.id = $1"))
-            .bind(id)
-            .fetch_optional(exec)
-            .await?,
+    Ok(sqlx::query_as::<_, CredentialIdentityRow>(&format!(
+        "{IDENTITY_SELECT}{NOT_EXPIRED} AND c.id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// (RFE-013, C-316) Records the use of credentials: `last_used_at = now()` for each id, only
+/// where it is null or older than a minute. A churn column: `updated_at` is untouched.
+pub async fn touch_last_used<'e, E: PgExecutor<'e>>(exec: E, ids: &[Uuid]) -> Result<u64, DbError> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    Ok(sqlx::query(
+        "UPDATE gateway_credentials SET last_used_at = now() \
+         WHERE id = ANY($1) AND revoked_at IS NULL \
+           AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')",
     )
+    .bind(ids)
+    .execute(exec)
+    .await?
+    .rows_affected())
 }
 
 /// Whether the user holds `can_use` on the workspace: an active org member who is owner/admin

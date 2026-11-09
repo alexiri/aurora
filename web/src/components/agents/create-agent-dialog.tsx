@@ -65,7 +65,12 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
       setOpen(false);
       reset();
       if (res.token) {
-        setRevealed({ token: res.token, config: res.container_config ?? null, agentName: res.agent.name });
+        setRevealed({
+          token: res.token,
+          config: res.container_config ?? null,
+          agentName: res.agent.name,
+          expiresAt: res.expires_at,
+        });
       }
     } catch {
       // surfaced via create.error

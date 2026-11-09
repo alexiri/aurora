@@ -55,11 +55,13 @@ const eff = (over: Partial<EffectiveGovernance> = {}): EffectiveGovernance => ({
     source_cidrs: { value: null, source: "instance" },
     require_context_credentials: { value: false, source: "instance" },
   },
+  agent_tokens: { max_age_days: { value: null, source: "instance" } },
   non_compliant_secrets: [{ id: "s1", name: "my-key", workspace_id: null, reason: "mismatch" }],
   ...over,
 });
 const doc = {
   byo: { posture: null, source_cidrs: [], require_context_credentials: false },
+  agent_tokens: { max_age_days: null },
   llm: { posture: "open", endpoints: { anthropic: { allowed: true, key_scopes: ["organization"], allowed_models: ["m1"], origin: { allowed_organization_ids: ["org-1"], allowed_workspace_ids: [], allowed_team_ids: [] } } } },
   egress: { posture: "open", open_lane: "allowlist_only", allowlist: [{ host: "pypi.org" }, { host: "x.io", path: "/a/**" }] },
 };

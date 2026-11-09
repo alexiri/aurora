@@ -335,6 +335,7 @@ async fn start(o: Opts) -> Env {
         baseline_allowlist: Vec::<EgressEntry>::new(),
         open_lane_minimum: aurora_config::OpenLanePosture::Enabled,
         byo: Default::default(),
+        agent_token_max_age_days: None,
     };
     let gsrc = Arc::new(TestGov {
         doc: Mutex::new(o.doc.clone()),

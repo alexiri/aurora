@@ -582,6 +582,28 @@ impl FromRequestParts<AppState> for InstanceAdmin {
     }
 }
 
+/// In-process throttle of the `last_used_at` writes: true at most once a minute per credential.
+fn use_due(id: Uuid) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+    static SEEN: OnceLock<Mutex<HashMap<Uuid, Instant>>> = OnceLock::new();
+    let Ok(mut m) = SEEN.get_or_init(Default::default).lock() else {
+        return false;
+    };
+    let now = Instant::now();
+    if m.len() >= 10_000 {
+        m.retain(|_, t| now.duration_since(*t) < Duration::from_secs(60));
+    }
+    match m.get(&id) {
+        Some(t) if now.duration_since(*t) < Duration::from_secs(60) => false,
+        _ => {
+            m.insert(id, now);
+            true
+        }
+    }
+}
+
 /// Agent-token (A) caller: a live `aug_` gateway credential of kind `agent`.
 /// Use only on `/v1/agent/*` routes; every other extractor rejects `aug_` tokens.
 /// Not cached, so regeneration/deletion take effect immediately.
@@ -605,11 +627,32 @@ impl FromRequestParts<AppState> for AgentCaller {
             .and_then(|(scheme, rest)| scheme.eq_ignore_ascii_case("bearer").then(|| rest.trim()))
             .filter(|t| t.starts_with(TokenPrefix::Gateway.as_str()))
             .ok_or_else(unauth)?;
-        let rec =
-            aurora_db::repo::gateway::find_credential_identity(&state.pool, &token::hash(tok))
-                .await?
-                .filter(|r| r.kind == "agent")
-                .ok_or_else(unauth)?;
+        let rec = aurora_db::repo::gateway::find_credential_identity_incl_expired(
+            &state.pool,
+            &token::hash(tok),
+        )
+        .await?
+        .filter(|r| r.kind == "agent")
+        .ok_or_else(unauth)?;
+        // (RFE-013, C-312) Past `expires_at`: 401 `agent_token_expired` (a revoked or unknown
+        // token stays `unauthenticated`).
+        if rec.expires_in_secs.is_some_and(|s| s <= 0.0) {
+            return Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                "agent_token_expired",
+                "This agent token has expired. Regenerate it in the Aurora dashboard.",
+            ));
+        }
+        // (C-316) Best-effort use record, at most once a minute (the statement is conditional),
+        // never on the request's critical path.
+        if use_due(rec.credential_id) {
+            let (pool, id) = (state.pool.clone(), rec.credential_id);
+            tokio::spawn(async move {
+                if let Err(e) = aurora_db::repo::credentials::touch_last_used(&pool, id).await {
+                    tracing::debug!(error = %e, "last_used_at write failed");
+                }
+            });
+        }
         Ok(Self {
             agent_id: rec.agent_id,
             workspace_id: rec.workspace_id,

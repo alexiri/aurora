@@ -162,6 +162,8 @@ pub async fn container_config(
 pub struct Created {
     pub agent: AgentRow,
     pub token: Option<String>,
+    /// (RFE-013) `expires_at` of the minted token (`None` = no maximum age applies).
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 pub async fn create(
@@ -258,29 +260,38 @@ pub async fn create(
     )
     .await
     .map_err(|e| conflict_code(e, &[(agents::HANDLE_CONSTRAINT, "handle_taken")]))?;
-    let tok = if row.kind == "byo" {
-        Some(mint_agent_token(&mut tx, row.id).await?)
+    let (tok, expires_at) = if row.kind == "byo" {
+        let max = super::byo::token_max_age_days(state, &mut tx, org_id).await?;
+        let (t, exp) = mint_agent_token(&mut tx, row.id, max).await?;
+        (Some(t), exp)
     } else {
-        None
+        (None, None)
     };
     tx.commit().await.map_err(DbError::from)?;
     Ok(Created {
         agent: row,
         token: tok,
+        expires_at,
     })
 }
 
-async fn mint_agent_token(tx: &mut sqlx::PgConnection, agent_id: Uuid) -> Result<String, ApiError> {
+/// Mints the agent's `aug_` token with `expires_at = now() + max age` (C-311).
+async fn mint_agent_token(
+    tx: &mut sqlx::PgConnection,
+    agent_id: Uuid,
+    max_age_days: Option<u32>,
+) -> Result<(String, Option<chrono::DateTime<chrono::Utc>>), ApiError> {
     let t = token::generate(TokenPrefix::Gateway);
     let t = t.expose();
-    credentials::insert_agent_credential(
+    let (_, exp) = credentials::insert_agent_credential(
         &mut *tx,
         agent_id,
         &token::hash(t),
         &token::display_prefix(t),
+        max_age_days,
     )
     .await?;
-    Ok(t.clone())
+    Ok((t.clone(), exp))
 }
 
 /// Revoke the previous agent + context credentials and mint a new token. The audit row
@@ -289,11 +300,12 @@ pub async fn regenerate(
     state: &AppState,
     caller: &Caller,
     row: &AgentRow,
-) -> Result<String, ApiError> {
+) -> Result<(String, Option<chrono::DateTime<chrono::Utc>>), ApiError> {
     let agent_id = row.id;
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let max = super::byo::token_max_age_days(state, &mut tx, row.org_id).await?;
     credentials::revoke_for_agent(&mut *tx, agent_id, false).await?;
-    let t = mint_agent_token(&mut tx, agent_id).await?;
+    let (t, expires_at) = mint_agent_token(&mut tx, agent_id, max).await?;
     let ev = AuditEvent::new(
         AuditActor::from_caller(caller),
         "agent.token_regenerate",
@@ -308,7 +320,7 @@ pub async fn regenerate(
     })?;
     credentials::notify_gateway_invalidate(&mut *tx, "agent", agent_id).await?;
     tx.commit().await.map_err(DbError::from)?;
-    Ok(t)
+    Ok((t, expires_at))
 }
 
 /// `PUT /v1/agents/{agent}/byo`: the agent's own source list and require-context flag, with the

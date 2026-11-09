@@ -289,6 +289,12 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = aurora_api::domains::connectors::bootstrap_tokens(&state).await {
         tracing::warn!(error = %e, "bootstrap connector tokens not applied");
     }
+    // (RFE-013, C-315) The instance maximum agent-token age applies to existing tokens at start.
+    match aurora_api::domains::governance::service::retrofit_instance(&state).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(retrofitted = n, "agent token maximum age applied"),
+        Err(e) => tracing::warn!(error = %e.message(), "agent token maximum age not applied"),
+    }
     // (FU-P2-015b) Quota notices ride the RFE-011a e-mail channel when it is enabled.
     let quota_mail = cfg.approvals.email_notifications.then(|| {
         aurora_api::domains::attachments::sweep::QuotaMail {

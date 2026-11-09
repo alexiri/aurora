@@ -3,11 +3,24 @@ import Link from "next/link";
 import type { Agent } from "@/lib/api/queries";
 
 import { AgentAvatar } from "./agent-avatar";
+import { TokenBadges } from "./agents/token-badges";
 import { EmptyState } from "./states";
 import { Badge } from "./ui/badge";
 import { ItemList, ListRow } from "./ui/section";
 
-export function AgentsList({ agents, base }: { agents: readonly Agent[]; base?: string }) {
+/**
+ * `showTokenBadges`: the viewer owns the workspace; stale / expiring / expired token badges are
+ * shown to owners only (RFE-013, C-314).
+ */
+export function AgentsList({
+  agents,
+  base,
+  showTokenBadges = false,
+}: {
+  agents: readonly Agent[];
+  base?: string;
+  showTokenBadges?: boolean;
+}) {
   if (agents.length === 0) return <EmptyState title="No agents yet" />;
   return (
     <ItemList aria-label="Agents">
@@ -30,6 +43,7 @@ export function AgentsList({ agents, base }: { agents: readonly Agent[]; base?: 
                 BYO disabled by {a.byo.posture_level}
               </Badge>
             ) : null}
+            {showTokenBadges ? <TokenBadges token={a.byo?.token} /> : null}
           </div>
         </ListRow>
       ))}

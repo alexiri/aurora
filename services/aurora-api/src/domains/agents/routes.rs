@@ -23,6 +23,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_agent, patch_agent, delete_agent))
         .routes(routes!(regenerate_token))
         .routes(routes!(put_agent_byo))
+        .routes(routes!(list_workspace_agent_tokens))
+        .routes(routes!(list_org_agent_tokens))
         .routes(routes!(agent_container_config))
         .routes(routes!(self_container_config))
         .routes(routes!(create_context_credential))
@@ -100,9 +102,14 @@ async fn get_agent(
 /// The agent DTO with its `byo` view loaded (BYO agents).
 async fn with_byo(state: &AppState, row: agents::AgentRow) -> Result<Agent, ApiError> {
     let byo = if row.kind == "byo" {
+        let token = aurora_db::repo::credentials::agent_tokens_of(&state.pool, &[row.id])
+            .await?
+            .first()
+            .map(super::byo::TokenView::from);
         Some(super::byo::view(
             &super::byo::effective_for_agent(state, &row).await?,
             &row,
+            token,
         ))
     } else {
         None
@@ -167,6 +174,7 @@ async fn create_agent(
             agent,
             token: created.token,
             container_config,
+            expires_at: created.expires_at,
         }),
     ))
 }
@@ -288,11 +296,12 @@ async fn regenerate_token(
     // (phase 2, RFE-025) same posture check as creation.
     let eff = super::byo::effective_for_agent(&state, &row).await?;
     super::byo::require_creation(&state, &auth, row.workspace_id, &eff).await?;
-    let token = service::regenerate(&state, &caller, &row).await?;
+    let (token, expires_at) = service::regenerate(&state, &caller, &row).await?;
     let container_config = service::container_config(&state, Some(&token), Some(&eff)).await?;
     Ok(Json(AgentToken {
         token,
         container_config,
+        expires_at,
     }))
 }
 
@@ -447,6 +456,93 @@ async fn put_agent_byo(
     crate::http::auth::require_own(&auth)?;
     let updated = service::put_byo(&state, &caller, &row, &req).await?;
     Ok(Json(with_byo(&state, updated).await?))
+}
+
+/// The paged agent-token list shared by the workspace and org routes (C-313).
+async fn agent_token_page(
+    state: &AppState,
+    workspace: Option<Uuid>,
+    org: Option<Uuid>,
+    q: AgentTokenQuery,
+) -> Result<Json<Page<AgentTokenEntry>>, ApiError> {
+    let p = crate::http::pagination::Pagination::new(q.limit, q.cursor.as_deref())?;
+    if let Some(d) = q.expiring_within_days
+        && !(1..=3650).contains(&d)
+    {
+        return Err(ApiError::invalid_request(
+            "Invalid expiring_within_days.",
+            vec![aurora_core::FieldError::new(
+                "/expiring_within_days",
+                "must be between 1 and 3650",
+            )],
+        ));
+    }
+    let rows = aurora_db::repo::credentials::list_agent_tokens(
+        &state.pool,
+        workspace,
+        org,
+        q.stale,
+        q.expiring_within_days,
+        p.after.map(|c| (c.t, c.id)),
+        p.fetch(),
+    )
+    .await?;
+    let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.credential_id));
+    Ok(Json(Page {
+        items: page.items.into_iter().map(AgentTokenEntry::from).collect(),
+        next_cursor: page.next_cursor,
+    }))
+}
+
+/// Live BYO agent tokens of a workspace with expiry and use (workspace owner).
+#[utoipa::path(
+    get,
+    path = "/workspaces/{ws}/agent-tokens",
+    operation_id = "listWorkspaceAgentTokens",
+    tag = "agents",
+    params(("ws" = Uuid, Path, description = "Workspace id"), AgentTokenQuery),
+    responses(
+        (status = 200, description = "Agent tokens", body = Page<AgentTokenEntry>),
+        (status = 400, description = "Invalid query", body = ErrorEnvelope),
+        (status = 403, description = "Forbidden", body = ErrorEnvelope),
+        (status = 404, description = "Not found", body = ErrorEnvelope),
+    ),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn list_workspace_agent_tokens(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path(ws): Path<Uuid>,
+    Query(q): Query<AgentTokenQuery>,
+) -> Result<Json<Page<AgentTokenEntry>>, ApiError> {
+    let a = caller.workspace(&state, ws).await?;
+    crate::http::auth::require_own(&a)?;
+    agent_token_page(&state, Some(ws), None, q).await
+}
+
+/// Live BYO agent tokens of an organization with expiry and use (org owner/admin).
+#[utoipa::path(
+    get,
+    path = "/orgs/{org}/agent-tokens",
+    operation_id = "listOrgAgentTokens",
+    tag = "agents",
+    params(("org" = Uuid, Path, description = "Organization id"), AgentTokenQuery),
+    responses(
+        (status = 200, description = "Agent tokens", body = Page<AgentTokenEntry>),
+        (status = 400, description = "Invalid query", body = ErrorEnvelope),
+        (status = 403, description = "Forbidden", body = ErrorEnvelope),
+        (status = 404, description = "Not found", body = ErrorEnvelope),
+    ),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn list_org_agent_tokens(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path(org): Path<Uuid>,
+    Query(q): Query<AgentTokenQuery>,
+) -> Result<Json<Page<AgentTokenEntry>>, ApiError> {
+    caller.org(&state, org).await?.require_admin()?;
+    agent_token_page(&state, None, Some(org), q).await
 }
 
 /// The gateway CA certificate (PEM).

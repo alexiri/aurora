@@ -209,6 +209,18 @@ impl Proxy {
                 .await;
                 return;
             }
+            // (RFE-013, C-312) An expired agent token is refused like a revoked one (28P01).
+            Err(ResolveError::Expired) => {
+                metrics::counter!("aurora_gateway_agent_token_expired_total").increment(1);
+                count("bad_credential");
+                fatal(
+                    &mut io,
+                    "28P01",
+                    "password authentication failed: the gateway credential is unknown, revoked or expired",
+                )
+                .await;
+                return;
+            }
             Err(ResolveError::Frozen { level }) => {
                 metrics::counter!("aurora_gateway_frozen_refused_total").increment(1);
                 count("frozen");

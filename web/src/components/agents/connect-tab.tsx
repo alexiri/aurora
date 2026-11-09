@@ -14,11 +14,13 @@ import {
   useContainerConfig,
   useRegenerateToken,
 } from "@/lib/api/agents";
+import { expiryText, lastUsedText } from "@/lib/api/agent-tokens";
 import { errorMessage } from "@/lib/api/errors";
 import type { Agent } from "@/lib/api/queries";
 
 import { ByoSettings } from "./byo-settings";
 import { AgentRevealDialog, type Revealed } from "./reveal";
+import { TokenBadges } from "./token-badges";
 
 function Snippet({ label, text }: { label: string; text: string }) {
   const [copied, setCopied] = useState(false);
@@ -63,7 +65,7 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
     try {
       const res = await regen.mutateAsync();
       setConfirming(false);
-      setRevealed({ token: res.token, config: res.container_config, agentName: agent.name });
+      setRevealed({ token: res.token, config: res.container_config, agentName: agent.name, expiresAt: res.expires_at });
       regen.reset();
     } catch {
       // surfaced via regen.error
@@ -78,6 +80,18 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
         title="Agent token"
         description="Regenerating revokes the current token and any context credentials."
       >
+        {agent.byo?.token ? (
+          <div data-testid="token-info" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-2">
+            <span className="font-mono text-ink">{agent.byo.token.display_prefix}…</span>
+            <span>{expiryText(agent.byo.token.expires_at)}</span>
+            <span>{lastUsedText(agent.byo.token.last_used_at)}</span>
+            <TokenBadges token={agent.byo.token} />
+          </div>
+        ) : (
+          <p data-testid="token-info" className="text-sm text-ink-2">
+            This agent has no live token. Regenerate one to connect it.
+          </p>
+        )}
         {regenBlocked ? (
           <Notice role="status">{regenBlocked}</Notice>
         ) : confirming ? (

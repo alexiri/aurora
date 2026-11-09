@@ -383,6 +383,9 @@ const ROWS: &[Row] = &[
     ),
     r("GET", "/v1/workspaces/{ws}/agents", G::WsUse, false),
     r("POST", "/v1/workspaces/{ws}/agents", G::WsUse, false),
+    // (phase 3, RFE-013, C-313) agent-token lists: workspace owner / org owner or admin.
+    r("GET", "/v1/workspaces/{ws}/agent-tokens", G::WsOwn, false),
+    r("GET", "/v1/orgs/{org}/agent-tokens", G::Admin, false),
     r("GET", "/v1/workspaces/{ws}/api-keys", G::WsOwn, false),
     r("POST", "/v1/workspaces/{ws}/api-keys", G::WsOwn, true),
     r("GET", "/v1/workspaces/{ws}/approvals", G::WsApprove, false),

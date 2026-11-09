@@ -135,6 +135,30 @@ export interface ByoForm {
   instanceCidrs: string[];
   requireContext: boolean;
   requireContextLocked: boolean;
+  /** (phase 3, RFE-013) Org maximum agent-token age in days; "" = none (the instance value applies). */
+  maxAgeDays: string;
+  /** The instance maximum (`null` = none): the org value must not exceed it. */
+  instanceMaxAgeDays: number | null;
+}
+
+export const AGENT_TOKEN_MAX_AGE_MIN = 1;
+export const AGENT_TOKEN_MAX_AGE_MAX = 3650;
+
+/** Parses the days field: `""` = none, a whole number in 1…3650, else `undefined` (invalid). */
+export function parseMaxAgeDays(s: string): number | null | undefined {
+  const t = s.trim();
+  if (t === "") return null;
+  if (!/^\d{1,4}$/.test(t)) return undefined;
+  const n = Number(t);
+  return n >= AGENT_TOKEN_MAX_AGE_MIN && n <= AGENT_TOKEN_MAX_AGE_MAX ? n : undefined;
+}
+
+/** Client-side hint only (the server is authoritative): why the days field is not acceptable. */
+export function maxAgeDaysProblem(s: string, instance: number | null): string | undefined {
+  const n = parseMaxAgeDays(s);
+  if (n === undefined) return `Enter a whole number of days from ${AGENT_TOKEN_MAX_AGE_MIN} to ${AGENT_TOKEN_MAX_AGE_MAX}, or leave it empty.`;
+  if (n !== null && instance !== null && n > instance) return `The instance limit is ${instance} days; an organization can only tighten it.`;
+  return undefined;
 }
 
 export interface GovForm {
@@ -163,7 +187,7 @@ export function formFromDocument(
 ): GovForm {
   const stored = doc?.llm?.endpoints ?? {};
   return {
-    byo: byoFormFrom(doc?.byo, eff, instance),
+    byo: byoFormFrom(doc?.byo, eff, instance, doc?.agent_tokens),
     llmPosture: (doc?.llm?.posture as GovForm["llmPosture"]) ?? (eff.llm.posture.value as GovForm["llmPosture"]),
     llmPostureLocked: eff.llm.posture.source === "instance",
     endpoints: eff.llm.endpoints.map((e) => {
@@ -197,6 +221,7 @@ function byoFormFrom(
   stored: GovDocument["byo"] | undefined,
   eff: EffectiveGovernance,
   instance?: InstanceGovernance | null,
+  tokens?: GovDocument["agent_tokens"] | null,
 ): ByoForm {
   const e = eff.byo;
   // The floor: the instance's own value when known, else the effective value when the instance
@@ -210,6 +235,11 @@ function byoFormFrom(
     instanceCidrs: instance?.byo?.default_source_cidrs ?? [],
     requireContext: stored?.require_context_credentials ?? false,
     requireContextLocked: e.require_context_credentials.source === "instance" && e.require_context_credentials.value,
+    maxAgeDays: tokens?.max_age_days != null ? String(tokens.max_age_days) : "",
+    // Known from the instance view; else from the effective view when the instance decided it.
+    instanceMaxAgeDays:
+      instance?.agent_tokens?.max_age_days ??
+      (eff.agent_tokens?.max_age_days.source === "instance" ? eff.agent_tokens.max_age_days.value : null),
   };
 }
 
@@ -223,6 +253,7 @@ export function formFromEffective(eff: EffectiveGovernance): GovForm {
       posture: eff.byo.posture.value as ByoPosture,
       sourceCidrs: (eff.byo.source_cidrs.value ?? []).join("\n"),
       requireContext: eff.byo.require_context_credentials.value,
+      maxAgeDays: eff.agent_tokens.max_age_days.value != null ? String(eff.agent_tokens.max_age_days.value) : "",
     },
     llmPosture: eff.llm.posture.value as GovForm["llmPosture"],
     egressPosture: eff.egress.posture.value as GovForm["egressPosture"],
@@ -263,8 +294,12 @@ export function formToDocument(f: GovForm): GovDocument {
     source_cidrs: cidrs,
     require_context_credentials: f.byo.requireContext,
   };
+  // Empty = no org limit. An unparsable field never reaches here: the view disables saving
+  // (`maxAgeDaysProblem`), and the server validates it again (422 `governance_invalid`).
+  const days = parseMaxAgeDays(f.byo.maxAgeDays) ?? null;
   return {
     byo,
+    agent_tokens: { max_age_days: days },
     llm: { posture: f.llmPosture, endpoints },
     egress: {
       posture: f.egressPosture,

@@ -101,6 +101,39 @@ pub struct OrgGovernance {
     /// (RFE-025) BYO posture, default source list and require-context default.
     #[serde(skip_serializing_if = "OrgByo::is_default")]
     pub byo: OrgByo,
+    /// (RFE-013) BYO agent-token maximum age; omitted from the stored document when empty.
+    #[serde(skip_serializing_if = "OrgAgentTokens::is_default")]
+    pub agent_tokens: OrgAgentTokens,
+}
+
+/// `organizations.governance.agent_tokens` (no column: `governance` is `jsonb`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct OrgAgentTokens {
+    /// Days, 1..=3650, never above the instance value; absent = no org limit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_days: Option<u32>,
+}
+
+impl OrgAgentTokens {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+/// The effective BYO agent-token maximum age: the smaller of the instance and org values
+/// (`None` = no limit) and the level that set it (`instance` when neither is set).
+pub fn effective_agent_token_max_age(
+    instance: Option<u32>,
+    org: Option<u32>,
+) -> (Option<u32>, super::effective::Source) {
+    use super::effective::Source;
+    match (instance, org) {
+        (Some(i), Some(o)) if o < i => (Some(o), Source::Org),
+        (Some(i), _) => (Some(i), Source::Instance),
+        (None, Some(o)) => (Some(o), Source::Org),
+        (None, None) => (None, Source::Instance),
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

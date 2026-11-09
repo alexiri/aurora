@@ -104,6 +104,10 @@ pub async fn apply_gateway_grants(pool: &PgPool, role: &str) -> Result<(), Grant
     stmts.push(format!(
         "GRANT UPDATE (last_used_at, origin) ON {s}.secrets TO {r}"
     ));
+    // (RFE-013, C-316) The churn column of token use tracking.
+    stmts.push(format!(
+        "GRANT UPDATE (last_used_at) ON {s}.gateway_credentials TO {r}"
+    ));
     // pg_advisory_lock family (both key forms, session/xact, exclusive/shared).
     for f in [
         "pg_advisory_lock",

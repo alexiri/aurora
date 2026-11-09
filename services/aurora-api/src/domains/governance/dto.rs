@@ -86,11 +86,25 @@ pub struct EffectiveByo {
     pub require_context_credentials: Sourced<bool>,
 }
 
+/// (phase 3, RFE-013) Effective BYO agent-token maximum age.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct EffectiveAgentTokens {
+    /// Days: the smaller of the instance and org values; `null` = no limit.
+    pub max_age_days: Sourced<Option<u32>>,
+}
+
+/// (phase 3, RFE-013) The instance level of the agent-token maximum age.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct InstanceAgentTokens {
+    pub max_age_days: Option<u32>,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct EffectiveGovernance {
     pub llm: EffectiveLlm,
     pub egress: EffectiveEgress,
     pub byo: EffectiveByo,
+    pub agent_tokens: EffectiveAgentTokens,
     pub non_compliant_secrets: Vec<NonCompliantSecret>,
 }
 
@@ -135,4 +149,5 @@ pub struct InstanceGovernance {
     pub llm: InstanceLlm,
     pub egress: InstanceEgress,
     pub byo: InstanceByo,
+    pub agent_tokens: InstanceAgentTokens,
 }

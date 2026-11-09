@@ -143,12 +143,81 @@ pub struct CreatedAgent {
     /// BYO only; shown once.
     pub token: Option<String>,
     pub container_config: Option<ContainerConfig>,
+    /// (phase 3, RFE-013) When the token expires; `null` = never (no maximum age applies) and
+    /// always `null` for hosted agents.
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, ToSchema)]
 pub struct AgentToken {
     pub token: String,
     pub container_config: ContainerConfig,
+    /// (phase 3, RFE-013) When the token expires; `null` = never.
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+/// (phase 3, RFE-013, C-313) One live BYO agent token in the stale / expiring lists.
+#[derive(Serialize, ToSchema)]
+pub struct AgentTokenEntry {
+    pub agent: AgentTokenAgent,
+    pub workspace: AgentTokenWorkspace,
+    pub display_prefix: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    /// Unused (or never used, counted from creation) for 30 days.
+    pub stale: bool,
+    /// Expires within 14 days, or already has.
+    pub expiring: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AgentTokenAgent {
+    pub id: Uuid,
+    pub handle: String,
+    pub name: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AgentTokenWorkspace {
+    pub id: Uuid,
+    pub slug: String,
+    pub name: String,
+}
+
+impl From<aurora_db::repo::credentials::AgentTokenRow> for AgentTokenEntry {
+    fn from(r: aurora_db::repo::credentials::AgentTokenRow) -> Self {
+        Self {
+            agent: AgentTokenAgent {
+                id: r.agent_id,
+                handle: r.agent_handle,
+                name: r.agent_name,
+            },
+            workspace: AgentTokenWorkspace {
+                id: r.workspace_id,
+                slug: r.workspace_slug,
+                name: r.workspace_name,
+            },
+            display_prefix: r.display_prefix,
+            created_at: r.created_at,
+            expires_at: r.expires_at,
+            last_used_at: r.last_used_at,
+            stale: r.stale,
+            expiring: r.expiring,
+        }
+    }
+}
+
+/// Query of the agent-token lists (C-313).
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct AgentTokenQuery {
+    /// `true` keeps stale tokens, `false` the others.
+    pub stale: Option<bool>,
+    /// Keeps tokens expiring within this many days (1..=3650), expired ones included.
+    pub expiring_within_days: Option<i64>,
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]

@@ -196,13 +196,28 @@ type Creds = Arc<Mutex<HashMap<String, RequestIdentity>>>;
 /// `ResolveError::Frozen`, as the database-backed resolver does.
 type FrozenAgents = Arc<Mutex<std::collections::HashSet<Uuid>>>;
 
-struct MapResolver(Creds, FrozenAgents);
+struct MapResolver(Creds, FrozenAgents, Expiry);
+
+/// (RFE-013) Agent tokens with an expiry: refused with `ResolveError::Expired` once it passed,
+/// and reported to the tunnel registry as the deadline before that.
+type Expiry = Arc<Mutex<HashMap<Uuid, std::time::Instant>>>;
 
 impl MapResolver {
     fn check(&self, i: Option<RequestIdentity>) -> Result<Option<RequestIdentity>, ResolveError> {
         match i {
             Some(i) if self.1.lock().unwrap().contains(&i.agent_id) => {
                 Err(ResolveError::Frozen { level: "agent" })
+            }
+            Some(i)
+                if i.kind == CredentialKind::Agent
+                    && self
+                        .2
+                        .lock()
+                        .unwrap()
+                        .get(&i.agent_id)
+                        .is_some_and(|d| *d <= std::time::Instant::now()) =>
+            {
+                Err(ResolveError::Expired)
             }
             other => Ok(other),
         }
@@ -223,6 +238,16 @@ impl CredentialResolver for MapResolver {
                 .find(|i| i.credential_id == id)
                 .cloned(),
         )
+    }
+    fn token_deadline(&self, credential: Uuid) -> Option<std::time::Instant> {
+        let agent = self
+            .0
+            .lock()
+            .unwrap()
+            .values()
+            .find(|i| i.credential_id == credential && i.kind == CredentialKind::Agent)?
+            .agent_id;
+        self.2.lock().unwrap().get(&agent).copied()
     }
 }
 
@@ -253,6 +278,7 @@ struct Env {
     proxy: SocketAddr,
     creds: Creds,
     frozen: FrozenAgents,
+    expiry: Expiry,
     tunnels: Arc<TunnelRegistry>,
     log: Arc<Capture>,
     gw_ca_pem: String,
@@ -261,8 +287,9 @@ struct Env {
 async fn start(trusted: &[&str]) -> Env {
     let creds: Creds = Arc::default();
     let frozen: FrozenAgents = Arc::default();
+    let expiry: Expiry = Arc::default();
     let resolver: Arc<dyn CredentialResolver> =
-        Arc::new(MapResolver(creds.clone(), frozen.clone()));
+        Arc::new(MapResolver(creds.clone(), frozen.clone(), expiry.clone()));
     let gw = ca::generate("gw").unwrap();
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = l.local_addr().unwrap();
@@ -294,6 +321,7 @@ async fn start(trusted: &[&str]) -> Env {
         proxy,
         creds,
         frozen,
+        expiry,
         tunnels,
         log,
         gw_ca_pem: gw.cert_pem,
@@ -624,6 +652,75 @@ async fn freeze_refuses_credentials_403_and_closes_live_tunnels_of_every_kind() 
         let (s, _) = env.connect_req(&[], token, "").await.unwrap();
         assert_eq!(s, 200);
     }
+}
+
+/// (RFE-013, C-312, SEC-53) An expired agent token is 407 `proxy_auth_required` with
+/// `details.reason = "agent_token_expired"` on both HTTP credential paths that authenticate a
+/// request (CONNECT, which opens the MITM tunnel, and the absolute-form forward request); an
+/// unknown token keeps the plain 407.
+#[tokio::test]
+async fn expired_agent_token_is_407_agent_token_expired_on_connect_and_absolute_form() {
+    let env = start(&[]).await;
+    let id = env.add("aug_old", CredentialKind::Agent, None);
+    env.add("aug_ok", CredentialKind::Agent, None);
+    env.expiry.lock().unwrap().insert(
+        id.agent_id,
+        std::time::Instant::now() - Duration::from_secs(1),
+    );
+    let absolute = "GET http://127.0.0.1:1/x HTTP/1.1\r\nHost: 127.0.0.1:1\r\n";
+    for (path, head) in [
+        (
+            "CONNECT",
+            "CONNECT 127.0.0.1:1 HTTP/1.1\r\nHost: 127.0.0.1:1\r\n",
+        ),
+        ("absolute-form", absolute),
+    ] {
+        let (s, text) = env.request(&[], "aug_old", head).await.unwrap();
+        assert_eq!(s, 407, "{path}: {text}");
+        assert!(
+            text.contains("\"reason\":\"agent_token_expired\""),
+            "{path}: {text}"
+        );
+        assert_eq!(body_code(&text), "proxy_auth_required", "{path}");
+        assert!(
+            text.to_lowercase()
+                .contains("proxy-authenticate: basic realm=\"aurora\""),
+            "{path}: {text}"
+        );
+        // Unknown tokens are told nothing about expiry.
+        let (s, text) = env.request(&[], "aug_nope", head).await.unwrap();
+        assert_eq!(s, 407, "{path}: {text}");
+        assert!(!text.contains("agent_token_expired"), "{path}: {text}");
+    }
+    // A token that has not expired yet is admitted.
+    let (s, _) = env.connect_req(&[], "aug_ok", "").await.unwrap();
+    assert_eq!(s, 200);
+}
+
+/// (RFE-013) Authentication happens at CONNECT, so the agent token's expiry also ends the tunnel
+/// it admitted: the tunnel is closed at the deadline and a new CONNECT is refused.
+#[tokio::test]
+async fn live_tunnel_closes_when_its_agent_token_expires() {
+    let env = start(&[]).await;
+    let id = env.add("aug_soon", CredentialKind::Agent, None);
+    env.expiry.lock().unwrap().insert(
+        id.agent_id,
+        std::time::Instant::now() + Duration::from_millis(1500),
+    );
+    let mut tunnel = open_tunnel(&env, "aug_soon").await;
+    assert_eq!(env.tunnels.len(), 1);
+    assert!(alive(&mut tunnel, Duration::from_millis(500)).await);
+    assert!(
+        !alive(&mut tunnel, Duration::from_secs(5)).await,
+        "tunnel closed at the token's expiry"
+    );
+    let (s, text) = env.connect_req(&[], "aug_soon", "").await.unwrap();
+    assert_eq!(s, 407, "{text}");
+    assert!(text.contains("agent_token_expired"), "{text}");
+    // A tunnel of a token without an expiry is not touched by any deadline.
+    env.add("aug_forever", CredentialKind::Agent, None);
+    let mut t2 = open_tunnel(&env, "aug_forever").await;
+    assert!(alive(&mut t2, Duration::from_millis(1800)).await);
 }
 
 #[tokio::test]

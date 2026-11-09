@@ -626,6 +626,112 @@ fn byo_org_document_validation_and_layering() {
     );
 }
 
+// ---- (phase 3, RFE-013) agent-token maximum age ----
+
+#[test]
+fn agent_token_max_age_none_by_default_and_omitted_when_empty() {
+    let i = inst();
+    assert_eq!(i.agent_token_max_age_days, None);
+    let d = validate(&json!({}), &i).unwrap();
+    assert_eq!(d.agent_tokens.max_age_days, None);
+    assert!(
+        serde_json::to_value(&d)
+            .unwrap()
+            .get("agent_tokens")
+            .is_none(),
+        "an empty `agent_tokens` is omitted from the stored document"
+    );
+    for empty in [
+        json!({"agent_tokens": {}}),
+        json!({"agent_tokens": {"max_age_days": null}}),
+    ] {
+        let d = validate(&empty, &i).unwrap();
+        assert!(
+            serde_json::to_value(&d)
+                .unwrap()
+                .get("agent_tokens")
+                .is_none()
+        );
+    }
+    let d = validate(&json!({"agent_tokens": {"max_age_days": 90}}), &i).unwrap();
+    assert_eq!(
+        serde_json::to_value(&d).unwrap()["agent_tokens"],
+        json!({"max_age_days": 90})
+    );
+}
+
+#[test]
+fn agent_token_max_age_bounds_and_types() {
+    let i = inst();
+    for ok in [1, 30, 3650] {
+        assert!(validate(&json!({"agent_tokens": {"max_age_days": ok}}), &i).is_ok());
+    }
+    for bad in [
+        json!(0),
+        json!(-5),
+        json!(3651),
+        json!(1.5),
+        json!("7"),
+        json!(true),
+    ] {
+        assert_eq!(
+            codes(json!({"agent_tokens": {"max_age_days": bad.clone()}}), &i),
+            [(INVALID, "agent_tokens.max_age_days".to_owned())],
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn agent_token_org_value_may_not_exceed_the_instance_value() {
+    let i = cfg(|c| c.governance.agent_tokens.max_age_days = Some(30));
+    assert_eq!(i.agent_token_max_age_days, Some(30));
+    assert!(validate(&json!({"agent_tokens": {"max_age_days": 30}}), &i).is_ok());
+    assert!(validate(&json!({"agent_tokens": {"max_age_days": 7}}), &i).is_ok());
+    assert_eq!(
+        codes(json!({"agent_tokens": {"max_age_days": 31}}), &i),
+        [(BELOW_MIN, "agent_tokens.max_age_days".to_owned())]
+    );
+}
+
+#[test]
+fn effective_agent_token_max_age_is_the_smaller_with_its_source() {
+    assert_eq!(
+        effective_agent_token_max_age(None, None),
+        (None, Source::Instance)
+    );
+    assert_eq!(
+        effective_agent_token_max_age(Some(30), None),
+        (Some(30), Source::Instance)
+    );
+    assert_eq!(
+        effective_agent_token_max_age(None, Some(10)),
+        (Some(10), Source::Org)
+    );
+    assert_eq!(
+        effective_agent_token_max_age(Some(30), Some(10)),
+        (Some(10), Source::Org)
+    );
+    assert_eq!(
+        effective_agent_token_max_age(Some(10), Some(10)),
+        (Some(10), Source::Instance)
+    );
+    // Never above the instance value, whatever is stored.
+    assert_eq!(
+        effective_agent_token_max_age(Some(10), Some(99)),
+        (Some(10), Source::Instance)
+    );
+}
+
+#[test]
+fn agent_token_stored_value_is_read_and_junk_is_ignored() {
+    let i = inst();
+    let d = from_stored(&json!({"agent_tokens": {"max_age_days": 14}}), &i).unwrap();
+    assert_eq!(d.agent_tokens.max_age_days, Some(14));
+    let d = from_stored(&json!({"agent_tokens": "junk"}), &i).unwrap();
+    assert_eq!(d.agent_tokens.max_age_days, None);
+}
+
 #[test]
 fn byo_stored_value_fails_closed() {
     let i = inst();

@@ -30,6 +30,8 @@ pub enum Refusal {
     Posture,
     Source,
     ContextRequired,
+    /// (RFE-013) The agent token's `expires_at` passed while a tunnel it opened was live.
+    TokenExpired,
 }
 
 impl Refusal {
@@ -38,6 +40,7 @@ impl Refusal {
             Self::Posture => "posture",
             Self::Source => "source",
             Self::ContextRequired => "context_required",
+            Self::TokenExpired => "agent_token_expired",
         }
     }
 }
@@ -244,6 +247,28 @@ impl TunnelRegistry {
         let (tx, rx) = watch::channel(false);
         let (closed_tx, closed_rx) = watch::channel(None);
         let n = self.next.fetch_add(1, Ordering::Relaxed);
+        // (RFE-013, C-312) A tunnel opened with an agent token ends when the token expires: the
+        // credential is only authenticated at CONNECT, so the deadline closes what it admitted.
+        if let Some(deadline) = self.resolver.token_deadline(id.credential_id)
+            && let Ok(h) = tokio::runtime::Handle::try_current()
+        {
+            let (kill, closed_by) = (tx.clone(), closed_tx.clone());
+            h.spawn(async move {
+                tokio::select! {
+                    () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
+                        metrics::counter!("aurora_gateway_byo_tunnels_closed_total").increment(1);
+                        // The answer first, then the close (as for a freeze).
+                        let _ = closed_by.send(Some(Arc::new(ClosedBy {
+                            error: crate::guidance::agent_token_expired(),
+                            reason: Some(Refusal::TokenExpired),
+                        })));
+                        let _ = kill.send(true);
+                    }
+                    // The tunnel ended first (every receiver is gone).
+                    () = kill.closed() => {}
+                }
+            });
+        }
         if let Ok(mut l) = self.live.lock() {
             l.insert(
                 n,

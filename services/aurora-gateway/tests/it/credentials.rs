@@ -202,6 +202,185 @@ async fn rejections() {
     assert!(resolve(&r3, "aub_boot").await.is_none());
 }
 
+// ---- (phase 3, RFE-013, SEC-53) agent-token expiry and use tracking ----------------------------
+
+/// An expired `aug_` token is `ResolveError::Expired` (407 / 28P01 upstream), an unknown one
+/// `Ok(None)`; expired context and boot credentials stay plain refusals.
+#[tokio::test]
+async fn expired_agent_token_is_distinguished_from_unknown_and_revoked() {
+    let db = TestDb::new().await;
+    let p = db.pool();
+    let w = world(p).await;
+    cred(
+        p,
+        w.agent,
+        "aug_old",
+        "agent",
+        "now() - interval '1 second'",
+    )
+    .await;
+    cred(
+        p,
+        w.agent,
+        "auc_old",
+        "context",
+        "now() - interval '1 second'",
+    )
+    .await;
+    let r = DbCredentialResolver::new(p.clone());
+    assert!(matches!(
+        r.resolve("aug_old").await,
+        Err(aurora_gateway::auth::ResolveError::Expired)
+    ));
+    // The refusal is answered from the cache for a moment, not by another database read.
+    db.pool().close().await;
+    assert!(matches!(
+        r.resolve("aug_old").await,
+        Err(aurora_gateway::auth::ResolveError::Expired)
+    ));
+}
+
+#[tokio::test]
+async fn expired_context_boot_unknown_and_revoked_are_plain_refusals() {
+    let db = TestDb::new().await;
+    let p = db.pool();
+    let w = world(p).await;
+    cred(
+        p,
+        w.agent,
+        "auc_old",
+        "context",
+        "now() - interval '1 second'",
+    )
+    .await;
+    cred(p, w.agent, "aub_old", "boot", "now() - interval '1 second'").await;
+    let rev = cred(
+        p,
+        w.agent,
+        "aug_rev",
+        "agent",
+        "now() - interval '1 second'",
+    )
+    .await;
+    sqlx::query("UPDATE gateway_credentials SET revoked_at = now() WHERE id = $1")
+        .bind(rev)
+        .execute(p)
+        .await
+        .unwrap();
+    let r = DbCredentialResolver::new(p.clone());
+    for t in ["auc_old", "aub_old", "aug_rev", "aug_nope"] {
+        assert!(
+            matches!(r.resolve(t).await, Ok(None)),
+            "{t}: unknown / revoked / non-agent expiry is not `agent_token_expired`"
+        );
+    }
+}
+
+/// The identity cache honours `expires_at` without waiting for its 60 s TTL: a token valid for
+/// 1.5 s is served from the cache and refused as expired right after, though the cache TTL
+/// (60 s) has not elapsed and no invalidation arrived.
+#[tokio::test]
+async fn cache_honours_expires_at_before_the_ttl_boundary() {
+    let db = TestDb::new().await;
+    let p = db.pool();
+    let w = world(p).await;
+    cred(
+        p,
+        w.agent,
+        "aug_short",
+        "agent",
+        "now() + interval '1500 milliseconds'",
+    )
+    .await;
+    let r = DbCredentialResolver::with_ttls(
+        p.clone(),
+        Duration::from_secs(60),
+        Duration::from_millis(10),
+    );
+    assert!(resolve(&r, "aug_short").await.is_some());
+    assert!(r.cache().len() == 1);
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert!(
+        resolve(&r, "aug_short").await.is_some(),
+        "still valid and served from the cache"
+    );
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert!(matches!(
+        r.resolve("aug_short").await,
+        Err(aurora_gateway::auth::ResolveError::Expired)
+    ));
+    assert!(r.cache().is_empty(), "the cached identity is gone");
+}
+
+// The outage rules for expiry (503, never `agent_token_expired`, no `last_used_at` write) are
+// tested in `outage.rs`, which owns the process-wide state gauge.
+
+async fn last_used(p: &PgPool, token: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    sqlx::query_scalar("SELECT last_used_at FROM gateway_credentials WHERE token_hash = $1")
+        .bind(aurora_core::token::hash(token).to_vec())
+        .fetch_one(p)
+        .await
+        .unwrap()
+}
+
+/// `last_used_at` is written in a batch off the request path: nothing is written by `resolve`,
+/// one `flush_last_used` writes each used credential once, further uses within the minute queue
+/// nothing, and it is skipped while the database is unreachable.
+#[tokio::test]
+async fn last_used_at_is_batched_and_throttled_to_once_a_minute() {
+    let db = TestDb::new().await;
+    let p = db.pool();
+    let w = world(p).await;
+    cred(p, w.agent, "aug_a", "agent", "NULL").await;
+    cred(p, w.agent, "auc_b", "context", "now() + interval '1 hour'").await;
+    // At most one live agent credential per agent: the unused token belongs to another agent.
+    let other = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind) VALUES ($1,$2,$3,'b','B','byo')")
+        .bind(other)
+        .bind(w.org)
+        .bind(w.ws)
+        .execute(p)
+        .await
+        .unwrap();
+    cred(p, other, "aug_unused", "agent", "NULL").await;
+    let r = DbCredentialResolver::new(p.clone());
+    for _ in 0..5 {
+        assert!(resolve(&r, "aug_a").await.is_some());
+    }
+    assert!(resolve(&r, "auc_b").await.is_some());
+    assert_eq!(last_used(p, "aug_a").await, None, "resolve never writes");
+    assert_eq!(
+        r.flush_last_used().await,
+        2,
+        "one write per used credential"
+    );
+    let first = last_used(p, "aug_a").await.expect("written");
+    assert!(last_used(p, "auc_b").await.is_some());
+    assert_eq!(last_used(p, "aug_unused").await, None);
+    // More requests inside the minute queue nothing.
+    for _ in 0..5 {
+        assert!(resolve(&r, "aug_a").await.is_some());
+    }
+    assert_eq!(r.flush_last_used().await, 0);
+    assert_eq!(last_used(p, "aug_a").await, Some(first));
+    // The statement is conditional too: a use queued by another instance within the minute does
+    // not rewrite the column.
+    let id =
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM gateway_credentials WHERE token_hash = $1")
+            .bind(aurora_core::token::hash("aug_a").to_vec())
+            .fetch_one(p)
+            .await
+            .unwrap();
+    assert_eq!(
+        aurora_db::repo::gateway::touch_last_used(p, &[id])
+            .await
+            .unwrap(),
+        0
+    );
+    // (Skipped while the database is unreachable: see `outage.rs`.)
+    assert_eq!(last_used(p, "aug_unused").await, None);
+}
+
 async fn gone_after(
     db: &TestDb,
     r: &DbCredentialResolver,

@@ -139,6 +139,8 @@ pub struct Governance {
     pub open_lane_minimum: OpenLanePosture,
     /// (RFE-025) resolved `[byo]`.
     pub byo: Byo,
+    /// (RFE-013) `governance.agent_tokens.max_age_days`; `None` = no instance limit.
+    pub agent_token_max_age_days: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -1577,6 +1579,20 @@ fn check_governance(c: &mut Ctx, raw: &RawConfig) -> Option<Governance> {
             );
         }
     }
+    if let Some(d) = g.agent_tokens.max_age_days
+        && !(aurora_core::limits::AGENT_TOKEN_MAX_AGE_MIN
+            ..=aurora_core::limits::AGENT_TOKEN_MAX_AGE_MAX)
+            .contains(&d)
+    {
+        c.err(
+            "governance.agent_tokens.max_age_days",
+            format!(
+                "{d} is out of range; expected {}..={} days (or unset for no limit)",
+                aurora_core::limits::AGENT_TOKEN_MAX_AGE_MIN,
+                aurora_core::limits::AGENT_TOKEN_MAX_AGE_MAX
+            ),
+        );
+    }
     if c.errors.len() > before {
         return None;
     }
@@ -1590,6 +1606,10 @@ fn check_governance(c: &mut Ctx, raw: &RawConfig) -> Option<Governance> {
         baseline_allowlist: g.egress.baseline_allowlist.clone(),
         open_lane_minimum: open_lane_minimum?,
         byo: byo?,
+        agent_token_max_age_days: g
+            .agent_tokens
+            .max_age_days
+            .and_then(|d| u32::try_from(d).ok()),
     })
 }
 
@@ -1611,6 +1631,7 @@ fn resolve_governance_lossy(raw: &RawConfig) -> Governance {
             default_source_cidrs: raw.byo.default_source_cidrs.clone(),
             require_context_credentials: raw.byo.require_context_credentials,
         },
+        agent_token_max_age_days: None,
     }
 }
 

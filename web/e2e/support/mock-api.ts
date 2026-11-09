@@ -64,6 +64,7 @@ const effective = {
   byo: { posture: sourced("enabled"), require_context_credentials: sourced(false), source_cidrs: sourced(null) },
   egress: { baseline_allowlist: [], org_allowlist: [], open_lane: sourced("enabled"), posture: sourced("enabled") },
   llm: { endpoints: [], posture: sourced("enabled") },
+  agent_tokens: { max_age_days: sourced(null) },
   non_compliant_secrets: [],
 };
 

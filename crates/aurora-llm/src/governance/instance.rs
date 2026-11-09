@@ -29,6 +29,8 @@ pub struct Instance {
     /// Known LLM hosts (providers Aurora has no configured endpoint for).
     pub known_llm_hosts: Vec<String>,
     pub baseline_allowlist: Vec<AllowEntry>,
+    /// (RFE-013) `governance.agent_tokens.max_age_days`; `None` = no instance limit.
+    pub agent_token_max_age_days: Option<u32>,
 }
 
 impl Instance {
@@ -82,6 +84,21 @@ impl Instance {
                     path: e.path.clone(),
                 })
                 .collect(),
+            agent_token_max_age_days: match g.agent_tokens.max_age_days {
+                None => None,
+                Some(d)
+                    if (aurora_core::limits::AGENT_TOKEN_MAX_AGE_MIN
+                        ..=aurora_core::limits::AGENT_TOKEN_MAX_AGE_MAX)
+                        .contains(&d) =>
+                {
+                    u32::try_from(d).ok()
+                }
+                Some(_) => {
+                    return Err(LlmError::Config(
+                        "governance.agent_tokens.max_age_days: out of range".into(),
+                    ));
+                }
+            },
         })
     }
 

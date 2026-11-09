@@ -5,11 +5,14 @@ use aurora_core::cidr::Cidr;
 use aurora_core::limits::BYO_CIDR_MAX;
 use aurora_core::{ApiError, FieldError};
 use aurora_db::authz::WorkspaceAuth;
-use aurora_db::repo::{agents::AgentRow, gateway, workspaces};
+use aurora_db::repo::credentials::AgentTokenRow;
+use aurora_db::repo::{agents::AgentRow, gateway, governance, workspaces};
 use aurora_llm::governance::{
-    ByoInputs, ByoLevel, ByoPosture, EffectiveByo, OrgByo, creation_allowed, effective_byo,
+    ByoInputs, ByoLevel, ByoPosture, EffectiveByo, OrgByo, creation_allowed,
+    effective_agent_token_max_age, effective_byo,
 };
 use axum::http::StatusCode;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use utoipa::ToSchema;
@@ -34,6 +37,54 @@ pub struct ByoView {
     pub effective_require_context: bool,
     /// Which layer switched it on: `instance` | `org` | `agent` (null = off).
     pub effective_require_context_level: Option<String>,
+    /// (phase 3, RFE-013, C-314) The agent's live token: prefix, creation, expiry and use;
+    /// `null` when the agent has none (or the response does not load it).
+    pub token: Option<TokenView>,
+}
+
+/// `Agent.byo.token` (C-314); no token material beyond the display prefix.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TokenView {
+    pub display_prefix: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    /// Unused (or never used, counted from creation) for 30 days.
+    pub stale: bool,
+    /// Expires within 14 days, or already has.
+    pub expiring: bool,
+}
+
+impl From<&AgentTokenRow> for TokenView {
+    fn from(r: &AgentTokenRow) -> Self {
+        Self {
+            display_prefix: r.display_prefix.clone(),
+            created_at: r.created_at,
+            expires_at: r.expires_at,
+            last_used_at: r.last_used_at,
+            stale: r.stale,
+            expiring: r.expiring,
+        }
+    }
+}
+
+/// The effective maximum age (days) of a new agent token: the smaller of the instance and org
+/// values, `None` = no limit (C-311). Read under a share lock on the org row so a concurrent
+/// governance change and its retrofit are ordered against this mint.
+pub async fn token_max_age_days(
+    state: &AppState,
+    conn: &mut sqlx::PgConnection,
+    org: Uuid,
+) -> Result<Option<u32>, ApiError> {
+    let doc = governance::read_shared(conn, org)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Organization not found."))?;
+    let org_days = doc
+        .get("agent_tokens")
+        .and_then(|a| a.get("max_age_days"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|d| u32::try_from(d).ok());
+    Ok(effective_agent_token_max_age(state.gov_instance.agent_token_max_age_days, org_days).0)
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -99,8 +150,9 @@ fn lvl(l: Option<ByoLevel>) -> Option<String> {
     l.map(|l| l.as_str().to_owned())
 }
 
-pub fn view(eff: &EffectiveByo, agent: &AgentRow) -> ByoView {
+pub fn view(eff: &EffectiveByo, agent: &AgentRow, token: Option<TokenView>) -> ByoView {
     ByoView {
+        token,
         posture: eff.posture.as_str().to_owned(),
         posture_level: eff.posture_level.as_str().to_owned(),
         source_cidrs: agent.byo_source_cidrs.clone(),
@@ -127,13 +179,24 @@ pub async fn views(
     let ws = workspaces::get(&state.pool, ws)
         .await?
         .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
+    let ids: Vec<Uuid> = agents
+        .iter()
+        .filter(|a| a.kind == "byo")
+        .map(|a| a.id)
+        .collect();
+    let tokens = aurora_db::repo::credentials::agent_tokens_of(&state.pool, &ids).await?;
     Ok(agents
         .iter()
         .map(|a| {
             (a.kind == "byo").then(|| {
+                let token = tokens
+                    .iter()
+                    .find(|t| t.agent_id == a.id)
+                    .map(TokenView::from);
                 view(
                     &effective(state, &org, ws.byo_posture.as_deref(), Some(a)),
                     a,
+                    token,
                 )
             })
         })

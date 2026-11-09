@@ -250,6 +250,21 @@ async fn gateway_grants(pool: PgPool) {
                 .await
                 .is_err()
         );
+        // (RFE-013, C-316) The gateway writes `last_used_at` of credentials and nothing else:
+        // not the expiry, not the revocation, not the token hash.
+        sqlx::query("UPDATE gateway_credentials SET last_used_at = now()")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        for col in ["expires_at = now()", "revoked_at = now()", "kind = kind"] {
+            assert!(
+                sqlx::query(&format!("UPDATE gateway_credentials SET {col}"))
+                    .execute(&mut *conn)
+                    .await
+                    .is_err(),
+                "{col}"
+            );
+        }
         assert!(
             sqlx::query("SELECT * FROM request_log")
                 .fetch_all(&mut *conn)

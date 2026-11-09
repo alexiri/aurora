@@ -30,6 +30,21 @@ pub async fn lock(
     .await?)
 }
 
+/// The document under a share lock: a concurrent `PUT` (which updates the row) waits for this
+/// transaction to finish, so a credential minted in it is seen by that `PUT`'s retrofit
+/// (RFE-013).
+pub async fn read_shared(
+    conn: &mut PgConnection,
+    org: Uuid,
+) -> Result<Option<serde_json::Value>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT governance FROM organizations WHERE id = $1 FOR SHARE")
+            .bind(org)
+            .fetch_optional(conn)
+            .await?,
+    )
+}
+
 /// Store the document and bump the revision; returns the new revision.
 pub async fn store(
     conn: &mut PgConnection,
