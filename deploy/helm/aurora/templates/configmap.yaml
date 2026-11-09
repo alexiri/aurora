@@ -8,6 +8,7 @@
 {{- with .Values.runner.k8s.tolerations }}{{ $_ := set $k8s "tolerations" . }}{{ end -}}
 {{- with .Values.runner.sandboxImagePullSecrets }}{{ $_ := set $k8s "image_pull_secrets" . }}{{ end -}}
 {{- $_ := set $cfg "runner" (merge (dict "backend" "kubernetes" "api_url" (printf "http://%s-api:4101" $full) "k8s" $k8s) (default (dict) $cfg.runner)) -}}
+{{- $_ := set $cfg "connector_host" (merge (dict "api_url" (printf "http://%s-api:4101" $full) "test_types" (.Values.connectorHost.testTypes | default false)) (default (dict) $cfg.connector_host)) -}}
 {{- $_ := set $cfg "database" (merge (dict "max_connections" .Values.database.maxConnections.api) (default (dict) $cfg.database)) -}}
 {{- if ne (not (not .Values.database.gatewayRole)) (not (not .Values.database.gatewayExistingSecret)) }}{{ fail "database.gatewayRole and database.gatewayExistingSecret go together: set both (the gateway then connects as that least-privilege role) or neither (the gateway uses the main database user). See docs/operator/install-helm.md, Database." }}{{ end -}}
 {{- if .Values.database.gatewayRole }}{{ $_ := set $cfg.database "gateway_role" .Values.database.gatewayRole }}{{ end -}}

@@ -7,6 +7,7 @@ pub mod callbacks;
 pub mod connector;
 pub mod events;
 pub mod integ;
+pub mod managed;
 pub mod ops;
 pub mod presence;
 pub mod render;

@@ -30,6 +30,8 @@ pub struct EnvSecrets {
     pub runner_session_key: Option<Redacted<String>>,
     pub runner_token: Option<Redacted<String>>,
     pub connector_token: Option<Redacted<String>>,
+    /// (phase 4, P4-MCON) the connector host's anchor token `auh_…`.
+    pub connector_host_token: Option<Redacted<String>>,
     pub bootstrap_runner_token: Option<Redacted<String>>,
     pub bootstrap_connector_tokens: Option<Redacted<String>>,
     pub bootstrap_connector_host_token: Option<Redacted<String>>,
@@ -60,6 +62,8 @@ pub struct RawConfig {
     pub plugins: PluginsSection,
     pub hookhost: HookhostSection,
     pub runner: RunnerSection,
+    /// (phase 4, P4-MCON) the connector host (docs/15).
+    pub connector_host: ConnectorHostSection,
     pub tls: TlsSection,
     pub retention: RetentionSection,
     pub attachments: AttachmentsSection,
@@ -541,6 +545,30 @@ impl Default for HookhostSection {
     fn default() -> Self {
         Self {
             api_internal_url: "http://aurora-api:4111".into(),
+        }
+    }
+}
+
+/// `connector_host.*` (docs/15). The token comes from `AURORA_CONNECTOR_HOST_TOKEN`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConnectorHostSection {
+    /// The API the host registers with.
+    pub api_url: String,
+    /// Platform callbacks (`/connectors/<id>/…`).
+    pub listen: String,
+    /// Health and metrics.
+    pub ops_port: u16,
+    /// Also announce the `fake` type (development and e2e only).
+    pub test_types: bool,
+}
+impl Default for ConnectorHostSection {
+    fn default() -> Self {
+        Self {
+            api_url: "http://127.0.0.1:4101".into(),
+            listen: "0.0.0.0:4110".into(),
+            ops_port: 4192,
+            test_types: false,
         }
     }
 }

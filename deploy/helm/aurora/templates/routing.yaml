@@ -1,7 +1,8 @@
 {{- $full := include "aurora.fullname" . -}}
 {{- $host := default (include "aurora.host" .) .Values.ingress.host -}}
 {{- if .Values.ingress.enabled }}
-# Edge rules: /v1/* -> api:4101, everything else -> web:4100. /internal and /metrics are never routed to api.
+# Edge rules: /v1/* -> api:4101, /connectors/* -> connector-host:4110 (managed connectors' platform
+# callbacks, P4-MCON), everything else -> web:4100. /internal and /metrics are never routed to api.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -26,6 +27,11 @@ spec:
           - path: /v1
             pathType: Prefix
             backend: {service: {name: {{ $full }}-api, port: {number: 4101}}}
+          {{- if .Values.connectorHost.enabled }}
+          - path: /connectors
+            pathType: Prefix
+            backend: {service: {name: {{ $full }}-connector-host, port: {number: 4110}}}
+          {{- end }}
           {{- if and .Values.devIdp.enabled .Values.devIdp.pathPrefix }}
           - path: {{ .Values.devIdp.pathPrefix }}
             pathType: Prefix
@@ -54,6 +60,14 @@ spec:
         request: {{ .Values.gatewayApi.requestTimeout }}
       backendRefs:
         - {name: {{ $full }}-api, port: 4101}
+    {{- if .Values.connectorHost.enabled }}
+    - matches:
+        - path: {type: PathPrefix, value: /connectors}
+      timeouts:
+        request: {{ .Values.gatewayApi.requestTimeout }}
+      backendRefs:
+        - {name: {{ $full }}-connector-host, port: 4110}
+    {{- end }}
     - matches:
         - path: {type: PathPrefix, value: /}
       backendRefs:

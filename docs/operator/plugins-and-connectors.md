@@ -101,6 +101,65 @@ Keep private keys out of the repository and out of shared locations.
 
 ## Connectors
 
+Aurora runs the connectors it ships itself. You add one in the dashboard, with nothing to
+copy by hand and no deployment to change. A connector for a platform Aurora does not ship, or one
+you run elsewhere, is a self-hosted connector: [see below](#self-hosted-connectors-advanced).
+
+### Add a managed connector (dashboard)
+
+You need instance-administrator rights and a running **connector host**
+(`connectorHost.enabled`, on by default in the chart; [install-helm.md](install-helm.md#connector-host)).
+Design: [docs/13 §3.1](../13-channels-connectors.md#31-managed-connectors-phase-4-p4-mcon-d-128).
+
+1. Open **Admin → Connectors → Add**. The page lists the connector types the connector host
+   announced. A type that is already added is marked. If the page says the connector host is not
+   running, no host has registered for 90 seconds: check
+   `kubectl -n <namespace> get pods -l app.kubernetes.io/component=connector-host` and its logs.
+2. **Review** what the type is: name, icon, version, publisher, capabilities, public callbacks and
+   setup fields. This is the same summary as the approval screen. Saving approves exactly the
+   manifest you reviewed.
+3. **Settings**: fill in the type's connector-level settings. Secret fields are password inputs
+   and are never shown again. A generated secret (for Mattermost, the key that signs buttons and
+   menus) is created by Aurora; you can regenerate it later.
+4. **Save.** The connector is `awaiting_registration`, then `active` as soon as the host has
+   started it. No token is shown, because nobody handles one.
+
+The connector page then shows the status the host reports (`running` or `error`, with a short
+message that never contains a secret). From there you can change settings and secrets (the host
+restarts the connector), disable it (the host stops it and its integrations are not served;
+enabling restores it), or delete it (`409 connector_in_use` while integrations exist; the stored
+secrets are discarded).
+
+What a managed connector can and cannot do:
+
+- The connector host runs only the types built into it (phase 4: **Mattermost**; the `fake` test
+  type only when `connectorHost.testTypes` is on, development and end-to-end tests). Nothing you
+  enter names an image, a binary, a URL or code (SEC-69).
+- The id of a managed connector is its type id, and there is one per type.
+- A newer connector host with a **widened** manifest (a new capability, setup field or public
+  callback) puts the connector in `pending_approval`, as for any connector. Review and approve it
+  as under [Register and approve](#register-and-approve).
+- The platform reaches the connector's callbacks (buttons, menus, slash commands) at
+  `<externalUrl>/connectors/<id>/…`; the chart's edge rules route `/connectors` to the connector
+  host ([install-helm.md](install-helm.md#routing)). Set a connector's *Public URL*
+  setting only when the platform reaches Aurora under another name.
+- Every connector host replica runs every enabled managed connector; the connector protocol's
+  integration ownership handles the replicas.
+- The connector host signs nothing at run time. Its release image embeds the manifest signatures
+  made with the project key, and the API refuses a type whose signature does not verify (the
+  catalogue then does not list it). A build without the project key, such as a local development
+  build, announces unsigned manifests and shows no types. `plugins.allow_unsigned` does not change this.
+
+The API routes behind the dashboard: `GET /v1/admin/connector-types`, `POST /v1/admin/connectors`
+with `"managed": true`, and `PATCH /v1/admin/connectors/{id}` (docs/05).
+
+## Self-hosted connectors (advanced)
+
+A self-hosted connector is a service you deploy yourself, with its own `aun_…` token and the
+settings in its environment. Use it for a platform Aurora does not ship a connector for, or to run
+a connector outside the cluster. It follows the same trust rules: a signed manifest, approval,
+widening review.
+
 ### Provision
 
 ```bash

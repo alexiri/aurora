@@ -390,6 +390,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-connector-host"
+version = "0.1.0"
+dependencies = [
+ "aurora-config",
+ "aurora-connector-fake",
+ "aurora-connector-sdk",
+ "aurora-connectors-builtin",
+ "aurora-core",
+ "aurora-protocol",
+ "aurora-registry",
+ "axum",
+ "clap",
+ "ed25519-dalek 2.2.0",
+ "http",
+ "metrics",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tower",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "aurora-connector-mattermost"
 version = "0.1.0"
 dependencies = [
@@ -438,6 +464,23 @@ dependencies = [
  "tracing",
  "uuid",
  "wiremock",
+]
+
+[[package]]
+name = "aurora-connectors-builtin"
+version = "0.1.0"
+dependencies = [
+ "aurora-connector-fake",
+ "aurora-connector-mattermost",
+ "aurora-connector-sdk",
+ "aurora-crypto",
+ "aurora-protocol",
+ "aurora-registry",
+ "axum",
+ "base64 0.22.1",
+ "ed25519-dalek 2.2.0",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

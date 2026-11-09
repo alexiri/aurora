@@ -784,6 +784,43 @@ fn bootstrap_connector_host_token_must_be_an_auh_token() {
 }
 
 #[test]
+fn connector_host_config_defaults_token_and_overrides() {
+    let c = load_with(BASE, &[("AURORA_CONNECTOR_HOST_TOKEN", "auh_abc123")])
+        .unwrap()
+        .connector_host_config()
+        .unwrap();
+    assert_eq!(c.api_url, "http://127.0.0.1:4101");
+    assert_eq!(c.listen, "0.0.0.0:4110");
+    assert_eq!(c.ops_port, 4192);
+    assert!(!c.test_types);
+    assert_eq!(c.token.expose(), "auh_abc123");
+    let c = load_with(
+        &format!(
+            "{BASE}\n[connector_host]\napi_url = \"http://aurora-api:4101/\"\ntest_types = true\nops_port = 4200\n"
+        ),
+        &[("AURORA_CONNECTOR_HOST_TOKEN", "auh_abc123")],
+    )
+    .unwrap()
+    .connector_host_config()
+    .unwrap();
+    assert_eq!(c.api_url, "http://aurora-api:4101");
+    assert_eq!(c.ops_port, 4200);
+    assert!(c.test_types);
+    // The token is required and must be an `auh_` token (an `aun_` connector token is refused).
+    let e = load_with(BASE, &[])
+        .unwrap()
+        .connector_host_config()
+        .unwrap_err();
+    assert!(e.has_key("AURORA_CONNECTOR_HOST_TOKEN"), "{e}");
+    let e = load_with(BASE, &[("AURORA_CONNECTOR_HOST_TOKEN", "aun_abc")])
+        .unwrap()
+        .connector_host_config()
+        .unwrap_err();
+    assert!(e.has_key("AURORA_CONNECTOR_HOST_TOKEN"), "{e}");
+    assert!(!format!("{c:?}").contains("auh_abc123"));
+}
+
+#[test]
 fn bootstrap_connector_tokens_are_validated_and_resolved() {
     let ok = load_with(
         BASE,

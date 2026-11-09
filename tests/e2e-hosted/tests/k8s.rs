@@ -438,3 +438,282 @@ async fn k4_sec02_sec09_probes_from_sandbox_pod() {
         fails.join("\n---\n")
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// P4-MCON-2 (docs/18 §Managed connectors, E2E): a managed `fake` connector, added through the
+// admin API, run by the chart's connector host.
+// ---------------------------------------------------------------------------------------------
+
+/// `kubectl port-forward` to the connector host's ops port (it has no Service: the test control
+/// API `/test/…` is for tests only and is enabled by `connectorHost.testTypes`).
+struct HostOps {
+    child: std::process::Child,
+    base: String,
+    http: reqwest::Client,
+}
+
+impl HostOps {
+    async fn open() -> Self {
+        let port = std::env::var("AURORA_KIND_HOST_OPS_PORT").unwrap_or_else(|_| "14192".into());
+        let child = Command::new("kubectl")
+            .args(["--context", &env("AURORA_KIND_CONTEXT")])
+            .args(["-n", &env("AURORA_KIND_NS")])
+            .arg("port-forward")
+            .arg(format!("deploy/{}-connector-host", env("AURORA_KIND_FULL")))
+            .arg(format!("{port}:4192"))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("kubectl port-forward");
+        let me = Self {
+            child,
+            base: format!("http://127.0.0.1:{port}"),
+            http: reqwest::Client::new(),
+        };
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            if me.get("/healthz").await.0 == 200 {
+                return me;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "connector host ops port unreachable"
+            );
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    async fn get(&self, p: &str) -> (u16, Value) {
+        match self
+            .http
+            .get(format!("{}{p}", self.base))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+        {
+            Ok(r) => (r.status().as_u16(), r.json().await.unwrap_or(Value::Null)),
+            Err(_) => (0, Value::Null),
+        }
+    }
+
+    async fn post(&self, p: &str, body: Value) -> (u16, Value) {
+        let r = self
+            .http
+            .post(format!("{}{p}", self.base))
+            .json(&body)
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .unwrap();
+        (r.status().as_u16(), r.json().await.unwrap_or(Value::Null))
+    }
+}
+
+impl Drop for HostOps {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Runs SQL in the evaluation Postgres Pod (the chart's `postgres.enabled`).
+fn psql(sql: &str) {
+    let pod = std::env::var("AURORA_KIND_PG_POD")
+        .unwrap_or_else(|_| format!("{}-postgres-0", env("AURORA_KIND_FULL")));
+    let (rc, out) = kubectl(&[
+        "-n",
+        &env("AURORA_KIND_NS"),
+        "exec",
+        &pod,
+        "--",
+        "psql",
+        "-U",
+        "aurora",
+        "-d",
+        "aurora",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        sql,
+    ]);
+    assert_eq!(rc, 0, "psql failed: {out}");
+}
+
+async fn eventually<F, Fut>(what: &str, secs: u64, mut f: F) -> Value
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Option<Value>>,
+{
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    loop {
+        if let Some(v) = f().await {
+            return v;
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for: {what}");
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+    }
+}
+
+#[tokio::test]
+async fn k5_managed_fake_connector_round_trip_and_disable() {
+    if !enabled() {
+        return;
+    }
+    let owner = format!("m{}@e2e.test", uuid::Uuid::now_v7().simple());
+    let me = Api::connect(&env("AURORA_KIND_API"), &env("AURORA_KIND_ORIGIN"), &owner).await;
+    psql(&format!(
+        "UPDATE users SET is_instance_admin = true, email_verified_at = now() WHERE email = '{owner}'"
+    ));
+    // The session cache holds the flag as of sign-in: sign in again.
+    let admin = me.relogin(&owner).await;
+    let host = HostOps::open().await;
+
+    // The host signs the `fake` test type with an ephemeral key; trust it for its publisher, as
+    // an admin would trust any third-party publisher (the project key never signs a test type).
+    let (s, key) = host.get("/test/signing-key").await;
+    assert_eq!(s, 200, "{key}");
+    let (s, v) = admin
+        .post(
+            "/v1/admin/trusted-keys",
+            json!({"publisher": key["publisher"], "name": "e2e-fake-host",
+                   "public_key": key["key_id"]}),
+        )
+        .await;
+    assert_eq!(s, 201, "trusted key: {v}");
+
+    // The catalogue: the type appears at the host's next heartbeat (30 s).
+    let ty = eventually("the fake type in the catalogue", 120, || async {
+        let (s, v) = admin.get("/v1/admin/connector-types").await;
+        assert_eq!(s, 200, "{v}");
+        if v["host_running"] != true {
+            return None;
+        }
+        v["items"]
+            .as_array()
+            .and_then(|a| a.iter().find(|t| t["type_id"] == "fake").cloned())
+    })
+    .await;
+    assert_eq!(ty["added"], false);
+    let fields: Vec<&str> = ty["instance_setup"]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|f| f["type"].as_str())
+        .collect();
+    assert!(
+        fields.contains(&"secret") && fields.contains(&"generated_secret"),
+        "{fields:?}"
+    );
+
+    // Add it as a managed connector: the reviewed digest is approved in the same request and no
+    // token comes back.
+    let (s, v) = admin
+        .post(
+            "/v1/admin/connectors",
+            json!({"id": "fake", "managed": true,
+                   "approve_manifest_digest": ty["manifest_digest"],
+                   "settings": {"nickname": "e2e"},
+                   "secrets": {"api_key": "e2e-api-key-value"}}),
+        )
+        .await;
+    assert_eq!(s, 201, "add managed connector: {v}");
+    assert!(v.get("token").is_none_or(Value::is_null), "no token: {v}");
+    assert!(
+        !v.to_string().contains("e2e-api-key-value"),
+        "no secret value in the response: {v}"
+    );
+    eventually("the connector active and running", 120, || async {
+        let (s, v) = admin.get("/v1/admin/connectors").await;
+        assert_eq!(s, 200, "{v}");
+        let c = v["items"]
+            .as_array()
+            .and_then(|a| a.iter().find(|c| c["id"] == "fake").cloned())?;
+        let running = c["host_status"]
+            .as_array()
+            .is_some_and(|h| h.iter().any(|x| x["state"] == "running"));
+        (c["status"] == "active" && running).then_some(c)
+    })
+    .await;
+
+    // An integration through the managed connector, one message round trip.
+    let (s, v) = admin
+        .post(
+            &format!("/v1/orgs/{}/channel-integrations", me.org),
+            json!({"connector_id": "fake", "config": {"verified_email_autolink": true},
+                   "credentials": {"token": "e2e-token", "shared_bot": true}}),
+        )
+        .await;
+    assert_eq!(s, 201, "create integration: {v}");
+    assert_eq!(v["status"], "active", "{v}");
+    let integ = v["id"].as_str().unwrap().to_owned();
+    let (s, v) = admin
+        .post(
+            &format!("/v1/agents/{}/presences", me.daneel),
+            json!({"integration_id": integ, "mode": "shared"}),
+        )
+        .await;
+    assert_eq!(s, 201, "attach presence: {v}");
+    let _conv = admin.direct().await;
+    eventually(
+        "the managed connector serving the integration",
+        120,
+        || async {
+            let (_, st) = host.get("/test/fake/fake/status").await;
+            st["integrations"]
+                .as_array()
+                .is_some_and(|a| !a.is_empty())
+                .then_some(st)
+        },
+    )
+    .await;
+    for (r, email, verified, bot) in [
+        ("B1", None, false, true),
+        ("U1", Some(owner.as_str()), true, false),
+    ] {
+        let (s, v) = host
+            .post(
+                "/test/fake/fake/users",
+                json!({"ref": r, "display_name": r, "email": email,
+                       "email_verified": verified, "is_bot": bot}),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+    }
+    let (s, v) = host
+        .post(
+            "/test/fake/fake/messages",
+            json!({"author_ref": "U1", "text": "[[say: hello through the managed connector]]",
+                   "event_id": format!("ev-{}", uuid::Uuid::now_v7()),
+                   "message_ref": format!("x-{}", uuid::Uuid::now_v7())}),
+        )
+        .await;
+    assert_eq!((s, v["ack"].as_str()), (200, Some("accepted")), "{v}");
+    eventually("the answer posted on the platform", 180, || async {
+        let (_, p) = host.get("/test/fake/fake/posted?space_ref=dm-U1").await;
+        p["messages"]
+            .as_array()?
+            .iter()
+            .find(|m| {
+                m["author_ref"]
+                    .as_str()
+                    .is_some_and(|a| a == "shared-bot" || a.starts_with('B'))
+                    && m["text"]
+                        .as_str()
+                        .is_some_and(|t| t.contains("hello through the managed connector"))
+            })
+            .cloned()
+    })
+    .await;
+
+    // Disable: the host stops the instance (its callbacks and test control vanish) and the
+    // connector is `disabled` for the core.
+    let (s, v) = admin
+        .patch("/v1/admin/connectors/fake", json!({"enabled": false}))
+        .await;
+    assert_eq!(s, 200, "disable: {v}");
+    assert_eq!(v["status"], "disabled", "{v}");
+    eventually("the host to stop the instance", 90, || async {
+        (host.get("/test/fake/fake/status").await.0 == 404).then_some(Value::Null)
+    })
+    .await;
+}

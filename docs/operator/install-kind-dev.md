@@ -17,7 +17,7 @@ podman provider (`KIND_EXPERIMENTAL_PROVIDER=podman`, set by the script). No com
 ```sh
 just kind-up                                  # cluster aurora-dev + ingress-nginx + images + helm release
 just kind-up --llm-mock --connector-fake      # with the optional profiles (below)
-just kind-dev [api gateway hookhost runner connector-fake web sandbox]
+just kind-dev [api gateway hookhost runner connector-host connector-fake web sandbox]
                                               # rebuild only what changed, load, restart those Deployments
 just kind-status
 just kind-down                                # delete the cluster (the cargo cache volume is kept)
@@ -65,7 +65,16 @@ Host-built binaries are not used: the host glibc is newer than the distroless ba
 |------|-------------|------|
 | (always) | `deploy/kind/values-dev.yaml` | single replicas, open sign-up, the development IdP (`devIdp`), hosted agents with the fake harness (`hosted.allow_fake_harness`), Ingress `nginx` |
 | `--llm-mock` | `deploy/kind/values-llm-mock.yaml` + `deploy/dev/llm-mock/llm-mock.yaml` | LiteLLM in front of VidaiMock in namespace `aurora-dev-mock` (decision I-30; **not a model**), endpoint `litellm-mock`, dev key `sk-aurora-mock-dev` ([llm-endpoints.md](llm-endpoints.md#running-with-the-mock-dev-and-e2e-only)) |
-| `--connector-fake` | `deploy/kind/values-connector-fake.yaml` | the fake connector Deployment; the API upserts connector `fake` from the generated token (still needs manifest approval, [plugins-and-connectors.md](plugins-and-connectors.md#connectors)) |
+| `--connector-fake` | `deploy/kind/values-connector-fake.yaml` | the fake connector Deployment (a self-hosted connector); the API upserts connector `fake` from the generated token (still needs manifest approval, [plugins-and-connectors.md](plugins-and-connectors.md#self-hosted-connectors-advanced)) |
+
+The connector host (`aurora-connector-host`) is part of every dev cluster (the chart enables it
+by default), so managed connectors can be added in the dashboard under Admin → Connectors
+([plugins-and-connectors.md](plugins-and-connectors.md#add-a-managed-connector-dashboard)). The dev
+images are built without the project signing key: the host announces unsigned manifests, which the API
+refuses, so the type list stays empty here (and the page says so). The managed-connector round trip
+is proven by `scripts/e2e/kind.sh`, whose profile (`deploy/kind/values-e2e.yaml`,
+`connectorHost.testTypes: true`) makes the host announce the `fake` type, signed with a key of its
+own that the test trusts for its publisher.
 
 The mock's Service has the fixed ClusterIP `10.96.100.40`; the profile opens exactly that `/32` in
 `gateway.allowed_private` and gives the gateway's NetworkPolicy one extra egress rule

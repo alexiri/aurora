@@ -87,6 +87,15 @@ UI glyphs (no Microsoft 365 or Microsoft mark), and its terms permit use "in arc
 training materials, or documentation" only. So the monogram "M" stays. Revisit if Microsoft
 publishes a product icon with terms that cover a product listing.
 
+## Built-in connectors
+
+The Mattermost connector (`connectors/mattermost/assets/icon.png`, embedded in its manifest as
+`about.icon_png_b64`, P4-MCON-2) uses the same source and rendering: Simple Icons 16.37.0 (tarball
+sha256 `cd9faf0e6faa8a8fdd15e9632ab4c86fcae4b986fe552b87673149847f2f671d`), slug `mattermost`, brand
+hex `#0058CC`, SVG sha256 `eb0c39d9be0cd4463c484199f672b5e99de37c0ae91ef26678efb95111283df8`, rendered
+with `rsvg-convert` at 256×256, transparent background, 12 % padding. Brand guidelines:
+<https://www.mattermost.org/brand-guidelines/>. A manifest carries one icon, so there is no dark variant.
+
 ## Provenance of the earlier icons
 
 The previous `assets/icon.png` of `gitlab`, `indico`, `postgresql`, `aws-keys` and `aws-role` had

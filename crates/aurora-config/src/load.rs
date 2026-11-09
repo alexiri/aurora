@@ -230,6 +230,7 @@ fn read_env_secrets(
         runner_session_key: read_secret(env, "AURORA_RUNNER_SESSION_KEY", errors),
         runner_token: read_secret(env, "AURORA_RUNNER_TOKEN", errors),
         connector_token: read_secret(env, "AURORA_CONNECTOR_TOKEN", errors),
+        connector_host_token: read_secret(env, "AURORA_CONNECTOR_HOST_TOKEN", errors),
         bootstrap_runner_token: read_secret(env, "AURORA_BOOTSTRAP_RUNNER_TOKEN", errors),
         bootstrap_connector_tokens: read_secret(env, "AURORA_BOOTSTRAP_CONNECTOR_TOKENS", errors),
         bootstrap_connector_host_token: read_secret(

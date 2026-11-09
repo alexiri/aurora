@@ -2,7 +2,7 @@
 # OPS-017: the one containerized dev/test setup: a kind cluster + the Helm chart (replaces podman compose).
 #
 #   deploy/dev/kind-dev.sh up [--llm-mock] [--connector-fake] [--no-sandbox]   cluster + ingress + images + helm release
-#   deploy/dev/kind-dev.sh dev [api|gateway|hookhost|runner|connector-fake|dev-idp|web|sandbox ...]
+#   deploy/dev/kind-dev.sh dev [api|gateway|hookhost|runner|connector-host|connector-fake|dev-idp|web|sandbox ...]
 #                                          rebuild changed service images, load them, restart those Deployments
 #   deploy/dev/kind-dev.sh bootstrap-admin <email>   pre-provision the first instance admin (binds at their first sign-in)
 #   deploy/dev/kind-dev.sh status | down
@@ -36,7 +36,7 @@ VOL_REGISTRY="$LANE-kind-dev-cargo-registry"
 VOL_RUSTUP="$LANE-kind-dev-rustup"   # `stable` is auto-installed once, then kept
 BUILDER_IMAGE="$REG/builder:1"
 WORK="$ROOT/target/kind-dev"
-RUST_SVCS=(api gateway hookhost runner connector-fake dev-idp)
+RUST_SVCS=(api gateway hookhost runner connector-host connector-fake dev-idp)
 
 k() { kubectl --context "$CTX" "$@"; }
 log() { echo "==> $*" >&2; }
@@ -182,7 +182,7 @@ cmd_up() {
   [ "$free_kb" -ge $((15 * 1024 * 1024)) ] || die "less than 15 GB free; stopping"
   ensure_cluster
   # dev-idp: the development IdP (P1-005, RFE-004; values-dev.yaml devIdp). All sign-in is OIDC.
-  local svcs=(api gateway hookhost runner web dev-idp) vals=(-f deploy/kind/values-dev.yaml)
+  local svcs=(api gateway hookhost runner connector-host web dev-idp) vals=(-f deploy/kind/values-dev.yaml)
   [ "$fake" = 1 ] && { svcs+=(connector-fake); vals+=(-f deploy/kind/values-connector-fake.yaml); }
   [ "$sandbox" = 1 ] && svcs+=(sandbox)
   build_and_load "${svcs[@]}" || die "image build/load failed"
@@ -216,9 +216,9 @@ cmd_dev() {
   need kind kubectl podman
   cluster_exists || die "cluster $CLUSTER does not exist: run 'deploy/dev/kind-dev.sh up' first"
   local svcs=("$@")
-  [ "${#svcs[@]}" -gt 0 ] || svcs=(api gateway hookhost runner web dev-idp)
+  [ "${#svcs[@]}" -gt 0 ] || svcs=(api gateway hookhost runner connector-host web dev-idp)
   local s; for s in "${svcs[@]}"; do
-    case "$s" in api|gateway|hookhost|runner|connector-fake|dev-idp|web|sandbox) ;; *) die "unknown service: $s" ;; esac
+    case "$s" in api|gateway|hookhost|runner|connector-host|connector-fake|dev-idp|web|sandbox) ;; *) die "unknown service: $s" ;; esac
   done
   local t0=$SECONDS
   build_and_load "${svcs[@]}" || die "image build/load failed"

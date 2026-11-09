@@ -322,7 +322,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `api` is built by images-api / images-api-pr below (it ships the signed built-in packages).
+        # `api` and `connector-host` are built by images-api / images-api-pr below (they ship
+        # artifacts signed with the project key: built-in packages, connector manifests).
         image: [gateway, hookhost, runner, connector-fake, connector-mattermost]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -402,7 +403,7 @@ jobs:
       packages: write
     strategy:
       matrix:
-        image: [api]
+        image: [api, connector-host]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - *images-prep
@@ -435,7 +436,7 @@ jobs:
         with:
           context: .
           file: images/services/Containerfile
-          target: api
+          target: ${{ matrix.image }}
           push: ${{ steps.prep.outputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -459,7 +460,7 @@ jobs:
       packages: write
     strategy:
       matrix:
-        image: [api]
+        image: [api, connector-host]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - *images-prep
