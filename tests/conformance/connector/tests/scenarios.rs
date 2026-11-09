@@ -1161,13 +1161,91 @@ async fn s13_dedicated_presence_lifecycle() -> R {
         assert_eq!(post.author_ref, res.platform_user_ref, "posted as the bot");
     }
 
-    // Deprovision: the bot is gone for good.
-    let r = pop(
-        "presence.deprovision",
-        json!({"presence_id": pid, "reason": "detached"}),
-    )
-    .await?;
+    // Deprovision (RFE-024, self-contained): the bot is gone for good, and the connector acts
+    // from the payload and `credentials` alone. The core serves neither the integration nor
+    // the presence any more (their rows were deleted), and the op names no integration.
+    let id = c.0.core.enqueue_deprovision(
+        c.0.integration,
+        pid,
+        "agent_deleted",
+        &res.platform_user_ref,
+        Some(&res.handle),
+    );
+    c.0.core.remove_integration(c.0.integration);
+    let r =
+        c.0.core
+            .wait_result(id, T)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no result for presence.deprovision"))?;
     ok_data(&r);
+    if let Some(p) = c.0.driver.bot_profile(&res.platform_user_ref).await? {
+        assert!(!p.active, "bot still active after deprovision");
+    }
+    c.0.finish().await?;
+    Ok(())
+}
+
+// ------------------------------- 14. self-contained deprovision errors (RFE-024)
+
+#[tokio::test]
+async fn s14_deprovision_error_codes_and_missing_credentials() -> R {
+    let c = ctx(StartOptions::default()).await?;
+    if !c.0.driver.quirks().dedicated_presences {
+        return c.0.finish().await.map(|_| ());
+    }
+    let handle = format!("scout{}", &Uuid::now_v7().simple().to_string()[20..28]);
+    let r = c
+        .op(
+            "presence.provision",
+            json!({"agent": {"handle": handle, "name": "Scout"}}),
+        )
+        .await?;
+    let res: PresenceProvisionResult = serde_json::from_value(ok_data(&r))?;
+    let pid = Uuid::now_v7();
+
+    // An op that arrives without credentials is refused, never executed without them.
+    let id = c.0.core.enqueue_deprovision_without_credentials(
+        c.0.integration,
+        pid,
+        "agent_deleted",
+        &res.platform_user_ref,
+    );
+    let r =
+        c.0.core
+            .wait_result(id, T)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no result without credentials"))?;
+    assert_eq!(err_code(&r), ErrorCode::Forbidden);
+    if let Some(p) = c.0.driver.bot_profile(&res.platform_user_ref).await? {
+        assert!(p.active, "a deprovision without credentials acted anyway");
+    }
+
+    // A bot that does not exist (already removed by hand) is `not_found`: the core drops the op.
+    let unknown = "a".repeat(26);
+    let id =
+        c.0.core
+            .enqueue_deprovision(c.0.integration, pid, "detached", &unknown, None);
+    let r =
+        c.0.core
+            .wait_result(id, T)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no result for an unknown bot"))?;
+    assert_eq!(err_code(&r), ErrorCode::NotFound);
+
+    // The real one is still removable afterwards: nothing above had an effect on it.
+    let id = c.0.core.enqueue_deprovision(
+        c.0.integration,
+        pid,
+        "detached",
+        &res.platform_user_ref,
+        Some(&res.handle),
+    );
+    ok_data(
+        &c.0.core
+            .wait_result(id, T)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no result for the deprovision"))?,
+    );
     if let Some(p) = c.0.driver.bot_profile(&res.platform_user_ref).await? {
         assert!(!p.active, "bot still active after deprovision");
     }

@@ -123,7 +123,7 @@ struct Source {
     update: &'static str,
 }
 
-const SOURCES: [Source; 6] = [
+const SOURCES: [Source; 7] = [
     Source {
         purpose: Purpose::SecretValue,
         select: "SELECT id, org_id, workspace_id, value_ref FROM secrets \
@@ -174,6 +174,17 @@ const SOURCES: [Source; 6] = [
                  verification = jsonb_set(verification, '{secret_ref}', to_jsonb($2::text)), \
                  updated_at = now() \
                  WHERE id = $1 AND verification->>'secret_ref' = $3",
+    },
+    // (RFE-024) The credential copy of a pending self-contained deprovision op; the org it was
+    // sealed for is kept in the op's payload.
+    Source {
+        purpose: Purpose::ChannelOpDeprovision,
+        select: "SELECT id, (payload->>'org_id')::uuid, NULL::uuid, payload->>'credentials_ref' \
+                 FROM channel_ops WHERE kind = 'presence.deprovision' \
+                 AND payload->>'credentials_ref' IS NOT NULL AND id > $1 ORDER BY id LIMIT $2",
+        update: "UPDATE channel_ops SET payload = jsonb_set(payload, '{credentials_ref}', \
+                 to_jsonb($2::text)), updated_at = now() \
+                 WHERE id = $1 AND payload->>'credentials_ref' = $3",
     },
 ];
 

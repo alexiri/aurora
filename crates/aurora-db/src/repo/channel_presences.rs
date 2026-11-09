@@ -195,10 +195,19 @@ pub struct DeprovisionTarget {
     pub connector_id: String,
     pub agent_id: Uuid,
     pub handle: Option<String>,
+    pub org_id: Uuid,
+    /// The bot's platform user; `None` while provisioning never produced one.
+    pub platform_user_ref: Option<String>,
+    pub tenant_ref: String,
+    pub tenant_label: String,
+    pub config: serde_json::Value,
+    /// Sealed platform credentials of the integration (never decrypted here).
+    pub integration_credentials_ref: String,
 }
 
-const TARGETS: &str =
-    "SELECT p.id AS presence_id, p.integration_id, i.connector_id, p.agent_id, p.handle
+const TARGETS: &str = "SELECT p.id AS presence_id, p.integration_id, i.connector_id, p.agent_id,
+        p.handle, i.org_id, p.platform_user_ref, i.tenant_ref, i.tenant_label, i.config,
+        i.credentials_ref AS integration_credentials_ref
     FROM channel_presences p
     JOIN channel_integrations i ON i.id = p.integration_id
     JOIN agents a ON a.id = p.agent_id
@@ -252,6 +261,17 @@ pub async fn dedicated_for_org<'e, E: PgExecutor<'e>>(
             .fetch_all(exec)
             .await?,
     )
+}
+
+/// The presence as a deprovision target when it is dedicated (else empty).
+pub async fn dedicated_for_presence<'e, E: PgExecutor<'e>>(
+    exec: E,
+    presence: Uuid,
+) -> Result<Vec<DeprovisionTarget>, DbError> {
+    Ok(sqlx::query_as(&format!("{TARGETS} AND p.id=$1"))
+        .bind(presence)
+        .fetch_all(exec)
+        .await?)
 }
 
 pub async fn dedicated_for_integration<'e, E: PgExecutor<'e>>(

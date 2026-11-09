@@ -1092,10 +1092,10 @@ presence-level ownership).
 |---|---|---|
 | id | uuid pk | |
 | connector_id | text not null | |
-| integration_id | uuid null FK→channel_integrations (cascade) | |
-| presence_id | uuid null | |
+| integration_id | uuid null FK→channel_integrations (cascade) | `NULL` for `presence.deprovision` (so the cascade of `channel_integrations` cannot delete it); any live replica of the connector may claim it (`13 §4.2`) |
+| presence_id | uuid null | no FK |
 | kind | text not null | contract op kind (`13 §Operations`) |
-| payload | jsonb not null | |
+| payload | jsonb not null | for `presence.deprovision` (RFE-024): `{ presence_id, reason, platform_user_ref, handle, tenant_ref, tenant_label, config, credentials_ref, org_id }`; `credentials_ref` is a SecretRef sealed under the op id (`purpose channel_op_deprovision`, owner = op id, org = `org_id`), set to JSON `null` and discarded at the terminal state or by the pruning job; `credentials_ref` and `org_id` are internal and never sent to the connector (`13 §4.2`) |
 | dedupe_key | text null unique | e.g. `answer:<turn_id>:<thread_link_id>` |
 | correlation_id | uuid null | for synchronous waits |
 | status | text CHECK in (`pending`,`claimed`,`done`,`failed`,`dropped`) | |
@@ -1107,6 +1107,7 @@ presence-level ownership).
 | error_code | text null | neutral error |
 | completed_at | timestamptz null | |
 | index | (connector_id, status, not_before) | |
+| index | (kind, status) WHERE kind = `presence.deprovision` AND (status IN (`pending`,`claimed`) OR the sealed `credentials_ref` is still set) | the expiry and pruning job finds deprovision ops past `DEPROVISION_RETRY_WINDOW` and finished ops whose sealed copy was not yet discarded (RFE-024) |
 
 ### `channel_cards`
 Posted interactive messages, so they can be updated/settled.
@@ -1194,9 +1195,3 @@ tables above in the same change (and this section shrinks).
 |---|---|---|---|
 | status_reason | (existing column, open vocabulary) | gains the value `breaks_connections`: for a major upgrade held in `pending_approval` because it would set connections to `reauth_required` (`09 §10`) | 3 (RFE-022) |
 
-#### `channel_ops` (self-contained deprovision)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| payload | (existing column) | for `presence.deprovision`: `{ presence_id, reason, platform_user_ref, handle, tenant_ref, tenant_label, config, credentials_ref }`; `credentials_ref` is a SecretRef sealed under the op id (`purpose channel_op_deprovision`), nulled and discarded at the terminal state (`13 §4.2`) | 3 (RFE-024) |
-| integration_id | (existing column) | `NULL` for deprovision ops (so the cascade of `channel_integrations` cannot delete them); `presence_id` has no FK; `connector_id` is set | 3 (RFE-024) |
-| index | (kind, status) WHERE kind = `presence.deprovision` AND status IN (`pending`,`claimed`) | the pruning job finds deprovision ops whose sealed copy must be discarded | 3 (RFE-024) |

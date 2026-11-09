@@ -255,6 +255,104 @@ impl FakeCore {
         st.version += 1;
     }
 
+    /// Stops serving an integration and its presences, as if their rows were deleted.
+    pub fn remove_integration(&self, id: Uuid) {
+        let mut st = self.st();
+        st.integrations.retain(|i| i.id != id);
+        st.presences.retain(|p| p.integration_id != id);
+        st.version += 1;
+    }
+
+    /// Queues a self-contained `presence.deprovision` (RFE-024, C-360/C-361) as the core
+    /// does after a delete: no integration id, everything the connector needs in the payload
+    /// and the integration's credentials in `credentials`. Built from the served integration
+    /// `integration`, so call it before [`Self::remove_integration`].
+    pub fn enqueue_deprovision(
+        &self,
+        integration: Uuid,
+        presence: Uuid,
+        reason: &str,
+        platform_user_ref: &str,
+        handle: Option<&str>,
+    ) -> Uuid {
+        self.deprovision_op(
+            integration,
+            presence,
+            reason,
+            platform_user_ref,
+            handle,
+            true,
+        )
+    }
+
+    /// As [`Self::enqueue_deprovision`] but the op arrives without `credentials` (the core
+    /// never does this; a connector must refuse it).
+    pub fn enqueue_deprovision_without_credentials(
+        &self,
+        integration: Uuid,
+        presence: Uuid,
+        reason: &str,
+        platform_user_ref: &str,
+    ) -> Uuid {
+        self.deprovision_op(
+            integration,
+            presence,
+            reason,
+            platform_user_ref,
+            None,
+            false,
+        )
+    }
+
+    fn deprovision_op(
+        &self,
+        integration: Uuid,
+        presence: Uuid,
+        reason: &str,
+        platform_user_ref: &str,
+        handle: Option<&str>,
+        with_credentials: bool,
+    ) -> Uuid {
+        let (payload, credentials) = {
+            let st = self.st();
+            // An integration that is not served yields an op the connector must refuse.
+            let i = st.integrations.iter().find(|i| i.id == integration);
+            (
+                json!({
+                    "presence_id": presence, "reason": reason,
+                    "platform_user_ref": platform_user_ref, "handle": handle,
+                    "tenant_ref": i.map(|i| i.tenant_ref.clone()).unwrap_or_default(),
+                    "tenant_label": i.map(|i| i.tenant_label.clone()).unwrap_or_default(),
+                    "config": i.map(|i| i.config.clone()).unwrap_or_else(|| json!({})),
+                }),
+                i.map(|i| i.credentials.clone())
+                    .unwrap_or_else(|| json!({})),
+            )
+        };
+        let mut payload = payload;
+        let aliases = self.st().aliases.clone();
+        translate(&mut payload, &aliases, false);
+        let id = Uuid::now_v7();
+        self.st().ops.push(OpRecord {
+            op: Operation {
+                op_id: id,
+                kind: OpKind::PresenceDeprovision,
+                integration_id: None,
+                presence_id: Some(presence),
+                attempt: 1,
+                maybe_sent: false,
+                payload,
+                credentials: with_credentials.then_some(credentials),
+            },
+            state: OpState::Queued,
+            claims: vec![],
+            lapsed: false,
+            result: None,
+        });
+        self.inner.notify.notify_waiters();
+        id
+    }
+
     /// Registers `alias` for the platform id `real`, for platforms whose ids the
     /// suite cannot choose. Scenarios talk in aliases (`U1`, `C1`, `B1`): they are
     /// translated to real ids in operations the scenario enqueues, and back to
@@ -346,6 +444,7 @@ impl FakeCore {
             attempt: 1,
             maybe_sent: false,
             payload,
+            credentials: None,
         };
         self.st().ops.push(OpRecord {
             op,

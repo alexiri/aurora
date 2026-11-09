@@ -130,7 +130,7 @@ integration config.
 | `spaces.list` / `space.members` | `GET /api/v4/users/{bot}/teams/{team}/channels`, `POST /api/v4/channels/search` / `GET /api/v4/channels/{id}/members` |
 | `history.read` | `GET /api/v4/posts/{root}/thread` or `GET /api/v4/channels/{id}/posts` |
 | `presence.provision` (admin) | `POST /api/v4/bots` (`username = <handle>` or `<handle>-agent` on collision), add to team, `POST /api/v4/users/{id}/tokens`, set image from `avatar_url` |
-| `presence.deprovision` | revoke tokens, `POST /api/v4/bots/{id}/disable` — (phase 3, RFE-024) driven entirely by the op's own payload and `credentials` (`platform_user_ref`, `tenant_ref`, `config.base_url`, the admin token), never by looking up the integration or presence rows, which may already be deleted; 404 on the bot → `not_found` (`dropped`) |
+| `presence.deprovision` | revoke tokens, `POST /api/v4/bots/{id}/disable` — (phase 3, RFE-024) driven entirely by the op's own payload and `credentials` (`platform_user_ref`, `tenant_ref`, `config.server_url`, the admin token from `credentials.admin_token`), never by looking up the integration or presence rows, which may already be deleted; 404 on the bot → `not_found` (`dropped`) |
 | `presence.rename` / `set_icon` | `PUT /api/v4/bots/{id}`, `POST /api/v4/users/{id}/image` |
 | `credentials.validate` | as above |
 

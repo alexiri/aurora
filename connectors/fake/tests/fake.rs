@@ -24,6 +24,7 @@ fn op(kind: &str, payload: Value) -> Operation {
         attempt: 1,
         maybe_sent: false,
         payload,
+        credentials: None,
     }
 }
 

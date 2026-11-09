@@ -163,6 +163,10 @@ pub fn all() -> Vec<(&'static str, Schema)> {
             schema_for!(c::PresenceProvisionOp),
         ),
         (
+            "connector_op_presence_deprovision",
+            schema_for!(c::PresenceDeprovisionOp),
+        ),
+        (
             "connector_op_presence_change",
             schema_for!(c::PresenceChangeOp),
         ),

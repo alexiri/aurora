@@ -1,6 +1,7 @@
 //! Presence lifecycle (docs/13 §5.7; C-34): attach, detach, re-attach, provisioning results,
 //! deprovision on agent/workspace/org/integration deletion, rename.
 
+use super::deprovision;
 use super::dto::*;
 use super::integrations::discard;
 use super::{capability_enabled, map_correlated};
@@ -14,9 +15,7 @@ use crate::http::auth::Caller;
 use aurora_core::{ApiError, FieldError, Secret};
 use aurora_db::repo::channel_integrations as integ_repo;
 use aurora_db::repo::channel_ops;
-use aurora_db::repo::channel_presences::{
-    self as repo, DeprovisionTarget, NewPresence, PresenceRow,
-};
+use aurora_db::repo::channel_presences::{self as repo, NewPresence, PresenceRow};
 use aurora_db::repo::{agents, connectors, memory};
 use aurora_db::{DbError, conflict_code};
 use aurora_protocol::connector::{CredentialsValidateResult, PresenceProvisionResult};
@@ -51,66 +50,7 @@ pub async fn bump_integration_agents(
     Ok(repo::bump_agents_of_integration(conn, integration).await?)
 }
 
-// ------------------------------------------------------------------ deprovision
-
-async fn enqueue_deprovision(
-    tx: &mut PgConnection,
-    t: &DeprovisionTarget,
-    keep_integration: bool,
-) -> Result<(), ApiError> {
-    ops::enqueue(
-        tx,
-        NewOp {
-            kind: "presence.deprovision".to_owned(),
-            connector_id: Some(t.connector_id.clone()),
-            integration_id: keep_integration.then_some(t.integration_id),
-            presence_id: Some(t.presence_id),
-            payload: json!({"presence_id": t.presence_id, "handle": t.handle}),
-            dedupe_key: Some(format!("presence.deprovision:{}", t.presence_id)),
-        },
-    )
-    .await?;
-    Ok(())
-}
-
-/// Agent deletion (04 §Deletion semantics): before the cascade removes the rows.
-pub async fn enqueue_deprovision_for_agent(
-    tx: &mut PgConnection,
-    agent: Uuid,
-) -> Result<(), ApiError> {
-    for t in repo::dedicated_for_agent(&mut *tx, agent).await? {
-        enqueue_deprovision(tx, &t, true).await?;
-    }
-    Ok(())
-}
-
-pub async fn enqueue_deprovision_for_workspace(
-    tx: &mut PgConnection,
-    workspace: Uuid,
-) -> Result<(), ApiError> {
-    for t in repo::dedicated_for_workspace(&mut *tx, workspace).await? {
-        enqueue_deprovision(tx, &t, true).await?;
-    }
-    Ok(())
-}
-
-/// Org deletion removes the integrations too, so the ops carry no integration id.
-pub async fn enqueue_deprovision_for_org(tx: &mut PgConnection, org: Uuid) -> Result<(), ApiError> {
-    for t in repo::dedicated_for_org(&mut *tx, org).await? {
-        enqueue_deprovision(tx, &t, false).await?;
-    }
-    Ok(())
-}
-
-pub async fn enqueue_deprovision_for_integration(
-    tx: &mut PgConnection,
-    integration: Uuid,
-) -> Result<(), ApiError> {
-    for t in repo::dedicated_for_integration(&mut *tx, integration).await? {
-        enqueue_deprovision(tx, &t, false).await?;
-    }
-    Ok(())
-}
+// Deprovision on deletion: see `super::deprovision` (self-contained ops, RFE-024).
 
 /// An agent was renamed: dedicated bots follow (`presence.rename`).
 pub async fn on_agent_renamed(s: &AppState, agent: Uuid, name: &str) -> Result<(), ApiError> {
@@ -560,28 +500,26 @@ fn audit_presence(
 
 pub async fn detach(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> {
     let (row, agent) = load_presence(s, c, id).await?;
-    let mut tx = s.pool.begin().await.map_err(DbError::from)?;
-    let Some(cur) = repo::get_for_update(&mut tx, id).await? else {
-        return Err(ApiError::not_found("Presence not found."));
-    };
-    if cur.mode == "dedicated" {
-        enqueue_deprovision(
-            &mut tx,
-            &DeprovisionTarget {
-                presence_id: cur.id,
-                integration_id: cur.integration_id,
-                connector_id: cur.connector_id.clone(),
-                agent_id: cur.agent_id,
-                handle: cur.handle.clone(),
-            },
-            true,
-        )
-        .await?;
+    // Copies sealed first; a seal failure refuses the detach (503) and removes nothing.
+    let mut dep = deprovision::prepare(s, deprovision::Scope::Presence(id)).await?;
+    let done = async {
+        let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+        let Some(cur) = repo::get_for_update(&mut tx, id).await? else {
+            return Err(ApiError::not_found("Presence not found."));
+        };
+        dep.enqueue(&mut tx).await?;
+        repo::forget_agent_routing(&mut tx, cur.agent_id, cur.integration_id).await?;
+        repo::delete(&mut *tx, id).await?;
+        memory::bump_agent_sync(&mut tx, cur.agent_id).await?;
+        tx.commit().await.map_err(DbError::from)?;
+        Ok::<_, ApiError>(())
     }
-    repo::forget_agent_routing(&mut tx, cur.agent_id, cur.integration_id).await?;
-    repo::delete(&mut *tx, id).await?;
-    memory::bump_agent_sync(&mut tx, cur.agent_id).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    .await;
+    if let Err(e) = done {
+        dep.rollback(s).await;
+        return Err(e);
+    }
+    dep.committed(s).await;
     if let Some(sealed) = &row.credentials_ref {
         discard(s, row.org_id, row.id, true, sealed).await;
     }

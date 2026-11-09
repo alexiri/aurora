@@ -312,6 +312,7 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     aurora_api::domains::approvals::notify::spawn(state.clone());
     aurora_api::domains::connectors::inbox::spawn(state.clone());
     aurora_api::domains::channels::cards::fanout::spawn(state.clone());
+    aurora_api::domains::channels::deprovision::spawn(state.clone());
     aurora_api::domains::plugins::scan::spawn(state.clone());
     aurora_api::domains::plugins::registry::spawn_initial(state.clone());
     let internal =

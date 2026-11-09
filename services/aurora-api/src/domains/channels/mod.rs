@@ -6,9 +6,9 @@
 //! * the config feed ETag is derived from the rows it serves, so row changes invalidate it
 //!   without an extra counter;
 //! * agent-side presence changes bump the agent's `home_sync_generation`;
-//! * deprovision ops are enqueued with the presence id and handle only; rows of a deleted
-//!   integration/org take their ops' `integration_id` FK with them, so those ops are enqueued
-//!   without an integration (claimable by any live replica of the connector, best effort);
+//! * deprovision ops are self-contained and committed with the delete (see [`deprovision`],
+//!   RFE-024): `integration_id` NULL (claimable by any live replica of the connector), the
+//!   payload carries what the connector needs and the credentials ride a sealed copy;
 //! * plaintext credentials sent in a `credentials.validate` op payload are blanked once the op
 //!   finished.
 pub mod actions;
@@ -16,6 +16,7 @@ mod bindings;
 pub mod card_requests;
 pub mod cards;
 pub mod commands;
+pub mod deprovision;
 mod dto;
 pub mod inbox;
 mod integrations;

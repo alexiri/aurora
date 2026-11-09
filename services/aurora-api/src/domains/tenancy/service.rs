@@ -307,14 +307,26 @@ pub fn confirmation_mismatch() -> ApiError {
 }
 
 pub async fn delete_org(
-    pool: &PgPool,
+    state: &AppState,
     org_id: Uuid,
     ev: &crate::audit::AuditEvent,
 ) -> Result<(), ApiError> {
-    let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
-    crate::domains::channels::presences::enqueue_deprovision_for_org(&mut tx, org_id).await?;
-    orgs::delete_cascade(&mut tx, org_id).await?;
-    crate::audit::commit_critical(tx, ev).await?;
+    use crate::domains::channels::deprovision::{self, Scope};
+    // Self-contained deprovision ops (RFE-024): the integrations are removed by the cascade, so
+    // each op carries its own sealed credential copy. The org's shared bot stays (C-364).
+    let mut dep = deprovision::prepare(state, Scope::Org(org_id)).await?;
+    let done = async {
+        let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
+        dep.enqueue(&mut tx).await?;
+        orgs::delete_cascade(&mut tx, org_id).await?;
+        crate::audit::commit_critical(tx, ev).await
+    }
+    .await;
+    if let Err(e) = done {
+        dep.rollback(state).await;
+        return Err(e);
+    }
+    dep.committed(state).await;
     Ok(())
 }
 

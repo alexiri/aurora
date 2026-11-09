@@ -558,10 +558,10 @@ pub async fn execute(
             need(integ, Capability::PresenceDedicated)?;
             presence::provision(integ, op, p).await
         }
-        OpPayload::PresenceDeprovision(c) => {
-            need(integ, Capability::PresenceDedicated)?;
-            presence::deprovision(integ, op, c).await
-        }
+        OpPayload::PresenceDeprovision(_) => Err(err(
+            ErrorCode::Invalid,
+            "presence.deprovision is self-contained and handled by the connector, not an integration",
+        )),
         OpPayload::PresenceRename(c) => {
             need(integ, Capability::PresenceDedicated)?;
             presence::rename(integ, op, c).await

@@ -14,6 +14,12 @@ use uuid::Uuid;
 
 const SECRET: &str = "SECRET-credential-123";
 
+/// The test keyring's key (see `common::config`).
+fn base64_key() -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode([b'a'; 32])
+}
+
 struct Conn {
     id: String,
     tok: String,
@@ -79,7 +85,33 @@ async fn plane(
 
 impl W {
     async fn new() -> W {
-        let h = Harness::new().await;
+        Self::build(None).await
+    }
+
+    /// As `new`, with a memory store as the default secret store (so a test can make it
+    /// unavailable and count its managed values).
+    async fn with_memory_store() -> (W, std::sync::Arc<aurora_secrets::MemoryStore>) {
+        let mem = std::sync::Arc::new(aurora_secrets::MemoryStore::new("memory"));
+        (Self::build(Some(mem.clone())).await, mem)
+    }
+
+    async fn build(mem: Option<std::sync::Arc<aurora_secrets::MemoryStore>>) -> W {
+        let mut h = Harness::new().await;
+        if let Some(mem) = mem {
+            let keyring = std::sync::Arc::new(
+                aurora_crypto::Keyring::parse(&format!("k1:{}", base64_key()), "k1").unwrap(),
+            );
+            let mut sr =
+                aurora_secrets::StoreRegistry::from_config(&h.state.config.secrets, keyring)
+                    .unwrap();
+            sr.register(mem);
+            sr.set_default("memory").unwrap();
+            h.state = h
+                .state
+                .clone()
+                .with_vault(std::sync::Arc::new(aurora_secrets::SecretVault::new(sr)));
+            h.app = test_router(h.state.clone());
+        }
         let root = h.user("root@x.io", true).await;
         let admin_c = cookie(&h.good_session(root).await.1);
         let key = generate_signing_key().unwrap();
@@ -306,6 +338,22 @@ impl W {
             Some(json!({"integration_id": integ, "mode": mode})),
         )
         .await
+    }
+
+    /// A dedicated presence whose provisioning completed with the bot `bot_ref`.
+    async fn dedicated(&self, agent: Uuid, integ: Uuid, bot_ref: &str) -> Uuid {
+        let (s, v) = self.attach(&self.owner, agent, integ, "dedicated").await;
+        assert_eq!(s, 201, "{v}");
+        let pid: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+        let bot = bot_ref.to_owned();
+        let served = self
+            .serve(&self.fake, 1, move |_| {
+                json!({"outcome": "ok", "data": {
+                    "platform_user_ref": bot, "handle": "h", "credentials": {"t": "x"}}})
+            })
+            .await;
+        assert_eq!(served[0]["kind"], "presence.provision");
+        pid
     }
 
     async fn ops_of(&self, kind: &str) -> Vec<(Uuid, Option<Uuid>, Option<Uuid>, String, Value)> {
@@ -941,11 +989,14 @@ async fn presence_dedicated_provision_and_detach() {
     assert_eq!(s, 204);
     let d = w.ops_of("presence.deprovision").await;
     assert_eq!(d.len(), 1);
+    // Self-contained (RFE-024): no integration id, the payload names the bot.
     assert_eq!(
         (d[0].1, d[0].2, d[0].3.as_str()),
-        (Some(integ), Some(pid), "pending")
+        (None, Some(pid), "pending")
     );
     assert_eq!(d[0].4["presence_id"], json!(pid));
+    assert_eq!(d[0].4["reason"], "detached");
+    assert_eq!(d[0].4["platform_user_ref"], "BOT-9");
     let left: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_presences")
         .fetch_one(w.h.pool())
         .await
@@ -1195,7 +1246,8 @@ async fn agent_delete_enqueues_deprovision() {
     assert_eq!(d.len(), 1, "only the dedicated presence is deprovisioned");
     assert_eq!(
         (d[0].1, d[0].2, d[0].3.as_str()),
-        (Some(integ), Some(pid), "pending")
+        (None, Some(pid), "pending"),
+        "the op names no integration (self-contained)"
     );
     // The connector receives it.
     let ops = w
@@ -1220,7 +1272,7 @@ async fn workspace_and_integration_delete_enqueue_deprovision() {
     let w = W::new().await;
     let integ = w.integration(&w.fake, "T1").await;
     let a1 = w.agent("a1").await;
-    w.attach(&w.owner, a1, integ, "dedicated").await;
+    w.dedicated(a1, integ, "BOT-1").await;
     // Workspace delete (typed confirmation).
     let slug: String = sqlx::query_scalar("SELECT slug FROM workspaces WHERE id=$1")
         .bind(w.ws)
@@ -1237,13 +1289,16 @@ async fn workspace_and_integration_delete_enqueue_deprovision() {
         .await;
     assert_eq!(s, 204, "{v}");
     assert_eq!(w.ops_of("presence.deprovision").await.len(), 1);
+    // The connector takes it (a queued op would otherwise be served before the next provision).
+    w.serve(&w.fake, 1, |_| json!({"outcome": "ok", "data": {}}))
+        .await;
 
     // Integration delete: the ops outlive the integration (no integration id).
     let ws2 = w.h.workspace(w.org).await;
     let a2 = Uuid::now_v7();
     sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) VALUES ($1,$2,$3,'b1','b1','hosted','fake')")
         .bind(a2).bind(w.org).bind(ws2).execute(w.h.pool()).await.unwrap();
-    w.attach(&w.owner, a2, integ, "dedicated").await;
+    w.dedicated(a2, integ, "BOT-2").await;
     let (s, _) = w
         .call(
             &w.owner,
@@ -1253,10 +1308,11 @@ async fn workspace_and_integration_delete_enqueue_deprovision() {
         )
         .await;
     assert_eq!(s, 204);
-    // The workspace's op named the integration, so it went with it; this one outlives it.
+    // Both ops outlive the integration (no integration id).
     let d = w.ops_of("presence.deprovision").await;
-    assert_eq!(d.len(), 1);
-    assert!(d[0].1.is_none() && d[0].3 == "pending");
+    assert_eq!(d.len(), 2);
+    assert!(d.iter().all(|o| o.1.is_none()));
+    assert_eq!(d[1].3, "pending");
     // Org delete. First let the connector take the pending deprovision (a queued op would
     // otherwise be served before the validation below).
     let drained = w
@@ -1264,7 +1320,7 @@ async fn workspace_and_integration_delete_enqueue_deprovision() {
         .await;
     assert_eq!(drained[0]["kind"], "presence.deprovision");
     let integ2 = w.integration(&w.fake, "T2").await;
-    w.attach(&w.owner, a2, integ2, "dedicated").await;
+    w.dedicated(a2, integ2, "BOT-3").await;
     let org_slug: String = sqlx::query_scalar("SELECT slug FROM organizations WHERE id=$1")
         .bind(w.org)
         .fetch_one(w.h.pool())
@@ -1279,7 +1335,7 @@ async fn workspace_and_integration_delete_enqueue_deprovision() {
         )
         .await;
     assert_eq!(s, 204, "{v}");
-    assert_eq!(w.ops_of("presence.deprovision").await.len(), 2);
+    assert_eq!(w.ops_of("presence.deprovision").await.len(), 3);
 }
 
 // -------------------------------------------------------------------- bindings
@@ -1918,4 +1974,712 @@ async fn presence_options_for_members_are_metadata_only() {
         .find(|i| i["integration_id"] == shared.to_string())
         .unwrap();
     assert_eq!(a["attached"], true);
+}
+
+// ------------------------------------------- self-contained deprovision (RFE-024, SEC-58)
+
+fn failed_total() -> f64 {
+    use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+    static H: std::sync::OnceLock<PrometheusHandle> = std::sync::OnceLock::new();
+    let h = H.get_or_init(|| PrometheusBuilder::new().install_recorder().unwrap());
+    h.render()
+        .lines()
+        .find(|l| l.starts_with("aurora_channel_deprovision_failed_total"))
+        .and_then(|l| l.split_whitespace().last()?.parse().ok())
+        .unwrap_or(0.0)
+}
+
+impl W {
+    async fn second_replica(&self, c: &Conn) -> Conn {
+        let id = Uuid::now_v7();
+        sqlx::query("INSERT INTO connector_replicas (id, connector_id, version, last_seen_at) VALUES ($1,$2,'1.0.0',now())")
+            .bind(id)
+            .bind(&c.id)
+            .execute(self.h.pool())
+            .await
+            .unwrap();
+        Conn {
+            id: c.id.clone(),
+            tok: c.tok.clone(),
+            replica: id,
+        }
+    }
+
+    /// One claim by `c` without waiting.
+    async fn claim_now(&self, c: &Conn) -> Vec<Value> {
+        let (s, _, v) = plane(
+            &self.h,
+            &c.tok,
+            Some(c.replica),
+            Method::POST,
+            "/ops/claim",
+            Some(json!({"max": 10, "wait_secs": 0})),
+        )
+        .await;
+        assert_eq!(s, 200, "{v}");
+        v["ops"].as_array().unwrap().clone()
+    }
+
+    async fn report(&self, c: &Conn, op: &Value, mut result: Value) {
+        result["op_id"] = op["op_id"].clone();
+        let (s, _, v) = plane(
+            &self.h,
+            &c.tok,
+            Some(c.replica),
+            Method::POST,
+            "/ops/results",
+            Some(json!({"results": [result]})),
+        )
+        .await;
+        assert_eq!(s, 200, "{v}");
+    }
+
+    /// The deprovision op of a presence: `(id, integration_id, status, error_code, payload)`.
+    async fn dep_op(&self, presence: Uuid) -> (Uuid, Option<Uuid>, String, Option<String>, Value) {
+        sqlx::query_as(
+            "SELECT id, integration_id, status, error_code, payload FROM channel_ops
+              WHERE kind='presence.deprovision' AND presence_id=$1",
+        )
+        .bind(presence)
+        .fetch_one(self.h.pool())
+        .await
+        .unwrap()
+    }
+
+    async fn delete_ok(&self, path: &str, body: Option<Value>) {
+        let (s, v) = self.call(&self.owner, Method::DELETE, path, body).await;
+        assert_eq!(s, 204, "{v}");
+    }
+
+    async fn ws_slug(&self, ws: Uuid) -> String {
+        sqlx::query_scalar("SELECT slug FROM workspaces WHERE id=$1")
+            .bind(ws)
+            .fetch_one(self.h.pool())
+            .await
+            .unwrap()
+    }
+
+    /// The best-effort failure audit row of a presence (written asynchronously).
+    async fn failure_audit(&self, presence: Uuid) -> Option<(Option<Uuid>, String, String, Value)> {
+        for _ in 0..50 {
+            let row: Option<(Option<Uuid>, String, String, Value)> = sqlx::query_as(
+                "SELECT org_id, actor_kind, target_kind, metadata FROM audit_log
+                  WHERE action='presence.deprovision_failed' AND target_id=$1",
+            )
+            .bind(presence.to_string())
+            .fetch_optional(self.h.pool())
+            .await
+            .unwrap();
+            if row.is_some() {
+                return row;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        None
+    }
+
+    async fn agent_in(&self, ws: Uuid, handle: &str) -> Uuid {
+        let agent = Uuid::now_v7();
+        sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) VALUES ($1,$2,$3,$4,$4,'hosted','fake')")
+            .bind(agent).bind(self.org).bind(ws).bind(handle).execute(self.h.pool()).await.unwrap();
+        agent
+    }
+}
+
+fn dep_creds() -> Value {
+    json!({"token": SECRET})
+}
+
+/// 18 §Self-contained deprovision, *Atomicity* (1/2): the delete of an agent, a workspace, an
+/// org, an integration or a single presence commits one op per dedicated presence, in the same
+/// transaction; shared presences enqueue nothing.
+#[tokio::test]
+async fn deprovision_ops_commit_with_agent_workspace_org_integration_and_detach() {
+    let (w, _mem) = W::with_memory_store().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let integ2 = w.integration(&w.fake, "T2").await;
+    // Everything is set up first: a queued deprovision would be served in place of the next
+    // provisioning or validation answer.
+    let a1 = w.agent("a1").await;
+    let shared = w.agent("a2").await;
+    let p1 = w.dedicated(a1, integ, "BOT-1").await;
+    assert_eq!(w.attach(&w.owner, shared, integ, "shared").await.0, 201);
+    let ws2 = w.h.workspace(w.org).await;
+    let b1 = w.agent_in(ws2, "b1").await;
+    let p2 = w.dedicated(b1, integ, "BOT-2").await;
+    let c1 = w.agent("c1").await;
+    let p3 = w.dedicated(c1, integ, "BOT-3").await;
+    let c2 = w.agent("c2").await;
+    let p4 = w.dedicated(c2, integ, "BOT-4").await;
+    let d1 = w.agent("d1").await;
+    let d2 = w.agent("d2").await;
+    let p5 = w.dedicated(d1, integ2, "BOT-5").await;
+    assert_eq!(w.attach(&w.owner, d2, integ2, "shared").await.0, 201);
+
+    // Agent: one op, none for the shared presence.
+    w.delete_ok(&format!("/v1/agents/{a1}"), None).await;
+    w.delete_ok(&format!("/v1/agents/{shared}"), None).await;
+    let d = w.ops_of("presence.deprovision").await;
+    assert_eq!(d.len(), 1, "shared presences enqueue nothing");
+    let (_, op_integ, status, _, payload) = w.dep_op(p1).await;
+    assert_eq!((op_integ, status.as_str()), (None, "pending"));
+    assert_eq!(payload["reason"], "agent_deleted");
+    assert_eq!(payload["platform_user_ref"], "BOT-1");
+    assert_eq!(payload["handle"], "h");
+    assert_eq!(payload["tenant_ref"], "T1");
+    assert_eq!(payload["tenant_label"], "Tenant T1");
+    assert_eq!(payload["config"], json!({"region": "eu"}));
+    assert!(
+        payload["credentials_ref"]
+            .as_str()
+            .is_some_and(|r| !r.is_empty())
+    );
+    assert!(
+        !payload.to_string().contains(SECRET),
+        "the stored payload never holds plaintext"
+    );
+    let gone: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM channel_presences WHERE agent_id = ANY($1)")
+            .bind(vec![a1, shared])
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(gone, 0);
+
+    // Workspace.
+    w.delete_ok(
+        &format!("/v1/workspaces/{ws2}"),
+        Some(json!({"confirm": w.ws_slug(ws2).await})),
+    )
+    .await;
+    assert_eq!(w.dep_op(p2).await.4["reason"], "workspace_deleted");
+
+    // Detach of a single presence.
+    w.delete_ok(&format!("/v1/presences/{p3}"), None).await;
+    assert_eq!(w.dep_op(p3).await.4["reason"], "detached");
+
+    // Integration delete cascades its presences the same way.
+    w.delete_ok(&format!("/v1/channel-integrations/{integ}"), None)
+        .await;
+    let (_, op_integ, _, _, payload) = w.dep_op(p4).await;
+    assert_eq!(op_integ, None);
+    assert_eq!(payload["reason"], "detached");
+
+    // Org: its integration goes with it; the op does not.
+    let slug: String = sqlx::query_scalar("SELECT slug FROM organizations WHERE id=$1")
+        .bind(w.org)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    w.delete_ok(
+        &format!("/v1/orgs/{}", w.org),
+        Some(json!({"confirm": slug})),
+    )
+    .await;
+    let (_, op_integ, status, _, payload) = w.dep_op(p5).await;
+    assert_eq!((op_integ, status.as_str()), (None, "pending"));
+    assert_eq!(payload["reason"], "org_deleted");
+    assert_eq!(payload["tenant_label"], "Tenant T2");
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_integrations")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "the integration is gone, the op is not");
+    assert_eq!(
+        w.ops_of("presence.deprovision").await.len(),
+        5,
+        "one op per dedicated presence; the org's shared bot and shared presence: none"
+    );
+}
+
+/// *Atomicity* (2/2): an injected failure after the op inserts (here in the cascade) rolls back
+/// the delete and the ops together, and the sealed copies are discarded; once the failure is
+/// gone the same delete commits both.
+#[tokio::test]
+async fn deprovision_rolls_back_with_a_failed_delete() {
+    let (w, mem) = W::with_memory_store().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let a1 = w.agent("a1").await;
+    let p1 = w.dedicated(a1, integ, "BOT-1").await;
+    let before = mem.managed_count();
+    sqlx::query("CREATE FUNCTION p3024_fail() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'injected'; END $$ LANGUAGE plpgsql")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("CREATE TRIGGER p3024_fail BEFORE DELETE ON channel_presences FOR EACH ROW EXECUTE FUNCTION p3024_fail()")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let slug = w.ws_slug(w.ws).await;
+    let org_slug: String = sqlx::query_scalar("SELECT slug FROM organizations WHERE id=$1")
+        .bind(w.org)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    for (path, body) in [
+        (format!("/v1/agents/{a1}"), None),
+        (format!("/v1/presences/{p1}"), None),
+        (
+            format!("/v1/workspaces/{}", w.ws),
+            Some(json!({"confirm": slug})),
+        ),
+        (
+            format!("/v1/orgs/{}", w.org),
+            Some(json!({"confirm": org_slug})),
+        ),
+    ] {
+        let (s, v) = w.call(&w.owner, Method::DELETE, &path, body).await;
+        assert!(s >= 500, "{path}: {s} {v}");
+        assert!(w.ops_of("presence.deprovision").await.is_empty(), "{path}");
+        let alive: i64 = sqlx::query_scalar(
+            "SELECT (SELECT count(*) FROM agents WHERE id=$1)
+                  + (SELECT count(*) FROM channel_presences WHERE id=$2)
+                  + (SELECT count(*) FROM organizations WHERE id=$3)",
+        )
+        .bind(a1)
+        .bind(p1)
+        .bind(w.org)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+        assert_eq!(alive, 3, "{path}: nothing was deleted");
+        assert_eq!(
+            mem.managed_count(),
+            before,
+            "{path}: the sealed copy of the rolled-back delete is discarded"
+        );
+    }
+    sqlx::query("DROP TRIGGER p3024_fail ON channel_presences")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    w.delete_ok(&format!("/v1/agents/{a1}"), None).await;
+    assert_eq!(w.ops_of("presence.deprovision").await.len(), 1);
+}
+
+/// *Self-containment*: with the integration, presence, agent and org rows deleted, a replica
+/// that never owned the integration claims the op, gets the credentials next to a payload that
+/// holds everything else, and the plaintext exists nowhere at rest.
+#[tokio::test]
+async fn deprovision_survives_org_delete_and_runs_on_another_replica() {
+    let (w, mem) = W::with_memory_store().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let a1 = w.agent("a1").await;
+    let p1 = w.dedicated(a1, integ, "BOT-1").await;
+    let slug: String = sqlx::query_scalar("SELECT slug FROM organizations WHERE id=$1")
+        .bind(w.org)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    w.delete_ok(
+        &format!("/v1/orgs/{}", w.org),
+        Some(json!({"confirm": slug})),
+    )
+    .await;
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM channel_integrations) + (SELECT count(*) FROM channel_presences)
+              + (SELECT count(*) FROM agents) + (SELECT count(*) FROM organizations WHERE id=$1)",
+    )
+    .bind(w.org)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows, 0, "everything the connector used to look up is gone");
+
+    let other = w.second_replica(&w.fake).await;
+    let ops = w.claim_now(&other).await;
+    assert_eq!(ops.len(), 1, "{ops:?}");
+    let op = &ops[0];
+    assert_eq!(op["kind"], "presence.deprovision");
+    assert!(op.get("integration_id").is_none_or(Value::is_null));
+    assert_eq!(op["presence_id"], json!(p1));
+    assert_eq!(op["credentials"], dep_creds());
+    let typed: aurora_protocol::connector::Operation = serde_json::from_value(op.clone()).unwrap();
+    let aurora_protocol::connector::OpPayload::PresenceDeprovision(p) = typed.parse().unwrap()
+    else {
+        panic!("not a deprovision payload");
+    };
+    assert_eq!(p.platform_user_ref, "BOT-1");
+    assert_eq!(p.tenant_ref, "T1");
+    assert_eq!(p.config, json!({"region": "eu"}));
+    let keys: Vec<&str> = op["payload"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert!(
+        !keys.contains(&"credentials_ref") && !keys.contains(&"org_id"),
+        "internal payload keys are never sent: {keys:?}"
+    );
+
+    // Plaintext only in the claim response.
+    let at_rest: String = sqlx::query_scalar(
+        "SELECT string_agg(payload::text || coalesce(result::text,''), '') FROM channel_ops",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert!(!at_rest.contains(SECRET));
+    let before = mem.managed_count();
+    w.report(&other, op, json!({"outcome": "ok", "data": {}}))
+        .await;
+    let (_, _, status, _, payload) = w.dep_op(p1).await;
+    assert_eq!(status, "done");
+    assert_eq!(payload["credentials_ref"], Value::Null);
+    assert_eq!(mem.managed_count(), before - 1, "the copy was discarded");
+}
+
+/// *Credential copy*: sealed under the op's context; every other context refuses it.
+#[tokio::test]
+async fn deprovision_copy_is_bound_to_the_op_context() {
+    use aurora_api::domains::channels::deprovision::op_seal_ctx;
+    use aurora_api::domains::connectors::{integration_seal_ctx, presence_seal_ctx};
+    use aurora_secrets::{SecretError, SecretRef};
+    let (w, _mem) = W::with_memory_store().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let a1 = w.agent("a1").await;
+    let p1 = w.dedicated(a1, integ, "BOT-1").await;
+    w.delete_ok(&format!("/v1/agents/{a1}"), None).await;
+    let (op, _, _, _, payload) = w.dep_op(p1).await;
+    let sealed: SecretRef = payload["credentials_ref"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let vault = &w.h.state.vault;
+    let plain = vault.open(&op_seal_ctx(op, w.org), &sealed).await.unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(plain.expose()).unwrap(),
+        dep_creds()
+    );
+    for ctx in [
+        presence_seal_ctx(p1, w.org),
+        integration_seal_ctx(integ, w.org),
+        op_seal_ctx(Uuid::now_v7(), w.org),
+        op_seal_ctx(op, Uuid::now_v7()),
+    ] {
+        assert!(
+            matches!(
+                vault.open(&ctx, &sealed).await,
+                Err(SecretError::SecretRefMismatch)
+            ),
+            "{ctx:?} opened the copy"
+        );
+    }
+}
+
+/// *Credential copy*: discarded and nulled at done / failed / dropped and by pruning (a finished
+/// op whose discard failed), and by the expiry of an op that ran out of its window.
+#[tokio::test]
+async fn deprovision_copy_is_discarded_at_every_end_and_by_pruning() {
+    let (w, mem) = W::with_memory_store().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let mut pres = Vec::new();
+    let mut agents = Vec::new();
+    for (i, h) in ["a1", "a2", "a3", "a4", "a5"].into_iter().enumerate() {
+        let a = w.agent(h).await;
+        pres.push(w.dedicated(a, integ, &format!("BOT-{i}")).await);
+        agents.push(a);
+    }
+    for a in agents {
+        w.delete_ok(&format!("/v1/agents/{a}"), None).await;
+    }
+    let (ok, dead, gone, pruned, expired) = (pres[0], pres[1], pres[2], pres[3], pres[4]);
+    let before = mem.managed_count();
+    let answer = |op: &Value| {
+        let p = op["presence_id"].as_str().unwrap().to_owned();
+        if p == ok.to_string() {
+            json!({"outcome": "ok", "data": {}})
+        } else if p == dead.to_string() {
+            op_err("credential_dead", "revoked")
+        } else if p == gone.to_string() {
+            op_err("not_found", "no such bot")
+        } else {
+            // The remaining two stay claimed-and-unanswered: answer unavailable (retried).
+            op_err("unavailable", "later")
+        }
+    };
+    w.serve(&w.fake, 5, answer).await;
+    for (p, want) in [(ok, "done"), (dead, "failed"), (gone, "dropped")] {
+        let (_, _, status, _, payload) = w.dep_op(p).await;
+        assert_eq!(status, want);
+        assert_eq!(payload["credentials_ref"], Value::Null, "{want}");
+    }
+    assert_eq!(mem.managed_count(), before - 3);
+
+    // Pruning: a finished op whose discard did not happen.
+    let (op, _, _, _, _) = w.dep_op(pruned).await;
+    sqlx::query("UPDATE channel_ops SET status='done', completed_at=now() WHERE id=$1")
+        .bind(op)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    // Expiry: an op past its 24 h window.
+    let (op2, _, _, _, _) = w.dep_op(expired).await;
+    sqlx::query("UPDATE channel_ops SET status='pending', created_at = now() - interval '25 hours' WHERE id=$1")
+        .bind(op2)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let before = mem.managed_count();
+    let (n_expired, n_pruned) = aurora_api::domains::channels::deprovision::sweep(&w.h.state)
+        .await
+        .unwrap();
+    assert_eq!(
+        (n_expired, n_pruned),
+        (1, 2),
+        "pruned = the done op and the expired one"
+    );
+    let (_, _, status, code, payload) = w.dep_op(pruned).await;
+    assert_eq!(
+        (status.as_str(), payload["credentials_ref"].clone()),
+        ("done", Value::Null)
+    );
+    assert!(code.is_none());
+    let (_, _, status, code, payload) = w.dep_op(expired).await;
+    assert_eq!(
+        (
+            status.as_str(),
+            code.as_deref(),
+            payload["credentials_ref"].clone()
+        ),
+        ("failed", Some("unavailable"), Value::Null)
+    );
+    assert_eq!(mem.managed_count(), before - 2);
+    let (org, actor, target, meta) = w.failure_audit(expired).await.expect("failure audit");
+    assert_eq!(
+        (org, actor.as_str(), target.as_str()),
+        (Some(w.org), "system", "presence")
+    );
+    assert_eq!(meta["error_code"], "unavailable");
+}
+
+/// *Retry*: an op is never claimed without its credentials; while the copy cannot be opened it
+/// stays pending, and it is handed out (with credentials) once it can.
+#[tokio::test]
+async fn deprovision_is_never_claimed_without_its_credentials() {
+    let (w, mem) = W::with_memory_store().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let a1 = w.agent("a1").await;
+    let p1 = w.dedicated(a1, integ, "BOT-1").await;
+    w.delete_ok(&format!("/v1/agents/{a1}"), None).await;
+    mem.set_unavailable(true);
+    assert!(
+        w.claim_now(&w.fake).await.is_empty(),
+        "claimed without credentials"
+    );
+    let (_, _, status, _, payload) = w.dep_op(p1).await;
+    assert_eq!(status, "pending");
+    assert!(payload["credentials_ref"].is_string(), "the copy is kept");
+    mem.set_unavailable(false);
+    sqlx::query("UPDATE channel_ops SET not_before = now() WHERE kind='presence.deprovision'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let ops = w.claim_now(&w.fake).await;
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ops[0]["credentials"], dep_creds());
+}
+
+/// *Delete routes*: a seal failure (the store is unavailable) refuses every route with 503
+/// `secret_store_unavailable` and deletes nothing; a delete that needs no copy is unaffected.
+#[tokio::test]
+async fn delete_is_refused_when_the_secret_store_is_unavailable() {
+    let (w, mem) = W::with_memory_store().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let a1 = w.agent("a1").await;
+    let plain = w.agent("a2").await;
+    let p1 = w.dedicated(a1, integ, "BOT-1").await;
+    let slug = w.ws_slug(w.ws).await;
+    let org_slug: String = sqlx::query_scalar("SELECT slug FROM organizations WHERE id=$1")
+        .bind(w.org)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    mem.set_unavailable(true);
+    for (path, body) in [
+        (format!("/v1/agents/{a1}"), None),
+        (format!("/v1/presences/{p1}"), None),
+        (format!("/v1/channel-integrations/{integ}"), None),
+        (
+            format!("/v1/workspaces/{}", w.ws),
+            Some(json!({"confirm": slug})),
+        ),
+        (
+            format!("/v1/orgs/{}", w.org),
+            Some(json!({"confirm": org_slug})),
+        ),
+    ] {
+        let (s, v) = w.call(&w.owner, Method::DELETE, &path, body).await;
+        assert_eq!(s, 503, "{path}: {v}");
+        assert_eq!(v["error"]["code"], "secret_store_unavailable", "{path}");
+        assert!(!v.to_string().contains(SECRET));
+        let alive: i64 = sqlx::query_scalar(
+            "SELECT (SELECT count(*) FROM agents WHERE id=$1)
+                  + (SELECT count(*) FROM channel_presences WHERE id=$2)
+                  + (SELECT count(*) FROM channel_integrations WHERE id=$3)
+                  + (SELECT count(*) FROM workspaces WHERE id=$4)
+                  + (SELECT count(*) FROM organizations WHERE id=$5)",
+        )
+        .bind(a1)
+        .bind(p1)
+        .bind(integ)
+        .bind(w.ws)
+        .bind(w.org)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+        assert_eq!(alive, 5, "{path}: nothing was deleted");
+        assert!(w.ops_of("presence.deprovision").await.is_empty(), "{path}");
+    }
+    // No copy is needed for an agent without a dedicated presence.
+    w.delete_ok(&format!("/v1/agents/{plain}"), None).await;
+    mem.set_unavailable(false);
+    w.delete_ok(&format!("/v1/agents/{a1}"), None).await;
+    assert_eq!(w.ops_of("presence.deprovision").await.len(), 1);
+}
+
+/// *Retry/failure* (clock test): `unavailable` is retried for the 24 h window regardless of the
+/// attempt count, then the op fails (`unavailable`) with the failure audit, the metric and the
+/// copy discarded.
+#[tokio::test]
+async fn deprovision_retries_unavailable_for_the_window_then_fails() {
+    let _ = failed_total();
+    let (w, mem) = W::with_memory_store().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let a1 = w.agent("a1").await;
+    let p1 = w.dedicated(a1, integ, "BOT-1").await;
+    w.delete_ok(&format!("/v1/agents/{a1}"), None).await;
+    let before_total = failed_total();
+    for round in 0..3 {
+        let ops = w.claim_now(&w.fake).await;
+        assert_eq!(ops.len(), 1, "round {round}");
+        assert_eq!(ops[0]["credentials"], dep_creds());
+        w.report(&w.fake, &ops[0], op_err("unavailable", "platform down"))
+            .await;
+        let (_, _, status, _, payload) = w.dep_op(p1).await;
+        assert_eq!(status, "pending", "round {round}: still inside the window");
+        assert!(payload["credentials_ref"].is_string());
+        // Far past OP_MAX_ATTEMPTS: the window, not the attempt count, limits the retries.
+        sqlx::query("UPDATE channel_ops SET attempts = 50, not_before = now() WHERE kind='presence.deprovision'")
+            .execute(w.h.pool())
+            .await
+            .unwrap();
+    }
+    let ops = w.claim_now(&w.fake).await;
+    assert_eq!(ops.len(), 1);
+    // The clock moves past the window while the connector works.
+    sqlx::query("UPDATE channel_ops SET created_at = now() - interval '25 hours' WHERE kind='presence.deprovision'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let before = mem.managed_count();
+    w.report(&w.fake, &ops[0], op_err("unavailable", "platform down"))
+        .await;
+    let (_, _, status, code, payload) = w.dep_op(p1).await;
+    assert_eq!(
+        (status.as_str(), code.as_deref()),
+        ("failed", Some("unavailable"))
+    );
+    assert_eq!(payload["credentials_ref"], Value::Null);
+    assert_eq!(mem.managed_count(), before - 1);
+    assert!(w.failure_audit(p1).await.is_some());
+    assert!(failed_total() > before_total);
+}
+
+/// *Failure record* (C-364): `credential_dead` and `forbidden` fail the op, `not_found` drops it
+/// (the bot is already gone: no residual). Failures write the audit row with the documented
+/// metadata (never credentials) and count the metric.
+#[tokio::test]
+async fn deprovision_failure_audit_metric_and_dropped() {
+    let _ = failed_total();
+    let (w, _mem) = W::with_memory_store().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let mut pres = Vec::new();
+    let mut agents = Vec::new();
+    for (i, h) in ["a1", "a2", "a3"].into_iter().enumerate() {
+        let a = w.agent(h).await;
+        pres.push(w.dedicated(a, integ, &format!("BOT-{i}")).await);
+        agents.push(a);
+    }
+    for a in agents {
+        w.delete_ok(&format!("/v1/agents/{a}"), None).await;
+    }
+    let (dead, forbidden, gone) = (pres[0], pres[1], pres[2]);
+    let before_total = failed_total();
+    w.serve(&w.fake, 3, |op| {
+        let p = op["presence_id"].as_str().unwrap();
+        if p == dead.to_string() {
+            op_err("credential_dead", "token revoked")
+        } else if p == forbidden.to_string() {
+            op_err("forbidden", "not an admin")
+        } else {
+            op_err("not_found", "no such bot")
+        }
+    })
+    .await;
+    assert_eq!(w.dep_op(dead).await.2, "failed");
+    assert_eq!(w.dep_op(forbidden).await.2, "failed");
+    assert_eq!(w.dep_op(gone).await.2, "dropped");
+    for (p, code, bot) in [
+        (dead, "credential_dead", "BOT-0"),
+        (forbidden, "forbidden", "BOT-1"),
+    ] {
+        let (org, actor, target, meta) = w.failure_audit(p).await.expect("failure audit");
+        assert_eq!(
+            (org, actor.as_str(), target.as_str()),
+            (Some(w.org), "system", "presence")
+        );
+        assert_eq!(
+            meta,
+            json!({
+                "connector_id": "fake", "tenant_label": "Tenant T1",
+                "platform_user_ref": bot, "handle": "h", "error_code": code
+            })
+        );
+        assert!(!meta.to_string().contains(SECRET));
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        w.failure_audit(gone).await.is_none(),
+        "a dropped op is not a residual"
+    );
+    assert!(
+        failed_total() >= before_total + 2.0,
+        "aurora_channel_deprovision_failed_total counts each failed op"
+    );
+    // No credential in any result or ledger row.
+    let at_rest: String = sqlx::query_scalar(
+        "SELECT coalesce(string_agg(coalesce(result::text,'') || payload::text, ''), '') FROM channel_ops",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    let audit: String =
+        sqlx::query_scalar("SELECT coalesce(string_agg(metadata::text, ''), '') FROM audit_log")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert!(!at_rest.contains(SECRET) && !audit.contains(SECRET));
+}
+
+/// A shared presence has no bot of its own: nothing is enqueued by any delete.
+#[tokio::test]
+async fn shared_presences_enqueue_nothing_on_org_delete() {
+    let (w, _mem) = W::with_memory_store().await;
+    let integ = w.integration(&w.fake, "T1").await;
+    let a1 = w.agent("a1").await;
+    assert_eq!(w.attach(&w.owner, a1, integ, "shared").await.0, 201);
+    let slug: String = sqlx::query_scalar("SELECT slug FROM organizations WHERE id=$1")
+        .bind(w.org)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    w.delete_ok(
+        &format!("/v1/orgs/{}", w.org),
+        Some(json!({"confirm": slug})),
+    )
+    .await;
+    assert!(w.ops_of("presence.deprovision").await.is_empty());
 }

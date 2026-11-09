@@ -100,12 +100,19 @@ pub struct Claimed {
     pub payload: serde_json::Value,
     /// A previous claim's lease lapsed: the platform call may already have happened.
     pub was_leased: bool,
+    /// Self-contained `presence.deprovision` only: the sealed credential copy (internal; the
+    /// caller opens it and must not hand the reference out).
+    pub credentials_ref: Option<String>,
+    /// Self-contained `presence.deprovision` only: the org the copy was sealed for.
+    pub org_id: Option<Uuid>,
 }
 
 /// `SKIP LOCKED` claim of up to `max` due ops of `connector_id` that `replica` may run: ops of
 /// integrations it owns, or without an integration. Also takes over `claimed` ops whose lease
 /// lapsed. A non-null `lease_until` on the old row (lapsed claim, possibly already reset to
-/// `pending` by the sweeper) marks `was_leased`.
+/// `pending` by the sweeper) marks `was_leased`. `presence.deprovision` ops are limited by
+/// `deprovision_window_secs` from their creation instead of `max_attempts`; their internal
+/// payload keys are stripped from `payload` and returned separately.
 pub async fn claim<'e, E: PgExecutor<'e>>(
     exec: E,
     connector_id: &str,
@@ -113,12 +120,16 @@ pub async fn claim<'e, E: PgExecutor<'e>>(
     max: i64,
     lease_secs: f64,
     max_attempts: i32,
+    deprovision_window_secs: f64,
 ) -> Result<Vec<Claimed>, DbError> {
     Ok(sqlx::query_as(
         "WITH c AS (
              SELECT o.id, (o.lease_until IS NOT NULL) AS was_leased
                FROM channel_ops o
-              WHERE o.connector_id = $1 AND o.attempts < $5
+              WHERE o.connector_id = $1
+                AND (CASE WHEN o.kind = 'presence.deprovision'
+                          THEN o.created_at + make_interval(secs => $6) > now()
+                          ELSE o.attempts < $5 END)
                 AND ((o.status='pending' AND o.not_before <= now())
                      OR (o.status='claimed' AND o.lease_until < now()))
                 AND (o.integration_id IS NULL OR EXISTS (
@@ -130,15 +141,116 @@ pub async fn claim<'e, E: PgExecutor<'e>>(
             SET status='claimed', lease_until = now() + make_interval(secs => $4),
                 claimed_by_replica = $2, attempts = o.attempts + 1, updated_at = now()
            FROM c WHERE o.id = c.id
-       RETURNING o.id, o.kind, o.integration_id, o.presence_id, o.attempts, o.payload, c.was_leased",
+       RETURNING o.id, o.kind, o.integration_id, o.presence_id, o.attempts, c.was_leased,
+                 CASE WHEN o.kind = 'presence.deprovision'
+                      THEN o.payload - 'credentials_ref' - 'org_id' ELSE o.payload END AS payload,
+                 CASE WHEN o.kind = 'presence.deprovision'
+                      THEN o.payload->>'credentials_ref' END AS credentials_ref,
+                 CASE WHEN o.kind = 'presence.deprovision'
+                      THEN (o.payload->>'org_id')::uuid END AS org_id",
     )
     .bind(connector_id)
     .bind(replica)
     .bind(max)
     .bind(lease_secs)
     .bind(max_attempts)
+    .bind(deprovision_window_secs)
     .fetch_all(exec)
     .await?)
+}
+
+/// Whether a `presence.deprovision` op is still inside its retry window (from its creation).
+pub async fn deprovision_window_open<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    window_secs: f64,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT created_at + make_interval(secs => $2) > now() FROM channel_ops WHERE id = $1",
+    )
+    .bind(id)
+    .bind(window_secs)
+    .fetch_optional(exec)
+    .await?
+    .unwrap_or(false))
+}
+
+/// A self-contained deprovision op that ended (or never started) without a clean discard.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct DeprovisionEnd {
+    pub id: Uuid,
+    pub connector_id: String,
+    /// Full payload (with the internal keys); never log.
+    pub payload: serde_json::Value,
+}
+
+impl DeprovisionEnd {
+    pub fn credentials_ref(&self) -> Option<&str> {
+        self.payload.get("credentials_ref").and_then(|v| v.as_str())
+    }
+
+    pub fn org_id(&self) -> Option<Uuid> {
+        self.payload
+            .get("org_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse().ok())
+    }
+}
+
+/// `pending` (or lapsed `claimed`) deprovision ops past `window_secs` from creation become
+/// `failed` / `unavailable`. The sealed copy stays until the caller discards it.
+pub async fn expire_deprovision(
+    conn: &mut PgConnection,
+    window_secs: f64,
+) -> Result<Vec<DeprovisionEnd>, DbError> {
+    Ok(sqlx::query_as(
+        "UPDATE channel_ops o
+            SET status = 'failed', error_code = 'unavailable', completed_at = now(),
+                lease_until = NULL, updated_at = now(),
+                result = '{\"error\":{\"code\":\"unavailable\",\"message\":\"retry window exhausted\"}}'::jsonb
+           FROM (SELECT id FROM channel_ops
+                  WHERE kind = 'presence.deprovision'
+                    AND created_at + make_interval(secs => $1) <= now()
+                    AND (status = 'pending' OR (status = 'claimed' AND lease_until < now()))
+                  ORDER BY created_at LIMIT 200 FOR UPDATE SKIP LOCKED) s
+          WHERE o.id = s.id
+      RETURNING o.id, o.connector_id, o.payload",
+    )
+    .bind(window_secs)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// Finished deprovision ops whose sealed copy is still referenced (a discard failed or never ran).
+pub async fn finished_with_copy<'e, E: PgExecutor<'e>>(
+    exec: E,
+    limit: i64,
+) -> Result<Vec<DeprovisionEnd>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, connector_id, payload FROM channel_ops
+          WHERE kind = 'presence.deprovision' AND status IN ('done','failed','dropped')
+            AND payload->>'credentials_ref' IS NOT NULL
+          ORDER BY updated_at LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Replace the sealed reference with JSON `null` once its copy was discarded.
+pub async fn clear_credentials_ref<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE channel_ops SET payload = jsonb_set(payload, '{credentials_ref}', 'null'::jsonb),
+                updated_at = now()
+          WHERE id = $1 AND kind = 'presence.deprovision'",
+    )
+    .bind(id)
+    .execute(exec)
+    .await?;
+    Ok(())
 }
 
 /// Lock an op of `connector_id` for a result transition.
@@ -208,11 +320,14 @@ pub async fn sweep_lapsed(
 ) -> Result<Vec<(Uuid, String, String)>, DbError> {
     Ok(sqlx::query_as(
         "UPDATE channel_ops o
-            SET status = CASE WHEN o.attempts >= $1 THEN 'failed' ELSE 'pending' END,
-                error_code = CASE WHEN o.attempts >= $1 THEN 'unavailable' END,
-                result = CASE WHEN o.attempts >= $1 THEN
+            SET status = CASE WHEN o.attempts >= $1 AND o.kind <> 'presence.deprovision'
+                              THEN 'failed' ELSE 'pending' END,
+                error_code = CASE WHEN o.attempts >= $1 AND o.kind <> 'presence.deprovision'
+                                  THEN 'unavailable' END,
+                result = CASE WHEN o.attempts >= $1 AND o.kind <> 'presence.deprovision' THEN
                     '{\"error\":{\"code\":\"unavailable\",\"message\":\"lease lapsed; attempts exhausted\"}}'::jsonb END,
-                completed_at = CASE WHEN o.attempts >= $1 THEN now() END,
+                completed_at = CASE WHEN o.attempts >= $1 AND o.kind <> 'presence.deprovision'
+                                    THEN now() END,
                 updated_at = now()
            FROM (SELECT id FROM channel_ops WHERE status='claimed' AND lease_until < now()
                   ORDER BY lease_until LIMIT 500 FOR UPDATE SKIP LOCKED) s

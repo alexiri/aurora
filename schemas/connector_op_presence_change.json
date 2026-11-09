@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "`presence.deprovision` / `presence.rename` / `presence.set_icon`.",
+  "description": "`presence.rename` / `presence.set_icon`.",
   "properties": {
     "avatar_url": {
       "type": [

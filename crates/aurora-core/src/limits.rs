@@ -143,6 +143,9 @@ pub const OP_LEASE: Duration = Duration::from_secs(60);
 pub const OP_MAX_ATTEMPTS: u32 = 10;
 pub const OP_BACKOFF_INITIAL: Duration = Duration::from_secs(2);
 pub const OP_BACKOFF_MAX: Duration = Duration::from_secs(600);
+/// (RFE-024) A self-contained `presence.deprovision` op is retried for this long from its
+/// creation (instead of `OP_MAX_ATTEMPTS`), then `failed`.
+pub const DEPROVISION_RETRY_WINDOW: Duration = Duration::from_secs(24 * 3600);
 pub const CHANNEL_LEDGER_RETENTION: Duration = Duration::from_secs(604800);
 /// fallback TTL when there is no approval deadline.
 pub const ACTION_TOKEN_TTL: Duration = Duration::from_secs(86400);

@@ -13,16 +13,19 @@ pub enum Purpose {
     IntegrationCredentials,
     PresenceCredentials,
     WebhookVerification,
+    /// (RFE-024) The credential copy of a self-contained `presence.deprovision` op; owner = op id.
+    ChannelOpDeprovision,
 }
 
 impl Purpose {
-    pub const ALL: [Purpose; 6] = [
+    pub const ALL: [Purpose; 7] = [
         Purpose::SecretValue,
         Purpose::ConnectionCredentials,
         Purpose::OauthClientSecret,
         Purpose::IntegrationCredentials,
         Purpose::PresenceCredentials,
         Purpose::WebhookVerification,
+        Purpose::ChannelOpDeprovision,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -33,6 +36,7 @@ impl Purpose {
             Self::IntegrationCredentials => "integration.credentials",
             Self::PresenceCredentials => "presence.credentials",
             Self::WebhookVerification => "webhook.verification",
+            Self::ChannelOpDeprovision => "channel_op.deprovision",
         }
     }
 }
