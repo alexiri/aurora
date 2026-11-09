@@ -25,7 +25,7 @@ export type CreateConnectorRequest = S["CreateConnectorRequest"];
  * An `instance_setup` field (C-450): the form-field schema plus `url`, `number` (`min`/`max`),
  * `generated_secret` and a static `default`. The generated type lists the base schema only.
  */
-export type SetupField = FormField & { default?: unknown; min?: number | null; max?: number | null };
+export type SetupField = FormField & { help?: string | null; default?: unknown; min?: number | null; max?: number | null };
 
 export const connectorKeys = {
   admin: ["admin", "connectors"] as const,

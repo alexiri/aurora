@@ -21,7 +21,7 @@ import {
 } from "@/lib/api/connectors";
 
 import { ApprovalPanel } from "./approval-panel";
-import { ConnectorError, ConnectorIcon, ConnectorStatusChip, ManagedBadge, fmtWhen, settingErrors } from "./shared";
+import { ConnectorError, ConnectorIcon, ConnectorStatusChip, ManagedBadge, count, fmtWhen, settingErrors } from "./shared";
 import { initialValues, isSecretField, requiredErrors, settingText, typedValue } from "./setup-values";
 
 type Staged = "replace" | "clear";
@@ -274,7 +274,7 @@ export function ConnectorDetail({ c, onBack }: { c: ConnectorAdmin; onBack: () =
             <ManagedBadge managed />
             <ConnectorStatusChip c={c} />
             <span>
-              {c.integration_count} integration(s){c.version ? ` · v${c.version}` : ""}
+              {count(c.integration_count, "integration")}{c.version ? ` · v${c.version}` : ""}
             </span>
           </span>
         }
@@ -303,7 +303,7 @@ export function ConnectorDetail({ c, onBack }: { c: ConnectorAdmin; onBack: () =
         title="Delete connector"
         description={
           inUse
-            ? `${c.integration_count} integration(s) still use this connector. Remove them first.`
+            ? `${count(c.integration_count, "integration")} still ${c.integration_count === 1 ? "uses" : "use"} this connector. Remove ${c.integration_count === 1 ? "it" : "them"} first.`
             : "Removes the connector and its stored settings and secrets."
         }
       >

@@ -9,7 +9,9 @@ import { safeHref } from "./markdown";
 export function FieldControl({ f, value, error, onChange }: { f: FormField; value: string; error?: string; onChange: (v: string) => void }) {
   const id = `cf-${f.name}`;
   const help = f.help_url ? safeHref(f.help_url) : null;
-  const hint = f.placeholder ?? undefined;
+  // Help text is its own string; the placeholder is only ever shown inside the input.
+  const help_text = (f as FormField & { help?: string | null }).help ?? undefined;
+  const hint = help_text;
   let control;
   if (f.type === "select") {
     const warn = f.options?.find((o) => o.value === value)?.warning;

@@ -12,7 +12,7 @@ export async function openConnectorScreen(page: Page, screen: ConnectorScreen, s
   if (screen === "list") return;
   if (screen === "detail") {
     await page.getByRole("button", { name: "Manage Mattermost" }).click();
-    await page.getByLabel("Server URL").waitFor();
+    await page.getByLabel("Callback URL").waitFor();
     return;
   }
   await page.getByRole("button", { name: "Add connector" }).click();
@@ -29,5 +29,5 @@ export async function openConnectorScreen(page: Page, screen: ConnectorScreen, s
   await page.getByTestId("manifest-summary").waitFor();
   if (screen === "add-review") return;
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByLabel("Server URL").waitFor();
+  await page.getByLabel("Callback URL").waitFor();
 }

@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { useDeleteConnector, useRotateConnectorToken, type ConnectorAdmin } from "@/lib/api/connectors";
 
 import { ApprovalPanel } from "./approval-panel";
-import { ConnectorError, ConnectorIcon, ConnectorStatusChip, ManagedBadge } from "./shared";
+import { ConnectorError, ConnectorIcon, ConnectorStatusChip, ManagedBadge, count } from "./shared";
 
 /** One connector in the list: identity, status, counts, and either Manage (managed) or the self-hosted actions. */
 export function ConnectorCard({
@@ -34,8 +34,8 @@ export function ConnectorCard({
           <ConnectorStatusChip c={c} />
           {c.version ? <span className="text-xs text-muted">v{c.version}</span> : null}
           <span className="text-xs text-muted sm:ml-auto">
-            {c.integration_count} integration(s) ·{" "}
-            {c.managed ? `${hosts} host(s) reporting` : `${c.replicas.length} replica(s)`}
+            {count(c.integration_count, "integration")} ·{" "}
+            {c.managed ? `${count(hosts, "host")} reporting` : count(c.replicas.length, "replica")}
           </span>
         </div>
         {c.managed ? (
