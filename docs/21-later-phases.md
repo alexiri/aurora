@@ -147,7 +147,12 @@ tokens), group → workspace access bindings, group identities in policy
   `15 §Shared rate-limit counters`, `06 §Rate limiting`, `05 §Conventions`
   (*Shared counters*), `04 §Rate limits (auth)`, `07 §Evaluation`, `03 §Planned
   changes`, `18 §Shared rate-limit counters`.
-- S3-compatible blob store (`BlobStore` registry entry).
+- **S3-compatible blob store — specified (phase 4, P4-S3, D-120, SEC-63).**
+  `BlobStore` backend `s3` beside `postgres` for attachment bytes; per-row backend,
+  SSE verified at startup, no pre-signed URLs, explicit `aurora-api blobs migrate`.
+  Owning sections: `10 §Attachments`, `15 §S3-compatible blob store`, `03 §Planned
+  changes`, `05` (storage and overview routes, jobs), `16 §W14`, `18 §S3-compatible
+  blob store`.
 - Additional LLM providers: OpenAI, Azure OpenAI, AWS Bedrock, Google Vertex,
   generic OpenAI-compatible endpoints; additional harness adapters (e.g. Codex)
   declaring `openai_*` dialects.

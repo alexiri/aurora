@@ -345,7 +345,9 @@ claim-based and safe to run everywhere.
 | Action-approval expiry | every 60 s | idempotent |
 | Attachment pending sweep (`ATTACH_PENDING_TTL`) | hourly | idempotent |
 | Conversation retention sweep (phase 2, RFE-010): delete conversations past the org window through the delete path; blob-orphan sweep | daily | singleton |
-| Attachment sweep (phase 2, RFE-015): purge attachment bytes past the org window, remove orphan blobs, reconcile `org_storage_usage`, quota notices | daily | singleton |
+| Attachment sweep (phase 2, RFE-015): purge attachment bytes past the org window, remove orphan blobs, reconcile `org_storage_usage`, quota notices; (phase 4, P4-S3) with the `s3` backend the orphan step lists the bucket prefix and honours `S3_ORPHAN_GRACE` (`10 §Attachments`) | daily | singleton |
+| Counter pruning (phase 4, P4-CNT, `postgres` backend only): delete dead `rate_limit_windows` / `rate_limit_buckets` rows | every `COUNTER_PRUNE_INTERVAL` (60 s) | `SKIP LOCKED` batches |
+| Blob store probe (phase 4, P4-S3, `s3` backend only): `HeadBucket` + versioning/encryption state, sets `aurora_blob_store_up` | every 30 s | per replica |
 | Request-log partition maintenance and retention | daily | singleton |
 | Retention pruning (inbox/ops/cards > `CHANNEL_LEDGER_RETENTION`, used action tokens, expired email/CLI tokens, sessions, expired context credentials) | daily | singleton |
 | Runtime daily rollup | hourly | singleton |
@@ -587,7 +589,7 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | GET `/v1/conversations/{id}/stream` | S/K | SSE |
 | POST `/v1/conversations/{id}/messages` | S/K | `{ text, attachment_ids? }` → `{ turn }` or `{ followup }`; (phase 3, RFE-018) optional header `Idempotency-Key` — a retry with the same key returns the original result (`Idempotent-Replayed: true`) and creates nothing; 422 `idempotency_key_invalid` / `idempotency_key_reused` (`### Idempotency keys`) |
 | POST `/v1/turns/{id}/abort`, `/v1/turns/{id}/send-now` | S/K | |
-| POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment; (phase 2, RFE-015) 422 `attachment_quota_exceeded` when the org quota would be exceeded |
+| POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment; (phase 2, RFE-015) 422 `attachment_quota_exceeded` when the org quota would be exceeded; (phase 4, P4-S3) with the `s3` blob backend also 503 `blob_store_unavailable` (`retry-after: 5`) and 503 `blob_store_busy`; downloads (`GET /v1/attachments/{id}/content`) add 503 `blob_store_unavailable`, 503 `blob_backend_not_configured` and 502 `blob_store_corrupt`, never 404/410 for a store failure (`10 §Attachments`) |
 | GET `/v1/attachments/{id}/content` | S/K | `Content-Disposition: attachment` always; (phase 2, RFE-015) 410 `attachment_purged` after retention/delete |
 | DELETE `/v1/attachments/{id}` | S/K | (phase 2, RFE-015) purge the bytes now; uploader or `can_own` |
 
@@ -622,14 +624,14 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 ### Instance administration
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/admin/overview` | IA | versions, gateways, hook hosts, runners, connectors, active snapshot |
+| GET `/v1/admin/overview` | IA | versions, gateways, hook hosts, runners, connectors, active snapshot; (phase 4) `counters: { backend, state }` (P4-CNT, `15`) and `blobs: { backend, healthy }` (P4-S3) |
 | GET/PATCH `/v1/admin/users` | IA | list, instance-admin flag, disable |
 | GET/POST `/v1/admin/plugins` (multipart upload); GET `/v1/admin/plugins/{id}`; POST `…/approve`, `…/reject`, `…/disable`, `…/enable`; DELETE `…?force=` | IA | (phase 3, RFE-022) GET `{id}` of a pending major upgrade carries `impact` (`09 §10`: `connections_needing_reauth`, `by_app`); `approve` activates and flips the failing connections to `reauth_required` in one transaction and returns the `PluginPackage` plus `connections_reauth: n` (phase 3, D-107) |
 | GET `/v1/admin/host-claims`; PUT `/v1/admin/host-claims/{claim_key}` | IA | conflicts and winners |
 | GET/POST/DELETE `/v1/admin/trusted-keys` | IA | |
 | GET/POST/DELETE `/v1/admin/connectors`; POST `…/{id}/approve`, `…/{id}/token` | IA | provision token, approve manifest |
 | GET/POST/DELETE `/v1/admin/runners`; POST `…/{id}/token` | IA | |
-| GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`) |
+| GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`); (phase 4, P4-S3) plus `blobs: { backend, by_backend: [{ backend, attachments, bytes }], s3?: { bucket, prefix, healthy, last_probe_at, sse, versioning } }` (never credentials; counts come from `attachments`, not from listing the bucket) |
 | GET `/v1/admin/registry/snapshot` | IA | active snapshot (JSON) |
 | POST `/v1/admin/orgs/{org}/freeze` `{ reason }`; POST `/v1/admin/orgs/{org}/unfreeze` | IA | (phase 2, RFE-006) operator kill-switch; `frozen_authority = instance_admin`; org data stays inaccessible |
 | GET `/v1/admin/orgs` (`frozen=true` filter, paginated) | IA | (phase 2, RFE-006, D-76) organizations with their freeze state: id, slug, name only |

@@ -1223,3 +1223,12 @@ Atomic consume (one statement per rule, all rules of a request in **one transact
 
 Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR UPDATE SKIP LOCKED`, batches of 5 000 rows, only rows with `expires_at < now()`) deletes dead rows from both tables. The gateway database role gains `SELECT, INSERT, UPDATE` on `rate_limit_windows` (and nothing on `rate_limit_buckets`: the gateway keeps only rule counters); it never deletes. Neither table holds an e-mail address, an IP address or a secret (`05 §Conventions`). The `redis` and `memory` backends need no table; the migration creates the two tables regardless of the configured backend (empty, no cost).
 
+#### `attachments` (S3 blob backend)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| blob_backend | (existing column) | gains the value **`s3`** next to `postgres` (the Notes of §6 say `postgres (phase 0)`); no schema change. A row's bytes live in the backend it names, so both can coexist and `aurora-api blobs migrate` moves rows one by one (`10 §Attachments`) | 4 (P4-S3) |
+| blob_key | (existing column) | for `s3` rows: `attachments/<org_id>/<attachment_id>` (the object key is `<blobs.s3.prefix>` + this); for `postgres` rows unchanged. Cleared on purge, as today | 4 (P4-S3) |
+| failure_reason | (existing open vocabulary) | gains `blob_store_unavailable` (a connector file could not be stored) | 4 (P4-S3) |
+
+`blobs` (the Postgres backend table), `agents.avatar_blob_key` (avatars) and `plugin_blobs` are unchanged and stay in Postgres. No new table: S3 state is the bucket. The `attachments` index on `blob_key` serves the S3 orphan sweep (rows are looked up by `(blob_backend, blob_key)`). `GET /v1/admin/storage` reports bytes and counts **per backend** from `attachments` (never by listing the bucket).
+

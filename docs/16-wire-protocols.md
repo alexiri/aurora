@@ -21,6 +21,7 @@ implementation repo and checked in (CI fails on drift).
 | W11 | Upstream | gateway → internet | guarded resolver | `06` |
 | W12 | CLI / BYO | CLI → API; BYO agent → gateway | API key / agent token | `05`, `08` |
 | W13 | Counter backend (phase 4, P4-CNT) | API, gateway → Postgres or Redis | database role / Redis ACL user over TLS | `15 §Shared rate-limit counters` |
+| W14 | Blob store (phase 4, P4-S3) | API → S3-compatible bucket | SigV4 with workload identity or env keys, over TLS | `10 §Attachments`, `15 §S3-compatible blob store` |
 
 ## Cross-cutting conventions
 
@@ -205,3 +206,16 @@ trait semantics (atomic, all-or-nothing, store clock, TTL) and the error mapping
 every transport failure is `Unavailable` and is handled by the class policy
 (`local` / `closed`), never read as "allowed". Keys contain ids and keyed hashes only
 (`05 §Conventions` *Shared counters*).
+
+---
+
+## W14 — Blob store (phase 4, P4-S3)
+
+The API speaks the S3 REST API (`PutObject` with `x-amz-checksum-sha256`, the configured
+`x-amz-server-side-encryption` and `If-None-Match: *`, `GetObject`, `DeleteObject`,
+`ListObjectsV2`, `HeadBucket`, `GetBucketVersioning`; the versioned-bucket mode adds
+`ListObjectVersions` and `DeleteObject?versionId`) signed with SigV4. Aurora owns only
+the object key layout (`10 §Attachments`), the no-metadata / no-pre-signed-URL rules and the
+error mapping: every transport, 5xx, throttling or credential error is
+`blob_store_unavailable`; a missing object for a live row is `blob_store_corrupt` (logged);
+nothing is ever mapped to 404/410, which are decided from the database row.

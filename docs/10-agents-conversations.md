@@ -322,6 +322,92 @@ caps `ATTACH_OUT_*`; produces an `attachment` event and, for threads, a
 - Storage through the **BlobStore** trait (`put`, `get`, `delete`; backend key
 per row). Phase 0 backend: `postgres` (`blobs` table). An S3-compatible
 backend is a later registry entry.
+- **S3-compatible backend (phase 4, P4-S3, D-120, SEC-63).** The registry entry
+  is `s3` (`15 §S3-compatible blob store`): `blobs.backend = "s3"` makes **new**
+  attachments go to the bucket; `attachments.blob_backend` is already per row, so
+  `postgres` rows stay readable and nothing is converted unless the operator runs
+  `aurora-api blobs migrate` (below). The default stays `postgres` and nothing in
+  an existing configuration changes. Everything above this bullet (quota,
+  retention, 410 after purge, delete, visibility, sweep) applies **unchanged**, and
+  the rules below only say what differs:
+  - *Scope.* Attachment bytes only. Avatars (`agents.avatar_blob_key`, tiny and
+    public-keyed) and plugin module blobs (`plugin_blobs`) stay in Postgres.
+  - *Object key.* `<blobs.s3.prefix>attachments/<org_id>/<attachment_id>` (prefix
+    default `aurora/`); `attachments.blob_key` stores the part after the prefix
+    (`attachments/<org_id>/<attachment_id>`), so the prefix can change without
+    rewriting rows, and org-scoped listing and IAM conditions are possible. Ids are
+    UUIDs (an org's immutable id, never its slug); the filename, content type and
+    workspace never appear in a key. Objects are written with
+    `Content-Type: application/octet-stream`, **no user metadata**, and
+    `If-None-Match: *` where the endpoint supports conditional writes (a key is
+    never overwritten).
+  - *Never public, never pre-signed.* The bucket is private to Aurora. **The API
+    never hands out a pre-signed or public URL**: every download (dashboard,
+    runner inbox delivery, export zip, connector file) streams through the API after
+    the same authorization (`can_see_conversation`, `04`), purge check (410) and
+    headers (`Content-Disposition: attachment`, `nosniff`) as the Postgres backend.
+    A pre-signed URL would bypass retention, the 410 and audit, and outlive a
+    membership change.
+  - *Size and streaming.* The per-file limits do not change (`ATTACH_IN_FILE_MAX`
+    10 MiB, `ATTACH_OUT_FILE_MAX` 25 MiB, the counts and the daily cap), so a file is
+    always one `PutObject` (no multipart). The API reads the upload body once,
+    computing the SHA-256 while it reads, enforcing the size limit and the quota
+    **before the first byte is sent to the store** (the quota pre-check of D-73, then
+    the locked check in the inserting transaction after the put, exactly as for
+    Postgres), and sends the SHA-256 as the object checksum (`x-amz-checksum-sha256`)
+    so the store verifies integrity. At most `S3_UPLOAD_CONCURRENCY` (16) uploads are
+    in flight per API replica (the rest wait up to 10 s, then 503
+    `blob_store_busy`), which bounds buffered memory to 16 × 25 MiB. Downloads
+    stream from the store to the client without buffering; the API compares the
+    store's `Content-Length` with `size_bytes` and fails the response (502
+    `blob_store_corrupt`, logged, request aborted) on a mismatch.
+  - *Order of operations on upload.* put object → insert the row (quota check under
+    the counter lock) → on any failure after the put, delete the object (a failed
+    delete leaves an orphan for the sweep). A row is never visible before its bytes
+    exist, and a failed put creates no row and costs no quota.
+  - *Delete, purge and erasure.* Purge (retention, `DELETE /v1/attachments/{id}`,
+    conversation, workspace or org deletion) clears `blob_key` in the database
+    transaction exactly as today and deletes the object **after commit**. Failures
+    leave an orphan that the daily sweep removes (`S3_ORPHAN_GRACE`). Because
+    `SEC-47` promises that deleted data is deleted, the backend refuses to start
+    against a bucket with **versioning enabled** (`GetBucketVersioning`) or **Object
+    Lock** unless `blobs.s3.allow_versioned_bucket = true`; with that flag a purge
+    deletes **every version** of the key (`ListObjectVersions` + `DeleteObject` with
+    `VersionId`), and Object Lock (retention that forbids deletion) is never
+    supported. A lifecycle rule on the bucket must not be relied on for erasure.
+  - *Orphan sweep.* The daily attachment sweep lists `…/attachments/<org_id>/`
+    pages (`ListObjectsV2`, 1 000 keys per page, at most 50 000 keys per org per run)
+    and deletes objects that no attachment row references **and** whose
+    `LastModified` is older than `S3_ORPHAN_GRACE` (2 h: an upload may not have
+    inserted its row yet). Keys outside the configured prefix are never touched.
+  - *Store unavailable* (connect error, timeout, 5xx, throttling after the retries
+    of `15`, credentials refused): upload → **503 `blob_store_unavailable`**
+    (`retry-after: 5`; no row, no quota, no partial state); download → the same 503
+    (never 404 or 410: the bytes are not known to be gone); connector `file.fetch` →
+    attachment `failed` with `failure_reason = blob_store_unavailable`;
+    `send_file` → tool error `blob_store_unavailable`; runner inbox download → the
+    503 and the runner's existing retry path (`16 §W5`); delete paths → the database
+    change commits and the object becomes an orphan for the sweep. Conversation
+    sending that does not involve an attachment is unaffected, and so is
+    `readyz` (a blob outage degrades attachments, not the API): the state is the
+    metric `aurora_blob_store_up` and `GET /v1/admin/overview` (`blobs`).
+  - *A row whose backend is not configured.* If an attachment names
+    `blob_backend = "s3"` while `blobs.s3` is not configured (the operator removed
+    it), its reads and purges answer 503 `blob_backend_not_configured` and the API
+    logs an error once at startup naming the row count; nothing is deleted.
+  - *Migration.* No automatic migration and no filesystem backend exists (phase 0–3
+    stored attachments in Postgres only). **`aurora-api blobs migrate --to s3|postgres
+    [--org <id>] [--batch N] [--max-bytes-per-sec N] [--dry-run] [--keep-source]`**
+    moves rows between backends, resumable and idempotent: per row it reads the
+    source bytes, writes the target object, verifies size and SHA-256, then
+    compare-and-sets `blob_backend`/`blob_key` (`UPDATE … WHERE id = $1 AND
+    blob_backend = $old AND blob_key = $oldkey`), and only after commit removes the
+    source (skipped with `--keep-source`; a source left behind is an orphan the
+    sweep removes). Purged rows and `failed` rows are skipped; quota, usage counters
+    and `size_bytes` do not change; a row that fails verification is left on its
+    source and reported. Running it needs a reachable target and is audited as
+    `blobs.migrate` (counts, never content). Rolling back is the same command in the
+    other direction.
 - **Retention, quota and storage visibility (phase 2, RFE-015, D-54).** Phase 0
   bounded single files and one conversation's daily output but nothing in total:
   attachment bytes lived in a Postgres `bytea` table forever.

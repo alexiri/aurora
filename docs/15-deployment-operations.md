@@ -165,6 +165,19 @@ one new entry without activating it.
 | `ratelimit.counters.redis.username_env`, `.password_env` | unset | api, gateway | (phase 4, P4-CNT) names of environment variables holding the Redis ACL user and password (both optional; an unset variable that is named refuses startup); never the values (`08 §4`) |
 | `ratelimit.counters.redis.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api, gateway | (phase 4, P4-CNT) PEM bundle verifying the Redis server |
 | `ratelimit.counters.redis.db`, `.key_prefix` | `0`, `aurora:rl:` | api, gateway | (phase 4, P4-CNT) database index and key prefix (lets several Aurora instances share one Redis); `key_prefix` ≤ 64 chars of `[A-Za-z0-9:_-]` |
+| `blobs.backend` | `postgres` | api | (phase 4, P4-S3, D-120) where **new** attachment bytes go: `postgres` (the `blobs` table) or `s3`; existing rows keep their own backend (`attachments.blob_backend`); any other value refuses startup. See *S3-compatible blob store* |
+| `blobs.s3.bucket`, `blobs.s3.region` | — (required for `s3`) | api | (phase 4, P4-S3) bucket name (3–63 chars, DNS-compatible) and signing region (any non-empty string for S3-compatible servers that ignore it, e.g. `us-east-1`) |
+| `blobs.s3.endpoint` | unset (AWS S3 for the region) | api | (phase 4, P4-S3) `https://host[:port]` of an S3-compatible server (MinIO, Ceph, …), no userinfo, path or query; `http://` accepted only for a loopback host or with `allow_insecure_http = true` |
+| `blobs.s3.allow_insecure_http` | `false` | api | (phase 4, P4-S3) opt-in for `http://` to a non-loopback endpoint (in-cluster MinIO without TLS); startup warning |
+| `blobs.s3.path_style` | `false` | api | (phase 4, P4-S3) path-style addressing (`https://host/bucket/key`); needed by most self-hosted servers |
+| `blobs.s3.prefix` | `aurora/` | api | (phase 4, P4-S3) key prefix, ≤ 64 chars of `[A-Za-z0-9._/-]`, no leading `/`, no `..`, empty or ending in `/` |
+| `blobs.s3.credentials.source` | `provider_chain` | api | (phase 4, P4-S3) `provider_chain` (the standard AWS chain: web identity / IRSA / pod identity / instance profile / environment; **recommended**, no static key in Aurora's configuration) or `env` (static keys from the variables named below); never inline values |
+| `blobs.s3.credentials.access_key_id_env`, `.secret_access_key_env`, `.session_token_env` | — | api | (phase 4, P4-S3) `source = env`: names of the environment variables holding the keys (`session_token_env` optional); an unset or empty named variable refuses startup; values are filled from a Secret (Helm `blobs.s3.existingSecret`), never from `aurora.toml` or the database |
+| `blobs.s3.sse` | `AES256` | api | (phase 4, P4-S3) server-side encryption requested on every `PutObject`: `AES256` (SSE-S3), `aws:kms` (with `sse_kms_key_id`) or `none` (startup warning; only for servers without encryption support). The startup probe verifies that the server **confirms** the requested encryption (`x-amz-server-side-encryption` in the response) and refuses to start otherwise |
+| `blobs.s3.sse_kms_key_id` | unset | api | (phase 4, P4-S3) KMS key id/ARN for `aws:kms` (not a secret) |
+| `blobs.s3.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api | (phase 4, P4-S3) PEM bundle verifying the endpoint |
+| `blobs.s3.allow_versioned_bucket` | `false` | api | (phase 4, P4-S3) accept a bucket with versioning enabled; purges then delete every version (`10 §Attachments`). Object-Lock buckets are never accepted |
+| `blobs.s3.upload_concurrency` | 16 | api | (phase 4, P4-S3) `S3_UPLOAD_CONCURRENCY`, 1–64 uploads in flight per replica |
 | `retention.request_log_days` | 30 | api | |
 | `attachments.default_org_quota_mib`, `attachments.org_quota_mib_max` | 10240, 51200 | api | (phase 2, RFE-015) default and ceiling of an org's attachment storage quota (MiB; `0` = unlimited) |
 | `attachments.days_max` | — (no ceiling) | api | (phase 2, RFE-015) instance maximum for an org's attachment retention window |
@@ -349,7 +362,9 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   (hooks' fetch is additionally filtered in-process); runner → api, Kubernetes
   API; connectors → api, their platform. (phase 4, P4-CNT) With the Redis counter
   backend api and gateway also reach the configured Redis peers
-  (`counters.redis.networkPolicy`) on its port; nothing else changes.
+  (`counters.redis.networkPolicy`) on its port; nothing else changes. (phase 4, P4-S3)
+  With the `s3` blob backend the **api** (only) also reaches the configured bucket
+  endpoint (`blobs.s3.networkPolicy`).
 - **Sandboxes namespace**: ResourceQuota, LimitRange, PSA `restricted`, runner
   ServiceAccount + Role (`11 §kubernetes`).
 - **Postgres**: external database expected in production (values: URL secret,
@@ -416,7 +431,8 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
 
 ## Backups and state
 
-Stateful: Postgres (system of record), per-agent home volumes (PVC snapshots /
+Stateful: Postgres (system of record), (phase 4, P4-S3) the attachment bucket when
+`blobs.backend = "s3"` (restore it together with Postgres), per-agent home volumes (PVC snapshots /
 volume backups are the operator's job), the gateway CA Secret, the encryption
 keyring and signing key (phase 2: the signing-key and internal-secret **rings**,
 including retired entries still inside their rotation window). **Secrets are
@@ -430,8 +446,9 @@ occupy a slot permanently: size for steady state, not peak. Postgres: modest;
 
 ### Attachment storage (phase 2, RFE-015)
 
-Attachments live in Postgres (`blobs`, `bytea`) until the S3-compatible BlobStore
-exists, so they share the database's disk and backups. Budget for
+Attachments live in Postgres (`blobs`, `bytea`) by default (phase 4, P4-S3: or in an
+S3-compatible bucket with `blobs.backend = "s3"`, *S3-compatible blob store* below), so in
+the default they share the database's disk and backups. Budget for
 `Σ org quotas` (default 10 GiB each) in the worst case, expect real use to be far
 lower, and prefer short retention windows. `GET /v1/admin/storage` shows where the
 bytes are; the Postgres size alert should fire well before the disk is full
@@ -564,3 +581,83 @@ and buckets start empty on the new backend (a limit's usage resets once). Going
 back to `memory` leaves the tables in place (they are pruned, not dropped). A mixed
 fleet (some replicas shared, some `memory`) is safe: each counts what it sees, so
 the effective limit is between the configured value and N× until the roll finishes.
+
+## S3-compatible blob store (phase 4, P4-S3, D-120, SEC-63)
+
+A second attachment backend beside Postgres, behind the same **BlobStore** trait
+(`put`, `get`, `delete`, `list(prefix)`, `health`; crate `aurora-blobstore`, with the
+`postgres` backend moved behind it unchanged and the `s3` backend built on
+`aws-sdk-s3` with rustls). It is **optional**: with no `blobs.*` configuration the
+deployment behaves exactly as in phase 3. Behaviour, key layout, streaming, purge,
+orphan sweep, unavailability and migration are specified in `10 §Attachments`; this
+section is the operator side.
+
+- **Who talks to the bucket.** Only the **API** (uploads, downloads, purge, sweep).
+  The gateway, runner, supervisor, connectors and sandboxes never reach it and
+  never see its credentials (the runner downloads inbox files through the API). Only
+  the API NetworkPolicy gains an egress rule (`blobs.s3.networkPolicy`).
+- **Credentials.** Prefer `provider_chain` (IRSA / pod identity / instance profile):
+  no static key exists in Aurora's configuration. For `env`, the Helm chart reads
+  a Secret (`blobs.s3.existingSecret` with keys `AWS_ACCESS_KEY_ID`,
+  `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`) and the configuration names
+  the variables (`*_env`); the values are not in `aurora.toml`, the database, a
+  response, a log line, a metric label or a sandbox (SEC-63).
+- **Least-privilege policy.** On `arn:aws:s3:::<bucket>/<prefix>attachments/*`:
+  `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`; on the bucket, with
+  `s3:prefix = <prefix>attachments/*`: `s3:ListBucket`; plus `s3:GetBucketVersioning`
+  and `s3:GetEncryptionConfiguration` for the startup probe (and `s3:ListBucketVersions`,
+  `s3:DeleteObjectVersion` only with `allow_versioned_bucket`). Nothing else; no
+  `s3:*`, no `PutBucketPolicy`, no ACL actions.
+- **Bucket requirements.** Private (S3 *Block Public Access* on), default encryption
+  enabled, **versioning off** (or `allow_versioned_bucket`), **Object Lock off**.
+  Aurora requests the configured SSE on every put and the startup probe writes,
+  reads and deletes a probe object under `<prefix>_probe/` to prove it; a server that
+  does not confirm the requested encryption, a missing bucket, a refused credential
+  or a versioned or locked bucket fails startup with a message naming the key.
+- **Timeouts and retries.** `S3_CONNECT_TIMEOUT` 5 s, `S3_REQUEST_TIMEOUT` 60 s per
+  call, idle body timeout 30 s; `S3_RETRIES` (2) with jittered backoff for
+  connection errors, 5xx and throttling on `get`, `delete`, `list`, `head` and on
+  `put` (a key is written once, so a retry is safe; a `412` on a retried conditional
+  put counts as success when the stored checksum equals the upload's); other 4xx are final.
+- **Metrics:** `aurora_blob_store_requests_total{backend,op,result}`,
+  `aurora_blob_store_seconds{backend,op}`, `aurora_blob_store_up{backend}`,
+  `aurora_blob_bytes{backend}` (from `attachments`), `aurora_blob_orphans_removed_total{backend}`.
+  Alert on `aurora_blob_store_up == 0` for 2 min: uploads and downloads of attachments
+  fail with 503 while it holds; the rest of the API keeps working and `readyz` does not
+  change.
+- **Backups and DR.** The bucket's durability, replication and backup are the operator's
+  job and are part of "stateful" (`§Backups and state`): restoring Postgres without the
+  bucket (or the reverse) leaves attachments readable only for the rows whose bytes exist
+  (a missing object reads as 503/502 and is logged, never silently empty).
+- **Helm:**
+
+  ```yaml
+  blobs:
+    backend: postgres            # postgres | s3  -> blobs.backend
+    s3:
+      bucket: ""
+      region: ""
+      endpoint: ""               # empty = AWS; https://minio.example.org for S3-compatible servers
+      allowInsecureHttp: false
+      pathStyle: false
+      prefix: aurora/
+      credentials: {source: provider_chain}   # provider_chain | env
+      existingSecret: ""         # source=env: Secret with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY [/ AWS_SESSION_TOKEN]
+      serviceAccountAnnotations: {}   # e.g. eks.amazonaws.com/role-arn for IRSA, on the api ServiceAccount only
+      sse: AES256                # AES256 | aws:kms | none
+      sseKmsKeyId: ""
+      caFile: ""
+      allowVersionedBucket: false
+      uploadConcurrency: 16
+      networkPolicy: {egressTo: []}   # peers/ports the api may reach (default deny stays)
+  ```
+
+  `helm template` fails when `backend: s3` has an empty `bucket` or `region`, when
+  `credentials.source: env` has no `existingSecret`, or when `existingSecret` and an
+  inline key are both set. The chart does not ship MinIO or any bucket.
+- **Switching and migrating.** Setting `blobs.backend: s3` changes only where **new**
+  attachments go (rolling restart). To move existing attachments run
+  `aurora-api blobs migrate --to s3` (resumable; `--dry-run` first; as a Kubernetes
+  Job in the chart's `jobs` values). Keep `blobs.s3` configured for as long as any row
+  names `s3`: removing it makes those attachments unreadable (503
+  `blob_backend_not_configured`), not deleted.
