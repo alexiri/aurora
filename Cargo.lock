@@ -257,6 +257,7 @@ dependencies = [
  "image",
  "lettre",
  "metrics",
+ "metrics-exporter-prometheus",
  "openidconnect",
  "percent-encoding",
  "reqwest 0.12.28",

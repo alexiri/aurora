@@ -20,7 +20,8 @@ use crate::app::AppState;
 use crate::http::json::Json;
 use aurora_core::ApiError;
 use aurora_core::limits::{
-    CONNECTOR_OPS_WAIT, OP_BACKOFF_INITIAL, OP_BACKOFF_MAX, OP_LEASE, OP_MAX_ATTEMPTS,
+    CONNECTOR_OPS_WAIT, DEPROVISION_RETRY_WINDOW, OP_BACKOFF_INITIAL, OP_BACKOFF_MAX, OP_LEASE,
+    OP_MAX_ATTEMPTS,
 };
 use aurora_db::DbError;
 use aurora_db::bus::Channel;
@@ -88,6 +89,11 @@ pub(super) async fn notify(
         .map_err(|e| ApiError::internal(e.to_string()))
 }
 
+/// Tell correlated waiters that op `id` reached a terminal state.
+pub async fn notify_op_result(conn: &mut PgConnection, id: Uuid) -> Result<(), ApiError> {
+    notify(conn, Channel::OpResult, &json!({"op_id": id})).await
+}
+
 pub(super) fn invalid(e: impl std::fmt::Display) -> ApiError {
     ApiError::invalid_request(e.to_string(), vec![])
 }
@@ -111,15 +117,22 @@ pub struct NewOp {
 /// Queue `op` in the caller's transaction and `NOTIFY aurora_ops` (delivered on commit).
 /// Returns the op id (the existing one when `dedupe_key` already exists).
 pub async fn enqueue(tx: &mut PgConnection, op: NewOp) -> Result<Uuid, ApiError> {
-    enqueue_with(tx, op, None).await
+    enqueue_with(tx, Uuid::now_v7(), op, None).await
+}
+
+/// As [`enqueue`] with a caller-chosen op id (the self-contained deprovision copy is sealed
+/// under it before the op exists). A second enqueue under the same `dedupe_key` returns the
+/// first op's id, so callers compare it with `id`.
+pub async fn enqueue_with_id(tx: &mut PgConnection, id: Uuid, op: NewOp) -> Result<Uuid, ApiError> {
+    enqueue_with(tx, id, op, None).await
 }
 
 async fn enqueue_with(
     tx: &mut PgConnection,
+    id: Uuid,
     op: NewOp,
     correlation_id: Option<Uuid>,
 ) -> Result<Uuid, ApiError> {
-    let id = Uuid::now_v7();
     // Every `message.post` carries its op id as the invisible marker (docs/13 §4.2).
     let mut payload = op.payload.clone();
     if op.kind == "message.post"
@@ -190,7 +203,7 @@ pub async fn call_correlated(
     let correlation = Uuid::now_v7();
     let id = async {
         let mut tx = state.pool.begin().await.map_err(DbError::from)?;
-        let id = enqueue_with(&mut tx, op, Some(correlation)).await?;
+        let id = enqueue_with(&mut tx, Uuid::now_v7(), op, Some(correlation)).await?;
         tx.commit().await.map_err(DbError::from)?;
         Ok::<_, ApiError>(id)
     }
@@ -245,6 +258,32 @@ pub async fn call_correlated(
 
 // ------------------------------------------------------------------------ claim
 
+/// The decrypted credentials of a claimed `presence.deprovision` op. `Ok(None)` for every other
+/// op (and for a legacy deprovision that never had a copy); `Err(())` when the copy exists but
+/// cannot be opened right now.
+async fn open_deprovision_copy(s: &AppState, r: &ops::Claimed) -> Result<Option<Value>, ()> {
+    let Some(sealed) = r.credentials_ref.as_deref() else {
+        return Ok(None);
+    };
+    let (Some(org), Ok(sealed)) = (r.org_id, sealed.parse::<aurora_secrets::SecretRef>()) else {
+        tracing::error!(op_id = %r.id, "deprovision credential copy is malformed; op stays pending");
+        return Err(());
+    };
+    match s
+        .vault
+        .open(&crate::domains::channels::deprovision::op_seal_ctx(r.id, org), &sealed)
+        .await
+    {
+        Ok(plain) => serde_json::from_slice(plain.expose()).map(Some).map_err(|_| {
+            tracing::error!(op_id = %r.id, "deprovision credential copy is unreadable; op stays pending");
+        }),
+        Err(e) => {
+            tracing::warn!(op_id = %r.id, error = %e, "deprovision credential copy not opened; op stays pending");
+            Err(())
+        }
+    }
+}
+
 async fn claim(
     c: ConnectorCtx,
     State(s): State<AppState>,
@@ -267,6 +306,7 @@ async fn claim(
             i64::from(req.max),
             OP_LEASE.as_secs_f64(),
             OP_MAX_ATTEMPTS as i32,
+            DEPROVISION_RETRY_WINDOW.as_secs_f64(),
         )
         .await?;
         if !rows.is_empty() {
@@ -274,6 +314,16 @@ async fn claim(
             for r in rows {
                 let kind =
                     OpKind::from_wire(&r.kind).map_err(|e| ApiError::internal(e.to_string()))?;
+                // (RFE-024, C-363) A self-contained deprovision is never handed out without
+                // its credentials: when the copy cannot be opened the op goes back to
+                // `pending` (the time counts against its retry window).
+                let credentials = match open_deprovision_copy(&s, &r).await {
+                    Ok(c) => c,
+                    Err(()) => {
+                        ops::reschedule(&s.pool, r.id, backoff_secs(r.attempts), true).await?;
+                        continue;
+                    }
+                };
                 out.push(Operation {
                     op_id: r.id,
                     kind,
@@ -282,9 +332,12 @@ async fn claim(
                     attempt: u32::try_from(r.attempts).unwrap_or(1),
                     maybe_sent: r.was_leased,
                     payload: r.payload,
+                    credentials,
                 });
             }
-            return Ok(Json(ClaimResponse { ops: out }));
+            if !out.is_empty() {
+                return Ok(Json(ClaimResponse { ops: out }));
+            }
         }
         let left = deadline.saturating_duration_since(Instant::now());
         let Some(rx) = rx.as_mut().filter(|_| !left.is_zero()) else {
@@ -380,10 +433,14 @@ async fn apply_result(s: &AppState, c: &ConnectorCtx, r: OpResult) -> Result<(),
         return Ok(()); // already finished: idempotent retry
     }
     let fail = |code: &str, message: &str| json!({"error": {"code": code, "message": message}});
+    let deprovision = op.kind == "presence.deprovision";
+    // Set when a self-contained deprovision reaches a terminal state: `(status, error code)`.
+    let mut ended: Option<(&str, Option<String>)> = None;
     match (r.outcome, r.error) {
         (Outcome::Ok, _) => {
             let data = r.data.unwrap_or_else(|| json!({}));
             ops::finish(&mut *tx, op.id, "done", Some(&data), None).await?;
+            ended = Some(("done", None));
             if op.kind == "presence.provision"
                 && let Some(p) = op.presence_id
             {
@@ -415,7 +472,19 @@ async fn apply_result(s: &AppState, c: &ConnectorCtx, r: OpResult) -> Result<(),
                     terminal = None;
                 }
                 "unavailable" => {
-                    if op.attempts < OP_MAX_ATTEMPTS as i32 {
+                    // A self-contained deprovision is retried for a time window, not a
+                    // number of attempts (C-363).
+                    let retry = if deprovision {
+                        ops::deprovision_window_open(
+                            &mut *tx,
+                            op.id,
+                            DEPROVISION_RETRY_WINDOW.as_secs_f64(),
+                        )
+                        .await?
+                    } else {
+                        op.attempts < OP_MAX_ATTEMPTS as i32
+                    };
+                    if retry {
                         ops::reschedule(&mut *tx, op.id, backoff_secs(op.attempts), false).await?;
                         notify(
                             &mut tx,
@@ -426,6 +495,9 @@ async fn apply_result(s: &AppState, c: &ConnectorCtx, r: OpResult) -> Result<(),
                         terminal = None;
                     }
                 }
+                // The presence row is gone: nothing to disable or tell an operator about
+                // (the failure audit row says it).
+                "credential_dead" if deprovision => {}
                 "credential_dead" => {
                     if let Some(p) = op.presence_id {
                         ops::disable_presence(&mut *tx, p, "credential_dead").await?;
@@ -470,10 +542,28 @@ async fn apply_result(s: &AppState, c: &ConnectorCtx, r: OpResult) -> Result<(),
                 )
                 .await?;
                 notify(&mut tx, Channel::OpResult, &json!({"op_id": op.id})).await?;
+                ended = Some((status, Some(code.clone())));
             }
         }
     }
     tx.commit().await.map_err(DbError::from)?;
+    if deprovision && let Some((status, code)) = ended {
+        use crate::domains::channels::deprovision as dep;
+        // The copy is discarded once the terminal state is committed (a failed discard is
+        // retried by the pruning job).
+        if let Some(sealed) = op.payload.get("credentials_ref").and_then(Value::as_str) {
+            let org = op
+                .payload
+                .get("org_id")
+                .and_then(Value::as_str)
+                .and_then(|v| v.parse().ok());
+            dep::discard_op_copy(s, op.id, org, sealed).await;
+        }
+        // `dropped` means the bot was already gone: not a residual.
+        if status == "failed" {
+            dep::record_op_failure(s, &op, code.as_deref().unwrap_or("failed"));
+        }
+    }
     Ok(())
 }
 

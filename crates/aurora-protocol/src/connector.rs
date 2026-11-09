@@ -582,7 +582,7 @@ impl InboundEvent {
 
 // ----------------------------------------------------------------- ops
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Operation {
     pub op_id: Uuid,
     pub kind: OpKind,
@@ -596,6 +596,27 @@ pub struct Operation {
     pub maybe_sent: bool,
     #[serde(default)]
     pub payload: Value,
+    /// Decrypted credentials of a self-contained `presence.deprovision` op (RFE-024, C-360):
+    /// present only on that kind, only when the op carries a sealed copy. Never log.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials: Option<Value>,
+}
+
+impl std::fmt::Debug for Operation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Operation")
+            .field("op_id", &self.op_id)
+            .field("kind", &self.kind)
+            .field("integration_id", &self.integration_id)
+            .field("presence_id", &self.presence_id)
+            .field("attempt", &self.attempt)
+            .field("maybe_sent", &self.maybe_sent)
+            .field(
+                "credentials",
+                &self.credentials.as_ref().map(|_| "[redacted]"),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 fn one() -> u32 {
@@ -973,7 +994,44 @@ pub struct PresenceProvisionResult {
     pub credentials: Value,
 }
 
-/// `presence.deprovision` / `presence.rename` / `presence.set_icon`.
+/// `presence.deprovision` (RFE-024, C-361): everything the connector needs to remove the
+/// presence after the rows and secrets are gone; the credentials arrive in
+/// `Operation.credentials`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PresenceDeprovisionOp {
+    pub presence_id: Uuid,
+    pub reason: DeprovisionReason,
+    pub platform_user_ref: String,
+    #[serde(default)]
+    pub handle: Option<String>,
+    pub tenant_ref: String,
+    pub tenant_label: String,
+    /// The integration's non-secret setup fields (e.g. a server URL).
+    #[serde(default)]
+    pub config: Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeprovisionReason {
+    Detached,
+    AgentDeleted,
+    WorkspaceDeleted,
+    OrgDeleted,
+}
+
+impl DeprovisionReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Detached => "detached",
+            Self::AgentDeleted => "agent_deleted",
+            Self::WorkspaceDeleted => "workspace_deleted",
+            Self::OrgDeleted => "org_deleted",
+        }
+    }
+}
+
+/// `presence.rename` / `presence.set_icon`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PresenceChangeOp {
     pub presence_id: Uuid,
@@ -1019,7 +1077,7 @@ pub enum OpPayload {
     SpaceMembers(SpaceMembersOp),
     HistoryRead(HistoryReadOp),
     PresenceProvision(PresenceProvisionOp),
-    PresenceDeprovision(PresenceChangeOp),
+    PresenceDeprovision(PresenceDeprovisionOp),
     PresenceRename(PresenceChangeOp),
     PresenceSetIcon(PresenceChangeOp),
     CredentialsValidate(CredentialsValidateOp),

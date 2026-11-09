@@ -418,13 +418,25 @@ pub async fn patch(
 }
 
 pub async fn delete(state: &AppState, id: Uuid) -> Result<(), ApiError> {
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
-    credentials::revoke_for_agent(&mut *tx, id, true).await?;
-    // Dedicated channel presences are deprovisioned before the cascade removes them.
-    crate::domains::channels::presences::enqueue_deprovision_for_agent(&mut tx, id).await?;
-    agents::delete(&mut *tx, id).await?;
-    credentials::notify_gateway_invalidate(&mut *tx, "agent", id).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    use crate::domains::channels::deprovision::{self, Scope};
+    // Self-contained deprovision ops (RFE-024): credential copies sealed first (a seal failure
+    // refuses the delete with 503), the ops committed with the delete, before the cascade.
+    let mut dep = deprovision::prepare(state, Scope::Agent(id)).await?;
+    let done = async {
+        let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+        credentials::revoke_for_agent(&mut *tx, id, true).await?;
+        dep.enqueue(&mut tx).await?;
+        agents::delete(&mut *tx, id).await?;
+        credentials::notify_gateway_invalidate(&mut *tx, "agent", id).await?;
+        tx.commit().await.map_err(DbError::from)?;
+        Ok::<_, ApiError>(())
+    }
+    .await;
+    if let Err(e) = done {
+        dep.rollback(state).await;
+        return Err(e);
+    }
+    dep.committed(state).await;
     Ok(())
 }
 

@@ -169,7 +169,9 @@ the cascade**:
   `connector_id` set, and a payload
   `{ presence_id, reason: "detached"|"agent_deleted"|"workspace_deleted"|"org_deleted",
      platform_user_ref, handle, tenant_ref, tenant_label, config: {…non-secret
-     integration setup fields…}, credentials_ref }`. `credentials_ref` is a **fresh
+     integration setup fields…}, credentials_ref }` (the core also keeps `org_id`
+     in the stored payload, for the seal context and the failure audit row; like
+     `credentials_ref` it is stripped before the op is handed out). `credentials_ref` is a **fresh
      SecretRef** holding a copy of the integration credentials the connector needs
      to administer the bot (for Mattermost the admin token, `20`), sealed under a
      context bound to the op (`SealContext` purpose `channel_op_deprovision`, the op

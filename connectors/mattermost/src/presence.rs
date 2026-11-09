@@ -266,35 +266,57 @@ pub async fn set_icon(integ: &Arc<Integ>, op: &Operation, c: PresenceChangeOp) -
     Ok(json!({}))
 }
 
-/// `presence.deprovision`: revoke every token, then disable the bot. A bot that is
-/// already gone is `not_found` (the core records it as dropped).
-pub async fn deprovision(integ: &Arc<Integ>, op: &Operation, c: PresenceChangeOp) -> R<Value> {
-    let admin = admin(integ)?;
-    let bot = bot_of(integ, op, &c, false).await?;
+/// `presence.deprovision` (RFE-024, self-contained): revoke every token, then disable the
+/// bot, acting from the op's payload (`platform_user_ref`, `config.server_url`) and its
+/// `credentials` (the admin token) alone. The integration, presence, agent and org rows may
+/// already be deleted and no replica may own the integration, so nothing is looked up. A bot
+/// that is already gone is `not_found` (the core records it as dropped).
+pub async fn deprovision(
+    open: &[Arc<Integ>],
+    op: &Operation,
+    c: PresenceDeprovisionOp,
+) -> R<Value> {
+    let bot = c.platform_user_ref.as_str();
+    if !is_mm_id(bot) {
+        return Err(err(ErrorCode::Invalid, "bad platform_user_ref"));
+    }
+    let server = c
+        .config
+        .get("server_url")
+        .and_then(Value::as_str)
+        .ok_or_else(|| err(ErrorCode::Invalid, "config.server_url missing"))?;
+    let mm = crate::api::Mm::new(server).map_err(|e| err(ErrorCode::Invalid, e))?;
+    let admin = op
+        .credentials
+        .as_ref()
+        .and_then(|v| v.get("admin_token"))
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| {
+            err(
+                ErrorCode::Forbidden,
+                "the operation carries no system-admin token",
+            )
+        })?;
     // Our own disable must not come back as a `presence.removed` event.
-    integ.retire_bot(&bot);
-    let tokens = integ
-        .mm
-        .get(&admin, &format!("/users/{bot}/tokens"))
-        .await?;
+    for integ in open {
+        integ.retire_bot(bot);
+    }
+    let tokens = mm.get(admin, &format!("/users/{bot}/tokens")).await?;
     for t in tokens.as_array().into_iter().flatten() {
         if let Some(id) = t.get("id").and_then(Value::as_str) {
-            integ
-                .mm
-                .post(&admin, "/users/tokens/revoke", &json!({"token_id": id}))
+            mm.post(admin, "/users/tokens/revoke", &json!({"token_id": id}))
                 .await?;
         }
     }
-    integ
-        .mm
-        .send(
-            &admin,
-            Method::POST,
-            &format!("/bots/{bot}/disable"),
-            &[],
-            None,
-        )
-        .await?;
+    mm.send(
+        admin,
+        Method::POST,
+        &format!("/bots/{bot}/disable"),
+        &[],
+        None,
+    )
+    .await?;
     Ok(json!({}))
 }
 

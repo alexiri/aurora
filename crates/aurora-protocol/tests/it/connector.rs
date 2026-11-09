@@ -185,3 +185,43 @@ fn credentials_not_in_debug() -> R {
     assert!(!format!("{i:?}").contains("hunter2"));
     Ok(())
 }
+
+/// (RFE-024, C-360/C-361) A claimed `presence.deprovision` carries `credentials`; the payload
+/// is the self-contained shape; the credentials never show in `Debug`.
+#[test]
+fn deprovision_operation_carries_credentials_and_hides_them_in_debug() -> R {
+    let pid = Uuid::now_v7();
+    let op: Operation = serde_json::from_value(json!({
+        "op_id": Uuid::now_v7(), "kind": "presence.deprovision", "presence_id": pid,
+        "payload": {
+            "presence_id": pid, "reason": "org_deleted", "platform_user_ref": "bot1",
+            "handle": null, "tenant_ref": "t", "tenant_label": "T",
+            "config": {"server_url": "https://mm.example"}
+        },
+        "credentials": {"admin_token": "hunter2"}
+    }))?;
+    assert_eq!(op.integration_id, None);
+    assert_eq!(op.credentials, Some(json!({"admin_token": "hunter2"})));
+    assert!(!format!("{op:?}").contains("hunter2"));
+    let OpPayload::PresenceDeprovision(p) = op.parse()? else {
+        panic!("not a deprovision payload");
+    };
+    assert_eq!(p.reason, DeprovisionReason::OrgDeleted);
+    assert_eq!(p.handle, None);
+    assert_eq!(p.platform_user_ref, "bot1");
+    // Every other op omits the field on the wire.
+    let plain: Operation = serde_json::from_value(json!({
+        "op_id": Uuid::now_v7(), "kind": "message.post", "payload": {}
+    }))?;
+    assert_eq!(plain.credentials, None);
+    assert!(serde_json::to_value(&plain)?.get("credentials").is_none());
+    // The payload refuses a reason the contract does not list.
+    assert!(
+        serde_json::from_value::<PresenceDeprovisionOp>(json!({
+            "presence_id": pid, "reason": "bored", "platform_user_ref": "b",
+            "tenant_ref": "t", "tenant_label": "T", "config": {}
+        }))
+        .is_err()
+    );
+    Ok(())
+}

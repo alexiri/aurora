@@ -62,6 +62,7 @@ metrics = { workspace = true }
 [dev-dependencies]
 aurora-secrets = { workspace = true, features = ["memory-store"] }
 wiremock = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 aurora-testkit = { workspace = true }
 percent-encoding = { workspace = true }
 http-body-util = { workspace = true }

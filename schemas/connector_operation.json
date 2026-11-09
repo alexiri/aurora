@@ -13,6 +13,9 @@
       "minimum": 0,
       "type": "integer"
     },
+    "credentials": {
+      "description": "Decrypted credentials of a self-contained `presence.deprovision` op (RFE-024, C-360):\npresent only on that kind, only when the op carries a sealed copy. Never log."
+    },
     "integration_id": {
       "format": "uuid",
       "type": [

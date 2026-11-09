@@ -1,5 +1,6 @@
 //! Integration setup and lifecycle (docs/13 §5.8; C-33).
 
+use super::deprovision;
 use super::dto::*;
 use super::presences;
 use super::{capability_enabled, map_correlated, object_field};
@@ -493,22 +494,33 @@ async fn get_row(s: &AppState, id: Uuid) -> Result<ChannelIntegration, ApiError>
 pub async fn delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> {
     let row = load_admin(s, c, id).await?;
     let refs = repo::sealed_refs(&s.pool, id).await?;
-    let mut tx = audit::begin(s).await?;
-    // Serialize with concurrent presence changes.
-    repo::get_for_update(&mut tx, id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("Integration not found."))?;
-    presences::enqueue_deprovision_for_integration(&mut tx, id).await?;
-    presences::bump_integration_agents(&mut tx, id).await?;
-    repo::delete(&mut *tx, id).await?;
-    let ev = AuditEvent::new(
-        AuditActor::from_caller(c),
-        "channel_integration.delete",
-        Outcome::Success,
-    )
-    .org(row.org_id)
-    .target("channel_integration", id);
-    audit::commit_critical(tx, &ev).await?;
+    // Credential copies for the dedicated presences are sealed first: a seal failure answers
+    // 503 `secret_store_unavailable` and nothing is deleted (C-362).
+    let mut dep = deprovision::prepare(s, deprovision::Scope::Integration(id)).await?;
+    let done = async {
+        let mut tx = audit::begin(s).await?;
+        // Serialize with concurrent presence changes.
+        repo::get_for_update(&mut tx, id)
+            .await?
+            .ok_or_else(|| ApiError::not_found("Integration not found."))?;
+        dep.enqueue(&mut tx).await?;
+        presences::bump_integration_agents(&mut tx, id).await?;
+        repo::delete(&mut *tx, id).await?;
+        let ev = AuditEvent::new(
+            AuditActor::from_caller(c),
+            "channel_integration.delete",
+            Outcome::Success,
+        )
+        .org(row.org_id)
+        .target("channel_integration", id);
+        audit::commit_critical(tx, &ev).await
+    }
+    .await;
+    if let Err(e) = done {
+        dep.rollback(s).await;
+        return Err(e);
+    }
+    dep.committed(s).await;
     for (presence, sealed) in refs {
         match presence {
             Some(p) => discard(s, row.org_id, p, true, &sealed).await,

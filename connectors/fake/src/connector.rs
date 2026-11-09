@@ -447,7 +447,29 @@ impl FakeConnector {
                     "credentials": {"token": format!("fake-bot-token-{reference}")}
                 }))
             }
-            OpPayload::PresenceDeprovision(_) => ok(json!({})),
+            OpPayload::PresenceDeprovision(c) => {
+                // Self-contained (RFE-024): payload + `credentials` alone, no integration
+                // lookup (it may be gone and never owned by this replica).
+                let token = op
+                    .credentials
+                    .as_ref()
+                    .and_then(|v| v.get("token"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if token.is_empty() {
+                    return Err(OpError::new(
+                        ErrorCode::Forbidden,
+                        "the operation carries no credentials",
+                    ));
+                }
+                if token == "dead" {
+                    return Err(OpError::new(ErrorCode::CredentialDead, "token rejected"));
+                }
+                match p.users.remove(&c.platform_user_ref) {
+                    Some(_) => ok(json!({})),
+                    None => Err(OpError::new(ErrorCode::NotFound, "unknown bot")),
+                }
+            }
             OpPayload::PresenceRename(c) | OpPayload::PresenceSetIcon(c) => {
                 let _ = c;
                 ok(json!({}))

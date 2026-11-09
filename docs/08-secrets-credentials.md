@@ -13,6 +13,7 @@ Phase: **0** (inline store, LiteLLM, Anthropic) · **3** (HashiCorp Vault store,
 | Channel integration credentials | `channel_integrations.credentials_ref` | `integration.credentials` |
 | Dedicated presence credentials | `channel_presences.credentials_ref` | `presence.credentials` |
 | Webhook verification secret | `webhooks.verification.secret_ref` | `webhook.verification` |
+| Credential copy of a self-contained deprovision op (RFE-024, owner = op id) | `channel_ops.payload.credentials_ref` | `channel_op.deprovision` |
 
 Every such column holds a **SecretRef**. Code never interprets a SecretRef
 outside `aurora-secrets`; it calls the **SecretVault** service:

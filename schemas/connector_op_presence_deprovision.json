@@ -1,0 +1,53 @@
+{
+  "$defs": {
+    "DeprovisionReason": {
+      "enum": [
+        "detached",
+        "agent_deleted",
+        "workspace_deleted",
+        "org_deleted"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`presence.deprovision` (RFE-024, C-361): everything the connector needs to remove the\npresence after the rows and secrets are gone; the credentials arrive in\n`Operation.credentials`.",
+  "properties": {
+    "config": {
+      "default": null,
+      "description": "The integration's non-secret setup fields (e.g. a server URL)."
+    },
+    "handle": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "platform_user_ref": {
+      "type": "string"
+    },
+    "presence_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "reason": {
+      "$ref": "#/$defs/DeprovisionReason"
+    },
+    "tenant_label": {
+      "type": "string"
+    },
+    "tenant_ref": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "presence_id",
+    "reason",
+    "platform_user_ref",
+    "tenant_ref",
+    "tenant_label"
+  ],
+  "title": "PresenceDeprovisionOp",
+  "type": "object"
+}

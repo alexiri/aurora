@@ -163,6 +163,23 @@ impl MattermostConnector {
             .collect()
     }
 
+    /// Self-contained `presence.deprovision` (RFE-024).
+    async fn deprovision(&self, op: &Operation) -> R<Value> {
+        if !self.declared.contains("presence_dedicated") {
+            return Err(OpError::new(
+                ErrorCode::Unsupported,
+                "capability presence_dedicated not declared",
+            ));
+        }
+        let OpPayload::PresenceDeprovision(c) = op
+            .parse()
+            .map_err(|e| OpError::new(ErrorCode::Invalid, e.to_string()))?
+        else {
+            return Err(OpError::new(ErrorCode::Invalid, "bad payload"));
+        };
+        crate::presence::deprovision(&self.shared.all(), op, c).await
+    }
+
     /// `credentials.validate` (docs/20 §Integration setup fields).
     async fn validate(&self, v: CredentialsValidateOp) -> R<Value> {
         let invalid = |m: &str| OpError::new(ErrorCode::Invalid, m);
@@ -507,6 +524,14 @@ impl Connector for MattermostConnector {
                 }
             };
             return match self.validate(parsed).await {
+                Ok(data) => OpResult::ok(op.op_id, data),
+                Err(e) => OpResult::err(op.op_id, e),
+            };
+        }
+        if op.kind == OpKind::PresenceDeprovision {
+            // Self-contained (RFE-024): payload + `credentials` alone; the integration may be
+            // gone and this replica never owned it.
+            return match self.deprovision(&op).await {
                 Ok(data) => OpResult::ok(op.op_id, data),
                 Err(e) => OpResult::err(op.op_id, e),
             };
