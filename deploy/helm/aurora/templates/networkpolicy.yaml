@@ -216,6 +216,30 @@ spec:
       ports: [{protocol: TCP, port: 4101}]
     {{- include "aurora.external" $ | nindent 4 }}
 {{- end }}
+{{- if and $np.cilium.enabled $np.cilium.edgeEntities }}
+{{- $edge := list (dict "c" "api" "port" 4101) (dict "c" "web" "port" 4100) }}
+{{- if .Values.devIdp.enabled }}{{- $edge = append $edge (dict "c" "dev-idp" "port" 4107) }}{{- end }}
+{{- range .Values.connectors }}
+{{- if and .callbackIngress .callbackIngress.enabled }}{{- $edge = append $edge (dict "c" (printf "connector-%s" .id) "port" (default 4190 .callbackPort)) }}{{- end }}
+{{- end }}
+{{- range $edge }}
+---
+# Cilium: the Gateway API / Ingress Envoy reaches backends as the `ingress` entity (a host-network
+# ingress controller as `host`/`remote-node`), which the edgeNamespaceSelector rule never matches
+# (values.yaml networkPolicy.cilium.edgeEntities). Allows only those entities to the edge port.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: {{ $full }}-{{ .c }}-edge, namespace: {{ $ns }}}
+spec:
+  endpointSelector:
+    matchLabels: {{- include "aurora.selector" (dict "root" $ "component" .c) | nindent 6 }}
+  ingress:
+    - fromEntities: {{ toJson $np.cilium.edgeEntities }}
+      toPorts:
+        - ports:
+            - {port: {{ .port | quote }}, protocol: TCP}
+{{- end }}
+{{- end }}
 ---
 # migrate hook (pre-upgrade runs while the policies above exist): database egress only.
 apiVersion: networking.k8s.io/v1

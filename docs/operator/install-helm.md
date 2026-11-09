@@ -297,6 +297,86 @@ Routing rules are the same for both: `/v1` goes to the API (4101), `/` goes to t
 app (4100). `/internal` and `/metrics` are never routed. These are the rules
 `scripts/guards/edge-routes.sh` checks.
 
+### Behind an external reverse proxy
+
+When users reach Aurora through a reverse proxy outside the cluster (for example nginx on its own
+VM), the proxy needs one in-cluster entry point that it can reach. The api and web Services are
+`ClusterIP` only, so expose them through a Gateway (or an ingress controller) and point the proxy at
+that address, not at the pods:
+
+1. **Gateway** (owned by the cluster, not by this chart). With Cilium, use the `cilium`
+   GatewayClass. On an OpenStack cloud each Gateway gets a load balancer (it needs load-balancer
+   quota); without quota, Cilium can run the Gateway on the node host network instead. Give it an
+   HTTPS listener with a certificate for the public name, so that session cookies never cross the
+   network between the proxy and the cluster in clear text:
+
+   ```yaml
+   apiVersion: gateway.networking.k8s.io/v1
+   kind: Gateway
+   metadata: {name: aurora, namespace: aurora}
+   spec:
+     gatewayClassName: cilium
+     listeners:
+       - name: https
+         protocol: HTTPS
+         port: 443
+         hostname: aurora.example.org          # the public name users type
+         tls: {mode: Terminate, certificateRefs: [{name: aurora-edge-tls}]}
+         allowedRoutes: {namespaces: {from: Same}}
+   ```
+
+   `kubectl -n aurora get gateway aurora` shows the address once it is programmed.
+2. **Chart values**: `ingress.enabled: false`, `gatewayApi.enabled: true`,
+   `gatewayApi.parentRefs: [{name: aurora}]`, `externalUrl: https://aurora.example.org`. On Cilium
+   also set `networkPolicy.cilium.enabled: true`. Cilium's Gateway Envoy connects to the backends
+   as the `ingress` entity, which the `edgeNamespaceSelector` rule never matches. The option adds
+   one `CiliumNetworkPolicy` per edge port that allows `networkPolicy.cilium.edgeEntities`
+   (default `[ingress]`; use `[host, remote-node]` for a host-network ingress controller such as
+   ingress-nginx run as a `hostNetwork` DaemonSet).
+3. **Proxy**: forward everything to the Gateway address over HTTPS, keep the `Host` header, and do
+   not buffer (SSE and long-polls):
+
+   ```nginx
+   upstream aurora_edge { server <gateway address>:443; keepalive 16; }
+   server {
+     listen 443 ssl http2;
+     server_name aurora.example.org;
+     # ssl_certificate / ssl_certificate_key for aurora.example.org
+     client_max_body_size 64m;
+     location / {
+       proxy_pass https://aurora_edge;
+       proxy_ssl_server_name on;
+       proxy_ssl_name aurora.example.org;
+       proxy_ssl_verify on;                       # trust the Gateway certificate's CA
+       proxy_ssl_trusted_certificate /etc/nginx/aurora-edge-ca.pem;
+       proxy_http_version 1.1;
+       proxy_set_header Connection "";
+       proxy_set_header Host $host;
+       proxy_set_header X-Forwarded-Proto https;
+       proxy_set_header X-Forwarded-For $remote_addr;   # overwrite, never append the client's
+       proxy_buffering off;
+       proxy_request_buffering off;
+       proxy_read_timeout 600s;
+       proxy_send_timeout 600s;
+     }
+   }
+   ```
+4. **Client addresses** (`config.server.trusted_proxies`). The API takes the rightmost
+   `X-Forwarded-For` hop that is not in this list. Each hop that the Envoy sees as its peer is
+   appended, so list the proxy's address, plus the Gateway data path (the private pod ranges are
+   already in the default). A layer-4 load balancer that rewrites the source address (an OpenStack
+   load balancer without the PROXY protocol does) puts its own address in the chain. Either enable
+   the PROXY protocol between the load balancer and the Gateway, so the Envoy sees the proxy's
+   address, or list the load balancer's address and allow only the proxy to reach the load
+   balancer. Otherwise anyone who can reach it directly can choose their own client address.
+   Check the result with `GET /v1/me`: `client_address` must be your own address, not the
+   proxy's or the load balancer's.
+
+BYO agents connect to the gateway proxy on 4102, which is TLS end to end and never goes through
+the edge. Publish it with `gateway.proxy.service.type: LoadBalancer`, or pass it through the
+external proxy at layer 4 (an nginx `stream` block with no TLS termination). See
+[Gateway proxy addresses](#gateway-proxy-addresses).
+
 ## NetworkPolicies
 
 With `networkPolicy.enabled: true` (default) the chart renders:
@@ -325,7 +405,10 @@ entities), so without it the runner times out reaching the Kubernetes API at sta
 adds one `CiliumNetworkPolicy` that allows only runner → `toEntities: [kube-apiserver]` on
 `kubeApiPorts`. Cilium unions it with the NetworkPolicies, so nothing else opens. It needs the
 `cilium.io/v2` CRDs. Anything else that must reach a node address (a database on a node IP, a
-NodePort) has the same Cilium behaviour.
+NodePort) has the same Cilium behaviour. With the option on, the edge ports also accept
+`networkPolicy.cilium.edgeEntities` (default `[ingress]`, Cilium's own Gateway API / Ingress Envoy),
+one `CiliumNetworkPolicy` per edge-facing component (api 4101, web 4100, dev-idp 4107, connector
+callbacks); see [Behind an external reverse proxy](#behind-an-external-reverse-proxy).
 
 Sandboxes can reach only gateway 4102 and runner 4105 (`docs/11 §kubernetes`). The kind test
 checks this from inside a sandbox Pod: no DNS, no route to the API, Postgres, hookhost, gateway

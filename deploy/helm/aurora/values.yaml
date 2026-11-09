@@ -303,8 +303,13 @@ networkPolicy:
   # matches there and the runner times out at start. `cilium.enabled` adds a CiliumNetworkPolicy
   # that allows exactly that flow (toEntities: kube-apiserver on kubeApiPorts). Cilium unions it
   # with the NetworkPolicies, so nothing else is opened. Requires the cilium.io/v2 CRDs.
+  # With `cilium.enabled`, the edge ports (api 4101, web 4100, dev-idp 4107, connector callbacks)
+  # also accept `edgeEntities`: Cilium's own Gateway API / Ingress Envoy connects to backends as
+  # the `ingress` entity, not from a namespace. For a host-network ingress controller (e.g.
+  # ingress-nginx as a hostNetwork DaemonSet) use [host, remote-node]. [] renders nothing.
   cilium:
     enabled: false
+    edgeEntities: [ingress]
   # External egress (OIDC, SMTP, LLM endpoints...) for api/gateway/hookhost/connectors.
   externalEgress:
     cidr: 0.0.0.0/0
