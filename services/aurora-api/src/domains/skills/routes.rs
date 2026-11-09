@@ -1,8 +1,8 @@
 use super::dto::*;
-use super::service::{self, NewSkill, Patch};
+use super::service::{self, NewSkill, Owner, Patch};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
-use crate::http::auth::Caller;
+use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::Page;
@@ -18,7 +18,9 @@ use uuid::Uuid;
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_agent_skills, create_agent_skill))
+        .routes(routes!(effective_agent_skills))
         .routes(routes!(list_org_skills, create_org_skill))
+        .routes(routes!(list_workspace_skills, create_workspace_skill))
         .routes(routes!(get_skill, update_skill, delete_skill))
         .routes(routes!(put_skill_file, delete_skill_file))
 }
@@ -35,8 +37,24 @@ async fn visible_agent(c: &Caller, s: &AppState, id: Uuid) -> Result<agents::Age
     Ok(row)
 }
 
-/// Org skills: any active member reads, owner/admin writes.
+/// Workspace skills: `can_use` reads (404 invisible), `can_own` writes (403 for a member).
+async fn workspace_auth(c: &Caller, s: &AppState, ws: Uuid, write: bool) -> Result<(), ApiError> {
+    let a = c.workspace(s, ws).await?;
+    if write {
+        require_own(&a)
+    } else if a.can_use() {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden("Workspace access required."))
+    }
+}
+
+/// Agent skills follow the agent's workspace; workspace skills: `can_use` reads, `can_own`
+/// writes; org skills: any active member reads, owner/admin writes.
 async fn authorize(c: &Caller, s: &AppState, sk: &SkillRow, write: bool) -> Result<(), ApiError> {
+    if let Some(ws) = sk.workspace_id {
+        return workspace_auth(c, s, ws, write).await;
+    }
     match sk.agent_id {
         Some(a) => visible_agent(c, s, a).await.map(|_| ()),
         None => {
@@ -53,7 +71,7 @@ fn record(c: &Caller, s: &AppState, sk: &SkillRow, action: &str, ws: Option<Uuid
     let mut ev = AuditEvent::new(AuditActor::from_caller(c), action, Outcome::Success)
         .org(sk.org_id)
         .target("skill", sk.id)
-        .metadata(json!({"name": sk.name, "scope": if sk.agent_id.is_some() { "agent" } else { "organization" }}));
+        .metadata(json!({"name": sk.name, "scope": service::tier_of(sk)}));
     if let Some(w) = ws {
         ev = ev.workspace(w);
     }
@@ -61,17 +79,24 @@ fn record(c: &Caller, s: &AppState, sk: &SkillRow, action: &str, ws: Option<Uuid
 }
 
 async fn workspace_of(s: &AppState, sk: &SkillRow) -> Result<Option<Uuid>, ApiError> {
+    if sk.workspace_id.is_some() {
+        return Ok(sk.workspace_id);
+    }
     match sk.agent_id {
         Some(a) => Ok(agents::get(&s.pool, a).await?.map(|r| r.workspace_id)),
         None => Ok(None),
     }
 }
 
-fn page(items: Vec<service::SkillView>) -> Json<Page<Skill>> {
-    Json(Page {
-        items: items.into_iter().map(Skill::from).collect(),
+async fn page(s: &AppState, items: Vec<service::SkillView>) -> Result<Json<Page<Skill>>, ApiError> {
+    let mut out = Vec::with_capacity(items.len());
+    for v in items {
+        out.push(service::dto(&s.pool, v).await?);
+    }
+    Ok(Json(Page {
+        items: out,
         next_cursor: None,
-    })
+    }))
 }
 
 /// List an agent's own skills.
@@ -85,7 +110,7 @@ async fn list_agent_skills(
     Path(agent): Path<Uuid>,
 ) -> Result<Json<Page<Skill>>, ApiError> {
     visible_agent(&c, &s, agent).await?;
-    Ok(page(service::list_agent(&s.pool, agent).await?))
+    page(&s, service::list_agent(&s.pool, agent).await?).await
 }
 
 /// Create an agent-tier skill; 409 `skill_exists`.
@@ -108,7 +133,11 @@ async fn create_agent_skill(
         body: &req.body,
         enabled: req.enabled.unwrap_or(true),
     };
-    let v = service::create(&s.pool, a.org_id, Some(agent), &n, "user").await?;
+    let owner = Owner {
+        agent: Some(agent),
+        workspace: None,
+    };
+    let v = service::create(&s.pool, a.org_id, owner, &n, "user").await?;
     record(&c, &s, &v.row, "skill.create", Some(a.workspace_id));
     Ok((StatusCode::CREATED, Json(v.into())))
 }
@@ -124,7 +153,7 @@ async fn list_org_skills(
     Path(org): Path<Uuid>,
 ) -> Result<Json<Page<Skill>>, ApiError> {
     c.org(&s, org).await?;
-    Ok(page(service::list_org(&s.pool, org).await?))
+    page(&s, service::list_org(&s.pool, org).await?).await
 }
 
 /// Create an organization-tier skill (owner/admin); 409 `skill_exists`.
@@ -148,9 +177,100 @@ async fn create_org_skill(
         body: &req.body,
         enabled: req.enabled.unwrap_or(true),
     };
-    let v = service::create(&s.pool, org, None, &n, "user").await?;
+    let v = service::create(&s.pool, org, Owner::default(), &n, "user").await?;
     record(&c, &s, &v.row, "skill.create", None);
     Ok((StatusCode::CREATED, Json(v.into())))
+}
+
+/// List a workspace's skills (workspace tier).
+#[utoipa::path(get, path = "/workspaces/{ws}/skills", operation_id = "listWorkspaceSkills",
+    tag = "skills", params(("ws" = Uuid, Path, description = "Workspace id")),
+    responses((status = 200, body = Page<Skill>), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn list_workspace_skills(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(ws): Path<Uuid>,
+) -> Result<Json<Page<Skill>>, ApiError> {
+    workspace_auth(&c, &s, ws, false).await?;
+    page(&s, service::list_workspace(&s.pool, ws).await?).await
+}
+
+/// Create a workspace-tier skill (`can_own`, org owners/admins included); 409 `skill_exists`.
+#[utoipa::path(post, path = "/workspaces/{ws}/skills", operation_id = "createWorkspaceSkill",
+    tag = "skills", params(("ws" = Uuid, Path, description = "Workspace id")),
+    request_body = CreateSkillRequest,
+    responses((status = 201, body = Skill), (status = 400, body = ErrorEnvelope),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn create_workspace_skill(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(ws): Path<Uuid>,
+    Json(req): Json<CreateSkillRequest>,
+) -> Result<(StatusCode, Json<Skill>), ApiError> {
+    workspace_auth(&c, &s, ws, true).await?;
+    let org = aurora_db::repo::workspaces::get(&s.pool, ws)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Workspace not found."))?
+        .org_id;
+    let n = NewSkill {
+        name: &req.name,
+        description: &req.description,
+        body: &req.body,
+        enabled: req.enabled.unwrap_or(true),
+    };
+    let owner = Owner {
+        agent: None,
+        workspace: Some(ws),
+    };
+    let v = service::create(&s.pool, org, owner, &n, "user").await?;
+    record(&c, &s, &v.row, "skill.create", Some(ws));
+    Ok((StatusCode::CREATED, Json(service::dto(&s.pool, v).await?)))
+}
+
+/// The effective skill set an agent receives, plus every skill it does not (shadowed or
+/// disabled).
+#[utoipa::path(get, path = "/agents/{agent}/skills/effective",
+    operation_id = "listEffectiveAgentSkills", tag = "skills",
+    params(("agent" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = EffectiveSkills), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn effective_agent_skills(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+) -> Result<Json<EffectiveSkills>, ApiError> {
+    let a = visible_agent(&c, &s, agent).await?;
+    let e = service::effective(&s.pool, &a).await?;
+    let mut items = Vec::with_capacity(e.items.len());
+    for i in e.items {
+        let skill = service::dto(&s.pool, i.view).await?;
+        items.push(EffectiveSkill {
+            tier: skill.tier,
+            enabled: true,
+            shadows: i
+                .shadows
+                .into_iter()
+                .map(|(id, tier)| TierRef { id, tier })
+                .collect(),
+            skill,
+        });
+    }
+    let mut shadowed = Vec::with_capacity(e.shadowed.len());
+    for i in e.shadowed {
+        let skill = service::dto(&s.pool, i.view).await?;
+        shadowed.push(ShadowedSkill {
+            tier: skill.tier,
+            enabled: i.enabled,
+            shadowed_by: i.shadowed_by.map(|(id, tier)| TierRef { id, tier }),
+            skill,
+        });
+    }
+    Ok(Json(EffectiveSkills { items, shadowed }))
 }
 
 /// Get one skill with its file metadata.
@@ -165,7 +285,7 @@ async fn get_skill(
 ) -> Result<Json<Skill>, ApiError> {
     let v = service::get(&s.pool, id).await?;
     authorize(&c, &s, &v.row, false).await?;
-    Ok(Json(v.into()))
+    Ok(Json(service::dto(&s.pool, v).await?))
 }
 
 /// Update description, body or enabled. The name is immutable.
@@ -197,7 +317,7 @@ async fn update_skill(
         "skill.update",
         workspace_of(&s, &v.row).await?,
     );
-    Ok(Json(v.into()))
+    Ok(Json(service::dto(&s.pool, v).await?))
 }
 
 /// Delete a skill and its files.
@@ -245,7 +365,7 @@ async fn put_skill_file(
         "skill.file.put",
         workspace_of(&s, &v.row).await?,
     );
-    Ok(Json(v.into()))
+    Ok(Json(service::dto(&s.pool, v).await?))
 }
 
 /// Delete one skill file.

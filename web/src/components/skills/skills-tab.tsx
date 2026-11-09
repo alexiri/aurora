@@ -1,12 +1,16 @@
 "use client";
 
-import { OrgSkillsReadOnly, SkillsEditor } from "./skills-view";
+import { EffectiveSkillsView, SkillsEditor } from "./skills-view";
 
-export function SkillsTab({ agentId, orgId }: { agentId: string; orgId: string }) {
+/** Agent tab: the agent's own skills (editable) and the effective set it receives from all three tiers. */
+export function SkillsTab({ agentId }: { agentId: string }) {
   return (
     <div className="space-y-8">
-      <SkillsEditor scope={{ kind: "agent", id: agentId }} />
-      <OrgSkillsReadOnly orgId={orgId} />
+      <section aria-label="Agent skills" className="space-y-3">
+        <h3 className="font-display text-base font-semibold text-ink">This agent&apos;s skills</h3>
+        <SkillsEditor scope={{ kind: "agent", id: agentId }} />
+      </section>
+      <EffectiveSkillsView agentId={agentId} />
     </div>
   );
 }

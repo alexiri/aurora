@@ -64,10 +64,37 @@ export function buildTree(files: SkillFile[]): FileTreeNode[] {
   return root.children;
 }
 
+export type EffectiveSkill = components["schemas"]["EffectiveSkill"];
+export type ShadowedSkill = components["schemas"]["ShadowedSkill"];
+export type SkillTier = Skill["tier"];
+
+/** Display names of the tiers; precedence is agent > workspace > organization (D-64). */
+export const TIER_LABEL: Record<SkillTier, string> = { agent: "Agent", workspace: "Workspace", org: "Organization" };
+
 export const skillKeys = {
   agent: (agent: string) => ["agents", agent, "skills"] as const,
   org: (org: string) => ["orgs", org, "skills"] as const,
+  workspace: (ws: string) => ["workspaces", ws, "skills"] as const,
+  effective: (agent: string) => ["agents", agent, "skills", "effective"] as const,
 };
+
+export function useWorkspaceSkills(ws: string | undefined) {
+  return useQuery({
+    queryKey: skillKeys.workspace(ws ?? ""),
+    queryFn: () => unwrap(api.GET("/v1/workspaces/{ws}/skills", { params: { path: { ws: ws! } } })),
+    enabled: !!ws,
+    retry: false,
+  });
+}
+
+/** The set an agent receives (one skill per name) plus the skills that do not reach it. */
+export function useEffectiveSkills(agent: string) {
+  return useQuery({
+    queryKey: skillKeys.effective(agent),
+    queryFn: () => unwrap(api.GET("/v1/agents/{agent}/skills/effective", { params: { path: { agent } } })),
+    retry: false,
+  });
+}
 
 export function useAgentSkills(agent: string) {
   return useQuery({
@@ -87,12 +114,17 @@ export function useOrgSkills(org: string | undefined) {
 }
 
 /** Scope selects which list is invalidated; `scopeId` is the agent or org id. */
-export type SkillScope = { kind: "agent" | "organization"; id: string };
+export type SkillScope = { kind: "agent" | "workspace" | "organization"; id: string };
 
 function useInvalidateSkills(scope: SkillScope) {
   const qc = useQueryClient();
-  return () =>
-    qc.invalidateQueries({ queryKey: scope.kind === "agent" ? skillKeys.agent(scope.id) : skillKeys.org(scope.id) });
+  return () => {
+    const key =
+      scope.kind === "agent" ? skillKeys.agent(scope.id) : scope.kind === "workspace" ? skillKeys.workspace(scope.id) : skillKeys.org(scope.id);
+    // Any tier change can alter what an agent receives: refresh every effective-set view too.
+    void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "agents" && q.queryKey[3] === "effective" });
+    return qc.invalidateQueries({ queryKey: key });
+  };
 }
 
 export function useCreateSkill(scope: SkillScope) {
@@ -101,7 +133,9 @@ export function useCreateSkill(scope: SkillScope) {
     mutationFn: (body: CreateSkillRequest) =>
       scope.kind === "agent"
         ? unwrap(api.POST("/v1/agents/{agent}/skills", { params: { path: { agent: scope.id } }, body }))
-        : unwrap(api.POST("/v1/orgs/{org}/skills", { params: { path: { org: scope.id } }, body })),
+        : scope.kind === "workspace"
+          ? unwrap(api.POST("/v1/workspaces/{ws}/skills", { params: { path: { ws: scope.id } }, body }))
+          : unwrap(api.POST("/v1/orgs/{org}/skills", { params: { path: { org: scope.id } }, body })),
     onSuccess: inv,
   });
 }

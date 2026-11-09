@@ -5,15 +5,17 @@ use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-const COLS: &str = "id, org_id, agent_id, name, description, body, enabled, created_by_kind, \
-                    created_at, updated_at";
+const COLS: &str = "id, org_id, agent_id, workspace_id, name, description, body, enabled, \
+                    created_by_kind, created_at, updated_at";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SkillRow {
     pub id: Uuid,
     pub org_id: Uuid,
-    /// Null => organization skill.
+    /// Set => agent tier.
     pub agent_id: Option<Uuid>,
+    /// Set => workspace tier (never together with `agent_id`); both null => organization tier.
+    pub workspace_id: Option<Uuid>,
     pub name: String,
     pub description: String,
     pub body: String,
@@ -73,11 +75,74 @@ pub async fn get_org_named(
     name: &str,
 ) -> Result<Option<SkillRow>, DbError> {
     Ok(sqlx::query_as(&format!(
-        "SELECT {COLS} FROM skills WHERE org_id = $1 AND agent_id IS NULL AND name = $2"
+        "SELECT {COLS} FROM skills WHERE org_id = $1 AND agent_id IS NULL
+         AND workspace_id IS NULL AND name = $2"
     ))
     .bind(org)
     .bind(name)
     .fetch_optional(conn)
+    .await?)
+}
+
+pub async fn get_workspace_named(
+    conn: &mut PgConnection,
+    workspace: Uuid,
+    name: &str,
+) -> Result<Option<SkillRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM skills WHERE workspace_id = $1 AND name = $2"
+    ))
+    .bind(workspace)
+    .bind(name)
+    .fetch_optional(conn)
+    .await?)
+}
+
+pub async fn list_workspace(
+    conn: &mut PgConnection,
+    workspace: Uuid,
+) -> Result<Vec<SkillRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM skills WHERE workspace_id = $1 ORDER BY name"
+    ))
+    .bind(workspace)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// Every skill of the three tiers that reaches the agent (its own, its workspace's, its
+/// organization's), enabled or not.
+pub async fn list_reaching(
+    conn: &mut PgConnection,
+    org: Uuid,
+    workspace: Uuid,
+    agent: Uuid,
+) -> Result<Vec<SkillRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM skills WHERE org_id = $1
+         AND (agent_id = $3 OR workspace_id = $2 OR (agent_id IS NULL AND workspace_id IS NULL))
+         ORDER BY name"
+    ))
+    .bind(org)
+    .bind(workspace)
+    .bind(agent)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// Enabled agent-tier skills of the workspace's agents with the given names, with the agent.
+pub async fn agent_overrides(
+    conn: &mut PgConnection,
+    workspace: Uuid,
+    name: &str,
+) -> Result<Vec<(Uuid, String, String, Uuid)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT a.id, a.handle, a.name, s.id FROM skills s JOIN agents a ON a.id = s.agent_id
+         WHERE a.workspace_id = $1 AND s.name = $2 AND s.enabled ORDER BY a.handle",
+    )
+    .bind(workspace)
+    .bind(name)
+    .fetch_all(conn)
     .await?)
 }
 
@@ -92,18 +157,26 @@ pub async fn list_agent(conn: &mut PgConnection, agent: Uuid) -> Result<Vec<Skil
 
 pub async fn list_org(conn: &mut PgConnection, org: Uuid) -> Result<Vec<SkillRow>, DbError> {
     Ok(sqlx::query_as(&format!(
-        "SELECT {COLS} FROM skills WHERE org_id = $1 AND agent_id IS NULL ORDER BY name"
+        "SELECT {COLS} FROM skills WHERE org_id = $1 AND agent_id IS NULL
+         AND workspace_id IS NULL ORDER BY name"
     ))
     .bind(org)
     .fetch_all(conn)
     .await?)
 }
 
+/// Where a skill lives: `(agent, workspace)`; at most one is set, neither => organization tier.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Owner {
+    pub agent: Option<Uuid>,
+    pub workspace: Option<Uuid>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn insert(
     conn: &mut PgConnection,
     org: Uuid,
-    agent: Option<Uuid>,
+    owner: Owner,
     name: &str,
     description: &str,
     body: &str,
@@ -111,17 +184,19 @@ pub async fn insert(
     created_by_kind: &str,
 ) -> Result<SkillRow, DbError> {
     Ok(sqlx::query_as(&format!(
-        "INSERT INTO skills (id, org_id, agent_id, name, description, body, enabled, created_by_kind)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING {COLS}"
+        "INSERT INTO skills (id, org_id, agent_id, workspace_id, name, description, body, enabled,
+            created_by_kind)
+         VALUES ($1,$2,$3,$9,$4,$5,$6,$7,$8) RETURNING {COLS}"
     ))
     .bind(Uuid::now_v7())
     .bind(org)
-    .bind(agent)
+    .bind(owner.agent)
     .bind(name)
     .bind(description)
     .bind(body)
     .bind(enabled)
     .bind(created_by_kind)
+    .bind(owner.workspace)
     .fetch_one(conn)
     .await?)
 }
@@ -232,6 +307,18 @@ pub async fn bump_agent(conn: &mut PgConnection, agent: Uuid) -> Result<(), DbEr
         .bind(agent)
         .execute(conn)
         .await?;
+    Ok(())
+}
+
+/// Bumps the workspace generation (workspace-tier skill change; part of every agent's desired
+/// home-sync generation of that workspace, and of no other).
+pub async fn bump_workspace(conn: &mut PgConnection, workspace: Uuid) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE workspaces SET home_sync_generation = home_sync_generation + 1 WHERE id = $1",
+    )
+    .bind(workspace)
+    .execute(conn)
+    .await?;
     Ok(())
 }
 

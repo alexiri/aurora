@@ -124,7 +124,7 @@ export function AgentPage() {
       <div role="tabpanel" id={tabPanelId("agent", tab)} aria-labelledby={tabId("agent", tab)} className="pt-2">
         {tab === "chat" && !byo ? <ChatTab agentId={agent.id} wsId={wsId!} base={`/o/${org}/w/${ws}`} orgId={workspace.data?.org_id} agent={{ id: agent.id, name: agent.name, avatarUrl: agent.avatar_url, brief: agent.brief }} /> : null}
         {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} memoryLanguage={workspace.data?.memory_language} /> : null}
-        {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} /> : null}
+        {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} /> : null}
         {tab === "schedules" && !byo ? <SchedulesTab agentId={agent.id} defaultTimezone={workspace.data?.timezone} wsId={workspace.data?.id} canOwn={workspace.data?.my_role === "owner"} /> : null}
         {tab === "webhooks" && !byo ? <WebhooksTab agentId={agent.id} wsId={workspace.data?.id} canOwn={workspace.data?.my_role === "owner"} /> : null}
         {tab === "peers" && !byo ? <PeersTab agentId={agent.id} /> : null}

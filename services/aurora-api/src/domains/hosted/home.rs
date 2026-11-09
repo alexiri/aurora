@@ -244,7 +244,7 @@ pub async fn render(
     let mut manifest: Vec<Value> = Vec::new();
 
     let mut skill_entries = Vec::new();
-    for s in hosted::skills(conn, inputs.org_id, claim.agent_id).await? {
+    for s in hosted::skills(conn, inputs.org_id, inputs.workspace_id, claim.agent_id).await? {
         let path = format!("{skills_root}/{}/SKILL.md", s.name);
         let content = format!(
             "---\nname: {}\ndescription: {}\n---\n\n{}",

@@ -306,18 +306,23 @@ pub struct SkillRow {
     pub body: String,
 }
 
-/// Effective skills of an agent: org tier then agent tier (the agent's wins on a name clash).
+/// Effective skills of an agent (RFE-020): the highest *enabled* tier per name wins,
+/// agent > workspace > organization. A disabled skill never vetoes a lower tier.
 pub async fn skills(
     conn: &mut PgConnection,
     org: Uuid,
+    workspace: Uuid,
     agent: Uuid,
 ) -> Result<Vec<SkillRow>, DbError> {
     Ok(sqlx::query_as(
         "SELECT DISTINCT ON (name) id, name, description, body FROM skills
-         WHERE enabled AND org_id = $1 AND (agent_id IS NULL OR agent_id = $2)
-         ORDER BY name, (agent_id IS NULL)",
+         WHERE enabled AND org_id = $1
+           AND (agent_id = $3 OR workspace_id = $2 OR (agent_id IS NULL AND workspace_id IS NULL))
+         ORDER BY name, (CASE WHEN agent_id IS NOT NULL THEN 0
+                              WHEN workspace_id IS NOT NULL THEN 1 ELSE 2 END)",
     )
     .bind(org)
+    .bind(workspace)
     .bind(agent)
     .fetch_all(conn)
     .await?)

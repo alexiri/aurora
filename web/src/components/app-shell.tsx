@@ -249,6 +249,7 @@ export function WorkspaceNav({
         {item(`${base}/agents`, "Agents", BotIcon, pathname.startsWith(`${base}/agents`))}
         {item(`${base}/credentials`, "Credentials", KeyIcon, pathname.startsWith(`${base}/credentials`))}
         {item(`${base}/policy`, "Policy", ShieldIcon, pathname.startsWith(`${base}/policy`))}
+        {item(`${base}/skills`, "Skills", BookIcon, pathname.startsWith(`${base}/skills`))}
         {canApprove && wsId
           ? item(`${base}/approvals`, "Approvals", CheckCircleIcon, pathname.startsWith(`${base}/approvals`), <PendingPill wsId={wsId} />)
           : null}

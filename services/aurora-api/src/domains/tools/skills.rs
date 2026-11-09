@@ -1,6 +1,7 @@
 //! Skill tools (docs/12 Phase 0 catalogue): `skill_list/get/create/update/delete`. Agent tier
 //! only: an agent edits its own skills; organization skills are readable, never writable.
 use super::registry::{PlatformTool, ToolCallContext, ToolContext, ToolError};
+use crate::domains::skills::service::Owner;
 use crate::domains::skills::{NewSkill, Patch, SkillView, service};
 use aurora_core::{ApiError, limits};
 use aurora_db::repo::agents;
@@ -36,8 +37,9 @@ fn fail(e: ApiError) -> ToolError {
 }
 
 fn summary(v: &SkillView) -> Value {
-    json!({"name": v.row.name,
-        "scope": if v.row.agent_id.is_some() { "agent" } else { "organization" },
+    let tier = service::tier_of(&v.row);
+    json!({"name": v.row.name, "tier": tier,
+        "scope": if tier == "org" { "organization" } else { tier },
         "description": v.row.description, "enabled": v.row.enabled,
         "files": v.files.iter().map(|f| json!({"path": f.path, "size": f.size,
             "executable": f.executable})).collect::<Vec<_>>(),
@@ -49,11 +51,39 @@ fn name_schema() -> Value {
         the aurora- prefix is reserved)."})
 }
 
-async fn org_of(ctx: &ToolCallContext) -> Result<uuid::Uuid, ToolError> {
-    Ok(agents::get(&ctx.agent.pool, ctx.agent.agent_id)
+async fn agent_of(ctx: &ToolCallContext) -> Result<agents::AgentRow, ToolError> {
+    agents::get(&ctx.agent.pool, ctx.agent.agent_id)
         .await?
-        .ok_or_else(|| ToolError::Failed("Unknown agent.".into()))?
-        .org_id)
+        .ok_or_else(|| ToolError::Failed("Unknown agent.".into()))
+}
+
+/// The agent's own skill of this name, or a read-only error when the name only exists in the
+/// workspace or organization tier (those tiers are written by humans, SEC-56).
+async fn own_skill(ctx: &ToolCallContext, name: &str) -> Result<SkillView, ToolError> {
+    let pool = &ctx.agent.pool;
+    match service::get_agent_named(pool, ctx.agent.agent_id, name).await {
+        Ok(v) => Ok(v),
+        Err(e) if e.status() == http::StatusCode::NOT_FOUND => {
+            let agent = agent_of(ctx).await?;
+            let eff = service::effective(pool, &agent).await.map_err(fail)?;
+            let other = eff
+                .items
+                .iter()
+                .map(|i| &i.view)
+                .chain(eff.shadowed.iter().map(|i| &i.view))
+                .find(|v| v.row.name == name);
+            match other.map(|v| service::tier_of(&v.row)) {
+                Some("workspace") => Err(ToolError::Failed(format!(
+                    "{name} is a workspace skill and is read-only; ask an owner"
+                ))),
+                Some("org") => Err(ToolError::Failed(format!(
+                    "{name} is an organization skill and is read-only; ask an owner"
+                ))),
+                _ => Err(fail(e)),
+            }
+        }
+        Err(e) => Err(fail(e)),
+    }
 }
 
 #[derive(Deserialize)]
@@ -70,7 +100,10 @@ impl PlatformTool for List {
         "skill_list"
     }
     fn description(&self, _: &ToolContext) -> String {
-        "List your skills and the organization skills (read-only for you).".into()
+        "List the skills you receive (your own, your workspace's and the organization's; the \
+         workspace and organization ones are read-only for you) with their tier and the tiers \
+         your own skills shadow, plus your own disabled skills."
+            .into()
     }
     fn input_schema(&self) -> Value {
         json!({"type": "object", "properties": {}, "additionalProperties": false})
@@ -92,16 +125,31 @@ impl PlatformTool for List {
                 ));
             }
         }
-        let org = org_of(ctx).await?;
-        let mut items = service::list_agent(&ctx.agent.pool, ctx.agent.agent_id)
+        let agent = agent_of(ctx).await?;
+        let eff = service::effective(&ctx.agent.pool, &agent)
             .await
             .map_err(fail)?;
-        items.extend(
-            service::list_org(&ctx.agent.pool, org)
-                .await
-                .map_err(fail)?,
-        );
-        out(json!({"skills": items.iter().map(summary).collect::<Vec<_>>()}))
+        let mut skills: Vec<Value> = Vec::new();
+        for i in &eff.items {
+            let mut s = summary(&i.view);
+            // `shadows` names the tiers an agent skill overrides; empty otherwise.
+            s["shadows"] = if i.view.row.agent_id.is_some() {
+                json!(i.shadows.iter().map(|(_, t)| *t).collect::<Vec<_>>())
+            } else {
+                json!([])
+            };
+            skills.push(s);
+        }
+        // The agent's own disabled skills stay findable so it can re-enable them.
+        for i in &eff.shadowed {
+            if i.view.row.agent_id.is_some() && !i.enabled {
+                let mut s = summary(&i.view);
+                s["shadows"] = json!([]);
+                skills.push(s);
+            }
+        }
+        skills.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        out(json!({"skills": skills}))
     }
 }
 
@@ -121,8 +169,8 @@ impl PlatformTool for Get {
         "skill_get"
     }
     fn description(&self, _: &ToolContext) -> String {
-        "Read a skill (yours first, else the organization's): body and file list, or one text \
-         file when `path` is given."
+        "Read a skill from the set you receive (agent > workspace > organization): body and \
+         file list, or one text file when `path` is given."
             .into()
     }
     fn input_schema(&self) -> Value {
@@ -141,12 +189,18 @@ impl PlatformTool for Get {
         let a: GetArgs = parse(args)?;
         let pool = &ctx.agent.pool;
         let v = match service::get_agent_named(pool, ctx.agent.agent_id, &a.name).await {
+            // The agent's own skill, even a disabled one (so it can find and re-enable it).
             Ok(v) => v,
             Err(e) if e.status() == http::StatusCode::NOT_FOUND => {
-                let org = org_of(ctx).await?;
-                service::get_org_named(pool, org, &a.name)
+                let agent = agent_of(ctx).await?;
+                service::effective(pool, &agent)
                     .await
                     .map_err(fail)?
+                    .items
+                    .into_iter()
+                    .find(|i| i.view.row.name == a.name)
+                    .map(|i| i.view)
+                    .ok_or_else(|| ToolError::Failed("Skill not found.".into()))?
             }
             Err(e) => return Err(fail(e)),
         };
@@ -199,14 +253,19 @@ impl PlatformTool for Create {
         args: Value,
     ) -> Result<Vec<ToolContent>, ToolError> {
         let a: CreateArgs = parse(args)?;
-        let org = org_of(ctx).await?;
+        let org = agent_of(ctx).await?.org_id;
         let n = NewSkill {
             name: &a.name,
             description: &a.description,
             body: &a.body,
             enabled: true,
         };
-        let v = service::create(&ctx.agent.pool, org, Some(ctx.agent.agent_id), &n, "agent")
+        let owner = Owner {
+            agent: Some(ctx.agent.agent_id),
+            workspace: None,
+        };
+        // A name taken in another tier is fine: the new agent skill shadows it.
+        let v = service::create(&ctx.agent.pool, org, owner, &n, "agent")
             .await
             .map_err(fail)?;
         out(summary(&v))
@@ -247,9 +306,7 @@ impl PlatformTool for Update {
         args: Value,
     ) -> Result<Vec<ToolContent>, ToolError> {
         let a: UpdateArgs = parse(args)?;
-        let cur = service::get_agent_named(&ctx.agent.pool, ctx.agent.agent_id, &a.name)
-            .await
-            .map_err(fail)?;
+        let cur = own_skill(ctx, &a.name).await?;
         let p = Patch {
             description: a.description.as_deref(),
             body: a.body.as_deref(),
@@ -285,9 +342,7 @@ impl PlatformTool for Delete {
         args: Value,
     ) -> Result<Vec<ToolContent>, ToolError> {
         let a: NameArgs = parse(args)?;
-        let cur = service::get_agent_named(&ctx.agent.pool, ctx.agent.agent_id, &a.name)
-            .await
-            .map_err(fail)?;
+        let cur = own_skill(ctx, &a.name).await?;
         service::delete(&ctx.agent.pool, cur.row.id)
             .await
             .map_err(fail)?;

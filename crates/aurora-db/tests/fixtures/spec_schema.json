@@ -732,7 +732,8 @@
       "enabled",
       "id",
       "name",
-      "org_id"
+      "org_id",
+      "workspace_id"
     ],
     "space_bindings": [
       "active",

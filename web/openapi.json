@@ -5048,6 +5048,67 @@
         ]
       }
     },
+    "/v1/agents/{agent}/skills/effective": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "The effective skill set an agent receives, plus every skill it does not (shadowed or\ndisabled).",
+        "operationId": "listEffectiveAgentSkills",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveSkills"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/space-bindings": {
       "get": {
         "tags": [
@@ -17419,6 +17480,166 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/skills": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "List a workspace's skills (workspace tier).",
+        "operationId": "listWorkspaceSkills",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Skill"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Create a workspace-tier skill (`can_own`, org owners/admins included); 409 `skill_exists`.",
+        "operationId": "createWorkspaceSkill",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSkillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Skill"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/unfreeze": {
       "post": {
         "tags": [
@@ -18028,6 +18249,26 @@
             "items": {
               "$ref": "#/components/schemas/AgentLink"
             }
+          }
+        }
+      },
+      "AgentRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "handle",
+          "name"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
           }
         }
       },
@@ -21228,6 +21469,55 @@
           }
         }
       },
+      "EffectiveSkill": {
+        "type": "object",
+        "required": [
+          "skill",
+          "tier",
+          "enabled",
+          "shadows"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Always true: a disabled skill never wins."
+          },
+          "shadows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TierRef"
+            },
+            "description": "Every lower-tier skill of this name (enabled or not)."
+          },
+          "skill": {
+            "$ref": "#/components/schemas/Skill"
+          },
+          "tier": {
+            "type": "string"
+          }
+        }
+      },
+      "EffectiveSkills": {
+        "type": "object",
+        "required": [
+          "items",
+          "shadowed"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EffectiveSkill"
+            }
+          },
+          "shadowed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShadowedSkill"
+            }
+          }
+        }
+      },
       "EffectiveTool": {
         "type": "object",
         "required": [
@@ -23505,6 +23795,23 @@
           },
           "method": {
             "type": "string"
+          }
+        }
+      },
+      "OverriddenAgent": {
+        "type": "object",
+        "description": "An agent that overrides a workspace skill with an enabled agent-tier skill of the same name.",
+        "required": [
+          "agent",
+          "skill_id"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/AgentRef"
+          },
+          "skill_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -26080,6 +26387,7 @@
               "type": "object",
               "required": [
                 "id",
+                "tier",
                 "scope",
                 "org_id",
                 "name",
@@ -26130,9 +26438,23 @@
                   "type": "string",
                   "format": "uuid"
                 },
+                "overridden_in": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "$ref": "#/components/schemas/OverriddenAgent"
+                  },
+                  "description": "Workspace tier only: the agents of the workspace whose own enabled skill of this name\noverrides it; null for the other tiers."
+                },
                 "scope": {
                   "type": "string",
-                  "description": "`agent` | `organization`."
+                  "description": "`agent` | `workspace` | `organization` (kept for compatibility, D-107)."
+                },
+                "tier": {
+                  "type": "string",
+                  "description": "`agent` | `workspace` | `org`."
                 },
                 "total_size": {
                   "type": "integer",
@@ -26142,6 +26464,13 @@
                 "updated_at": {
                   "type": "string",
                   "format": "date-time"
+                },
+                "workspace_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
                 }
               }
             }
@@ -29300,6 +29629,36 @@
           "disabled"
         ]
       },
+      "ShadowedSkill": {
+        "type": "object",
+        "required": [
+          "skill",
+          "tier",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "shadowed_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TierRef",
+                "description": "The winner of this name; null for a disabled skill whose name has no enabled skill."
+              }
+            ]
+          },
+          "skill": {
+            "$ref": "#/components/schemas/Skill"
+          },
+          "tier": {
+            "type": "string"
+          }
+        }
+      },
       "SharedBotInfo": {
         "type": "object",
         "required": [
@@ -29509,6 +29868,7 @@
         "type": "object",
         "required": [
           "id",
+          "tier",
           "scope",
           "org_id",
           "name",
@@ -29559,9 +29919,23 @@
             "type": "string",
             "format": "uuid"
           },
+          "overridden_in": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/OverriddenAgent"
+            },
+            "description": "Workspace tier only: the agents of the workspace whose own enabled skill of this name\noverrides it; null for the other tiers."
+          },
           "scope": {
             "type": "string",
-            "description": "`agent` | `organization`."
+            "description": "`agent` | `workspace` | `organization` (kept for compatibility, D-107)."
+          },
+          "tier": {
+            "type": "string",
+            "description": "`agent` | `workspace` | `org`."
           },
           "total_size": {
             "type": "integer",
@@ -29571,6 +29945,13 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           }
         }
       },
@@ -30085,6 +30466,22 @@
           }
         ],
         "description": "Rule target (I-12: tagged with `type`)."
+      },
+      "TierRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "tier"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tier": {
+            "type": "string"
+          }
+        }
       },
       "TokenRequest": {
         "type": "object",

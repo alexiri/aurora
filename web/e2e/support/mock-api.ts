@@ -175,5 +175,6 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "ws-app-connect", path: "/o/acme/w/main/apps/github/connect" },
   { name: "ws-credentials", path: "/o/acme/w/main/credentials" },
   { name: "ws-policy", path: "/o/acme/w/main/policy" },
+  { name: "ws-skills", path: "/o/acme/w/main/skills" },
   { name: "ws-settings", path: "/o/acme/w/main/settings" },
 ];
