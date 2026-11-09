@@ -27,7 +27,7 @@ Configuration `auth.signup_mode`:
 
 | Mode | Behaviour |
 |------|-----------|
-| `open` | Anyone may register (phase 0: email+password or any configured OIDC provider; **from phase 1: by signing in through any configured OIDC provider**, subject to `allowed_email_domains`). A new user gets **their own organization** (`<Name>'s org`) with a default workspace. Joining another org requires an invitation. |
+| `open` | Anyone may register (phase 0: email+password or any configured OIDC provider; **from phase 1: by signing in through any configured OIDC provider**, subject to `allowed_email_domains`). A new user gets **their own organization** (`<Name>'s org`) with a default workspace. Joining another org requires an invitation. (phase 4, P4-ONB-1) Where the new user lands is the instance admin's **placement** choice (`§New-user placement`); "own organization" is only the `personal_org` mode. |
 | `invite_only` (default) | Registration only by accepting an invitation, or for addresses in `auth.instance_admins`. (phase 1: "registration" is the user's first OIDC sign-in, see below.) |
 | `sso_jit` | Only OIDC sign-ins; a provider's `jit` block decides which org/role/workspaces the user joins on first sign-in. Users without a matching JIT rule and without an invitation are refused (`signup_closed`). |
 
@@ -67,6 +67,54 @@ in, in every mode (unless disabled or suspended everywhere).
 
 `POST /v1/orgs/{org}/workspaces` performs steps 2–4 for a new workspace.
 
+## New-user placement (phase 4, P4-ONB-1, D-140, SEC-79)
+
+**Why.** In `open` mode every new user gets **their own organization**, in which they
+are owner. The owner's first production sign-in landed in "Alex Iribarren's Org" with a
+workspace "Default". On a shared instance that is wrong: users should land where the
+instance admin decided, as members, with their own workspace if the admin wants one.
+
+**What an instance admin configures** (Admin → **Sign-up & placement**; dashboard only,
+no config key (owner, 2026-11-09: "roles in Helm values, everything else through the
+interface"); stored in the database, audited):
+
+| Setting | Meaning |
+|---|---|
+| **Placement mode** | `shared_org` — new users join one **default organization**; `personal_org` — today's behaviour (own org, owner); `none` — no automatic placement (users enter only by invitation, role claims or JIT) |
+| **Default organization** | an existing org, or "create *Users*" with a name the admin types; new users join it as `member` (or `admin`, chosen) |
+| **Shared workspaces** | zero or more workspaces of the default org that every new user joins, each with a role (`member` / `approver`) |
+| **Personal workspace** | on/off. When on, each user gets **their own workspace** in the default org, created at their first sign-in, with the default agent in it and the user as its `owner` (role selectable: `owner` / `approver` / `member`) |
+| **Workspace name template** | e.g. `{preferred_username}`, `{name}`, `{email_local}`, `{given_name} {family_name}`, `{claim:cern_upn}`; a fallback chain (`{preferred_username}` → `{email_local}`) when a claim is missing. Preview shows the result for the admin's own token |
+| **Starter grants** | org-scope credentials (LLM keys, secrets, connections with full access) granted automatically to the default agent of every new personal workspace, so "bobj signs in → bobj workspace → Daneel can already answer" works with no further step. Each grant goes through the same grant path as any other (D-137, SEC-77), with the system as actor |
+
+**Behaviour.**
+- Applied once per user at the first sign-in that creates the user, **after** invitation,
+  role claims and JIT (§OIDC role claims step 6). In `open` mode it is what admits a new
+  user; in `invite_only` and `sso_jit` it applies to users admitted by another rule (so
+  invited people also get their personal workspace).
+- Example: `bobj` signs in for the first time. He joins org *Users* as `member`, joins
+  workspace *General* as `member`, and gets workspace *bobj* (slug `bobj`) with *Daneel*,
+  which already holds the org's LiteLLM key. He lands on its Welcome page (`14 §Onboarding`).
+- **The personal workspace is tied to the user id, never to its name or slug.** A
+  workspace records `personal_owner_user_id`. Later sign-ins find it by that id; renaming
+  the user or the workspace changes nothing. A name collision gets a numbered slug
+  (`bobj-2`) and never attaches the user to an existing workspace (SEC-79). Empty or
+  unusable template results fall back down the chain, then to `user-<short id>`.
+- **Existing users** are not moved. When the admin turns personal workspaces on later,
+  users without one get it at their next sign-in (idempotent, same rules). Orgs made by
+  the old `personal_org` behaviour stay; their owner can delete them (`§Deletion
+  semantics`). The admin page lists them ("12 personal orgs from before") so the admin
+  can tell people.
+- A personal workspace is an ordinary workspace of the default org afterwards: org
+  owners/admins have their usual implicit access, the user can invite others into it,
+  and leaving the org follows `§Deletion semantics` and the offboarding views (RFE-021).
+- Defaults: until an instance admin saves a placement, an instance behaves as today
+  (`personal_org` under `open`, so nothing changes on upgrade), and the admin page
+  shows a warning while that holds. The **instance setup wizard** (`14 §Onboarding`)
+  asks for the placement before anything else and proposes `shared_org` with a personal
+  workspace. While it is unsaved on a fresh instance (no organization exists yet), users
+  who are not instance admins signing in under `open` see "This instance is being set up — try again shortly" (no user row is created).
+
 ## Instance admins
 
 - `users.is_instance_admin` grants deployment-level powers: plugin packages,
@@ -86,6 +134,10 @@ in, in every mode (unless disabled or suspended everywhere).
   e-mail binds the identity to the user (*OIDC step 3*); no secret is printed
   and nothing can be used to sign in except the IdP. The command refuses to run
   when no OIDC provider is configured (`no_oidc_provider`).
+- (phase 4, P4-IDP-1, D-139) A third source: an IdP role value mapped to
+  `instance_admin` in the provider's `role_mappings` (`§OIDC role claims`). Unlike the
+  e-mail list, this source **is** revoked by the sync when the value disappears from
+  the token, at the next sign-in.
 - Instance admin is **not** an org role: it grants no access to org data.
 
 ## Authentication
@@ -186,6 +238,85 @@ required the password (account deletion) require `reauth_at` within 10 minutes
 Aurora (`users.disabled_at` or org suspension kills sessions and keys at once,
 `SEC-21`/`SEC-29`) and/or shorten `auth.session_absolute_secs`; see `17 §Residual
 risks`.
+
+### OIDC role claims (phase 4, P4-IDP-1, D-139, SEC-78)
+
+**Why.** The organization's IdP already knows who administers what: the owner's
+production IdP (CERN SSO) assigns application roles to e-groups and puts them in the
+token. Aurora should read those roles instead of having someone re-enter them in the
+dashboard. Mapping groups to roles is the IdP's job; Aurora maps **role values** in
+the token to **Aurora roles**.
+
+**Configuration** (per provider in `auth.oidc_providers[]`, `15`; set in the **Helm
+values** (`config.auth.oidc_providers`) like the rest of the provider, never editable in
+the dashboard, because it can create instance admins and owners; the dashboard only
+shows it, read-only):
+
+```yaml
+auth:
+  oidc_providers:
+    - id: cern
+      # ...issuer, client_id, ...
+      role_claim: cern_roles            # dot path into the ID token, e.g. roles, groups,
+                                        # resource_access.aurora.roles (Keycloak)
+      role_claim_source: id_token       # id_token (default) | userinfo
+      require_role: false               # true: a sign-in whose claim maps to nothing is refused
+      role_mappings:
+        - value: aurora-admins          # exact, case-sensitive match on one claim value
+          instance_admin: true
+        - value: aurora-users
+          org: { slug: users, role: member }
+        - value: it-ai-team
+          org: { slug: it, role: owner }
+          workspaces: [{ slug: infra, role: owner }, { slug: research, role: approver }]
+```
+
+- The claim may be an array of strings or a single string with space- or
+  comma-separated values; anything else counts as no values (logged once per
+  provider).
+- One value may grant several things. Targets: `instance_admin`, an org role (`owner` |
+  `admin` | `member`), and workspace roles (`owner` | `approver` | `member`) in that
+  org's workspaces. An org or workspace named in a mapping that does not exist is created
+  at the first sign-in that needs it (an org with the default workspace and default agent,
+  `§Sign-up and organization creation`; a workspace with its default agent), so a fresh
+  instance needs no hand-made orgs.
+- Startup validation: unknown keys, duplicate values, an invalid role or slug, and
+  `require_role: true` without `role_mappings` refuse startup naming the key.
+
+**Behaviour at every sign-in** (not only the first):
+
+1. Aurora computes the user's **claim-derived** assignments from the validated token
+   (after step 2 of the flow, never from unvalidated data) and **syncs** them. Missing
+   ones are added. Claim-derived ones whose value is gone are removed. Removing an org
+   role drops the user to the strongest role they still hold from another source. If
+   they have no other source, the membership is removed: it was the claim that admitted
+   them.
+2. Each assignment remembers its source (`idp:<provider>:<value>`). Roles given by hand
+   (invitation, dashboard, JIT, SCIM, `bootstrap-admin`, `auth.instance_admins`) are
+   **never** changed or removed by the sync, and the strongest source wins (as for
+   groups, `§Groups`).
+3. In the dashboard a claim-derived role shows a badge "From IdP role `aurora-admins`" and
+   cannot be edited or removed there (the IdP is the source of truth). Org owners can
+   still add a manual role on top.
+4. **Last owner**: a sync never removes an org's last owner; it keeps the role, audits
+   `org_role.idp_sync_blocked`, and shows a notice to instance admins.
+5. `require_role: true` refuses a sign-in whose claim maps to nothing (`no_mapped_role`,
+   no user row created). This lets an operator say "only people the IdP gave an Aurora
+   role may enter".
+6. Precedence when the user is new: invitation → role claims → provider `jit` →
+   new-user placement (`§New-user placement`). They add up and never subtract.
+
+**Timeliness.** Claims are read at sign-in, so a role removed in the IdP takes effect
+at the user's next sign-in (bounded by `auth.session_absolute_secs`). For immediate
+deprovisioning use SCIM (`§SCIM`) or disable the user; `17 §Residual risks` records it.
+
+**Visibility.** The account page shows "Roles from your sign-in" (value → what it
+granted). Instance admins see per user the last synced claim values and what they
+mapped to. That is the claim debugger an operator needs when "it doesn't work".
+
+**Audit** (security-critical): `instance_admin.grant|revoke`, `org_member.add|update|remove`
+and `workspace_access.set|remove` rows written by the sync carry `actor_kind = service`,
+`actor_label = idp:<provider>` and `metadata.claim_value`.
 
 ### Development and end-to-end sign-in (phase 1, RFE-004)
 
@@ -469,6 +600,10 @@ Names are unique per org, case-insensitively, 1–80 characters, sanitized.
 2. **An org-role mapping** (optional): `admin` or `member`. `owner` cannot be mapped,
    so ownership, ownership transfer, the last-owner invariant and `instance admin`
    remain direct, human decisions and no directory change can create an owner.
+   (phase 4, D-139) The one exception is operator configuration: a provider's
+   `role_mappings` (`§OIDC role claims`) may name `owner` and `instance_admin`, because
+   the operator who writes the config file already controls the instance. Groups and SCIM
+   still cannot.
 
 **Effective roles** (the single definition; implemented once in `aurora-db::authz` as
 `effective_access(user, workspace)` by one query, and no other code reads

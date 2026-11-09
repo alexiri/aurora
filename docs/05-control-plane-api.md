@@ -468,6 +468,7 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/auth/oidc/{provider}/start`, `/callback` | none | `04 §OIDC`; (phase 1, RFE-004) the only sign-in; `start` accepts `reauth=1` |
 | POST `/v1/auth/cli`, `/v1/auth/cli/token` | none | device flow |
 | POST `/v1/auth/cli/approve` | SO | `{ user_code, workspace_id }` |
+| GET/PATCH `/v1/me/onboarding` | S | (phase 4, P4-ONB-2, D-141) the caller's onboarding progress: `{ welcome_seen, guide_dismissed: [workspace_id], tour_completed_at }`; guide step completion itself is computed by the client from real state (model readiness, grants, conversations), never stored |
 | GET/PATCH/DELETE `/v1/me` | S (DELETE: SO) | (phase 1, RFE-004: DELETE needs a recent OIDC re-authentication, 412 `reauth_required`, no body) profile, memberships (phase 2, RFE-012: with the effective role per workspace), default org; (phase 2, RFE-011a) `PATCH { approval_email: bool }`; (phase 2, C-195) `client_address: string \| null`, the caller's address as the API sees it behind `server.trusted_proxies` |
 
 ### Organizations, members, keys
@@ -697,7 +698,10 @@ subscription counts by state and host; never key material).
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET `/v1/admin/overview` | IA | versions, gateways, hook hosts, runners, connectors, active snapshot; (phase 4) `counters: { backend, state }` (P4-CNT, `15`) and `blobs: { backend, healthy }` (P4-S3) |
-| GET/PATCH `/v1/admin/users` | IA | list, instance-admin flag, disable |
+| GET/PATCH `/v1/admin/users` | IA | list, instance-admin flag, disable; (phase 4, P4-IDP-1, D-139) each user carries `idp_roles: { provider, values, synced_at, granted: [...] }`; claim-derived instance-admin flags cannot be changed here (409 `managed_by_idp`) |
+| GET `/v1/admin/identity` | IA | (phase 4, P4-IDP-1) per provider the role claim settings and mapping table, read-only (from the Helm values; no secrets) |
+| GET/PUT `/v1/admin/placement` | IA | (phase 4, P4-ONB-1, D-140) the new-user placement (`04 §New-user placement`); PUT validates org/workspace ids, roles, template and starter grants (credentials of the default org only) and is audited; `GET …/placement/preview?template=&sample=` renders a template for the caller's last token or a sample |
+| GET `/v1/admin/setup` | IA | (phase 4, P4-ONB-2, D-141) setup-wizard status per step (roles, placement, LLM endpoints incl. `default_model`, runners, gateway), each `ok` \| `warning` \| `todo` with a reason code |
 | GET/POST `/v1/admin/plugins` (multipart upload); GET `/v1/admin/plugins/{id}`; POST `…/approve`, `…/reject`, `…/disable`, `…/enable`; DELETE `…?force=` | IA | (phase 3, RFE-022) GET `{id}` of a pending major upgrade carries `impact` (`09 §10`: `connections_needing_reauth`, `by_app`); (phase 4, P4-GRANTS) `impact` also carries `grants_to_convert` (count, by app and workspace) for an upgrade that introduces `grants.custom_only`, and approval then converts them atomically (`09 §10`, reason `converts_grants`); `approve` activates and flips the failing connections to `reauth_required` in one transaction and returns the `PluginPackage` plus `connections_reauth: n` (phase 3, D-107) |
 | GET `/v1/admin/host-claims`; PUT `/v1/admin/host-claims/{claim_key}` | IA | conflicts and winners |
 | GET/POST/DELETE `/v1/admin/trusted-keys` | IA | |

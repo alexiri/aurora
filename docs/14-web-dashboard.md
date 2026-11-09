@@ -427,7 +427,9 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 (phase 1: asks for a fresh OIDC sign-in first, `04 §OIDC`). (phase 4, P4-GRP-1) Profile
 lists the person's groups per organization (read-only) and the effective role with its
 source. (phase 4, RFE-011b) **Notifications**: the in-tab notification and e-mail switches
-and the Web Push device list (*Key flows*).
+and the Web Push device list (*Key flows*). (phase 4, P4-IDP-1) **Roles from your
+sign-in**: each IdP role value and what it granted. (phase 4, P4-ONB-2) "Show the tour
+again" and "Show the getting-started guide again".
 
 ### Organization (`/o/<org>/*`) — owners/admins unless noted
 - **Workspaces** (all members: those they can access; owners/admins: all).
@@ -501,7 +503,9 @@ and the Web Push device list (*Key flows*).
 
 ### Workspace (`/o/<org>/w/<ws>/*`)
 - **Overview**: first-run checklist (store an LLM key → grant it to Daneel →
-  say hello), agents, pending approvals, recent activity.
+  say hello), agents, pending approvals, recent activity. (phase 4, P4-ONB-2) The
+  checklist becomes the **getting-started guide** of `§Onboarding` (same component,
+  collapsed to one line once complete).
 - **Agents** list → **agent page** tabs:
   - **Chat** — (phase 2, RFE-010) per-conversation menu: Archive, Delete (typed
     confirmation; explains that platform copies and agent memory remain), Export
@@ -648,6 +652,14 @@ claims** (conflicts and winners), **Trusted keys**, **Connectors** (provision,
 token rotation, manifest approval with capability/setup-field diff; (phase 4, P4-MCON) see
 below), **Runners**
 (provision, token, replicas, capacity), **Instances** (instance-wide app instances, D-74), **OAuth clients** (instance-level).
+(phase 4, P4-ONB-1, D-140) **Sign-up & placement** (`04 §New-user placement`): sign-up
+mode shown read-only (config); placement mode; default org (pick or create); shared
+workspaces with roles; personal workspace on/off, role, name template with a live
+preview for the admin's own token and for a typed sample ("bobj" → workspace `bobj`);
+starter grants (org LLM keys, secrets, connections); the list of personal orgs from
+before. (phase 4, P4-IDP-1, D-139) **Identity** (read-only): per OIDC provider the role
+claim path and the mapping table from the Helm values, and per user (Users page) the last
+synced claim values and what they granted. (phase 4, P4-ONB-2) **Setup** (`§Onboarding`).
 
 #### Admin: connectors (phase 4, P4-MCON, `13 §3.1`)
 The Connectors page lists every connector as a card: icon and name, **Managed** or
@@ -674,6 +686,80 @@ integration count while in use), the host status list, and, in `pending_approval
 diff with **Approve**. No secret value is ever displayed after entry. Everything follows
 §Visual design (tokens, shared primitives and page patterns, both themes, no horizontal scroll
 at 390 px).
+
+## Onboarding (phase 4, P4-ONB-2, D-141)
+
+**Why.** Today a new user lands on Overview with a three-item checklist and has to
+work out alone what an LLM key is, that the agent needs access to it, and that the
+agent may need a model. The owner's own first production session failed exactly there
+(FIX-019..FIX-021). Onboarding must take people from "just signed in" to "my agent
+answered" without help, and explain the product's few concepts on the way.
+
+Three pieces, all built from the shared primitives and page patterns (both themes,
+390 px, axe-clean), each skippable and replayable, progress stored **server-side per user**
+(so it follows them across browsers).
+
+### 1. Instance setup wizard (instance admins)
+
+Shown to an instance admin at sign-in while the instance has **no saved placement**,
+and always reachable at Admin → **Setup**. One page with a stepper. Each step shows live
+status and either does the thing in place or explains the Helm value to change
+(read-only steps show the current value and a docs link):
+
+1. **Sign-in and roles**: "You signed in through *CERN SSO*. Your token's `cern_roles`:
+   `aurora-admins`, `aurora-users` → instance admin, member of *Users*." It shows a
+   warning when no `role_mappings` exist and only the e-mail list makes admins.
+2. **Where new users land**: the placement form (`04 §New-user placement`) with the
+   recommended choice preselected (`shared_org` *Users*, personal workspace
+   `{preferred_username}`) and the preview.
+3. **LLM access**: configured endpoints with reachability, whether `default_model` is
+   set (FIX-019 warning in words), and an "Add an organization LLM key" form for the
+   default org, plus a "Give it to every new user's agent" switch that fills the
+   **starter grants**.
+4. **Agents can run**: runners online, sandbox image, harnesses, gateway reachable;
+   failures in words with the fix.
+5. **Optional**: connect apps for everyone (instance OAuth clients, managed connectors),
+   approve plugins.
+6. **Try it**: "Open your workspace and say hello to Daneel".
+
+### 2. Welcome and getting-started guide (every new user)
+
+At first sign-in the user lands on a **Welcome** page in the workspace placement chose
+(their personal workspace if there is one), not on Overview:
+
+- **Where you are**, in three short cards using real names: "This is **bobj**, your
+  workspace in **Users**. Workspaces hold agents, credentials and rules." /
+  "**Daneel** is your agent. It works on its own computer and reaches the internet only
+  through Aurora's gateway, which adds credentials and asks you before risky actions." /
+  "**You are the owner** of this workspace" (or member, with what that allows).
+- **Get Daneel talking**: a numbered guide whose steps tick themselves from real state
+  (model readiness C-500, grants, conversations), not from clicks:
+  1. *LLM key*: done and collapsed when Daneel already has a usable key ("Your
+     organization provides an LLM key: AIGW"). Otherwise it says what a key is, where to
+     get one, and opens the LLM key form inline.
+  2. *Give Daneel access*: the FIX-021 "Give agents access" step, preselected to Daneel
+     here.
+  3. *Model*: only when readiness says no model resolves; a model picker inline.
+  4. *Say hello*: opens Chat with a suggested first message.
+  Optional, below: connect an app, write instructions for the agent, set up a schedule,
+  invite a teammate (owners).
+- A member who **cannot** do a step (not owner) sees who can: "Ask a workspace owner
+  (Ada Lovelace) to add an LLM key", never a dead button.
+- "Skip for now" goes to Overview, where the same guide sits at the top until complete
+  or dismissed (then it is one line, "Getting started — 4/4").
+
+### 3. Tour and contextual help
+
+- **"Show me around"** (offered at the end of Welcome, replayable from the account
+  menu): 6–8 coach marks over the real navigation (Agents, Chat, Credentials, Policy,
+  Approvals, Activity, Members, Settings). Each has one or two sentences on what lives
+  there and when you need it. Keyboard-operable (Next, Back, Esc), focus-managed,
+  respects reduced motion, and on 390 px opens the navigation drawer as it goes.
+- **Empty states teach**: every empty list touched by the journey (LLM keys, Secrets,
+  Connections, Policy rules, Approvals, Schedules) gets one sentence of what it is, one
+  of when you need it, and the primary action. Role-aware like the guide.
+- **Errors link to the guide step** that fixes them (`no_model_key`,
+  `no_default_model`, missing grant).
 
 ## Key flows
 
