@@ -4,9 +4,11 @@
 {{- $genSecrets := not .Values.secrets.existingSecret -}}
 {{- $genCA := not .Values.gateway.ca.existingSecret -}}
 {{- $rotate := .Values.secrets.rotate | default dict -}}
-{{- $rotating := and $genSecrets (or $rotate.signing $rotate.internal) -}}
-{{- /* RFE-007: a rotation request needs the hook on upgrade too (it only appends, never activates). */ -}}
-{{- $secretHook := ternary "pre-install,pre-upgrade" "pre-install" (and $rotating true) -}}
+{{- /* RFE-007: a rotation request needs the hook on upgrade too (it only appends, never activates).
+       P4-MCON: so does a release upgraded from before the connector host, whose Secret has no
+       AURORA_CONNECTOR_HOST_TOKEN yet. Every `put` is idempotent (only absent keys are written), so the hook
+       runs on every upgrade. */ -}}
+{{- $secretHook := "pre-install,pre-upgrade" -}}
 {{- if or $genSecrets $genCA }}
 # Hook ServiceAccount + Role: may only read/create/patch Secrets in the release namespace.
 apiVersion: v1
@@ -77,7 +79,7 @@ spec:
               kubectl get secret "$NAME" >/dev/null 2>&1 || kubectl create secret generic "$NAME"
               # Idempotent: only keys that are absent are written; existing values are never overwritten.
               have() { [ -n "$(kubectl get secret "$NAME" -o "jsonpath={.data.$1}")" ]; }
-              put() { case "$2" in ""|k1:|aur_|aun_) echo "empty generated value for $1" >&2; exit 1;; esac; have "$1" || kubectl patch secret "$NAME" -p "{\"stringData\":{\"$1\":\"$2\"}}" >/dev/null; }
+              put() { case "$2" in ""|k1:|aur_|aun_|auh_) echo "empty generated value for $1" >&2; exit 1;; esac; have "$1" || kubectl patch secret "$NAME" -p "{\"stringData\":{\"$1\":\"$2\"}}" >/dev/null; }
               # The hook image (alpine/k8s) has no openssl: read /dev/urandom. A generator that
               # printed nothing would store an empty value, so every put refuses empty values.
               b64() { head -c 32 /dev/urandom | base64 | tr -d '\n'; }
@@ -113,6 +115,8 @@ spec:
               put AURORA_RUNNER_SESSION_KEY "$(b64)"
               put AURORA_RUNNER_TOKEN "aur_$(hex)"
               put AURORA_CONNECTOR_TOKEN "aun_$(hex)"
+              # P4-MCON: the connector host's anchor token (given to the api as the bootstrap token).
+              put AURORA_CONNECTOR_HOST_TOKEN "auh_$(hex)"
               if [ "$PG_ENABLED" = "true" ]; then
                 put POSTGRES_PASSWORD "$(hex)"
                 pw="$(kubectl get secret "$NAME" -o 'jsonpath={.data.POSTGRES_PASSWORD}' | base64 -d)"

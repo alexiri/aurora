@@ -16,7 +16,8 @@
 # probe pod -> build + `kind load image-archive` the service and sandbox images -> `helm install`
 # with deploy/kind/values-e2e.yaml (docs/operator/install-helm.md) -> readiness -> port-forward the
 # API -> tests/e2e-hosted/tests/k8s.rs (chat turn in a sandbox Pod, park/wake, restart, SEC-02 and
-# SEC-09 probes from inside the sandbox Pod). Logs are collected under target/kind-logs/ on failure.
+# SEC-09 probes from inside the sandbox Pod; a managed `fake` connector added through the admin API and
+# run by the chart's connector host, one message round trip, disable stops it). Logs are collected under target/kind-logs/ on failure.
 #
 # Everything created is named aurora-e2e*: cluster `aurora-e2e`, images `localhost/aurora-e2e/*`,
 # namespaces `aurora` and `aurora-sandboxes`, probe namespace `aurora-e2e-npcheck`.
@@ -148,17 +149,17 @@ dev_rust_images() (
   REG=$e2e_reg; TAG=$e2e_tag; WORK="$ROOT/target/kind/dev"   # own sha bookkeeping: not the dev cluster's
   CHANGED_SVCS=()
   build_rust || exit 1
-  for s in api gateway hookhost runner; do
+  for s in api gateway hookhost runner connector-host; do
     thin_image "$s" || exit 1
     [ -f "$WORK/bin/$s.sha.pending" ] && mv -f "$WORK/bin/$s.sha.pending" "$WORK/bin/$s.sha"
     podman image exists "$REG/aurora-$s:$TAG" || { echo "thin image for $s missing" >&2; exit 1; }
   done
   exit 0
 )
-IMAGES=(aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-web aurora-sandbox aurora-dev-idp)
+IMAGES=(aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-host aurora-web aurora-sandbox aurora-dev-idp)
 if [ "$SKIP_BUILD" != "1" ]; then
   if [ "$RELEASE_IMAGES" = "1" ]; then
-    for t in api gateway hookhost runner; do
+    for t in api gateway hookhost runner connector-host; do
       log "building aurora-$t (release Containerfile)"
       podman build -q -f images/services/Containerfile --target "$t" -t "$REGISTRY/aurora-$t:$TAG" . >/dev/null || exit 1
     done
@@ -237,6 +238,7 @@ AURORA_TEST_KIND=1 \
 AURORA_KIND_API="http://127.0.0.1:$LOCAL_PORT" \
 AURORA_KIND_ORIGIN="http://localhost:4100" \
 AURORA_KIND_CONTEXT="$CTX" AURORA_KIND_NS="$NS" AURORA_KIND_SBX_NS="$SBX_NS" AURORA_KIND_FULL="$FULL" \
+AURORA_KIND_PG_POD="$FULL-postgres-0" \
   timeout 1500 cargo test -p aurora-e2e-hosted --test k8s -- --test-threads=1 --nocapture "${CARGO_ARGS[@]}"
 STATUS=$?
 if [ "$STATUS" -eq 0 ]; then log "kind e2e PASSED"; else log "kind e2e FAILED (rc=$STATUS)"; fi

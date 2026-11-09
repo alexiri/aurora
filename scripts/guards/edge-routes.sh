@@ -2,7 +2,8 @@
 # Edge configuration covers all route prefixes (docs/18 "Architecture guards", docs/15 "Networking").
 # Verifies the Helm Ingress and the Helm HTTPRoute (the compose Caddyfile is gone: phase 1, OPS-017), each
 # rendered with the chart defaults and with the kind dev profile (deploy/kind/values-dev.yaml):
-#   /v1/* -> api:4101, everything else -> web:4100, /internal and /metrics never routed to api.
+#   /v1/* -> api:4101, /connectors/* -> connector-host:4110, everything else -> web:4100,
+#   /internal and /metrics never routed to api.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
@@ -43,8 +44,12 @@ for path, svc, port in routes:
         fail("/v1 must go to api:4101")
     if path == "/" and not (svc.endswith("-web") and port == 4100):
         fail("/ must go to web:4100")
+    if path == "/connectors" and not (svc.endswith("-connector-host") and port == 4110):
+        fail("/connectors must go to connector-host:4110")
 if not any(p == "/v1" for p, _, _ in routes): fail("no /v1 route")
 if not any(p == "/" for p, _, _ in routes): fail("no / route")
+# (P4-MCON) the platform callbacks of managed connectors are served by the connector host on one port.
+if not any(p == "/connectors" for p, _, _ in routes): fail("no /connectors route (connector host)")
 print("edge-routes: %s ok" % label)
 ' "$label"
 }

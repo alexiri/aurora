@@ -45,7 +45,12 @@ pub struct FakeConnector {
     sinks: Arc<Mutex<BTreeMap<Uuid, EventSink>>>,
     core: Mutex<Option<Arc<CoreClient>>>,
     publisher: String,
+    /// Run by the connector host: the manifest carries `instance_setup`.
+    managed: bool,
 }
+
+/// Type id of the fake connector (`package.id`).
+pub const TYPE_ID: &str = "fake";
 
 impl Default for FakeConnector {
     fn default() -> Self {
@@ -64,7 +69,53 @@ impl FakeConnector {
             sinks: Arc::new(Mutex::new(BTreeMap::new())),
             core: Mutex::new(None),
             publisher: "aurora".into(),
+            managed: false,
         }
+    }
+
+    /// `instance_setup` of the managed fake: one `secret` and one `generated_secret` field so
+    /// the e2e run exercises both (13 §3.1).
+    pub fn instance_setup() -> InstanceSetup {
+        InstanceSetup {
+            fields: vec![
+                json!({"name": "nickname", "label": "Nickname", "type": "text",
+                    "required": false, "default": "fake"}),
+                json!({"name": "api_key", "label": "Platform API key", "type": "secret",
+                    "required": true}),
+                json!({"name": "signing_key", "label": "Signing key",
+                    "type": "generated_secret", "required": false}),
+            ],
+        }
+    }
+
+    /// The manifest the connector host announces for this type.
+    pub fn catalogue_manifest() -> ConnectorManifest {
+        Self::default().managed().manifest()
+    }
+
+    /// Marks this instance as run by the connector host.
+    pub fn managed(mut self) -> Self {
+        self.managed = true;
+        self
+    }
+
+    /// The instance for a managed assignment: the settings are validated, never echoed.
+    pub fn from_assignment(
+        settings: &Value,
+        secrets: &BTreeMap<String, String>,
+    ) -> Result<Self, String> {
+        for name in ["api_key", "signing_key"] {
+            if secrets.get(name).is_none_or(|v| v.is_empty()) {
+                return Err(format!("secret `{name}` is missing"));
+            }
+        }
+        if let Some(v) = settings.get("nickname")
+            && !v.is_null()
+            && !v.is_string()
+        {
+            return Err("setting `nickname` must be a string".into());
+        }
+        Ok(Self::default().managed())
     }
 
     /// Manifest publisher (default `aurora`, which the core reserves for the project key: a
@@ -566,7 +617,7 @@ impl Connector for FakeConnector {
                 writes_per_space_per_minute: Some(600),
             },
             public_callbacks: vec![],
-            instance_setup: None,
+            instance_setup: self.managed.then(Self::instance_setup),
         }
     }
 

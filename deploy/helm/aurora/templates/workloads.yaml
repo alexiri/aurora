@@ -9,6 +9,9 @@
 {{- if .Values.api.bootstrap.runnerToken }}
 {{- $apiEnv = printf "%s\n- name: AURORA_BOOTSTRAP_RUNNER_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_RUNNER_TOKEN}}" $apiEnv (include "aurora.secretName" .) }}
 {{- end }}
+{{- if and .Values.connectorHost.enabled .Values.api.bootstrap.connectorHostToken }}
+{{- $apiEnv = printf "%s\n- name: AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN\n  valueFrom: {secretKeyRef: {name: %s, key: AURORA_CONNECTOR_HOST_TOKEN}}" $apiEnv (include "aurora.secretName" .) }}
+{{- end }}
 {{ include "aurora.workload" (dict "root" . "name" "api" "spec" .Values.api "caCert" true "vaultToken" true "image" (include "aurora.image" (dict "root" . "name" "aurora-api")) "args" (list "serve") "env" $apiEnv "pluginsMount" true "ports" (list (dict "name" "http" "port" 4101) (dict "name" "internal" "port" 4111))) }}
 ---
 {{ include "aurora.workload" (dict "root" . "name" "hookhost" "spec" .Values.hookhost "image" (include "aurora.image" (dict "root" . "name" "aurora-hookhost")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_INTERNAL_SECRET") "optionalKeys" (list "AURORA_INTERNAL_ACTIVE_KEY"))) "ports" (list (dict "name" "http" "port" 4104))) }}
@@ -44,6 +47,11 @@ metadata:
   labels: {{- include "aurora.labels" . | nindent 4 }}
 ---
 {{ include "aurora.workload" (dict "root" . "name" "runner" "spec" .Values.runner "serviceAccount" (printf "%s-runner" $full) "image" (include "aurora.image" (dict "root" . "name" "aurora-runner")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_RUNNER_SESSION_KEY" "AURORA_RUNNER_TOKEN"))) "ports" (list (dict "name" "http" "port" 4105))) }}
+{{- end }}
+{{- if .Values.connectorHost.enabled }}
+---
+{{/* connector host (P4-MCON): callbacks 4110 (Service, routed by the edge under /connectors), ops 4192 (no Service) */}}
+{{ include "aurora.workload" (dict "root" . "name" "connector-host" "spec" .Values.connectorHost "image" (include "aurora.image" (dict "root" . "name" "aurora-connector-host")) "args" (list "serve") "env" (include "aurora.env" (dict "root" . "keys" (list "AURORA_CONNECTOR_HOST_TOKEN"))) "ports" (list (dict "name" "callbacks" "port" 4110) (dict "name" "ops" "port" 4192 "skipService" true))) }}
 {{- end }}
 {{- range .Values.connectors }}
 {{- $c := . }}

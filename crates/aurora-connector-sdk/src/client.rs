@@ -6,6 +6,7 @@ use std::time::Duration;
 use aurora_core::limits;
 use aurora_protocol::common::{Validate, ValidationError};
 use aurora_protocol::connector::*;
+use aurora_protocol::host::HDR_CONNECTOR;
 use aurora_protocol::version::HEADER as PROTOCOL_HEADER;
 use reqwest::{Method, StatusCode};
 use serde::Serialize;
@@ -97,13 +98,35 @@ pub struct CoreClient {
     http: reqwest::Client,
     base: String,
     token: String,
+    /// Managed connector id sent as `Aurora-Connector` (C-458); `None` for an `aun_` token.
+    connector: Option<String>,
     replica: RwLock<Option<Uuid>>,
     retry: RetryPolicy,
 }
 
 impl CoreClient {
-    /// `base` is the API origin (without `/v1/connector`).
+    /// `base` is the API origin (without `/v1/connector`). Authenticates with an `aun_` token.
     pub fn new(base: &str, token: &str, retry: RetryPolicy) -> Result<Self, ClientError> {
+        Self::build(base, token, None, retry)
+    }
+
+    /// Authenticates as managed connector `connector` with the host's `auh_` token (C-458):
+    /// every call carries `Aurora-Connector: <connector>`.
+    pub fn managed(
+        base: &str,
+        token: &str,
+        connector: &str,
+        retry: RetryPolicy,
+    ) -> Result<Self, ClientError> {
+        Self::build(base, token, Some(connector.to_owned()), retry)
+    }
+
+    fn build(
+        base: &str,
+        token: &str,
+        connector: Option<String>,
+        retry: RetryPolicy,
+    ) -> Result<Self, ClientError> {
         let http = reqwest::Client::builder()
             .build()
             .map_err(|e| ClientError::Transport(e.to_string()))?;
@@ -111,6 +134,7 @@ impl CoreClient {
             http,
             base: base.trim_end_matches('/').to_owned(),
             token: token.to_owned(),
+            connector,
             replica: RwLock::new(None),
             retry,
         })
@@ -136,6 +160,9 @@ impl CoreClient {
             .request(method, format!("{}/v1/connector{path}", self.base))
             .bearer_auth(&self.token)
             .header(PROTOCOL_HEADER, PROTOCOL_HEADER_VALUE);
+        if let Some(c) = &self.connector {
+            rb = rb.header(HDR_CONNECTOR, c);
+        }
         if let Some(r) = self.replica_id() {
             rb = rb.header(HDR_REPLICA, r.to_string());
         }

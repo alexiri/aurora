@@ -27,8 +27,10 @@ pub enum RuntimeError {
 pub struct RuntimeConfig {
     /// API origin, e.g. `https://aurora.example`.
     pub core_url: String,
-    /// Anchor token `aun_...`.
+    /// Anchor token `aun_...`, or the connector host's `auh_...` token with `connector_id`.
     pub token: String,
+    /// Managed connector id: sent as `Aurora-Connector` next to an `auh_` token (C-458).
+    pub connector_id: Option<String>,
     /// Detached manifest signature sent with `register`.
     pub manifest_signature: String,
     pub version: String,
@@ -50,6 +52,7 @@ impl RuntimeConfig {
         Self {
             core_url: core_url.to_owned(),
             token: token.to_owned(),
+            connector_id: None,
             manifest_signature: String::new(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
             replica_hint: None,
@@ -60,6 +63,15 @@ impl RuntimeConfig {
             config_interval: None,
             ops_wait_secs: None,
         }
+    }
+}
+
+impl RuntimeConfig {
+    /// Authenticates as managed connector `connector_id` with the host's `auh_` token (C-458).
+    pub fn managed(core_url: &str, host_token: &str, connector_id: &str) -> Self {
+        let mut c = Self::new(core_url, host_token);
+        c.connector_id = Some(connector_id.to_owned());
+        c
     }
 }
 
@@ -76,7 +88,10 @@ pub async fn run(
     cfg: RuntimeConfig,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), RuntimeError> {
-    let client = Arc::new(CoreClient::new(&cfg.core_url, &cfg.token, cfg.retry)?);
+    let client = Arc::new(match &cfg.connector_id {
+        Some(id) => CoreClient::managed(&cfg.core_url, &cfg.token, id, cfg.retry)?,
+        None => CoreClient::new(&cfg.core_url, &cfg.token, cfg.retry)?,
+    });
     let req = RegisterRequest {
         manifest: connector.manifest(),
         signature: cfg.manifest_signature.clone(),

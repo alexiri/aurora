@@ -34,7 +34,7 @@ hosted scenarios and the sandbox isolation probes against the `kubernetes` runne
 
 ## Images: publish, pull, or build and load
 
-The chart needs six images: `aurora-api`, `aurora-gateway`, `aurora-hookhost`, `aurora-runner` and `aurora-web`, plus the sandbox image (named by `config.runner.image`, not by `image.registry`),
+The chart needs seven images: `aurora-api`, `aurora-gateway`, `aurora-hookhost`, `aurora-runner`, `aurora-connector-host` (unless `connectorHost.enabled: false`) and `aurora-web`, plus the sandbox image (named by `config.runner.image`, not by `image.registry`),
 and `aurora-dev-idp` or `aurora-connector-*` only if you enable those. Pick **one** of three ways to get them.
 
 **1. Pull the project's published images (the chart default).** The default is `image.registry: ghcr.io/alexiri` with the chart's appVersion as the tag. Those images exist **only after a CI publish** (CI publishes `master`, `sha-<short>`
@@ -54,7 +54,7 @@ If the packages are private, either make them public or create a pull secret and
 
 ```bash
 REG=registry.example.org/aurora   # or localhost/aurora for kind; TAG=0.1.0
-for t in api gateway hookhost runner; do
+for t in api gateway hookhost runner connector-host; do
   podman build -f images/services/Containerfile --target "$t" -t "$REG/aurora-$t:$TAG" .
 done
 podman build -f images/services/web.Containerfile -t "$REG/aurora-web:$TAG" .
@@ -88,7 +88,7 @@ runner:
 
 ```bash
 export KIND_EXPERIMENTAL_PROVIDER=podman        # kind with the rootless podman provider
-for i in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-web aurora-sandbox; do
+for i in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-host aurora-web aurora-sandbox; do
   podman save -o "/tmp/$i.tar" "$REG/$i:$TAG" && kind load image-archive "/tmp/$i.tar" --name <cluster> && rm -f "/tmp/$i.tar"
 done
 ```
@@ -121,8 +121,10 @@ The `<fullname>-secrets` pre-install job (`secrets`, weight -10; it needs `sh`, 
 It never overwrites a value. The generated keys are:
 `AURORA_ENCRYPTION_KEYS`, `AURORA_ENCRYPTION_ACTIVE_KEY`, `AURORA_SIGNING_KEY`,
 `AURORA_INTERNAL_SECRET`, `AURORA_RUNNER_SESSION_KEY`, `AURORA_RUNNER_TOKEN`,
-`AURORA_CONNECTOR_TOKEN`. With `postgres.enabled: true` it also writes
-`POSTGRES_PASSWORD` and `AURORA_DATABASE_URL`.
+`AURORA_CONNECTOR_TOKEN`, `AURORA_CONNECTOR_HOST_TOKEN`. With `postgres.enabled: true` it also writes
+`POSTGRES_PASSWORD` and `AURORA_DATABASE_URL`. The job runs on `helm install` and on every
+`helm upgrade` (it only adds keys that are missing, so an upgrade from a release without a
+connector host creates `AURORA_CONNECTOR_HOST_TOKEN`).
 
 **Option B: bring your own.** Set `secrets.existingSecret` to a Secret you created.
 The generator hook is then not rendered. The Secret must contain every key the
@@ -135,9 +137,12 @@ workloads read:
 | `AURORA_INTERNAL_SECRET` | api, gateway, hookhost, migrate |
 | `AURORA_RUNNER_SESSION_KEY` | api, runner, migrate |
 | `AURORA_RUNNER_TOKEN` | runner, and the API bootstrap (`api.bootstrap.runnerToken`, default true) |
+| `AURORA_CONNECTOR_HOST_TOKEN` (`auh_…`) | connector host, and the API bootstrap (`api.bootstrap.connectorHostToken`, default true); only with `connectorHost.enabled` |
 
 `AURORA_CONNECTOR_TOKEN` is generated into the shared Secret, but no chart workload reads it.
-Each connector takes its token from its own `tokenSecret` (see [Connectors](#connectors-optional)).
+Each self-hosted connector takes its token from its own `tokenSecret` (see [Connectors](#connectors-optional)).
+The managed connectors run by the connector host have no token of their own: the host's single
+`auh_` token covers them (see [Connector host](#connector-host)).
 
 Generate values by the same rules `setup.sh` uses (`docs/15 §Configuration`): keys are
 `k1:<base64 32 bytes>`, the signing and internal secrets are base64, and the runner
@@ -300,6 +305,50 @@ Packages still need approval in the admin API before they take effect.
 | hookhost | `hookhost.replicas` | 2 | Port 4104. |
 | web | `web.replicas` | 2 | Port 4100. |
 | runner | `runner.enabled`, `runner.replicas` (default 1), `runner.k8s.*` | enabled | Port 4105 is reachable only from the sandboxes namespace. See [runners.md](runners.md#kubernetes-backend). |
+| connector host | `connectorHost.enabled`, `connectorHost.replicas`, `connectorHost.resources`, `connectorHost.testTypes`, `connectorHost.nodeSelector`, `connectorHost.tolerations`, `connectorHost.extraEnv` | enabled, 1 | Ports 4110 (platform callbacks, Service `<fullname>-connector-host`, routed by the edge) and 4192 (health and metrics, no Service). See [Connector host](#connector-host). |
+
+### Connector host
+
+`aurora-connector-host` runs the connector types built into Aurora (phase 4: Mattermost) for the
+managed connectors an instance administrator adds in the dashboard
+([plugins-and-connectors.md](plugins-and-connectors.md#add-a-managed-connector-dashboard)). It
+is on by default; set `connectorHost.enabled: false` to run no managed connectors (self-hosted
+connectors, [below](#connectors-optional), do not need it).
+
+- **Token.** The secrets hook generates `AURORA_CONNECTOR_HOST_TOKEN` (`auh_…`) into the instance
+  Secret, once (existing values are never overwritten), and the API receives it as
+  `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` (`api.bootstrap.connectorHostToken`, default `true`).
+  The hook now also runs on `helm upgrade`, so a release installed before the connector host gets
+  the new key. With `secrets.existingSecret` you add `AURORA_CONNECTOR_HOST_TOKEN` yourself before
+  enabling the host: `auh_` followed by random characters (the chart generates `auh_` plus 48 hex digits).
+- **Config.** The chart renders `[connector_host]` into `aurora.toml`: `api_url` is the in-cluster
+  API Service, `test_types` comes from `connectorHost.testTypes`. `connector_host.listen`
+  (`0.0.0.0:4110`) and `connector_host.ops_port` (`4192`) keep their defaults.
+  Every replica runs every enabled managed connector.
+- **`connectorHost.testTypes`** (default `false`) also announces the `fake` test type and mounts a
+  test control API on the ops port. The host warns at start. Development and end-to-end tests only;
+  `deploy/kind/values-e2e.yaml` sets it.
+- **Edge.** `/connectors` goes to the host on 4110 (Ingress and HTTPRoute), next to `/v1` and
+  `/`. The URL a platform such as Mattermost calls back is
+  `<externalUrl>/connectors/<id>/…`; see [Routing](#routing).
+- **NetworkPolicy** `<fullname>-connector-host`: ingress on 4110 from the edge namespace (and, with
+  `networkPolicy.cilium.enabled`, from `networkPolicy.cilium.edgeEntities`); egress to the API on
+  4101, DNS, and external addresses (the chat platform). A platform on a private address range needs
+  `networkPolicy.connectorHostExtraEgress`, a list of raw NetworkPolicy `egress` entries, for example:
+
+  ```yaml
+  networkPolicy:
+    connectorHostExtraEgress:
+      - to: [{ipBlock: {cidr: 10.20.0.0/24}}]
+        ports: [{protocol: TCP, port: 443}]
+  ```
+
+  Every outbound connection of the host goes through this policy, so a platform you do not open
+  here stays unreachable.
+- **Image.** `aurora-connector-host` is a separate image like the others
+  ([Images](#images-publish-pull-or-build-and-load)). The release build embeds the manifest
+  signatures made with the project key; a build without the key announces unsigned manifests,
+  which the API refuses, so the dashboard lists no types.
 
 Every workload runs as non-root (UID/GID 65532), with a read-only root filesystem and all
 capabilities dropped (`aurora.podSecurity`, `aurora.containerSecurity`). A
@@ -328,8 +377,10 @@ Set exactly one of these:
   `gatewayApi.parentRefs`, `gatewayApi.hostnames` and `gatewayApi.requestTimeout` (600 s).
   The Gateway implementation must enforce the body size and the header overwrite.
 
-Routing rules are the same for both: `/v1` goes to the API (4101), `/` goes to the web
-app (4100). `/internal` and `/metrics` are never routed. These are the rules
+Routing rules are the same for both: `/v1` goes to the API (4101), `/connectors` goes to the
+connector host (4110, the platform callbacks of managed connectors; only when
+`connectorHost.enabled`), `/` goes to the web app (4100). `/internal` and `/metrics` are never
+routed. These are the rules
 `scripts/guards/edge-routes.sh` checks.
 
 ### Behind an external reverse proxy
@@ -407,6 +458,12 @@ that address, not at the pods:
    Check the result with `GET /v1/me`: `client_address` must be your own address, not the
    proxy's or the load balancer's.
 
+   The `location /` above already forwards `/connectors/` with everything else. A proxy that
+   forwards only selected paths must forward **`/connectors/`** as well (next to `/v1/` and `/`),
+   with the same settings: the platforms of managed connectors, such as Mattermost, call back at
+   `https://aurora.example.org/connectors/<id>/…`, and the Gateway routes that prefix to the
+   connector host. Without it, buttons, menus and slash commands of managed connectors do not work.
+
 BYO agents connect to the gateway proxy on 4102, which is TLS end to end and never goes through
 the edge. Publish it with `gateway.proxy.service.type: LoadBalancer`, or pass it through the
 external proxy at layer 4 (an nginx `stream` block with no TLS termination). See
@@ -417,8 +474,8 @@ external proxy at layer 4 (an nginx `stream` block with no TLS termination). See
 With `networkPolicy.enabled: true` (default) the chart renders:
 
 - release namespace: `<fullname>-default-deny`, `-allow-dns`, and per-component policies
-  `-api`, `-web`, `-gateway`, `-hookhost`, `-runner`, `-postgres` (when the bundled database is on),
-  `-connector-<id>`;
+  `-api`, `-web`, `-gateway`, `-hookhost`, `-runner`, `-connector-host`, `-postgres` (when the
+  bundled database is on), `-connector-<id>` (self-hosted connectors);
 - the `migrate` hook pod (`-migrate`): egress to the database only, so `helm upgrade` can
   run migrations while the other policies are in place;
 - sandboxes namespace: `default-deny` and `allow-gateway-runner`.
@@ -442,8 +499,8 @@ adds one `CiliumNetworkPolicy` that allows only runner → `toEntities: [kube-ap
 `cilium.io/v2` CRDs. Anything else that must reach a node address (a database on a node IP, a
 NodePort) has the same Cilium behaviour. With the option on, the edge ports also accept
 `networkPolicy.cilium.edgeEntities` (default `[ingress]`, Cilium's own Gateway API / Ingress Envoy),
-one `CiliumNetworkPolicy` per edge-facing component (api 4101, web 4100, dev-idp 4107, connector
-callbacks); see [Behind an external reverse proxy](#behind-an-external-reverse-proxy).
+one `CiliumNetworkPolicy` per edge-facing component (api 4101, web 4100, connector host 4110,
+dev-idp 4107, self-hosted connector callbacks); see [Behind an external reverse proxy](#behind-an-external-reverse-proxy).
 
 Sandboxes can reach only gateway 4102 and runner 4105 (`docs/11 §kubernetes`). The kind test
 checks this from inside a sandbox Pod: no DNS, no route to the API, Postgres, hookhost, gateway
@@ -451,6 +508,10 @@ checks this from inside a sandbox Pod: no DNS, no route to the API, Postgres, ho
 read-only root filesystem.
 
 ## Connectors (optional)
+
+This section is for **self-hosted** connectors: services you deploy yourself, with their own
+token. For the connectors Aurora ships (Mattermost), do not list anything here: add them in the
+dashboard and the [connector host](#connector-host) runs them.
 
 `connectors` is a list. Each entry becomes a Deployment `<fullname>-connector-<id>`,
 plus an Ingress if `callbackIngress.enabled`.

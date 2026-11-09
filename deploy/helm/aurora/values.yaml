@@ -141,6 +141,7 @@ api:
   extraEnv: []            # supports valueFrom (e.g. OIDC client secrets); also given to the migrate Job (same config check)
   bootstrap:
     runnerToken: true     # AURORA_BOOTSTRAP_RUNNER_TOKEN from the runner token
+    connectorHostToken: true   # AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN from the connector host token (P4-MCON)
 
 gateway:
   replicas: 2
@@ -204,6 +205,20 @@ runner:
     runtimeClass: ""      # gVisor / Kata recommended
     nodeSelector: {}      # rendered as [runner.k8s] node_selector: sandbox pods get these labels
     tolerations: []       # rendered as [[runner.k8s.tolerations]]: sandbox pods get these tolerations
+
+# Connector host (P4-MCON, docs/13 §3.1, docs/15): runs the built-in connector types (Mattermost) for
+# the managed connectors an instance admin adds in the dashboard (Admin, Connectors). Callbacks are
+# served on 4110 under /connectors/<id>/ (the edge routes /connectors to it); health and metrics on
+# 4192. Every replica runs every enabled managed connector.
+connectorHost:
+  enabled: true
+  replicas: 1
+  resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {memory: 512Mi}}
+  # Also announce the `fake` test type (development and e2e only; the host warns at start).
+  testTypes: false
+  nodeSelector: {}
+  tolerations: []
+  extraEnv: []
 
 # Plugin packages (`*.aurora-plugin`) for the api pods (docs/15 §Production). The api scans
 # `plugins.dir` at startup and every 60 s. The chart never writes to the packages.
@@ -327,3 +342,6 @@ networkPolicy:
   # open a private-range LLM endpoint that `gateway.allowed_private` also permits. Dev example:
   # deploy/kind/values-llm-mock.yaml.
   gatewayExtraEgress: []
+  # Extra egress rules appended to the connector host's policy (raw NetworkPolicy `egress` entries),
+  # e.g. to reach a Mattermost server on a private range (the external-egress rule excludes them).
+  connectorHostExtraEgress: []

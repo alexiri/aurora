@@ -138,6 +138,19 @@ Error mapping: 401 → `credential_dead`; 403 → `forbidden`; 404 → `not_foun
 429 → `rate_limited` (`retry_after` from `X-Ratelimit-Reset`); 413 →
 `too_large`; 5xx/timeouts → `unavailable`.
 
+## Managed (dashboard)
+
+(phase 4, P4-MCON) Mattermost is a built-in connector type of `aurora-connector-host`: an instance
+administrator adds it under Admin → Connectors → Add, with no token and no deployment change. The
+host runs it in-process with the settings below, and the callbacks are served at
+`<externalUrl>/connectors/mattermost/mm/actions` and `…/mm/commands`. The manifest then also
+declares `instance_setup`: `public_url` (default `<server.external_url>/connectors/mattermost`),
+`callback_hmac_key` (a `generated_secret`), `catchup_window_secs` (600) and `token_check_secs`
+(30). The Mattermost server URL and tokens stay per integration, as below. The manifest carries the
+official Mattermost icon (Simple Icons, `plugins/builtin/ICONS.md`) in both paths. Design:
+`13 §3.1`; operator steps: `operator/plugins-and-connectors.md`. The standalone binary and its
+configuration below stay the self-hosted path.
+
 ## Configuration
 
 `AURORA_API_URL`, `AURORA_CONNECTOR_TOKEN`, `connector.listen`

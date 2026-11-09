@@ -26,6 +26,12 @@ hookhost: {replicas: 1}
 web: {replicas: 1}
 runner: {replicas: 1}
 
+# P4-MCON: the e2e adds the `fake` connector type through the admin API, which needs the host to
+# announce it (the host warns at start; never on a real instance).
+connectorHost:
+  replicas: 1
+  testTypes: true
+
 # P1-005 (RFE-004): sign-in is OIDC only. No ingress here, so the dev IdP is served at the root and
 # reached through `kubectl port-forward` on 127.0.0.1:4107 (kind.sh), the same URL the API hands the browser.
 devIdp:

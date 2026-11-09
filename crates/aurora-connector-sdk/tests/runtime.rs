@@ -197,6 +197,60 @@ async fn register_then_config_opens_integration_once() -> R {
     Ok(())
 }
 
+#[tokio::test]
+async fn managed_config_sends_host_token_and_connector_header() -> R {
+    let server = MockServer::start().await;
+    let (replica, integ) = (Uuid::from_u128(1), Uuid::from_u128(2));
+    fixtures(&server, replica, integ).await;
+    Mock::given(method("POST"))
+        .and(path("/v1/connector/ops/claim"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ops": []})))
+        .mount(&server)
+        .await;
+    let probe = Probe::new(Duration::ZERO);
+    let mut c = cfg(&server.uri());
+    c.token = "auh_host".into();
+    c.connector_id = Some("mattermost".into());
+    let (tx, h) = spawn_run(&probe, c);
+    assert!(wait_for(|| probe.opened.lock().map(|g| g.len()).unwrap_or(0) >= 1).await);
+    tx.send(true)?;
+    h.await??;
+    let reqs = server.received_requests().await.unwrap_or_default();
+    let v1: Vec<_> = reqs
+        .iter()
+        .filter(|r| r.url.path().starts_with("/v1/connector/"))
+        .collect();
+    assert!(v1.len() >= 3);
+    for r in v1 {
+        let get = |n: &str| r.headers.get(n).and_then(|v| v.to_str().ok());
+        assert_eq!(get("authorization"), Some("Bearer auh_host"));
+        assert_eq!(get("aurora-connector"), Some("mattermost"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn self_hosted_config_sends_no_connector_header() -> R {
+    let server = MockServer::start().await;
+    fixtures(&server, Uuid::from_u128(1), Uuid::from_u128(2)).await;
+    Mock::given(method("POST"))
+        .and(path("/v1/connector/ops/claim"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ops": []})))
+        .mount(&server)
+        .await;
+    let probe = Probe::new(Duration::ZERO);
+    let (tx, h) = spawn_run(&probe, cfg(&server.uri()));
+    assert!(wait_for(|| probe.opened.lock().map(|g| g.len()).unwrap_or(0) >= 1).await);
+    tx.send(true)?;
+    h.await??;
+    let reqs = server.received_requests().await.unwrap_or_default();
+    assert!(
+        reqs.iter()
+            .all(|r| r.headers.get("aurora-connector").is_none())
+    );
+    Ok(())
+}
+
 async fn claim_once(server: &MockServer, ops: Value) {
     Mock::given(method("POST"))
         .and(path("/v1/connector/ops/claim"))

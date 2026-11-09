@@ -1,0 +1,29 @@
+[package]
+name = "aurora-connectors-builtin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The connector types compiled into the connector host (docs/13 §3.1, SEC-69)."
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[lib]
+name = "aurora_connectors_builtin"
+path = "src/lib.rs"
+
+[dependencies]
+aurora-connector-fake = { path = "../fake" }
+aurora-connector-mattermost = { path = "../mattermost" }
+aurora-connector-sdk = { workspace = true }
+aurora-crypto = { workspace = true }
+aurora-protocol = { workspace = true }
+aurora-registry = { workspace = true }
+axum = { workspace = true }
+base64 = { workspace = true }
+ed25519-dalek = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }

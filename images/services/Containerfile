@@ -70,7 +70,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     with-sccache cargo chef cook --release --locked --recipe-path recipe.json \
       -p aurora-api -p aurora-gateway -p aurora-hookhost \
       -p aurora-runner -p aurora-connector-fake \
-      -p aurora-connector-mattermost
+      -p aurora-connector-mattermost -p aurora-connector-host
 COPY . .
 # The repo pins a toolchain + wasm target via rust-toolchain.toml; the image's own stable toolchain
 # is used for service builds.
@@ -83,10 +83,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     with-sccache cargo build --release --locked \
       -p aurora-api -p aurora-gateway -p aurora-hookhost \
       -p aurora-runner -p aurora-connector-fake \
-      -p aurora-connector-mattermost \
+      -p aurora-connector-mattermost -p aurora-connector-host \
     && mkdir /out \
     && for b in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-connector-fake \
-                 aurora-connector-mattermost; do \
+                 aurora-connector-mattermost aurora-connector-host; do \
          cp target/release/$b /out/; done
 
 # Built-in app packages (P2-CAT-0, docs/09 §10): plugins/builtin/<id> -> <id>-<version>.aurora-plugin.
@@ -121,6 +121,30 @@ RUN --mount=type=secret,id=aurora_project_signing_key,required=false \
     bash scripts/plugins/build-builtin.sh --sign-only --out /out-plugins --aurora target/release/aurora \
       --key-file /run/secrets/aurora_project_signing_key
 
+# Connector host (P4-MCON, docs/13 §3.1): the built-in connector types' manifests are signed with the
+# project key and the signatures embedded in the binary (as for the built-in packages above, and with
+# the same secret). Step 1 runs only the already compiled host binary (`sign-manifests`: no cargo, so
+# the key never meets build scripts or proc-macros, D-77). Step 2 rebuilds the host crate alone with
+# AURORA_CONNECTOR_SIGNATURES_DIR (services/aurora-connector-host/build.rs embeds <type>.sig); the
+# dependencies come from the builder layer. Without the secret the signatures stay empty: the binary
+# announces unsigned manifests, which a core that verifies signatures refuses (fail closed); only
+# `plugins.allow_unsigned` development installs accept them.
+FROM builder AS connector-host-signed
+RUN --mount=type=secret,id=aurora_project_signing_key,required=false \
+    sh -ec 'mkdir /sigs; key=/run/secrets/aurora_project_signing_key; \
+      if [ -s "$key" ]; then \
+        target/release/aurora-connector-host sign-manifests --key-file "$key" --out /sigs; \
+      else \
+        echo "signing: SKIPPED, no project signing key supplied; the connector host announces UNSIGNED manifests"; \
+      fi'
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/root/.cache/sccache \
+    --mount=type=secret,id=actions_results_url \
+    --mount=type=secret,id=actions_runtime_token \
+    AURORA_CONNECTOR_SIGNATURES_DIR=/sigs with-sccache cargo build --release --locked -p aurora-connector-host \
+    && cp target/release/aurora-connector-host /out/aurora-connector-host
+
 FROM gcr.io/distroless/cc-debian12:nonroot AS api
 COPY --from=builder /out/aurora-api /usr/local/bin/aurora-api
 COPY --from=plugin-archives /out-plugins/ /usr/share/aurora/plugins/
@@ -154,4 +178,12 @@ FROM gcr.io/distroless/cc-debian12:nonroot AS connector-mattermost
 COPY --from=builder /out/aurora-connector-mattermost /usr/local/bin/aurora-connector-mattermost
 EXPOSE 4110 4191
 ENTRYPOINT ["/usr/local/bin/aurora-connector-mattermost"]
+CMD ["serve"]
+
+# The connector host: public callbacks (/connectors/<id>/...) on 4110, health and metrics on 4192.
+#   podman build -f images/services/Containerfile --target connector-host -t aurora-connector-host .
+FROM gcr.io/distroless/cc-debian12:nonroot AS connector-host
+COPY --from=connector-host-signed /out/aurora-connector-host /usr/local/bin/aurora-connector-host
+EXPOSE 4110 4192
+ENTRYPOINT ["/usr/local/bin/aurora-connector-host"]
 CMD ["serve"]

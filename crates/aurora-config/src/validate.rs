@@ -248,6 +248,18 @@ pub struct ConnectorConfig {
     pub telemetry: TelemetrySection,
 }
 
+/// The connector host (`aurora-connector-host`, P4-MCON).
+#[derive(Debug, Clone)]
+pub struct ConnectorHostConfig {
+    pub token: Redacted<String>,
+    pub api_url: String,
+    pub listen: String,
+    pub ops_port: u16,
+    pub test_types: bool,
+    pub tls: TlsSection,
+    pub telemetry: TelemetrySection,
+}
+
 #[derive(Debug, Clone)]
 pub enum ServiceConfig {
     Api(Box<ApiConfig>),
@@ -689,6 +701,41 @@ impl RawConfig {
         c.finish()?;
         Ok(ConnectorConfig {
             token: token.unwrap_or_default(),
+            tls: self.tls.clone(),
+            telemetry: self.telemetry.clone(),
+        })
+    }
+
+    pub fn connector_host_config(&self) -> Result<ConnectorHostConfig> {
+        let mut c = Ctx::default();
+        let token = match &self.env_secrets.connector_host_token {
+            Some(t) => {
+                token_prefix(&mut c, "AURORA_CONNECTOR_HOST_TOKEN", t, "auh_");
+                Some(t.clone())
+            }
+            None => {
+                c.err("AURORA_CONNECTOR_HOST_TOKEN", "required");
+                None
+            }
+        };
+        let h = &self.connector_host;
+        if !(h.api_url.starts_with("http://") || h.api_url.starts_with("https://")) {
+            c.err("connector_host.api_url", "must be an http(s) URL");
+        }
+        if h.listen
+            .rsplit_once(':')
+            .is_none_or(|(_, p)| p.parse::<u16>().is_err())
+        {
+            c.err("connector_host.listen", "must be host:port");
+        }
+        check_common(&mut c, &self.tls, &self.telemetry);
+        c.finish()?;
+        Ok(ConnectorHostConfig {
+            token: token.unwrap_or_default(),
+            api_url: h.api_url.trim_end_matches('/').to_owned(),
+            listen: h.listen.clone(),
+            ops_port: h.ops_port,
+            test_types: h.test_types,
             tls: self.tls.clone(),
             telemetry: self.telemetry.clone(),
         })
