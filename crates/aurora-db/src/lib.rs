@@ -19,6 +19,11 @@ pub use sqlx::PgPool;
 /// Embedded, forward-only migrations (`crates/aurora-db/migrations`).
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
+/// Digest of the migration files this crate was compiled with (`build.rs`). Reading it ties the
+/// compilation to the migrations, so neither cargo nor a compilation cache can reuse an object
+/// that embeds an older set.
+pub const MIGRATIONS_DIGEST: &str = env!("CARGO_AURORA_MIGRATIONS_DIGEST");
+
 /// Open a pool against `url`.
 pub async fn connect(url: &str, max_connections: u32) -> Result<PgPool, DbError> {
     Ok(sqlx::postgres::PgPoolOptions::new()
