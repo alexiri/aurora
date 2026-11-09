@@ -19,10 +19,10 @@ contains `aurora`, otherwise `<release>-aurora`
   `postgres.enabled` is for evaluation only (see [Database](#database)).
 - An Ingress controller (values default to ingress-nginx) or a Gateway API implementation.
 - A runtime class for sandboxes, such as gVisor or Kata (recommended by docs/15).
-- Images: by default the chart pulls the CI-published images from
-  `ghcr.io/alexiri/aurora-*` (public; `image.registry`), tag = the chart's appVersion
-  (`image.tag`). To use a mirror or private registry, set `image.registry` (and `image.pullSecrets`);
-  `image.registry: ""` means bare names (images you built and loaded yourself).
+- Images: pullable by the nodes under the names the chart uses, `<image.registry>/aurora-<name>:<image.tag>`
+  (tag defaults to the chart's appVersion). **The default registry `ghcr.io/alexiri` works only if the project's CI has published
+  that tag and the packages were made public**; otherwise pulls fail with `unauthorized`. Read
+  [Images: publish, pull, or build and load](#images-publish-pull-or-build-and-load) before your first install.
 - The sandbox image must be pullable by the nodes under the name in `config.runner.image`
   (default `aurora-sandbox:<version>`, which containerd resolves to
   `docker.io/library/aurora-sandbox:<version>`). The runner applies that setting to every
@@ -31,6 +31,77 @@ contains `aurora`, otherwise `<release>-aurora`
 The chart is checked with `helm lint`, `helm template` and an install on a local kind
 cluster (see [Test on a local kind cluster](#test-on-a-local-kind-cluster)), which runs the
 hosted scenarios and the sandbox isolation probes against the `kubernetes` runner backend.
+
+## Images: publish, pull, or build and load
+
+The chart needs six images: `aurora-api`, `aurora-gateway`, `aurora-hookhost`, `aurora-runner` and `aurora-web`, plus the sandbox image (named by `config.runner.image`, not by `image.registry`),
+and `aurora-dev-idp` or `aurora-connector-*` only if you enable those. Pick **one** of three ways to get them.
+
+**1. Pull the project's published images (the chart default).** The default is `image.registry: ghcr.io/alexiri` with the chart's appVersion as the tag. Those images exist **only after a CI publish** (CI publishes `master`, `sha-<short>`
+and version tags once its lint, test and e2e jobs pass; see [docs/15 §Images](../15-deployment-operations.md#images)), and a package on `ghcr.io` is **private until its owner makes it public** in the package settings.
+Check before you rely on it, from a machine that is not logged in to ghcr:
+
+```bash
+podman manifest inspect ghcr.io/alexiri/aurora-api:0.1.0   # an `unauthorized` error: not published, or still private
+```
+
+If the packages are private, either make them public or create a pull secret and set `image.pullSecrets` (`kubectl -n aurora create secret docker-registry regcred --docker-server=ghcr.io --docker-username=<user> --docker-password=<token with read:packages>`, then
+`image: {pullSecrets: [{name: regcred}]}`). The sandbox image is pulled separately, by each sandbox Pod, with `runner.sandboxImagePullSecrets` (see [Configuration](#configuration)).
+
+**2. Mirror to your own registry.** Copy the published images (`skopeo copy --all`) to a registry the cluster can reach and set `image.registry` and `image.tag`.
+
+**3. Build and load them yourself.** Use this when nothing is published, or for a local cluster. The images come from the repository's Containerfiles (the commands use podman, as the project's scripts do):
+
+```bash
+REG=registry.example.org/aurora   # or localhost/aurora for kind; TAG=0.1.0
+for t in api gateway hookhost runner; do
+  podman build -f images/services/Containerfile --target "$t" -t "$REG/aurora-$t:$TAG" .
+done
+podman build -f images/services/web.Containerfile -t "$REG/aurora-web:$TAG" .
+# the sandbox image: target `sandbox` (Claude Code harness), or `sandbox-min` (fake harness, for tests only)
+podman build -f images/sandbox/Containerfile --target sandbox \
+  --build-arg ALMA_BASE=docker.io/library/almalinux:10 -t "$REG/aurora-sandbox:$TAG" .
+```
+
+`ALMA_BASE` defaults to a CERN registry image (`gitlab-registry.cern.ch/linuxsupport/alma10-base`) that is not reachable from outside CERN; pass a base you can pull, as above (`images/sandbox/Containerfile`).
+The builds need several GB of free disk and a long first compile. An API image built this way carries **no signed built-in packages**: without the project signing key the API refuses them
+([apps-and-catalogue.md](apps-and-catalogue.md#the-built-in-catalogue)); upload the packages you need as ordinary plugins.
+
+*Real cluster with a private registry.* Push the images and point the chart at them:
+
+```bash
+for i in api gateway hookhost runner web sandbox; do podman push "$REG/aurora-$i:$TAG"; done
+```
+
+```yaml
+image:
+  registry: registry.example.org/aurora
+  tag: "0.1.0"
+  pullSecrets: [{name: regcred}]           # a docker-registry Secret in the release namespace
+config:
+  runner:
+    image: registry.example.org/aurora/aurora-sandbox:0.1.0
+runner:
+  sandboxImagePullSecrets: [sandbox-registry]   # a docker-registry Secret in the sandboxes namespace
+```
+
+*kind (no registry).* Load the images into the cluster's nodes and tell the chart not to pull. `scripts/e2e/kind.sh` and `deploy/dev/kind-dev.sh` do exactly this; their load step is:
+
+```bash
+export KIND_EXPERIMENTAL_PROVIDER=podman        # kind with the rootless podman provider
+for i in aurora-api aurora-gateway aurora-hookhost aurora-runner aurora-web aurora-sandbox; do
+  podman save -o "/tmp/$i.tar" "$REG/$i:$TAG" && kind load image-archive "/tmp/$i.tar" --name <cluster> && rm -f "/tmp/$i.tar"
+done
+```
+
+```yaml
+image: {registry: localhost/aurora, tag: local, pullPolicy: Never}
+config: {runner: {image: localhost/aurora/aurora-sandbox:local}}
+```
+
+`image.registry: ""` means bare image names (`aurora-api:<tag>`), which is only right when the nodes already hold images under exactly those names.
+For a ready-made path use the scripts instead of typing this: `bash scripts/e2e/kind.sh --release-images` builds the release images, loads them and runs the tests ([below](#test-on-a-local-kind-cluster)),
+and [install-kind-dev.md](install-kind-dev.md) keeps a persistent cluster with fast rebuilds. The commands above are modelled on those scripts and were not run as part of writing this page.
 
 ## Namespaces
 
@@ -291,7 +362,7 @@ Minimal `my-values.yaml`:
 ```yaml
 externalUrl: https://aurora.example.org
 image:
-  registry: registry.example.org/aurora   # optional: default is ghcr.io/alexiri
+  registry: registry.example.org/aurora   # the default ghcr.io/alexiri works only after a CI publish and public packages
   tag: "0.1.0"
 ingress:
   className: nginx
@@ -356,7 +427,8 @@ external PostgreSQL 16. Record the date, the Kubernetes version, the CNI and the
    (the chart needs namespace admin; see [Namespaces](#namespaces)). CNI enforces NetworkPolicy
    (run steps 1 to 2 of the [kind script](#test-on-a-local-kind-cluster) logic by hand: a probe pod
    reaches a server pod, a default-deny policy then blocks it). Images are pushed to a registry the nodes
-   can pull from, by digest or an immutable tag, and `image.registry`/`image.tag` point at them.
+   can pull from, by digest or an immutable tag, and `image.registry`/`image.tag` point at them
+   (see [Images](#images-publish-pull-or-build-and-load): the `ghcr.io/alexiri` default needs a CI publish and public packages).
    The hook image resolves from the nodes (or is mirrored, see [Workloads](#workloads)).
 2. **Inputs.** Create the namespaces, the Secrets ([Secrets](#secrets)), the database Secret, and a
    `values.yaml` with `externalUrl`, `ingress.host`/`ingress.tls.secretName`, an OIDC provider under

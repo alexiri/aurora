@@ -1,7 +1,8 @@
-# Aurora operator guide (phase 0)
+# Aurora operator guide
 
 This guide covers installing Aurora, configuring LLM endpoints, adding a runner,
-approving plugins and connectors, backing up state and upgrading.
+approving plugins and connectors, backing up state and upgrading, and (phases 1 and 2) the
+sign-in, gateway, retention, limits, approval, catalogue and freeze settings.
 
 The design source of truth is [`docs/15-deployment-operations.md`](../15-deployment-operations.md).
 Every configuration key, route and command in these pages was checked against the
@@ -28,6 +29,34 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 | [backups.md](backups.md) | Stateful components, what to back up, restore order, key pointers |
 | [key-rotation.md](key-rotation.md) | Rotating the signing key and the internal secret (rings, `aurora-api keys`, status endpoints) |
 | [upgrades.md](upgrades.md) | Upgrade order, migrations, running sandboxes during an upgrade |
+| [sign-in.md](sign-in.md) | OIDC-only sign-in (`auth.oidc_providers`), first administrator, the development IdP (`auth.dev_idp`, loopback only) |
+| [gateway-posture.md](gateway-posture.md) | TLS proxy listener (`gateway.proxy_tls.*`), open-lane posture, BYO posture and source allow-lists (`byo.*`, `gateway.trusted_proxies`, PROXY protocol), the database lane |
+| [retention-and-quota.md](retention-and-quota.md) | `retention.conversation_days_max`, `attachments.*`, org settings and the daily sweeps |
+| [limits-and-approvals.md](limits-and-approvals.md) | API rate limits (`ratelimit.api.*`), approval timeouts (`approvals.*`) and approval e-mail (`email.*`) |
+| [apps-and-catalogue.md](apps-and-catalogue.md) | The built-in catalogue (signing, icons) and app instances for self-hosted servers |
+| [freeze.md](freeze.md) | The emergency freeze of an agent, workspace or organization |
+
+## Phase 1 and 2 topics
+
+Where to find each phase 1 and phase 2 setting. The key table with every default stays
+[docs/15 §Configuration reference](../15-deployment-operations.md#configuration-reference-keys-and-defaults).
+
+| Topic | Section |
+|-------|---------|
+| TLS proxy listener | [gateway-posture.md §TLS proxy listener](gateway-posture.md#tls-proxy-listener) |
+| OIDC-only sign-in and the dev IdP | [sign-in.md](sign-in.md) |
+| Open-lane posture and the browser capability | [gateway-posture.md §Open lane](gateway-posture.md#open-lane) |
+| BYO posture, source allow-lists, `gateway.trusted_proxies`, PROXY protocol | [gateway-posture.md §BYO agents](gateway-posture.md#byo-agents-posture-and-source-allow-lists) |
+| Retention and attachment quota | [retention-and-quota.md](retention-and-quota.md) |
+| API rate limits | [limits-and-approvals.md §API rate limits](limits-and-approvals.md#api-rate-limits) |
+| Signing-key and internal-secret rotation | [key-rotation.md](key-rotation.md) |
+| Approval timeouts and e-mail | [limits-and-approvals.md §Approval timeouts](limits-and-approvals.md#approval-timeouts) |
+| App instances (D-74) | [apps-and-catalogue.md §App instances](apps-and-catalogue.md#app-instances-self-hosted-servers) |
+| Built-in catalogue | [apps-and-catalogue.md §The built-in catalogue](apps-and-catalogue.md#the-built-in-catalogue) |
+| Database lane | [gateway-posture.md §Database lane](gateway-posture.md#database-lane) |
+| Freeze | [freeze.md](freeze.md) |
+| Sandbox resources and private sandbox registries | [runners.md §Sandbox resources](runners.md#sandbox-resources), [Private sandbox registry](runners.md#private-sandbox-registry) |
+| Getting the images (publish, pull, build and load) | [install-helm.md §Images](install-helm.md#images-publish-pull-or-build-and-load) |
 
 ## Things to know first
 
