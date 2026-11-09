@@ -366,7 +366,7 @@ external PostgreSQL 16. Record the date, the Kubernetes version, the CNI and the
 4. **Install.** `helm install aurora deploy/helm/aurora -n aurora -f values.yaml --wait --timeout 10m`.
    Expect the hook Jobs (`secrets`, `gateway-ca`, `migrate`) to complete and every Deployment to be Ready
    (`kubectl -n aurora get pods,jobs`). The hook image pulls by digest.
-5. **Edge.** `curl -fsS https://<host>/healthz` returns 200 over a valid certificate. The web UI loads
+5. **Edge.** `curl -fsS https://<host>/v1/instance` returns 200 (the instance info with the sign-in providers) over a valid certificate. `/healthz` is served by each service but isn't routed through the edge. The web UI loads
    `/` and the OIDC sign-in redirects to the provider and back. The gateway proxy Service type matches
    what you set (`ClusterIP`, or `LoadBalancer` with `loadBalancerSourceRanges`).
 6. **Bootstrap and first use.** `kubectl -n aurora exec deploy/aurora-api -- /usr/local/bin/aurora-api bootstrap-admin --email <you>`
