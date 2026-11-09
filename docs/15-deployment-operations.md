@@ -369,6 +369,7 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   until its sandbox restarts. The boot inputs include the gateway transport
   (`gateway.tls`), so the API reports `restart_to_update` for those sandboxes
   automatically; the next boot runs the TLS-capable supervisor.
+- (phase 3, CONTRACT-001) The contract step for RFE-004 shipped in this release: it drops `users.password_hash` and `email_tokens` (not additive), so a deployment must have run a phase-1+ release first; `scripts/e2e/upgrade.sh` proves the path.
 
 ## Observability
 

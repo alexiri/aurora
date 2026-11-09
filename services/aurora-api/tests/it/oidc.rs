@@ -120,7 +120,7 @@ async fn happy_path_new_user_open_mode() {
             .iter()
             .any(|c| c.starts_with("__Host-aurora_oidc=;"))
     );
-    assert_eq!(count(&h, "SELECT count(*) FROM users WHERE email = 'new.user@example.com' AND email_verified_at IS NOT NULL AND password_hash IS NULL").await, 1);
+    assert_eq!(count(&h, "SELECT count(*) FROM users WHERE email = 'new.user@example.com' AND email_verified_at IS NOT NULL").await, 1);
     assert_eq!(
         count(
             &h,

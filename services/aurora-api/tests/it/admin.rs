@@ -110,14 +110,14 @@ async fn bootstrap_admin_preprovisions_and_binds_at_first_sign_in() {
         .await
         .unwrap();
     assert_eq!(url, "http://localhost:3000/auth/login");
-    let row: (bool, bool, bool) = sqlx::query_as(
-        "SELECT is_instance_admin, email_verified_at IS NOT NULL, password_hash IS NULL
+    let row: (bool, bool) = sqlx::query_as(
+        "SELECT is_instance_admin, email_verified_at IS NOT NULL
          FROM users WHERE email = 'new@x.io'",
     )
     .fetch_one(h.pool())
     .await
     .unwrap();
-    assert_eq!(row, (true, true, true));
+    assert_eq!(row, (true, true));
     let ids: i64 = sqlx::query_scalar("SELECT count(*) FROM user_identities")
         .fetch_one(h.pool())
         .await
