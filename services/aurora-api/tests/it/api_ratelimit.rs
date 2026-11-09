@@ -347,18 +347,44 @@ async fn exempt_routes_are_never_limited() {
 #[tokio::test]
 async fn unauthenticated_and_rejected_bearer_requests_are_limited_per_ip() {
     let w = world(real_limits).await;
+    // The per-IP buckets refill on the wall clock and their rates are constants (only the
+    // multiplier scales them), so on a loaded machine a token can come back while the burst is
+    // being spent. Instead of "exactly burst, then 429", assert what the limiter guarantees: at
+    // least `burst` requests pass, then a 429 arrives no later than burst + the tokens that could
+    // have refilled in the elapsed time (+1 for a partial token).
+    let allowed_until_429 = |passed: u32, per_min: f64, burst: u32, started: std::time::Instant| {
+        let refill = (started.elapsed().as_secs_f64() * per_min / 60.0).ceil() as u32 + 1;
+        assert!(
+            passed >= burst,
+            "only {passed} passed before 429, burst is {burst}"
+        );
+        assert!(
+            passed <= burst + refill,
+            "{passed} passed before 429; burst {burst} + refill {refill} allows at most {}",
+            burst + refill
+        );
+    };
+
     // public GETs: 120/min/IP
-    for i in 0..120 {
-        let (s, _, _) = w.h.send(Method::GET, "/v1/instance", &[], None).await;
-        assert_ne!(s, StatusCode::TOO_MANY_REQUESTS, "request {i}");
-    }
-    let (s, hd, v) = w.h.send(Method::GET, "/v1/instance", &[], None).await;
-    assert_eq!(s, StatusCode::TOO_MANY_REQUESTS);
+    let started = std::time::Instant::now();
+    let mut passed = 0u32;
+    let (hd, v) = loop {
+        let (s, hd, v) = w.h.send(Method::GET, "/v1/instance", &[], None).await;
+        if s == StatusCode::TOO_MANY_REQUESTS {
+            break (hd, v);
+        }
+        passed += 1;
+        assert!(passed <= 1000, "no 429 after {passed} public GETs");
+    };
+    allowed_until_429(passed, 120.0, 120, started);
     assert_eq!(v["error"]["details"]["class"], "unauth");
     assert!(hd.contains_key("retry-after"));
+
     // rejected bearer: 30/min/IP, tracked separately from the public-GET bucket
-    for i in 0..30 {
-        let (s, _, _) =
+    let started = std::time::Instant::now();
+    let mut passed = 0u32;
+    let v = loop {
+        let (s, _, v) =
             w.h.send(
                 Method::GET,
                 "/v1/me",
@@ -366,17 +392,17 @@ async fn unauthenticated_and_rejected_bearer_requests_are_limited_per_ip() {
                 None,
             )
             .await;
-        assert_eq!(s, StatusCode::UNAUTHORIZED, "request {i}");
-    }
-    let (s, _, v) =
-        w.h.send(
-            Method::GET,
-            "/v1/me",
-            &[("authorization", "Bearer auo_not_a_real_key")],
-            None,
-        )
-        .await;
-    assert_eq!(s, StatusCode::TOO_MANY_REQUESTS);
+        if s == StatusCode::TOO_MANY_REQUESTS {
+            break v;
+        }
+        assert_eq!(s, StatusCode::UNAUTHORIZED, "request {passed}");
+        passed += 1;
+        assert!(
+            passed <= 1000,
+            "no 429 after {passed} rejected bearer requests"
+        );
+    };
+    allowed_until_429(passed, 30.0, 30, started);
     assert_eq!(v["error"]["code"], "rate_limited");
 }
 
