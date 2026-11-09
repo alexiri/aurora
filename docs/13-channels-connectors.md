@@ -82,8 +82,9 @@ Strings are sanitized; the icon and guide follow app-package asset rules.
 
 (phase 4, P4-MCON) The manifest may also carry `"instance_setup": { "fields": [ … ] }`:
 connector-level settings an instance admin fills in when adding a **managed** connector
-(§3.1), in the same form-field schema as `integration_setup` (`09 §3.4`) plus the field type
-`generated_secret` (the core generates it, §3.1). A new `instance_setup` field is a widening.
+(§3.1), in the same form-field schema as `integration_setup` (`09 §3.4`) plus the field types
+`url`, `number` (optional `min`/`max`) and `generated_secret` (the core generates it, §3.1) and an
+optional static `default`; `file`, `json_file` and `store` are not allowed there (C-450). A new `instance_setup` field is a widening.
 Connectors without the key have no instance settings.
 
 ### 3.1 Managed connectors (phase 4, P4-MCON, D-128)
