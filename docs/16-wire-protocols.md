@@ -63,7 +63,7 @@ All requests: `Authorization: Bearer aur_…`; after registration also
 `RunnerCapabilities`: `{ backend, home_durability: "resident"|"snapshot",
 resources: { cpu: {min,max}, memory_mib: {min,max}, pids: {min,max}, home_gib:
 {min,max} }, max_sandboxes, harnesses: ["claude-code","fake"], max_attachment_bytes,
-image_capabilities?: ["browser"] }` (phase 1, RFE-003: the capabilities the
+image_capabilities?: ["browser"] }` (phase 4, P4-HAR: `harnesses` is read from the image label `org.aurora.harnesses`, absent = `["claude-code","fake"]`; the API places a sandbox only on a replica listing the agent's harness; `codex` is a new open-vocabulary id) (phase 1, RFE-003: the capabilities the
 sandbox image declares via its `org.aurora.capabilities` label, read by the
 runner when it registers; open vocabulary, absent = none).
 

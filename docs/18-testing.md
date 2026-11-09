@@ -421,6 +421,14 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - **Live suites** (`AURORA_TEST_LIVE_OPENAI=1`, `…_AZURE`, `…_BEDROCK`, `…_VERTEX`, `…_COMPAT`; not in CI): one real model call and listing per provider through a real gateway, used to pin the header, error-type and client-variable details the spec leaves to "pinned in the provider".
 - **Default unchanged**: with the default `enabled_providers` the registry, `/v1/llm/providers` and every phase-0 provider test are untouched.
 
+### Harness adapters (phase 4, P4-HAR, D-122, SEC-66)
+- **Conformance**: `tests/conformance/harness` gains `codex`: CI runs it against a mock **Responses/chat upstream** in `aurora-testkit` (SSE, tool call, error injection: 401, 429, `insufficient_quota`, 5xx) through a real gateway; an env-gated variant (`AURORA_TEST_HARNESS_CODEX_LIVE=1`) runs it against a real OpenAI endpoint. Same cases as every adapter plus: steer refusal (`steer = false`, follow-up becomes a separate turn).
+- **Adapter unit tests**: event mapping from recorded Codex JSONL fixtures (golden), exactly one terminal event after abort and after crash, effort table, session-id parsing and resume, `purge_session` (idempotent, only the named session), error mapping to `provider_*` through the shared table.
+- **Rendering**: golden test of `config.toml` and the process environment for each dialect and for Azure/compatible endpoints: no secret, `OPENAI_API_KEY=aurora-placeholder`, `base_url` from `ModelChoice`, approvals/sandbox settings, MCP bridge entry; no `auth.json` created; `AGENTS.md` rendered, `CLAUDE.md` not (and the reverse for `claude-code`).
+- **Selection**: `hosted.enabled_harnesses` validation (unknown id, default not enabled, `fake` gating); `PATCH` harness (422 not enabled, 409 active turn); boot document carries the id; unknown id or missing runtime → `harness_unsupported`; runner without the harness → `harness_unavailable` and no sandbox start; images without the label read as `claude-code,fake`; dialect intersection and first-of-harness-list choice; model override dropped with a notice after a switch; `no_model_key` when nothing is compatible.
+- **Switch**: epoch bumped for every conversation, `harness_session_ref` cleared, purge rows queued and executed by the old adapter at next boot before any turn, instructions re-rendered for the new harness, transcript untouched.
+- **e2e-hosted**: a Codex agent against the mock upstream (turn, tool call, `send_file`, platform tools, restart and resume) and the SEC-01 secret probe over its sandbox; run after P4-LLM lands.
+
 ### API rate limiting (phase 2, RFE-017)
 - Bucket semantics per class (burst then steady refill), a request must pass
   general + class + org buckets and a refused request consumes none of the others;

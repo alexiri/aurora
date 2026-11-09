@@ -482,7 +482,10 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
     (phase 3, RFE-018) The composer generates one UUID `Idempotency-Key` per composed
     message and reuses it for every automatic retry, so a timeout-retry never
     double-posts; editing the text or deliberately sending again uses a new key.
-  - **Instructions** — name, brief, avatar, harness, model (from
+  - **Instructions** — name, brief, avatar, harness (phase 4, P4-HAR: a picker from
+    `/v1/harnesses`, shown only when more than one is enabled; unavailable ones are disabled
+    with "no runner offers this"; changing it asks for confirmation: "Starts fresh sessions for
+    every conversation of this agent; the transcript is kept"; refused while a turn runs), model (from
     `/v1/agents/{a}/models`), effort, proactive messaging mode.
   - **Access** — grants: connections (full / custom with allow/ask/block per
     tool, read/write groups, wildcard umbrellas only where valid, inert-tool

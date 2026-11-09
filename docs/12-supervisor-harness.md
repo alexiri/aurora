@@ -171,6 +171,105 @@ against `fake`, and against `claude-code` when an LLM endpoint is configured
 - The adapter holds a starting session's first turn until the harness has
   listed MCP tools, so a stale on-disk tool cache is never used.
 
+### Harness selection and adapter contract (phase 4, P4-HAR, D-122, SEC-66)
+
+Phase 0–3 shipped one real adapter, so selection was implicit. From phase 4
+(implemented **after P4-LLM**, because a harness is only useful with a provider that
+speaks its dialect) the rules are explicit; nothing changes for a deployment that
+does not enable a second harness.
+
+- **Who chooses.** The harness is a property of the **agent** (`agents.harness`, `10`),
+  set at creation (default `hosted.default_harness`) and changeable by whoever may edit
+  the agent's instructions, and only among `hosted.enabled_harnesses` (default
+  `["claude-code"]`, so Codex is opt-in). The API stamps it into the boot document
+  (`harness.id`, `11 §The boot document`) and the supervisor instantiates the adapter
+  **by that id from a compile-time registry** (`claude-code`, `codex`, `fake`; `fake`
+  only with `hosted.allow_fake_harness`). Nothing inside the sandbox (an agent, a
+  tool, a file) can change it. An id the supervisor does not know, or whose runtime is
+  not in the image, fails the boot (`sandbox.status failed`, `reason_code =
+  harness_unsupported`) before `ready`, never a fallback to another harness.
+- **Placement.** The API places a sandbox only on a runner replica whose registered
+  `harnesses` list contains the agent's harness (`16 §W5`, taken from the image label
+  `org.aurora.harnesses`, `11 §Sandbox image`); with none, the turn fails
+  `harness_unavailable` with the dashboard hint to enable the image or runner, before any
+  start.
+- **What an adapter declares.** `HarnessCapabilities` (above) is the whole contract between
+  a harness and the rest of the platform; capabilities and `dialects` are declared per
+  pinned version, never probed. **Dialects, in preference order**:
+
+  | Harness | Declared dialects | Notes |
+  |---------|-------------------|-------|
+  | `claude-code` | `anthropic_messages`, `anthropic_bedrock`, `anthropic_vertex` | `08 §Phase 4 providers` |
+  | `codex` | `openai_responses`, `openai_chat` | `openai_chat` only while the pinned version supports the chat wire API; a version that drops it removes it here |
+  | `fake` | none (needs no model key) | tests |
+
+- **Dialect choice.** For an agent, a usable key's endpoint serves the harness when the
+  endpoint's dialects intersect the harness's; the dialect used is the **first of the
+  harness's own list** that the endpoint also serves (`08 §Model selection`). Switching an
+  agent's harness re-runs that selection: a model override whose endpoint no longer serves
+  the new harness is dropped with a notice (the existing rule); with no compatible granted
+  key the next turn fails `no_model_key`.
+- **Switching the harness of an agent that has history.** Sessions are adapter-owned
+  files in the agent's home, so the change (a) bumps `harness_session_epoch` of every
+  conversation (the next turn starts a fresh harness session; the transcript in Aurora
+  is untouched, the new harness does not see the old harness's private context),
+  (b) queues `session_purges` for the old sessions so the previous adapter's files are
+  deleted (`§Session purge`, run by the **old** adapter's `purge_session`, which therefore stays
+  in the image while any purge is pending), and (c) re-renders instructions and skills for
+  the new harness's `instruction_files` and `skills_dir` on the next home sync. An
+  active turn refuses the change (409 `turn_active`).
+- **Conformance.** Every adapter must pass `tests/conformance/harness` (`§Harness
+  interface`). `codex` runs it against the mock Responses upstream of `aurora-testkit`
+  (CI) and against a real OpenAI endpoint (env-gated).
+
+### Adapter `codex` (phase 4, P4-HAR)
+
+Drives the pinned OpenAI **Codex CLI** non-interactively (`codex exec`, JSON event
+stream, one child process per live session, working directory `/workspace`), resumed by
+the session id it reports. Exact flags, config keys and event mapping are pinned in the
+adapter next to the pinned CLI version and verified by the conformance suites; what is
+specified here is the contract.
+
+- **Capabilities.** `resume`, `tool_events`, `platform_tools`; `thinking_deltas` only if
+  the pinned version streams reasoning summaries; `steer = false` (a running `codex exec`
+  cannot take a follow-up, so follow-ups become separate turns, `10 §Turns`);
+  `background_tool = false`; dialects `[openai_responses, openai_chat]`;
+  `instruction_files = ["AGENTS.md"]` (the platform preamble, brief and capability
+  fragments are rendered there only; `CLAUDE.md` is rendered for `claude-code` only);
+  `skills_dir` = the pinned version's skills directory when it has one, else none (skills
+  are then listed in `AGENTS.md`).
+- **State.** `CODEX_HOME` points into the agent's home (`~/.codex`); sessions live there
+  and are what `purge_session` deletes (idempotent: the rollout files of one session id).
+  No `auth.json` is ever written and ChatGPT-account sign-in is never offered.
+- **Configuration the adapter renders** (per session start, into `CODEX_HOME/config.toml`
+  owned by Aurora and overwritten on every start): a model provider whose `base_url` is the
+  endpoint base URL of `ModelChoice`, `wire_api` from the chosen dialect, `env_key =
+  OPENAI_API_KEY`; `model`; the reasoning effort from a version-pinned table (`low`,
+  `medium`, `high`; `max` maps to the highest the CLI accepts); approvals set to "never"
+  and Codex's own sandbox set to full access, **because the Aurora sandbox and the
+  gateway are the isolation and policy boundaries** (Codex's inner sandbox cannot nest in
+  the container and would only fail), exactly as tool prompts are disabled for
+  `claude-code`; update checks, analytics and any non-essential network use disabled; one
+  MCP server `aurora` = `aurora-supervisor mcp-bridge --session <conversation_id>`.
+  The file contains **no secret**: `OPENAI_API_KEY=aurora-placeholder` is in the process
+  environment and the gateway injects the real key (`08 §Phase 4 providers`, SEC-64).
+- **Environment per session:** `HTTPS_PROXY`/`HTTP_PROXY` = the per-session proxy (so
+  every call carries the turn's context credential), the CA bundle variables of the boot
+  document, `CODEX_HOME`, `OPENAI_API_KEY=aurora-placeholder`; no `OPENAI_BASE_URL`
+  outside the rendered provider. Azure OpenAI and OpenAI-compatible endpoints use the same
+  provider block with their `base_url`.
+- **Events.** The adapter maps Codex's JSON events to `HarnessEvent`: agent messages →
+  text (message boundaries per the harness's framing, `10 §Answer rule`), reasoning
+  summaries → thinking, command/file/MCP tool items → tool started/finished and activity
+  lines, token usage → `usage`, turn completion/failure → exactly one terminal `Done` or
+  `Error`. Provider errors map through the shared `aurora-llm` classification
+  (`provider_auth` … `provider_refusal`); anything else is `harness_failed` with a
+  sanitized message. Usage `provider`/`model` fields are overwritten by the API from the
+  `ModelChoice` (`08`).
+- **Not supported:** ChatGPT-subscription sign-in (the host `chatgpt.com` stays a known
+  LLM host, refused under `sanctioned_only`), Codex cloud/remote features, IDE/app-server
+  modes, its own MCP-server catalogue beyond Aurora's bridge.
+
 ### Adapter `fake`
 
 In-process, directive-driven (`[[say: …]]`, `[[tool: memory_save {…}]]`,

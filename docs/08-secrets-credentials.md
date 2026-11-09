@@ -491,7 +491,9 @@ one. Like all credentials, LLM secrets are used only when granted.
   matches the effective rule (§11).
 - When all are null, the dispatcher picks the first usable LLM secret, in
   `provider_preference` order, whose endpoint serves a dialect the agent's
-  harness speaks (`12 §Harness interface`), and uses the endpoint's
+  harness speaks (`12 §Harness interface`; phase 4, P4-HAR: the dialect used is the
+  first of the harness's own preference-ordered list that the endpoint also serves),
+  and uses the endpoint's
   `default_model` (or the provider's) — or, when a model allow-list applies
   and the default is not on it, the first allowed model.
 - An explicit model is stamped with its provider and endpoint. If that

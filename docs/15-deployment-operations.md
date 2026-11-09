@@ -32,7 +32,11 @@ non-prerelease semver tag. Images carry OCI labels (source, revision, version, l
 `GPL-3.0-or-later`) plus SBOM and max-mode provenance attestations. The Helm chart defaults to
 `image.registry: ghcr.io/alexiri` with the chart `appVersion` as tag. The six service images are copies of a
 single compile of the workspace (`images/services/Containerfile`, cargo-chef dependency layer, lld).
-`aurora-sandbox-min` is the slim e2e sandbox (OS + supervisor).
+`aurora-sandbox-min` is the slim e2e sandbox (OS + supervisor). (phase 4, P4-HAR) The
+sandbox image installs the pinned Claude Code and Codex runtimes by default; build with
+`SANDBOX_HARNESSES="claude-code"` for a slimmer image. The label `org.aurora.harnesses`
+tells the runner what is inside. Helm: `hosted.enabledHarnesses` (default
+`[claude-code]`) renders `hosted.enabled_harnesses`.
 
 Service images are distroless (`gcr.io/distroless/cc` or equivalent), run as
 non-root, contain only their binary, and are built for linux/amd64. arm64 images are deferred
@@ -114,7 +118,8 @@ one new entry without activating it.
 | `agents.default_name` | `Daneel` | api | default agent and shared-bot name |
 | `agents.default_brief` | (neutral text in `10`; phase 3, RFE-019: was the Daneel persona in phase 0–2) | api | brief given to the default agent of **new** workspaces; ≤20 000 chars; empty = the default; never changes existing agents |
 | `hosted.enabled` | `true` | api | hosted agents available |
-| `hosted.default_harness` | `claude-code` | api | |
+| `hosted.default_harness` | `claude-code` | api | must be in `hosted.enabled_harnesses` or startup fails |
+| `hosted.enabled_harnesses` | `["claude-code"]` | api | (phase 4, P4-HAR, D-122) harness ids agents may use (`claude-code`, `codex`; `fake` only with `hosted.allow_fake_harness`); an unknown id refuses startup. Enabling `codex` also needs a runner image that contains it (image label `org.aurora.harnesses`, `11 §Sandbox image`) and an LLM endpoint serving `openai_responses` or `openai_chat` (`08 §Phase 4 providers`) |
 | `hosted.allow_fake_harness` | `false` | api | tests/dev |
 | `hosted.default_timezone` | `UTC` | api | for new workspaces |
 | `hosted.idle_stop_secs`, `hosted.background_cap_secs`, `hosted.turn_ceiling_secs`, `hosted.turn_stall_secs` | `02 §Limits` | api | |

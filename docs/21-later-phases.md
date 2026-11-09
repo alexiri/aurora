@@ -162,8 +162,12 @@ tokens), group → workspace access bindings, group identities in policy
   hosts`, `09` (reserved hosts), `12` (claude-code dialects), `15`, `16`, `18 §Additional
   LLM providers`. Not in phase 4: Entra ID for Azure, assume-role or gateway-identity
   AWS auth for Bedrock, Converse and Gemini-native dialects, gateway token counting.
-- Additional harness adapters (e.g. Codex) declaring `openai_*` dialects: P4-HAR,
-  after P4-LLM (specified below).
+- **Additional harness adapters — specified (phase 4, P4-HAR, D-122, SEC-66):** the
+  `codex` adapter declaring `openai_responses` / `openai_chat`, explicit harness
+  selection (`agents.harness`, `hosted.enabled_harnesses`, runner label
+  `org.aurora.harnesses`), and the switching rules. Implemented after P4-LLM. Owning
+  sections: `12 §Harness selection and adapter contract`, `12 §Adapter codex`, `11
+  §Sandbox image`, `10`, `05`, `15`, `16 §W5`, `18 §Harness adapters`.
 - Live narration cards in chat (steps list updated under the connector's write
   rate hint), user-token features (`user_tokens` capability).
 - **Slack connector**: decision deferred; if built, it is a connector covering
