@@ -566,6 +566,7 @@ impl Connector for FakeConnector {
                 writes_per_space_per_minute: Some(600),
             },
             public_callbacks: vec![],
+            instance_setup: None,
         }
     }
 

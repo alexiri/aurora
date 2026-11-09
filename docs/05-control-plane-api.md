@@ -225,7 +225,7 @@ caches — phase 3, RFE-014: *after* re-subscribing, keeping the caches meanwhil
 | `aurora_conversation` | `{ "c": conversation_id, "s": seq }` | API (after commit) → API SSE handlers |
 | `aurora_delta` | `{ "c", "t": turn_id, "type": "text.delta"|"thinking.delta"|"activity", "d": string }` | API (on runner events) → API SSE handlers; (phase 1, RFE-016) this is the `notify` implementation of the `DeltaBus` seam below |
 | `aurora_work` | `{ "sandbox_id"?: uuid }` | API → API runner long-polls |
-| `aurora_ops` | `{ "connector": id }` | API → API connector long-polls |
+| `aurora_ops` | `{ "connector": id }`; (phase 4, P4-MCON) `{ "assignments": true }` when a managed connector changed | API → API connector long-polls; the connector-host `assignments` long poll |
 | `aurora_inbox` | `{}` | API → API inbox workers |
 | `aurora_op_result` | `{ "op_id" }` | API (on connector results) → API callers waiting on correlated operations |
 | `aurora_approval` | `{ "id", "workspace_id", "event": "created"|"decided"|"expired" }` | gateway & API → gateways, API (cards, SSE, long-polls) |

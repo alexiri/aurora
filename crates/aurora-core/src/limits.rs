@@ -129,6 +129,10 @@ pub const PROCESS_TAIL: usize = 4 * KIB;
 pub const WATCH_PATTERN_MAX: usize = 256;
 pub const RUNNER_POLL_WAIT: Duration = Duration::from_secs(25);
 pub const REPLICA_ONLINE_THRESHOLD: Duration = Duration::from_secs(90);
+/// (P4-MCON) A connector host not seen for this long leaves the catalogue and `host_running`.
+pub const CONNECTOR_HOST_STALE: Duration = Duration::from_secs(90);
+/// (P4-MCON) Connector host rows older than this are pruned.
+pub const CONNECTOR_HOST_RETAIN: Duration = Duration::from_secs(24 * 3600);
 pub const RECONCILE_INTERVAL: Duration = Duration::from_secs(60);
 pub const ORPHAN_GRACE: Duration = Duration::from_secs(3600);
 pub const SANDBOX_DEFAULT_MEMORY_MIB: u32 = 2048;

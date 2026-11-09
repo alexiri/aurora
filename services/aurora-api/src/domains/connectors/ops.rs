@@ -247,7 +247,7 @@ pub async fn call_correlated(
             loop {
                 match rx.recv().await {
                     Ok(Msg::OpResult { op_id }) if op_id == id => break,
-                    Ok(Msg::OpResult { .. } | Msg::Ops { .. } | Msg::Inbox) => {}
+                    Ok(Msg::OpResult { .. } | Msg::Ops { .. } | Msg::Inbox | Msg::Assignments) => {}
                     Ok(Msg::Resync) | Err(_) => break,
                 }
             }
@@ -350,7 +350,7 @@ async fn claim(
             loop {
                 match rx.recv().await {
                     Ok(Msg::Ops { connector }) if connector == mine => break,
-                    Ok(Msg::Ops { .. } | Msg::OpResult { .. } | Msg::Inbox) => {}
+                    Ok(Msg::Ops { .. } | Msg::OpResult { .. } | Msg::Inbox | Msg::Assignments) => {}
                     Ok(Msg::Resync) | Err(_) => break,
                 }
             }

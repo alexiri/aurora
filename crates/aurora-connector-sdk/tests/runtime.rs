@@ -51,6 +51,7 @@ impl Connector for ProbeConn {
             presence_setup: Value::Null,
             limits: Default::default(),
             public_callbacks: vec![],
+            instance_setup: None,
         }
     }
     async fn open_integration(

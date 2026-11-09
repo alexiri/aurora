@@ -451,6 +451,7 @@ impl Connector for MattermostConnector {
                 writes_per_space_per_minute: Some(30),
             },
             public_callbacks: vec!["actions".into(), "commands".into()],
+            instance_setup: None,
         }
     }
 

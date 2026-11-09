@@ -158,6 +158,8 @@ pub struct ApiConfig {
     pub bootstrap_runner_token: Option<Redacted<String>>,
     /// `(connector id, token)` pairs.
     pub bootstrap_connector_tokens: Vec<(String, Redacted<String>)>,
+    /// (P4-MCON) `auh_…`: the connector host anchor token, upserted at start.
+    pub bootstrap_connector_host_token: Option<Redacted<String>>,
     pub auth: AuthSection,
     pub signup_mode: SignupMode,
     pub org_creation: OrgCreation,
@@ -317,6 +319,9 @@ impl RawConfig {
         if let Some(t) = &s.bootstrap_runner_token {
             token_prefix(&mut c, "AURORA_BOOTSTRAP_RUNNER_TOKEN", t, "aur_");
         }
+        if let Some(t) = &s.bootstrap_connector_host_token {
+            token_prefix(&mut c, "AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN", t, "auh_");
+        }
         let bootstrap_connector_tokens =
             bootstrap_connectors(&mut c, &s.bootstrap_connector_tokens);
         let (signup_mode, org_creation) =
@@ -418,6 +423,7 @@ impl RawConfig {
             runner_session_key: runner_session_key.unwrap_or_default(),
             bootstrap_runner_token: s.bootstrap_runner_token.clone(),
             bootstrap_connector_tokens,
+            bootstrap_connector_host_token: s.bootstrap_connector_host_token.clone(),
             auth,
             signup_mode: signup_mode.unwrap_or(SignupMode::InviteOnly),
             org_creation: org_creation.unwrap_or(OrgCreation::InstanceAdmins),

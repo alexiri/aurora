@@ -32,6 +32,7 @@ pub struct EnvSecrets {
     pub connector_token: Option<Redacted<String>>,
     pub bootstrap_runner_token: Option<Redacted<String>>,
     pub bootstrap_connector_tokens: Option<Redacted<String>>,
+    pub bootstrap_connector_host_token: Option<Redacted<String>>,
     /// OIDC client secrets keyed by provider id (from each `client_secret_env`).
     pub oidc_client_secrets: BTreeMap<String, Redacted<String>>,
 }

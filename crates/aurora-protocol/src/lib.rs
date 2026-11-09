@@ -9,6 +9,7 @@ pub mod common;
 pub mod connector;
 pub mod gateway_internal;
 pub mod hookhost;
+pub mod host;
 pub mod runner;
 pub mod schema;
 pub mod supervisor;

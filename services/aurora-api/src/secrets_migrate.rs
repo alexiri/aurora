@@ -123,7 +123,7 @@ struct Source {
     update: &'static str,
 }
 
-const SOURCES: [Source; 7] = [
+const SOURCES: [Source; 8] = [
     Source {
         purpose: Purpose::SecretValue,
         select: "SELECT id, org_id, workspace_id, value_ref FROM secrets \
@@ -185,6 +185,22 @@ const SOURCES: [Source; 7] = [
         update: "UPDATE channel_ops SET payload = jsonb_set(payload, '{credentials_ref}', \
                  to_jsonb($2::text)), updated_at = now() \
                  WHERE id = $1 AND payload->>'credentials_ref' = $3",
+    },
+    // (P4-MCON) One row per sealed field of a managed connector: all of a connector's fields
+    // share the owner id (`secret_owner`), so pages never split an owner (see `migrate_purpose`).
+    Source {
+        purpose: Purpose::ConnectorSettings,
+        select: "SELECT c.secret_owner, NULL::uuid, NULL::uuid, kv.value \
+                 FROM (SELECT secret_owner, secret_refs FROM connectors \
+                       WHERE managed AND secret_owner > $1 \
+                       ORDER BY secret_owner LIMIT $2) c, \
+                      jsonb_each_text(c.secret_refs) AS kv \
+                 ORDER BY c.secret_owner, kv.key",
+        update: "UPDATE connectors SET secret_refs = (SELECT jsonb_object_agg(kv.key, \
+                 CASE WHEN kv.value = $3 THEN to_jsonb($2::text) ELSE to_jsonb(kv.value) END) \
+                 FROM jsonb_each_text(secret_refs) AS kv), updated_at = now() \
+                 WHERE secret_owner = $1 AND managed \
+                 AND EXISTS (SELECT 1 FROM jsonb_each_text(secret_refs) AS e WHERE e.value = $3)",
     },
 ];
 
@@ -367,10 +383,11 @@ async fn row_points_to(pool: &PgPool, src: &Source, id: Uuid, r: &SecretRef) -> 
     let before = Uuid::from_u128(id.as_u128().checked_sub(1)?);
     let rows: Vec<Row> = sqlx::query_as(src.select)
         .bind(before)
-        .bind(1_i64)
+        .bind(64_i64)
         .fetch_all(pool)
         .await
         .ok()?;
-    let row = rows.into_iter().find(|row| row.0 == id)?;
-    Some(row.3 == r.to_column())
+    let mut mine = rows.iter().filter(|row| row.0 == id).peekable();
+    mine.peek()?;
+    Some(mine.any(|row| row.3 == r.to_column()))
 }

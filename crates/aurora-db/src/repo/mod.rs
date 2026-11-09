@@ -20,6 +20,7 @@ pub mod channel_ops;
 pub mod channel_presences;
 pub mod cli_logins;
 pub mod connections;
+pub mod connector_hosts;
 pub mod connectors;
 pub mod conversations;
 pub mod credentials;

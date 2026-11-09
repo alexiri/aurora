@@ -175,6 +175,20 @@ pub struct ConnectorManifest {
     pub limits: ManifestLimits,
     #[serde(default)]
     pub public_callbacks: Vec<String>,
+    /// (P4-MCON, 13 §3) Connector-level settings an instance admin fills in when adding a
+    /// managed connector. Absent = no instance settings (and the key is not serialized, so the
+    /// digest of an older manifest is unchanged).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_setup: Option<InstanceSetup>,
+}
+
+/// `instance_setup`: the integration form-field schema (09 §3.4) plus the field types `url`,
+/// `number` and `generated_secret`, and an optional `default`. Fields stay raw JSON on the wire;
+/// the API validates them (`services/aurora-api` `domains/connectors/setup.rs`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct InstanceSetup {
+    #[serde(default)]
+    pub fields: Vec<Value>,
 }
 
 impl ConnectorManifest {
@@ -206,7 +220,11 @@ impl Validate for ConnectorManifest {
         check_chars("package.version", &self.package.version, 64)?;
         check_chars("about.name", &self.about.name, 120)?;
         check_max("capabilities", self.capabilities.len(), 64)?;
-        check_max("public_callbacks", self.public_callbacks.len(), 16)
+        check_max("public_callbacks", self.public_callbacks.len(), 16)?;
+        if let Some(s) = &self.instance_setup {
+            check_max("instance_setup.fields", s.fields.len(), 32)?;
+        }
+        Ok(())
     }
 }
 

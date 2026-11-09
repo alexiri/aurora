@@ -229,6 +229,42 @@
         ]
       }
     },
+    "/v1/admin/connector-types": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Connector types announced by the live connector hosts (C-450).",
+        "operationId": "adminListConnectorTypes",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorTypeList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/connectors": {
       "get": {
         "tags": [
@@ -268,7 +304,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Provision a connector; the `aun_` token is returned once.",
+        "summary": "Provision a self-hosted connector (the `aun_` token is returned once) or, with `managed: true`,\nadd a managed connector run by a connector host (no token; C-451).",
         "operationId": "adminCreateConnector",
         "requestBody": {
           "content": {
@@ -313,6 +349,16 @@
           },
           "422": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "secret_store_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -373,6 +419,91 @@
           },
           "409": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Edit a connector (C-453): name, `enabled`; for a managed connector also settings, secrets and\nregeneration of generated secrets (write-only; no response carries a secret value).",
+        "operationId": "adminUpdateConnector",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connector id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchConnectorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorAdmin"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "secret_store_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -951,6 +1082,42 @@
             }
           },
           "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/overview": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Instance overview (C-459): the connector hosts seen within 24 hours.",
+        "operationId": "adminOverview",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOverview"
+                }
+              }
+            }
+          },
+          "403": {
             "description": "",
             "content": {
               "application/json": {
@@ -18230,6 +18397,22 @@
           }
         }
       },
+      "AdminOverview": {
+        "type": "object",
+        "description": "`GET /v1/admin/overview` (C-459): this phase reports the connector hosts.",
+        "required": [
+          "connector_hosts"
+        ],
+        "properties": {
+          "connector_hosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectorHostInfo"
+            },
+            "description": "Connector hosts seen within 24 hours."
+          }
+        }
+      },
       "AdminStorage": {
         "type": "object",
         "description": "`GET /admin/storage` (API_CONTRACTS C-172).",
@@ -20367,7 +20550,10 @@
           "widening",
           "replicas",
           "integration_count",
-          "created_at"
+          "created_at",
+          "managed",
+          "secrets",
+          "host_status"
         ],
         "properties": {
           "approved_at": {
@@ -20405,12 +20591,23 @@
           "display_name": {
             "type": "string"
           },
+          "host_status": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostStatusInfo"
+            },
+            "description": "Managed only: reports of hosts seen recently."
+          },
           "id": {
             "type": "string"
           },
           "integration_count": {
             "type": "integer",
             "format": "int64"
+          },
+          "managed": {
+            "type": "boolean",
+            "description": "Added from the dashboard and run by a connector host (13 §3.1)."
           },
           "manifest": {
             "type": [
@@ -20432,8 +20629,32 @@
             },
             "description": "Live (not retired, recently seen) replicas."
           },
+          "secrets": {
+            "type": "object",
+            "description": "Managed only: one entry per `secret` / `generated_secret` field; `{}` otherwise.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ConnectorSecretInfo"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "settings": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Managed only: stored non-secret settings with defaults applied; `null` otherwise."
+          },
           "status": {
             "$ref": "#/components/schemas/ConnectorStatus"
+          },
+          "type_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Managed only: the built-in type."
           },
           "version": {
             "type": [
@@ -20461,6 +20682,34 @@
             "items": {
               "$ref": "#/components/schemas/ConnectorAdmin"
             }
+          }
+        }
+      },
+      "ConnectorHostInfo": {
+        "type": "object",
+        "required": [
+          "instance_id",
+          "version",
+          "last_seen_at",
+          "types"
+        ],
+        "properties": {
+          "instance_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "version": {
+            "type": "string"
           }
         }
       },
@@ -20518,6 +20767,29 @@
           }
         }
       },
+      "ConnectorSecretInfo": {
+        "type": "object",
+        "description": "State of one secret setting; the value is never returned.",
+        "required": [
+          "set",
+          "generated"
+        ],
+        "properties": {
+          "generated": {
+            "type": "boolean"
+          },
+          "set": {
+            "type": "boolean"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "ConnectorStatus": {
         "type": "string",
         "enum": [
@@ -20540,20 +20812,102 @@
           }
         }
       },
+      "ConnectorType": {
+        "type": "object",
+        "description": "A connector type announced by live connector hosts (C-450).",
+        "required": [
+          "type_id",
+          "name",
+          "version",
+          "publisher",
+          "manifest",
+          "manifest_digest",
+          "instance_setup",
+          "hosts",
+          "added"
+        ],
+        "properties": {
+          "added": {
+            "type": "boolean",
+            "description": "A connector with this id already exists."
+          },
+          "hosts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Live hosts announcing exactly this digest."
+          },
+          "icon_png_b64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "instance_setup": {
+            "type": "object",
+            "description": "`{ fields: Field[] }`: the form-field schema plus `url`, `number`, `generated_secret`."
+          },
+          "manifest": {
+            "type": "object",
+            "description": "The manifest, icon stripped."
+          },
+          "manifest_digest": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "setup_guide_md": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "ConnectorTypeList": {
+        "type": "object",
+        "required": [
+          "host_running",
+          "items"
+        ],
+        "properties": {
+          "host_running": {
+            "type": "boolean",
+            "description": "At least one connector host was seen within `CONNECTOR_HOST_STALE`."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectorType"
+            }
+          }
+        }
+      },
       "ConnectorWithToken": {
         "type": "object",
-        "description": "Returned once on provisioning.",
+        "description": "Returned on provisioning (C-31, C-451): the `aun_` token is shown once and only for a\nself-hosted connector.",
         "required": [
-          "connector",
-          "token"
+          "connector"
         ],
         "properties": {
           "connector": {
             "$ref": "#/components/schemas/ConnectorAdmin"
           },
           "token": {
-            "type": "string",
-            "description": "`aun_…`, shown once."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`aun_…`, shown once; absent for a managed connector."
           }
         }
       },
@@ -20912,17 +21266,50 @@
       "CreateConnectorRequest": {
         "type": "object",
         "required": [
-          "id",
-          "display_name"
+          "id"
         ],
         "properties": {
+          "approve_manifest_digest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Managed (required): the manifest digest the administrator reviewed."
+          },
           "display_name": {
-            "type": "string",
-            "description": "Name shown to administrators (1-80 chars)."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name shown to administrators (1-80 chars). Required for a self-hosted connector; a\nmanaged connector defaults to the manifest name."
           },
           "id": {
             "type": "string",
-            "description": "Connector id: `[a-z][a-z0-9-]{1,31}`."
+            "description": "Connector id: `[a-z][a-z0-9-]{1,31}`; for a managed connector, a type of\n`GET /v1/admin/connector-types`."
+          },
+          "managed": {
+            "type": "boolean",
+            "description": "`true`: add a managed connector run by a connector host (C-451). Default `false`."
+          },
+          "secrets": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Managed: values of the `secret` fields (write-only, at most 8 KiB each).",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "settings": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Managed: non-secret `instance_setup` values."
           }
         }
       },
@@ -22375,6 +22762,41 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "HostState": {
+        "type": "string",
+        "enum": [
+          "running",
+          "error"
+        ]
+      },
+      "HostStatusInfo": {
+        "type": "object",
+        "description": "What one connector host reports for a managed connector.",
+        "required": [
+          "host_instance",
+          "state",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "host_instance": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/HostState"
           }
         }
       },
@@ -27456,6 +27878,57 @@
           }
         },
         "additionalProperties": false
+      },
+      "PatchConnectorRequest": {
+        "type": "object",
+        "description": "`PATCH /v1/admin/connectors/{id}` (C-453).",
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "regenerate": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Managed only: `generated_secret` fields to generate again."
+          },
+          "secrets": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Managed only: a string replaces the secret, `null` clears it (not for required ones).",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "settings": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Managed only: merged per key; `null` restores the field default."
+          }
+        }
       },
       "PatchIntegrationRequest": {
         "type": "object",

@@ -1,0 +1,59 @@
+{
+  "$defs": {
+    "Assignment": {
+      "description": "One managed connector the host must run (`GET /v1/connector-host/assignments`, C-456).",
+      "properties": {
+        "display_name": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "secrets": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "**Decrypted** secret and generated settings. Never log.",
+          "type": "object"
+        },
+        "settings": {
+          "description": "Non-secret settings, defaults applied (incl. `public_url`)."
+        },
+        "status": {
+          "type": "string"
+        },
+        "type_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type_id",
+        "display_name",
+        "settings",
+        "secrets",
+        "status"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "connectors": {
+      "items": {
+        "$ref": "#/$defs/Assignment"
+      },
+      "type": "array"
+    },
+    "revision": {
+      "format": "int64",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "revision",
+    "connectors"
+  ],
+  "title": "AssignmentsResponse",
+  "type": "object"
+}

@@ -3,8 +3,10 @@
 use crate::app::AppState;
 use aurora_core::ApiError;
 use aurora_core::token::{self, TokenPrefix};
+use aurora_db::repo::connector_hosts;
 use aurora_db::repo::connectors::{self, ConnectorRow};
 use aurora_protocol::connector::HDR_REPLICA;
+use aurora_protocol::host::HDR_CONNECTOR;
 use axum::extract::FromRequestParts;
 use http::{StatusCode, header, request::Parts};
 use uuid::Uuid;
@@ -42,6 +44,25 @@ fn check_protocol(parts: &Parts) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// C-458: a connector host's `auh_` token plus `Aurora-Connector: <id>` acts as connector `<id>`,
+/// only when that connector is `managed` and not `disabled`. Every refusal is the same 401 as an
+/// unknown `aun_` token, so nothing reveals which connectors exist.
+async fn delegated(parts: &Parts, st: &AppState, tok: &str) -> Result<ConnectorRow, ApiError> {
+    let refuse = || ApiError::unauthenticated("Unknown connector token.");
+    let id = parts
+        .headers
+        .get(HDR_CONNECTOR)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(refuse)?;
+    if !connector_hosts::token_exists(&st.pool, &token::hash(tok)).await? {
+        return Err(refuse());
+    }
+    connectors::get(&st.pool, id)
+        .await?
+        .filter(|r| r.managed && r.status != "disabled")
+        .ok_or_else(refuse)
+}
+
 impl FromRequestParts<AppState> for ConnectorToken {
     type Rejection = ApiError;
 
@@ -52,8 +73,14 @@ impl FromRequestParts<AppState> for ConnectorToken {
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .filter(|t| token::parse_prefix(t) == Some(TokenPrefix::Connector))
             .ok_or_else(|| ApiError::unauthenticated("Connector token required."))?;
+        if token::parse_prefix(tok) == Some(TokenPrefix::ConnectorHost) {
+            return delegated(parts, st, tok).await.map(Self);
+        }
+        if token::parse_prefix(tok) != Some(TokenPrefix::Connector) {
+            return Err(ApiError::unauthenticated("Connector token required."));
+        }
+        // With an `aun_` token the `Aurora-Connector` header is ignored (C-458).
         let row = connectors::find_by_token_hash(&st.pool, &token::hash(tok))
             .await?
             .ok_or_else(|| ApiError::unauthenticated("Unknown connector token."))?;

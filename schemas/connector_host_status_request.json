@@ -1,0 +1,52 @@
+{
+  "$defs": {
+    "ConnectorReport": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/InstanceState"
+        }
+      },
+      "required": [
+        "id",
+        "state"
+      ],
+      "type": "object"
+    },
+    "InstanceState": {
+      "enum": [
+        "running",
+        "error"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`POST /v1/connector-host/status` (C-457).",
+  "properties": {
+    "connectors": {
+      "items": {
+        "$ref": "#/$defs/ConnectorReport"
+      },
+      "type": "array"
+    },
+    "instance_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "instance_id",
+    "connectors"
+  ],
+  "title": "HostStatusRequest",
+  "type": "object"
+}

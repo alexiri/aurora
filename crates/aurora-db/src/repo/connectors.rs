@@ -20,10 +20,119 @@ pub struct ConnectorRow {
     pub approved_by: Option<Uuid>,
     pub approved_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// Added from the dashboard and run by a connector host (`13 §3.1`).
+    pub managed: bool,
+    pub type_id: Option<String>,
+    /// Managed only: the stored non-secret settings (no defaults applied).
+    pub settings: Option<serde_json::Value>,
+    /// Owner id of the sealed settings (purpose `connector.settings`, nil org).
+    pub secret_owner: Uuid,
+    /// Field name → sealed reference column value (never a value).
+    pub secret_refs: serde_json::Value,
+    /// Field name → RFC 3339 time of the last write of the sealed value.
+    pub secret_updated_at: serde_json::Value,
 }
 
 const COLS: &str = "id, display_name, version, contract, manifest, manifest_digest, \
-    approved_manifest_digest, status, approved_by, approved_at, created_at";
+    approved_manifest_digest, status, approved_by, approved_at, created_at, \
+    managed, type_id, settings, secret_owner, secret_refs, secret_updated_at";
+
+/// New managed connector (`POST /v1/admin/connectors` with `managed: true`).
+#[derive(Debug, Clone)]
+pub struct NewManaged<'a> {
+    pub id: &'a str,
+    pub display_name: &'a str,
+    pub settings: &'a serde_json::Value,
+    pub secret_owner: Uuid,
+    pub secret_refs: &'a serde_json::Value,
+    pub secret_updated_at: &'a serde_json::Value,
+    /// Stored manifest (with its approved baseline) and its digest.
+    pub manifest: &'a serde_json::Value,
+    pub digest: &'a str,
+}
+
+pub async fn insert_managed<'e, E: PgExecutor<'e>>(
+    exec: E,
+    n: &NewManaged<'_>,
+) -> Result<ConnectorRow, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "INSERT INTO connectors (id, display_name, status, managed, type_id, settings,
+                secret_owner, secret_refs, secret_updated_at, manifest, manifest_digest,
+                approved_manifest_digest)
+         VALUES ($1,$2,'awaiting_registration',true,$1,$3,$4,$5,$8,$6,$7,$7) RETURNING {COLS}"
+    ))
+    .bind(n.id)
+    .bind(n.display_name)
+    .bind(n.settings)
+    .bind(n.secret_owner)
+    .bind(n.secret_refs)
+    .bind(n.manifest)
+    .bind(n.digest)
+    .bind(n.secret_updated_at)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// Writes the editable state of a connector (any kind: `settings`/`secret_refs` only change for
+/// managed connectors, which the caller guarantees).
+pub async fn update_managed<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: &str,
+    display_name: &str,
+    status: &str,
+    settings: Option<&serde_json::Value>,
+    secret_refs: &serde_json::Value,
+    secret_updated_at: &serde_json::Value,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE connectors SET display_name=$2, status=$3, settings=$4, secret_refs=$5,
+                secret_updated_at=$6, updated_at=now() WHERE id=$1",
+    )
+    .bind(id)
+    .bind(display_name)
+    .bind(status)
+    .bind(settings)
+    .bind(secret_refs)
+    .bind(secret_updated_at)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// Managed connectors that are not `disabled` and whose type is one of `types`.
+pub async fn list_managed_enabled<'e, E: PgExecutor<'e>>(
+    exec: E,
+    types: &[String],
+) -> Result<Vec<ConnectorRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLS} FROM connectors
+         WHERE managed AND status <> 'disabled' AND type_id = ANY($1) ORDER BY id"
+    ))
+    .bind(types)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Advances the assignments revision (C-456) in the caller's transaction and wakes the hosts'
+/// long polls on commit (`aurora_ops`, payload `{"assignments": true}`).
+pub async fn bump_revision<'e, E: PgExecutor<'e>>(exec: E) -> Result<(), DbError> {
+    sqlx::query(
+        "SELECT nextval('connector_assignments_rev'),
+                pg_notify('aurora_ops', '{\"assignments\":true}')",
+    )
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// Current assignments revision (0 until the first change).
+pub async fn revision<'e, E: PgExecutor<'e>>(exec: E) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM connector_assignments_rev",
+    )
+    .fetch_one(exec)
+    .await?)
+}
 
 /// A connector replica (`connector_replicas`).
 #[derive(Debug, Clone, sqlx::FromRow)]

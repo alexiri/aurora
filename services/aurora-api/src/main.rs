@@ -289,6 +289,9 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = aurora_api::domains::connectors::bootstrap_tokens(&state).await {
         tracing::warn!(error = %e, "bootstrap connector tokens not applied");
     }
+    if let Err(e) = aurora_api::domains::connectors::bootstrap_host_token(&state).await {
+        tracing::warn!(error = %e, "bootstrap connector host token not applied");
+    }
     // (RFE-013, C-315) The instance maximum agent-token age applies to existing tokens at start.
     match aurora_api::domains::governance::service::retrofit_instance(&state).await {
         Ok(0) => {}

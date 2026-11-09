@@ -60,6 +60,8 @@ refuses to start on any error, naming the key.
 | `AURORA_CONNECTOR_TOKEN` | each connector | `aun_…` |
 | `AURORA_BOOTSTRAP_RUNNER_TOKEN` (optional) | api | on startup, upsert runner `default` with this token's hash (Helm bootstrap) |
 | `AURORA_BOOTSTRAP_CONNECTOR_TOKENS` (optional) | api | `id:aun_…,id2:aun_…` — upsert connector ids (still require manifest approval unless `plugins.allow_unsigned` dev mode auto-approves) |
+| `AURORA_CONNECTOR_HOST_TOKEN` | connector-host | (phase 4, P4-MCON) `auh_…` |
+| `AURORA_BOOTSTRAP_CONNECTOR_HOST_TOKEN` (optional) | api | (phase 4, P4-MCON) on startup, upsert this `auh_…` token's hash into `connector_host_tokens` (Helm bootstrap; no admin route mints it) |
 | OIDC client secrets, SMTP password | api | referenced from config (`client_secret_env = "…"`) |
 
 Setup tooling generates every secret and **never overwrites** an existing one.
