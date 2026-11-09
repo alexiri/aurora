@@ -202,7 +202,9 @@ fn registry_validation() {
         Ok(_) => panic!("expected error"),
         Err(e) => e.to_string(),
     };
-    assert!(e(cfg("inline", &[("v", "hashicorp-vault")])).contains("phase 3"));
+    // A Vault store with no address / auth refuses startup naming the keys.
+    let v = e(cfg("inline", &[("v", "hashicorp-vault")]));
+    assert!(v.contains("secrets.stores[0].address") && v.contains("secrets.stores[0].auth.method"));
     assert!(e(cfg("inline", &[("x", "bogus")])).contains("unknown kind"));
     assert!(e(cfg("missing", &[])).contains("not a configured store"));
     assert!(e(cfg("inline", &[("a", "inline"), ("a", "inline")])).contains("duplicate"));

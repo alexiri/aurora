@@ -13,6 +13,12 @@ mod raw;
 mod redacted;
 mod urlcheck;
 mod validate;
+mod vault_store;
+
+pub use vault_store::{
+    VAULT_KIND, VaultAuthSettings, VaultReferenceScope, VaultSettings, glob_matches,
+    under_managed_prefix, valid_kv_path,
+};
 
 pub use error::{ConfigError, ConfigErrors, Result};
 pub use load::{CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH, load};
