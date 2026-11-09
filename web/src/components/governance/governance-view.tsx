@@ -22,6 +22,7 @@ import {
   isStale,
   issuesUnder,
   KEY_SCOPES,
+  maxAgeDaysProblem,
   useBlockedHosts,
   useEffectiveGovernance,
   useGovernanceDoc,
@@ -140,7 +141,7 @@ function Body({
         {tab === "egress" ? (
           <EgressTab form={form} patch={patch} issues={issues} readOnly={!canEdit} eff={eff} orgId={orgId} />
         ) : null}
-        {tab === "byo" ? <ByoPanel form={form} patch={patch} issues={issues} readOnly={!canEdit} eff={eff} /> : null}
+        {tab === "byo" ? <ByoPanel form={form} patch={patch} issues={issues} readOnly={!canEdit} eff={eff} orgId={orgId} /> : null}
         {tab === "compliance" ? <ComplianceTab eff={eff} orgId={orgId} orgSlug={orgSlug} /> : null}
       </div>
       {canEdit && tab !== "compliance" ? (
@@ -160,7 +161,11 @@ function Body({
           ) : null}
           {saved ? <Notice tone="accent" role="status">Saved. Existing keys were re-checked against the new rules.</Notice> : null}
           <FormActions>
-            <Button size="lg" onClick={save} disabled={put.isPending}>
+            <Button
+              size="lg"
+              onClick={save}
+              disabled={put.isPending || !!maxAgeDaysProblem(form.byo.maxAgeDays, form.byo.instanceMaxAgeDays)}
+            >
               {put.isPending ? "Saving…" : "Save governance"}
             </Button>
           </FormActions>

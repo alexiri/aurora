@@ -2,6 +2,7 @@
 mod action_approvals;
 mod activity;
 mod admin;
+mod agent_token_age;
 mod agents;
 mod api_ratelimit;
 mod app_instances;

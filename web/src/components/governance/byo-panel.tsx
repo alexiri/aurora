@@ -1,11 +1,17 @@
 "use client";
 
+import { TokenBadges } from "@/components/agents/token-badges";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Field, inputClass } from "@/components/ui/field";
+import { ItemList, ListRow } from "@/components/ui/section";
+import { expiryText, useOrgAttentionTokens } from "@/lib/api/agent-tokens";
 import {
+  AGENT_TOKEN_MAX_AGE_MAX,
+  AGENT_TOKEN_MAX_AGE_MIN,
   byoOptionsFrom,
   issuesUnder,
+  maxAgeDaysProblem,
   splitList,
   type ByoForm,
   type ByoPosture,
@@ -32,12 +38,14 @@ export function ByoPanel({
   issues,
   readOnly,
   eff,
+  orgId,
 }: {
   form: GovForm;
   patch: (p: Partial<GovForm>) => void;
   issues: GovIssues;
   readOnly: boolean;
   eff: EffectiveGovernance;
+  orgId?: string;
 }) {
   const b = form.byo;
   const set = (p: Partial<ByoForm>) => patch({ byo: { ...b, ...p } });
@@ -45,6 +53,9 @@ export function ByoPanel({
   const postureLocked = b.instanceOff || b.floor === "disabled";
   const effective = eff.byo;
   const cidrCount = splitList(b.sourceCidrs).length;
+  const age = eff.agent_tokens.max_age_days;
+  const ageProblem = maxAgeDaysProblem(b.maxAgeDays, b.instanceMaxAgeDays);
+  const attention = useOrgAttentionTokens(orgId ?? "", !!orgId && !readOnly);
 
   return (
     <div className="space-y-4">
@@ -87,6 +98,64 @@ export function ByoPanel({
             ))}
           </select>
         </Field>
+      </Card>
+
+      <Card className="space-y-4">
+        <h2 className="text-base font-semibold text-ink">How long BYO tokens live</h2>
+        <p className="text-sm text-ink-2">
+          Effective maximum age:{" "}
+          <Badge tone={age.value == null ? "neutral" : "accent"} data-testid="effective-max-age">
+            {age.value == null ? "No limit" : `${age.value} days`}
+          </Badge>{" "}
+          <span className="text-muted">set by {age.source}</span>
+          {b.instanceMaxAgeDays != null ? (
+            <>
+              {" "}
+              <Badge>enforced by instance: {b.instanceMaxAgeDays} days</Badge>
+            </>
+          ) : null}
+        </p>
+        <Field
+          id="byo-max-age"
+          label="Maximum token age (days)"
+          hint={`Whole days, ${AGENT_TOKEN_MAX_AGE_MIN} to ${AGENT_TOKEN_MAX_AGE_MAX}${b.instanceMaxAgeDays != null ? `, at most the instance limit of ${b.instanceMaxAgeDays}` : ""}. Empty = no organization limit. New and regenerated tokens expire after this; existing tokens that would live longer are shortened, keeping at least 7 days. Loosening or clearing it never extends an existing token.`}
+          error={ageProblem ?? errorText(issuesUnder(issues, "/agent_tokens/max_age_days"))}
+        >
+          <input
+            id="byo-max-age"
+            inputMode="numeric"
+            className={`${inputClass} max-w-40`}
+            value={b.maxAgeDays}
+            disabled={readOnly || b.instanceOff}
+            placeholder={b.instanceMaxAgeDays != null ? String(b.instanceMaxAgeDays) : "No limit"}
+            onChange={(e) => set({ maxAgeDays: e.target.value })}
+          />
+        </Field>
+        {!readOnly && orgId ? (
+          <div className="space-y-2" data-testid="token-attention">
+            <h3 className="text-sm font-semibold text-ink">Tokens that need attention</h3>
+            {attention.isPending ? <p className="text-sm text-ink-2">Loading…</p> : null}
+            {attention.isError ? <p className="text-sm text-ink-2">The token list is unavailable.</p> : null}
+            {attention.data && attention.data.length === 0 ? (
+              <p className="text-sm text-ink-2">Every BYO token is in use and not close to expiring.</p>
+            ) : null}
+            {attention.data && attention.data.length > 0 ? (
+              <ItemList aria-label="BYO tokens that are unused or expiring">
+                {attention.data.map((t) => (
+                  <ListRow key={t.agent.id}>
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                      <span className="font-medium text-ink">{t.agent.name}</span>
+                      <span className="font-mono text-sm text-muted">@{t.agent.handle}</span>
+                      <span className="text-sm text-ink-2">{t.workspace.name}</span>
+                      <span className="text-sm text-ink-2">{expiryText(t.expires_at)}</span>
+                      <TokenBadges token={t} />
+                    </div>
+                  </ListRow>
+                ))}
+              </ItemList>
+            ) : null}
+          </div>
+        ) : null}
       </Card>
 
       <Card className="space-y-4">

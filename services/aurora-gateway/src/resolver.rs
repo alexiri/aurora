@@ -21,10 +21,19 @@ const MAX_NEGATIVE: usize = 10_000;
 
 type Hash = [u8; 32];
 
+/// (RFE-013, C-316) A credential's use is recorded at most once a minute.
+pub const LAST_USED_INTERVAL: Duration = Duration::from_secs(60);
+/// Bound on credentials waiting for their `last_used_at` write; beyond it, uses are dropped.
+const MAX_PENDING_TOUCH: usize = 10_000;
+
 struct Entry {
     identity: Arc<RequestIdentity>,
     expires: Instant,
     born: Instant,
+    /// When this credential's use was last queued for `last_used_at` (None = never).
+    touched: Option<Instant>,
+    /// (RFE-013) When an agent token expires (None = never, or not an agent token).
+    deadline: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -34,6 +43,12 @@ struct Inner {
     /// (RFE-006) Credentials of frozen agents, answered 403 `frozen` without a database read for
     /// `NEGATIVE_TTL`; cleared by every invalidation (an unfreeze notifies).
     frozen: HashMap<Hash, (Instant, &'static str)>,
+    /// (RFE-013) Expired agent tokens, answered `agent_token_expired` without a database read
+    /// for `NEGATIVE_TTL`. An expiry never lifts by itself, but the entry is short-lived and
+    /// cleared by every invalidation like the other negative answers.
+    expired: HashMap<Hash, Instant>,
+    /// (RFE-013) Credentials whose use awaits a batched `last_used_at` write.
+    touch: HashSet<Uuid>,
     by_org: HashMap<Uuid, HashSet<Hash>>,
     by_workspace: HashMap<Uuid, HashSet<Hash>>,
     by_agent: HashMap<Uuid, HashSet<Hash>>,
@@ -67,7 +82,13 @@ impl Inner {
         }
     }
 
-    fn insert(&mut self, h: Hash, identity: Arc<RequestIdentity>, ttl: Duration) {
+    fn insert(
+        &mut self,
+        h: Hash,
+        identity: Arc<RequestIdentity>,
+        ttl: Duration,
+        deadline: Option<Instant>,
+    ) {
         if self.entries.len() >= MAX_ENTRIES {
             self.clear();
         }
@@ -94,8 +115,26 @@ impl Inner {
                 identity,
                 expires: Instant::now() + ttl,
                 born: Instant::now(),
+                touched: None,
+                deadline,
             },
         );
+    }
+
+    /// Queues the credential's use unless it was queued less than a minute ago.
+    fn note_use(&mut self, h: &Hash, now: Instant) {
+        let Some(e) = self.entries.get_mut(h) else {
+            return;
+        };
+        if e.touched
+            .is_some_and(|t| now.duration_since(t) < LAST_USED_INTERVAL)
+        {
+            return;
+        }
+        e.touched = Some(now);
+        if self.touch.len() < MAX_PENDING_TOUCH {
+            self.touch.insert(e.identity.credential_id);
+        }
     }
 
     fn drop_hashes(&mut self, hashes: Option<HashSet<Hash>>) {
@@ -113,6 +152,7 @@ impl Inner {
         self.by_user.clear();
         self.negative.clear();
         self.frozen.clear();
+        self.expired.clear();
     }
 }
 
@@ -127,6 +167,7 @@ enum Lookup {
     Hit(Arc<RequestIdentity>),
     Denied,
     Frozen(&'static str),
+    Expired,
     Miss(u64),
 }
 
@@ -145,10 +186,20 @@ impl IdentityCache {
         };
         let now = Instant::now();
         if let Some(e) = g.entries.get(h) {
+            // `expires` is already capped at the credential's own `expires_at` (see `store`), so
+            // a cached agent token stops being honoured at its expiry, not at the TTL boundary.
             if e.expires > now {
-                return Lookup::Hit(e.identity.clone());
+                let identity = e.identity.clone();
+                g.note_use(h, now);
+                return Lookup::Hit(identity);
             }
             g.remove(h);
+        }
+        if let Some(until) = g.expired.get(h) {
+            if *until > now {
+                return Lookup::Expired;
+            }
+            g.expired.remove(h);
         }
         if let Some(until) = g.negative.get(h) {
             if *until > now {
@@ -177,6 +228,41 @@ impl IdentityCache {
             .insert(h, (Instant::now() + self.negative_ttl, level));
     }
 
+    fn store_expired(&self, h: Hash, gen_seen: u64) {
+        let Ok(mut g) = self.inner.lock() else { return };
+        if g.generation != gen_seen {
+            return;
+        }
+        if g.expired.len() >= MAX_NEGATIVE {
+            g.expired.clear();
+        }
+        g.expired.insert(h, Instant::now() + self.negative_ttl);
+    }
+
+    /// The expiry of the cached agent token with this credential id, if it has one.
+    fn deadline_of(&self, credential: Uuid) -> Option<Instant> {
+        let g = self.inner.lock().ok()?;
+        g.by_credential
+            .get(&credential)?
+            .iter()
+            .find_map(|h| g.entries.get(h).and_then(|e| e.deadline))
+    }
+
+    /// Takes the credentials whose use awaits a `last_used_at` write.
+    fn take_touched(&self) -> Vec<Uuid> {
+        self.inner
+            .lock()
+            .map(|mut g| std::mem::take(&mut g.touch).into_iter().collect())
+            .unwrap_or_default()
+    }
+
+    /// Queues a use recorded on a freshly loaded entry.
+    fn note_loaded(&self, h: &Hash) {
+        if let Ok(mut g) = self.inner.lock() {
+            g.note_use(h, Instant::now());
+        }
+    }
+
     fn store(&self, h: Hash, found: Option<(Arc<RequestIdentity>, Option<f64>)>, gen_seen: u64) {
         let Ok(mut g) = self.inner.lock() else { return };
         if g.generation != gen_seen {
@@ -189,7 +275,11 @@ impl IdentityCache {
                     Some(s) => self.ttl.min(Duration::from_secs_f64(s.max(0.0))),
                     None => self.ttl,
                 };
-                g.insert(h, i, ttl);
+                let deadline = (i.kind == CredentialKind::Agent)
+                    .then_some(expires_in)
+                    .flatten()
+                    .map(|s| Instant::now() + Duration::from_secs_f64(s.max(0.0)));
+                g.insert(h, i, ttl, deadline);
             }
             None => {
                 if g.negative.len() >= MAX_NEGATIVE {
@@ -215,6 +305,7 @@ impl Invalidatable for IdentityCache {
         g.generation += 1;
         g.negative.clear();
         g.frozen.clear();
+        g.expired.clear();
         match ev.scope {
             Scope::All => g.clear(),
             Scope::Org(id) => {
@@ -322,13 +413,68 @@ impl DbCredentialResolver {
         hash: &Hash,
     ) -> Result<Option<(RequestIdentity, Option<f64>)>, ResolveError> {
         let unavailable = |e: aurora_db::DbError| resolve_err(self.health.as_ref(), &e);
-        let Some(row) = repo::find_credential_identity(&self.pool, hash)
+        let Some(row) = repo::find_credential_identity_incl_expired(&self.pool, hash)
             .await
             .map_err(unavailable)?
         else {
             return Ok(None);
         };
+        // (RFE-013) Past `expires_at`: an agent token says so (407 `agent_token_expired`); the
+        // other kinds are simply refused, as before.
+        if row.expires_in_secs.is_some_and(|s| s <= 0.0) {
+            return if row.kind == "agent" {
+                Err(ResolveError::Expired)
+            } else {
+                Ok(None)
+            };
+        }
         self.identity(row).await
+    }
+
+    /// (RFE-013, C-316) Writes the queued `last_used_at` updates in one statement. Best effort:
+    /// skipped while the database is unreachable (the uses are dropped, never retried), a failure
+    /// is logged. Returns the number of rows written.
+    pub async fn flush_last_used(&self) -> u64 {
+        let ids = self.cache.take_touched();
+        if ids.is_empty() {
+            return 0;
+        }
+        if self
+            .health
+            .as_ref()
+            .is_some_and(|h| h.db_unreachable() || h.is_degraded_fast())
+        {
+            return 0;
+        }
+        match repo::touch_last_used(&self.pool, &ids).await {
+            Ok(n) => n,
+            Err(e) => {
+                resolve_err(self.health.as_ref(), &e);
+                tracing::debug!(error = %e, "last_used_at write failed");
+                0
+            }
+        }
+    }
+
+    /// Runs [`Self::flush_last_used`] every `interval` until `shutdown`, with a final flush.
+    pub async fn run_last_used(
+        self: Arc<Self>,
+        interval: Duration,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) {
+        let mut tick = tokio::time::interval(interval);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = tick.tick() => { self.flush_last_used().await; }
+                r = shutdown.changed() => {
+                    if r.is_err() || *shutdown.borrow() {
+                        self.flush_last_used().await;
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     async fn identity(
@@ -427,6 +573,7 @@ impl CredentialResolver for DbCredentialResolver {
                 return Ok(Some((*i).clone()));
             }
             Lookup::Denied => return Ok(None),
+            Lookup::Expired => return Err(ResolveError::Expired),
             Lookup::Frozen(level) => return Err(ResolveError::Frozen { level }),
             Lookup::Miss(_) => {}
         }
@@ -441,6 +588,7 @@ impl CredentialResolver for DbCredentialResolver {
         let gen_seen = match self.cache.lookup(&hash) {
             Lookup::Hit(i) => return Ok(Some((*i).clone())),
             Lookup::Denied => return Ok(None),
+            Lookup::Expired => return Err(ResolveError::Expired),
             Lookup::Frozen(level) => return Err(ResolveError::Frozen { level }),
             Lookup::Miss(g) => g,
         };
@@ -451,6 +599,10 @@ impl CredentialResolver for DbCredentialResolver {
             Err(ResolveError::Frozen { level }) => {
                 self.cache.store_frozen(hash, level, gen_seen);
                 return Err(ResolveError::Frozen { level });
+            }
+            Err(ResolveError::Expired) => {
+                self.cache.store_expired(hash, gen_seen);
+                return Err(ResolveError::Expired);
             }
             other => other?,
         };
@@ -463,7 +615,12 @@ impl CredentialResolver for DbCredentialResolver {
             Some((Arc::new(identity.clone()), expires_in)),
             gen_seen,
         );
+        self.cache.note_loaded(&hash);
         Ok(Some(identity))
+    }
+
+    fn token_deadline(&self, credential: Uuid) -> Option<Instant> {
+        self.cache.deadline_of(credential)
     }
 
     async fn resolve_credential(&self, id: Uuid) -> Result<Option<RequestIdentity>, ResolveError> {

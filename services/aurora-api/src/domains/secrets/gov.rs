@@ -48,6 +48,7 @@ pub fn instance_from_config(
                 path: e.path.clone(),
             })
             .collect(),
+        agent_token_max_age_days: g.agent_token_max_age_days,
     }
 }
 

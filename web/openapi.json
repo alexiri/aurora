@@ -9491,6 +9491,114 @@
         ]
       }
     },
+    "/v1/orgs/{org}/agent-tokens": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Live BYO agent tokens of an organization with expiry and use (org owner/admin).",
+        "operationId": "listOrgAgentTokens",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "stale",
+            "in": "query",
+            "description": "`true` keeps stale tokens, `false` the others.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "expiring_within_days",
+            "in": "query",
+            "description": "Keeps tokens expiring within this many days (1..=3650), expired ones included.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AgentTokenEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/orgs/{org}/api-keys": {
       "get": {
         "tags": [
@@ -15648,6 +15756,114 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/agent-tokens": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Live BYO agent tokens of a workspace with expiry and use (workspace owner).",
+        "operationId": "listWorkspaceAgentTokens",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "stale",
+            "in": "query",
+            "description": "`true` keeps stale tokens, `false` the others.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "expiring_within_days",
+            "in": "query",
+            "description": "Keeps tokens expiring within this many days (1..=3650), expired ones included.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_AgentTokenEntry"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/agents": {
       "get": {
         "tags": [
@@ -18041,7 +18257,104 @@
           "container_config": {
             "$ref": "#/components/schemas/ContainerConfig"
           },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "(phase 3, RFE-013) When the token expires; `null` = never."
+          },
           "token": {
+            "type": "string"
+          }
+        }
+      },
+      "AgentTokenAgent": {
+        "type": "object",
+        "required": [
+          "id",
+          "handle",
+          "name"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "AgentTokenEntry": {
+        "type": "object",
+        "description": "(phase 3, RFE-013, C-313) One live BYO agent token in the stale / expiring lists.",
+        "required": [
+          "agent",
+          "workspace",
+          "display_prefix",
+          "created_at",
+          "stale",
+          "expiring"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/AgentTokenAgent"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "display_prefix": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expiring": {
+            "type": "boolean",
+            "description": "Expires within 14 days, or already has."
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "Unused (or never used, counted from creation) for 30 days."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/AgentTokenWorkspace"
+          }
+        }
+      },
+      "AgentTokenWorkspace": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
             "type": "string"
           }
         }
@@ -19190,6 +19503,17 @@
               "type": "string"
             },
             "description": "The agent's own source list (`null` = inherit)."
+          },
+          "token": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TokenView",
+                "description": "(phase 3, RFE-013, C-314) The agent's live token: prefix, creation, expiry and use;\n`null` when the agent has none (or the response does not load it)."
+              }
+            ]
           }
         }
       },
@@ -20803,6 +21127,14 @@
               }
             ]
           },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "(phase 3, RFE-013) When the token expires; `null` = never (no maximum age applies) and\nalways `null` for hosted agents."
+          },
           "token": {
             "type": [
               "string",
@@ -21040,6 +21372,19 @@
           }
         }
       },
+      "EffectiveAgentTokens": {
+        "type": "object",
+        "description": "(phase 3, RFE-013) Effective BYO agent-token maximum age.",
+        "required": [
+          "max_age_days"
+        ],
+        "properties": {
+          "max_age_days": {
+            "$ref": "#/components/schemas/Sourced_Option_u32",
+            "description": "Days: the smaller of the instance and org values; `null` = no limit."
+          }
+        }
+      },
       "EffectiveByo": {
         "type": "object",
         "description": "(phase 2, RFE-025) Effective org-level BYO controls (instance ∩ org); the workspace layer is\napplied per workspace/agent.",
@@ -21190,9 +21535,13 @@
           "llm",
           "egress",
           "byo",
+          "agent_tokens",
           "non_compliant_secrets"
         ],
         "properties": {
+          "agent_tokens": {
+            "$ref": "#/components/schemas/EffectiveAgentTokens"
+          },
           "byo": {
             "$ref": "#/components/schemas/EffectiveByo"
           },
@@ -21897,6 +22246,20 @@
         ],
         "description": "Injection recipe (`08 §5`)."
       },
+      "InstanceAgentTokens": {
+        "type": "object",
+        "description": "(phase 3, RFE-013) The instance level of the agent-token maximum age.",
+        "properties": {
+          "max_age_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "InstanceByo": {
         "type": "object",
         "description": "(phase 2, RFE-025) The instance level of BYO governance (`[byo]`).",
@@ -21989,9 +22352,13 @@
         "required": [
           "llm",
           "egress",
-          "byo"
+          "byo",
+          "agent_tokens"
         ],
         "properties": {
+          "agent_tokens": {
+            "$ref": "#/components/schemas/InstanceAgentTokens"
+          },
           "byo": {
             "$ref": "#/components/schemas/InstanceByo"
           },
@@ -23128,6 +23495,22 @@
           }
         }
       },
+      "OrgAgentTokens": {
+        "type": "object",
+        "description": "`organizations.governance.agent_tokens` (no column: `governance` is `jsonb`).",
+        "properties": {
+          "max_age_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Days, 1..=3650, never above the instance value; absent = no org limit.",
+            "default": null,
+            "minimum": 0
+          }
+        }
+      },
       "OrgAllowEntry": {
         "type": "object",
         "description": "An egress allow-list entry in policy host/path pattern syntax.",
@@ -23246,6 +23629,15 @@
         "type": "object",
         "description": "Normalized organization governance document (`organizations.governance`).",
         "properties": {
+          "agent_tokens": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OrgAgentTokens",
+                "description": "(RFE-013) BYO agent-token maximum age; omitted from the stored document when empty."
+              }
+            ],
+            "default": {}
+          },
           "byo": {
             "oneOf": [
               {
@@ -23891,6 +24283,72 @@
                 "workspace_id": {
                   "type": "string",
                   "format": "uuid"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_AgentTokenEntry": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "(phase 3, RFE-013, C-313) One live BYO agent token in the stale / expiring lists.",
+              "required": [
+                "agent",
+                "workspace",
+                "display_prefix",
+                "created_at",
+                "stale",
+                "expiring"
+              ],
+              "properties": {
+                "agent": {
+                  "$ref": "#/components/schemas/AgentTokenAgent"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "display_prefix": {
+                  "type": "string"
+                },
+                "expires_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "expiring": {
+                  "type": "boolean",
+                  "description": "Expires within 14 days, or already has."
+                },
+                "last_used_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "stale": {
+                  "type": "boolean",
+                  "description": "Unused (or never used, counted from creation) for 30 days."
+                },
+                "workspace": {
+                  "$ref": "#/components/schemas/AgentTokenWorkspace"
                 }
               }
             }
@@ -29621,6 +30079,31 @@
           }
         }
       },
+      "Sourced_Option_u32": {
+        "type": "object",
+        "required": [
+          "value",
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "`instance` | `org`."
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            ]
+          }
+        }
+      },
       "Sourced_String": {
         "type": "object",
         "required": [
@@ -30110,6 +30593,47 @@
           },
           "workspace": {
             "$ref": "#/components/schemas/CliWorkspace"
+          }
+        }
+      },
+      "TokenView": {
+        "type": "object",
+        "description": "`Agent.byo.token` (C-314); no token material beyond the display prefix.",
+        "required": [
+          "display_prefix",
+          "created_at",
+          "stale",
+          "expiring"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "display_prefix": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expiring": {
+            "type": "boolean",
+            "description": "Expires within 14 days, or already has."
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "Unused (or never used, counted from creation) for 30 days."
           }
         }
       },

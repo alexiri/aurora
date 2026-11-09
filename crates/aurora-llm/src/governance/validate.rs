@@ -3,7 +3,7 @@ use super::byo::{ByoPosture, OrgByo};
 use super::instance::{Instance, InstanceEndpoint};
 use super::model::{
     AllowEntry, BELOW_MIN, EgressPosture, GovernanceError, INVALID, LlmPosture, OpenLanePosture,
-    OrgEgress, OrgEndpoint, OrgGovernance, OrgLlm, OrgOrigin,
+    OrgAgentTokens, OrgEgress, OrgEndpoint, OrgGovernance, OrgLlm, OrgOrigin,
 };
 use crate::OriginMethod;
 use aurora_core::cidr::Cidr;
@@ -18,6 +18,14 @@ struct RawDoc {
     llm: Option<RawLlm>,
     egress: Option<RawEgress>,
     byo: Option<RawByo>,
+    agent_tokens: Option<RawAgentTokens>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAgentTokens {
+    /// Kept as a JSON value so a non-integer is a field error, not a parse failure.
+    max_age_days: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -80,6 +88,48 @@ pub fn default_for_new_org(inst: &Instance) -> OrgGovernance {
             open_lane: inst.open_lane_minimum,
         },
         byo: OrgByo::default(),
+        agent_tokens: OrgAgentTokens::default(),
+    }
+}
+
+/// `agent_tokens.max_age_days`: an integer in `AGENT_TOKEN_MAX_AGE_MIN..=_MAX`, never above the
+/// instance value when that is set.
+fn agent_tokens(
+    a: RawAgentTokens,
+    inst: &Instance,
+    errs: &mut Vec<GovernanceError>,
+) -> OrgAgentTokens {
+    const PATH: &str = "agent_tokens.max_age_days";
+    let (min, max) = (
+        aurora_core::limits::AGENT_TOKEN_MAX_AGE_MIN,
+        aurora_core::limits::AGENT_TOKEN_MAX_AGE_MAX,
+    );
+    let Some(v) = a.max_age_days.filter(|v| !v.is_null()) else {
+        return OrgAgentTokens::default();
+    };
+    match v.as_i64() {
+        Some(d) if (min..=max).contains(&d) => {
+            let d = u32::try_from(d).unwrap_or(u32::MAX);
+            if inst.agent_token_max_age_days.is_some_and(|i| d > i) {
+                errs.push(GovernanceError::new(
+                    BELOW_MIN,
+                    PATH,
+                    "longer than the instance maximum age",
+                ));
+                return OrgAgentTokens::default();
+            }
+            OrgAgentTokens {
+                max_age_days: Some(d),
+            }
+        }
+        _ => {
+            errs.push(GovernanceError::new(
+                INVALID,
+                PATH,
+                format!("must be an integer from {min} to {max}"),
+            ));
+            OrgAgentTokens::default()
+        }
     }
 }
 
@@ -100,6 +150,10 @@ pub fn from_stored(
     }
     // A malformed `byo` never errors the whole document: it fails closed (08 §11.9).
     doc.byo = OrgByo::from_stored(raw.get("byo"));
+    // An unparsable `agent_tokens` is ignored (no org limit); the instance value still applies.
+    if let Some(a) = raw.get("agent_tokens") {
+        doc.agent_tokens = serde_json::from_value(a.clone()).unwrap_or_default();
+    }
     Ok(doc)
 }
 
@@ -224,6 +278,9 @@ pub fn validate(
 
     if let Some(b) = raw.byo {
         out.byo = byo(b, inst, &mut errs);
+    }
+    if let Some(a) = raw.agent_tokens {
+        out.agent_tokens = agent_tokens(a, inst, &mut errs);
     }
 
     if errs.is_empty() { Ok(out) } else { Err(errs) }

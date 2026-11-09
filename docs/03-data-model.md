@@ -581,9 +581,10 @@ All tokens the gateway accepts.
 | context_label | text null | kind=context (BYO), ≤128, sanitized |
 | speaker_user_id | uuid null | (phase 2, RFE-005) kind=`context` hosted only: the person who authored the turn (`turns.speaker_user_id` when `speaker_kind = person`); null for every other credential. No FK (the resolver also requires the speaker to still hold `can_use`). Policy `user` identities match only this (`07`) |
 | capabilities | text[] not null default `{}` | (phase 1, RFE-003) credential capabilities; phase 1 value `browser` (open-lane use), settable on `boot` credentials only (`08 §7`) |
-| expires_at | timestamptz null | agent: null; boot: null until stop; context: turn end + grace |
+| expires_at | timestamptz null | agent: null unless an effective maximum age is configured, then `created + max age` (phase 3, RFE-013, `08 §7`); boot: null until stop; context: turn end + grace (BYO: capped by the agent token's) |
+| last_used_at | timestamptz null | (phase 3, RFE-013) churn column: set by the gateway on successful authentication and by the API on agent-token routes, ≤1 write/min/credential; drives the stale-token views. Gateway role has `UPDATE (last_used_at)` |
 | revoked_at | timestamptz null | |
-| index | (agent_id, kind) | |
+| index | (agent_id, kind); partial (created_at desc, id desc) WHERE kind = 'agent' AND revoked_at IS NULL (phase 3) | |
 
 Invariant: at most one non-revoked `agent` credential per agent.
 
@@ -1149,7 +1150,8 @@ view `gateway_users`), `api_keys`), `agents`, `gateway_credentials`, `secrets`,
 `INSERT, UPDATE` on `approvals`, `gateway_instances`; `INSERT` on
 `request_log`; `UPDATE (credentials_ref, credentials_version,
 credentials_expires_at, status, status_reason, reauth_required_at,
-last_used_at)` on `app_connections`; `UPDATE (last_used_at, origin)` on `secrets`;
+last_used_at)` on `app_connections`; `UPDATE (last_used_at, origin)` on `secrets`; `UPDATE (last_used_at)` on
+`gateway_credentials`;
 `EXECUTE` on `pg_advisory_lock` family; `LISTEN` is implicit.
 
 ---
@@ -1163,12 +1165,6 @@ phase-0 schema: the tables above are machine-checked against the migrations
 headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
-
-#### `gateway_credentials` (token age and use)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| expires_at | (existing column) | kind=`agent`: null unless an effective maximum age is configured, then `created + max age` (`08 §7`); BYO `context` credentials are capped by it | 3 (RFE-013) |
-| last_used_at | timestamptz null | churn column: set by the gateway on successful authentication and by the API on agent-token routes, ≤1 write/min/credential; drives the stale-token views. Gateway role gains `UPDATE (last_used_at)` on `gateway_credentials` | 3 (RFE-013) |
 
 #### `organizations` (jsonb key in `governance`, agent token age)
 | Planned column | Type | Notes | Phase |

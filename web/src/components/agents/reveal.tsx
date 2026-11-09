@@ -1,12 +1,15 @@
 "use client";
 
 import { OneTimeKeyDialog } from "@/components/account/one-time-key-dialog";
+import { expiryText } from "@/lib/api/agent-tokens";
 import type { ContainerConfig } from "@/lib/api/agents";
 
 export interface Revealed {
   token: string;
   config: ContainerConfig | null;
   agentName: string;
+  /** (RFE-013) When the token expires; `null` / absent = never. */
+  expiresAt?: string | null;
 }
 
 /** One-time token + container config reveal. State lives in the parent only. */
@@ -24,6 +27,13 @@ export function AgentRevealDialog({
       title="Copy the agent token"
       description={`Agent "${revealed?.agentName ?? ""}" token. You won't see it again, so store it somewhere safe now.`}
     >
+      {revealed ? (
+        <p data-testid="revealed-expiry" className="text-sm text-ink-2">
+          {revealed.expiresAt
+            ? `This token expires on ${new Date(revealed.expiresAt).toLocaleDateString()} (${expiryText(revealed.expiresAt).toLowerCase()}). Regenerate it before then.`
+            : "This token does not expire."}
+        </p>
+      ) : null}
       {revealed?.config ? (
         <div className="space-y-2">
           <p className="text-sm font-medium text-ink">Container config</p>

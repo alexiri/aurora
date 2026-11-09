@@ -34,6 +34,7 @@ use uuid::Uuid;
 const TOKEN_A: &str = "aug_agent_a";
 const TOKEN_B: &str = "aug_agent_b";
 const TOKEN_FROZEN: &str = "aug_frozen";
+const TOKEN_EXPIRED: &str = "aug_expired";
 
 #[derive(Clone, Copy)]
 struct World {
@@ -53,6 +54,7 @@ impl CredentialResolver for Static {
             TOKEN_A => w.agent_a,
             TOKEN_B => w.agent_b,
             TOKEN_FROZEN => return Err(ResolveError::Frozen { level: "agent" }),
+            TOKEN_EXPIRED => return Err(ResolveError::Expired),
             _ => return Ok(None),
         };
         Ok(Some(RequestIdentity {
@@ -642,6 +644,14 @@ async fn login_refusals() {
     // wrong credential
     let e = Pg::login(&env, &id, "aug_nope").await.err().unwrap();
     assert_eq!(e.0, "28P01");
+    // (RFE-013, C-312) an expired agent token is refused like a revoked one: the same FATAL
+    // `28P01` and the same words, so the lane discloses nothing new.
+    let ex = Pg::login(&env, &id, TOKEN_EXPIRED).await.err().unwrap();
+    assert_eq!(
+        (ex.0.clone(), ex.1.clone()),
+        (e.0.clone(), e.1.clone()),
+        "{ex:?}"
+    );
     // user is not a connection id
     let e = Pg::login(&env, "postgres", TOKEN_A).await.err().unwrap();
     assert_eq!(e.0, "28000");

@@ -72,10 +72,16 @@ export function useContainerConfig(agentId: string, enabled: boolean) {
 
 /** The response carries the token; the caller keeps it in component state only. */
 export function useRegenerateToken(agentId: string) {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
       unwrap(api.POST("/v1/agents/{agent}/token", { params: { path: { agent: agentId } } })),
     gcTime: 0,
+    // (RFE-013) The new token's expiry and use appear on the Connect tab and in agent lists.
+    onSuccess: () =>
+      qc.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === "workspaces" && q.queryKey[2] === "agents",
+      }),
   });
 }
 

@@ -338,6 +338,7 @@
       "expires_at",
       "id",
       "kind",
+      "last_used_at",
       "revoked_at",
       "speaker_user_id",
       "token_hash",

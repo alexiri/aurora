@@ -13,6 +13,17 @@ pub fn proxy_auth_required() -> ApiError {
     )
 }
 
+/// (phase 3, RFE-013, C-312) 407 for an expired BYO agent token: the same envelope as
+/// `proxy_auth_required` with `details.reason = "agent_token_expired"`.
+pub fn agent_token_expired() -> ApiError {
+    ApiError::new(
+        StatusCode::PROXY_AUTHENTICATION_REQUIRED,
+        "proxy_auth_required",
+        "This agent token has expired. Regenerate it in the Aurora dashboard (agent > Connect) and configure the new token.",
+    )
+    .with_details(json!({ "reason": "agent_token_expired" }))
+}
+
 /// (phase 2, RFE-006) 403 `frozen`: the credential is fine, the agent (or its workspace or
 /// organization) is paused by an administrator. Not 407: the client must not re-authenticate.
 pub fn frozen(level: &str) -> ApiError {

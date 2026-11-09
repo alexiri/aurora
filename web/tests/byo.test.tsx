@@ -54,6 +54,7 @@ const eff = (byo?: Partial<EffectiveGovernance["byo"]>): EffectiveGovernance => 
     require_context_credentials: { value: false, source: "instance" },
     ...byo,
   },
+  agent_tokens: { max_age_days: { value: null, source: "instance" } },
   non_compliant_secrets: [],
 });
 const instance = (over: Record<string, unknown> = {}) => ({

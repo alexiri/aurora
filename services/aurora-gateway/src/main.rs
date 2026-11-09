@@ -262,6 +262,12 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         rx.clone(),
     ));
     let probe_task = tokio::spawn(health.clone().run_probe(pool.clone(), rx.clone()));
+    // (RFE-013, C-316) Token use is written in batches off the request path.
+    let last_used_task = tokio::spawn(
+        resolver
+            .clone()
+            .run_last_used(Duration::from_secs(10), rx.clone()),
+    );
     let reconcile_task = tokio::spawn(
         holds
             .clone()
@@ -400,6 +406,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let _ = reqlog_task.await;
     let _ = tls_task.await;
     let _ = probe_task.await;
+    let _ = last_used_task.await;
     let _ = reconcile_task.await;
     Ok(())
 }

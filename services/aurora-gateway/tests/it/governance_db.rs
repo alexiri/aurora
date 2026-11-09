@@ -51,6 +51,7 @@ fn gov_config(known_hosts: Vec<String>) -> aurora_config::Governance {
         baseline_allowlist: vec![],
         open_lane_minimum: aurora_config::OpenLanePosture::Enabled,
         byo: Default::default(),
+        agent_token_max_age_days: None,
     }
 }
 

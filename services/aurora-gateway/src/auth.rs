@@ -76,6 +76,11 @@ pub enum ResolveError {
     /// workspace or org flag; `level` = where the broadest one is set). Answered 403 `frozen`.
     #[error("agent is frozen at the {level} level")]
     Frozen { level: &'static str },
+    /// (phase 3, RFE-013) A BYO agent token (`aug_`) past its `expires_at`. Answered 407
+    /// `proxy_auth_required` with `details.reason = "agent_token_expired"`, FATAL `28P01` on the
+    /// database lane. Other expired kinds stay `Ok(None)`.
+    #[error("agent token expired")]
+    Expired,
 }
 
 #[async_trait::async_trait]
@@ -88,6 +93,12 @@ pub trait CredentialResolver: Send + Sync + 'static {
     /// `None`, i.e. a live tunnel is closed.
     async fn resolve_credential(&self, _id: Uuid) -> Result<Option<RequestIdentity>, ResolveError> {
         Ok(None)
+    }
+
+    /// (phase 3, RFE-013) When the agent token behind a just-resolved credential expires, for
+    /// tunnels to close at that moment. `None` = no expiry (or not an agent token).
+    fn token_deadline(&self, _credential: Uuid) -> Option<std::time::Instant> {
+        None
     }
 }
 

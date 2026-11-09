@@ -166,8 +166,16 @@ pub async fn effective(state: &AppState, org: Uuid) -> Result<EffectiveGovernanc
         .ok_or_else(not_found)?;
     let org_byo = g::OrgByo::from_stored(org_doc.get("byo"));
     let byo = effective_byo_view(&state.gov_instance, &org_byo);
+    let org_tokens = g::from_stored(&org_doc, &state.gov_instance)
+        .map(|d| d.agent_tokens.max_age_days)
+        .unwrap_or_default();
+    let (days, days_src) =
+        g::effective_agent_token_max_age(state.gov_instance.agent_token_max_age_days, org_tokens);
     Ok(EffectiveGovernance {
         byo,
+        agent_tokens: EffectiveAgentTokens {
+            max_age_days: sourced(days, days_src),
+        },
         llm: EffectiveLlm {
             posture: sourced(llm_posture(eff.llm_posture), eff.llm_posture_source),
             endpoints,
@@ -251,7 +259,7 @@ pub async fn put(
     let stored = serde_json::to_value(&doc).map_err(|_| ApiError::internal("Internal error."))?;
 
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
-    let (_, rev) = repo::lock(&mut tx, org).await?.ok_or_else(not_found)?;
+    let (current_doc, rev) = repo::lock(&mut tx, org).await?.ok_or_else(not_found)?;
     if rev != req.revision {
         return Err(stale());
     }
@@ -290,6 +298,23 @@ pub async fn put(
     if !agents_cleared.is_empty() {
         repo::clear_agent_models(&mut tx, &agents_cleared).await?;
     }
+    // (RFE-013, C-315) Introducing or tightening the org's maximum age shortens its live agent
+    // tokens (7-day minimum remaining life); loosening or removing never extends one.
+    let old_days = g::from_stored(&current_doc, &state.gov_instance)
+        .ok()
+        .and_then(|d| d.agent_tokens.max_age_days);
+    let agent_tokens_retrofitted = match doc.agent_tokens.max_age_days {
+        Some(new) if old_days.is_none_or(|old| new < old) => {
+            credentials::retrofit_org(
+                &mut *tx,
+                org,
+                new,
+                aurora_core::limits::AGENT_TOKEN_RETROFIT_GRACE_DAYS as i32,
+            )
+            .await?
+        }
+        _ => 0,
+    };
     credentials::notify_gateway_invalidate(&mut *tx, "org", org).await?;
     // RFE-008: `governance.update` commits with its audit row.
     let ev =
@@ -300,6 +325,7 @@ pub async fn put(
                 "revision": revision,
                 "secrets_marked_mismatch": secrets_marked,
                 "agent_overrides_cleared": agents_cleared,
+                "agent_tokens_retrofitted": agent_tokens_retrofitted,
             }));
     crate::audit::commit_critical(tx, &ev).await?;
     Ok(Applied {
@@ -349,5 +375,45 @@ pub fn instance(state: &AppState) -> InstanceGovernance {
                 .collect(),
             require_context_credentials: i.byo.require_context_credentials,
         },
+        agent_tokens: InstanceAgentTokens {
+            max_age_days: i.agent_token_max_age_days,
+        },
     }
+}
+
+/// (RFE-013, C-315) Applies the instance maximum age to the live agent tokens at API start:
+/// `expires_at = least(expires_at, greatest(created_at + max, now() + grace))`, with each org's
+/// own smaller value honoured. One system `governance.update` audit row, only when something
+/// changed; the affected gateway identity caches are invalidated.
+pub async fn retrofit_instance(state: &AppState) -> Result<u64, ApiError> {
+    let Some(days) = state.gov_instance.agent_token_max_age_days else {
+        return Ok(0);
+    };
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let changed = credentials::retrofit_instance(
+        &mut *tx,
+        days,
+        aurora_core::limits::AGENT_TOKEN_RETROFIT_GRACE_DAYS as i32,
+    )
+    .await?;
+    if changed.is_empty() {
+        return Ok(0);
+    }
+    let mut orgs = changed.clone();
+    orgs.sort();
+    orgs.dedup();
+    for o in orgs {
+        credentials::notify_gateway_invalidate(&mut *tx, "org", o).await?;
+    }
+    let ev = crate::audit::AuditEvent::new(
+        crate::audit::AuditActor::system("agent-token-max-age"),
+        "governance.update",
+        crate::audit::Outcome::Success,
+    )
+    .metadata(json!({
+        "agent_tokens_retrofitted": changed.len(),
+        "max_age_days": days,
+    }));
+    crate::audit::commit_critical(tx, &ev).await?;
+    Ok(changed.len() as u64)
 }

@@ -2034,6 +2034,23 @@ export interface paths {
         patch: operations["patchOrg"];
         trace?: never;
     };
+    "/v1/orgs/{org}/agent-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Live BYO agent tokens of an organization with expiry and use (org owner/admin). */
+        get: operations["listOrgAgentTokens"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/api-keys": {
         parameters: {
             query?: never;
@@ -3083,6 +3100,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/agent-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Live BYO agent tokens of a workspace with expiry and use (workspace owner). */
+        get: operations["listWorkspaceAgentTokens"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/agents": {
         parameters: {
             query?: never;
@@ -3583,7 +3617,40 @@ export interface components {
         };
         AgentToken: {
             container_config: components["schemas"]["ContainerConfig"];
+            /**
+             * Format: date-time
+             * @description (phase 3, RFE-013) When the token expires; `null` = never.
+             */
+            expires_at?: string | null;
             token: string;
+        };
+        AgentTokenAgent: {
+            handle: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        /** @description (phase 3, RFE-013, C-313) One live BYO agent token in the stale / expiring lists. */
+        AgentTokenEntry: {
+            agent: components["schemas"]["AgentTokenAgent"];
+            /** Format: date-time */
+            created_at: string;
+            display_prefix: string;
+            /** Format: date-time */
+            expires_at?: string | null;
+            /** @description Expires within 14 days, or already has. */
+            expiring: boolean;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            /** @description Unused (or never used, counted from creation) for 30 days. */
+            stale: boolean;
+            workspace: components["schemas"]["AgentTokenWorkspace"];
+        };
+        AgentTokenWorkspace: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            slug: string;
         };
         /** @description One allow-list row; a null workspace allows the app for the whole organization. */
         AllowEntry: {
@@ -3919,6 +3986,7 @@ export interface components {
             require_context: boolean;
             /** @description The agent's own source list (`null` = inherit). */
             source_cidrs?: string[] | null;
+            token?: null | components["schemas"]["TokenView"];
         };
         ChannelIntegration: {
             /**
@@ -4373,6 +4441,12 @@ export interface components {
         CreatedAgent: {
             agent: components["schemas"]["Agent"];
             container_config?: null | components["schemas"]["ContainerConfig"];
+            /**
+             * Format: date-time
+             * @description (phase 3, RFE-013) When the token expires; `null` = never (no maximum age applies) and
+             *     always `null` for hosted agents.
+             */
+            expires_at?: string | null;
             /** @description BYO only; shown once. */
             token?: string | null;
         };
@@ -4440,6 +4514,11 @@ export interface components {
             /** @description Per tool of every granted connection. */
             tools: components["schemas"]["EffectiveTool"][];
         };
+        /** @description (phase 3, RFE-013) Effective BYO agent-token maximum age. */
+        EffectiveAgentTokens: {
+            /** @description Days: the smaller of the instance and org values; `null` = no limit. */
+            max_age_days: components["schemas"]["Sourced_Option_u32"];
+        };
         /**
          * @description (phase 2, RFE-025) Effective org-level BYO controls (instance ∩ org); the workspace layer is
          *     applied per workspace/agent.
@@ -4491,6 +4570,7 @@ export interface components {
             provider: string;
         };
         EffectiveGovernance: {
+            agent_tokens: components["schemas"]["EffectiveAgentTokens"];
             byo: components["schemas"]["EffectiveByo"];
             egress: components["schemas"]["EffectiveEgress"];
             llm: components["schemas"]["EffectiveLlm"];
@@ -4697,6 +4777,11 @@ export interface components {
             pattern: string;
             replacement: string;
         };
+        /** @description (phase 3, RFE-013) The instance level of the agent-token maximum age. */
+        InstanceAgentTokens: {
+            /** Format: int32 */
+            max_age_days?: number | null;
+        };
         /** @description (phase 2, RFE-025) The instance level of BYO governance (`[byo]`). */
         InstanceByo: {
             default_source_cidrs: string[];
@@ -4719,6 +4804,7 @@ export interface components {
             provider: string;
         };
         InstanceGovernance: {
+            agent_tokens: components["schemas"]["InstanceAgentTokens"];
             byo: components["schemas"]["InstanceByo"];
             egress: components["schemas"]["InstanceEgress"];
             llm: components["schemas"]["InstanceLlm"];
@@ -5047,6 +5133,15 @@ export interface components {
             settings: components["schemas"]["OrgSettings"];
             slug: string;
         };
+        /** @description `organizations.governance.agent_tokens` (no column: `governance` is `jsonb`). */
+        OrgAgentTokens: {
+            /**
+             * Format: int32
+             * @description Days, 1..=3650, never above the instance value; absent = no org limit.
+             * @default null
+             */
+            max_age_days: number | null;
+        };
         /** @description An egress allow-list entry in policy host/path pattern syntax. */
         OrgAllowEntry: {
             host: string;
@@ -5096,6 +5191,8 @@ export interface components {
         };
         /** @description Normalized organization governance document (`organizations.governance`). */
         OrgGovernance: {
+            /** @default {} */
+            agent_tokens: components["schemas"]["OrgAgentTokens"];
             /** @default {} */
             byo: components["schemas"]["OrgByo"];
             /**
@@ -5303,6 +5400,24 @@ export interface components {
                 updated_at: string;
                 /** Format: uuid */
                 workspace_id: string;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_AgentTokenEntry: {
+            items: {
+                agent: components["schemas"]["AgentTokenAgent"];
+                /** Format: date-time */
+                created_at: string;
+                display_prefix: string;
+                /** Format: date-time */
+                expires_at?: string | null;
+                /** @description Expires within 14 days, or already has. */
+                expiring: boolean;
+                /** Format: date-time */
+                last_used_at?: string | null;
+                /** @description Unused (or never used, counted from creation) for 30 days. */
+                stale: boolean;
+                workspace: components["schemas"]["AgentTokenWorkspace"];
             }[];
             next_cursor?: string | null;
         };
@@ -6956,6 +7071,11 @@ export interface components {
             source: string;
             value: null | string[];
         };
+        Sourced_Option_u32: {
+            /** @description `instance` | `org`. */
+            source: string;
+            value: null | number;
+        };
         Sourced_String: {
             /** @description `instance` | `org`. */
             source: string;
@@ -7081,6 +7201,20 @@ export interface components {
             /** @description Workspace API key (`auk_`); returned exactly once. */
             api_key: string;
             workspace: components["schemas"]["CliWorkspace"];
+        };
+        /** @description `Agent.byo.token` (C-314); no token material beyond the display prefix. */
+        TokenView: {
+            /** Format: date-time */
+            created_at: string;
+            display_prefix: string;
+            /** Format: date-time */
+            expires_at?: string | null;
+            /** @description Expires within 14 days, or already has. */
+            expiring: boolean;
+            /** Format: date-time */
+            last_used_at?: string | null;
+            /** @description Unused (or never used, counted from creation) for 30 days. */
+            stale: boolean;
         };
         Tool: {
             description?: string | null;
@@ -13520,6 +13654,63 @@ export interface operations {
             };
         };
     };
+    listOrgAgentTokens: {
+        parameters: {
+            query?: {
+                /** @description `true` keeps stale tokens, `false` the others. */
+                stale?: boolean;
+                /** @description Keeps tokens expiring within this many days (1..=3650), expired ones included. */
+                expiring_within_days?: number;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agent tokens */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AgentTokenEntry"];
+                };
+            };
+            /** @description Invalid query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listOrgApiKeys: {
         parameters: {
             query?: {
@@ -17294,6 +17485,63 @@ export interface operations {
                     "application/json": components["schemas"]["Page_RequestLogEntry"];
                 };
             };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWorkspaceAgentTokens: {
+        parameters: {
+            query?: {
+                /** @description `true` keeps stale tokens, `false` the others. */
+                stale?: boolean;
+                /** @description Keeps tokens expiring within this many days (1..=3650), expired ones included. */
+                expiring_within_days?: number;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agent tokens */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_AgentTokenEntry"];
+                };
+            };
+            /** @description Invalid query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
             404: {
                 headers: {
                     [name: string]: unknown;

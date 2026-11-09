@@ -992,6 +992,33 @@ fn proxy_tls_cert_and_key_come_together() {
 }
 
 #[test]
+fn agent_token_max_age_is_optional_bounded_and_named_in_the_error() {
+    let toml = |v: &str| format!("{BASE}[governance.agent_tokens]\nmax_age_days = {v}\n");
+    // Default: no limit.
+    let api = load_with(BASE, &[]).unwrap().api_config().unwrap();
+    assert_eq!(api.governance.agent_token_max_age_days, None);
+    for (v, want) in [("1", 1), ("90", 90), ("3650", 3650)] {
+        let api = load_with(&toml(v), &[]).unwrap().api_config().unwrap();
+        assert_eq!(api.governance.agent_token_max_age_days, Some(want));
+    }
+    for bad in ["0", "-1", "3651"] {
+        let e = load_with(&toml(bad), &[])
+            .unwrap()
+            .api_config()
+            .unwrap_err();
+        assert!(e.has_key("governance.agent_tokens.max_age_days"), "{bad}");
+    }
+    // Not an integer: the load itself refuses, naming the key.
+    let e = load_with(&toml("\"ten\""), &[])
+        .err()
+        .map(|e| e.to_string());
+    assert!(
+        e.is_some_and(|m| m.contains("max_age_days")),
+        "a non-integer is refused at load"
+    );
+}
+
+#[test]
 fn open_lane_minimum_is_validated_and_defaults_to_enabled() {
     let toml = |v: &str| format!("{BASE}[governance.egress]\nopen_lane_minimum = \"{v}\"\n");
     let api = load_with(&toml("allowlist_only"), &[])

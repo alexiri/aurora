@@ -997,6 +997,75 @@ async fn start_down() -> Gw {
 
 // ---- (a) serving during an outage ------------------------------------------------------------------
 
+/// (RFE-013 x RFE-014) Expiry refusals respect the outage rules: with the database reachable an
+/// expired agent token is 407 `agent_token_expired`; during an outage a credential the gateway
+/// does not hold in cache is 503 `gateway_degraded`, never a 407 (it cannot tell an expired token
+/// from an unreadable store), and `last_used_at` is not written.
+#[tokio::test]
+async fn an_expired_agent_token_not_in_cache_is_503_during_an_outage_never_407_and_use_is_not_written()
+ {
+    let _s = SERIAL.read().await;
+    let g = start(Opts::default()).await;
+    let p = g.db.pool();
+    let mut tokens = vec![];
+    for n in ["x", "y"] {
+        let agent = Uuid::now_v7();
+        sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind) VALUES ($1,$2,$3,$4,$4,'byo')")
+            .bind(agent)
+            .bind(g.w.org)
+            .bind(g.w.ws)
+            .bind(n)
+            .execute(p)
+            .await
+            .unwrap();
+        let token = format!("aug_expired_{n}");
+        sqlx::query(
+            "INSERT INTO gateway_credentials (id, kind, token_hash, display_prefix, agent_id, expires_at) \
+             VALUES ($1,'agent',$2,'x',$3, now() - interval '1 minute')",
+        )
+        .bind(Uuid::now_v7())
+        .bind(aurora_core::token::hash(&token).to_vec())
+        .bind(agent)
+        .execute(p)
+        .await
+        .unwrap();
+        tokens.push(token);
+    }
+    // Healthy: 407 with the expiry reason.
+    let r = get_as(&g, &tokens[0], None, "/plain").await;
+    assert_eq!(r.status, 407, "{}", r.body);
+    assert!(r.body.contains("agent_token_expired"), "{}", r.body);
+
+    // A good credential's use is queued, then the outage drops it unwritten.
+    assert_eq!(get(&g, "/plain").await.status, 200);
+    outage(&g).await;
+    for t in &tokens {
+        // Even the one answered before: its negative answer is short-lived and the database is
+        // unreachable now.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let r = get_as(&g, t, None, "/plain").await;
+        assert_eq!(r.status, 503, "{t}: {}", r.body);
+        assert!(r.body.contains("gateway_degraded"), "{}", r.body);
+        assert!(!r.body.contains("agent_token_expired"), "{}", r.body);
+    }
+    assert_eq!(
+        g.resolver.flush_last_used().await,
+        0,
+        "skipped while degraded"
+    );
+    recover(&g).await;
+    let used: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT last_used_at FROM gateway_credentials WHERE token_hash = $1")
+            .bind(aurora_core::token::hash(TOKEN).to_vec())
+            .fetch_one(p)
+            .await
+            .unwrap();
+    assert!(used.is_none(), "no write during the outage");
+    // Recovered: the batch writer works again.
+    assert_eq!(get(&g, "/plain").await.status, 200);
+    g.resolver.flush_last_used().await;
+}
+
 #[tokio::test]
 async fn cached_state_is_served_until_its_ttl_then_refused_and_unknown_credentials_are_503_never_407()
  {
@@ -1747,6 +1816,14 @@ fn metric(text: &str, name: &str, labels: &str) -> Option<f64> {
 async fn metrics_and_the_state_change_log_line() {
     // Exclusive: the state gauge is process-wide.
     let _s = SERIAL.write().await;
+    // Register the `gateway.state_change` callsite before the capturing subscriber exists. A
+    // callsite first reached by *another* thread (a test outside this lock that trips a state
+    // change) while the capturing subscriber is the only dispatcher is registered from that
+    // thread's own (absent) subscriber and stays disabled for ours; `set_default` below rebuilds
+    // the interest of every callsite that is already registered.
+    let warm = Health::new(|| true);
+    warm.report_db_error();
+    assert_eq!(warm.state(), State::Degraded);
     // This is the only test of the binary that installs the process-wide recorder.
     let handle = aurora_core::service::install_metrics("gateway-outage-test")
         .expect("the test process owns the metrics recorder");
