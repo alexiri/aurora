@@ -570,6 +570,11 @@ const ROWS: &[Row] = &[
     r("PATCH", "/v1/connections/{id}", G::WsOwn, false),
     r("DELETE", "/v1/connections/{id}", G::WsOwn, false),
     r("GET", "/v1/connections/{id}/grants", G::WsOwn, false),
+    // (FIX-020) credential-side bulk grants: the credential is addressed by its own id (the
+    // per-agent `can_own` is proven in grants_bulk.rs); org scope is covered by the org block.
+    r("POST", "/v1/connections/{id}/grants", G::WsOwn, false),
+    r("GET", "/v1/secrets/{id}/grants", G::WsOwn, false),
+    r("POST", "/v1/secrets/{id}/grants", G::WsOwn, false),
     r("GET", "/v1/secrets/{id}", G::WsOwn, false),
     r("PATCH", "/v1/secrets/{id}", G::WsOwn, false),
     r("DELETE", "/v1/secrets/{id}", G::WsOwn, false),
@@ -945,6 +950,10 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         }
         ("POST", "/v1/agents/{agent}/conversations") => json!({"external_ref": "matrix"}),
         ("PUT", "/v1/agents/{agent}/grants/connections/{conn}") => json!({"mode": "full"}),
+        ("POST", "/v1/secrets/{id}/grants") => json!({"agent_ids": [Uuid::now_v7()]}),
+        ("POST", "/v1/connections/{id}/grants") => {
+            json!({"agent_ids": [Uuid::now_v7()], "mode": "full"})
+        }
         ("POST", "/v1/agents/{agent}/memories") => json!({"key": "k", "content": "c"}),
         ("PUT", "/v1/agents/{agent}/memories/{id}") => json!({"content": "c"}),
         ("POST", "/v1/agents/{agent}/memories/{id}/restore") => json!({"revision": 1}),
@@ -1258,8 +1267,9 @@ async fn org_scope_credential_reads_by_principal() {
         (format!("/v1/secrets/{secret}"), G::OrgCred),
         (format!("/v1/secrets/{secret}/models"), G::OrgCred),
         (format!("/v1/connections/{conn}"), G::OrgCred),
-        // grants of an org connection name agents of every workspace: owner/admin only
-        (format!("/v1/connections/{conn}/grants"), G::Admin),
+        // (FIX-020) readable like the credential; the list is filtered to workspaces the caller owns
+        (format!("/v1/connections/{conn}/grants"), G::OrgCred),
+        (format!("/v1/secrets/{secret}/grants"), G::OrgCred),
     ] {
         for p in ALL {
             let (status, _, body) = {

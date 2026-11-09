@@ -35,6 +35,7 @@ mod direct_visibility;
 mod foundation;
 mod freeze;
 mod governance;
+mod grants_bulk;
 mod grants_connections;
 mod home_checksum;
 mod home_render_inputs;

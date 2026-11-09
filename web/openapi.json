@@ -7550,6 +7550,95 @@
             "api_key": []
           }
         ]
+      },
+      "post": {
+        "tags": [
+          "grants"
+        ],
+        "summary": "Grant a connection to several agents at once (FIX-020, C-504; `can_own` per agent). Each\nagent passes exactly the checks of `PUT /agents/{agent}/grants/connections/{conn}`;\nall-or-nothing; an existing grant is returned `existing` and not modified.",
+        "operationId": "grantConnectionToAgents",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Connection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkConnectionGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Grants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkConnectionGrantResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid agent_ids (empty, over GRANT_BULK_MAX, duplicates)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (details.agent_id)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent or connection not found (details.agent_id)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "grant_invalid, as the agent-side route (details.agent_id)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
       }
     },
     "/v1/connectors": {
@@ -13908,6 +13997,146 @@
         ]
       }
     },
+    "/v1/secrets/{id}/grants": {
+      "get": {
+        "tags": [
+          "grants"
+        ],
+        "summary": "Agents granted a secret (FIX-020, C-503): `can_own` on the secret's scope; only agents of\nworkspaces the caller can own.",
+        "operationId": "listSecretGrants",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Secret id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Grants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretGrantViewList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "grants"
+        ],
+        "summary": "Grant a secret to several agents at once (FIX-020, C-503; `can_own` per agent). Same checks\nas `PUT /agents/{agent}/grants/secrets/{secret}`; all-or-nothing; idempotent.",
+        "operationId": "grantSecretToAgents",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Secret id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkSecretGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Grants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkSecretGrantResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid agent_ids (empty, over GRANT_BULK_MAX, duplicates)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (details.agent_id)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent or secret not found (details.agent_id)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/secrets/{id}/models": {
       "get": {
         "tags": [
@@ -19802,6 +20031,81 @@
           }
         }
       },
+      "BulkConnectionGrantItem": {
+        "type": "object",
+        "required": [
+          "agent_id",
+          "grant",
+          "status"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "grant": {
+            "$ref": "#/components/schemas/ConnectionGrant"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BulkStatus"
+          }
+        }
+      },
+      "BulkConnectionGrantRequest": {
+        "type": "object",
+        "description": "`POST /v1/connections/{id}/grants` body: the agent-side grant body plus the agents.",
+        "required": [
+          "agent_ids",
+          "mode"
+        ],
+        "properties": {
+          "agent_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "1–`GRANT_BULK_MAX` distinct agent ids."
+          },
+          "allow_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ask_timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "ask_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mode": {
+            "$ref": "#/components/schemas/GrantMode"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BulkConnectionGrantResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkConnectionGrantItem"
+            }
+          }
+        }
+      },
       "BulkReassignRequest": {
         "type": "object",
         "description": "`POST /workspaces/{ws}/automations/reassign`.",
@@ -19853,6 +20157,66 @@
             "format": "int64"
           }
         }
+      },
+      "BulkSecretGrantItem": {
+        "type": "object",
+        "required": [
+          "agent_id",
+          "grant",
+          "status"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "grant": {
+            "$ref": "#/components/schemas/SecretGrant"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BulkStatus"
+          }
+        }
+      },
+      "BulkSecretGrantRequest": {
+        "type": "object",
+        "description": "`POST /v1/secrets/{id}/grants` body.",
+        "required": [
+          "agent_ids"
+        ],
+        "properties": {
+          "agent_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "1–`GRANT_BULK_MAX` distinct agent ids."
+          }
+        },
+        "additionalProperties": false
+      },
+      "BulkSecretGrantResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkSecretGrantItem"
+            }
+          }
+        }
+      },
+      "BulkStatus": {
+        "type": "string",
+        "description": "`created` | `existing` (an existing grant is never modified).",
+        "enum": [
+          "created",
+          "existing"
+        ]
       },
       "ByoPosture": {
         "type": "string",
@@ -20536,10 +20900,38 @@
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ConnectionGrant"
+              "$ref": "#/components/schemas/ConnectionGrantView"
             }
           }
         }
+      },
+      "ConnectionGrantView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ConnectionGrant"
+          },
+          {
+            "type": "object",
+            "required": [
+              "agent_name",
+              "workspace_id",
+              "workspace_name"
+            ],
+            "properties": {
+              "agent_name": {
+                "type": "string"
+              },
+              "workspace_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "workspace_name": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "A connection grant seen from the connection (FIX-020, C-504)."
       },
       "ConnectorAdmin": {
         "type": "object",
@@ -30492,6 +30884,48 @@
           "secret_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "SecretGrantView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SecretGrant"
+          },
+          {
+            "type": "object",
+            "required": [
+              "agent_name",
+              "workspace_id",
+              "workspace_name"
+            ],
+            "properties": {
+              "agent_name": {
+                "type": "string"
+              },
+              "workspace_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "workspace_name": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "A secret grant seen from the secret (FIX-020, C-503)."
+      },
+      "SecretGrantViewList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecretGrantView"
+            }
           }
         }
       },

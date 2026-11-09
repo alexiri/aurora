@@ -17,7 +17,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_grants))
         .routes(routes!(put_secret_grant, delete_secret_grant))
         .routes(routes!(put_connection_grant, delete_connection_grant))
-        .routes(routes!(connection_grants))
+        .routes(routes!(connection_grants, bulk_connection_grants))
+        .routes(routes!(secret_grants, bulk_secret_grants))
         .routes(routes!(agent_effective))
 }
 
@@ -59,9 +60,8 @@ async fn put_secret_grant(
     State(state): State<AppState>,
     Path((agent, secret)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<SecretGrant>, ApiError> {
-    let (a, auth) = service::visible_agent(&caller, &state, agent).await?;
-    require_own(&auth)?;
-    let g = service::grant_secret(&state, &caller, &a, secret).await?;
+    // can_own and scope checks live in the shared service function (SEC-77).
+    let g = service::grant_secret(&state, &caller, agent, secret).await?;
     Ok(Json(g))
 }
 
@@ -148,9 +148,7 @@ async fn put_connection_grant(
     Path((agent, conn)): Path<(Uuid, Uuid)>,
     Json(req): Json<PutConnectionGrant>,
 ) -> Result<Json<ConnectionGrant>, ApiError> {
-    let (a, auth) = service::visible_agent(&caller, &state, agent).await?;
-    require_own(&auth)?;
-    let g = service::grant_connection(&state, &caller, &a, conn, req).await?;
+    let g = service::grant_connection(&state, &caller, agent, conn, req).await?;
     Ok(Json(g))
 }
 
@@ -189,9 +187,75 @@ async fn connection_grants(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ConnectionGrantList>, ApiError> {
     let (row, access) = conn_service::visible(&caller, &state, id).await?;
-    access.require_write()?;
-    let items = grants::list_for_connection(&state.pool, row.id).await?;
-    Ok(Json(ConnectionGrantList {
-        items: items.into_iter().map(Into::into).collect(),
-    }))
+    // FIX-020: org connections are readable by owners of at least one workspace; the list only
+    // shows agents of workspaces the caller can own.
+    access.require_read()?;
+    let items = service::list_connection_grants(&state, &caller, row.id).await?;
+    Ok(Json(ConnectionGrantList { items }))
+}
+
+/// Grant a connection to several agents at once (FIX-020, C-504; `can_own` per agent). Each
+/// agent passes exactly the checks of `PUT /agents/{agent}/grants/connections/{conn}`;
+/// all-or-nothing; an existing grant is returned `existing` and not modified.
+#[utoipa::path(
+    post, path = "/connections/{id}/grants", operation_id = "grantConnectionToAgents", tag = "grants",
+    params(("id" = Uuid, Path, description = "Connection id")),
+    request_body = BulkConnectionGrantRequest,
+    responses((status = 200, description = "Grants", body = BulkConnectionGrantResponse),
+              (status = 400, description = "Invalid agent_ids (empty, over GRANT_BULK_MAX, duplicates)", body = ErrorEnvelope),
+              (status = 403, description = "Forbidden (details.agent_id)", body = ErrorEnvelope),
+              (status = 404, description = "Agent or connection not found (details.agent_id)", body = ErrorEnvelope),
+              (status = 422, description = "grant_invalid, as the agent-side route (details.agent_id)", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn bulk_connection_grants(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<BulkConnectionGrantRequest>,
+) -> Result<Json<BulkConnectionGrantResponse>, ApiError> {
+    let items = service::bulk_grant_connection(&state, &caller, id, req).await?;
+    Ok(Json(BulkConnectionGrantResponse { items }))
+}
+
+/// Agents granted a secret (FIX-020, C-503): `can_own` on the secret's scope; only agents of
+/// workspaces the caller can own.
+#[utoipa::path(
+    get, path = "/secrets/{id}/grants", operation_id = "listSecretGrants", tag = "grants",
+    params(("id" = Uuid, Path, description = "Secret id")),
+    responses((status = 200, description = "Grants", body = SecretGrantViewList),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
+              (status = 404, description = "Not found", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn secret_grants(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<SecretGrantViewList>, ApiError> {
+    let row = crate::domains::secrets::service::load_readable(&caller, &state, id).await?;
+    let items = service::list_secret_grants(&state, &caller, row.id).await?;
+    Ok(Json(SecretGrantViewList { items }))
+}
+
+/// Grant a secret to several agents at once (FIX-020, C-503; `can_own` per agent). Same checks
+/// as `PUT /agents/{agent}/grants/secrets/{secret}`; all-or-nothing; idempotent.
+#[utoipa::path(
+    post, path = "/secrets/{id}/grants", operation_id = "grantSecretToAgents", tag = "grants",
+    params(("id" = Uuid, Path, description = "Secret id")),
+    request_body = BulkSecretGrantRequest,
+    responses((status = 200, description = "Grants", body = BulkSecretGrantResponse),
+              (status = 400, description = "Invalid agent_ids (empty, over GRANT_BULK_MAX, duplicates)", body = ErrorEnvelope),
+              (status = 403, description = "Forbidden (details.agent_id)", body = ErrorEnvelope),
+              (status = 404, description = "Agent or secret not found (details.agent_id)", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = []))
+)]
+async fn bulk_secret_grants(
+    caller: Caller,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<BulkSecretGrantRequest>,
+) -> Result<Json<BulkSecretGrantResponse>, ApiError> {
+    let items = service::bulk_grant_secret(&state, &caller, id, &req.agent_ids).await?;
+    Ok(Json(BulkSecretGrantResponse { items }))
 }
