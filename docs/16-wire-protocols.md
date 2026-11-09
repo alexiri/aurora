@@ -20,6 +20,7 @@ implementation repo and checked in (CI fails on drift).
 | W10 | Platform callbacks | chat platform → connector | connector-defined | `20` |
 | W11 | Upstream | gateway → internet | guarded resolver | `06` |
 | W12 | CLI / BYO | CLI → API; BYO agent → gateway | API key / agent token | `05`, `08` |
+| W13 | Counter backend (phase 4, P4-CNT) | API, gateway → Postgres or Redis | database role / Redis ACL user over TLS | `15 §Shared rate-limit counters` |
 
 ## Cross-cutting conventions
 
@@ -191,3 +192,16 @@ Callers treat transport errors and timeouts as `credential_unavailable`
 -- <cmd>` (container config applied to a child process), `approvals watch`
 (long-poll, interactive approve/deny), `plugin …` (`09 §12`), `admin …`
 (instance-admin helpers: plugins, runners, connectors).
+
+---
+
+## W13 — Counter backend (phase 4, P4-CNT)
+
+Not an Aurora-defined protocol: the API and gateway call the `CounterStore` trait
+(`15 §Shared rate-limit counters`), whose `postgres` backend speaks SQL to Postgres
+(`03`) and whose `redis` backend speaks RESP over TLS (`rediss://`) with an ACL user
+whose credentials come from environment variables. The contract Aurora owns is the
+trait semantics (atomic, all-or-nothing, store clock, TTL) and the error mapping:
+every transport failure is `Unavailable` and is handled by the class policy
+(`local` / `closed`), never read as "allowed". Keys contain ids and keyed hashes only
+(`05 §Conventions` *Shared counters*).

@@ -256,6 +256,13 @@ reset 3/h/email *(all phase 0 only)*; CLI token polling governed by `interval`
 `OIDC_AUTH_RATE` (20/min/IP each) and CLI token polling as before. The general
 per-principal API limiter of phase 2 (RFE-017, `05 §Conventions`) applies to every
 authenticated request on top of these and returns the same 429 + `retry-after` shape.
+(phase 4, P4-CNT, D-119) These per-IP and per-e-mail buckets are **in memory per
+replica by default** and **shared across API replicas** with
+`ratelimit.counters.backend = postgres | redis`; they are the class `security` of
+`05 §Conventions` *Shared counters*: if the backend is unreachable they fall back
+to the per-replica bucket (`local`, the default) or refuse with 503
+`counter_unavailable` (`closed`), and never fail open (SEC-62). IP and e-mail
+values are stored only as keyed hashes.
 
 ## Authorization
 

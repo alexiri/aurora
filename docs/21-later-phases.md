@@ -141,7 +141,12 @@ tokens), group → workspace access bindings, group identities in policy
 
 ## Other later items
 
-- Shared rate-limit counters (`CounterStore` trait; Postgres or Redis backend).
+- **Shared rate-limit counters — specified (phase 4, P4-CNT, D-119, SEC-62).**
+  `CounterStore` trait with `memory` (default), `postgres` and `redis` backends;
+  per-limiter failure policy (`local` or `closed`, never open). Owning sections:
+  `15 §Shared rate-limit counters`, `06 §Rate limiting`, `05 §Conventions`
+  (*Shared counters*), `04 §Rate limits (auth)`, `07 §Evaluation`, `03 §Planned
+  changes`, `18 §Shared rate-limit counters`.
 - S3-compatible blob store (`BlobStore` registry entry).
 - Additional LLM providers: OpenAI, Azure OpenAI, AWS Bedrock, Google Vertex,
   generic OpenAI-compatible endpoints; additional harness adapters (e.g. Codex)

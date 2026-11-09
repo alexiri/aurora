@@ -582,7 +582,12 @@ token rotation, manifest approval with capability/setup-field diff), **Runners**
   simulate panel (method + URL + body → decision trace; phase 2, RFE-005: a
   "speaker" picker, default you, plus "no speaker"), identity picker labelling
   `user` identities **"when <name> is speaking"** with the warning of `07`, warnings panel (phase 2, RFE-025: a rule with empty identities that selects credentials shows "Applies to all agents, including agents created later" inline, and publishing lists such rules in its confirmation step),
-  generation history with rollback.
+  generation history with rollback. (phase 4, P4-CNT) Next to a rate-limit modifier the editor
+  shows a note that depends on the deployment: **"Limits are counted per gateway replica;
+  with N replicas the effective limit can be up to N× this value"** when the counter backend
+  is `memory`, and **"Limits are shared by all gateways"** when it is `postgres` or `redis`
+  (the policy response carries `rate_limit_scope`, `05`; a transient fallback is not shown
+  there, it is an operator alert, `15`). No other dashboard change.
 - **Plugin approval**: the permissions review is mandatory reading — approve is
   disabled until the reviewer expands every section (hooks, egress, context,
   claims). (phase 3, RFE-022) For a major upgrade the review adds an **Impact**

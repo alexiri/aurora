@@ -18,6 +18,7 @@ aurora/
     aurora-policy/            # host/path matchers, GraphQL classifier, rule evaluator, injection selection
     aurora-registry/          # plugin manifest types, validator/linter, package format, snapshot compiler + types
     aurora-llm/               # LLM provider registry (litellm, anthropic, …)
+    aurora-counters/          # (phase 4, P4-CNT) `CounterStore` trait, `memory` and `redis` backends, breaker/fallback wrapper; the `postgres` backend is in aurora-db
     aurora-summary/           # approval summary templates, decoders, generic redacting summarizer
     aurora-protocol/          # every wire contract (runner, supervisor, connector, hookhost, gateway-internal) as serde types + JSON Schemas
     aurora-channels/          # neutral content, card schema, action tokens, capability model
@@ -88,6 +89,7 @@ loaders live in `aurora-db`.
 | Concurrency primitives | `arc-swap` (snapshot swaps), `dashmap`/`moka` (caches) |
 | MIME decoding (summaries) | `mail-parser` |
 | Postgres wire (phase 2 DB lane) | `pg_query` (statement classification), hand-written protocol framing |
+| Shared counters (phase 4, P4-CNT) | `redis` (async, `tokio-rustls`; cargo feature `redis` of `aurora-counters`, off unless the backend is built in); the Postgres backend uses `sqlx` |
 | Logging / tracing | `tracing`, `tracing-subscriber` (JSON), `opentelemetry-otlp` (optional) |
 | Metrics | `metrics` + `metrics-exporter-prometheus` |
 | Errors | `thiserror` in crates; `anyhow` only in `main` and tests |
@@ -268,6 +270,9 @@ overridden by the named configuration key (`15`).
 | `SSE_KEEPALIVE` | 15 s | — | 05 |
 | `API_RATE_*` | (phase 2, RFE-017) buckets of `05 §Conventions`: general 600/min (burst 120), write 120/min (30), message 30/min (10), upload 20/min (5), simulate 20/min (5), search 30/min (10), export 6/h (2), org 3 000/min (600) | `ratelimit.api.*` | 05 |
 | `API_RATE_UNAUTH` | (phase 2, RFE-017) 120 / min / IP public GETs; 30 / min / IP for requests with a rejected bearer | — | 05 |
+| `COUNTER_TIMEOUT` | (phase 4, P4-CNT) 50 ms per shared-counter store call (10–2000 ms) | `ratelimit.counters.timeout_ms` | 05, 06, 15 |
+| `COUNTER_BREAKER_FAILURES` / `COUNTER_BREAKER_COOLDOWN` | (phase 4, P4-CNT) 3 consecutive failures open the breaker; one probe after 5 s | — | 06, 15 |
+| `COUNTER_PRUNE_INTERVAL` / `COUNTER_PRUNE_BATCH` | (phase 4, P4-CNT) 60 s / 5 000 rows (`postgres` backend) | — | 03, 15 |
 | `API_STREAMS_PER_PRINCIPAL` | (phase 2, RFE-017) 20 concurrent SSE connections + long-polls | — | 05 |
 | `DELTA_COALESCE` | (phase 1, RFE-016) 100 ms or 2 000 chars per turn per delta | `events.delta_coalesce_ms` (100–500) | 05 |
 | `LONG_POLL_MAX` | 30 s | — | 05 |

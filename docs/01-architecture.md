@@ -18,7 +18,13 @@
 | **CLI** | `aurora` | Login, BYO `run`, management, plugin tooling | — | `~/.config/aurora` | — |
 
 There is **no Redis** and no message broker: Postgres provides the work queue
-(claims with `SKIP LOCKED`) and the event bus (`LISTEN/NOTIFY`).
+(claims with `SKIP LOCKED`) and the event bus (`LISTEN/NOTIFY`). (phase 4, P4-CNT)
+This stays true by default: **Redis is an optional backend** of the rate-limit
+`CounterStore` only (`15 §Shared rate-limit counters`); nothing is stored there that
+is a system of record, no feature requires it, and a deployment without it behaves as
+before. The rate-limit counters themselves may also live in Postgres (`postgres`
+backend). Trust boundary 4 (gateway ↔ database) gains one grant: the counter table
+(`03`).
 
 ## The planes
 

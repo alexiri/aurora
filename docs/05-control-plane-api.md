@@ -125,9 +125,13 @@ matrix:
     rejected bearer). **Exempt**: `/healthz`, `/readyz`, `/metrics`, the machine
     planes (`/v1/runner/*`, `/v1/connector/*`, `/internal/*`) which apply their own
     back-pressure, and `POST /v1/hooks/{token}` (its own 60/min per webhook).
-  - **Token buckets**, in memory per API replica (the same approximation as the
-    gateway, D-05; N replicas can allow up to N×; a shared `CounterStore` backend
-    is the later seam, `06 §Rate limiting`). A request must obtain a token from
+  - **Token buckets**, in memory per API replica by default (the same
+    approximation as the gateway, D-05; N replicas can allow up to N×).
+    (phase 4, P4-CNT, D-119) With `ratelimit.counters.backend = postgres` or `redis`
+    the buckets are **shared by all API replicas** through the `CounterStore` trait
+    (`15 §Shared rate-limit counters`, `06 §Rate limiting`): the limits of this
+    section then hold for the whole deployment, not per replica; the table and the
+    429 shape are unchanged. See *Shared counters* below. A request must obtain a token from
     **every** bucket that applies: the principal's *general* bucket, the principal's
     *class* bucket, and the *org* bucket of the resource's organization:
 
@@ -160,6 +164,57 @@ matrix:
     `aurora_api_rate_limited_total{class,scope}`. Buckets idle for 10 minutes are
     evicted (LRU 100 000 entries); eviction only ever *refills* (fail-open for the
     individual, never fail-open for the instance because the entry cap bounds memory).
+  - **Shared counters (phase 4, P4-CNT, D-119, SEC-62).** Applies only when the
+    backend is `postgres` or `redis`; `memory` is exactly the text above.
+    - *Which limiters.* The authenticated buckets above (`general`, the class
+      buckets, `org`), the unauthenticated per-IP limits (`API_RATE_UNAUTH`, the
+      rejected-bearer limit, `OIDC_AUTH_RATE`) and the per-webhook 60/min of
+      `POST /v1/hooks/{token}`. **Not shared** (stay per replica, by design): the
+      concurrent-stream cap `API_STREAMS_PER_PRINCIPAL` (a concurrency gauge, not
+      a rate; sharing it needs leases with heartbeats, which is not worth it) and
+      CLI device-code polling (`interval` is enforced against the row in Postgres
+      already). Residual: the stream cap can reach N× (`17`).
+    - *Semantics.* Each bucket is a GCRA / virtual-scheduling state (one value per
+      key, `tat`) so a bucket needs one number per key in the store; refill and
+      burst are the table above; time comes from the store's clock. The three
+      buckets of one request are taken **all-or-nothing in one store call**
+      (`bucket_take`), so a refused request still consumes nothing from the
+      buckets that would have allowed it. `retry-after` and `ratelimit-*` come
+      from the blocking bucket as before.
+    - *Local pre-filter.* To keep refused floods off the store, each replica keeps
+      its own in-memory bucket per key with the **full** configured limit and checks
+      it first; a refusal there is final (a replica alone can never serve more than
+      the global limit, so the global bucket would refuse as well). A store refusal
+      refunds the local token. The pre-filter only ever refuses what the shared
+      state would also refuse, so it cannot loosen or tighten the shared limit.
+    - *Keys* (`api:<kind>:…`) use ids (`key:<id>`, `user:<id>`, `org:<id>`,
+      `agent:<id>`, webhook id). Keys derived from an **e-mail or an IP address**
+      (the unauthenticated limits) use `HMAC-SHA256(hkdf("ratelimit_key"), value)`
+      truncated to 128 bits, so a leaked Redis or Postgres dump does not reveal
+      e-mail addresses or client IPs and cannot be matched to them offline
+      (`08 §4`).
+    - *Unavailable backend.* The class decides (`ratelimit.counters.on_unavailable.<class>`,
+      default `local` for all): **`security`** (the unauthenticated per-IP limits,
+      rejected-bearer limit, `OIDC_AUTH_RATE`): `local` keeps brute-force
+      protection at today's strength; `closed` refuses the request with 503
+      `counter_unavailable` — these are the limiters that must **never** fail
+      open, and `open` is not a value for any class (startup refuses it).
+      **`management`** (`general`, class and `org` buckets, webhooks): `local`
+      keeps the API usable through a Redis outage with today's per-replica limit;
+      `closed` refuses authenticated writes and reads with 503, which turns a
+      cache outage into an API outage, so it is for operators who prefer that.
+      Health, metrics, the machine planes and the exempt routes are never
+      affected. The 503 carries `code = counter_unavailable`, `retry-after: 5`,
+      `details.limiter`. The refusal is never returned as 429 (a client must not
+      mistake an outage for its own rate).
+    - *Metrics:* `aurora_api_rate_limited_total{class,scope}` unchanged; plus the
+      `aurora_counters_*` series of `15 §Shared rate-limit counters`.
+    - *Cost.* Every authenticated request costs one store round-trip (three
+      buckets in one call). Redis is the recommended backend for the API limiter;
+      Postgres works for small deployments (≈ hundreds of requests per second in
+      total) and is the default shared choice because it adds no infrastructure.
+      Operators can keep the API limiter local and share only the gateway with
+      `ratelimit.counters.api = "memory"` (`15`).
 - (phase 2, RFE-010) The conversation SSE adds the ephemeral `event.redacted
   { seq }` (no `id:`), telling clients to re-read that event.
 - SSE: `Content-Type: text/event-stream`; durable events carry `id: <seq>`;
@@ -480,7 +535,7 @@ connector, **P** public capability. Permission checks per `04`.
 ### Policy
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/workspaces/{ws}/policy`, `/v1/orgs/{org}/policy` | S/K | published + draft + revision |
+| GET `/v1/workspaces/{ws}/policy`, `/v1/orgs/{org}/policy` | S/K | published + draft + revision; (phase 4, P4-CNT) plus `rate_limit_scope: "replica" \| "shared"` (`shared` when `ratelimit.counters.backend` is `postgres`/`redis` and the gateway share is not `memory`; the editor note of `14`) |
 | PUT `…/policy/draft` | S/K | whole-draft replace with `revision`; (phase 1, RFE-003) workspace scope also carries `open_lane_posture` (`enabled` \| `allowlist_only` \| `disabled`; a workspace can only tighten, so `enabled` simply adds no restriction beyond the org and instance) |
 | POST `…/policy/publish`, `…/policy/rollback` | S/K | `{ revision }` / `{ generation }` |
 | GET `…/policy/generations` | S/K | history |

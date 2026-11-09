@@ -155,6 +155,16 @@ one new entry without activating it.
 | `events.delta_coalesce_ms` | 100 | api | (phase 1, RFE-016) delta coalescing window, 100–500 |
 | `ratelimit.api.enabled`, `ratelimit.api.multiplier` | `true`, `1.0` | api | (phase 2, RFE-017) management-API token buckets and a global multiplier (0.1–100) |
 | `ratelimit.api.classes.<name>`, `ratelimit.api.org_per_minute` | `05 §Conventions` | api | (phase 2, RFE-017) per-class `{ per_minute \| per_hour, burst }` overrides and the per-org bucket (default 3000) |
+| `ratelimit.counters.backend` | `memory` | api, gateway | (phase 4, P4-CNT, D-119) `memory` (per replica, today's behaviour, no infrastructure), `postgres` (shared, tables of `03`, no new infrastructure) or `redis`; any other value refuses startup. See *Shared rate-limit counters* |
+| `ratelimit.counters.api`, `ratelimit.counters.gateway` | `shared` | api, gateway | (phase 4, P4-CNT) `shared` (use the backend above) or `memory` (keep that limiter per replica): lets an operator share only the gateway's rule quotas and keep the API limiter local. With `backend = memory` both are `memory` whatever they say |
+| `ratelimit.counters.on_unavailable.security`, `.management`, `.gateway` | `local`, `local`, `local` | api (`security`, `management`), gateway (`gateway`) | (phase 4, P4-CNT) behaviour when the shared backend cannot be reached: `local` (per-replica in-memory counters until it recovers) or `closed` (refuse with 503 `counter_unavailable`). **There is no `open`**: any other value, `open` included, refuses startup (SEC-62). Classes in `05 §Conventions` *Shared counters* |
+| `ratelimit.counters.timeout_ms` | 50 | api, gateway | (phase 4, P4-CNT) `COUNTER_TIMEOUT` per store call, 10–2000 |
+| `ratelimit.counters.postgres.pool_size` | 4 | api, gateway | (phase 4, P4-CNT) size of the dedicated pool of the `postgres` backend, 1–32, separate from `database.max_connections` so a slow counter query cannot starve the data path; uses the service's own database role |
+| `ratelimit.counters.redis.address` | — (required for `redis`) | api, gateway | (phase 4, P4-CNT) `rediss://host[:port]` (TLS) with no userinfo, path or query; `redis://` is accepted only for a loopback host or with `allow_plaintext = true` (startup warning); a URL carrying a password refuses startup |
+| `ratelimit.counters.redis.allow_plaintext` | `false` | api, gateway | (phase 4, P4-CNT) explicit opt-in for `redis://` to a non-loopback host (in-cluster Redis without TLS) |
+| `ratelimit.counters.redis.username_env`, `.password_env` | unset | api, gateway | (phase 4, P4-CNT) names of environment variables holding the Redis ACL user and password (both optional; an unset variable that is named refuses startup); never the values (`08 §4`) |
+| `ratelimit.counters.redis.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api, gateway | (phase 4, P4-CNT) PEM bundle verifying the Redis server |
+| `ratelimit.counters.redis.db`, `.key_prefix` | `0`, `aurora:rl:` | api, gateway | (phase 4, P4-CNT) database index and key prefix (lets several Aurora instances share one Redis); `key_prefix` ≤ 64 chars of `[A-Za-z0-9:_-]` |
 | `retention.request_log_days` | 30 | api | |
 | `attachments.default_org_quota_mib`, `attachments.org_quota_mib_max` | 10240, 51200 | api | (phase 2, RFE-015) default and ceiling of an org's attachment storage quota (MiB; `0` = unlimited) |
 | `attachments.days_max` | — (no ceiling) | api | (phase 2, RFE-015) instance maximum for an org's attachment retention window |
@@ -337,7 +347,9 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   providers, LLM endpoints for model listing, secret stores); gateway →
   postgres, hookhost, external egress; hookhost → api:4111 and external egress
   (hooks' fetch is additionally filtered in-process); runner → api, Kubernetes
-  API; connectors → api, their platform.
+  API; connectors → api, their platform. (phase 4, P4-CNT) With the Redis counter
+  backend api and gateway also reach the configured Redis peers
+  (`counters.redis.networkPolicy`) on its port; nothing else changes.
 - **Sandboxes namespace**: ResourceQuota, LimitRange, PSA `restricted`, runner
   ServiceAccount + Role (`11 §kubernetes`).
 - **Postgres**: external database expected in production (values: URL secret,
@@ -389,6 +401,9 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   latencies, holds pending, refresh/mint outcomes, due-work arm durations and
   items, sandboxes by state, turns by status, inbox/ops depth and age,
   connector replicas live, hook calls/errors/duration, snapshot hash info.
+- (phase 4, P4-CNT) **Counter backend.** The `aurora_counters_*` series and alerts of
+  *Shared rate-limit counters* below: a `fallback` state means limits are per replica
+  again (warning), `policy="closed"` refusals are an outage of the affected limiter.
 - (phase 3, RFE-024) **Orphaned bots.** Alert on `aurora_channel_deprovision_failed_total`
   and on audit rows `presence.deprovision_failed`: the named bot account was not
   removed on the chat platform (connector down > 24 h or credentials revoked) and
@@ -447,3 +462,105 @@ approaching the ceiling have three levers without code changes: raise coalescing
 (`events.delta_coalesce_ms`, default 100, up to 500), run fewer API replicas per
 streaming-heavy deployment, or switch `events.delta_bus` to a later
 implementation when available.
+
+## Shared rate-limit counters (phase 4, P4-CNT, D-119, SEC-62)
+
+Phase 0–3 keep every rate-limit counter in memory per replica (D-05, D-57): with N
+replicas a limit can be exceeded up to N×. From phase 4 the counters sit behind the
+**`CounterStore`** trait so replicas can share them. Nothing changes unless
+`ratelimit.counters.backend` is set: an existing `aurora.toml` and Helm values keep
+the `memory` backend, which is today's behaviour exactly.
+
+**Trait** (crate `aurora-counters`: the trait, the `memory` backend and the `redis`
+backend behind a cargo feature; the `postgres` backend lives in `aurora-db`, which
+implements the trait, so `aurora-counters` never depends on `aurora-db`):
+
+| Method | Semantics |
+|--------|-----------|
+| `fixed_window_peek(probes)` | read the current count of each `(key, period)`; `period` ∈ minute / hour / day, aligned to UTC by the **store's** clock; no side effect |
+| `fixed_window_consume(units)` | for each `(key, period, limit, cost = 1)`: add `cost` to the current window **only if** the result stays ≤ `limit`; **all-or-nothing** across the units of one call; returns `Allowed` or `Refused { key, retry_after }`; atomic (never exceeds `limit`, however many replicas call concurrently); a window's state expires with it (TTL) |
+| `bucket_take(takes)` | for each `(key, emission_interval, burst)`: GCRA token take, all-or-nothing across the takes of one call; returns `Allowed` or `Refused { key, retry_after }`; used by the API limiter |
+| `health()` | cheap liveness probe for the circuit breaker |
+
+Errors are only `Unavailable` (connection error, timeout, breaker open) and
+`Invalid` (a bug). **A backend error never means "allowed"**: the caller applies the
+class policy (`local` or `closed`) of `ratelimit.counters.on_unavailable.*`
+(`06 §Rate limiting`, `05 §Conventions`). `COUNTER_TIMEOUT` (50 ms), the breaker
+(`COUNTER_BREAKER_FAILURES` 3, `COUNTER_BREAKER_COOLDOWN` 5 s) and the `local`
+fallback are implemented once, in a wrapper over the trait, so every backend and
+every limiter behaves the same.
+
+**Limiters and failure policy** (the reason column is the design record):
+
+| Limiter | Class | Default when the backend is down | Why |
+|---------|-------|----------------------------------|-----|
+| gateway `rate_limit` rule quotas | `gateway` | `local` | a quota on an allowed access; the per-replica bound is today's behaviour; `closed` for hard caps |
+| sign-in/OIDC `start`/`callback`, rejected-bearer per-IP, unauthenticated per-IP GETs | `security` | `local` | brute-force and token-guessing protection must keep working at today's strength; **never open**; `closed` available (locks sign-in out during a Redis outage) |
+| API `general`, class and `org` buckets, per-webhook limit | `management` | `local` | availability of the management plane; per-replica limits are today's behaviour; `closed` turns a counter outage into an API outage |
+| stream concurrency cap, CLI polling, BYO admission (CIDR check), approval e-mail digest | — | not on the trait | gauge, row-based or not counters (`05`, `06`, `07`) |
+
+**Backends.**
+- `memory`: today's per-replica counters (default; exact with one replica).
+- `postgres`: the `rate_limit_windows` / `rate_limit_buckets` tables of `03`,
+  `UNLOGGED`, through a small dedicated pool; adds **no infrastructure**, one
+  round-trip per consume; suited to the gateway's rule quotas, auth limits and small
+  API deployments. The window and bucket arithmetic is done in SQL with the
+  database's clock; rows are pruned by the API's `counters_prune` arm. During a
+  Postgres outage this backend is unavailable too and falls back as above.
+- `redis`: a standalone Redis or a primary with replicas/Sentinel failover (**not
+  Redis Cluster**: a request's keys span slots); atomic scripts (`EVALSHA`, loaded
+  at start and on `NOSCRIPT`) implement the operations with `PEXPIRE` TTLs and the
+  Redis `TIME`. TLS by default (`rediss://`), ACL user and password from
+  environment variables, keys under `ratelimit.counters.redis.key_prefix`. The
+  Redis ACL needs only `EVALSHA`/`SCRIPT LOAD`/`GET`/`PING` on that prefix. Run it
+  with `maxmemory-policy noeviction` or `volatile-ttl` (an LRU policy evicts live
+  counters, which resets limits); persistence may be off. Redis is **optional and
+  never required**; every Aurora feature works without it.
+
+**Clock.** Replicas should be NTP-synchronized anyway, but counters do not depend
+on it: window starts and bucket times come from the store.
+
+**Metrics** (all services using the trait): `aurora_counters_calls_total{backend,op,result}`
+(`result` = `allowed|refused|error|timeout|breaker_open`), `aurora_counters_call_seconds{backend,op}`,
+`aurora_counters_state{backend,class,state="shared|fallback"}` (1 for the current
+state), `aurora_counters_fallback_total{class,policy}` (requests decided by the local
+fallback or refused by `closed`), `aurora_counters_pruned_total` (api). Alert on
+`aurora_counters_state{state="fallback"} == 1` for 5 min (warning: limits are per
+replica again) and on `aurora_counters_fallback_total{policy="closed"}` rate > 0
+(critical for `closed` classes: requests are being refused). `readyz` is **not**
+affected by a counter fallback.
+
+**Helm** (`deploy/helm/aurora/values.yaml`; all keys optional, defaults render the
+`memory` backend and the same manifests as before):
+
+```yaml
+counters:
+  backend: memory            # memory | postgres | redis  -> ratelimit.counters.backend
+  api: shared                # shared | memory
+  gateway: shared            # shared | memory
+  onUnavailable: {security: local, management: local, gateway: local}   # local | closed
+  timeoutMs: 50
+  postgres: {poolSize: 4}
+  redis:
+    address: ""              # rediss://redis.example.org:6379 (no password in it)
+    allowPlaintext: false
+    existingSecret: ""       # Secret with keys REDIS_USERNAME (optional) and REDIS_PASSWORD (optional);
+                             # exposed to api and gateway as the variables named by username_env/password_env
+    caFile: ""
+    db: 0
+    keyPrefix: "aurora:rl:"
+    networkPolicy: {egressTo: []}   # NetworkPolicy peers (podSelector/namespaceSelector/ipBlock) api and gateway may reach on the Redis port
+```
+
+With `backend = redis` the chart adds the Redis peers to the api and gateway
+NetworkPolicy egress (default deny stays: no peer, no egress) and fails `helm
+template` if `address` is empty or `existingSecret` and `address` carry a
+password inline. The chart **does not ship Redis**; an operator who wants one
+uses their own or any chart. With `postgres` nothing is added (the pods already
+reach Postgres).
+
+**Migrating and rolling back.** Switching `backend` is a rolling restart; windows
+and buckets start empty on the new backend (a limit's usage resets once). Going
+back to `memory` leaves the tables in place (they are pruned, not dropped). A mixed
+fleet (some replicas shared, some `memory`) is safe: each counts what it sees, so
+the effective limit is between the configured value and N× until the roll finishes.

@@ -199,7 +199,16 @@ carve-out is deliberate and was undocumented until phase 3:
    `default_denied`; from an uncredentialed default, `egress_denied`.
 4. Rate-limit counters of matched rate-limited rules are incremented only when
    the final verdict is `allow` or `needs_approval` (a blocked request does not
-   consume quota).
+   consume quota). (phase 4, P4-CNT) The evaluator stays a pure function: the
+   caller passes in the current counts of the matched rate-limited rules (a
+   `counts` argument, empty for rules without a count) and receives the list of
+   `(rule logical_id, period, limit)` to consume when the final verdict allows;
+   the gateway then consumes them atomically through the `CounterStore`
+   (`06 §Rate limiting`), and a consume the store refuses turns the answer into
+   `rate_limited`. With a shared backend a peek can be stale by one request; the
+   consume is authoritative. Simulation (`POST …/policy/simulate`) neither
+   reads nor consumes counters, as before (it reports the rule's limit, never a
+   count), whatever the backend.
 5. The evaluator returns a **trace** (per scope: rules considered, the matching
    rule, why) used by simulation and the request log (`rule_logical_id`,
    `rule_name`).

@@ -158,6 +158,16 @@ value on the connect path, never per request.
 `AURORA_SIGNING_KEY` (32 bytes, base64) is the root for derived keys:
 `HKDF-SHA256(root, info = "aurora:<purpose>:v1")`.
 
+(phase 4, P4-CNT) The purpose **`ratelimit_key`** derives the key that hashes e-mail
+addresses and client IPs into shared rate-limit counter keys (`05 §Conventions`
+*Shared counters*): `HMAC-SHA256(hkdf("ratelimit_key"), value)` truncated to 128 bits,
+hex. It is derived from the **active** signing key and rotating the signing key
+changes the hashes, which only restarts the affected windows (a counter is not a
+record). The Redis backend's credentials are **never in `aurora.toml` or in a URL**:
+the configuration names environment variables (`username_env`, `password_env`),
+filled from a Secret (Helm `counters.redis.existingSecret`), exactly like the Vault
+`approle` variables (`15`).
+
 **Keyring-style lists (phase 2, RFE-007, D-51).** Phase 0 held one static value
 for each of `AURORA_SIGNING_KEY` and `AURORA_INTERNAL_SECRET`, with no rotation.
 From phase 2 both accept the **same shape as the encryption keyring** (§3):
