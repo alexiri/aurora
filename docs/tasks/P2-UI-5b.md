@@ -2,7 +2,15 @@
 
 ## Decisions (owner, 2026-11-09, "go on": the coordinator's recommendations)
 1. **Compact header on the Chat tab.** At 1280×800 the agent page scrolls slightly: header + tabs ≈ 280 px plus the chat panel's 560 px minimum. On the Chat tab only, compact the agent header so that the page does not scroll at **1280×800** and the composer stays put. For example: handle and badges on the title line, avatar 32 px, the "Freeze agent" action moved into the header's overflow menu, and less vertical padding. The other tabs keep today's header. Use the same components and tokens, no one-off styles.
-2. **Person messages render as plain text** (whitespace kept); agent messages stay Markdown in safe mode. Amend `docs/14 §Visual design` › Agent chat to say so, with the reason: what a person typed is shown exactly as typed.
+2. **Both sides render as Markdown** (owner, 2026-11-09, overriding the earlier plain-text recommendation), as `docs/14` already says.
+   - Person messages use the **same safe Markdown mode** as agent messages: no raw HTML, sanitised links, and nothing the CSP would block.
+   - Single newlines the person typed stay visible as line breaks (GFM-style "breaks").
+   - Code fences and inline code render as code, so pasted snippets keep their characters.
+   - Add tests:
+     - a person message with `**bold**`, a list, a fenced code block and two lines separated by one newline renders as Markdown with the line break kept;
+     - a person message containing `<script>` or an `<img onerror>` renders inert text;
+     - an agent message is unchanged.
+   - `docs/14` needs no change for this item (it already specifies Markdown for both); only confirm that its wording covers the line-break rule, and add one clause if not.
 
 ## Scope
 - `web/src/components/agents/agent-page.tsx` (header variant for the Chat tab) and whatever shared header pieces it uses; the overflow-menu entry for Freeze must keep the existing confirm dialog and permissions.
