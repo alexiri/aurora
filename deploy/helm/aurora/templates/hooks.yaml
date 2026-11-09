@@ -191,6 +191,10 @@ spec:
           {{- include "aurora.containerSecurity" . | nindent 10 }}
           env:
             {{- include "aurora.env" (dict "root" . "db" true "keys" (list "AURORA_ENCRYPTION_KEYS" "AURORA_ENCRYPTION_ACTIVE_KEY" "AURORA_INTERNAL_SECRET" "AURORA_SIGNING_KEY" "AURORA_RUNNER_SESSION_KEY") "optionalKeys" (list "AURORA_SIGNING_ACTIVE_KEY" "AURORA_INTERNAL_ACTIVE_KEY")) | nindent 12 }}
+            {{- /* `aurora-api migrate` validates the same configuration as the API, so it needs the
+                   same extra environment (e.g. AURORA_*_CLIENT_SECRET for OIDC providers): a
+                   missing `*_env` variable fails the configuration check before any migration runs. */}}
+            {{- with .Values.api.extraEnv }}{{ toYaml . | nindent 12 }}{{ end }}
           volumeMounts: [{name: config, mountPath: /etc/aurora, readOnly: true}, {name: tmp, mountPath: /tmp}]
       volumes:
         - {name: config, configMap: {name: {{ $full }}-config}}

@@ -260,7 +260,7 @@ Packages still need approval in the admin API before they take effect.
 
 | Component | Values | Default | Notes |
 |-----------|--------|---------|-------|
-| api | `api.replicas`, `api.resources`, `api.nodeSelector`, `api.tolerations`, `api.extraEnv` | 2 | Ports 4101 (public) and 4111 (internal). `extraEnv` supports `valueFrom` (for example OIDC client secrets). |
+| api | `api.replicas`, `api.resources`, `api.nodeSelector`, `api.tolerations`, `api.extraEnv` | 2 | Ports 4101 (public) and 4111 (internal). `extraEnv` supports `valueFrom` (for example OIDC client secrets). The pre-install/pre-upgrade migrate Job gets the same `api.extraEnv`, because `aurora-api migrate` runs the same configuration check (a missing `*_env` secret would fail it). The referenced Secrets must exist before `helm install`. |
 | gateway | `gateway.replicas`, `gateway.ca.existingSecret`, `gateway.proxy.service.type`, `gateway.proxy.service.loadBalancerSourceRanges`, `gateway.proxy.service.annotations`, `gateway.proxy.tls.externalHost`, `gateway.proxy.tls.names`, `gateway.proxy.tls.existingSecret` | 2 | Ports 4103 (internal) and 4102 (proxy, Service `<fullname>-gateway-proxy`). `ClusterIP` by default. `LoadBalancer` exposes 4102 to external BYO agents and bypasses the edge; it must be layer 4 (the proxy listener is TLS-only, never terminate TLS in front of it). The proxy certificate is issued by the gateway CA for the Service names plus `tls.externalHost` and `tls.names`; `tls.existingSecret` (a `kubernetes.io/tls` Secret) replaces it with an operator certificate that must cover every name clients use. |
 | hookhost | `hookhost.replicas` | 2 | Port 4104. |
 | web | `web.replicas` | 2 | Port 4100. |

@@ -129,7 +129,7 @@ api:
   resources: {requests: {cpu: 200m, memory: 256Mi}, limits: {memory: 1Gi}}
   nodeSelector: {}
   tolerations: []
-  extraEnv: []            # supports valueFrom (e.g. OIDC client secrets)
+  extraEnv: []            # supports valueFrom (e.g. OIDC client secrets); also given to the migrate Job (same config check)
   bootstrap:
     runnerToken: true     # AURORA_BOOTSTRAP_RUNNER_TOKEN from the runner token
 
