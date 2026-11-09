@@ -103,6 +103,51 @@ for (const scheme of ["light", "dark"] as const) {
   }
 }
 
+// Bubble widths (owner, 2026-11-09; docs/14 › Agent chat): both parties at most 80 % of the thread column, and a
+// short message stays on one line. Regression: person rows shrank to fit, so 78 % of the text's own width wrapped
+// "hi" into "h / i".
+const LONG = "The GitHub pull request, the Linear issue and the Sentry alert all point at the same importer timeout, so I would fix the retry budget first and then re-run the nightly job to confirm.";
+const widths: Fixture = {
+  ...DEFAULT,
+  events: {
+    [MINE.id]: [
+      { seq: 1, type: "turn.queued", ts: new Date(Date.now() - 600_000).toISOString(), payload: { turn_id: "t1", speaker_label: "Ada Lovelace", door: "dashboard", text: "hello there", attachments: [] } },
+      { seq: 2, type: "text", ts: new Date(Date.now() - 590_000).toISOString(), payload: { turn_id: "t1", message_id: "m2", text: "ok" } },
+      { seq: 3, type: "turn.finished", ts: new Date(Date.now() - 590_000).toISOString(), payload: { turn_id: "t1", status: "done" } },
+      { seq: 4, type: "turn.queued", ts: new Date(Date.now() - 300_000).toISOString(), payload: { turn_id: "t2", speaker_label: "Ada Lovelace", door: "dashboard", text: "hi", attachments: [] } },
+      { seq: 5, type: "turn.queued", ts: new Date(Date.now() - 299_000).toISOString(), payload: { turn_id: "t3", speaker_label: "Ada Lovelace", door: "dashboard", text: LONG, attachments: [] } },
+      { seq: 6, type: "text", ts: new Date(Date.now() - 290_000).toISOString(), payload: { turn_id: "t3", message_id: "m6", text: LONG } },
+      { seq: 7, type: "turn.finished", ts: new Date(Date.now() - 290_000).toISOString(), payload: { turn_id: "t3", status: "done" } },
+    ] satisfies Ev[],
+  },
+};
+
+for (const width of [1280, 390]) {
+  test.describe(`bubble widths, ${width} px`, () => {
+    test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
+    test("short messages stay on one line; long ones use at most 80 % of the thread column", async ({ page }) => {
+      await openChat(page, "light", widths, `?c=${MINE.id}`);
+      const log = page.getByRole("log");
+      const col = (await log.boundingBox())!.width;
+      const bubble = (text: string, nth = 0) =>
+        log.getByText(text, { exact: true }).nth(nth).locator("xpath=ancestor::div[contains(@class,'rounded-card')][1]");
+      for (const short of ["hello there", "hi", "ok"]) {
+        const text = log.getByText(short, { exact: true });
+        const lineHeight = await text.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
+        expect((await text.boundingBox())!.height, `"${short}" wraps`).toBeLessThan(lineHeight * 1.5);
+      }
+      for (const nth of [0, 1]) {
+        const w = (await bubble(LONG, nth).boundingBox())!.width;
+        expect(w, `long bubble ${nth} wider than 80 %`).toBeLessThanOrEqual(col * 0.8 + 1);
+        // The agent bubble is 80 % of its column (the thread minus the avatar), so it is a bit narrower.
+        expect(w, `long bubble ${nth} does not use the room`).toBeGreaterThan(col * 0.6);
+      }
+      expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
+      await page.screenshot({ path: `${SHOTS}/bubble-widths-${width}.png` });
+    });
+  });
+}
+
 // (800 px tall: the Chat tab's compact agent header, tabs and page padding leave the panel at least 560 px.)
 test.describe("layout, 1280 px", () => {
   test.use({ viewport: { width: 1280, height: 800 } });

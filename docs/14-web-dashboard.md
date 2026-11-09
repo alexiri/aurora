@@ -288,12 +288,15 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
       Messages from the same sender within 5 minutes share that line.
     - Person turns are right-aligned in a `primary` bubble (dark: `#23304A` /
       `ink`). The bubble's radius is 14 px with a 4 px top-right corner, and
-      its maximum width is min(78 %, 620 px).
+      its maximum width is 80 % of the thread column (owner, 2026-11-09: both
+      parties at most 80 %, narrower when the text is shorter, like a
+      messaging app; no pixel cap). A short message fits on one line: the
+      bubble shrinks to its text, never below it.
     - Turns started by a schedule, webhook or peer render on the same side,
       with their source name and door chip.
     - Agent turns are left-aligned, with a 32 px avatar aligned to the top of
       the meta line. The bubble is `subtle`, with a 14 px radius, a 4 px
-      top-left corner and a maximum width of min(88 %, 720 px).
+      top-left corner and a maximum width of 80 % (as person bubbles).
     - Bubbles render markdown in safe mode. In a person's message a single
       typed newline stays a line break. Inline code and code blocks sit on
       `surface` (dark: `canvas`) with a `line` border, and code blocks scroll

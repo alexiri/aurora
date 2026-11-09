@@ -104,14 +104,17 @@ function Bubble({
   const text = s(p.text);
   const attachments = side === "person" && Array.isArray(p.attachments) ? (p.attachments as unknown[]).map(s).filter(Boolean) : [];
   return (
-    <div className={cn("group/msg relative flex max-w-full", side === "person" ? "justify-end" : "justify-start")}>
+    // `w-full`: the row spans the column, so the bubble's percentage max-width is measured against the chat
+    // column. In the person column (`items-end`) a shrink-to-fit row made 80 % mean "80 % of the text's own
+    // width", wrapping "hi" into "h / i".
+    <div className={cn("group/msg relative flex w-full", side === "person" ? "justify-end" : "justify-start")}>
       <div
         onClick={() => setShown((v) => !v)}
         className={cn(
           "min-w-0 space-y-2 break-words px-3.5 py-2.5 text-sm",
           side === "person"
-            ? "max-w-[min(78%,620px)] rounded-card rounded-tr-[4px] bg-bubble text-bubble-ink"
-            : "max-w-[min(88%,720px)] rounded-card rounded-tl-[4px] bg-subtle text-ink",
+            ? "max-w-[80%] rounded-card rounded-tr-[4px] bg-bubble text-bubble-ink"
+            : "max-w-[80%] rounded-card rounded-tl-[4px] bg-subtle text-ink",
           "[&_code]:rounded [&_code]:border [&_code]:border-line [&_code]:bg-surface [&_code]:px-1 [&_code]:text-ink dark:[&_code]:bg-canvas",
           "[&_pre]:border [&_pre]:border-line [&_pre]:bg-surface dark:[&_pre]:bg-canvas [&_pre_code]:border-0 [&_pre_code]:px-0",
         )}
@@ -228,7 +231,7 @@ export function StreamingBubble({ text, agent }: { text: string; agent?: AgentId
   return (
     <div className="flex items-start gap-2">
       <Avatar name={agent?.name ?? "Agent"} url={agent?.avatarUrl} tintKey={agent?.id} size={32} />
-      <div className="min-w-0 max-w-[min(88%,720px)] rounded-card rounded-tl-[4px] bg-subtle px-3.5 py-2.5 text-sm text-ink">
+      <div className="min-w-0 max-w-[80%] rounded-card rounded-tl-[4px] bg-subtle px-3.5 py-2.5 text-sm text-ink">
         <Markdown source={text} />
       </div>
     </div>
