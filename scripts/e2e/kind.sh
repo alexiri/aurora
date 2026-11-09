@@ -21,20 +21,35 @@
 #
 # Everything created is named aurora-e2e*: cluster `aurora-e2e`, images `localhost/aurora-e2e/*`,
 # namespaces `aurora` and `aurora-sandboxes`, probe namespace `aurora-e2e-npcheck`.
+#
+# Environment overrides (unset = the values above, so the script behaves as before). Use them to run
+# next to another lane's cluster without touching its cluster, images or ports:
+#   AURORA_E2E_CLUSTER     kind cluster name (default aurora-e2e); --fresh deletes only this one
+#   AURORA_E2E_CONTEXT     kubectl context (default kind-$AURORA_E2E_CLUSTER)
+#   AURORA_E2E_REGISTRY    image prefix (default localhost/aurora-e2e)
+#   AURORA_KIND_PORT       host port forwarded to the API (default 14101)
+#   AURORA_E2E_IDP_PORT    host port forwarded to the dev IdP, also its issuer URL (default 4107)
+#   AURORA_KIND_HOST_OPS_PORT  host port forwarded to the connector host's ops port (default 14192)
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-CLUSTER=aurora-e2e
+CLUSTER="${AURORA_E2E_CLUSTER:-aurora-e2e}"
 export KIND_EXPERIMENTAL_PROVIDER=podman
-CTX="kind-$CLUSTER"
+CTX="${AURORA_E2E_CONTEXT:-kind-$CLUSTER}"
 NS=aurora
 SBX_NS=aurora-sandboxes
 RELEASE=aurora
 FULL=aurora            # chart fullname: the release name contains "aurora"
-REGISTRY=localhost/aurora-e2e
+REGISTRY="${AURORA_E2E_REGISTRY:-localhost/aurora-e2e}"
 TAG=e2e
 LOCAL_PORT="${AURORA_KIND_PORT:-14101}"
+IDP_PORT="${AURORA_E2E_IDP_PORT:-4107}"
+export AURORA_KIND_HOST_OPS_PORT="${AURORA_KIND_HOST_OPS_PORT:-14192}"
+# The registry, the sandbox image and the dev IdP issuer in values-e2e.yaml are overridden with the
+# values above (identical to the file's own when the AURORA_E2E_* variables are unset).
+HELM_OVERRIDES=(--set "image.registry=$REGISTRY" --set "config.runner.image=$REGISTRY/aurora-sandbox:$TAG" \
+  --set "devIdp.issuer=http://localhost:$IDP_PORT")
 LOGDIR="$ROOT/target/kind-logs"
 WORK="$ROOT/target/kind"
 KEEP=0; FRESH=0; SKIP_BUILD="${SKIP_IMAGE_BUILD:-0}"; RELEASE_IMAGES="${AURORA_E2E_RELEASE_IMAGES:-0}"
@@ -189,8 +204,8 @@ done
 
 # ---- 4. Helm install (docs/operator/install-helm.md) ----------------------------------------------
 log "helm lint / template"
-helm lint deploy/helm/aurora -f deploy/kind/values-e2e.yaml >/dev/null || exit 1
-helm template "$RELEASE" deploy/helm/aurora -n "$NS" -f deploy/kind/values-e2e.yaml >"$WORK/rendered.yaml" || exit 1
+helm lint deploy/helm/aurora -f deploy/kind/values-e2e.yaml "${HELM_OVERRIDES[@]}" >/dev/null || exit 1
+helm template "$RELEASE" deploy/helm/aurora -n "$NS" -f deploy/kind/values-e2e.yaml "${HELM_OVERRIDES[@]}" >"$WORK/rendered.yaml" || exit 1
 if helm --kube-context "$CTX" status "$RELEASE" -n "$NS" >/dev/null 2>&1; then
   log "removing previous release"
   helm --kube-context "$CTX" uninstall "$RELEASE" -n "$NS" --wait >/dev/null || exit 1
@@ -208,7 +223,7 @@ k -n "$NS" create secret generic aurora-gateway-database \
   --from-literal=AURORA_DATABASE_URL="postgres://aurora_gateway:gwe2e-evaluation-pw@$FULL-postgres:5432/aurora" >/dev/null || exit 1
 log "helm install"
 helm --kube-context "$CTX" install "$RELEASE" deploy/helm/aurora -n "$NS" --create-namespace \
-  -f deploy/kind/values-e2e.yaml --wait --timeout 8m || exit 1
+  -f deploy/kind/values-e2e.yaml "${HELM_OVERRIDES[@]}" --wait --timeout 8m || exit 1
 k -n "$NS" get pods -o wide >&2
 
 # ---- 5. reach the API, run the scenarios ---------------------------------------------------------
@@ -222,16 +237,16 @@ for _ in $(seq 60); do
 done
 curl -fsS "http://127.0.0.1:$LOCAL_PORT/readyz" >/dev/null || { echo "api not ready via port-forward" >&2; exit 1; }
 # P1-005 (RFE-004): sign-in is OIDC only; the dev IdP (values-e2e.yaml: devIdp) is reached at the issuer URL
-# the API hands out, http://localhost:4107, so forward that port too.
-log "port-forward svc/$FULL-dev-idp -> 127.0.0.1:4107"
-k -n "$NS" port-forward "svc/$FULL-dev-idp" 4107:4107 >"$WORK/port-forward-idp.log" 2>&1 &
+# the API hands out, http://localhost:$IDP_PORT (4107 by default), so forward that port too.
+log "port-forward svc/$FULL-dev-idp -> 127.0.0.1:$IDP_PORT"
+k -n "$NS" port-forward "svc/$FULL-dev-idp" "$IDP_PORT:4107" >"$WORK/port-forward-idp.log" 2>&1 &
 IDP_PF_PID=$!
 for _ in $(seq 30); do
-  curl -fsS "http://localhost:4107/.well-known/openid-configuration" >/dev/null 2>&1 && break
+  curl -fsS "http://localhost:$IDP_PORT/.well-known/openid-configuration" >/dev/null 2>&1 && break
   kill -0 "$IDP_PF_PID" 2>/dev/null || { cat "$WORK/port-forward-idp.log" >&2; exit 1; }
   sleep 1
 done
-curl -fsS "http://localhost:4107/.well-known/openid-configuration" >/dev/null || { echo "dev IdP not reachable via port-forward" >&2; exit 1; }
+curl -fsS "http://localhost:$IDP_PORT/.well-known/openid-configuration" >/dev/null || { echo "dev IdP not reachable via port-forward" >&2; exit 1; }
 
 log "running tests/e2e-hosted/tests/k8s.rs"
 AURORA_TEST_KIND=1 \
