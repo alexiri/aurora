@@ -422,6 +422,37 @@ async fn dedicated_dm_creates_direct_turn_with_receipt() {
     assert!(r[0]["sender"]["presence_id"].is_string());
 }
 
+/// C-326 (RFE-018, SEC-55): `api:` is reserved for `Idempotency-Key` values; ordinary connector
+/// dedupe is unchanged.
+#[tokio::test]
+async fn api_prefixed_event_id_is_rejected_reserved_and_dedupe_is_unchanged() {
+    let w = world().await;
+    let ev = |id: &str| {
+        json!({"event_id": id, "integration_id": w.integ, "kind": "message.posted",
+            "occurred_at": "2026-11-07T00:00:00Z", "payload": {}})
+    };
+    let (s, v) = w
+        .plane(
+            Method::POST,
+            "/events",
+            Some(json!({"events": [ev("api:u:k"), ev("e-ok"), ev("e-ok"), ev("xapi:1")]})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        v["rejected"],
+        json!([{"event_id": "api:u:k", "code": "reserved_event_id"}])
+    );
+    assert_eq!(v["accepted"], json!(["e-ok", "xapi:1"]));
+    assert_eq!(v["duplicates"], json!(["e-ok"]));
+    assert_eq!(
+        w.count("SELECT count(*) FROM channel_inbox WHERE event_id LIKE 'api:%'")
+            .await,
+        0,
+        "never reaches the inbox"
+    );
+}
+
 #[tokio::test]
 async fn shared_dm_single_reachable_default_and_picker() {
     let w = world().await;

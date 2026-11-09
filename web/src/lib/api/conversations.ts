@@ -67,10 +67,11 @@ export const chatApi = {
     unwrap(api.POST("/v1/conversations/{id}/events/{seq}/redact", { params: { path: { id, seq } }, body })),
   events: (id: string, afterSeq: number) =>
     unwrap(api.GET("/v1/conversations/{id}/events", { params: { path: { id }, query: { after_seq: afterSeq, limit: 500 } } })),
-  send: (id: string, text: string, attachmentIds: string[] = []) =>
+  /** `idempotencyKey` (RFE-018): the same key on a retry returns the first result instead of a second message. */
+  send: (id: string, text: string, attachmentIds: string[] = [], idempotencyKey?: string) =>
     unwrap(
       api.POST("/v1/conversations/{id}/messages", {
-        params: { path: { id } },
+        params: { path: { id }, ...(idempotencyKey ? { header: { "Idempotency-Key": idempotencyKey } } : {}) },
         body: attachmentIds.length > 0 ? { text, attachment_ids: attachmentIds } : { text },
       }),
     ),

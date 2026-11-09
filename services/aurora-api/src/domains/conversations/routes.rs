@@ -10,7 +10,7 @@ use aurora_core::{ApiError, FieldError};
 use aurora_db::repo::{conversations as convs, turns};
 use aurora_db::repo::{transcript, users};
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use futures::Stream;
@@ -340,20 +340,33 @@ async fn list_events(
 
 /// Send a message: starts a turn, or becomes a follow-up when a turn is active.
 #[utoipa::path(post, path = "/conversations/{id}/messages", operation_id = "postConversationMessage", tag = "conversations",
-    params(("id" = Uuid, Path, description = "Conversation id")),
+    params(("id" = Uuid, Path, description = "Conversation id"),
+        ("Idempotency-Key" = Option<String>, Header,
+            description = "1-128 characters of [A-Za-z0-9._:~-]. A retry with the same key returns the original result with `Idempotent-Replayed: true` and creates nothing.")),
     request_body = SendMessage,
     responses((status = 202, body = MessageAccepted), (status = 400, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope), (status = 413, body = ErrorEnvelope),
-        (status = 422, description = "hosted_disabled", body = ErrorEnvelope)),
+        (status = 422, description = "hosted_disabled, idempotency_key_invalid, idempotency_key_reused (details.turn_id | details.followup_id)", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn post_message(
     c: Caller,
     State(s): State<AppState>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(b): Json<SendMessage>,
-) -> Result<(StatusCode, Json<MessageAccepted>), ApiError> {
-    let out = service::post_message(&s, &c, id, &b.text, &b.attachment_ids).await?;
-    Ok((StatusCode::ACCEPTED, Json(out)))
+) -> Result<(StatusCode, HeaderMap, Json<MessageAccepted>), ApiError> {
+    let key_headers: Vec<Vec<u8>> = headers
+        .get_all("idempotency-key")
+        .iter()
+        .map(|v| v.as_bytes().to_vec())
+        .collect();
+    let (out, replayed) =
+        service::post_message(&s, &c, id, &b.text, &b.attachment_ids, &key_headers).await?;
+    let mut h = HeaderMap::new();
+    if replayed {
+        h.insert("idempotent-replayed", HeaderValue::from_static("true"));
+    }
+    Ok((StatusCode::ACCEPTED, h, Json(out)))
 }
 
 /// Abort a turn (queued turns end immediately).

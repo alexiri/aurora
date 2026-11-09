@@ -41,6 +41,8 @@ pub struct Followup {
     /// `joining` | `joined` | `promoted`
     pub status: String,
     pub text: String,
+    /// The turn this follow-up became; non-null only when `status` is `promoted` (D-107).
+    pub promoted_turn_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -198,6 +200,7 @@ impl From<TurnRow> for Followup {
             parent_turn_id: t.parent_turn_id.unwrap_or(t.id),
             status: t.status,
             text: t.text,
+            promoted_turn_id: None,
             created_at: t.created_at,
         }
     }

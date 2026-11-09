@@ -4616,6 +4616,11 @@ export interface components {
             id: string;
             /** Format: uuid */
             parent_turn_id: string;
+            /**
+             * Format: uuid
+             * @description The turn this follow-up became; non-null only when `status` is `promoted` (D-107).
+             */
+            promoted_turn_id?: string | null;
             /** @description `joining` | `joined` | `promoted` */
             status: string;
             text: string;
@@ -12611,7 +12616,10 @@ export interface operations {
     postConversationMessage: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description 1-128 characters of [A-Za-z0-9._:~-]. A retry with the same key returns the original result with `Idempotent-Replayed: true` and creates nothing. */
+                "Idempotency-Key"?: string | null;
+            };
             path: {
                 /** @description Conversation id */
                 id: string;
@@ -12656,7 +12664,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description hosted_disabled */
+            /** @description hosted_disabled, idempotency_key_invalid, idempotency_key_reused (details.turn_id | details.followup_id) */
             422: {
                 headers: {
                     [name: string]: unknown;

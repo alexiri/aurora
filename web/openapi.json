@@ -8068,6 +8068,18 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1-128 characters of [A-Za-z0-9._:~-]. A retry with the same key returns the original result with `Idempotent-Replayed: true` and creates nothing.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "requestBody": {
@@ -8122,7 +8134,7 @@
             }
           },
           "422": {
-            "description": "hosted_disabled",
+            "description": "hosted_disabled, idempotency_key_invalid, idempotency_key_reused (details.turn_id | details.followup_id)",
             "content": {
               "application/json": {
                 "schema": {
@@ -21669,6 +21681,14 @@
           "parent_turn_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "promoted_turn_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The turn this follow-up became; non-null only when `status` is `promoted` (D-107)."
           },
           "status": {
             "type": "string",
