@@ -39,7 +39,7 @@ allowed_email_domains = ["example.org"]
 jit = { org_slug = "example", role = "member", workspace_slugs = ["general"] }
 ```
 
-With Helm, add the secret to the API pods: `api.extraEnv: [{name: AURORA_OIDC_CORP_SECRET, valueFrom: {secretKeyRef: {name: aurora-oidc, key: corp}}}]`.
+With Helm, add the secret to the API pods: `api.extraEnv: [{name: AURORA_OIDC_CORP_SECRET, valueFrom: {secretKeyRef: {name: aurora-oidc, key: corp}}}]`. The migrate Job receives the same variables, since it validates the same configuration. Create the Secret before `helm install`, because the Job runs as a pre-install hook.
 
 **First administrator.** `aurora-api bootstrap-admin --email <you>` pre-provisions an instance administrator with a verified e-mail and no credential. Their first OIDC sign-in with that e-mail binds the identity
 ([install-helm.md](install-helm.md#post-install-checks)). It refuses to run when no provider is configured.
