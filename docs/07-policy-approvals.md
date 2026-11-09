@@ -48,11 +48,42 @@ identities. Authors who want "anyone with access" write empty identities, not a
 roster of users. Existing phase-0 rules are not rewritten; their meaning
 narrows, and the editor/warnings say so (below).
 
+**Group identities (phase 4, P4-GRP-1, D-131, SEC-71).** A `group` identity
+(`{ "kind": "group", "id": uuid }`, a directory group of the rule's org, `04 §Groups`)
+matches **only when the request has a speaker and the group id is in the evaluator's
+principal set**, i.e. the turn's author is currently a member of that group. The
+principal set is `{agent_id} ∪ speaker_group_ids` (`06 §Credential authentication`):
+the gateway resolves the speaker's groups once per credential resolution and passes them
+in; `aurora-policy` stays pure and never loads a group. Everything said for `user`
+identities applies unchanged and for the same reason: **with no speaker** (boot-token,
+BYO, schedule, webhook, watch, peer, system, bot-authored turns, or a speaker who lost
+`can_use`) a group identity never matches, so a privilege granted to a group is never
+granted to unattributed traffic, and an allow rule naming only groups neither allows nor
+selects a credential for such traffic (*Injection selection*); a block, require-approval
+or rate-limit rule naming a group also does not match it. Identities are OR-ed with the
+other kinds. Three more rules keep the semantics from widening:
+
+- **A removed group never turns a rule into "anyone".** Deleting a group does not rewrite
+  rules (published generations are immutable and drafts are not touched): a rule whose
+  identities are non-empty keeps them, and a dead group id is simply in no principal
+  set, so such a rule matches nobody. The author is told by the warning
+  `rule_names_removed_group` (below); an empty `identities` array is still the only way
+  to say "anyone".
+- **Authoring validates.** A `group` identity must name a group of the **scope's org**
+  (the org rule's org, the workspace rule's workspace org), else 422
+  `unknown_identity`; a rule holds at most `RULE_GROUP_IDENTITIES_MAX` (20) group
+  identities. Group ids are not secrets; the editor shows names.
+- **Org and workspace stay separate.** A group identity in an org rule matches speakers
+  of any workspace of the org (the group is org-wide); in a workspace rule it matches the
+  same way. Membership, not workspace binding, is what is tested: a group that holds no
+  binding on the workspace still matches its members' turns there (a person must still
+  have `can_use` to be a speaker at all).
+
 Stored in `policy_rules` (hand) or `derived_rules.rule` (derived).
 
 | Part | Shape / meaning |
 |------|-----------------|
-| `identities` | `[{ "kind": "agent", "id": uuid } | { "kind": "user", "id": uuid }]`. Empty = anyone. An `agent` identity matches when the id equals the request's agent. A `user` identity: **phase 0** matched when the user is in the request identity's `principals` (users with `can_use` on the agent's workspace — "workspace roster" semantics, so a rule naming Alice matched every request by the agent whoever was speaking). **From phase 2 (RFE-005)** a `user` identity matches **only when the request's `speaker_user_id` equals that user**, i.e. the turn that caused the request was authored by that person (`06 §Credential authentication`). With **no speaker** (boot-token, BYO agent-token and BYO context traffic, schedule/webhook/watch/peer/system/bot-authored turns, or a speaker who lost `can_use`) a `user` identity **never matches**. Several identities are OR-ed. |
+| `identities` | `[{ "kind": "agent", "id": uuid } | { "kind": "user", "id": uuid } | { "kind": "group", "id": uuid }]` (phase 4, P4-GRP-1: `group`, below). Empty = anyone. An `agent` identity matches when the id equals the request's agent. A `user` identity: **phase 0** matched when the user is in the request identity's `principals` (users with `can_use` on the agent's workspace — "workspace roster" semantics, so a rule naming Alice matched every request by the agent whoever was speaking). **From phase 2 (RFE-005)** a `user` identity matches **only when the request's `speaker_user_id` equals that user**, i.e. the turn that caused the request was authored by that person (`06 §Credential authentication`). With **no speaker** (boot-token, BYO agent-token and BYO context traffic, schedule/webhook/watch/peer/system/bot-authored turns, or a speaker who lost `can_use`) a `user` identity **never matches**. Several identities are OR-ed. |
 | `targets` | Empty = anywhere. Kinds below. A rule matches if **any** target matches. |
 | `action` | `allow` \| `block` |
 | `require_approval` | allow only. (phase 2, RFE-011a) With the optional `approval_timeout_secs` (60 … `approvals.max_timeout_secs`; absent = no preference, see *Approval deadlines*) |
@@ -75,7 +106,7 @@ Target kinds (matching uses the **request facts** below):
 + `truncated`, `app_id?`, `tool_id?`, `winning_credential?` (`connection{id,
 app_id, scope}` \| `secret{id, kind, scope}`), `injected` (= winning credential
 present), `is_llm_host`, `identity` (agent id, principals; from phase 2 also
-`speaker_user_id?`).
+`speaker_user_id?`; phase 4, P4-GRP-1: `principals` also holds the speaker's group ids).
 
 ## Matching primitives
 
@@ -338,7 +369,11 @@ separate mode.
 `GET /v1/agents/{agent}/effective[?speaker=<user_id>]` (phase 2, RFE-005: the
 optional `speaker` selects the person whose turns are evaluated; default: the
 caller; `speaker=none` shows speakerless traffic; credentials whose selection
-depends on the speaker are flagged `depends_on_speaker`) returns, for every
+depends on the speaker are flagged `depends_on_speaker`; phase 4, P4-GRP-1: the
+selected speaker's **current groups** are resolved from the database and passed as
+principals, `group` identities included, and the response lists them as
+`speaker_groups`; `speaker=none` has none, and `POST …/policy/simulate` with
+`speaker_user_id` does the same) returns, for every
 candidate credential in scope: whether it is selected, by which rule(s), and for each app tool the
 combined decision with the org-only decision exposed as `org_ceiling` so the UI
 can explain locks. Computed by running the evaluator over synthetic request
@@ -367,7 +402,15 @@ facts per tool (one per tool's first method/path example).
   identities carry the informational warning `user_rule_needs_speaker` — "matches
   only turns spoken by <name>; never schedules, webhooks, BYO or boot traffic" —
   and, for allow rules that grant credentials, `user_rule_no_agent_fallback`;
-  phase 2, RFE-025: `rule_applies_to_all_agents`, see *Injection selection*):
+  phase 2, RFE-025: `rule_applies_to_all_agents`, see *Injection selection*;
+  (phase 4, P4-GRP-1) rules with `group` identities carry `group_rule_needs_speaker`
+  — "matches only turns spoken by a member of <group>; never schedules, webhooks, BYO
+  or boot traffic" — and, for allow rules that grant credentials,
+  `group_rule_no_agent_fallback`; `group_rule_empty` (info) when a named group has no
+  members; and `rule_names_removed_group` (severity `warning`, `details.group_id`,
+  "this rule names a group that no longer exists and matches nobody") — the last also
+  appears in the editor next to the identity chip, and publishing is never blocked by
+  any of them):
   rules shadowed by an earlier
   unconditional rule with identical/broader identities and targets; rules
   naming removed tools or lost host claims (inert); allow rules in workspace

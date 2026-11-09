@@ -8,8 +8,10 @@ Phase: **0**. Tables: `03 §1`. (phase 1, RFE-004) From phase 1 **all sign-in is
 Instance ── instance admins (user flag) · plugins · trusted keys · connectors · host-claim decisions
    └── Organization ── members (role, status) · invitations · org policy · org secrets/connections/OAuth clients
           │             channel integrations · org skills · app availability · org API keys
+          │             groups (phase 4: membership · org-role mapping · workspace bindings)
           └── Workspace ── agents · secrets · connections · grants · workspace policy · API keys
-                            access bindings (user → owner|member) · timezone · memory language
+                            access bindings (user → owner|member; phase 4: group → owner|approver|member)
+                            timezone · memory language
 ```
 
 - A user may belong to several organizations.
@@ -273,6 +275,7 @@ values are stored only as keyed hashes.
 | Org role | `owner` > `admin` > `member` | Always enforced. |
 | Membership status | `active`, `suspended` | Suspended = non-member for **every** check including API keys, channel clicks, schedules. |
 | Workspace access | `owner`, `member` — phase 0/1. **From phase 2 (RFE-012): `owner` > `approver` > `member`** | Org owners and admins are implicit workspace owners of every workspace in their org. `approver` is one deliberate notch between chatting and owning: it adds the authority to decide approvals. |
+| Group (phase 4, P4-GRP-1) | member of zero or more org groups | A group can hold workspace roles (`owner`, `approver`, `member`) and map to an org role (`admin`, `member`; never `owner`). The **effective** role is the strongest of the direct and group-derived ones, see *Groups* below. A group never creates membership. |
 | Freeze state (phase 2, RFE-006) | not frozen / `frozen` — per **agent**, **workspace** and **organization** | A reversible, audited emergency switch, see *Freeze* below. |
 
 ### The access law
@@ -297,6 +300,14 @@ request their own turn caused.
 The access law is implemented once (`aurora-db::authz`) and used by every
 surface: HTTP routes, channel speakers and clickers, approvals, schedule and
 webhook fire-time checks, peer messaging.
+
+(phase 4, P4-GRP-1, D-130) **Groups extend the law without changing its shape.** In
+the three definitions above, "the user's org role" means the **effective org role**
+and "a `workspace_access` row exists / workspace role" means the **effective
+workspace role**, both defined in *Groups* below (the strongest of the direct and the
+group-derived value). With no groups in the database the result is exactly the
+phase 0–3 result. Nothing else in this section changes: `can_approve`,
+`can_see_conversation` and every other predicate are built from `can_use` / `can_own`.
 
 **Conversation visibility** (phase 1, RFE-009, D-47). Phase 0 gated transcript
 reads by `can_use` alone, so every workspace member could read every other
@@ -359,6 +370,9 @@ the frozen payload.
 | Freeze / unfreeze an **agent** (phase 2, RFE-006) | `can_own`; lifting a freeze imposed by a higher authority needs that authority (below) |
 | Freeze / unfreeze a **workspace** (phase 2, RFE-006) | `can_own` (org owners/admins included); same lifting rule |
 | Freeze / unfreeze an **organization** (phase 2, RFE-006) | org `owner`, or instance admin |
+| Create, rename, delete a group; add/remove members of a `manual` group; set or clear a group's org-role mapping (phase 4, P4-GRP-1) | org `owner`/`admin` (a mapping to `admin` is as powerful as granting `admin` by role change, which admins may already do; `owner` can never be mapped) |
+| List groups with names, source and member counts; read a group's members (phase 4, P4-GRP-1) | members and the impact view: org `owner`/`admin`; names and counts only (for the binding picker): `can_own` of any workspace of the org; a member sees only the groups they belong to (`/v1/me`) |
+| Bind / unbind / change the role of a **group** on a workspace, read the workspace's group bindings and the group-derived members (phase 4, P4-GRP-1) | `can_own` of the workspace (the same authority as user bindings, including granting `owner`); the group must belong to the workspace's org |
 | Plugins, trusted keys, host claims, connectors, runners | instance admin |
 
 Org admins/owners can therefore always repair a workspace; members of a shared
@@ -410,6 +424,117 @@ decisions are not automations; both are unchanged):
   `creator`-anchored to the turn's speaker. `creator_user_id` stays on anchored
   items as provenance only. The dashboard labels them "Workspace" and the audit row
   records the anchor change (`automation.reassign`, `to: workspace`).
+
+## Groups (phase 4, P4-GRP-1, D-130, D-131, SEC-71)
+
+Until phase 3 every grant of access names one person: a workspace binding per user,
+a role per member. An organization with an IdP wants "everyone in *Platform Team* may
+use workspace *Infra*", maintained in one place. A **group** is a named, flat set of
+an organization's members (no nesting) that can hold workspace access and, optionally,
+an org role. Tables: `03 §Planned changes` (`groups`, `group_members`,
+`group_workspace_access`). Groups are **manual** (created and filled in the dashboard or
+API, this section) or **SCIM** (created and filled by the IdP, `§SCIM`); everything else
+is identical. Nothing changes for an organization that has no groups: the access law
+returns the phase 0–3 answers and no new row is read on a path that finds none.
+
+**Membership.** A group lists users who already have an `org_members` row of the group's
+org (the table's composite foreign key makes removal from the org remove the user from
+every group, and a member can be added only if the org knows them). A group **never
+creates, reactivates or removes an org membership**: admission stays with invitations,
+JIT and SCIM user provisioning, so a group cannot be used to put a stranger into an
+organization. A `suspended` member stays listed but derives nothing from any group
+(suspended = non-member for every check, *Roles*). Limits (`02 §Limits`): 500 groups per
+org, 5 000 members per group, 100 groups per user, 200 workspace bindings per group.
+Names are unique per org, case-insensitively, 1–80 characters, sanitized.
+
+**What a group can hold.** Only two things:
+
+1. **Workspace bindings**: `(group, workspace, role)` with the same vocabulary as a user
+   binding, `owner` > `approver` > `member`. A group may hold `owner`; binding it needs
+   `can_own` on the workspace exactly as for a user, and the group must belong to the
+   workspace's org.
+2. **An org-role mapping** (optional): `admin` or `member`. `owner` cannot be mapped,
+   so ownership, ownership transfer, the last-owner invariant and `instance admin`
+   remain direct, human decisions and no directory change can create an owner.
+
+**Effective roles** (the single definition; implemented once in `aurora-db::authz` as
+`effective_access(user, workspace)` by one query, and no other code reads
+`workspace_access` or the group tables to authorize):
+
+- *Effective org role* = the strongest of `org_members.role` and the `org_role` of every
+  group the user belongs to in that org, **only while the membership is `active`**
+  (a user without an active membership has none, whatever groups say).
+- *Effective workspace role* = the strongest of the direct `workspace_access` row, the
+  role of every `group_workspace_access` row whose group contains the user, and
+  implicit `owner` when the effective org role is `owner` or `admin`. Strongest, never a
+  sum or an intersection: a group can raise a person above their direct binding and can
+  never lower it, and removing a direct binding leaves what groups give.
+- `can_use`, `can_own` and `can_approve` are the phase 2 predicates evaluated on those
+  effective values (*The access law*). The effective result carries its **sources**
+  (`direct`, `group <id>`, `org_role via group <id>`, `org role`) so the dashboard can
+  explain it; sources are informational and never an input to a decision.
+
+Consequences that need no special case: API keys act with the owner's *current* effective
+permissions (a group change reaches keys on the next request); `can_see_conversation`,
+approval decider sets and the e-mail/push recipient set (`07 §Approvals`) are built from
+`can_use`/`can_own`/`can_approve`; schedules and webhooks re-check their creator at every
+fire, so a creator whose only access came through a group stops firing when removed
+(`disabled_reason = authorization`, notice, *Fire-time authority*); anchored automations
+survive as before. The offboarding views (RFE-021) are computed from effective access
+and add `via_groups` to each row (the groups that currently give the person access), so
+"what would break" is accurate for people who have no direct binding. A **group impact
+view** (`GET /v1/groups/{id}/impact`, optional `?remove_member=<user>`) answers the same
+question for deleting a group, unbinding it, or removing one member: per workspace the
+users who would lose all access (at most 200 listed, with the total), the automations
+that would be disabled, and the API-key count; the dashboard shows it before it confirms.
+
+**Policy identities** (`07 §Rule anatomy`): a rule may name `{ "kind": "group", "id" }`.
+It matches only when the request has a **speaker** who is in the group (the evaluator's
+principal set gains the speaker's group ids; no speaker, no group ids), consistent with
+the `user` identity binding of RFE-005 (SEC-44). That is the only place a group is
+visible to the gateway.
+
+**Recomputation and invalidation.** The access law reads the database on every
+request: there is **no per-user authorization cache** in the API (the 30 s caches of
+sessions and key liveness hold the session or key row, not roles), so a group change is
+effective for the next request of every user it touches. The slow consumers are told:
+
+| Change | Signals (after commit, `05 §Gateway cache invalidation`) |
+|--------|--------------------------------------------------------|
+| Member added/removed (manual route or SCIM) | `aurora_gateway_invalidate` scope **`user`** (new, id = the user: gateways drop every cached identity whose speaker is that user and re-resolve their group set and `can_use`); `aurora_auth_revoked { kind: "access", id: user }` |
+| Group binding added/changed/removed; group deleted | scope `workspace` for each affected workspace (`org` when a deletion touches more than 20); `aurora_auth_revoked { kind: "access", org_id, id: null }` (every user of the org) |
+| Org-role mapping changed; group deleted with a mapping | scope `org`; the same `access` notification |
+| User removed from the org / suspended | unchanged (`org`/`workspace` scopes of the existing rules) |
+
+`aurora_auth_revoked` with `kind = "access"` makes every API replica **re-authorize the
+live SSE streams and long-polls** of that user (or of the whole org when `id` is null):
+a stream the user may no longer open is closed with a final `access.changed` event and
+the client reconnects and gets 403/404 (`05 §Conventions`). Sessions are **not** revoked:
+a session is an identity, not an access grant, and the user may still hold other orgs.
+**Running turns** are not aborted by a group change (exactly as a membership change does
+not abort them today); the speaker binding of the turn's context credential is
+re-resolved at the next gateway request, so a person who lost `can_use` stops matching
+`user`/`group` rules from then on (`06 §Credential authentication`, RFE-005), and a held
+approval can only be decided by someone who passes the decider check at decision time.
+Bulk changes (SCIM) deduplicate notifications per user within a transaction; above 1 000
+users in one transaction a single org-wide notification is sent instead.
+
+**Audit** (security-critical, `§Audit`): `group.create|update|delete`,
+`group_member.add|remove`, `group_access.set|remove`. A mapping change is a
+`group.update` with `metadata.change` (`org_role: member → admin`). One row per member
+and per binding changed (a SCIM group `PUT` writes one row per added or removed member).
+Rows written for the IdP carry `actor_kind = service`, `actor_label = scim:<token name>`
+and `metadata.via = "scim"`; there is no new `audit_log.source` value (the column is
+checked, `03 §1`) — SCIM rows use `source = api`.
+
+**Deletion.** Deleting a group deletes its memberships and bindings in one transaction
+and invalidates as above. Policy rules that name the group are **not rewritten**: a
+rule whose identities are all dead groups must keep matching nobody rather than become
+an "anyone" rule (`07 §Rule anatomy`, SEC-71). Deleting a workspace deletes its group
+bindings; deleting a user or removing an org member deletes their memberships; org
+deletion deletes the org's groups after their children (the foreign key is `restrict`).
+There is no nesting, no import and no export in phase 4; JIT (`§OIDC` step 4) assigns
+org membership and workspace bindings only, never groups.
 
 ## Freeze (phase 2, RFE-006, D-50)
 
@@ -493,7 +618,7 @@ original record, returns 200).
   (`10`); deleting a workspace or agent still cascades as below.
 - **Account deletion** (session-only, requires password or recent OIDC sign-in
   within 10 min; phase 1: recent OIDC re-authentication only, RFE-004): refused while the user is the last owner of any org
-  (409 `last_owner`). Removes memberships, bindings, sessions, keys, identities;
+  (409 `last_owner`). Removes memberships, bindings, (phase 4) group memberships, sessions, keys, identities;
   conversations of kind `direct` with that user are deleted; authored content
   keeps a denormalized label.
 - **Workspace deletion**: cascades; agents' sandboxes are destroyed through
@@ -562,6 +687,7 @@ strings are the ones the API already used and are listed in `SECURITY_CRITICAL_A
 | Approval decisions | `approval.decide`, `approval.batch_decide`, `action_approval.decide`, `reach.decide`, `agent_link.decide` (whatever the door: dashboard, API, channel click) |
 | Roles and membership | `org_member.add\|role_change\|suspend\|reactivate\|remove`, `org.transfer_ownership`, `invitation.create\|accept\|cancel`, `workspace_access.put\|delete`, `user.instance_admin_grant\|revoke`, `user.disable\|enable`, `user.delete` |
 | Freeze (RFE-006) | `agent.freeze\|unfreeze`, `workspace.freeze\|unfreeze`, `org.freeze\|unfreeze` |
+| Groups (phase 4, P4-GRP-1) | `group.create\|update\|delete`, `group_member.add\|remove`, `group_access.set\|remove` (emitted as written; `§Groups`) |
 | Governance and tenant settings | `governance.update`, `app_availability.update`, `org.update`, `org.delete`, `workspace.delete`, `retention.update` (RFE-010/015) |
 | Channels | `channel_integration.create\|update\|delete\|autolink_enable\|autolink_disable` (RFE-001), `user_link.create\|delete` |
 | Data erasure and reassignment | `conversation.delete`, `transcript_event.redact`, `memory.redact`, `automation.reassign` (RFE-021) |

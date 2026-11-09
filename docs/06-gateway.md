@@ -131,6 +131,20 @@ unencrypted.
   so a conversation id it names proves nothing), and context credentials of
   turns with no person speaker (schedule, webhook, watch, peer, system, bot or
   agent speakers) — has **no speaker**.
+  **(phase 4, P4-GRP-1, D-131, SEC-71) Group principals.** When the identity has a
+  speaker, `principals = {agent_id} ∪ speaker_group_ids`: the ids of the groups **of the
+  agent's own org** that contain the speaker (`03 §Planned changes`, `group_members`;
+  read once per resolution with the `can_use` check, one indexed query, never per
+  request). A speaker without `can_use` has no speaker and therefore no group ids; a
+  request without a speaker carries none, so `group` identities never match
+  speakerless traffic (`07 §Rule anatomy`). The set is capped by `GROUPS_PER_USER`
+  (100). It is part of the cached identity and is dropped and re-resolved by the
+  scopes `agent`, `workspace`, `org` **and the new scope `user`** (`id` = the user:
+  every cached identity whose `speaker_user_id` is that user, the cheap
+  invalidation for a membership change, `05 §Gateway cache invalidation`); the
+  identity cache keeps a secondary index by speaker for it. A request already in the
+  pipeline finishes with the identity it started with; the next one re-resolves. The
+  policy crate stays pure: it receives the set, it never loads groups.
 
 ### BYO admission (phase 2, RFE-025)
 
@@ -581,7 +595,7 @@ injected (the agent should see the real upstream error).
 
 | Cache | Key | TTL | Invalidated by |
 |-------|-----|-----|----------------|
-| Credential → identity | token hash | 60 s | `credential`, `agent`, `workspace`, `org`, `all`; `aurora_auth_revoked` (phase 2, RFE-025: the identity carries the effective BYO posture, source list and require-context flag; the instance switch comes from configuration) |
+| Credential → identity | token hash | 60 s | `credential`, `agent`, `workspace`, `org`, `all`; (phase 4, P4-GRP-1) `user` (by speaker); `aurora_auth_revoked` (phase 2, RFE-025: the identity carries the effective BYO posture, source list and require-context flag; the instance switch comes from configuration; phase 4: and the speaker's group ids) |
 | ResolvedHost | `org/ws/credential/host` | 60 s | `org`, `workspace`, `agent`, `connection`, `all` |
 | Plaintext values | `(SecretRef, version)` | 60 s | `connection`, `workspace`, `org`, `all` (zeroized on eviction) |
 | Effective governance (`08 §11`) | org | 60 s | `org`, `all` |

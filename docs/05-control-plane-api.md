@@ -284,10 +284,10 @@ caches — phase 3, RFE-014: *after* re-subscribing, keeping the caches meanwhil
 | `aurora_inbox` | `{}` | API → API inbox workers |
 | `aurora_op_result` | `{ "op_id" }` | API (on connector results) → API callers waiting on correlated operations |
 | `aurora_approval` | `{ "id", "workspace_id", "event": "created"|"decided"|"expired" }` | gateway & API → gateways, API (cards, SSE, long-polls) |
-| `aurora_gateway_invalidate` | `{ "scope": "org"|"workspace"|"agent"|"credential"|"connection"|"all", "id"?: uuid }` | API → gateways |
+| `aurora_gateway_invalidate` | `{ "scope": "org"|"workspace"|"agent"|"credential"|"connection"|"user"|"all", "id"?: uuid }` (phase 4, P4-GRP-1: `user`, id = the user; drops the cached identities of that speaker) | API → gateways |
 | `aurora_registry` | `{ "hash": content_hash, "contract": int }` | API → gateways, API replicas (hook hosts have no DB connection and poll `/internal/v1/registry/active` every 60 s and on cache miss) |
 | `aurora_secret_origin` | `{ "secret_id", "status" }` | gateway (origin preflight/backstop) → API (audit, owner notice, dashboard) |
-| `aurora_auth_revoked` | `{ "kind": "session"|"api_key"|"user", "id" }` | API → API replicas, gateways |
+| `aurora_auth_revoked` | `{ "kind": "session"|"api_key"|"user", "id" }`; (phase 4, P4-GRP-1) `{ "kind": "access", "id": user_id \| null, "org_id" }`: the user's (or, with `id` null, every user of the org's) effective access changed (`04 §Groups`) | API → API replicas, gateways (replicas re-authorize that user's open SSE streams and long-polls; a stream the user may no longer open is closed with a final `access.changed`; gateways ignore it, they use the `user`/`workspace`/`org` scopes) |
 
 Deltas are coalesced by the API before notifying (≥100 ms or ≥2 000 chars per
 turn per notification) so a busy stream does not flood the channel.
@@ -426,6 +426,9 @@ aurora_gateway_invalidate` after commit with the narrowest scope:
 | Policy publish/rollback | `workspace` or `org` |
 | Agent delete, token regeneration, credential revocation | `agent` / `credential` |
 | Workspace access or membership change | `workspace` / `org` |
+| (phase 4, P4-GRP-1) Group member added/removed | `user` (+ `aurora_auth_revoked` kind `access`) |
+| (phase 4, P4-GRP-1) Group binding change; group deleted | `workspace` per affected workspace (`org` above 20) (+ `access`, org-wide) |
+| (phase 4, P4-GRP-1) Group org-role mapping change | `org` (+ `access`, org-wide) |
 | Freeze / unfreeze (phase 2, RFE-006) | `agent` / `workspace` / `org` |
 | App availability change | `org` |
 | Org governance change (and the stored-origin re-evaluation it triggers) | `org` |
@@ -483,6 +486,8 @@ connector, **P** public capability. Permission checks per `04`.
 | GET/POST `/v1/orgs/{org}/workspaces` | S/K | |
 | GET/PATCH/DELETE `/v1/workspaces/{ws}` | S/K | name, timezone, memory_language; (phase 2, RFE-025) PATCH also `byo_posture` (`enabled`\|`owners_only`\|`disabled`\|null = inherit; `can_own`; tighten-only, 422 `governance_below_instance_minimum`; audited `workspace.byo_posture.update`; invalidation scope `workspace`); GET shows `byo_posture` and `effective_byo_posture` with its `level` |
 | GET `/v1/workspaces/{ws}/access`; PUT/DELETE `/v1/workspaces/{ws}/access/{user}` | S/K | bindings (phase 2, RFE-021: DELETE accepts `reassign_to`); (phase 2, RFE-012) `PUT { role: "owner"\|"approver"\|"member" }`; `can_own` |
+| GET `/v1/workspaces/{ws}/access?expand=groups` | S/K | (phase 4, P4-GRP-1) opt-in expansion for `can_own`: adds `group_bindings: [{ group: {id, name, source, member_count}, role }]` and `derived_members: Page<{ user, role, sources: [{ kind: "direct"\|"group"\|"org_role", group? }] }>` (the effective role of everyone who has access through a group or an org role; a person with several sources appears once). Without `expand` the response is unchanged |
+| PUT/DELETE `/v1/workspaces/{ws}/access/groups/{group}` | S/K | (phase 4, P4-GRP-1) `PUT { role: "owner"\|"approver"\|"member" }` binds or changes the role of a group; `can_own`; 404 for a group of another org, 422 `group_binding_limit_reached`; DELETE is idempotent; both audited (`group_access.set\|remove`), invalidation scope `workspace` |
 | GET/POST `/v1/workspaces/{ws}/api-keys` | S (POST: SO) | workspace keys |
 | GET `/v1/workspaces/{ws}/audit` | S/K | same filters |
 | GET `/v1/orgs/{org}/storage` | S/K | (phase 2, RFE-015) org `owner`/`admin`: usage vs quota, breakdown by workspace and direction |
@@ -490,6 +495,29 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/workspaces/{ws}/activity` | S/K | request log, filters: agent, conversation, decision, host, app |
 | GET `/v1/workspaces/{ws}/usage` | S/K | runtime + tokens |
 | POST `/v1/workspaces/{ws}/freeze` `{ reason }`; POST `/v1/workspaces/{ws}/unfreeze` | S/K | (phase 2, RFE-006) `can_own`; as for agents |
+
+### Groups (phase 4, P4-GRP-1, D-130)
+Permissions per `04 §Permission matrix`; every write is audited and security-critical
+(`04 §Audit`) and invalidates as in *Gateway cache invalidation*; lists are paginated
+(`Page`). A group of another org is 404. Errors: 409 `group_name_taken`, 422
+`group_limit_reached`, `group_member_limit_reached`, `group_user_limit_reached`
+(`GROUPS_PER_USER`), `not_an_org_member`, `group_org_role_invalid` (`owner` or unknown),
+409 `group_managed_by_scim` (name, delete and membership of a `source = scim` group are
+the IdP's; `DELETE` is allowed only when the org's SCIM is disabled; the mapping and
+workspace bindings stay editable), 409 `stale_revision`.
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET/POST `/v1/orgs/{org}/groups` | S/K | list (`q`, `source`, `member=<user>`) / create `{ name, description?, org_role? }` → `Group { id, name, description, source, org_role, member_count, workspace_count, revision, created_at }`; org `owner`/`admin` (names and counts for `can_own` of any workspace of the org) |
+| GET/PATCH/DELETE `/v1/groups/{id}` | S/K | PATCH `{ name?, description?, org_role?: "admin"\|"member"\|null }` with `If-Match`/`revision`; DELETE removes members and bindings and never rewrites policy rules (`07`) |
+| GET `/v1/groups/{id}/members`; PUT/DELETE `/v1/groups/{id}/members/{user}`; POST `/v1/groups/{id}/members:batch` | S/K | org `owner`/`admin`; PUT/DELETE are idempotent; the batch body is `{ add?: [user], remove?: [user] }` (≤ 100 each, one transaction, one audit row per change) |
+| GET `/v1/groups/{id}/workspaces` | S/K | the workspaces the group is bound to, with roles (org `owner`/`admin`) |
+| GET `/v1/groups/{id}/impact?remove_member=<user>` | S/K | org `owner`/`admin`: what deleting the group (or, with `remove_member`, removing that member) would take away, `{ workspaces: [{ workspace, users_losing_access: [...≤ GROUP_IMPACT_LIST_MAX], total, schedules_disabled, webhooks_disabled, api_keys }] }` |
+| GET `/v1/me` | S/K | (phase 4) also `groups: [{ id, name, org_id }]` and, per membership, `effective_role` with `sources` (`role` stays the direct role) |
+
+(phase 4, P4-GRP-1) The offboarding views of `§Organizations, members, keys` add
+`via_groups` to each row; `GET /v1/agents/{agent}/effective` and policy `simulate` take
+the speaker's groups into account (`07`).
 
 ### Secrets and LLM
 | Method & path | Auth | Purpose |

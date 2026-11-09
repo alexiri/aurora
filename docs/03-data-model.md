@@ -1281,6 +1281,43 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | plugin_packages.status_reason | (existing open vocabulary) | gains `converts_grants`: an upgrade held in `pending_approval` because it would convert full grants | 4 (P4-GRANTS) |
 | registry snapshot `apps[].grants` | `{ custom_only, block_untooled }` booleans, in the snapshot JSON only | no table; copied from the manifest (`09 §9`). Tool entries may also carry `params` (Q8, `09 §3.4`) | 4 (P4-GRANTS) |
 
+#### `groups` (new table; directory groups, phase 4)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (P4-GRP-1) |
+| org_id | uuid not null FK→organizations (restrict) | unique `(id, org_id)` so child tables can carry a same-org composite foreign key | 4 (P4-GRP-1) |
+| name | citext not null | 1–80 chars, sanitized; unique `(org_id, name)` | 4 (P4-GRP-1) |
+| description | text null | ≤ 280 | 4 (P4-GRP-1) |
+| source | text not null default `manual` CHECK in (`manual`,`scim`) | immutable; `scim` groups are created and filled by the IdP (`04 §SCIM`), their name and membership are read-only in the dashboard | 4 (P4-GRP-1) |
+| org_role | text null CHECK in (`admin`,`member`) | the group → org-role mapping; `owner` is not a legal value (`04 §Groups`) | 4 (P4-GRP-1) |
+| revision | bigint not null default 1 | optimistic concurrency (`If-Match`) | 4 (P4-GRP-1) |
+| created_by | uuid null FK→users (set null) | null for SCIM-created groups | 4 (P4-GRP-1) |
+| created_at, updated_at | timestamptz not null default now() | | 4 (P4-GRP-1) |
+
+#### `group_members` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| group_id | uuid not null | pk part | 4 (P4-GRP-1) |
+| org_id | uuid not null | denormalized; composite FKs `(group_id, org_id)` → `groups(id, org_id)` (cascade) and `(org_id, user_id)` → `org_members(org_id, user_id)` (cascade): a member must be a member of the group's org, and leaving the org leaves every group | 4 (P4-GRP-1) |
+| user_id | uuid not null FK→users (cascade) | pk part | 4 (P4-GRP-1) |
+| source | text not null default `manual` CHECK in (`manual`,`scim`) | who added the row; equals the group's source (a `manual` group takes only `manual` rows) | 4 (P4-GRP-1) |
+| added_by | uuid null FK→users (set null) | | 4 (P4-GRP-1) |
+| created_at | timestamptz not null default now() | | 4 (P4-GRP-1) |
+| primary key / index | `(group_id, user_id)` / `(org_id, user_id)` | the index answers "which groups is this user in" (the access law, the gateway) | 4 (P4-GRP-1) |
+
+#### `group_workspace_access` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| group_id | uuid not null | pk part | 4 (P4-GRP-1) |
+| workspace_id | uuid not null | pk part; composite FKs `(group_id, org_id)` → `groups(id, org_id)` (cascade) and `(workspace_id, org_id)` → `workspaces(id, org_id)` (cascade; needs a unique index on that pair): a group binds only workspaces of its own org | 4 (P4-GRP-1) |
+| org_id | uuid not null | denormalized for the composite foreign keys | 4 (P4-GRP-1) |
+| role | text not null CHECK in (`owner`,`approver`,`member`) | same vocabulary and meaning as `workspace_access.role` | 4 (P4-GRP-1) |
+| granted_by | uuid null FK→users (set null) | | 4 (P4-GRP-1) |
+| created_at, updated_at | timestamptz not null default now() | | 4 (P4-GRP-1) |
+| index | `(workspace_id)` | "who has access to this workspace" | 4 (P4-GRP-1) |
+
+`effective_access(user, workspace)` is one statement: the user's `org_members` row (active), the maximum of `org_members.role` and `groups.org_role` over the user's groups, the direct `workspace_access` row, and the maximum role over `group_workspace_access ⋈ group_members` for the workspace, returning the strongest role and the list of sources (`04 §Groups`). The gateway database role gains `SELECT` on `groups`, `group_members` and `group_workspace_access` (the speaker's group set is resolved at credential resolution, `06 §Credential authentication`); it never writes them. The `workspace_access` table, its CHECK and the `can_*` meaning are unchanged: a deployment without groups reads the same rows as before.
+
 #### `agents`, `conversations` (harness selection)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

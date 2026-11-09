@@ -139,6 +139,18 @@ tokens), group → workspace access bindings, group identities in policy
 (`{ "kind": "group" }` — the evaluator's principal set gains group ids), group
 → org-role mappings.
 
+- **Manual groups — specified (phase 4, P4-GRP-1, D-130, D-131, SEC-71).** Tables
+  `groups`, `group_members`, `group_workspace_access`; the effective role is the
+  strongest of direct and group-derived roles; org-role mappings are `admin`/`member`
+  only (never `owner`); `group` policy identities match only a speaker in the group
+  (never speakerless traffic); per-request evaluation with `user`/`workspace`/`org`
+  gateway invalidation and an `access` notification for open streams. Owning
+  sections: `04 §Groups`, `03 §Planned changes`, `05` (Groups, invalidation, bus),
+  `06 §Credential authentication`, `07 §Rule anatomy`, `10 §Visibility of direct
+  conversations`, `14` (Groups page, workspace Access, policy editor), `02 §Limits`,
+  `18 §Groups`. Not in phase 4: nested groups, JIT group assignment, group import or
+  export.
+
 ## Other later items
 
 - **Shared rate-limit counters — specified (phase 4, P4-CNT, D-119, SEC-62).**

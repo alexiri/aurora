@@ -132,6 +132,13 @@ specified once here and enforced by the same predicate everywhere:
   agent-wide and **not** conversation-scoped (`17 §Residual risks`).
 - The agent's own context is unaffected: an agent still sees its conversations'
   contents; visibility concerns people.
+- (phase 4, P4-GRP-1) **Group-derived access follows the same predicate.** "Owner" and
+  "can use" in these rules mean the *effective* access of `04 §Groups`: a person who
+  can own a workspace only through a group sees other members' direct conversations
+  exactly like any owner, and loses that the moment the group membership or binding
+  goes (the access law is read on every request; open streams are re-authorized by the
+  `access` notification). A running turn is not aborted by such a loss; its speaker
+  binding is re-resolved at the next gateway request (`06 §Credential authentication`).
 
 ## Turns
 
