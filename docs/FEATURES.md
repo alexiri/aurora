@@ -5,8 +5,8 @@ invariants `SEC-nn` (`17`). Phase 0 = M0–M7 (complete). From phase 1 the ids a
 the design-review item (`RFE-nnn[a|b]`, `80`, optionally `§part`) or
 `P<phase>/<doc>§<section>` (`19`, `21`, `14`, `15`). Phase 0 and phase 1 are
 complete; phase 2's build work is complete and its exit audit (AUDIT-002,
-`docs/audit/phase2-exit.md`) found one defect (FIX-014) and documentation gaps; phases 3 and 4 start when
-phases 1 and 2 are done; phase 5 holds OPS-021, OPS-022 and P5-SLACK (`19`, owner 2026-11-06/07/08). The execution plan for
+`docs/audit/phase2-exit.md`) found one defect and documentation gaps, all closed (FIX-014, FIX-015,
+P2-DOCS-2); phases 3 and 4 start on the owner's go; phase 5 holds OPS-021, OPS-022 and P5-SLACK (`19`, owner 2026-11-06/07/08). The execution plan for
 every open row is in `PROGRESS.md` §Remaining work plan (by feature).
 
 Status: `todo` · `planned` (briefs written) · `in-progress` · `done` (acceptance evidence in PROGRESS.md) · `blocked` · `deferred` (owner).
