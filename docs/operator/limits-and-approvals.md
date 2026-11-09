@@ -1,6 +1,6 @@
-# API rate limits, approval timeouts and e-mail
+# API rate limits, approval timeouts, e-mail and streaming fan-out
 
-(Phase 2, RFE-017 and RFE-011a.) The normative text is [docs/05 §Conventions](../05-control-plane-api.md#conventions) (rate limiting) and
+(Phase 2, RFE-017 and RFE-011a; streaming fan-out is phase 1, RFE-016.) The normative text is [docs/05 §Conventions](../05-control-plane-api.md#conventions) (rate limiting) and
 [docs/07 §Approval deadlines](../07-policy-approvals.md) (approvals). In Helm, put the keys under `config.ratelimit`, `config.approvals` and `config.email`.
 
 ## API rate limits
@@ -87,3 +87,20 @@ from = "aurora@example.org"
 
 Verify: with `smtp_url` unset, trigger an approval from a webhook or schedule and look for the e-mail in the API log. With it set, check the mailbox of a workspace owner after about 20 seconds.
 Details: [docs/07 §E-mail when no surface is live](../07-policy-approvals.md).
+
+## Streaming fan-out (events)
+
+(Phase 1, RFE-016.) Streaming text and activity lines travel over a `DeltaBus`. Scope: API only; in Helm, `config.events`.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `events.delta_bus` | `notify` | Which `DeltaBus` implementation carries deltas. `notify` (Postgres `NOTIFY`) is the only one; any other value fails startup naming `events.delta_bus`. |
+| `events.delta_coalesce_ms` | `100` | Producer-side coalescing window of `text.delta` / `thinking.delta`: a delta is sent once this many milliseconds passed since the last one for the same message, or when 2 000 characters are buffered (that threshold is fixed). 100 to 500, otherwise startup fails naming the key. Raise it to cut the notification rate (at the cost of a choppier stream) when approaching the ceiling. |
+
+```toml
+[events]
+delta_bus = "notify"
+delta_coalesce_ms = 250
+```
+
+Verify: open a conversation stream while an agent writes a long answer; deltas arrive about every `delta_coalesce_ms`. To re-measure the `notify` ceiling on your Postgres, run `bash scripts/perf/delta_bus.sh` from a source checkout (release build; the role in `DATABASE_URL` needs `CREATEDB`; it works in a throwaway database it drops again). It prints PASS or WARN against the planning numbers in [docs/15 §Streaming fan-out ceiling](../15-deployment-operations.md), and never fails on a slow machine.

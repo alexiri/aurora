@@ -168,6 +168,8 @@ pub struct ApiConfig {
     pub hosted: HostedSection,
     /// (RFE-011a) approval deadlines and the e-mail notifier switch.
     pub approvals: ApprovalsSection,
+    /// (phase 1, RFE-016) delta bus id and coalescing window.
+    pub events: EventsSection,
     pub advertised_proxy_url: String,
     /// (FIX-010, D-87) Resolved `gateway.sandbox_proxy_url`: the proxy address in the boot document.
     pub sandbox_proxy_url: String,
@@ -323,6 +325,7 @@ impl RawConfig {
         let governance = check_governance(&mut c, self);
         check_hosted(&mut c, &self.hosted);
         check_approvals(&mut c, &self.approvals, &self.hosted);
+        check_events(&mut c, &self.events);
         check_pos(
             &mut c,
             "database.max_connections",
@@ -423,6 +426,7 @@ impl RawConfig {
             agents: self.agents.clone(),
             hosted: self.hosted.clone(),
             approvals: self.approvals.clone(),
+            events: self.events.clone(),
             advertised_proxy_url,
             sandbox_proxy_url,
             gateway_ca_dir: self.gateway.ca_dir.clone(),
@@ -1668,6 +1672,25 @@ fn check_approvals(c: &mut Ctx, a: &ApprovalsSection, h: &HostedSection) {
         c.err(
             "approvals.timeout_secs",
             "must not exceed approvals.max_timeout_secs",
+        );
+    }
+}
+
+/// (RFE-016) `events.delta_bus` must name a known implementation; the window is 100..=500 ms.
+fn check_events(c: &mut Ctx, e: &EventsSection) {
+    if e.delta_bus != DELTA_BUS_NOTIFY {
+        c.err(
+            "events.delta_bus",
+            format!(
+                "unknown delta bus {:?}; the only implementation is {DELTA_BUS_NOTIFY:?}",
+                e.delta_bus
+            ),
+        );
+    }
+    if !(DELTA_COALESCE_MS_MIN..=DELTA_COALESCE_MS_MAX).contains(&e.delta_coalesce_ms) {
+        c.err(
+            "events.delta_coalesce_ms",
+            format!("must be between {DELTA_COALESCE_MS_MIN} and {DELTA_COALESCE_MS_MAX}"),
         );
     }
 }

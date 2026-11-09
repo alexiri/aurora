@@ -20,3 +20,8 @@ futures = { workspace = true }
 tracing = { workspace = true }
 aurora-core = { workspace = true, features = ["axum"] }
 chrono = { workspace = true }
+
+[[bench]]
+name = "delta_bus_perf"
+path = "benches/delta_bus_perf.rs"
+harness = false

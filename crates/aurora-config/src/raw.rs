@@ -54,6 +54,8 @@ pub struct RawConfig {
     pub api: ApiSection,
     pub gateway: GatewaySection,
     pub approvals: ApprovalsSection,
+    /// (phase 1, RFE-016) ephemeral delta fan-out.
+    pub events: EventsSection,
     pub plugins: PluginsSection,
     pub hookhost: HookhostSection,
     pub runner: RunnerSection,
@@ -449,6 +451,31 @@ impl Default for GatewaySection {
             hookhost_url: "http://aurora-hookhost:4104".into(),
             proxy_tls: ProxyTlsSection::default(),
             trusted_proxies: vec![],
+        }
+    }
+}
+
+/// Id of the only `DeltaBus` implementation (Postgres `LISTEN`/`NOTIFY`).
+pub const DELTA_BUS_NOTIFY: &str = "notify";
+/// Bounds of `events.delta_coalesce_ms`.
+pub const DELTA_COALESCE_MS_MIN: u32 = 100;
+pub const DELTA_COALESCE_MS_MAX: u32 = 500;
+
+/// (phase 1, RFE-016) `[events]`: which `DeltaBus` carries streaming deltas and the producer-side
+/// coalescing window (`docs/15 §Configuration`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EventsSection {
+    /// `DeltaBus` implementation id; `notify` is the only one. Unknown ids fail startup.
+    pub delta_bus: String,
+    /// Delta coalescing window in milliseconds, 100..=500.
+    pub delta_coalesce_ms: u32,
+}
+impl Default for EventsSection {
+    fn default() -> Self {
+        Self {
+            delta_bus: DELTA_BUS_NOTIFY.to_owned(),
+            delta_coalesce_ms: DELTA_COALESCE_MS_MIN,
         }
     }
 }

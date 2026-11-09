@@ -65,6 +65,36 @@ fn plugins_builtin_dir_default_override_and_empty() {
     assert!(raw.api_config().unwrap_err().has_key("plugins.builtin_dir"));
 }
 
+// FIX-015 (RFE-016): `[events]` defaults, a valid window, both out-of-range ends, unknown bus id.
+#[test]
+fn events_delta_bus_and_coalesce_window() {
+    let raw = load_with(BASE, &[]).unwrap();
+    assert_eq!(raw.events.delta_bus, "notify");
+    assert_eq!(raw.events.delta_coalesce_ms, 100);
+    let api = raw.api_config().unwrap();
+    assert_eq!(
+        (api.events.delta_bus.as_str(), api.events.delta_coalesce_ms),
+        ("notify", 100)
+    );
+    for ok in ["100", "250", "500"] {
+        let raw = load_with(BASE, &[("AURORA__EVENTS__DELTA_COALESCE_MS", ok)]).unwrap();
+        let api = raw.api_config().unwrap();
+        assert_eq!(api.events.delta_coalesce_ms.to_string(), ok);
+    }
+    for bad in ["0", "99", "501"] {
+        let raw = load_with(BASE, &[("AURORA__EVENTS__DELTA_COALESCE_MS", bad)]).unwrap();
+        let e = raw.api_config().unwrap_err();
+        assert!(e.has_key("events.delta_coalesce_ms"), "{bad}: {e}");
+    }
+    let raw = load_with(BASE, &[("AURORA__EVENTS__DELTA_BUS", "kafka")]).unwrap();
+    let e = raw.api_config().unwrap_err();
+    assert!(e.has_key("events.delta_bus"), "{e}");
+    // The same keys in the TOML file.
+    let toml = format!("{BASE}[events]\ndelta_bus = \"notify\"\ndelta_coalesce_ms = 300\n");
+    let api = load_with(&toml, &[]).unwrap().api_config().unwrap();
+    assert_eq!(api.events.delta_coalesce_ms, 300);
+}
+
 // P2-011A (RFE-011a, D-56): the instance maximum of approval timeouts is bounded and always
 // below the turn ceiling minus its warning; startup refuses anything else.
 #[test]
