@@ -110,6 +110,11 @@ pub struct EffectiveCredential {
     /// (phase 2, RFE-005) An enabled allow rule with a `user` identity targets this credential,
     /// so whether it is selected changes with the speaker (compare `?speaker=none`).
     pub depends_on_speaker: bool,
+    /// (FIX-014) A connection's status (`active` | `disabled` | `reauth_required`); absent for
+    /// secrets. A connection that is not `active` is not usable: the gateway refuses it and it
+    /// contributes no app env, stubs or snippets to a boot, and no tool decisions are listed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 /// Query of `GET /v1/agents/{agent}/effective` (phase 2, RFE-005).

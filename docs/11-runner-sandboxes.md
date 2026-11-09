@@ -196,6 +196,11 @@ Non-secret environment set on the container by the runner: `TZ`, `HOME=/workspac
 from the snapshot. The proxy URL carries **no credentials**: the supervisor's
 loopback forwarder adds them (`12 §Loopback proxies`).
 
+(FIX-014) An app contributes env and stub files only through an **`active`** connection the agent's
+allow rules select: a `disabled` (or `reauth_required`) connection contributes nothing, and disabling or
+re-enabling one flags `restart_to_update` like an app becoming unavailable. It stays in
+`GET /agents/{agent}/effective` with its `status` and no tool decisions.
+
 (phase 1, RFE-003) **`capabilities`** (array, absent = empty) lists what the
 sandbox may do beyond ordinary traffic; phase 1 defines `browser`. Its source:
 the **sandbox image declares** the capabilities it supports in the OCI label

@@ -21103,6 +21103,13 @@
               "format": "uuid"
             },
             "description": "Logical ids of the allow rules that select it."
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(FIX-014) A connection's status (`active` | `disabled` | `reauth_required`); absent for\nsecrets. A connection that is not `active` is not usable: the gateway refuses it and it\ncontributes no app env, stubs or snippets to a boot, and no tool decisions are listed."
           }
         }
       },

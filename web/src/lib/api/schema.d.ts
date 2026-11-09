@@ -4467,6 +4467,12 @@ export interface components {
             selected: boolean;
             /** @description Logical ids of the allow rules that select it. */
             selected_by: string[];
+            /**
+             * @description (FIX-014) A connection's status (`active` | `disabled` | `reauth_required`); absent for
+             *     secrets. A connection that is not `active` is not usable: the gateway refuses it and it
+             *     contributes no app env, stubs or snippets to a boot, and no tool decisions are listed.
+             */
+            status?: string | null;
         };
         EffectiveEgress: {
             baseline_allowlist: components["schemas"]["AllowlistEntry"][];

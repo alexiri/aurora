@@ -105,6 +105,7 @@ async fn compute_inner(
                 depends_on_speaker: user_rules
                     .iter()
                     .any(|r| r.targets.iter().any(|t| t.selects(&cred))),
+                status: None,
             }
         })
         .collect();
@@ -137,7 +138,10 @@ async fn compute_inner(
                 .map(|r| r.logical_id)
                 .collect();
             let selected = !selected_by.is_empty();
-            if selected {
+            // FIX-014: only an active connection feeds a boot (env, stubs, snippets). The others
+            // stay listed with their status; the gateway refuses them with the right reason.
+            let usable = c.status == "active";
+            if selected && usable {
                 granted_apps.insert(c.app_id.clone());
             }
             credentials.push(EffectiveCredential {
@@ -154,12 +158,13 @@ async fn compute_inner(
                 depends_on_speaker: user_rules
                     .iter()
                     .any(|r| r.targets.iter().any(|t| t.selects(&cred))),
+                status: Some(c.status.clone()),
             });
             let Some(app) = snap.app(&c.app_id) else {
                 continue;
             };
             let catalogue = apps::tools(app);
-            if selected {
+            if selected && usable {
                 for t in &catalogue {
                     let facts = RequestFacts {
                         host: example(&t.host),

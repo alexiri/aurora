@@ -405,6 +405,75 @@ async fn an_unavailable_app_contributes_no_env_or_stubs_and_flags_restart() {
     assert!(doc2["files"].as_array().unwrap().is_empty());
 }
 
+/// FIX-014 (AUDIT-002 F-1): a selected connection that is not `active` feeds no boot env or stubs,
+/// toggling it flags `restart_to_update`, and it stays in the effective listing with its status.
+#[tokio::test]
+async fn a_disabled_connection_contributes_no_env_or_stubs_and_flags_restart() {
+    let w = world().await;
+    let agent = w.agent("disab").await;
+    let ca = w.conn("app_a").await;
+    w.grant(agent, ca).await;
+    let (start, doc) = w.start(agent).await;
+    assert_eq!(env_of(&start, "APP_A_BASE"), Some("https://a.example/api"));
+    assert_eq!(doc["files"].as_array().unwrap().len(), 1);
+    assert_eq!(w.sandbox(agent).await["restart_to_update"], false);
+    let set_status = |status: &'static str| {
+        let pool = w.h.pool().clone();
+        async move {
+            sqlx::query("UPDATE app_connections SET status = $2 WHERE id = $1")
+                .bind(ca)
+                .bind(status)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+    set_status("disabled").await;
+    assert_eq!(w.sandbox(agent).await["restart_to_update"], true);
+    // A fresh boot of another agent granted the disabled connection gets nothing from it.
+    let other = w.agent("disab2").await;
+    w.grant(other, ca).await;
+    let (start2, doc2) = w.start(other).await;
+    assert_eq!(env_of(&start2, "APP_A_BASE"), None);
+    assert!(doc2["files"].as_array().unwrap().is_empty(), "{doc2}");
+    // Still listed, marked with its status, selected by the rule, with no tool decisions.
+    let (s, v) = w
+        .call(Method::GET, &format!("/v1/agents/{other}/effective"), None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let c = v["credentials"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == json!(ca))
+        .unwrap_or_else(|| panic!("connection listed: {v}"));
+    assert_eq!(c["status"], "disabled", "{v}");
+    assert_eq!(c["selected"], true, "{v}");
+    assert!(
+        v["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|t| t["connection_id"] != json!(ca) || t["inert"] == true),
+        "{v}"
+    );
+    // Re-enabling restores the env and flags the running sandbox again: the first agent booted
+    // with it, `other` booted without it.
+    set_status("active").await;
+    assert_eq!(w.sandbox(agent).await["restart_to_update"], false);
+    assert_eq!(w.sandbox(other).await["restart_to_update"], true);
+    let (_, v) = w
+        .call(Method::GET, &format!("/v1/agents/{other}/effective"), None)
+        .await;
+    let c = v["credentials"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == json!(ca))
+        .unwrap();
+    assert_eq!(c["status"], "active", "{v}");
+}
+
 #[tokio::test]
 async fn a_boot_recorded_without_an_image_flags_only_when_the_image_is_known_to_differ() {
     let mut w = world().await;
