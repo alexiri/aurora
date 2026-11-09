@@ -5,6 +5,13 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+# One run per host, across worktrees: the fixed addresses below are host-wide, and the port check
+# alone misses a run that is still building (nothing bound yet). Waits for the other run.
+exec 9>/tmp/aurora-e2e-gateway.lock   # fixed path: TMPDIR differs between sessions
+if ! flock -n 9; then
+  echo "another scripts/e2e/gateway.sh run holds the lock; waiting (up to 1 h)..." >&2
+  flock -w 3600 9 || { echo "gave up waiting for the gateway e2e lock" >&2; exit 1; }
+fi
 for ip in 127.0.0.31 127.0.0.32 127.0.0.33 127.0.0.34; do
   for port in 4101 4102 4103 4104 4111; do
     if ss -ltn "sport = :$port" | grep -q "$ip:"; then echo "$ip:$port already in use" >&2; exit 1; fi
