@@ -29,4 +29,7 @@ bash scripts/guards/dev-gateway-address.sh
 echo "== no-conflict-markers"
 bash scripts/guards/no-conflict-markers.sh
 
+echo "== no-deployment-defaults (RFE-019: neutral brief, public digest-pinned sandbox base)"
+bash scripts/guards/no-deployment-defaults.sh
+
 echo "== all guards passed"

@@ -10,6 +10,6 @@ if [ "$free_kb" -lt $((15 * 1024 * 1024)) ]; then
   exit 1
 fi
 base_args=()
-[ -n "${ALMA_BASE:-}" ] && base_args=(--build-arg "ALMA_BASE=$ALMA_BASE")
+[ -n "${SANDBOX_BASE_IMAGE:-}" ] && base_args=(--build-arg "SANDBOX_BASE_IMAGE=$SANDBOX_BASE_IMAGE")
 podman build -f images/sandbox/Containerfile --target sandbox-min "${base_args[@]}" -t "$tag" .
 podman image ls "$tag" --format '{{.Repository}}:{{.Tag}} {{.Size}}'

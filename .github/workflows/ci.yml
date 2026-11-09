@@ -511,7 +511,8 @@ jobs:
           context: .
           file: images/sandbox/Containerfile
           target: sandbox
-          build-args: ALMA_BASE=docker.io/library/almalinux:10
+          # unset SANDBOX_BASE_IMAGE variable = the Containerfile's public digest-pinned default
+          build-args: ${{ vars.SANDBOX_BASE_IMAGE != '' && format('SANDBOX_BASE_IMAGE={0}', vars.SANDBOX_BASE_IMAGE) || '' }}
           push: ${{ steps.prep.outputs.push == 'true' }}
           tags: ${{ steps.meta-sandbox.outputs.tags }}
           labels: ${{ steps.meta-sandbox.outputs.labels }}
@@ -542,7 +543,7 @@ jobs:
           context: .
           file: images/sandbox/Containerfile
           target: sandbox-min
-          build-args: ALMA_BASE=docker.io/library/almalinux:10
+          build-args: ${{ vars.SANDBOX_BASE_IMAGE != '' && format('SANDBOX_BASE_IMAGE={0}', vars.SANDBOX_BASE_IMAGE) || '' }}
           push: ${{ steps.prep.outputs.push == 'true' }}
           tags: ${{ steps.meta-min.outputs.tags }}
           labels: ${{ steps.meta-min.outputs.labels }}

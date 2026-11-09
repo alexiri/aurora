@@ -59,11 +59,10 @@ for t in api gateway hookhost runner; do
 done
 podman build -f images/services/web.Containerfile -t "$REG/aurora-web:$TAG" .
 # the sandbox image: target `sandbox` (Claude Code harness), or `sandbox-min` (fake harness, for tests only)
-podman build -f images/sandbox/Containerfile --target sandbox \
-  --build-arg ALMA_BASE=docker.io/library/almalinux:10 -t "$REG/aurora-sandbox:$TAG" .
+podman build -f images/sandbox/Containerfile --target sandbox -t "$REG/aurora-sandbox:$TAG" .
 ```
 
-`ALMA_BASE` defaults to a CERN registry image (`gitlab-registry.cern.ch/linuxsupport/alma10-base`) that is not reachable from outside CERN; pass a base you can pull, as above (`images/sandbox/Containerfile`).
+The sandbox base defaults to the public official AlmaLinux 10 image pinned by digest. A private or mirrored base is a build-time override: add `--build-arg SANDBOX_BASE_IMAGE=<registry>/<image>:<tag>` (or set `SANDBOX_BASE_IMAGE` for `scripts/images/build-sandbox-min.sh`; `images/sandbox/Containerfile`).
 The builds need several GB of free disk and a long first compile. An API image built this way carries **no signed built-in packages**: without the project signing key the API refuses them
 ([apps-and-catalogue.md](apps-and-catalogue.md#the-built-in-catalogue)); upload the packages you need as ordinary plugins.
 

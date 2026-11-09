@@ -58,7 +58,7 @@ IMAGE="${AURORA_E2EH_IMAGE:-$DEFAULT_IMAGE}"
 # AURORA_E2EH_FULL_IMAGE=1 also builds the full sandbox image (the `browser` capability label,
 # Chromium, the pinned Claude Code CLI) for the chromium scenario (SEC-41, FU-P1-003b); without it
 # that scenario prints SKIPPED. Measured: ~10 min with a cold supervisor layer (dnf Chromium and
-# the Claude Code CLI included; much less when the layers are cached). ALMA_BASE=<image> overrides
+# the Claude Code CLI included; much less when the layers are cached). SANDBOX_BASE_IMAGE=<image> overrides
 # the base image as for the min image. SKIP_IMAGE_BUILD=1 reuses an existing $FULL_IMAGE.
 FULL_IMAGE="${AURORA_E2EH_FULL_IMAGE_TAG:-localhost/$PREFIX-sandbox-full:0.1.0}"
 
@@ -82,7 +82,7 @@ podman image exists "$IMAGE" || { echo "missing $IMAGE" >&2; exit 1; }
 if [ "${AURORA_E2EH_FULL_IMAGE:-}" = "1" ]; then
   if [ "${SKIP_IMAGE_BUILD:-}" != "1" ]; then
     base_args=()
-    [ -n "${ALMA_BASE:-}" ] && base_args=(--build-arg "ALMA_BASE=$ALMA_BASE")
+    [ -n "${SANDBOX_BASE_IMAGE:-}" ] && base_args=(--build-arg "SANDBOX_BASE_IMAGE=$SANDBOX_BASE_IMAGE")
     podman build -f images/sandbox/Containerfile --target sandbox "${base_args[@]}" \
       -t "$FULL_IMAGE" . || { echo "full image build failed" >&2; exit 1; }
   fi
