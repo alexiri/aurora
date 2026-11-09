@@ -284,6 +284,25 @@ overridden by the named configuration key (`15`).
 | `COUNTER_TIMEOUT` | (phase 4, P4-CNT) 50 ms per shared-counter store call (10–2000 ms) | `ratelimit.counters.timeout_ms` | 05, 06, 15 |
 | `COUNTER_BREAKER_FAILURES` / `COUNTER_BREAKER_COOLDOWN` | (phase 4, P4-CNT) 3 consecutive failures open the breaker; one probe after 5 s | — | 06, 15 |
 | `COUNTER_PRUNE_INTERVAL` / `COUNTER_PRUNE_BATCH` | (phase 4, P4-CNT) 60 s / 5 000 rows (`postgres` backend) | — | 03, 15 |
+| `GROUPS_PER_ORG` / `GROUP_MEMBERS_MAX` | (phase 4, P4-GRP-1) 500 groups per org / 5 000 members per group (422 `group_limit_reached` / `group_member_limit_reached`; SCIM: 400 `invalidValue` with a `detail`, `04 §SCIM`) | — | 04, 05 |
+| `GROUPS_PER_USER` / `GROUP_BINDINGS_PER_GROUP` | (phase 4, P4-GRP-1) 100 groups per user / 200 workspace bindings per group | — | 04 |
+| `GROUP_NAME_MAX` / `GROUP_DESCRIPTION_MAX` | (phase 4, P4-GRP-1) 80 / 280 chars | — | 03, 04 |
+| `RULE_GROUP_IDENTITIES_MAX` | (phase 4, P4-GRP-1) 20 `group` identities per policy rule | — | 07 |
+| `GROUP_IMPACT_LIST_MAX` | (phase 4, P4-GRP-1) 200 users listed in a group impact view (the total is always given) | — | 05 |
+| `ACCESS_NOTIFY_BULK` | (phase 4, P4-GRP-1) above 1 000 users changed in one transaction a single org-wide `access` notification replaces per-user ones | — | 04, 05 |
+| `PARK_THRESHOLD` / `PARK_MAX_TIMEOUT` | (phase 4, RFE-011b) 900 s: effective timeouts above it park, when parking is enabled / 86 400 s (at most 604 800) longest parked deadline | `approvals.park.threshold_secs` / `approvals.park.max_timeout_secs` | 06, 07, 15 |
+| `PARK_RESUME_WINDOW` / `PARK_DENY_COOLDOWN` | (phase 4, RFE-011b) 1 800 s a granted approval can be consumed (60–86 400) / 900 s a denied fingerprint is answered `manual_approval_denied` without a new approval | `approvals.park.resume_window_secs` / `approvals.park.deny_cooldown_secs` | 07 |
+| `PARK_BODY_MAX` / `PARK_BODY_READ_TIMEOUT` | (phase 4, RFE-011b) 256 KiB request body that may be parked (larger → held) / 10 s to read it | `approvals.park.max_body_bytes` | 06, 07 |
+| `PARK_PENDING_PER_AGENT` / `PARK_PER_AGENT_HOUR` | (phase 4, RFE-011b) 20 parked pending approvals per agent / 60 new parked approvals per agent per hour (403 `approval_limit_reached`) | `approvals.park.max_pending_per_agent` | 06, 07 |
+| `APPROVAL_PUSH_DELAY` / `PUSH_PER_USER_HOUR` | (phase 4, RFE-011b) 5 s grace before a push / 30 pushes per user per hour (rest digested) | — | 07 |
+| `PUSH_SUBSCRIPTIONS_PER_USER` / `PUSH_TEST_PER_HOUR` | (phase 4, RFE-011b) 10 devices per user / 3 test pushes per user per hour | — | 05, 07 |
+| `PUSH_TTL_MAX` / `PUSH_PAYLOAD_MAX` | (phase 4, RFE-011b) 24 h push-service TTL cap (≥ 60 s) / 1 KiB payload before encryption | — | 07, 16 |
+| `PUSH_VAPID_RETIRE` | (phase 4, RFE-011b) 30 days a retired VAPID key stays usable for the subscriptions that reference it | — | 07, 08 |
+| `SCIM_RATE` | (phase 4, P4-GRP-2) 600 requests / min per token, burst 120 (class `management`; `scim.rate_per_minute`) | `scim.rate_per_minute` | 04, 05, 16 |
+| `SCIM_BODY_MAX` / `SCIM_MAX_PATCH_OPS` / `SCIM_MAX_MEMBERS_PER_REQUEST` | (phase 4, P4-GRP-2) 1 MiB / 100 operations / 1 000 members | — | 04, 16 |
+| `SCIM_PAGE_MAX` / `SCIM_PAGE_DEFAULT` | (phase 4, P4-GRP-2) 100 / 50 resources per page | — | 16 |
+| `SCIM_TOKENS_PER_ORG` / `SCIM_TOKEN_DEFAULT_DAYS` / `SCIM_TOKEN_MAX_DAYS` | (phase 4, P4-GRP-2) 5 active / 365 days / 730 days (no non-expiring token) | `scim.token_max_days` | 04, 15 |
+| `SCIM_ERROR_LOG` | (phase 4, P4-GRP-2) last 20 sanitized errors kept per org for the Directory sync page | — | 14 |
 | `API_STREAMS_PER_PRINCIPAL` | (phase 2, RFE-017) 20 concurrent SSE connections + long-polls | — | 05 |
 | `DELTA_COALESCE` | (phase 1, RFE-016) 100 ms or 2 000 chars per turn per delta | `events.delta_coalesce_ms` (100–500) | 05 |
 | `LONG_POLL_MAX` | 30 s | — | 05 |

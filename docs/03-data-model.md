@@ -1281,6 +1281,135 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | plugin_packages.status_reason | (existing open vocabulary) | gains `converts_grants`: an upgrade held in `pending_approval` because it would convert full grants | 4 (P4-GRANTS) |
 | registry snapshot `apps[].grants` | `{ custom_only, block_untooled }` booleans, in the snapshot JSON only | no table; copied from the manifest (`09 §9`). Tool entries may also carry `params` (Q8, `09 §3.4`) | 4 (P4-GRANTS) |
 
+#### `groups` (new table; directory groups, phase 4)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (P4-GRP-1) |
+| org_id | uuid not null FK→organizations (restrict) | unique `(id, org_id)` so child tables can carry a same-org composite foreign key | 4 (P4-GRP-1) |
+| name | citext not null | 1–80 chars, sanitized; unique `(org_id, name)` | 4 (P4-GRP-1) |
+| description | text null | ≤ 280 | 4 (P4-GRP-1) |
+| source | text not null default `manual` CHECK in (`manual`,`scim`) | immutable; `scim` groups are created and filled by the IdP (`04 §SCIM`), their name and membership are read-only in the dashboard | 4 (P4-GRP-1) |
+| org_role | text null CHECK in (`admin`,`member`) | the group → org-role mapping; `owner` is not a legal value (`04 §Groups`) | 4 (P4-GRP-1) |
+| revision | bigint not null default 1 | optimistic concurrency (`If-Match`) | 4 (P4-GRP-1) |
+| created_by | uuid null FK→users (set null) | null for SCIM-created groups | 4 (P4-GRP-1) |
+| created_at, updated_at | timestamptz not null default now() | | 4 (P4-GRP-1) |
+
+#### `group_members` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| group_id | uuid not null | pk part | 4 (P4-GRP-1) |
+| org_id | uuid not null | denormalized; composite FKs `(group_id, org_id)` → `groups(id, org_id)` (cascade) and `(org_id, user_id)` → `org_members(org_id, user_id)` (cascade): a member must be a member of the group's org, and leaving the org leaves every group | 4 (P4-GRP-1) |
+| user_id | uuid not null FK→users (cascade) | pk part | 4 (P4-GRP-1) |
+| source | text not null default `manual` CHECK in (`manual`,`scim`) | who added the row; equals the group's source (a `manual` group takes only `manual` rows) | 4 (P4-GRP-1) |
+| added_by | uuid null FK→users (set null) | | 4 (P4-GRP-1) |
+| created_at | timestamptz not null default now() | | 4 (P4-GRP-1) |
+| primary key / index | `(group_id, user_id)` / `(org_id, user_id)` | the index answers "which groups is this user in" (the access law, the gateway) | 4 (P4-GRP-1) |
+
+#### `group_workspace_access` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| group_id | uuid not null | pk part | 4 (P4-GRP-1) |
+| workspace_id | uuid not null | pk part; composite FKs `(group_id, org_id)` → `groups(id, org_id)` (cascade) and `(workspace_id, org_id)` → `workspaces(id, org_id)` (cascade; needs a unique index on that pair): a group binds only workspaces of its own org | 4 (P4-GRP-1) |
+| org_id | uuid not null | denormalized for the composite foreign keys | 4 (P4-GRP-1) |
+| role | text not null CHECK in (`owner`,`approver`,`member`) | same vocabulary and meaning as `workspace_access.role` | 4 (P4-GRP-1) |
+| granted_by | uuid null FK→users (set null) | | 4 (P4-GRP-1) |
+| created_at, updated_at | timestamptz not null default now() | | 4 (P4-GRP-1) |
+| index | `(workspace_id)` | "who has access to this workspace" | 4 (P4-GRP-1) |
+
+#### `groups` (SCIM columns; phase 4)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| external_id | text null | SCIM `externalId` (≤ 256); only for `source = scim`; unique `(org_id, external_id)` where not null. Stored for the IdP's correlation; never used to find, link or authenticate anything | 4 (P4-GRP-2) |
+
+#### `scim_tokens` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (P4-GRP-2) |
+| org_id | uuid not null FK→organizations (restrict) | at most `SCIM_TOKENS_PER_ORG` (5) with `revoked_at` null and unexpired | 4 (P4-GRP-2) |
+| name | text not null | ≤ 80, sanitized; shown in audit as `scim:<name>` | 4 (P4-GRP-2) |
+| token_hash | bytea unique not null | SHA-256 of the `aud_` token (`00`); the token is shown once | 4 (P4-GRP-2) |
+| display_prefix | text not null | first 12 characters | 4 (P4-GRP-2) |
+| created_by | uuid null FK→users (set null) | an org owner | 4 (P4-GRP-2) |
+| expires_at | timestamptz not null | ≤ `SCIM_TOKEN_MAX_DAYS` after creation; there is no non-expiring token | 4 (P4-GRP-2) |
+| revoked_at | timestamptz null | | 4 (P4-GRP-2) |
+| last_used_at | timestamptz null | churn column, ≤ 1 write/min | 4 (P4-GRP-2) |
+| created_at | timestamptz not null default now() | | 4 (P4-GRP-2) |
+
+#### `scim_users` (new table; the link between an org's SCIM user and a global user)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | the SCIM `id` of the user (not the Aurora user id) | 4 (P4-GRP-2) |
+| org_id | uuid not null FK→organizations (restrict) | unique `(org_id, user_id)` and `(org_id, external_id)` where not null | 4 (P4-GRP-2) |
+| user_id | uuid not null FK→users (cascade) | the global user; never modified through this link once the user has an identity (`04 §SCIM`) | 4 (P4-GRP-2) |
+| external_id | text null | ≤ 256, the IdP's id; correlation only | 4 (P4-GRP-2) |
+| user_name | citext not null | the e-mail as asserted by the IdP (domain checked against the org's `email_domains`) | 4 (P4-GRP-2) |
+| display_name, given_name, family_name | text null | ≤ 120 each, sanitized | 4 (P4-GRP-2) |
+| state | text not null CHECK in (`active`,`suspended`,`removed`) | `removed` rows are tombstones that keep JIT and invitations from re-admitting the person (`04 §OIDC` note) | 4 (P4-GRP-2) |
+| suspended_by_scim | bool not null default false | true only when SCIM made the membership `suspended`; reactivation by the IdP is refused when false (a human suspension wins) | 4 (P4-GRP-2) |
+| removed_at | timestamptz null | | 4 (P4-GRP-2) |
+| created_at, updated_at | timestamptz not null default now() | `meta.created` / `meta.lastModified` | 4 (P4-GRP-2) |
+
+`organizations.settings.scim` (jsonb key, no column): `{ "enabled": bool, "email_domains": [domain], "exclusive": bool }`, default absent = SCIM off. The gateway role gets nothing on these tables. Token liveness is read on every SCIM request (indexed by `token_hash`); there is no cache.
+
+`effective_access(user, workspace)` is one statement: the user's `org_members` row (active), the maximum of `org_members.role` and `groups.org_role` over the user's groups, the direct `workspace_access` row, and the maximum role over `group_workspace_access ⋈ group_members` for the workspace, returning the strongest role and the list of sources (`04 §Groups`). The gateway database role gains `SELECT` on `groups`, `group_members` and `group_workspace_access` (the speaker's group set is resolved at credential resolution, `06 §Credential authentication`); it never writes them. The `workspace_access` table, its CHECK and the `can_*` meaning are unchanged: a deployment without groups reads the same rows as before.
+
+#### `approvals` (park and resume; phase 4)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| parked | bool not null default false | true for a parked approval: nobody holds the request (`07 §Park and resume`); excluded from the stale-holder sweep and from the stall exemption | 4 (RFE-011b) |
+| fp_salt | bytea null | 16 random bytes; set iff `parked` | 4 (RFE-011b) |
+| fingerprint | bytea null | `SHA-256(fp_salt ‖ canonical request)` (32 bytes), canonical form in `07`; never the request itself | 4 (RFE-011b) |
+| resume_state | text null CHECK in (`ready`,`consumed`,`expired`,`revoked`) | null while `pending`/`denied`/`expired`; `ready` from approval until the window ends; consumed by exactly one request (compare-and-set) | 4 (RFE-011b) |
+| resume_expires_at | timestamptz null | `decided_at + approvals.park.resume_window_secs` | 4 (RFE-011b) |
+| consumed_at | timestamptz null | | 4 (RFE-011b) |
+| resume_turn_id | uuid null | the system follow-up/turn queued at approval (tracing only; no FK, history survives) | 4 (RFE-011b) |
+| indexes | `(agent_id, conversation_id) WHERE resume_state = 'ready'`; `(resume_expires_at) WHERE resume_state = 'ready'`; `(agent_id, conversation_id) WHERE parked AND status = 'pending'` | grant lookup, resume-window expiry, pending-per-agent limits and de-duplication | 4 (RFE-011b) |
+
+The gateway database role's column-level `SELECT (id, status, gateway_instance_id)` on `approvals` gains `agent_id, conversation_id, parked, fp_salt, fingerprint, resume_state, resume_expires_at, method, host, path, rule_logical_id` and `UPDATE` stays as granted (it consumes with `resume_state`, `consumed_at`); it never writes `fingerprint`/`fp_salt` of a row it did not insert. Pending approval stays a closed `status` vocabulary: the resume lifecycle is `resume_state`, not a new status.
+
+#### `approval_push_claims` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| approval_id | uuid | gateway or action approval id; pk part (no FK: history survives) | 4 (RFE-011b) |
+| user_id | uuid FK→users (cascade) | pk part | 4 (RFE-011b) |
+| stage | text CHECK in (`initial`,`reminder`) | pk part | 4 (RFE-011b) |
+| kind | text CHECK in (`gateway`,`action`) | | 4 (RFE-011b) |
+| delivery | text CHECK in (`push`,`batch`,`digest`) | its own push; folded into the push of its `batch_id`; folded into the hourly digest (`PUSH_PER_USER_HOUR`) | 4 (RFE-011b) |
+| sent_at | timestamptz not null default now() | insert-on-conflict claim, idempotent across replicas; pruned daily with the other notification claims; index `(user_id, sent_at)` | 4 (RFE-011b) |
+
+#### `webpush_vapid_keys` (new table; instance-wide)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | the `vapid_key_id` of subscriptions | 4 (RFE-011b) |
+| public_key | text not null | base64url, 65-byte uncompressed P-256 point; the application server key | 4 (RFE-011b) |
+| private_ref | text not null | SecretRef, purpose `webpush.vapid` (`08 §1`); owner id = this id, org = nil UUID; never returned | 4 (RFE-011b) |
+| status | text CHECK in (`active`,`retired`) | exactly one `active` (partial unique index) | 4 (RFE-011b) |
+| created_at / retired_at | timestamptz | `retired_at` set at rotation; destroyed after `PUSH_VAPID_RETIRE` or when unreferenced | 4 (RFE-011b) |
+
+Absent when the operator supplies the key through `push.vapid.private_key_env` (nothing is stored). The gateway role has no access.
+
+#### `push_subscriptions` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (RFE-011b) |
+| user_id | uuid not null FK→users (cascade) | at most `PUSH_SUBSCRIPTIONS_PER_USER` (10) | 4 (RFE-011b) |
+| session_id | uuid not null FK→sessions (cascade) | the session that registered it; delivery only while that session is live (`07 §Web Push`) | 4 (RFE-011b) |
+| vapid_key_id | uuid null FK→webpush_vapid_keys (restrict) | null with an operator-managed key | 4 (RFE-011b) |
+| endpoint_hash | bytea unique not null | SHA-256 of the endpoint URL; one row per endpoint (re-registration under another user moves the row) | 4 (RFE-011b) |
+| endpoint_host | text not null | for the allow-list check and metrics; not secret | 4 (RFE-011b) |
+| secret_ref | text not null | SecretRef, purpose `webpush.subscription`, owner id = this id: sealed JSON `{ endpoint, p256dh, auth }` — the endpoint URL and keys are send capabilities and are never stored in clear or returned | 4 (RFE-011b) |
+| label | text not null | ≤ 80, sanitized, user-visible (e.g. "Firefox on Linux") | 4 (RFE-011b) |
+| show_details | bool not null default false | include agent and workspace names in the notification (`07 §Web Push`) | 4 (RFE-011b) |
+| paused_at | timestamptz null | | 4 (RFE-011b) |
+| expires_at | timestamptz null | the browser's `expirationTime` when given | 4 (RFE-011b) |
+| failure_count | int not null default 0 | consecutive; 5 sets `disabled_at` | 4 (RFE-011b) |
+| disabled_at | timestamptz null | | 4 (RFE-011b) |
+| last_success_at, last_failure_at | timestamptz null | churn columns | 4 (RFE-011b) |
+| created_at | timestamptz not null default now() | | 4 (RFE-011b) |
+| index | `(user_id)`, `(session_id)` | delivery and cascade | 4 (RFE-011b) |
+
+The gateway role has no access to any of these tables. Rows of revoked or expired sessions are removed by the daily session pruning (the foreign key cascades).
+
 #### `agents`, `conversations` (harness selection)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

@@ -139,6 +139,28 @@ tokens), group → workspace access bindings, group identities in policy
 (`{ "kind": "group" }` — the evaluator's principal set gains group ids), group
 → org-role mappings.
 
+- **Manual groups — specified (phase 4, P4-GRP-1, D-130, D-131, SEC-71).** Tables
+  `groups`, `group_members`, `group_workspace_access`; the effective role is the
+  strongest of direct and group-derived roles; org-role mappings are `admin`/`member`
+  only (never `owner`); `group` policy identities match only a speaker in the group
+  (never speakerless traffic); per-request evaluation with `user`/`workspace`/`org`
+  gateway invalidation and an `access` notification for open streams. Owning
+  sections: `04 §Groups`, `03 §Planned changes`, `05` (Groups, invalidation, bus),
+  `06 §Credential authentication`, `07 §Rule anatomy`, `10 §Visibility of direct
+  conversations`, `14` (Groups page, workspace Access, policy editor), `02 §Limits`,
+  `18 §Groups`. Not in phase 4: nested groups, JIT group assignment, group import or
+  export.
+- **SCIM 2.0 — specified (phase 4, P4-GRP-2, D-132, D-135, SEC-72, SEC-73).** `/scim/v2`
+  Users and Groups (Entra ID, Okta, Keycloak subset), per-org hashed expiring `aud_`
+  tokens created by org owners, off unless `scim.enabled` and an owner enables it;
+  pre-provisioned unverified users linked only by the OIDC-verified e-mail; groups feed
+  P4-GRP-1; deprovisioning suspends or removes the membership, revokes the org's keys,
+  aborts speaker turns and cannot be undone by JIT; owners are never touched. Owning
+  sections: `04 §SCIM` and `§OIDC`, `16 §W15`, `03 §Planned changes`, `05` (SCIM
+  management routes), `08 §4`, `10 §Failure semantics`, `14` (Directory sync), `15 §SCIM
+  directory sync`, `01` (trust boundary 11), `02 §Limits`, `18 §SCIM`. Not in phase 4:
+  SCIM `roles`, Bulk, enterprise extension, ETags, filters beyond `eq`, nested groups.
+
 ## Other later items
 
 - **Shared rate-limit counters — specified (phase 4, P4-CNT, D-119, SEC-62).**
@@ -176,6 +198,19 @@ tokens), group → workspace access bindings, group identities in policy
   routes), `14` (Access tab), `18 §Custom grants only and parameter-level matching`.
   Adoption (Indico `grants`, AWS `Describe*` tools) is a package change made at
   implementation, not part of this specification.
+- **Approval park-and-resume and Web Push — specified (phase 4, RFE-011b, D-133, D-134,
+  SEC-74, SEC-75, SEC-76).** Opt-in parking: a request whose approval deadline is long is
+  refused to the agent (`403 approval_parked`, not sent) and the approval becomes a
+  single-use, same-conversation grant for the identical request, delivered by a system
+  follow-up; nothing is suspended, the sandbox parks normally. Opt-in Web Push: VAPID key
+  generated and sealed by the API (rotation without dropping subscribers), per-device opt-in
+  bound to the registering session, payload with no request detail, delivery to deciders with
+  no live tab. Owning sections: `07 §Park and resume` and `§Web Push`, `06 §Approval holds`,
+  `03 §Planned changes`, `05` (Web Push routes, jobs), `08 §1` and `§4`, `10 §Turns` and
+  `§Agent instructions`, `11 §Keep-awake`, `12 §Provider refusal classification`, `13 §5.6`,
+  `14` (Notifications, parked approvals, service worker), `15 §Approval park-and-resume and Web
+  Push`, `16 §W16`, `18`. Not in phase 4: suspending a live harness process, parking BYO or
+  streamed requests, retraction of delivered pushes, mobile-app push, per-rule push routing.
 - Live narration cards in chat (steps list updated under the connector's write
   rate hint), user-token features (`user_tokens` capability).
 - **Slack connector**: decision deferred; if built, it is a connector covering

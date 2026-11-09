@@ -421,7 +421,10 @@ connects), `/setup-error` (missing required configuration reported by
 ### Account (`/account/*`)
 Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 (personal workspace keys), chat platform links, DM defaults, delete account
-(phase 1: asks for a fresh OIDC sign-in first, `04 §OIDC`).
+(phase 1: asks for a fresh OIDC sign-in first, `04 §OIDC`). (phase 4, P4-GRP-1) Profile
+lists the person's groups per organization (read-only) and the effective role with its
+source. (phase 4, RFE-011b) **Notifications**: the in-tab notification and e-mail switches
+and the Web Push device list (*Key flows*).
 
 ### Organization (`/o/<org>/*`) — owners/admins unless noted
 - **Workspaces** (all members: those they can access; owners/admins: all).
@@ -429,6 +432,33 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
   Suspend/remove first opens the **offboarding view** — "Removing Alice disables
   these N schedules and webhooks" with the list, a "Reassign to…" picker (a member
   or the workspace) and a Skip option; the removal then carries `reassign_to`.
+- **Groups** (`/o/<org>/groups`, phase 4, P4-GRP-1, D-130): a list page (name, source badge
+  "Manual"/"SCIM", member count, org-role chip, workspaces bound; search; "New group")
+  and a detail page with three sections built from the shared patterns (`PageHeader`,
+  section cards, tables, dialogs, empty/loading/error states; no one-off styling):
+  **Members** (add by name or e-mail from the org's members, remove, with the 5 000
+  limit shown; read-only with the note "Managed by your identity provider" for SCIM
+  groups), **Org role** (None / Member / Admin, never Owner, with the sentence "Members of
+  this group act as <role> in the whole organization, including every workspace" and a
+  confirm dialog when set to Admin) and **Workspace access** (workspaces and roles bound
+  to the group, the same selector as the workspace Access section). Deleting a group
+  opens the impact dialog first. Owners and admins manage; a workspace owner without
+  org rights only sees the binding picker. The Members list of the org shows an
+  "effective role" with the source ("Admin via <group>"); at 390 px every table
+  collapses to the stacked-row pattern.
+- **Directory sync** (`/o/<org>/settings/directory`, phase 4, P4-GRP-2, D-132; **org owners only,
+  hidden unless the instance has `scim.enabled`**): an enable switch (turning it on opens the
+  re-authentication step), the required **e-mail domains** editor, the `exclusive` switch ("Only people
+  your directory provisions can join this organization", default off), the **SCIM base URL** with a copy
+  button, **tokens** (create → the `aud_` token is shown once in a copy dialog with the warning
+  "Store it in your identity provider now; it cannot be shown again", list with expiry and last use, a
+  banner 14 days before expiry, revoke with a confirm) and a **status** card (last request, user and group
+  counts by state, the last 20 errors). A short setup guide per IdP (Entra ID, Okta, Keycloak: base URL,
+  token, attribute mapping `userName`/`emails`/`active`, "do not send roles") is linked from the page. The
+  Members list marks directory-managed people with a "Directory" badge and their state, disables the role
+  and remove controls for them where SCIM owns the state ("Managed by your identity provider": suspend and
+  remove stay available to owners as the human override, which SCIM never reverses), and the offboarding view
+  lists the BYO agents the person created ("regenerate their tokens"). Built from the shared patterns only.
 - **Policy**: org rules editor (draft/publish). (phase 3, RFE-023) The **Default Rule** control carries the note "Does not affect LLM endpoints — see Governance" with a link to the governance page, and a tooltip explaining that explicit block rules naming an LLM host still apply.
 - **Credentials**: org secrets, org LLM keys, org app connections, OAuth clients.
 - **Apps**: app availability posture and allow-list.
@@ -594,7 +624,15 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 - **Settings** — name, timezone, memory language (owners), (phase 2, RFE-025) **BYO posture** (tighten-only, shows the inherited value and its level), access bindings (phase 2,
   RFE-012: roles Owner / Approver / Member with a one-line explanation of each;
   invitation dialogs offer Member or Approver per workspace),
-  workspace API keys, danger zone. (phase 2, RFE-006) The danger zone offers
+  workspace API keys, danger zone. (phase 4, P4-GRP-1) The **Access** section (`GET …/access?expand=groups`,
+  `can_own`) gets a second list, **Groups**: bound groups with their role (the same Owner / Approver /
+  Member selector and explanations), an "Add group" picker over the org's groups (names and member counts), and
+  a **Members with access** table of everyone who has access, one row per person with their **effective role**
+  and a source chip per source — "Direct", "Group <name>", "Org admin/owner" or "Org role via <group>" (the
+  existing `Badge` primitive, tokens only); rows with no direct binding are read-only in this list ("Managed
+  by group"), and removing a group opens the impact dialog of `GET /v1/groups/{id}/impact` before it
+  confirms. The same table is how an owner sees why someone they never added can see the workspace.
+  (phase 2, RFE-006) The danger zone offers
   **Freeze workspace**; frozen workspaces and orgs show a banner on every page.
 
 ### Instance administration (`/admin/*`, instance admins only)
@@ -650,8 +688,48 @@ at 390 px).
   decide and only while the tab is hidden or unfocused; it shows agent, workspace
   and the sanitized title, `tag = approval id` (no duplicates), and clicking it
   focuses the tab at the Approvals page. This is **not** Web Push: it needs an open
-  tab (Web Push is RFE-011b, phase 4). Account also has the "E-mail me approvals
+  tab. Account also has the "E-mail me approvals
   nobody is watching" switch (`approval_email`).
+- **Web Push (phase 4, RFE-011b, D-134, SEC-75, SEC-76)**: shown only when `GET /v1/push/config`
+  says `available` (the operator set `push.enabled`). **Account → Notifications** gets a
+  **"Notify this device when an approval needs me, even when Aurora is closed"** card built from the
+  shared patterns (section card, toggle, list rows, `Badge`, dialogs): the control needs a user
+  gesture, explains in two sentences what is sent ("a notification that an approval is waiting; no
+  request details; you still decide in Aurora") and, on **Turn on**, registers the service worker,
+  calls `Notification.requestPermission()`, then `pushManager.subscribe({ userVisibleOnly: true,
+  applicationServerKey })` with the key of `config` and `POST /v1/me/push-subscriptions` with a label
+  derived from the user agent (editable). Below it the **device list** (label, "this device", created,
+  last delivery, state chip: Active / Paused / Not receiving — re-enable / Needs update), per device
+  **Show agent and workspace names in notifications** (default off, a one-line warning that names
+  appear on a lock screen), **Pause**, **Send test**, **Remove**. States are handled honestly: no
+  Push API ("This browser cannot receive push notifications"), an insecure origin (service workers
+  need https or localhost), permission denied ("Allowed in browser settings only"), and iOS/iPadOS,
+  where Web Push exists only for a site added to the Home Screen: the page shows that instruction and
+  the app serves a static `/manifest.webmanifest` (`display: standalone`, icons from the brand
+  folder, no tokens). On every dashboard load the page compares the device's `vapid_key_id` with
+  `config` and, if the key was rotated, re-subscribes silently and removes the old registration;
+  **signing out** removes this device's subscription first (best effort; the server-side session
+  binding ends delivery regardless, `07 §Web Push`). The in-tab notification above keeps working and
+  is what a user with the tab open sees (the server does not push to a user with a live watcher).
+  - **Service worker** `/aurora-push-sw.js` (static file of the web app, scope `/`, served with
+    `Cache-Control: no-cache`, listed in the edge routes and under a CSP that allows
+    `worker-src 'self'`): it has **no fetch handler, no cache, no network access and no access to
+    credentials**. `push`: parse the JSON defensively (a bad or unknown-version payload still shows
+    the generic notification: Chrome requires every push to display something), choose the text
+    locally from `type` (and `agent`/`workspace` only if present), `showNotification` with
+    `tag = approval_id` (or `aurora-digest`), no action buttons, `data.url`. `notificationclick`:
+    close, accept `data.url` **only** if it is a same-origin path starting with `/o/` (no scheme, no
+    `//`, no backslash) else go to `/`, focus an existing Aurora window and navigate it, else open one.
+    `pushsubscriptionchange` does nothing (the page re-syncs on its next load).
+- **Parked approvals (phase 4, RFE-011b)**: the Approvals page, the inline approval in the chat
+  and the workspace overview mark a parked approval with a **"Parked"** chip and the line "The agent
+  has stopped waiting. If you approve, it will be told and can repeat this exact request once within
+  <N> minutes", with the deadline countdown (`pending-soft` tokens like any pending item); the
+  approve dialog repeats that sentence; after approval the row shows "Approved — waiting for the
+  agent to retry (until <time>)", then "Used" or "Not used (window ended)" from `resume_state`; a
+  revoked grant (freeze) shows "Revoked". The transcript shows `approval.pending` with the chip and
+  the platform follow-up message (door chip "Approval") when the agent resumes. Held approvals look
+  as before. Everything follows §Visual design (tokens, primitives, both themes, 390 px).
 - **Policy editor**: draft/publish ("Apply changes"), drag reorder with
   stale-revision detection, identity and target pickers (apps/tools from the
   catalogue, connections, secrets, network patterns), conditions, modifiers,
@@ -660,7 +738,7 @@ at 390 px).
   default),
   simulate panel (method + URL + body → decision trace; phase 2, RFE-005: a
   "speaker" picker, default you, plus "no speaker"), identity picker labelling
-  `user` identities **"when <name> is speaking"** with the warning of `07`, warnings panel (phase 2, RFE-025: a rule with empty identities that selects credentials shows "Applies to all agents, including agents created later" inline, and publishing lists such rules in its confirmation step),
+  `user` identities **"when <name> is speaking"** with the warning of `07`, (phase 4, P4-GRP-1) a **Group** option in the same picker (searchable, names and member counts from `GET /v1/orgs/{org}/groups`; the chip reads **"when a member of <group> is speaking"** with the same warning; a removed group shows a danger chip "Group no longer exists — matches nobody" with the `rule_names_removed_group` warning, never a blank), warnings panel (phase 2, RFE-025: a rule with empty identities that selects credentials shows "Applies to all agents, including agents created later" inline, and publishing lists such rules in its confirmation step),
   generation history with rollback. (phase 4, P4-CNT) Next to a rate-limit modifier the editor
   shows a note that depends on the deployment: **"Limits are counted per gateway replica;
   with N replicas the effective limit can be up to N× this value"** when the counter backend

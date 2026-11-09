@@ -175,6 +175,22 @@ one new entry without activating it.
 | `ratelimit.counters.redis.username_env`, `.password_env` | unset | api, gateway | (phase 4, P4-CNT) names of environment variables holding the Redis ACL user and password (both optional; an unset variable that is named refuses startup); never the values (`08 §4`) |
 | `ratelimit.counters.redis.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api, gateway | (phase 4, P4-CNT) PEM bundle verifying the Redis server |
 | `ratelimit.counters.redis.db`, `.key_prefix` | `0`, `aurora:rl:` | api, gateway | (phase 4, P4-CNT) database index and key prefix (lets several Aurora instances share one Redis); `key_prefix` ≤ 64 chars of `[A-Za-z0-9:_-]` |
+| `scim.enabled` | `false` | api | (phase 4, P4-GRP-2, D-132) serve `/scim/v2` and show the Directory sync page; while `false` every `/scim/v2` path is 404 and no org can enable SCIM. Helm `scim.enabled` also adds the edge route (`15 §Networking`) |
+| `scim.allowed_email_domains` | `[]` | api | (phase 4, P4-GRP-2) optional instance allow-list of the e-mail domains an org may provision (exact, case-insensitive); empty = any domain the org owner lists. Entries must be domains (no `@`, wildcard or single label), else startup refuses naming the key |
+| `scim.rate_per_minute` | 600 | api | (phase 4, P4-GRP-2) `SCIM_RATE` per token (burst is a fifth of it), 30–6000 |
+| `scim.token_max_days` | 730 | api | (phase 4, P4-GRP-2) longest lifetime of an `aud_` token, 1–1825; the default offered in the dashboard is 365 (never above this) |
+| `approvals.park.enabled` | `false` | gateway, api | (phase 4, RFE-011b, D-133) park approvals with long deadlines instead of holding the connection (`07 §Park and resume`). Off = exactly phase 2 behaviour. The gateway and the API must agree (both read it from the shared configuration) |
+| `approvals.park.threshold_secs` | 900 | gateway | (phase 4, RFE-011b) effective timeouts above this park; 60–`approvals.park.max_timeout_secs` |
+| `approvals.park.max_timeout_secs` | 86400 | gateway, api | (phase 4, RFE-011b) longest deadline of a parked approval, 3600–604800 (also the upper bound of a rule's `approval_timeout_secs` when parking is enabled); requests that cannot park stay clamped to `approvals.max_timeout_secs` |
+| `approvals.park.resume_window_secs` | 1800 | api | (phase 4, RFE-011b) how long an approved parked request can be repeated once, 60–86400 |
+| `approvals.park.deny_cooldown_secs` | 900 | gateway | (phase 4, RFE-011b) a denied parked request repeated within it is answered `manual_approval_denied`, 0–86400 |
+| `approvals.park.max_body_bytes` | 262144 | gateway | (phase 4, RFE-011b) largest request body that can be parked (4096–1048576); larger requests are held |
+| `approvals.park.max_pending_per_agent` | 20 | gateway | (phase 4, RFE-011b) parked pending approvals per agent, 1–200 |
+| `push.enabled` | `false` | api | (phase 4, RFE-011b, D-134) Web Push; needs outbound HTTPS from the API to the push services. See *Approval park-and-resume and Web Push* below |
+| `push.vapid.subject` | the external URL | api | (phase 4, RFE-011b) VAPID `sub` claim: `mailto:` or `https:` contact for the push services |
+| `push.vapid.private_key_env` | unset | api | (phase 4, RFE-011b) name of an environment variable holding an operator-managed ES256 (P-256) VAPID private key (PKCS#8 PEM or raw base64url); unset = Aurora generates, seals and rotates its own key. Never the value |
+| `push.allowed_endpoint_hosts` | `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.services.mozilla.com`, `web.push.apple.com`, `*.push.apple.com`, `*.notify.windows.com` | api | (phase 4, RFE-011b) host patterns (`07 §Matching primitives`; a leading label wildcard only) a subscription endpoint may have; checked at registration and before every send; an empty list refuses startup; an entry that is not a host pattern refuses startup |
+| `push.concurrency`, `push.timeout_secs` | 16, 10 | api | (phase 4, RFE-011b) pushes in flight per replica (1–64) and per-request timeout (2–30) |
 | `blobs.backend` | `postgres` | api | (phase 4, P4-S3, D-120) where **new** attachment bytes go: `postgres` (the `blobs` table) or `s3`; existing rows keep their own backend (`attachments.blob_backend`); any other value refuses startup. See *S3-compatible blob store* |
 | `blobs.s3.bucket`, `blobs.s3.region` | — (required for `s3`) | api | (phase 4, P4-S3) bucket name (3–63 chars, DNS-compatible) and signing region (any non-empty string for S3-compatible servers that ignore it, e.g. `us-east-1`) |
 | `blobs.s3.endpoint` | unset (AWS S3 for the region) | api | (phase 4, P4-S3) `https://host[:port]` of an S3-compatible server (MinIO, Ceph, …), no userinfo, path or query; `http://` accepted only for a loopback host or with `allow_insecure_http = true` |
@@ -269,7 +285,11 @@ override changes nothing else (same package list, same labels, same tag scheme
 
 - `server.external_url` is the single public origin. The **edge** routes
   `/v1/*` → API :4101 and everything else → web :4100. `/internal/*` and
-  `/metrics` are never routed.
+  `/metrics` are never routed. (phase 4, P4-GRP-2) With `scim.enabled = true` the edge
+  also routes **`/scim/v2/*`** → API :4101 (Helm: the Ingress and HTTPRoute templates add the
+  path only when `scim.enabled` is true, so a default deployment exposes nothing new, and the
+  edge-routes guard checks both renderings); SCIM requests are small and need no body or
+  buffering exception.
 - (phase 2, RFE-017) The API limits by authenticated principal, not by IP, except
   for unauthenticated routes (which trust the edge's overwritten `X-Forwarded-For`).
   Size `ratelimit.api.multiplier` up for deployments where service keys legitimately
@@ -683,3 +703,75 @@ section is the operator side.
   Job in the chart's `jobs` values). Keep `blobs.s3` configured for as long as any row
   names `s3`: removing it makes those attachments unreadable (503
   `blob_backend_not_configured`), not deleted.
+
+## SCIM directory sync (phase 4, P4-GRP-2, D-132, SEC-72, SEC-73)
+
+Optional; nothing changes for a deployment that does not set `scim.enabled`. SCIM needs **no new
+infrastructure**: the API serves it, state is in Postgres, rate limits use the configured
+`CounterStore`.
+
+- **Turn it on.** Set `scim.enabled: true` (Helm; the chart then also routes `/scim/v2` at the
+  edge, *Networking*) and, if the instance should restrict which domains an org may provision,
+  `scim.allowed_email_domains`. An org **owner** then enables SCIM for the org in the dashboard
+  (Directory sync), lists the org's e-mail domains, creates a token and pastes the base URL
+  (`<external_url>/scim/v2`) and the token into the IdP's provisioning settings.
+- **IdP setup** (details in the dashboard guide): Entra ID (*Enterprise application → Provisioning →
+  Automatic*, tenant URL = base URL, secret token = the `aud_` token, mappings: `userName`,
+  `emails[type eq "work"].value`, `displayName`, `active`, `externalId`; **remove** any `roles`
+  mapping), Okta (SCIM 2.0 app with *Push New Users*, *Push Profile Updates*, *Push Groups*,
+  unique identifier `userName`), Keycloak (a SCIM extension; same attributes). Aurora ignores the
+  enterprise extension.
+- **Token rotation.** Tokens expire (default 365 days, at most `scim.token_max_days`). Create
+  the new token (up to 5 may be active), update the IdP, revoke the old one. The org owners get a
+  notice and an audit row 14 days and 1 day before expiry; an expired token makes the IdP's next
+  sync fail with 401, which stops provisioning but never changes existing state.
+- **What it never does**: sign anyone in, change a role, create or touch an org owner, change the
+  global account of a person who has signed in, link by `externalId`, or reactivate a person an org
+  admin suspended by hand (`04 §SCIM`).
+- **Observability.** `aurora_scim_requests_total{resource,method,status}`,
+  `aurora_scim_provisioned_total{op}` (`user_created`, `user_linked`, `suspended`, `reactivated`,
+  `removed`, `group_member_added`, `group_member_removed`), `aurora_scim_auth_failures_total`;
+  alert on a rising `status=401` rate for a token that was recently valid (expired token or a
+  rotated one still in the IdP) and on `5xx`. The Directory sync page shows the same per org.
+- **Offboarding runbook.** SCIM deprovisioning does not rotate BYO agent tokens the person saw and
+  cannot reassign their automations (`04 §SCIM`); follow the offboarding view of the member
+  (`/o/<org>/members`) after the IdP removes them.
+- **Helm values**: `scim.enabled` (false), `scim.allowedEmailDomains` (`[]`), `scim.ratePerMinute`
+  (600), `scim.tokenMaxDays` (730); no Secret is generated (tokens are created in the dashboard).
+
+## Approval park-and-resume and Web Push (phase 4, RFE-011b, D-133, D-134, SEC-74..SEC-76)
+
+Both are optional and off by default; an existing `aurora.toml` and Helm values change nothing.
+
+**Park and resume** (`approvals.park.*`). Neither infrastructure nor a migration beyond `03` is
+needed. Turn it on only when approvers realistically take longer than `approvals.max_timeout_secs`;
+set a rule's *Approval timeout* above `approvals.park.threshold_secs` (default 15 min) to use it. The
+gateway and the API read the same `approvals.park.*` values (`resume_window_secs` is the API's,
+`threshold_secs`/`max_body_bytes`/`max_pending_per_agent`/`deny_cooldown_secs` the gateway's); a
+rolling upgrade is safe because an older gateway simply holds (no `parked` row is ever created by it)
+and ignores grants. Operators should know the trade-off: the agent is *told* "not sent, wait for a
+message", so agents that cannot repeat a request byte-identically (timestamps or nonces in the body)
+will need a second approval. Metrics: `aurora_gateway_approvals_parked_total`,
+`aurora_gateway_approval_grants_consumed_total{result="consumed"|"no_match"|"expired"}`,
+`aurora_approvals_parked_pending`, `aurora_approvals_resume_expired_total`. Alert on a growing
+`aurora_approvals_parked_pending` (nobody is deciding).
+
+**Web Push** (`push.*`). Requirements: the external URL is **https** (service workers; `localhost`
+works for development), the API can make outbound HTTPS to the push services (Chrome/Edge/Android:
+FCM and WNS; Firefox: Mozilla autopush; Safari and iOS Home Screen web apps: Apple) — Helm
+`push.networkPolicy.egressTo` adds the peers the api may reach, and nothing else changes in the
+default-deny policy; behind an egress proxy configure it at the node or mesh (the destination guard
+resolves and pins the real addresses itself). No new Secret is needed: Aurora generates the VAPID key
+pair on first start and seals the private key with the usual store; to manage it yourself set
+`push.vapid.private_key_env` (Helm `push.vapid.existingSecret`/`key`).
+`push.vapid.subject` should be a monitored contact. **Rotate** with `aurora-api push rotate-vapid`:
+subscribers re-subscribe silently on their next visit and the old key is destroyed after 30 days
+(or earlier when unreferenced); with an operator-managed key a rotation is a redeploy and every
+user must re-enable notifications. `aurora-api push status` shows key ids, subscription counts by
+state and host. Metrics: `aurora_push_sent_total{result}`, `aurora_push_duration_seconds`,
+`aurora_push_subscriptions{state}`; alert on sustained `result=forbidden` (VAPID mismatch after a
+rotation or a wrong operator key) and on `result=rejected_host` (a push service moved to a host not
+in `push.allowed_endpoint_hosts`). Helm values: `approvals.park.*`, `push.enabled`, `push.vapid.*`,
+`push.allowedEndpointHosts`, `push.networkPolicy.egressTo`. A subscription (and so the notification)
+belongs to the browser profile and the Aurora session that created it: shared-computer users should
+sign out, which ends delivery.

@@ -291,6 +291,13 @@ provider refusal; it is reported as `gateway_refused` with the gateway code.
 map to `provider_rate_limited`, `provider_quota` and `provider_auth` the same way in
 every adapter. The new gateway codes `llm_path_not_permitted` and
 `llm_request_too_large` are gateway refusals (`gateway_refused`).
+(phase 4, RFE-011b) `approval_parked` is a gateway refusal that is **not a failure**: the supervisor
+shows it as an activity line ("waiting for approval") and never maps it to `gateway_refused` as a
+terminal error; a turn that ends normally after it is `done`. No adapter changes: the refusal
+arrives as the HTTP response of the agent's own tool call, and the platform preamble
+(`10 §Agent instructions`) tells the agent how to behave. Harness-level tool-failure counters
+(`TOOL_CONSECUTIVE_FAILURES`) apply to platform tools only and do not see it. Resuming is a new
+turn, so no harness needs a "suspend" capability and none is added to the adapter contract.
 
 ## Platform tools
 

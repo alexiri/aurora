@@ -48,11 +48,42 @@ identities. Authors who want "anyone with access" write empty identities, not a
 roster of users. Existing phase-0 rules are not rewritten; their meaning
 narrows, and the editor/warnings say so (below).
 
+**Group identities (phase 4, P4-GRP-1, D-131, SEC-71).** A `group` identity
+(`{ "kind": "group", "id": uuid }`, a directory group of the rule's org, `04 §Groups`)
+matches **only when the request has a speaker and the group id is in the evaluator's
+principal set**, i.e. the turn's author is currently a member of that group. The
+principal set is `{agent_id} ∪ speaker_group_ids` (`06 §Credential authentication`):
+the gateway resolves the speaker's groups once per credential resolution and passes them
+in; `aurora-policy` stays pure and never loads a group. Everything said for `user`
+identities applies unchanged and for the same reason: **with no speaker** (boot-token,
+BYO, schedule, webhook, watch, peer, system, bot-authored turns, or a speaker who lost
+`can_use`) a group identity never matches, so a privilege granted to a group is never
+granted to unattributed traffic, and an allow rule naming only groups neither allows nor
+selects a credential for such traffic (*Injection selection*); a block, require-approval
+or rate-limit rule naming a group also does not match it. Identities are OR-ed with the
+other kinds. Three more rules keep the semantics from widening:
+
+- **A removed group never turns a rule into "anyone".** Deleting a group does not rewrite
+  rules (published generations are immutable and drafts are not touched): a rule whose
+  identities are non-empty keeps them, and a dead group id is simply in no principal
+  set, so such a rule matches nobody. The author is told by the warning
+  `rule_names_removed_group` (below); an empty `identities` array is still the only way
+  to say "anyone".
+- **Authoring validates.** A `group` identity must name a group of the **scope's org**
+  (the org rule's org, the workspace rule's workspace org), else 422
+  `unknown_identity`; a rule holds at most `RULE_GROUP_IDENTITIES_MAX` (20) group
+  identities. Group ids are not secrets; the editor shows names.
+- **Org and workspace stay separate.** A group identity in an org rule matches speakers
+  of any workspace of the org (the group is org-wide); in a workspace rule it matches the
+  same way. Membership, not workspace binding, is what is tested: a group that holds no
+  binding on the workspace still matches its members' turns there (a person must still
+  have `can_use` to be a speaker at all).
+
 Stored in `policy_rules` (hand) or `derived_rules.rule` (derived).
 
 | Part | Shape / meaning |
 |------|-----------------|
-| `identities` | `[{ "kind": "agent", "id": uuid } | { "kind": "user", "id": uuid }]`. Empty = anyone. An `agent` identity matches when the id equals the request's agent. A `user` identity: **phase 0** matched when the user is in the request identity's `principals` (users with `can_use` on the agent's workspace — "workspace roster" semantics, so a rule naming Alice matched every request by the agent whoever was speaking). **From phase 2 (RFE-005)** a `user` identity matches **only when the request's `speaker_user_id` equals that user**, i.e. the turn that caused the request was authored by that person (`06 §Credential authentication`). With **no speaker** (boot-token, BYO agent-token and BYO context traffic, schedule/webhook/watch/peer/system/bot-authored turns, or a speaker who lost `can_use`) a `user` identity **never matches**. Several identities are OR-ed. |
+| `identities` | `[{ "kind": "agent", "id": uuid } | { "kind": "user", "id": uuid } | { "kind": "group", "id": uuid }]` (phase 4, P4-GRP-1: `group`, below). Empty = anyone. An `agent` identity matches when the id equals the request's agent. A `user` identity: **phase 0** matched when the user is in the request identity's `principals` (users with `can_use` on the agent's workspace — "workspace roster" semantics, so a rule naming Alice matched every request by the agent whoever was speaking). **From phase 2 (RFE-005)** a `user` identity matches **only when the request's `speaker_user_id` equals that user**, i.e. the turn that caused the request was authored by that person (`06 §Credential authentication`). With **no speaker** (boot-token, BYO agent-token and BYO context traffic, schedule/webhook/watch/peer/system/bot-authored turns, or a speaker who lost `can_use`) a `user` identity **never matches**. Several identities are OR-ed. |
 | `targets` | Empty = anywhere. Kinds below. A rule matches if **any** target matches. |
 | `action` | `allow` \| `block` |
 | `require_approval` | allow only. (phase 2, RFE-011a) With the optional `approval_timeout_secs` (60 … `approvals.max_timeout_secs`; absent = no preference, see *Approval deadlines*) |
@@ -75,7 +106,7 @@ Target kinds (matching uses the **request facts** below):
 + `truncated`, `app_id?`, `tool_id?`, `winning_credential?` (`connection{id,
 app_id, scope}` \| `secret{id, kind, scope}`), `injected` (= winning credential
 present), `is_llm_host`, `identity` (agent id, principals; from phase 2 also
-`speaker_user_id?`).
+`speaker_user_id?`; phase 4, P4-GRP-1: `principals` also holds the speaker's group ids).
 
 ## Matching primitives
 
@@ -338,7 +369,11 @@ separate mode.
 `GET /v1/agents/{agent}/effective[?speaker=<user_id>]` (phase 2, RFE-005: the
 optional `speaker` selects the person whose turns are evaluated; default: the
 caller; `speaker=none` shows speakerless traffic; credentials whose selection
-depends on the speaker are flagged `depends_on_speaker`) returns, for every
+depends on the speaker are flagged `depends_on_speaker`; phase 4, P4-GRP-1: the
+selected speaker's **current groups** are resolved from the database and passed as
+principals, `group` identities included, and the response lists them as
+`speaker_groups`; `speaker=none` has none, and `POST …/policy/simulate` with
+`speaker_user_id` does the same) returns, for every
 candidate credential in scope: whether it is selected, by which rule(s), and for each app tool the
 combined decision with the org-only decision exposed as `org_ceiling` so the UI
 can explain locks. Computed by running the evaluator over synthetic request
@@ -367,7 +402,15 @@ facts per tool (one per tool's first method/path example).
   identities carry the informational warning `user_rule_needs_speaker` — "matches
   only turns spoken by <name>; never schedules, webhooks, BYO or boot traffic" —
   and, for allow rules that grant credentials, `user_rule_no_agent_fallback`;
-  phase 2, RFE-025: `rule_applies_to_all_agents`, see *Injection selection*):
+  phase 2, RFE-025: `rule_applies_to_all_agents`, see *Injection selection*;
+  (phase 4, P4-GRP-1) rules with `group` identities carry `group_rule_needs_speaker`
+  — "matches only turns spoken by a member of <group>; never schedules, webhooks, BYO
+  or boot traffic" — and, for allow rules that grant credentials,
+  `group_rule_no_agent_fallback`; `group_rule_empty` (info) when a named group has no
+  members; and `rule_names_removed_group` (severity `warning`, `details.group_id`,
+  "this rule names a group that no longer exists and matches nobody") — the last also
+  appears in the editor next to the identity chip, and publishing is never blocked by
+  any of them):
   rules shadowed by an earlier
   unconditional rule with identical/broader identities and targets; rules
   naming removed tools or lost host claims (inert); allow rules in workspace
@@ -404,7 +447,10 @@ prod" ask deserves longer than a routine one, so from phase 2:
   carries `expires_at`. Expiry still **denies** (`expired`, 403 `manual_approval_expired`).
 - Clients may time out before a long deadline (an agent tool's own HTTP timeout is
   the client's business). Parking a request and resuming it later is **not** part of
-  phase 2 (RFE-011b, phase 4).
+  phase 2. (phase 4, RFE-011b, D-133) From phase 4, and only when the operator enables
+  it, a long deadline can be served by **parking** instead of holding the connection:
+  *Park and resume* below. With parking off (the default) everything in this section is
+  unchanged.
 
 **Stall exemption (phase 2, RFE-011a).** Stale-turn recovery fails a turn after
 `TURN_STALL` (10 min) without progress. A turn that is *blocked on a pending
@@ -417,6 +463,9 @@ means: no pending approval of the turn **and** `now − GREATEST(last_progress_a
 latest approval resolved_at) ≥ TURN_STALL`. The exemption never extends `TURN_CEILING`
 (wall-clock cap, still `failed time_limit`) and does not apply to action approvals
 (the agent is not blocked on them: it received `pending_approval` and continued).
+(phase 4, RFE-011b) Nor does it apply to **parked** approvals (`parked = true`): the
+agent was refused and is not blocked, so a turn that keeps running after a parked
+refusal is subject to stall detection like any other.
 
 **Lifecycle**: `pending` → `approved` | `denied` | `expired` | `abandoned`. (phase 2, RFE-006) Freezing the agent, its workspace or its org marks its `pending` approvals `abandoned` and pending action approvals `rejected` (reason `frozen`); unfreezing does not revive them.
 First decision wins (`UPDATE approvals SET status=… WHERE id=$1 AND
@@ -474,6 +523,213 @@ durable events `approval.pending` (at creation) and `approval.decided`
 in UIs and cards ("Approve all 14 / Deny all"); a batch decision applies to all
 *pending* approvals of that batch id within the same agent that the caller may
 decide.
+
+- **Web Push when the user has no live tab (phase 4, RFE-011b, D-134).** Besides the
+  e-mail above, a decider who registered a browser for Web Push (`§Web Push`) receives a
+  push for each approval created while they have no live `approvals/stream` or
+  long-poll in that workspace. It is per user and per device, independent of the e-mail
+  (the e-mail remains the fallback and is **not** suppressed by a push), and never an
+  approve/deny action.
+
+### Park and resume (phase 4, RFE-011b, D-133, SEC-74)
+
+**Problem.** A gateway hold keeps the agent's connection open until a person decides
+(`06 §Approval holds`). That is right for minutes and wrong for hours: the sandbox is
+kept awake by an active turn, the connection and the turn can outlive an edge or tool
+timeout, and every approval deadline is capped by `approvals.max_timeout_secs` (1–4 h)
+so that no hold outlives the turn ceiling (RFE-011a). Chat-based approvers routinely
+take longer. **Parking** ends the wait without losing the decision: the request is
+**refused** to the agent in a way that tells it to stop waiting, the approval stays
+`pending` for as long as its deadline says, and a decision becomes a **single-use grant**
+for the identical request, delivered to the agent by a platform follow-up message in the
+same conversation. Nothing is suspended and nothing stays in memory: the agent's turn
+ends, the sandbox idles and parks like any other, and the grant is only data in Postgres.
+
+**Opt-in.** `approvals.park.enabled` (default `false`). With it off nothing in this
+section runs and phase 2 behaviour is exact.
+
+**Which approvals park** (all must hold at the moment the gateway reaches the hold,
+`06` step 8; otherwise the request is held exactly as before):
+
+1. Parking is enabled and the **effective timeout** (*Approval deadlines*) exceeds
+   `approvals.park.threshold_secs` (default 900 s). The effective timeout is computed as
+   today (minimum of the timeouts set on the matching requiring rules, else
+   `approvals.timeout_secs`); its **upper bound** is `approvals.park.max_timeout_secs` (default
+   86 400 s, at most 604 800) for a parked approval and `approvals.max_timeout_secs` for a
+   held one. Authoring (`approval_timeout_secs`) accepts up to the park maximum when parking
+   is enabled; a request that **cannot** park is clamped to the hold maximum, never held
+   longer.
+2. The request belongs to a **turn of a hosted agent**: the identity is a hosted `context`
+   credential with `conversation_id` and `turn_id`, so a follow-up can reach the agent.
+   BYO, boot-token and conversation-less traffic is always held.
+3. The request is **fully bufferable**: not a WebSocket upgrade or tunnel, a body no larger
+   than `approvals.park.max_body_bytes` (256 KiB) that the gateway can read completely within
+   `PARK_BODY_READ_TIMEOUT` (10 s). Otherwise held (and clamped as above).
+4. The decision **does not depend on who is speaking**: the evaluator is run a second time
+   with no speaker and must give the same verdict from the same requiring rule and winning
+   credential. The resume turn is a system turn without a speaker (below), so a request that
+   was approvable only because of `user`/`group` identities (RFE-005, D-131) would not be
+   approvable on retry; such requests are held (or, when the hold limit is shorter than the
+   deadline, clamped), never parked.
+5. The agent is under its limits: at most `approvals.park.max_pending_per_agent` (20) parked
+   `pending` approvals and `PARK_PER_AGENT_HOUR` (60) new parked approvals per hour, else
+   403 `approval_limit_reached` (`x-should-retry: false`): a prompt-injected agent cannot
+   flood the approvers' queue. (Held approvals keep their existing behaviour.)
+
+**What is persisted** (`03 §Planned changes`, columns of `approvals`): `parked`, a salted
+request `fingerprint`, `resume_state`, `resume_expires_at`, `consumed_at`, `resume_turn_id`. The
+fingerprint is `SHA-256(salt ‖ canonical)` over: agent id, conversation id, method, host:port,
+the normalized path **and query** (exact), the SHA-256 of the complete body, the requiring
+rule's `logical_id`, the winning credential's id and the tool id. The salt is random per row
+(so the stored value is not a confirmation oracle for a guessable body and cannot be matched
+across rows); the raw body, headers and query values are **never** stored (the redacted
+summary is, as for every approval).
+
+**What the agent sees.** The request is **not sent** and is answered at once with
+**403 `approval_parked`** (`x-should-retry: false`; `details { approval_id, expires_at,
+resume_window_secs, manage_url }`) and a guidance message written for an LLM: *"This request
+needs a person's approval and that may take hours. It was not sent. Do not retry it now and do
+not look for another way around it. Finish what you can without it, tell the user what you are
+waiting for, and end your turn. Aurora will message you in this conversation when it is
+decided; if approved, repeat exactly this request once within <N> minutes."* The agent
+instructions (`10 §Agent instructions`) teach the same. Repeating the identical request while
+the approval is pending answers the same 403 with the same `approval_id` (no new approval, no
+new notification); the repeat counts against the API's usual limits.
+
+**Decision** (same deciders, same `can_approve` and conversation-visibility rules, same
+critical audit and first-decision-wins, through dashboard, API or channel card):
+
+- **Approve** → `status = approved` and, in the same transaction, `resume_state = ready`,
+  `resume_expires_at = now() + approvals.park.resume_window_secs` (default 1 800 s); after commit
+  the API queues a **system follow-up turn** in the origin conversation (the mechanism of action
+  approvals, `§Action approvals` step 4: a `joining` follow-up if the origin turn is still
+  running and can steer, else a new `queued` turn with `speaker_kind = system`) whose text is
+  **platform-composed** — approval title, "approved by <label>", the sanitized redacted request
+  line and the deadline — never model or request text beyond the sanitized summary. A frozen
+  agent gets no turn (creation is refused, `04 §Freeze`) and the grant is revoked.
+- **Deny** → `status = denied`; a follow-up tells the agent "denied by <label>, do not retry". A
+  retry of the same fingerprint within `approvals.park.deny_cooldown_secs` (default 900 s) is
+  answered 403 `manual_approval_denied` without creating a new approval.
+- **Expire** → the expiry job (`05 §Background jobs`) sets `expired` at the deadline (a parked
+  approval has no gateway holding it); the transcript gets `approval.expired` and a platform
+  `notice`, and **no turn is started** (waking an agent hours later to say "nothing happened" is
+  not worth a sandbox).
+- **Resume window passes unused** → `resume_state = expired` (audit best-effort, transcript
+  notice, no turn).
+
+**Consuming the grant** (gateway, step 8). When the verdict is `needs_approval` and parking is
+enabled, before creating anything the gateway looks for an open approval of the same agent and
+conversation (`parked`, `resume_state = ready`, unexpired), recomputes the fingerprint with that
+row's salt and, on a match, **consumes it atomically** (`UPDATE … SET resume_state = 'consumed',
+consumed_at = now() WHERE id = $1 AND resume_state = 'ready' AND resume_expires_at > now()
+RETURNING`, so two concurrent retries cannot both pass) and continues the pipeline as if
+approved; the request-log row records `approval_id` and `resumed = true`. The grant never
+overrides policy: the verdict is re-evaluated on the retry, so a rule that has since become
+`block`, a different requiring rule or a different winning credential makes the fingerprint not
+match, and a rule that became `allow` simply allows. Consumption happens before credential
+refresh and forwarding: a request that then fails upstream or at refresh has used its approval
+(fail closed; the agent gets the error and a new approval is needed). Without a match, parked
+approval or hold proceeds as above.
+
+**What revokes a grant or approval.** Freezing the agent, its workspace or its org marks its
+`pending` parked approvals `abandoned` (as for holds, `§Approvals`) and its `ready` grants
+`resume_state = revoked`; unfreezing revives neither. Deleting the agent or conversation deletes
+the rows (the approval history survives as before, `03 §approvals`). A grant is bound to the
+conversation and agent, single use, short-lived, and dies with its window.
+
+**Sandbox lifecycle.** A parked approval is **not** a keep-awake reason (`11 §Keep-awake`): the
+turn ends, the sandbox idles out after `IDLE_STOP` and parks (home volume kept) like any other.
+The resume turn wakes it through the normal due-work arms, in a new boot with the harness
+session restored from `harness_session_ref`; processes of the old boot are gone. This is the
+point of parking: a pending approval costs a database row, not a container.
+
+**Interaction with other rules.** RFE-011a deadlines, e-mail, cards, SSE and Web Push are
+unchanged and apply to parked approvals (the e-mail and push text says "the agent has stopped
+waiting and will resume when you approve"); a **reminder** is sent once, to deciders with a
+push subscription or e-mail enabled and no live watcher, when half of a parked approval's time
+has elapsed and it is still `pending`. Action approvals already work this way and are unaffected.
+Batches (`x-aurora-batch-id`) park per request. The app-turn cap (`APP_TURN_CAP`) does not count
+system turns, and each resume needs a human decision, so a retry loop is metered by people.
+Limits and honesty: parking suits requests the agent can repeat **byte-identically**; a client
+that puts a timestamp, nonce or idempotency token in the body will produce a different
+fingerprint on retry and must be approved again (documented in the guidance and `17`).
+
+### Web Push (phase 4, RFE-011b, D-134, SEC-75, SEC-76)
+
+RFE-011a notifies by dashboard SSE (an open tab) and e-mail (when *nobody* has a live
+surface). Web Push (RFC 8030, 8291, 8292) reaches a **person's device** when their browser is
+closed, so a decider can act without polling a mailbox. It is optional, per user, and carries
+almost nothing.
+
+**Opt-in at three levels.** (1) The operator: `push.enabled` (default `false`; `15`). (2) The user:
+in the dashboard, by a deliberate gesture, grants the browser's notification permission and
+registers **this browser** (`05` routes); there is no default registration and nothing is
+migrated from the phase 2 in-tab notification. (3) Per device: a subscription can be paused,
+given a label, set to show names, or removed. API keys cannot register a browser.
+
+**A push is delivered only to a browser that could act on it.** A subscription is bound to the
+**session** that created it (`push_subscriptions.session_id`, `03`): when the session is revoked
+(sign-out, "sign out other sessions", deactivation), expires or is pruned, the subscription
+stops receiving and is deleted. Deciding needs a signed-in session, so a push to a device
+without one is noise at best and a leak at worst; this also fixes shared computers. Registering
+an endpoint that already exists under another user **moves** it to the registering user's
+current session (the browser profile that holds the endpoint is the one signed in now).
+
+**Who receives what, and when.** On `aurora_approval created` (gateway hold, parked approval or
+action approval) the API picks the users with an unpaused, unexpired subscription whose session is
+live, who are **deciders of that approval at send time** (effective `can_approve` through
+`aurora-db::authz`, groups included, intersected with conversation visibility exactly like the
+e-mail and the SSE feed) and who have **no live watcher** (`approval_watchers`) in that workspace.
+It waits `APPROVAL_PUSH_DELAY` (5 s, so a tab that is open can show its own notification first),
+re-checks that the approval is still `pending` (decided, expired, frozen → nothing is sent) and
+the user's authority, claims `(approval, user, stage)` in `approval_push_claims` (idempotent
+across replicas) and sends one push per live subscription. Approvals sharing a `batch_id` produce
+one push; each user receives at most `PUSH_PER_USER_HOUR` (30) per hour, the rest folded into one
+"N approvals waiting" digest push (same `Topic`, so it replaces); a parked approval also gets the
+one reminder of *Park and resume*. The e-mail path is **independent**: a user may get both, and
+turning one off leaves the other (`approval_email`, subscriptions). A push is not retracted when
+the approval is decided (Chrome requires every push to display something); clicking it opens the
+Approvals page, which shows "already decided by X".
+
+**What a push contains.** The payload is end-to-end encrypted to the browser (RFC 8291
+`aes128gcm`) and at most 1 KiB of JSON: `{ v: 1, type: "approval.pending" | "approval.reminder" |
+"approval.digest" | "test", approval_id, workspace_id, expires_at, parked, url, count?, agent?,
+workspace? }` where `url` is the dashboard **path** `/o/<org>/w/<ws>/approvals?focus=<id>`.
+**Never** in a push, whatever the setting: an approval title, summary field, rule name, host,
+path, method, query, body or any text derived from a request or from the model, a token, a
+credential, an approve/deny link, an e-mail address or a user's name. By default (`show_details =
+false`) the notification reads "Aurora — an approval needs you / Open Aurora to review it"; with
+`show_details = true` the service worker also shows the **agent and workspace names** (sanitized,
+each ≤ 40 characters; the same information the e-mail already carries). The notification has no
+action buttons: deciding needs the dashboard and its session.
+
+**VAPID keys** (RFC 8292; ES256 on P-256). Instance-wide. Normally **generated** by the first API
+replica that finds none (under an advisory lock) and stored in `webpush_vapid_keys` with the private
+key **sealed** through the SecretVault (purpose `webpush.vapid`, `08 §1`) and the public key in
+clear; only the API ever opens it (never the gateway, a runner, a sandbox or a response; the public
+key is served to signed-in users). An operator who prefers to manage the key sets
+`push.vapid.private_key_env` (the name of an environment variable holding it); Aurora then
+generates and rotates nothing. **Rotation** (`aurora-api push rotate-vapid`) makes a new key
+`active` and the old one `retired`; a browser subscription is tied to the application-server key it
+was created with, so each subscription keeps its `vapid_key_id` and is signed for with *its* key
+while the dashboard silently re-subscribes on the user's next visit (the permission persists) under
+the new key and deletes the old subscription; a retired key and its secret are destroyed when no
+subscription references it or after `PUSH_VAPID_RETIRE` (30 days). With an operator-managed key
+rotation is a redeploy that invalidates every subscription (users re-subscribe). The VAPID subject
+(`push.vapid.subject`, default the external URL) is the contact the push service may use.
+
+**Delivery and failure.** The API sends from a bounded pool (`push.concurrency`, 16) through the
+**guarded resolver and destination guard** used for every untrusted destination (public addresses
+only, resolution pinned for the connection, TLS to system roots plus `tls.extra_ca_bundle`, **no
+redirects**, `push.timeout_secs` 10 s), and only to an endpoint whose host matches
+`push.allowed_endpoint_hosts` (validated at registration *and* before every send, `15`). Headers:
+`TTL` = the approval's remaining time capped at `PUSH_TTL_MAX` (24 h) and at least 60 s, `Urgency:
+high` for a new approval, `Topic` (≤ 32 URL-safe characters derived from the approval id) so a later
+push for the same approval replaces the earlier. Outcomes: 201 → success; 404/410 → the subscription
+is deleted; 413/400/403 → failure (a 403 after rotation means a key mismatch); 429/5xx → at most 3
+tries within 60 s. Five consecutive failures set `disabled_at` and the dashboard shows "not
+receiving — re-enable". A push failure never affects an approval, a decision or the e-mail. Metrics
+`aurora_push_sent_total{result}`, `aurora_push_duration_seconds`, `aurora_push_subscriptions`.
 
 ## Action approvals (platform-level)
 

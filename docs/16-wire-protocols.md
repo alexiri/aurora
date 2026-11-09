@@ -22,6 +22,8 @@ implementation repo and checked in (CI fails on drift).
 | W12 | CLI / BYO | CLI → API; BYO agent → gateway | API key / agent token | `05`, `08` |
 | W13 | Counter backend (phase 4, P4-CNT) | API, gateway → Postgres or Redis | database role / Redis ACL user over TLS | `15 §Shared rate-limit counters` |
 | W14 | Blob store (phase 4, P4-S3) | API → S3-compatible bucket | SigV4 with workload identity or env keys, over TLS | `10 §Attachments`, `15 §S3-compatible blob store` |
+| W15 | SCIM 2.0 (phase 4, P4-GRP-2) | IdP → API `/scim/v2` | `aud_` bearer per org | this doc, `04 §SCIM` |
+| W16 | Web Push (phase 4, RFE-011b) | API → browser push service (FCM, Mozilla, Apple, WNS) | VAPID (RFC 8292) JWT signed by the instance key | this doc, `07 §Web Push` |
 
 ## Cross-cutting conventions
 
@@ -225,3 +227,117 @@ the object key layout (`10 §Attachments`), the no-metadata / no-pre-signed-URL 
 error mapping: every transport, 5xx, throttling or credential error is
 `blob_store_unavailable`; a missing object for a live row is `blob_store_corrupt` (logged);
 nothing is ever mapped to 404/410, which are decided from the database row.
+
+---
+
+## W15 — SCIM 2.0 (phase 4, P4-GRP-2)
+
+Authority and semantics: `04 §SCIM`. This section is the wire subset Aurora implements
+(RFC 7643 schemas, RFC 7644 protocol), chosen from what Entra ID, Okta and Keycloak (a SCIM
+extension) actually send. Everything else is declared unsupported in `ServiceProviderConfig`
+and answered with the SCIM error below, never silently ignored.
+
+**Transport.** Base `<external>/scim/v2`, TLS only (the external URL is https, or loopback in
+development). `Authorization: Bearer aud_…` (`00`); no cookies, no CSRF/`Origin` check, no CORS.
+Requests and responses use `application/scim+json` (a request with `application/json` is
+accepted); bodies ≤ `SCIM_BODY_MAX`; `Accept` other than JSON → 406. Responses carry
+`meta { resourceType, created, lastModified, location }` and no `ETag` (`etag.supported=false`);
+resource ids are the SCIM ids of `03 §scim_users` / `groups.id`, UUIDs.
+
+**Discovery** (same auth): `GET /ServiceProviderConfig` (`patch.supported = true`,
+`bulk.supported = false`, `filter { supported: true, maxResults: SCIM_PAGE_MAX }`,
+`changePassword`, `sort`, `etag` all `false`, `authenticationSchemes: [oauthbearertoken]`),
+`GET /ResourceTypes`, `GET /Schemas` (the User core schema with the attributes below, the
+Group schema; **no enterprise extension**: its attributes are accepted and ignored).
+
+**Users** `urn:ietf:params:scim:schemas:core:2.0:User`. Attributes read and stored: `userName`
+(required), `externalId`, `displayName`, `name.givenName|familyName|formatted`, `emails[]`
+(`value`, `type`, `primary`; the primary or first is used, `04 §SCIM`), `active`. Returned:
+`id`, `externalId`, `userName`, `displayName`, `name`, `emails` (one, `primary: true`), `active`
+(`true` only when the link is `active`), `groups` (read-only: `{ value, display, $ref }` of the
+SCIM groups the user is in), `meta`. Unknown attributes are ignored except `roles`,
+`entitlements`, `password`, `x509Certificates`, `groups` on input, which are **refused 400
+`invalidValue`** (`detail`: "not supported") so an IdP cannot believe it set a role. `active` is
+accepted as a boolean or the strings `"True"`/`"False"` (Entra).
+
+| Operation | Behaviour |
+|-----------|-----------|
+| `POST /Users` | `04 §SCIM` *Users*; 201 with the resource and `Location`; 409 `uniqueness` |
+| `GET /Users/{id}` | 200; 404 for an unknown id, another org's id or a removed link |
+| `GET /Users?filter=&startIndex=&count=` | list of this org's non-removed links; filter subset below |
+| `PUT /Users/{id}` | full replacement of the stored attributes; `active` drives deprovisioning (`04 §SCIM`); owner → 403 |
+| `PATCH /Users/{id}` | `Operations`; below |
+| `DELETE /Users/{id}` | state `removed` (`04 §SCIM`); 204; repeating it is 204 (idempotent); owner → 403 |
+
+**Groups** `urn:ietf:params:scim:schemas:core:2.0:Group`: `displayName` (required), `externalId`,
+`members[] { value, display?, $ref? }` (`value` = SCIM user id; `type` ignored). `POST`, `GET
+/Groups/{id}`, `GET /Groups` (the org's `source = scim` groups only; `members` omitted from lists
+unless `?attributes=members`), `PUT` (replaces name and the whole member list), `PATCH`, `DELETE`
+(204, idempotent). Manual groups are invisible here (404 on their ids). Members beyond
+`SCIM_MAX_MEMBERS_PER_REQUEST` in one request → 400 `invalidValue`.
+
+**Filter subset** (`filter=`): a single `<attr> eq "<value>"` (case-insensitive attribute names,
+case-sensitive value except `userName`, e-mail and `displayName`, which compare
+case-insensitively): Users `userName`, `externalId`, `id`, `emails.value`; Groups `displayName`,
+`externalId`, `id`. Anything else (other operators, `and`/`or`/`not`, grouping, value paths in the
+filter, an unknown attribute) → 400 `invalidFilter`. No `sortBy`. **Pagination:** `startIndex`
+(1-based, default 1), `count` (default `SCIM_PAGE_DEFAULT`, max `SCIM_PAGE_MAX`; larger is
+clamped); the response is `ListResponse { totalResults, startIndex, itemsPerPage, Resources }`
+ordered by `created_at, id` (stable while the set changes within a sync; an index past the end
+returns an empty page). `count=0` returns only `totalResults`.
+
+**PATCH subset** (`urn:ietf:params:scim:api:messages:2.0:PatchOp`, ≤ `SCIM_MAX_PATCH_OPS`
+operations, applied atomically in order: any failure applies none). `op` is `add`, `replace`
+or `remove`, case-insensitive (Entra sends `Add`/`Replace`/`Remove`). Supported `path`s:
+Users `active`, `userName`, `displayName`, `externalId`, `name.givenName`, `name.familyName`,
+`name.formatted`, `emails`, `emails[type eq "work"].value` (and the same for `primary eq true`),
+or **no path** with an object value naming those attributes (Okta, Entra); Groups
+`displayName`, `externalId`, `members`, `members[value eq "<id>"]` (for `remove`), or no path
+with an object value. `remove` of `active`, `userName` or a required attribute → 400
+`noTarget`/`mutability`; any other path → 400 `invalidPath`; a `members` operation with an
+unknown user → 400 `invalidValue`. `replace` on `members` replaces the whole list.
+
+**Errors** (`urn:ietf:params:scim:api:messages:2.0:Error`, `status` a string, `scimType` where
+RFC 7644 §3.12 names one, `detail` sanitized and never containing a token, e-mail of another
+user or an internal id):
+
+| HTTP | `scimType` | When |
+|------|-----------|------|
+| 400 | `invalidSyntax`, `invalidValue`, `invalidFilter`, `invalidPath`, `noTarget`, `mutability`, `tooMany` | malformed body or schema, bad value or e-mail domain, unsupported filter, unsupported path, missing target, immutable/unsupported attribute, over a limit |
+| 401 | — | missing, malformed, unknown, revoked or expired token, SCIM disabled for the org: **one identical response** (`WWW-Authenticate: Bearer`) |
+| 403 | — | owner mutation, seat limit, SCIM suspended by the operator |
+| 404 | — | unknown or foreign resource, SCIM off at the instance (the whole surface) |
+| 409 | `uniqueness` | duplicate `userName`/e-mail/`externalId`/group name |
+| 413 | `tooMany` | body above `SCIM_BODY_MAX` |
+| 415 / 406 | — | content type / accept not JSON |
+| 429 | — | `SCIM_RATE` exceeded, with `retry-after` |
+| 500/503 | — | database or audit failure (`audit_unavailable`: the change is not applied); the IdP retries |
+
+**Idempotency and retries.** `POST` is not idempotent: IdPs probe with `GET …?filter=userName eq`
+first, and a repeated `POST` for an existing user is 409 `uniqueness`, which Entra and Okta treat as
+"already exists, then update". `PUT`, `PATCH` setting a value, `DELETE` and `members` add/remove of
+an already-present/absent member are idempotent and succeed.
+
+**Conformance.** The suite of `18 §SCIM` runs recorded request/response sequences of the three IdPs
+(sync, deactivate, group membership churn, token rotation) and a protocol validator against
+`/scim/v2`; fixtures contain no real tenants.
+
+---
+
+## W16 — Web Push (phase 4, RFE-011b)
+
+Semantics, payload and key handling: `07 §Web Push`. The wire is the standard Web Push protocol
+and Aurora owns only what it sends:
+
+| Part | Rule |
+|------|------|
+| Request | `POST <endpoint>` over TLS to a host in `push.allowed_endpoint_hosts`, resolved through the guarded resolver, no redirects followed, body `Content-Encoding: aes128gcm` (RFC 8291; record size 4096; per-message ephemeral key and salt; `auth` and `p256dh` from the subscription), `Content-Length` ≤ the push service's 4 096-byte limit (Aurora's plaintext is ≤ `PUSH_PAYLOAD_MAX`, 1 KiB) |
+| Authorization | `Authorization: vapid t=<JWT>, k=<application server public key>` (RFC 8292): ES256, claims `aud` = the endpoint's origin, `exp` ≤ now + 1 h (never the 24 h maximum), `sub` = `push.vapid.subject`; the key is the one named by the subscription's `vapid_key_id` |
+| Headers | `TTL` (remaining approval time capped at `PUSH_TTL_MAX`, ≥ 60 s), `Urgency: high` for `approval.pending` and `approval.reminder`, `normal` for digest and test, `Topic` (≤ 32 URL-safe characters, derived from the approval id, so a newer push for the same approval replaces the older one) |
+| Payload (plaintext JSON, `v: 1`) | `{ v, type, approval_id?, workspace_id?, expires_at?, parked?, url?, count?, agent?, workspace? }`; no other field may be added without a version bump; `agent`/`workspace` present only when the subscription has `show_details`; **never** a title, summary, rule name, host, path, method, query, body, token, credential, approve/deny link, e-mail address or user name (`07 §Web Push`) |
+| Responses | 201 success; 404/410 → delete the subscription; 400/403/413 → failure (a 403 after a rotation is a key mismatch); 429/5xx → retry with backoff, at most 3 tries in 60 s; any other status → failure; bodies of responses are logged only as a status and a truncated, sanitized reason |
+| Client side | the service worker of `14` receives the decrypted payload, shows a notification and on click opens a same-origin path; it never calls the API |
+
+Conformance: the RFC 8291 Appendix A and RFC 8292 examples are test vectors for the encryption and
+the JWT; a mock push service in the test kit verifies VAPID, decrypts with a test subscription key
+pair and asserts the payload invariants (`18 §Approval park-and-resume and Web Push`).

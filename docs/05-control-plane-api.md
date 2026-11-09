@@ -47,6 +47,7 @@ if any declared id lacks an implementation.
 | Runner | `Authorization: Bearer aur_…` + `X-Aurora-Replica: <id>` (after register) | `/v1/runner/**` |
 | Connector | `Authorization: Bearer aun_…` + `X-Aurora-Replica` (phase 4, P4-MCON: or the connector host's `auh_…` + `Aurora-Connector: <id>` for a **managed** connector, C-458) | `/v1/connector/**` |
 | Connector host (phase 4, P4-MCON) | `Authorization: Bearer auh_…` | `/v1/connector-host/**` (C-455..C-457) |
+| SCIM client (IdP; phase 4, P4-GRP-2) | `Authorization: Bearer aud_…` (per org; cookies and `Origin` ignored) | **only** `/scim/v2/**` (`16 §W15`); the edge proxy routes `/scim/v2` to the API in addition to `/v1`; 404 while `scim.enabled = false`; an `aud_` bearer anywhere else is 401 |
 | Public capability | token in path | `POST /v1/hooks/{token}`, `GET /v1/public/avatars/{key}`, `GET /v1/oauth/callback`, OIDC callbacks |
 | Internal services (hook host) | `Authorization: Bearer <internal secret>` (phase 2, RFE-007: any key of the ring + `X-Aurora-Key-Id`) | `/internal/v1/**` |
 | Metrics / health | none | `/healthz`, `/readyz`, `/metrics` |
@@ -126,6 +127,9 @@ matrix:
     rejected bearer). **Exempt**: `/healthz`, `/readyz`, `/metrics`, the machine
     planes (`/v1/runner/*`, `/v1/connector/*`, `/internal/*`) which apply their own
     back-pressure, and `POST /v1/hooks/{token}` (its own 60/min per webhook).
+    (phase 4, P4-GRP-2) `/scim/v2/**` is not an authenticated `/v1` request: it has its own
+    per-token bucket `SCIM_RATE` (600/min, burst 120; `key = api:scim:token:<id>`, class
+    `management`, `04 §SCIM`) and the rejected-bearer limit for bad tokens.
   - **Token buckets**, in memory per API replica by default (the same
     approximation as the gateway, D-05; N replicas can allow up to N×).
     (phase 4, P4-CNT, D-119) With `ratelimit.counters.backend = postgres` or `redis`
@@ -284,10 +288,10 @@ caches — phase 3, RFE-014: *after* re-subscribing, keeping the caches meanwhil
 | `aurora_inbox` | `{}` | API → API inbox workers |
 | `aurora_op_result` | `{ "op_id" }` | API (on connector results) → API callers waiting on correlated operations |
 | `aurora_approval` | `{ "id", "workspace_id", "event": "created"|"decided"|"expired" }` | gateway & API → gateways, API (cards, SSE, long-polls) |
-| `aurora_gateway_invalidate` | `{ "scope": "org"|"workspace"|"agent"|"credential"|"connection"|"all", "id"?: uuid }` | API → gateways |
+| `aurora_gateway_invalidate` | `{ "scope": "org"|"workspace"|"agent"|"credential"|"connection"|"user"|"all", "id"?: uuid }` (phase 4, P4-GRP-1: `user`, id = the user; drops the cached identities of that speaker) | API → gateways |
 | `aurora_registry` | `{ "hash": content_hash, "contract": int }` | API → gateways, API replicas (hook hosts have no DB connection and poll `/internal/v1/registry/active` every 60 s and on cache miss) |
 | `aurora_secret_origin` | `{ "secret_id", "status" }` | gateway (origin preflight/backstop) → API (audit, owner notice, dashboard) |
-| `aurora_auth_revoked` | `{ "kind": "session"|"api_key"|"user", "id" }` | API → API replicas, gateways |
+| `aurora_auth_revoked` | `{ "kind": "session"|"api_key"|"user", "id" }`; (phase 4, P4-GRP-1) `{ "kind": "access", "id": user_id \| null, "org_id" }`: the user's (or, with `id` null, every user of the org's) effective access changed (`04 §Groups`) | API → API replicas, gateways (replicas re-authorize that user's open SSE streams and long-polls; a stream the user may no longer open is closed with a final `access.changed`; gateways ignore it, they use the `user`/`workspace`/`org` scopes) |
 
 Deltas are coalesced by the API before notifying (≥100 ms or ≥2 000 chars per
 turn per notification) so a busy stream does not flood the channel.
@@ -342,11 +346,14 @@ claim-based and safe to run everywhere.
 | Approval card fan-out (`13`) | `aurora_approval created` + every 10 s catch-up | claims (`channel_ops.dedupe_key`) |
 | Approval e-mail notification (phase 2, RFE-011a, `07 §Approvals`): pending approvals older than `APPROVAL_NOTIFY_DELAY` without a live surface → e-mail to deciders | every 10 s | claims (`approval_notifications`) |
 | Approval watcher heartbeat (phase 2, RFE-011a): each replica upserts `approval_watchers` for its open approvals SSE/long-poll connections; stale rows pruned | every 15 s | idempotent |
-| Approval expiry: `pending` past `deadline + 30 s` → `expired`; pending rows of gateway instances unseen for 60 s → `abandoned` | every 10 s | idempotent updates |
+| Approval expiry: `pending` past `deadline + 30 s` → `expired` (phase 4, RFE-011b: a **parked** approval expires at `deadline`, nobody holds it); pending rows of gateway instances unseen for 60 s → `abandoned` (phase 4: **never** `parked` rows) | every 10 s | idempotent updates |
+| Approval resume window (phase 4, RFE-011b): `resume_state = 'ready'` past `resume_expires_at` → `expired` (audit best-effort, transcript notice, no turn); parked approvals at 50 % of their time → one reminder | every 10 s | idempotent updates, claims (`approval_push_claims`) |
+| Web Push delivery (phase 4, RFE-011b, `07 §Web Push`): on `aurora_approval created` + `APPROVAL_PUSH_DELAY`, deciders with a live subscription and no watcher; failure handling, subscription disabling, retired-VAPID-key destruction (`PUSH_VAPID_RETIRE`) | event + every 10 s catch-up; daily | claims (`approval_push_claims`) |
 | Action-approval expiry | every 60 s | idempotent |
 | Attachment pending sweep (`ATTACH_PENDING_TTL`) | hourly | idempotent |
 | Conversation retention sweep (phase 2, RFE-010): delete conversations past the org window through the delete path; blob-orphan sweep | daily | singleton |
 | Attachment sweep (phase 2, RFE-015): purge attachment bytes past the org window, remove orphan blobs, reconcile `org_storage_usage`, quota notices; (phase 4, P4-S3) with the `s3` backend the orphan step lists the bucket prefix and honours `S3_ORPHAN_GRACE` (`10 §Attachments`) | daily | singleton |
+| SCIM token expiry (phase 4, P4-GRP-2): a notice to the org owners and an audit row 14 days and 1 day before a token expires; expired tokens are simply dead (read-time check) | daily | singleton |
 | Counter pruning (phase 4, P4-CNT, `postgres` backend only): delete dead `rate_limit_windows` / `rate_limit_buckets` rows | every `COUNTER_PRUNE_INTERVAL` (60 s) | `SKIP LOCKED` batches |
 | Blob store probe (phase 4, P4-S3, `s3` backend only): `HeadBucket` + versioning/encryption state, sets `aurora_blob_store_up` | every 30 s | per replica |
 | Request-log partition maintenance and retention | daily | singleton |
@@ -426,6 +433,9 @@ aurora_gateway_invalidate` after commit with the narrowest scope:
 | Policy publish/rollback | `workspace` or `org` |
 | Agent delete, token regeneration, credential revocation | `agent` / `credential` |
 | Workspace access or membership change | `workspace` / `org` |
+| (phase 4, P4-GRP-1) Group member added/removed | `user` (+ `aurora_auth_revoked` kind `access`) |
+| (phase 4, P4-GRP-1) Group binding change; group deleted | `workspace` per affected workspace (`org` above 20) (+ `access`, org-wide) |
+| (phase 4, P4-GRP-1) Group org-role mapping change | `org` (+ `access`, org-wide) |
 | Freeze / unfreeze (phase 2, RFE-006) | `agent` / `workspace` / `org` |
 | App availability change | `org` |
 | Org governance change (and the stored-origin re-evaluation it triggers) | `org` |
@@ -483,6 +493,8 @@ connector, **P** public capability. Permission checks per `04`.
 | GET/POST `/v1/orgs/{org}/workspaces` | S/K | |
 | GET/PATCH/DELETE `/v1/workspaces/{ws}` | S/K | name, timezone, memory_language; (phase 2, RFE-025) PATCH also `byo_posture` (`enabled`\|`owners_only`\|`disabled`\|null = inherit; `can_own`; tighten-only, 422 `governance_below_instance_minimum`; audited `workspace.byo_posture.update`; invalidation scope `workspace`); GET shows `byo_posture` and `effective_byo_posture` with its `level` |
 | GET `/v1/workspaces/{ws}/access`; PUT/DELETE `/v1/workspaces/{ws}/access/{user}` | S/K | bindings (phase 2, RFE-021: DELETE accepts `reassign_to`); (phase 2, RFE-012) `PUT { role: "owner"\|"approver"\|"member" }`; `can_own` |
+| GET `/v1/workspaces/{ws}/access?expand=groups` | S/K | (phase 4, P4-GRP-1) opt-in expansion for `can_own`: adds `group_bindings: [{ group: {id, name, source, member_count}, role }]` and `derived_members: Page<{ user, role, sources: [{ kind: "direct"\|"group"\|"org_role", group? }] }>` (the effective role of everyone who has access through a group or an org role; a person with several sources appears once). Without `expand` the response is unchanged |
+| PUT/DELETE `/v1/workspaces/{ws}/access/groups/{group}` | S/K | (phase 4, P4-GRP-1) `PUT { role: "owner"\|"approver"\|"member" }` binds or changes the role of a group; `can_own`; 404 for a group of another org, 422 `group_binding_limit_reached`; DELETE is idempotent; both audited (`group_access.set\|remove`), invalidation scope `workspace` |
 | GET/POST `/v1/workspaces/{ws}/api-keys` | S (POST: SO) | workspace keys |
 | GET `/v1/workspaces/{ws}/audit` | S/K | same filters |
 | GET `/v1/orgs/{org}/storage` | S/K | (phase 2, RFE-015) org `owner`/`admin`: usage vs quota, breakdown by workspace and direction |
@@ -490,6 +502,45 @@ connector, **P** public capability. Permission checks per `04`.
 | GET `/v1/workspaces/{ws}/activity` | S/K | request log, filters: agent, conversation, decision, host, app |
 | GET `/v1/workspaces/{ws}/usage` | S/K | runtime + tokens |
 | POST `/v1/workspaces/{ws}/freeze` `{ reason }`; POST `/v1/workspaces/{ws}/unfreeze` | S/K | (phase 2, RFE-006) `can_own`; as for agents |
+
+### Groups (phase 4, P4-GRP-1, D-130)
+Permissions per `04 §Permission matrix`; every write is audited and security-critical
+(`04 §Audit`) and invalidates as in *Gateway cache invalidation*; lists are paginated
+(`Page`). A group of another org is 404. Errors: 409 `group_name_taken`, 422
+`group_limit_reached`, `group_member_limit_reached`, `group_user_limit_reached`
+(`GROUPS_PER_USER`), `not_an_org_member`, `group_org_role_invalid` (`owner` or unknown),
+409 `group_managed_by_scim` (name, delete and membership of a `source = scim` group are
+the IdP's; `DELETE` is allowed only when the org's SCIM is disabled; the mapping and
+workspace bindings stay editable), 409 `stale_revision`.
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET/POST `/v1/orgs/{org}/groups` | S/K | list (`q`, `source`, `member=<user>`) / create `{ name, description?, org_role? }` → `Group { id, name, description, source, org_role, member_count, workspace_count, revision, created_at }`; org `owner`/`admin` (names and counts for `can_own` of any workspace of the org) |
+| GET/PATCH/DELETE `/v1/groups/{id}` | S/K | PATCH `{ name?, description?, org_role?: "admin"\|"member"\|null }` with `If-Match`/`revision`; DELETE removes members and bindings and never rewrites policy rules (`07`) |
+| GET `/v1/groups/{id}/members`; PUT/DELETE `/v1/groups/{id}/members/{user}`; POST `/v1/groups/{id}/members:batch` | S/K | org `owner`/`admin`; PUT/DELETE are idempotent; the batch body is `{ add?: [user], remove?: [user] }` (≤ 100 each, one transaction, one audit row per change) |
+| GET `/v1/groups/{id}/workspaces` | S/K | the workspaces the group is bound to, with roles (org `owner`/`admin`) |
+| GET `/v1/groups/{id}/impact?remove_member=<user>` | S/K | org `owner`/`admin`: what deleting the group (or, with `remove_member`, removing that member) would take away, `{ workspaces: [{ workspace, users_losing_access: [...≤ GROUP_IMPACT_LIST_MAX], total, schedules_disabled, webhooks_disabled, api_keys }] }` |
+| GET `/v1/me` | S/K | (phase 4) also `groups: [{ id, name, org_id }]` and, per membership, `effective_role` with `sources` (`role` stays the direct role) |
+
+(phase 4, P4-GRP-1) The offboarding views of `§Organizations, members, keys` add
+`via_groups` to each row; `GET /v1/agents/{agent}/effective` and policy `simulate` take
+the speaker's groups into account (`07`).
+
+### SCIM management (phase 4, P4-GRP-2, D-132)
+Org `owner` only (`04 §SCIM`); every write is security-critical audited. The SCIM plane
+itself (`/scim/v2`, token auth, SCIM errors) is specified in `16 §W15`, not here.
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET/PUT `/v1/orgs/{org}/scim` | S (PUT: SO) | `{ available, enabled, email_domains: [domain], exclusive, base_url }` (`available` = instance `scim.enabled`; `base_url` = `<external>/scim/v2`); PUT validates domains (422 `scim_domain_invalid`, `scim_domain_not_allowed`, `scim_domains_required` when enabling) and needs a recent re-authentication when it turns SCIM on (412 `reauth_required`); 409 `scim_unavailable` when the instance switch is off |
+| GET/POST `/v1/orgs/{org}/scim/tokens`; DELETE `/v1/scim/tokens/{id}` | S (POST: SO) | list without material (`name`, `display_prefix`, `created_at`, `expires_at`, `last_used_at`, `expiring` within 14 days); POST `{ name, expires_in_days? }` → the `aud_` token once; 422 `scim_token_limit_reached`, `scim_not_enabled`; 412 `reauth_required`; DELETE is idempotent and effective at once |
+| GET `/v1/orgs/{org}/scim/status` | S | Directory sync page: `{ last_request_at, users: {active, suspended, removed}, groups, errors: [≤ SCIM_ERROR_LOG sanitized { at, method, resource, status, scim_type }] }` |
+
+Offboarding by SCIM is visible through the existing offboarding views
+(`GET /v1/orgs/{org}/members/{user}/offboarding`, RFE-021), which keep working for a
+`suspended` member and now carry `byo_agents_created` (id, name, workspace) next to the
+schedules and webhooks; members created or managed by SCIM carry `directory: {
+state, external_id? }` in `GET /v1/orgs/{org}/members`.
 
 ### Secrets and LLM
 | Method & path | Auth | Purpose |
@@ -558,9 +609,25 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | GET `/v1/workspaces/{ws}/approvals?status=` | S/K | |
 | GET `/v1/approvals/pending?wait=` | S/K | long-poll across what the caller may decide |
 | GET `/v1/approvals/stream` | S | SSE of created/decided; (phase 2, RFE-011a) `created` carries `{ id, workspace, agent, title, kind: "gateway"\|"action", expires_at }` so the dashboard can raise a browser notification; counts as a live surface (`approval_watchers`) |
-| POST `/v1/approvals/{id}/decision` | S/K | `{ "decision": "approve"|"deny" }`; first decision wins (409 `already_decided`) |
+| POST `/v1/approvals/{id}/decision` | S/K | `{ "decision": "approve"|"deny" }`; first decision wins (409 `already_decided`); (phase 4, RFE-011b) for a parked approval the response carries `resume: { state, expires_at }` and the DTOs of the approvals feed, long-poll, SSE and history carry `parked: bool`, `resume_state`, `resume_expires_at` (never the fingerprint or salt) |
 | POST `/v1/approvals/batches/{batch_id}/decision` | S/K | all pending of the batch the caller may decide |
 | GET `/v1/workspaces/{ws}/action-approvals`; POST `/v1/action-approvals/{id}/decision` | S/K | |
+
+### Web Push (phase 4, RFE-011b, D-134)
+Own-resources only: every route acts on the caller's subscriptions; another user's subscription
+is 404. 404 `push_unavailable` on all of them while `push.enabled = false`. Writes are best-effort
+audited (`push_subscription.create|delete`).
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET `/v1/push/config` | S | `{ available, vapid_public_key, vapid_key_id, allowed_hosts }` for the browser's `pushManager.subscribe` (the key is public) |
+| GET `/v1/me/push-subscriptions` | S | the caller's devices: `{ id, label, show_details, paused, state: "active"\|"paused"\|"disabled"\|"expired"\|"stale_key", this_session, created_at, last_success_at }` — never the endpoint or keys |
+| POST `/v1/me/push-subscriptions` | SO | `{ endpoint, keys: { p256dh, auth }, expiration_time?, label?, show_details?, vapid_key_id }` → 201 `PushSubscription`; 422 `push_endpoint_not_allowed` (not https, host not in `push.allowed_endpoint_hosts`, over 2 048 chars), `push_keys_invalid` (`p256dh` not a 65-byte P-256 point, `auth` not 16 bytes), `push_subscription_limit_reached`, 409 `push_key_stale` (the `vapid_key_id` is retired: re-fetch `config`); an endpoint already registered by another user is **moved** to the caller and its session |
+| PATCH/DELETE `/v1/me/push-subscriptions/{id}` | SO | `{ label?, show_details?, paused? }`; DELETE is idempotent |
+| POST `/v1/me/push-subscriptions/{id}/test` | SO | sends a `test` push (`PUSH_TEST_PER_HOUR` 3 per user); 202, the outcome appears in the device state |
+
+CLI (operator): `aurora-api push rotate-vapid`, `aurora-api push status` (key ids and dates,
+subscription counts by state and host; never key material).
 
 ### Agents and sandboxes
 | Method & path | Auth | Purpose |
