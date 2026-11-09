@@ -341,6 +341,83 @@ async fn mint_under_the_same_lock() {
     assert_eq!(*stub.0.lock().unwrap(), 1);
 }
 
+/// RFE-022: a reseal after a mint (and after a refresh) records the NAMES of the sealed fields.
+#[tokio::test]
+async fn reseal_records_credential_key_names() {
+    let fx = fixture("hook", "http://unused/token", "r0").await;
+    let stub = Arc::new(Stub(Mutex::new(0)));
+    let m = Arc::new(TokenManager::new(
+        fx.db.pool().clone(),
+        fx.vault.clone(),
+        Some(stub.clone()),
+    ));
+    let ctx = HashMap::from([("org_id".to_owned(), "o1".to_owned())]);
+    m.ensure_fresh(&fx.loaded, &fx.cand, &ctx, false)
+        .await
+        .unwrap();
+    let keys: Option<Vec<String>> =
+        sqlx::query_scalar("SELECT credential_keys FROM app_connections WHERE id=$1")
+            .bind(fx.cand.id)
+            .fetch_one(fx.db.pool())
+            .await
+            .unwrap();
+    // The mint output is merged over the stored fields (the refresh token stays).
+    assert_eq!(keys.unwrap(), ["access_token", "refresh_token"]);
+
+    let prov = Arc::new(Mutex::new(Provider {
+        calls: 0,
+        current: "r0".into(),
+    }));
+    let base = serve(
+        Router::new()
+            .route("/token", post(token_endpoint))
+            .with_state(prov),
+    )
+    .await;
+    let fx = fixture("oauth2_refresh", &format!("{base}/token"), "r0").await;
+    let m = Arc::new(TokenManager::new(
+        fx.db.pool().clone(),
+        fx.vault.clone(),
+        None,
+    ));
+    m.ensure_fresh(&fx.loaded, &fx.cand, &HashMap::new(), false)
+        .await
+        .unwrap();
+    let keys: Option<Vec<String>> =
+        sqlx::query_scalar("SELECT credential_keys FROM app_connections WHERE id=$1")
+            .bind(fx.cand.id)
+            .fetch_one(fx.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(keys.unwrap(), ["access_token", "refresh_token"]);
+}
+
+/// SEC-57: a connection a plugin major upgrade flipped to `reauth_required` after the decision
+/// loaded it (stale `active` candidate) is neither refreshed nor minted.
+#[tokio::test]
+async fn flipped_connection_is_never_minted_or_refreshed() {
+    let fx = fixture("hook", "http://unused/token", "r0").await;
+    sqlx::query("UPDATE app_connections SET status='reauth_required', status_reason='plugin_major_upgrade: pkg 1.0.0 -> 2.0.0; missing: x' WHERE id=$1")
+        .bind(fx.cand.id)
+        .execute(fx.db.pool())
+        .await
+        .unwrap();
+    let stub = Arc::new(Stub(Mutex::new(0)));
+    let m = Arc::new(TokenManager::new(
+        fx.db.pool().clone(),
+        fx.vault.clone(),
+        Some(stub.clone()),
+    ));
+    let ctx = HashMap::from([("org_id".to_owned(), "o1".to_owned())]);
+    let e = m
+        .ensure_fresh(&fx.loaded, &fx.cand, &ctx, true)
+        .await
+        .unwrap_err();
+    assert_eq!(e, RefreshError::Reauth);
+    assert_eq!(*stub.0.lock().unwrap(), 0, "no mint call");
+    assert_eq!(status(&fx).await, ("reauth_required".into(), 1));
+}
+
 #[tokio::test]
 async fn http_minter_follows_w9() {
     let seen = Arc::new(Mutex::new(Value::Null));

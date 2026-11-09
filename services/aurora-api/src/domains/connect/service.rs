@@ -441,6 +441,9 @@ impl Ctx<'_> {
             .await
             .map_err(secret_err)?;
         let col = sref.to_column();
+        // Names only, never values (RFE-022): the plugin major-upgrade check reads these.
+        let mut keys: Vec<String> = g.credentials.keys().cloned().collect();
+        keys.sort_unstable();
         let expires: Option<DateTime<Utc>> =
             g.expires_at.and_then(|s| DateTime::from_timestamp(s, 0));
         let n = NewConnection {
@@ -460,6 +463,7 @@ impl Ctx<'_> {
             oauth_client_id: g.client,
             connected_by: self.user,
             instance_id: self.instance.as_ref().map(|i| i.id),
+            credential_keys: &keys,
         };
         let old = match self.write(caller, &n).await {
             Ok(o) => o,

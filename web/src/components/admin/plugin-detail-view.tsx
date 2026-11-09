@@ -23,7 +23,12 @@ import {
 import { ViolationList, statusTone } from "./plugins-view";
 
 const SECTIONS = ["hooks", "egress", "context", "claims"] as const;
-type Section = (typeof SECTIONS)[number];
+// "impact" joins the mandatory review of a pending major upgrade (RFE-022, 09 §10).
+type Section = (typeof SECTIONS)[number] | "impact";
+
+function reconnectLine(n: number): string {
+  return `${n} ${n === 1 ? "connection" : "connections"} will need reconnecting`;
+}
 
 function Collapsible({
   id,
@@ -84,7 +89,10 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
     setSeen((p) => new Set(p).add(s));
     toggle(s);
   };
-  const allSeen = SECTIONS.every((s) => seen.has(s));
+  const impact = plugin.impact ?? null;
+  const majorImpact = impact !== null && impact.major_upgrade;
+  const required: Section[] = majorImpact ? [...SECTIONS, "impact"] : [...SECTIONS];
+  const allSeen = required.every((s) => seen.has(s));
 
   const doUninstall = (force: boolean) =>
     uninstall.mutate(force, {
@@ -165,6 +173,38 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
             ))}
           </ul>
         </Notice>
+      ) : null}
+
+      {majorImpact && impact.connections_needing_reauth > 0 ? (
+        <Notice tone="danger" role="status" aria-label="Upgrade impact">
+          <h2 className="font-medium">{reconnectLine(impact.connections_needing_reauth)}</h2>
+          <p>
+            This is a major upgrade{impact.from_version ? ` from ${impact.from_version}` : ""} that changes the credential
+            fields of {impact.connections_needing_reauth === 1 ? "a connection" : "these connections"}. Approving marks
+            {impact.connections_needing_reauth === 1 ? " it" : " them"} as needing reconnection; agents using{" "}
+            {impact.connections_needing_reauth === 1 ? "it" : "them"} are refused until a user reconnects.
+          </p>
+        </Notice>
+      ) : null}
+
+      {majorImpact ? (
+        <div className="space-y-2">
+          <Collapsible id="impact" title="Impact on connections" open={opened.has("impact")} onToggle={onToggle}>
+            <p>
+              {reconnectLine(impact.connections_needing_reauth)} (of {impact.connections_total} live). The count is
+              advisory; approval recomputes it.
+            </p>
+            {impact.by_app.length ? (
+              <ul className="mt-2 list-disc pl-5">
+                {impact.by_app.map((a) => (
+                  <li key={a.app_id}>
+                    <strong>{a.app_id}</strong>: {a.needing_reauth} of {a.connections} to reconnect
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </Collapsible>
+        </div>
       ) : null}
 
       <div className="space-y-2">
@@ -267,6 +307,11 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
               </Link>
             </>
           ) : null}
+        </Notice>
+      ) : null}
+      {act.isSuccess && (act.data?.connections_reauth ?? 0) > 0 ? (
+        <Notice tone="accent" role="status">
+          Approved. {reconnectLine(act.data.connections_reauth)}: their owners see a Reconnect action on the connections page.
         </Notice>
       ) : null}
       {uninstallErr ? (

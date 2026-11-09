@@ -485,6 +485,62 @@ async fn reconnect_updates_in_place_and_clears_reauth() {
 }
 
 #[tokio::test]
+async fn connect_records_credential_key_names_and_a_reconnect_clears_a_major_upgrade_flip() {
+    let w = world(None).await;
+    let mut b = w.connect_body("api_key");
+    b["fields"] = json!({"api_token": "super-secret-value"});
+    let (_, _, v) = w
+        .call(
+            &w.owner,
+            Method::POST,
+            "/v1/apps/acme_app/connect",
+            Some(b.clone()),
+        )
+        .await;
+    let id: Uuid = v["connection"]["id"].as_str().unwrap().parse().unwrap();
+    let keys: Option<Vec<String>> =
+        sqlx::query_scalar("SELECT credential_keys FROM app_connections WHERE id=$1")
+            .bind(id)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    // Names only, never values (SEC-57).
+    assert_eq!(keys.unwrap(), ["api_token"]);
+    // A plugin major upgrade flipped it (C-342) and it recorded the old version.
+    let why = "plugin_major_upgrade: acme 0.9.0 -> 1.0.0; missing: api_token";
+    sqlx::query("UPDATE app_connections SET status='reauth_required', status_reason=$2, reauth_required_at=now(), app_version='0.9.0', credential_keys=ARRAY['legacy_name'] WHERE id=$1")
+        .bind(id).bind(why).execute(w.h.pool()).await.unwrap();
+    let (s, _, item) = w
+        .call(
+            &w.owner,
+            Method::GET,
+            &format!("/v1/connections/{id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{item}");
+    assert_eq!(item["status"], "reauth_required");
+    assert_eq!(
+        item["status_reason"], why,
+        "visible on the DTO, not cut at 64"
+    );
+    b["fields"] = json!({"api_token": "t2"});
+    b["reconnect_connection_id"] = json!(id);
+    let (s, _, v) = w
+        .call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (status, why, ver, keys): (String, Option<String>, String, Option<Vec<String>>) =
+        sqlx::query_as("SELECT status, status_reason, app_version, credential_keys FROM app_connections WHERE id=$1")
+            .bind(id).fetch_one(w.h.pool()).await.unwrap();
+    assert_eq!(
+        (status.as_str(), why, ver.as_str()),
+        ("active", None, "1.0.0")
+    );
+    assert_eq!(keys.unwrap(), ["api_token"]);
+}
+
+#[tokio::test]
 async fn hook_authorize_and_exchange_via_stub_host() {
     let stub = MockServer::start().await;
     Mock::given(method("POST"))

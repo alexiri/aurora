@@ -9,5 +9,6 @@ pub mod registry;
 mod routes;
 pub mod scan;
 pub mod service;
+pub mod upgrade;
 
 pub use routes::router;

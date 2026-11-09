@@ -168,6 +168,18 @@ describe("connection missing scopes", () => {
     await show(conn({ database: null }));
     expect(screen.queryByLabelText("How to connect to me@acme.io")).toBeNull();
   });
+  it("explains a plugin major upgrade flip and offers Reconnect (RFE-022)", async () => {
+    await show(
+      conn({
+        status: "reauth_required",
+        status_reason: "plugin_major_upgrade: p 1.0.0 -> 2.0.0; missing: token_v2",
+      }),
+    );
+    expect(screen.getByText("Reconnect required")).toBeInTheDocument();
+    expect(screen.getByText(/gmail was upgraded to a version with different credential fields/)).toBeInTheDocument();
+    expect(screen.queryByText(/missing: token_v2/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Reconnect me@acme.io" })).toBeInTheDocument();
+  });
   it("shows no warning for a full grant", async () => {
     await show(conn({}));
     expect(screen.queryByRole("status")).toBeNull();

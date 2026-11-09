@@ -17,20 +17,20 @@ fn yaml(pkg: &str, version: &str, host: &str) -> String {
     )
 }
 
-fn signed(y: &str, k: &SigningKey) -> Vec<u8> {
+pub(crate) fn signed(y: &str, k: &SigningKey) -> Vec<u8> {
     let mut b = PackageBuilder::new(y);
     b.sign(k, &PackageBuilder::key_id(k));
     b.build().unwrap()
 }
 
-struct Admin<'a> {
-    h: &'a Harness,
-    cookie: String,
-    key: SigningKey,
+pub(crate) struct Admin<'a> {
+    pub(crate) h: &'a Harness,
+    pub(crate) cookie: String,
+    pub(crate) key: SigningKey,
 }
 
 impl Admin<'_> {
-    async fn json(&self, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
+    pub(crate) async fn json(&self, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
         let (s, _, v) = self
             .h
             .send(
@@ -43,7 +43,7 @@ impl Admin<'_> {
         (s.as_u16(), v)
     }
 
-    async fn upload(&self, y: &str) -> Value {
+    pub(crate) async fn upload(&self, y: &str) -> Value {
         let boundary = "XBOUNDARYX";
         let mut body = format!(
             "--{boundary}\r\nContent-Disposition: form-data; name=\"package\"; filename=\"p.aurora-plugin\"\r\nContent-Type: application/gzip\r\n\r\n"
@@ -68,7 +68,7 @@ impl Admin<'_> {
         serde_json::from_slice(&b).unwrap()
     }
 
-    async fn act(&self, id: &Value, action: &str) -> (u16, Value) {
+    pub(crate) async fn act(&self, id: &Value, action: &str) -> (u16, Value) {
         self.json(
             Method::POST,
             &format!("/v1/admin/plugins/{}/{action}", id.as_str().unwrap()),
@@ -77,7 +77,7 @@ impl Admin<'_> {
         .await
     }
 
-    async fn status(&self, id: &Value) -> Value {
+    pub(crate) async fn status(&self, id: &Value) -> Value {
         self.json(
             Method::GET,
             &format!("/v1/admin/plugins/{}", id.as_str().unwrap()),
@@ -88,7 +88,7 @@ impl Admin<'_> {
     }
 }
 
-async fn setup(h: &Harness) -> Admin<'_> {
+pub(crate) async fn setup(h: &Harness) -> Admin<'_> {
     let u = h.user("root@x.io", true).await;
     let (_, tok) = h.good_session(u).await;
     let a = Admin {

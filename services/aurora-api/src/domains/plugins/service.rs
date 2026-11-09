@@ -50,6 +50,24 @@ async fn widenings(state: &AppState, r: &PackageRow) -> Result<Vec<Widening>, Ap
     Ok(widens(&old, &new))
 }
 
+/// The detail view: like [`to_dto`], plus `impact` for a `pending_approval` version (C-340).
+pub async fn to_detail_dto(state: &AppState, r: PackageRow) -> Result<PluginPackage, ApiError> {
+    let pending = r.status == "pending_approval";
+    let impact = if pending {
+        let mut conn = state
+            .pool
+            .acquire()
+            .await
+            .map_err(aurora_db::DbError::from)?;
+        Some(super::upgrade::compute(&mut conn, &r).await?.into_dto())
+    } else {
+        None
+    };
+    let mut dto = to_dto(state, r).await?;
+    dto.impact = impact;
+    Ok(dto)
+}
+
 pub async fn to_dto(state: &AppState, r: PackageRow) -> Result<PluginPackage, ApiError> {
     let w = widenings(state, &r).await?;
     Ok(PluginPackage::from_row(r, &w))

@@ -12,6 +12,7 @@ pub mod package;
 pub mod signature;
 pub mod snapshot;
 pub mod template;
+pub mod upgrade;
 pub mod validate;
 
 pub use manifest::Manifest;

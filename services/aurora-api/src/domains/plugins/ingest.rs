@@ -1,7 +1,7 @@
 //! Package ingestion (09 §2, §6, §10): read, verify, validate, store, decide status.
 
 use super::registry;
-use super::{keys, service};
+use super::{keys, service, upgrade};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use aurora_core::{ApiError, ids};
@@ -258,11 +258,23 @@ pub async fn ingest(
             reason: Some("validation_failed"),
         },
     };
-    let auto = decision.status == "active";
     let violations_v = violations_json(&violations);
     let new_id = ids::new_id();
 
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    // C-343 (RFE-022): a major upgrade that would flip a connection to `reauth_required` is
+    // never activated automatically, widening or not; it waits for an instance admin.
+    let mut decision = decision;
+    if let (Ok(m), true) = (&parsed, decision.status != "invalid") {
+        let impact = upgrade::compute_for(&mut tx, None, &package_id, &version, m).await?;
+        if !impact.flips.is_empty() && decision.reason != Some("claim_conflict") {
+            decision = Decision {
+                status: "pending_approval",
+                reason: Some("breaks_connections"),
+            };
+        }
+    }
+    let auto = decision.status == "active";
     if auto {
         plugins::supersede_active(&mut tx, &package_id).await?;
     }
@@ -320,7 +332,10 @@ pub async fn ingest(
             state,
             AuditEvent::new(actor.clone(), "plugin.activate", Outcome::Success)
                 .target("plugin_package", new_id)
-                .metadata(json!({"package_id": package_id, "version": version, "auto": true})),
+                .metadata(
+                    json!({"package_id": package_id, "version": version, "auto": true,
+                    "connections_reauth": 0}),
+                ),
         );
         registry::request_compile(state).await?;
     }

@@ -262,7 +262,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Approve a pending package and activate it. */
+        /**
+         * Approve a pending package and activate it. A major upgrade flips every connection whose
+         *     stored credential keys lack a required field of the new version to `reauth_required` in
+         *     the same transaction (`connections_reauth`, C-341, C-342).
+         */
         post: operations["adminApprovePlugin"];
         delete?: never;
         options?: never;
@@ -5884,6 +5888,7 @@ export interface components {
                 host_claims: components["schemas"]["PluginHostClaim"][];
                 /** Format: uuid */
                 id: string;
+                impact?: null | components["schemas"]["PluginImpact"];
                 package_id: string;
                 permissions: components["schemas"]["PluginPermissions"];
                 publisher: string;
@@ -6366,11 +6371,48 @@ export interface components {
             app_id: string;
             name: string;
         };
+        /**
+         * @description `POST /v1/admin/plugins/{id}/approve` response (C-341): the package plus the number of
+         *     connections the activation flipped to `reauth_required`.
+         */
+        PluginApproval: components["schemas"]["PluginPackage"] & {
+            /** Format: int64 */
+            connections_reauth: number;
+        };
         PluginHostClaim: {
             app_id: string;
             claim_key: string;
             host: string;
             path_prefix?: string | null;
+        };
+        /**
+         * @description What activating a pending version does to live connections (C-340, `09 §10`). Advisory:
+         *     the activation recomputes. Counts only: no organization, workspace, connection id or label.
+         */
+        PluginImpact: {
+            /** @description The apps of the new version, ordered by `app_id`. */
+            by_app: components["schemas"]["PluginImpactApp"][];
+            /** Format: int64 */
+            connections_needing_reauth: number;
+            /** Format: int64 */
+            connections_total: number;
+            /** @description The currently active version of the package (`null` for a first install). */
+            from_version?: string | null;
+            major_upgrade: boolean;
+        };
+        /** @description Per-app share of a [`PluginImpact`]: counts only (C-340). */
+        PluginImpactApp: {
+            app_id: string;
+            /**
+             * Format: int64
+             * @description Live connections (`active`, `reauth_required`) of this app in every organization.
+             */
+            connections: number;
+            /**
+             * Format: int64
+             * @description Of those, the ones failing the required-field check (`0` unless a major upgrade).
+             */
+            needing_reauth: number;
         };
         PluginPackage: {
             /** Format: date-time */
@@ -6385,6 +6427,7 @@ export interface components {
             host_claims: components["schemas"]["PluginHostClaim"][];
             /** Format: uuid */
             id: string;
+            impact?: null | components["schemas"]["PluginImpact"];
             package_id: string;
             permissions: components["schemas"]["PluginPermissions"];
             publisher: string;
@@ -8426,7 +8469,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PluginPackage"];
+                    "application/json": components["schemas"]["PluginApproval"];
                 };
             };
             403: {

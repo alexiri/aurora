@@ -99,7 +99,7 @@ pub async fn apply_gateway_grants(pool: &PgPool, role: &str) -> Result<(), Grant
     stmts.push(format!("GRANT INSERT ON {s}.request_log TO {r}"));
     stmts.push(format!(
         "GRANT UPDATE (credentials_ref, credentials_version, credentials_expires_at, status, \
-         status_reason, reauth_required_at, last_used_at) ON {s}.app_connections TO {r}"
+         status_reason, reauth_required_at, last_used_at, credential_keys) ON {s}.app_connections TO {r}"
     ));
     stmts.push(format!(
         "GRANT UPDATE (last_used_at, origin) ON {s}.secrets TO {r}"

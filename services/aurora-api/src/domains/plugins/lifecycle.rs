@@ -1,7 +1,7 @@
 //! Package lifecycle (09 §10): approve / reject / disable / enable / uninstall.
 
 use super::registry::{self, CompileFail};
-use super::service;
+use super::{service, upgrade};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use aurora_core::{ApiError, FieldError};
@@ -64,7 +64,7 @@ pub async fn act(
     id: Uuid,
     action: Action,
     reason: Option<String>,
-) -> Result<PackageRow, ApiError> {
+) -> Result<(PackageRow, i64), ApiError> {
     let reason = clean_reason(reason)?;
     let mut tx = audit::begin(state).await?;
     plugins::lock_compile(&mut tx).await?;
@@ -78,6 +78,8 @@ pub async fn act(
         )
     };
     let mut activated = false;
+    let mut flipped = 0_i64;
+    let mut flip_meta: Option<serde_json::Value> = None;
     match action {
         Action::Reject => {
             if row.status != "pending_approval" {
@@ -137,8 +139,15 @@ pub async fn act(
                     ));
                 }
             }
+            // RFE-022: the impact is recomputed here, against the live connections and the
+            // version this one supersedes, and its flips commit (or roll back) with the
+            // activation and its audit row.
+            let impact = upgrade::compute(&mut tx, &row).await?;
             plugins::supersede_active(&mut tx, &row.package_id).await?;
             plugins::transition(&mut tx, id, "active", None, Some(approver), true).await?;
+            let done = upgrade::apply(&mut tx, &impact).await?;
+            flipped = done.total;
+            flip_meta = Some(done.metadata());
             match registry::activate_snapshot(state, &mut tx, false).await {
                 Ok(_) => activated = true,
                 Err(CompileFail::Conflict(groups)) => {
@@ -163,24 +172,32 @@ pub async fn act(
         }
     }
     // RFE-008: the decision commits with its audit row, or does not happen.
+    let mut meta = json!({"package_id": row.package_id, "version": row.version,
+            "reason": reason});
+    if let (Some(extra), Some(m)) = (flip_meta, meta.as_object_mut()) {
+        // `connections_reauth` and `by_app` counts (C-341).
+        if let Some(e) = extra.as_object() {
+            m.extend(e.clone());
+        }
+    }
     let ev = AuditEvent::new(
         actor.clone(),
         format!("plugin.{}", action.name()),
         Outcome::Success,
     )
     .target("plugin_package", id)
-    .metadata(json!({"package_id": row.package_id, "version": row.version,
-            "reason": reason}));
+    .metadata(meta);
     audit::commit_critical(tx, &ev).await?;
     if activated {
         audit::record(
             state,
             AuditEvent::new(actor.clone(), "plugin.activate", Outcome::Success)
                 .target("plugin_package", id)
-                .metadata(json!({"package_id": row.package_id, "version": row.version})),
+                .metadata(json!({"package_id": row.package_id, "version": row.version,
+                    "connections_reauth": flipped})),
         );
     }
-    service::get_row(state, id).await
+    Ok((service::get_row(state, id).await?, flipped))
 }
 
 /// Delete a package. Apps that disappear with it and still have live

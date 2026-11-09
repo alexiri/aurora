@@ -472,6 +472,81 @@ pub async fn live_connection_ids<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// The active version of `package_id`, if any (RFE-022: the version a new one upgrades).
+pub async fn active_of_package<'e, E: PgExecutor<'e>>(
+    exec: E,
+    package_id: &str,
+) -> Result<Option<PackageRow>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {SEL} FROM {FROM} WHERE p.package_id = $1 AND p.status = 'active' LIMIT 1"
+    ))
+    .bind(package_id)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// The stored manifest of one package version (any status), newest row first.
+pub async fn manifest_of_version<'e, E: PgExecutor<'e>>(
+    exec: E,
+    package_id: &str,
+    version: &str,
+) -> Result<Option<Value>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT manifest FROM plugin_packages WHERE package_id = $1 AND version = $2
+         AND status <> 'invalid' ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .bind(package_id)
+    .bind(version)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// A live (`active` or `reauth_required`) connection, for the major-upgrade check. Names only.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct UpgradeConnection {
+    pub id: Uuid,
+    pub app_id: String,
+    pub status: String,
+    pub app_version: String,
+    /// `None` = unknown (legacy row).
+    pub credential_keys: Option<Vec<String>>,
+}
+
+/// Live connections of `package_id` on `app_ids`, any organization and scope, by `app_id, id`.
+pub async fn upgrade_connections<'e, E: PgExecutor<'e>>(
+    exec: E,
+    package_id: &str,
+    app_ids: &[String],
+) -> Result<Vec<UpgradeConnection>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, app_id, status, app_version, credential_keys FROM app_connections
+         WHERE package_id = $1 AND app_id = ANY($2) AND status IN ('active', 'reauth_required')
+         ORDER BY app_id, id",
+    )
+    .bind(package_id)
+    .bind(app_ids)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Flip one `active` connection to `reauth_required` (C-342); false when it was no longer active.
+pub async fn flip_reauth_required(
+    conn: &mut PgConnection,
+    id: Uuid,
+    reason: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE app_connections SET status = 'reauth_required', status_reason = $2,
+            reauth_required_at = now(), updated_at = now() WHERE id = $1 AND status = 'active'",
+    )
+    .bind(id)
+    .bind(reason)
+    .execute(conn)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
 pub async fn orphan_connections(conn: &mut PgConnection, ids: &[Uuid]) -> Result<(), DbError> {
     sqlx::query(
         "UPDATE app_connections SET status = 'orphaned', status_reason = 'app_removed',

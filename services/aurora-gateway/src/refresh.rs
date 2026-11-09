@@ -210,6 +210,11 @@ impl TokenManager {
         let id = job.conn.id;
         // Re-read after taking the lock: another instance may have refreshed.
         let st = self.state(id).await?;
+        // SEC-57: a connection in `reauth_required` is never refreshed or minted (a plugin
+        // major upgrade may have flipped it after the decision loaded it).
+        if st.status == "reauth_required" {
+            return Err(RefreshError::Reauth);
+        }
         let changed = st.credentials_version != job.conn.version;
         let fresh = !expiring(st.credentials_expires_at, self.margin);
         if (changed && (job.force || fresh)) || (!changed && !job.force && fresh) {
@@ -231,6 +236,9 @@ impl TokenManager {
             TokenKind::Hook => self.mint(job, &st, &current).await?,
             TokenKind::Static => return self.cand(&job.conn, &st),
         };
+        // Names only, never values (RFE-022): the plugin major-upgrade check reads these.
+        let mut keys: Vec<String> = creds.keys().cloned().collect();
+        keys.sort_unstable();
         let bytes =
             serde_json::to_vec(&Value::Object(creds)).map_err(|_| RefreshError::Unavailable)?;
         let new_ref = self
@@ -244,6 +252,7 @@ impl TokenManager {
             &new_ref.to_column(),
             st.credentials_version,
             Some(expires_at),
+            &keys,
         )
         .await
         .map_err(|_| RefreshError::Unavailable)?;
