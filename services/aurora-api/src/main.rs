@@ -75,6 +75,16 @@ enum SecretsCommand {
         #[arg(long, default_value_t = 2)]
         discard_grace_secs: u64,
     },
+    /// Re-seal every inline value that is not under the active encryption key (key rotation,
+    /// `docs/operator/key-rotation.md`). Same guarantees as `migrate --to inline`.
+    Rekey {
+        /// Only one purpose (see `migrate --purpose`).
+        #[arg(long, value_parser = aurora_api::secrets_migrate::parse_purpose)]
+        purpose: Option<aurora_secrets::Purpose>,
+        /// Report what would move; write nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -150,6 +160,9 @@ async fn main() -> ExitCode {
                     discard_grace_secs,
                 },
         } => secrets_migrate(cfg, to, purpose, dry_run, discard_grace_secs).await,
+        Command::Secrets {
+            command: SecretsCommand::Rekey { purpose, dry_run },
+        } => secrets_rekey(cfg, purpose, dry_run).await,
         Command::Openapi { .. } | Command::Keys { .. } => Ok(()),
     };
     service::telemetry_shutdown();
@@ -187,6 +200,25 @@ async fn secrets_migrate(
     opts.purpose = purpose;
     opts.dry_run = dry_run;
     opts.discard_grace = std::time::Duration::from_secs(discard_grace_secs);
+    let summary = aurora_api::secrets_migrate::run(&pool, &state.vault, &opts).await?;
+    print!("{}", summary.render(dry_run));
+    if summary.failed() > 0 {
+        return Err(format!("{} row(s) failed; see the log", summary.failed()).into());
+    }
+    Ok(())
+}
+
+async fn secrets_rekey(
+    cfg: ApiConfig,
+    purpose: Option<aurora_secrets::Purpose>,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = aurora_db::connect(cfg.database_url.expose(), 4).await?;
+    let active = cfg.keyring.active.clone();
+    let state = aurora_api::app::AppState::try_new(pool.clone(), cfg)?;
+    let mut opts = aurora_api::secrets_migrate::Options::rekey(&active);
+    opts.purpose = purpose;
+    opts.dry_run = dry_run;
     let summary = aurora_api::secrets_migrate::run(&pool, &state.vault, &opts).await?;
     print!("{}", summary.render(dry_run));
     if summary.failed() > 0 {

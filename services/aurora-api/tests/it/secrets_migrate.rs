@@ -580,6 +580,128 @@ async fn old_ref_stays_readable_until_discard() {
     assert!(w.vault.open(ctx, &old.parse().unwrap()).await.is_err());
 }
 
+fn ring_vault(keys: &[(&str, u8)], active: &str) -> SecretVault {
+    let list = keys
+        .iter()
+        .map(|(id, b)| {
+            let k = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [*b; 32]);
+            format!("{id}:{k}")
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let kr = Arc::new(aurora_crypto::Keyring::parse(&list, active).unwrap());
+    SecretVault::new(StoreRegistry::from_config(&SecretsSection::default(), kr).unwrap())
+}
+
+fn key_of(col: &str) -> &str {
+    col.strip_prefix("inline:v1:")
+        .unwrap()
+        .split(':')
+        .next()
+        .unwrap()
+}
+
+/// `secrets rekey`: values sealed under key A, the active key rotated to B, rekey re-seals every
+/// value under B, a second run moves nothing, and A can leave the ring afterwards.
+#[tokio::test]
+async fn rekey_reseals_under_the_active_key() {
+    let w = world(ring_vault(&[("k1", b'k')], "k1")).await;
+    for s in &w.seeds {
+        assert_eq!(key_of(&w.col(s).await), "k1");
+    }
+    let rotated = ring_vault(&[("k1", b'k'), ("k2", b'm')], "k2");
+    let pool = w.h.pool();
+    let mut o = Options::rekey("k2");
+    o.discard_grace = Duration::ZERO;
+
+    // Dry run changes nothing.
+    o.dry_run = true;
+    let s = run(pool, &rotated, &o).await.unwrap();
+    for p in Purpose::ALL {
+        assert_eq!(counts(&s, p), (1, 0, 0, 0));
+    }
+    for s in &w.seeds {
+        assert_eq!(key_of(&w.col(s).await), "k1");
+    }
+    o.dry_run = false;
+
+    // Filter: one purpose only.
+    o.purpose = Some(Purpose::SecretValue);
+    let s = run(pool, &rotated, &o).await.unwrap();
+    assert_eq!(counts(&s, Purpose::SecretValue), (1, 0, 0, 0));
+    assert_eq!(s.per_purpose.len(), 1);
+    assert_eq!(key_of(&w.col(&w.seeds[1]).await), "k1");
+    o.purpose = None;
+
+    let s = run(pool, &rotated, &o).await.unwrap();
+    assert_eq!(s.failed(), 0);
+    assert_eq!(counts(&s, Purpose::SecretValue), (0, 0, 0, 1));
+    for p in &Purpose::ALL[1..] {
+        assert_eq!(counts(&s, *p), (1, 0, 0, 0));
+    }
+    let mut cols = Vec::new();
+    for sd in &w.seeds {
+        let col = w.col(sd).await;
+        assert_eq!(key_of(&col), "k2");
+        let v = rotated.open(&sd.ctx, &col.parse().unwrap()).await.unwrap();
+        assert_eq!(v.expose().as_slice(), sd.value.as_bytes());
+        cols.push(col);
+    }
+    // Idempotent.
+    let s = run(pool, &rotated, &o).await.unwrap();
+    assert_eq!(s.moved(), 0);
+    for (sd, col) in w.seeds.iter().zip(&cols) {
+        assert_eq!(&w.col(sd).await, col);
+    }
+    // The old key can leave the ring.
+    let only_new = ring_vault(&[("k2", b'm')], "k2");
+    for sd in &w.seeds {
+        let v = only_new
+            .open(&sd.ctx, &w.col(sd).await.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(v.expose().as_slice(), sd.value.as_bytes());
+    }
+}
+
+#[tokio::test]
+async fn rekey_context_failure_fails_only_that_row_and_leaves_other_stores_alone() {
+    let w = world(ring_vault(&[("k1", b'k')], "k1")).await;
+    let rotated = ring_vault(&[("k1", b'k'), ("k2", b'm')], "k2");
+    // A value sealed under another owner's context: it cannot be opened for its own row.
+    let inline = w.vault.registry().get("inline").unwrap().clone();
+    let bad = inline
+        .put(
+            &SealContext {
+                owner_id: Uuid::now_v7(),
+                ..w.seeds[2].ctx
+            },
+            &Secret::new(b"x".to_vec()),
+        )
+        .await
+        .unwrap()
+        .to_column();
+    sqlx::query("UPDATE app_oauth_clients SET secret_ref = $2 WHERE id = $1")
+        .bind(w.seeds[2].ctx.owner_id)
+        .bind(&bad)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let mut o = Options::rekey("k2");
+    o.discard_grace = Duration::ZERO;
+    let s = run(w.h.pool(), &rotated, &o).await.unwrap();
+    assert_eq!(counts(&s, Purpose::OauthClientSecret), (0, 0, 1, 0));
+    assert_eq!(s.failed(), 1);
+    assert_eq!(s.moved(), 5);
+    assert_eq!(
+        w.col(&w.seeds[2]).await,
+        bad,
+        "failed row keeps its old value"
+    );
+    let out = s.render(false);
+    assert!(!out.contains("plain-") && !out.contains(&bad));
+}
+
 /// Two migrators over the same rows (an operator error, but it must stay safe): every row ends
 /// up with exactly one valid ref in the target, the loser of each row's CAS counts a skip and
 /// discards its own new value, and no value is lost or mixed.

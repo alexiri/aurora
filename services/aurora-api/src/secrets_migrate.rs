@@ -30,6 +30,10 @@ pub struct Options {
     pub discard_grace: Duration,
     /// Rows read per page.
     pub batch: i64,
+    /// `secrets rekey`: the active encryption key id. Only inline values sealed under another
+    /// key id move (re-sealed under the active key); everything else counts as already done.
+    /// `to` must be `inline`.
+    pub rekey_active: Option<String>,
 }
 
 impl Options {
@@ -41,6 +45,16 @@ impl Options {
             dry_run: false,
             discard_grace: Duration::from_secs(2),
             batch: 200,
+            rekey_active: None,
+        }
+    }
+
+    /// `secrets rekey`: re-seal inline values under `active`.
+    #[must_use]
+    pub fn rekey(active: &str) -> Self {
+        Self {
+            rekey_active: Some(active.to_owned()),
+            ..Self::new("inline")
         }
     }
 }
@@ -219,7 +233,11 @@ async fn migrate_purpose(
                 counts.failed += 1;
                 continue;
             };
-            let in_target = old.store_id().unwrap_or("inline") == opts.to;
+            let in_target = match (&opts.rekey_active, &old) {
+                (Some(active), SecretRef::Inline { key_id, .. }) => key_id == active,
+                (Some(_), SecretRef::Ext { .. }) => true,
+                (None, _) => old.store_id().unwrap_or("inline") == opts.to,
+            };
             if in_target {
                 counts.already += 1;
                 continue;

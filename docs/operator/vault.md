@@ -261,9 +261,9 @@ may fail rows whose old value the winner already discarded).
 The managed area in Vault can be removed afterwards (`vault kv metadata delete` under
 `<managed_prefix>/`), once the counts are zero and you have no use for the data.
 
-`aurora-api secrets rekey` (re-seal inline values under the active key) is described in
-[`docs/08`](../08-secrets-credentials.md) but **not yet implemented**; key rotation is covered
-in [key-rotation.md](key-rotation.md).
+`aurora-api secrets rekey` is the same engine targeting `inline` with the active encryption
+key: it re-seals the inline values that are not under it (key rotation, see
+[key-rotation.md](key-rotation.md#rotating-the-inline-encryption-keyring-aurora-api-secrets-rekey)).
 
 ## 5. Checking it works
 

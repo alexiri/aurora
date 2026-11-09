@@ -18,7 +18,8 @@
 - **Producers use only the active key; receivers accept every key in their ring.** A key id
   outside the ring is refused.
 - This does **not** cover the runner session key or the gateway CA (no orchestrated rotation).
-  The inline encryption keyring has its own procedure (`aurora-api secrets rekey`, docs/08 §3).
+  The inline encryption keyring has its own procedure
+  ([`aurora-api secrets rekey`](#rotating-the-inline-encryption-keyring-aurora-api-secrets-rekey), docs/08 §3).
 
 What carries a key id:
 
@@ -86,6 +87,45 @@ step 3. Unset the flag afterwards.
 
 With `secrets.existingSecret`, edit that Secret's keys yourself; the chart only references
 `AURORA_SIGNING_ACTIVE_KEY` and `AURORA_INTERNAL_ACTIVE_KEY` as optional keys.
+
+## Rotating the inline encryption keyring (`aurora-api secrets rekey`)
+
+Inline secret values are sealed under `AURORA_ENCRYPTION_KEYS` (comma-separated
+`<key_id>:<base64 32 bytes>`; ids `[a-z0-9]{1,16}`), and `AURORA_ENCRYPTION_ACTIVE_KEY` names the
+key used for new seals ([docs/08 §3](../08-secrets-credentials.md)). Both the api and the
+gateway read it. Every key in the keyring still opens old values; `secrets rekey` re-seals the
+old ones under the active key so the old key can be retired.
+
+1. **Generate** a key and an id: `head -c32 /dev/urandom | base64`, id e.g. `k2`.
+2. **Add it, keep the old one active.** Append `,k2:<base64>` to `AURORA_ENCRYPTION_KEYS` for the
+   api **and** the gateway, leave `AURORA_ENCRYPTION_ACTIVE_KEY` as it is, and roll out both. Until
+   every instance knows `k2` no instance may seal under it. (Helm: the chart reads these two keys
+   from the Secret named by `secrets.existingSecret` or the generated one; edit them there with
+   `kubectl edit secret`, then `kubectl rollout restart`. `secrets.rotate.*` covers only the
+   signing key and the internal secret.)
+3. **Activate.** Set `AURORA_ENCRYPTION_ACTIVE_KEY=k2` and roll out the api and the gateway.
+   New values, and every token refresh, now seal under `k2`.
+4. **Re-seal.** Preview, then run it where the api runs:
+
+   ```sh
+   kubectl -n aurora exec deploy/aurora-api -- /usr/local/bin/aurora-api secrets rekey --dry-run
+   kubectl -n aurora exec deploy/aurora-api -- /usr/local/bin/aurora-api secrets rekey
+   ```
+
+   It visits every managed inline value (all six purposes, or one with `--purpose`) whose
+   envelope uses a key other than the active one, and re-seals it under the active key with
+   the guarantees of [`secrets migrate`](vault.md#4-migrating-values): per row a
+   compare-and-swap update in one transaction, so a row that changed meanwhile is skipped, never
+   overwritten; a row that fails its context (purpose, owner, org) or whose key is missing
+   fails alone and keeps its old value; values never reach the log or the output. The output is
+   one line per purpose (`moved`, `skipped`, `failed`, `already in target`) and the exit status
+   is non-zero if any row failed. Values held in Vault and reference secrets are untouched.
+5. **Check.** Run `secrets rekey --dry-run` again: every purpose must say `would move 0`. Run it
+   once more after any rollout that was still in progress during step 4 (an instance on the old
+   active key may have sealed a value meanwhile).
+6. **Retire the old key** only now: remove `k1` from `AURORA_ENCRYPTION_KEYS` and roll out. Keep
+   it in your backup of the keyring as long as you keep database backups taken before the rekey:
+   restoring such a backup needs the key that sealed its values ([backups.md](backups.md)).
 
 ## Backups
 
