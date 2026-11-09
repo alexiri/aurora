@@ -106,6 +106,8 @@ pub struct NewAgent<'a> {
     pub name: &'a str,
     pub kind: &'a str,
     pub harness: Option<&'a str>,
+    /// An explicit model is stamped with its provider and endpoint (08 §Model selection).
+    pub model_provider: Option<&'a str>,
     pub model_endpoint_id: Option<&'a str>,
     pub model_id: Option<&'a str>,
     pub effort: Option<&'a str>,
@@ -120,8 +122,8 @@ pub const HANDLE_CONSTRAINT: &str = "agents_workspace_id_handle_key";
 pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, a: &NewAgent<'_>) -> Result<AgentRow, DbError> {
     Ok(sqlx::query_as(&format!(
         "INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness, model_endpoint_id,
-            model_id, effort, proactive_messaging, brief, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING {COLS}"
+            model_id, effort, proactive_messaging, brief, created_by, model_provider)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING {COLS}"
     ))
     .bind(a.id)
     .bind(a.org_id)
@@ -136,6 +138,7 @@ pub async fn insert<'e, E: PgExecutor<'e>>(exec: E, a: &NewAgent<'_>) -> Result<
     .bind(a.proactive_messaging)
     .bind(a.brief)
     .bind(a.created_by)
+    .bind(a.model_provider)
     .fetch_one(exec)
     .await?)
 }
@@ -181,6 +184,8 @@ pub struct AgentPatch<'a> {
     pub name: Option<&'a str>,
     pub brief: Option<&'a str>,
     pub harness: Option<&'a str>,
+    /// Set together with `model_endpoint_id` (the endpoint's provider).
+    pub model_provider: Option<&'a str>,
     pub model_endpoint_id: Option<&'a str>,
     pub model_id: Option<&'a str>,
     pub effort: Option<&'a str>,
@@ -198,7 +203,8 @@ pub async fn update<'e, E: PgExecutor<'e>>(
             harness = COALESCE($4, harness), model_endpoint_id = COALESCE($5, model_endpoint_id),
             model_id = COALESCE($6, model_id), effort = COALESCE($7, effort),
             proactive_messaging = COALESCE($8, proactive_messaging),
-            resource_overrides = COALESCE($9, resource_overrides), updated_at = now()
+            resource_overrides = COALESCE($9, resource_overrides),
+            model_provider = COALESCE($10, model_provider), updated_at = now()
          WHERE id = $1 RETURNING {COLS}"
     ))
     .bind(id)
@@ -210,6 +216,7 @@ pub async fn update<'e, E: PgExecutor<'e>>(
     .bind(p.effort)
     .bind(p.proactive_messaging)
     .bind(p.resource_overrides)
+    .bind(p.model_provider)
     .fetch_one(exec)
     .await?)
 }

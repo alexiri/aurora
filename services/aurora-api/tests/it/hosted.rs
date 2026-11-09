@@ -37,6 +37,11 @@ fn caps() -> Value {
 }
 
 pub(crate) async fn rig() -> Rig {
+    rig_with(|_| {}).await
+}
+
+/// [`rig`] with extra instance configuration (endpoints, governance) applied last.
+pub(crate) async fn rig_with(extra: impl FnOnce(&mut aurora_config::ApiConfig) + 'static) -> Rig {
     let dir = std::env::temp_dir().join(format!("aurora-ca-{}", Uuid::now_v7()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("ca.pem"), "-----BEGIN CERTIFICATE-----\nX\n").unwrap();
@@ -51,6 +56,7 @@ pub(crate) async fn rig() -> Rig {
             default_model: Some("claude-test".into()),
             ..Default::default()
         });
+        extra(c);
     })
     .await;
     let admin = h.user("admin@x.io", true).await;

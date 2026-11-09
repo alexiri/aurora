@@ -59,12 +59,10 @@ pub async fn sweep_no_model_key(
             .harness
             .clone()
             .unwrap_or_else(|| s.config.hosted.default_harness.clone());
-        if matches!(
-            model::select(s, tx, agent, a.org_id, a.workspace_id, &harness).await?,
-            model::Selection::NoKey
-        ) {
+        let sel = model::select(s, tx, agent, a.org_id, a.workspace_id, &harness).await?;
+        if let Some((code, message)) = sel.failure() {
             convs::lock(tx, conversation).await?;
-            if lifecycle::fail(tx, turn, conversation, "no_model_key", NO_KEY_MSG)
+            if lifecycle::fail(tx, turn, conversation, code, &message)
                 .await?
                 .is_some()
             {
@@ -74,9 +72,6 @@ pub async fn sweep_no_model_key(
     }
     Ok(())
 }
-
-const NO_KEY_MSG: &str =
-    "No compatible LLM key is granted to this agent. Store a key and grant it to the agent.";
 
 /// Arms 4-8 for one poll.
 pub async fn arms(
@@ -188,26 +183,24 @@ async fn arm6_dispatch(
             .harness
             .clone()
             .unwrap_or_else(|| s.config.hosted.default_harness.clone());
-        let (choice, mut notices) =
-            match model::select(s, tx, agent.id, agent.org_id, agent.workspace_id, &harness).await?
+        let sel =
+            model::select(s, tx, agent.id, agent.org_id, agent.workspace_id, &harness).await?;
+        if let Some((code, message)) = sel.failure() {
+            if lifecycle::fail(tx, turn.id, turn.conversation_id, code, &message)
+                .await?
+                .is_some()
             {
-                model::Selection::Chosen { choice, notices } => (choice, notices),
-                model::Selection::NoKey => {
-                    if lifecycle::fail(
-                        tx,
-                        turn.id,
-                        turn.conversation_id,
-                        "no_model_key",
-                        NO_KEY_MSG,
-                    )
-                    .await?
-                    .is_some()
-                    {
-                        after.flush.push((turn.conversation_id, turn.id));
-                    }
-                    continue;
-                }
-            };
+                after.flush.push((turn.conversation_id, turn.id));
+            }
+            continue;
+        }
+        let model::Selection::Chosen {
+            choice,
+            mut notices,
+        } = sel
+        else {
+            continue;
+        };
         if !hosted::mark_dispatched(tx, turn.id, cand.boot_id).await? {
             continue;
         }

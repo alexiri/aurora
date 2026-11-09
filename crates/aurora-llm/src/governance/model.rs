@@ -249,6 +249,9 @@ pub struct StoredOrigin {
     pub value_version: i64,
     #[serde(default)]
     pub checked_at: Option<String>,
+    /// Why a verification was refused or failed (C-502); `None` when verified. Never key material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 impl StoredOrigin {

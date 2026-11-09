@@ -1487,6 +1487,56 @@ fn check_secret_stores(c: &mut Ctx, s: &SecretsSection) {
     }
 }
 
+const ORIGIN_METHODS: [&str; 3] = ["endpoint", "litellm_team", "provider_account"];
+
+/// The valid `key_origin.method` closest to `given` (`litellm-team` → `litellm_team`), if any
+/// is within a small edit distance (FIX-019).
+pub fn nearest_origin_method(given: &str) -> Option<&'static str> {
+    let norm: String = given
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c == '-' || c == ' ' { '_' } else { c })
+        .collect();
+    let dist = |a: &str, b: &str| {
+        let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+        let mut prev: Vec<usize> = (0..=b.len()).collect();
+        for (i, ca) in a.iter().enumerate() {
+            let mut cur = vec![i + 1];
+            for (j, cb) in b.iter().enumerate() {
+                let sub = prev[j] + usize::from(ca != cb);
+                cur.push(sub.min(prev[j + 1] + 1).min(cur[j] + 1));
+            }
+            prev = cur;
+        }
+        prev[b.len()]
+    };
+    ORIGIN_METHODS
+        .iter()
+        .map(|m| (dist(&norm, m), *m))
+        .filter(|(d, _)| *d <= 3)
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, m)| m)
+}
+
+/// Start-up warnings about LLM endpoints that start but will not work as the operator may
+/// expect (FIX-019, D-136). The caller logs each at `warn`.
+pub fn llm_endpoint_warnings(l: &LlmSection) -> Vec<String> {
+    l.endpoints
+        .iter()
+        // `litellm` lists its models live; the listing is never used to pick one (08).
+        .filter(|e| e.provider == "litellm" && e.default_model.is_none())
+        .map(|e| {
+            format!(
+                "llm endpoint `{}` has no `default_model`: hosted agents using it need a model \
+                 chosen per agent, otherwise their turns fail with `no_default_model`; set \
+                 `default_model` to a model id the endpoint serves",
+                e.id
+            )
+        })
+        .collect()
+}
+
 fn check_llm(c: &mut Ctx, l: &LlmSection, g: &GovernanceSection) {
     let mut ids = BTreeSet::new();
     for (i, e) in l.endpoints.iter().enumerate() {
@@ -1508,7 +1558,13 @@ fn check_llm(c: &mut Ctx, l: &LlmSection, g: &GovernanceSection) {
                 ) {
                     c.err(
                         k("key_origin.method"),
-                        "must be endpoint, litellm_team or provider_account",
+                        match nearest_origin_method(&o.method) {
+                            Some(m) => format!(
+                                "must be endpoint, litellm_team or provider_account \
+                                 (did you mean `{m}`?)"
+                            ),
+                            None => "must be endpoint, litellm_team or provider_account".to_owned(),
+                        },
                     );
                 }
             }

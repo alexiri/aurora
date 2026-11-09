@@ -55,6 +55,28 @@ async fn world() -> World {
         )
         .mount(&litellm)
         .await;
+    // FIX-019: LiteLLM `/key/info` by key: a team key, a teamless key, a refusal and a failure.
+    for (key, resp) in [
+        (
+            "sk-team",
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"key": "x", "info": {"team_id": "t1", "user_id": "u1"}})),
+        ),
+        (
+            "sk-teamless",
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"key": "x", "info": {"team_id": null, "user_id": "u2"}})),
+        ),
+        ("sk-info401", ResponseTemplate::new(401)),
+        ("sk-info500", ResponseTemplate::new(500)),
+    ] {
+        Mock::given(method("GET"))
+            .and(path("/key/info"))
+            .and(header("authorization", format!("Bearer {key}").as_str()))
+            .respond_with(resp)
+            .mount(&litellm)
+            .await;
+    }
     // Anthropic: account by key.
     for (key, org) in [
         ("sk-ant-good", Some("org-good")),
@@ -93,6 +115,23 @@ async fn world() -> World {
                 }),
             ),
             endpoint("dead", "http://127.0.0.1:1", None),
+            endpoint(
+                "team",
+                &lu,
+                Some(KeyOrigin {
+                    method: "litellm_team".into(),
+                    ..KeyOrigin::default()
+                }),
+            ),
+            endpoint(
+                "team_req",
+                &lu,
+                Some(KeyOrigin {
+                    method: "litellm_team".into(),
+                    allowed_team_ids: vec!["t1".into()],
+                    ..KeyOrigin::default()
+                }),
+            ),
             endpoint(
                 "dead_rule",
                 "http://127.0.0.1:1",
@@ -141,7 +180,7 @@ async fn world() -> World {
         .bind(org)
         .bind(json!({"llm": {"endpoints": {
             "central": {"key_scopes": ["organization"]},
-            "dead": {}, "dead_rule": {}, "anthropic": {}
+            "dead": {}, "dead_rule": {}, "anthropic": {}, "team": {}, "team_req": {}
         }}}))
         .execute(h.pool())
         .await
@@ -621,6 +660,113 @@ async fn llm_key_admission_validation_and_origin() {
         "name": "z", "kind": "llm", "llm": {"endpoint_id": "central"}, "host_pattern": "x.com", "value": GOOD_KEY}))).await;
     assert_eq!(s, 400);
     wait_audit(&w, "secret.verify").await;
+}
+
+// FIX-019 (D-136, C-502): `litellm_team` with a team key, a teamless key, and the reason a
+// refusal carries.
+#[tokio::test]
+async fn litellm_team_teamless_and_refusal_detail() {
+    let w = world().await;
+    let llm = |ep: &str, val: &str| json!({"name": format!("k-{ep}-{val}"), "kind": "llm", "llm": {"endpoint_id": ep}, "value": val});
+
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.org_url(),
+            &w.owner,
+            Some(llm("team", "sk-team")),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["status"], "verified");
+    assert_eq!(v["origin"]["team_id"], "t1");
+    assert_eq!(v["origin"]["detail"], Value::Null);
+
+    // No required team ids: a teamless key verifies with `team_id = null`.
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.org_url(),
+            &w.owner,
+            Some(llm("team", "sk-teamless")),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["origin"]["status"], "verified");
+    assert_eq!(v["origin"]["team_id"], Value::Null);
+    let teamless = v["id"].as_str().unwrap().to_owned();
+
+    // Required team ids: a team key in the list verifies; a teamless key is refused.
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.org_url(),
+            &w.owner,
+            Some(llm("team_req", "sk-team")),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &w.org_url(),
+            &w.owner,
+            Some(llm("team_req", "sk-teamless")),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("llm_key_unverifiable")),
+        "{v}"
+    );
+    assert_eq!(
+        v["error"]["details"]["detail"], "key_reports_no_team",
+        "{v}"
+    );
+
+    // `/key/info` refusing or failing says which step failed, never the key.
+    for (key, want) in [
+        ("sk-info401", "key_info_http_401"),
+        ("sk-info500", "key_info_http_500"),
+    ] {
+        let (s, v) = w
+            .call(Method::POST, &w.org_url(), &w.owner, Some(llm("team", key)))
+            .await;
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (422, Some("llm_key_unverifiable")),
+            "{key}: {v}"
+        );
+        assert_eq!(v["error"]["details"]["detail"], want, "{v}");
+        no_value(&v, &[key]);
+    }
+
+    // Re-verify persists the reason on the key row: the rule now requires team ids.
+    sqlx::query("UPDATE secrets SET llm_endpoint_id = 'team_req' WHERE id = $1::uuid")
+        .bind(&teamless)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &format!("/v1/secrets/{teamless}/verify"),
+            &w.owner,
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["origin"]["status"], "unverifiable");
+    assert_eq!(v["origin"]["detail"], "key_reports_no_team");
+    let (_, v) = w
+        .call(
+            Method::GET,
+            &format!("/v1/secrets/{teamless}"),
+            &w.owner,
+            None,
+        )
+        .await;
+    assert_eq!(v["origin"]["detail"], "key_reports_no_team", "{v}");
 }
 
 #[tokio::test]

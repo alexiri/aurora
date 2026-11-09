@@ -35,12 +35,30 @@ Each entry of `[[llm.endpoints]]` accepts:
 | `display_name` | Shown in the dashboard. |
 | `base_url` | Required for `litellm`. Validated as an origin. |
 | `dialects` | Empty means the provider default. Known values: `anthropic_messages`, `openai_chat`, `openai_responses`. |
-| `default_model` | Default for new agents. |
+| `default_model` | The model a hosted agent uses when it has none of its own. **Recommended for every `litellm` endpoint** (a model id the endpoint serves, for example a Claude model for the `claude-code` harness); see [No default model](#no-default-model). |
 | `models` | Optional static fallback list when the model list endpoint is not available. |
 | `allowed_models` | Instance-wide model allow-list. Empty means any model. |
 | `key_origin` | Key-origin rule (below). |
 
 Unknown keys are rejected (`deny_unknown_fields`), so a misspelled key stops startup and names the key.
+
+### No default model
+
+A hosted agent's model comes from, in order: the model chosen on the agent (Instructions), the
+endpoint's `default_model`, the first entry of an `allowed_models` list, then the first entry of
+the static `models` list. Aurora never picks a model from the endpoint's live model list: a
+LiteLLM listing mixes chat, embedding and image models and its order carries no meaning.
+
+An endpoint with only `base_url` therefore has no model. A key on it is **usable**, but a hosted
+agent that has no model of its own fails each turn with **`no_default_model`** ("An LLM key is
+usable but no model is chosen for this agent and its endpoint has no default model"), before any
+sandbox starts. Aurora logs a warning at start for each `litellm` endpoint in this state; it still
+starts, so existing configurations keep working.
+
+Fix it by setting `default_model` on the endpoint, or by choosing the model on each agent's
+Instructions page. `no_model_key` is a different failure: no granted key is usable at all, and its
+message counts the reasons (for example `origin_unverified`), never the key names.
+Owners see each key's reason on `GET /v1/agents/{agent}/model-readiness`.
 
 ## Key origin
 
@@ -53,7 +71,16 @@ Its keys are `method`, `allowed_organization_ids`, `allowed_workspace_ids` and `
 | `litellm_team` | LiteLLM's key-info endpoint returns the team and user ids for the key. | The gateway's key-origin check. |
 | `provider_account` | The Anthropic `anthropic-organization-id` and `anthropic-workspace-id` headers name the key's organization and workspace. | The `GET /v1/models?limit=1` call and the response headers. |
 
-Any other `method` value stops startup (`must be endpoint, litellm_team or provider_account`).
+Any other `method` value stops startup (`must be endpoint, litellm_team or provider_account`),
+and the error suggests the nearest valid value. The spelling uses underscores:
+`litellm-team` is refused with "did you mean `litellm_team`?".
+
+With `litellm_team`, Aurora calls `GET <base_url>/key/info` with the key itself as the bearer
+token and reads `info.team_id` and `info.user_id`. A key that reports no team verifies with
+`team_id = null` when no `allowed_team_ids` applies (neither the instance rule nor the
+organization's narrowing); when team ids are required it is refused. A refused or failed
+verification shows why on the key (`key_reports_no_team`, `key_info_http_<status>` for the HTTP
+status of `/key/info`, `endpoint_unreachable`, `bad_response`).
 
 A key complies when its stored origin is `verified`, its `value_version` is current, and its
 organization, workspace and team ids satisfy the current rule. A key on an endpoint with no

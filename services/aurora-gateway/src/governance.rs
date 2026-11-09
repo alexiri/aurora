@@ -365,7 +365,7 @@ impl Governance {
             self.registry.endpoint(&b.endpoint_id),
             std::str::from_utf8(plaintext),
         ) else {
-            return Err(self.mark(b, None, "unverifiable"));
+            return Err(self.mark(b, None, "unverifiable", Some("bad_response")));
         };
         let Some(provider) = self.registry.provider_for(ep) else {
             return Err(unavailable());
@@ -377,6 +377,14 @@ impl Governance {
             Err(_) => return Err(unavailable()),
         };
         match res {
+            // A teamless key under a rule that requires team ids: refused as unverifiable,
+            // like at save (08 §11.3). Without required team ids it complies below.
+            Ok(o) if origin::requires_team(&o, &b.rule) => Err(self.mark(
+                b,
+                Some(&o),
+                "unverifiable",
+                Some(origin::KEY_REPORTS_NO_TEAM),
+            )),
             Ok(o) if origin::complies(&o, &b.rule) => {
                 if let Ok(mut v) = self.verified.lock() {
                     if v.len() >= MAX_ENTRIES {
@@ -386,9 +394,9 @@ impl Governance {
                 }
                 Ok(())
             }
-            Ok(o) => Err(self.mark(b, Some(&o), "mismatch")),
+            Ok(o) => Err(self.mark(b, Some(&o), "mismatch", None)),
             Err(LlmError::Unreachable(_) | LlmError::Status(_)) => Err(unavailable()),
-            Err(_) => Err(self.mark(b, None, "unverifiable")),
+            Err(e) => Err(self.mark(b, None, "unverifiable", Some(&origin::detail_of(&e)))),
         }
     }
 
@@ -402,12 +410,18 @@ impl Governance {
                 None
             }
             Some(o) if origin::complies(&o, &b.rule) => None,
-            Some(o) => Some(self.mark(b, Some(&o), "mismatch")),
+            Some(o) => Some(self.mark(b, Some(&o), "mismatch", None)),
         }
     }
 
     /// Record a non-compliant result (write-back + notify) and build the refusal.
-    fn mark(&self, b: &BackstopInfo, o: Option<&KeyOrigin>, status: &'static str) -> ApiError {
+    fn mark(
+        &self,
+        b: &BackstopInfo,
+        o: Option<&KeyOrigin>,
+        status: &'static str,
+        detail: Option<&str>,
+    ) -> ApiError {
         let stored = StoredOrigin {
             status: if status == "mismatch" {
                 OriginStatus::Mismatch
@@ -421,6 +435,7 @@ impl Governance {
             user_id: o.and_then(|o| o.user_id.clone()),
             value_version: i64::from(b.version),
             checked_at: Some(chrono::Utc::now().to_rfc3339()),
+            detail: detail.map(str::to_owned),
         };
         if let Ok(v) = serde_json::to_value(&stored) {
             let src = self.source.clone();

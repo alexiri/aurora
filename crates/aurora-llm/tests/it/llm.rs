@@ -159,7 +159,8 @@ async fn litellm_key_info_team() {
         )
         .mount(&s2)
         .await;
-    let err = LitellmProvider
+    // FIX-019: a teamless key is reported as such (`team_id = None`); the rule decides.
+    let o = LitellmProvider
         .verify_key_origin(
             &ep("litellm", &s2.uri()),
             OriginMethod::LitellmTeam,
@@ -167,8 +168,131 @@ async fn litellm_key_info_team() {
             &reqwest::Client::new(),
         )
         .await
+        .unwrap();
+    assert_eq!(o.team_id, None);
+    let rule = |teams: &[&str]| KeyOriginRule {
+        method: OriginMethod::LitellmTeam,
+        allowed_organization_ids: vec![],
+        allowed_workspace_ids: vec![],
+        allowed_team_ids: teams.iter().map(|t| (*t).to_owned()).collect(),
+    };
+    assert!(!aurora_llm::origin::requires_team(&o, &rule(&[])));
+    assert!(aurora_llm::origin::complies(&o, &rule(&[])));
+    assert!(aurora_llm::origin::requires_team(&o, &rule(&["t1"])));
+    assert!(!aurora_llm::origin::complies(&o, &rule(&["t1"])));
+}
+
+/// FIX-019 live check against a real LiteLLM with a database (the kind mock has none, so keys
+/// and teams cannot be created there). Skipped unless `AURORA_LIVE_LITELLM_URL`,
+/// `AURORA_LIVE_LITELLM_TEAM_KEY`, `AURORA_LIVE_LITELLM_TEAMLESS_KEY` and
+/// `AURORA_LIVE_LITELLM_TEAM_ID` are set (see the FIX-019 report).
+#[tokio::test]
+async fn live_litellm_team_and_teamless_keys() {
+    let var = |n: &str| std::env::var(n).ok();
+    let (Some(url), Some(tk), Some(uk), Some(tid)) = (
+        var("AURORA_LIVE_LITELLM_URL"),
+        var("AURORA_LIVE_LITELLM_TEAM_KEY"),
+        var("AURORA_LIVE_LITELLM_TEAMLESS_KEY"),
+        var("AURORA_LIVE_LITELLM_TEAM_ID"),
+    ) else {
+        return;
+    };
+    let e = ep("litellm", &url);
+    let http = reqwest::Client::new();
+    let o = LitellmProvider
+        .verify_key_origin(&e, OriginMethod::LitellmTeam, &Secret::new(tk), &http)
+        .await
+        .unwrap();
+    assert_eq!(o.team_id.as_deref(), Some(tid.as_str()));
+    let o = LitellmProvider
+        .verify_key_origin(&e, OriginMethod::LitellmTeam, &Secret::new(uk), &http)
+        .await
+        .unwrap();
+    assert_eq!(o.team_id, None);
+    let err = LitellmProvider
+        .verify_key_origin(
+            &e,
+            OriginMethod::LitellmTeam,
+            &Secret::new("sk-nope".to_owned()),
+            &http,
+        )
+        .await
         .unwrap_err();
-    assert!(matches!(err, LlmError::Unverifiable(_)));
+    assert_eq!(aurora_llm::origin::detail_of(&err), "key_info_http_401");
+}
+
+#[tokio::test]
+async fn litellm_key_info_failures_carry_the_step() {
+    for (status, want) in [(401u16, "key_info_http_401"), (403, "key_info_http_403")] {
+        let s = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/key/info"))
+            .respond_with(ResponseTemplate::new(status))
+            .mount(&s)
+            .await;
+        let err = LitellmProvider
+            .verify_key_origin(
+                &ep("litellm", &s.uri()),
+                OriginMethod::LitellmTeam,
+                &key(),
+                &reqwest::Client::new(),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, LlmError::Unverifiable(ref d) if d == want),
+            "{err:?}"
+        );
+        assert_eq!(aurora_llm::origin::detail_of(&err), want);
+        no_key(&err);
+    }
+    let s = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/key/info"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&s)
+        .await;
+    let err = LitellmProvider
+        .verify_key_origin(
+            &ep("litellm", &s.uri()),
+            OriginMethod::LitellmTeam,
+            &key(),
+            &reqwest::Client::new(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, LlmError::Status(500)));
+    assert_eq!(aurora_llm::origin::detail_of(&err), "key_info_http_500");
+
+    let s = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/key/info"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+        .mount(&s)
+        .await;
+    let err = LitellmProvider
+        .verify_key_origin(
+            &ep("litellm", &s.uri()),
+            OriginMethod::LitellmTeam,
+            &key(),
+            &reqwest::Client::new(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(aurora_llm::origin::detail_of(&err), "bad_response");
+
+    let err = LitellmProvider
+        .verify_key_origin(
+            &ep("litellm", "http://127.0.0.1:1"),
+            OriginMethod::LitellmTeam,
+            &key(),
+            &reqwest::Client::new(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, LlmError::Unreachable(_)));
+    assert_eq!(aurora_llm::origin::detail_of(&err), "endpoint_unreachable");
+    no_key(&err);
 }
 
 #[test]

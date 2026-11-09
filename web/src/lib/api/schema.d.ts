@@ -853,6 +853,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/model-readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-key readiness and the default model of a hosted agent (`can_own`; D-136, C-500). The
+         *     dispatcher decides `no_model_key` / `no_default_model` from the same function.
+         */
+        get: operations["getAgentModelReadiness"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/models": {
         parameters: {
             query?: never;
@@ -4532,6 +4552,14 @@ export interface components {
         };
         /** @enum {string} */
         DefaultAction: "none" | "allow" | "block";
+        /** @description The model the next turn would use without further input (C-500). */
+        DefaultModel: {
+            endpoint_id: string;
+            model_id: string;
+            provider: string;
+            /** @description `override` | `endpoint_default` | `provider_default` | `allow_list` | `static_list`. */
+            source: string;
+        };
         /** @description The person a `direct` conversation belongs to (phase 1, RFE-009). */
         DirectUser: {
             display_name: string;
@@ -4951,6 +4979,24 @@ export interface components {
             /** Format: uuid */
             id: string;
         };
+        /** @description One granted LLM key and whether the dispatcher can use it (C-500). */
+        KeyReadiness: {
+            endpoint_id: string;
+            /** @description The key's name; shown to workspace owners only (this route is `can_own`). */
+            name: string;
+            provider: string;
+            /**
+             * @description First failing check when not usable: `not_active` | `endpoint_unknown` |
+             *     `provider_disabled` | `scope_not_permitted` | `origin_unverified` |
+             *     `origin_not_compliant` | `no_shared_dialect`; null when usable.
+             */
+            reason?: string | null;
+            /** @description `organization` | `workspace`. */
+            scope: string;
+            /** Format: uuid */
+            secret_id: string;
+            usable: boolean;
+        };
         /** @enum {string} */
         LinkMethod: "verified_email" | "sign_in_link" | "admin";
         LinkPeer: {
@@ -5098,6 +5144,14 @@ export interface components {
         };
         ModelOptions: {
             items: components["schemas"]["ModelOption"][];
+        };
+        ModelReadiness: {
+            default?: null | components["schemas"]["DefaultModel"];
+            harness: string;
+            /** @description In the order the dispatcher considers them. */
+            keys: components["schemas"]["KeyReadiness"][];
+            /** @description An agent model override exists but is not usable (the next turn drops it with a notice). */
+            override_dropped: boolean;
         };
         Models: {
             items: components["schemas"]["ModelItem"][];
@@ -7265,6 +7319,12 @@ export interface components {
         StoredOrigin: {
             /** Format: date-time */
             checked_at?: string | null;
+            /**
+             * @description Why the verification failed or was refused (≤ 200 chars, never key material):
+             *     `key_reports_no_team`, `key_info_http_<status>`, `endpoint_unreachable`,
+             *     `bad_response`; null when verified (C-502).
+             */
+            detail?: string | null;
             /** @description `endpoint` | `litellm_team` | `provider_account`. */
             method?: string | null;
             organization_id?: string | null;
@@ -10372,6 +10432,45 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAgentModelReadiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelReadiness"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found, not hosted, or not visible */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

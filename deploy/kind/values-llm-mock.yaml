@@ -21,6 +21,19 @@ config:
         default_model: scn-pong
         models: ["claude-mock", "scn-pong", "scn-memory-tool", "scn-count", "scn-ratelimit", "scn-overload"]
 
+      # FIX-019 (D-136): the owner's production endpoint shape (`aigw`): only `base_url` and the `endpoint`
+      # key origin; no default_model, models or dialects. A key on it is usable but names no model, so a
+      # hosted turn fails `no_default_model` until the agent's model is set (web/e2e/no-default-model.spec.ts).
+      # No `key_origin` here (no rule behaves as method `endpoint`): the API pod has no egress to the mock, and
+      # with a rule the save-time check would fail `llm_endpoint_unreachable` (`litellm-mock` hides this behind
+      # its static `models` fallback). Without a rule the key is saved with a pending origin and is usable.
+      # The gateway finds the endpoint of an LLM request by host, so this one uses the Service's fixed ClusterIP
+      # (already allowed above) instead of the name `litellm-mock` uses: two endpoints must not share a host.
+      - id: aigw-mock
+        provider: litellm
+        display_name: "AIGW shape (no default model, dev only)"
+        base_url: http://10.96.100.40:4000
+
 networkPolicy:
   gatewayExtraEgress:
     - to:

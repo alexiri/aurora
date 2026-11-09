@@ -4275,6 +4275,67 @@
         ]
       }
     },
+    "/v1/agents/{agent}/model-readiness": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Per-key readiness and the default model of a hosted agent (`can_own`; D-136, C-500). The\ndispatcher decides `no_model_key` / `no_default_model` from the same function.",
+        "operationId": "getAgentModelReadiness",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelReadiness"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, not hosted, or not visible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/models": {
       "get": {
         "tags": [
@@ -21495,6 +21556,31 @@
           "block"
         ]
       },
+      "DefaultModel": {
+        "type": "object",
+        "description": "The model the next turn would use without further input (C-500).",
+        "required": [
+          "endpoint_id",
+          "provider",
+          "model_id",
+          "source"
+        ],
+        "properties": {
+          "endpoint_id": {
+            "type": "string"
+          },
+          "model_id": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "`override` | `endpoint_default` | `provider_default` | `allow_list` | `static_list`."
+          }
+        }
+      },
       "DirectUser": {
         "type": "object",
         "description": "The person a `direct` conversation belongs to (phase 1, RFE-009).",
@@ -22952,6 +23038,48 @@
           }
         }
       },
+      "KeyReadiness": {
+        "type": "object",
+        "description": "One granted LLM key and whether the dispatcher can use it (C-500).",
+        "required": [
+          "secret_id",
+          "name",
+          "scope",
+          "endpoint_id",
+          "provider",
+          "usable"
+        ],
+        "properties": {
+          "endpoint_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "The key's name; shown to workspace owners only (this route is `can_own`)."
+          },
+          "provider": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "First failing check when not usable: `not_active` | `endpoint_unknown` |\n`provider_disabled` | `scope_not_permitted` | `origin_unverified` |\n`origin_not_compliant` | `no_shared_dialect`; null when usable."
+          },
+          "scope": {
+            "type": "string",
+            "description": "`organization` | `workspace`."
+          },
+          "secret_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "usable": {
+            "type": "boolean"
+          }
+        }
+      },
       "LinkMethod": {
         "type": "string",
         "enum": [
@@ -23491,6 +23619,41 @@
             "items": {
               "$ref": "#/components/schemas/ModelOption"
             }
+          }
+        }
+      },
+      "ModelReadiness": {
+        "type": "object",
+        "required": [
+          "harness",
+          "keys",
+          "override_dropped"
+        ],
+        "properties": {
+          "default": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DefaultModel",
+                "description": "Null when no model resolves (`no_default_model`) or no key is usable."
+              }
+            ]
+          },
+          "harness": {
+            "type": "string"
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyReadiness"
+            },
+            "description": "In the order the dispatcher considers them."
+          },
+          "override_dropped": {
+            "type": "boolean",
+            "description": "An agent model override exists but is not usable (the next turn drops it with a notice)."
           }
         }
       },
@@ -30802,6 +30965,13 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the verification failed or was refused (≤ 200 chars, never key material):\n`key_reports_no_team`, `key_info_http_<status>`, `endpoint_unreachable`,\n`bad_response`; null when verified (C-502)."
           },
           "method": {
             "type": [
