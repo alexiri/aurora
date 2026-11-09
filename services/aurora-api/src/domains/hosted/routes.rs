@@ -1,12 +1,16 @@
 //! `GET /agents/{agent}/sandbox`, `POST /agents/{agent}/restart`, `GET /agents/{agent}/models`
 //! (contract M4).
 
-use super::dto::{ModelOption, ModelOptions, SandboxPort, SandboxProcess, SandboxView};
+use super::dto::{
+    DefaultModel, KeyReadiness, ModelOption, ModelOptions, ModelReadiness, SandboxPort,
+    SandboxProcess, SandboxView,
+};
 use super::{lifecycle, model};
 use crate::app::AppState;
 use crate::domains::conversations::service::{self as conv, load_agent};
 use crate::domains::runner_plane::boot;
 use crate::http::auth::Caller;
+use crate::http::auth::require_own;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path};
 use aurora_core::ApiError;
@@ -23,6 +27,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_sandbox))
         .routes(routes!(restart))
         .routes(routes!(list_models))
+        .routes(routes!(model_readiness))
 }
 
 async fn hosted_agent(
@@ -193,6 +198,62 @@ async fn restart(
         lifecycle::flush_deltas(&s, cid, turn).await;
     }
     Ok((StatusCode::ACCEPTED, Json(view(&s, &a).await?)))
+}
+
+/// Per-key readiness and the default model of a hosted agent (`can_own`; D-136, C-500). The
+/// dispatcher decides `no_model_key` / `no_default_model` from the same function.
+#[utoipa::path(get, path = "/agents/{agent}/model-readiness", operation_id = "getAgentModelReadiness", tag = "agents",
+    params(("agent" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = ModelReadiness), (status = 403, body = ErrorEnvelope),
+              (status = 404, description = "Not found, not hosted, or not visible", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn model_readiness(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+) -> Result<Json<ModelReadiness>, ApiError> {
+    let a = hosted_agent(&s, &c, agent).await?;
+    let auth = c.workspace(&s, a.workspace_id).await?;
+    require_own(&auth)?;
+    let harness = a
+        .harness
+        .clone()
+        .unwrap_or_else(|| s.config.hosted.default_harness.clone());
+    let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+    let r = model::readiness(&s, &mut conn, a.id, a.org_id, a.workspace_id, &harness).await?;
+    drop(conn);
+    let default = r.default.as_ref().and_then(|d| {
+        let ep = r.keys.get(d.key)?.ep?;
+        Some(DefaultModel {
+            endpoint_id: ep.id.clone(),
+            provider: ep.provider.clone(),
+            model_id: d.model.clone(),
+            source: d.source.as_str().to_owned(),
+        })
+    });
+    Ok(Json(ModelReadiness {
+        harness,
+        keys: r
+            .keys
+            .iter()
+            .map(|k| KeyReadiness {
+                secret_id: k.secret.id,
+                name: k.secret.name.clone(),
+                scope: if k.secret.workspace_id.is_some() {
+                    "workspace"
+                } else {
+                    "organization"
+                }
+                .to_owned(),
+                endpoint_id: k.secret.llm_endpoint_id.clone(),
+                provider: k.secret.llm_provider.clone(),
+                usable: k.reason.is_none(),
+                reason: k.reason.map(|r| r.as_str().to_owned()),
+            })
+            .collect(),
+        default,
+        override_dropped: r.override_dropped.is_some(),
+    }))
 }
 
 /// Models selectable for the agent: usable granted keys only, allowed models only.

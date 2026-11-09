@@ -47,6 +47,10 @@ pub struct StoredOrigin {
     pub user_id: Option<String>,
     pub value_version: i64,
     pub checked_at: Option<DateTime<Utc>>,
+    /// Why the verification failed or was refused (≤ 200 chars, never key material):
+    /// `key_reports_no_team`, `key_info_http_<status>`, `endpoint_unreachable`,
+    /// `bad_response`; null when verified (C-502).
+    pub detail: Option<String>,
 }
 
 impl From<aurora_llm::governance::StoredOrigin> for StoredOrigin {
@@ -66,6 +70,7 @@ impl From<aurora_llm::governance::StoredOrigin> for StoredOrigin {
                 .checked_at
                 .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
                 .map(|t| t.with_timezone(&Utc)),
+            detail: o.detail,
         }
     }
 }

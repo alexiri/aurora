@@ -382,6 +382,51 @@ baseline_allowlist = [ {{ host = "pypi.org" }}, {{ host = "*.githubusercontent.c
     assert!(e.has_key("llm.endpoints[0].key_origin"), "{e}");
 }
 
+// FIX-019 (D-136): the owner's endpoint shape starts, with a warning naming the endpoint.
+#[test]
+fn litellm_endpoint_without_default_model_warns_but_starts() {
+    let toml = format!(
+        "{BASE}[[llm.endpoints]]\nid = \"aigw\"\nprovider = \"litellm\"\nbase_url = \"https://aigw.example.org\"\nkey_origin = {{ method = \"endpoint\" }}\n"
+    );
+    let raw = load_with(&toml, &[]).unwrap();
+    raw.api_config().unwrap();
+    let w = llm_endpoint_warnings(&raw.llm);
+    assert_eq!(w.len(), 1, "{w:?}");
+    assert!(
+        w[0].contains("`aigw`")
+            && w[0].contains("default_model")
+            && w[0].contains("no_default_model")
+    );
+
+    let with = toml.replace(
+        "key_origin",
+        "default_model = \"claude-sonnet\"\nkey_origin",
+    );
+    let raw = load_with(&with, &[]).unwrap();
+    assert!(llm_endpoint_warnings(&raw.llm).is_empty());
+    // The built-in provider is not live-listing: no warning.
+    let raw = load_with(BASE, &[]).unwrap();
+    assert!(llm_endpoint_warnings(&raw.llm).is_empty());
+}
+
+#[test]
+fn unknown_key_origin_method_suggests_nearest() {
+    let toml = format!(
+        "{BASE}[[llm.endpoints]]\nid = \"aigw\"\nprovider = \"litellm\"\nbase_url = \"https://aigw.example.org\"\nkey_origin = {{ method = \"litellm-team\" }}\n"
+    );
+    let e = load_with(&toml, &[]).unwrap().api_config().unwrap_err();
+    assert!(e.has_key("llm.endpoints[0].key_origin.method"), "{e}");
+    assert!(
+        e.to_string().contains("did you mean `litellm_team`?"),
+        "{e}"
+    );
+    assert_eq!(
+        nearest_origin_method("Provider-Account"),
+        Some("provider_account")
+    );
+    assert_eq!(nearest_origin_method("zzzzzzzzzzzz"), None);
+}
+
 #[test]
 fn known_hosts_extra_and_endpoint_removal() {
     let raw = load_with(

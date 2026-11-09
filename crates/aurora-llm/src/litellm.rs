@@ -131,18 +131,34 @@ impl LlmProvider for LitellmProvider {
             }
             OriginMethod::LitellmTeam => {
                 let url = format!("{}/key/info", ep.base());
-                let resp = check(send(http.get(url).bearer_auth(key.expose())).await?)?;
-                let v = json(resp).await?;
+                let resp = send(http.get(url).bearer_auth(key.expose())).await?;
+                // The key already passed `/v1/models`; a refusal here is a `/key/info`
+                // problem (e.g. the proxy restricts the route), not an invalid key. Keep
+                // the status so the user sees which step failed (C-502).
+                let status = resp.status();
+                if status == http::StatusCode::UNAUTHORIZED || status == http::StatusCode::FORBIDDEN
+                {
+                    return Err(LlmError::Unverifiable(format!(
+                        "key_info_http_{}",
+                        status.as_u16()
+                    )));
+                }
+                // Other failures stay `Status` (the gateway treats them as transient).
+                let resp = check(resp)?;
+                let v = json(resp)
+                    .await
+                    .map_err(|_| LlmError::Unverifiable("bad_response".into()))?;
                 let field = |n: &str| {
                     v.pointer(&format!("/info/{n}"))
                         .and_then(|x| x.as_str())
                         .filter(|s| !s.is_empty())
                         .map(str::to_string)
                 };
-                let team_id = field("team_id")
-                    .ok_or_else(|| LlmError::Unverifiable("key reports no team".into()))?;
+                // A key without a team is reported as such (`team_id = None`); whether that
+                // is acceptable depends on the rule, so the callers decide
+                // (`origin::requires_team`, 08 §11.3).
                 Ok(KeyOrigin {
-                    team_id: Some(team_id),
+                    team_id: field("team_id"),
                     user_id: field("user_id"),
                     ..KeyOrigin::default()
                 })

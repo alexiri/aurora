@@ -39,6 +39,7 @@ fn origin_of(
         user_id: ko.and_then(|k| k.user_id.clone()),
         value_version: version,
         checked_at: Some(Utc::now().to_rfc3339()),
+        detail: None,
     }
 }
 
@@ -71,6 +72,16 @@ pub async fn check_key(
         return Ok(origin_of(OriginStatus::Verified, "endpoint", None, version));
     };
     match provider.verify_key_origin(ep, rule.method, key, http).await {
+        Ok(ko) if origin::requires_team(&ko, rule) => {
+            let mut o = origin_of(
+                OriginStatus::Unverifiable,
+                rule.method.as_str(),
+                Some(&ko),
+                version,
+            );
+            o.detail = Some(origin::KEY_REPORTS_NO_TEAM.to_owned());
+            Ok(o)
+        }
         Ok(ko) => {
             let status = if origin::complies(&ko, rule) {
                 OriginStatus::Verified
@@ -81,27 +92,45 @@ pub async fn check_key(
         }
         Err(LlmError::InvalidKey) => Err(KeyFail::InvalidKey),
         Err(LlmError::Unreachable(_)) => Err(KeyFail::Unreachable),
-        Err(_) => Ok(origin_of(
-            OriginStatus::Unverifiable,
-            rule.method.as_str(),
-            None,
-            version,
-        )),
+        Err(e) => {
+            let mut o = origin_of(
+                OriginStatus::Unverifiable,
+                rule.method.as_str(),
+                None,
+                version,
+            );
+            o.detail = Some(origin::detail_of(&e));
+            Ok(o)
+        }
     }
 }
 
 /// Save-time refusal of non-compliant origins (nothing is saved).
 pub fn require_compliant(o: &StoredOrigin) -> Result<(), ApiError> {
     match o.status {
-        OriginStatus::Mismatch => Err(ApiError::unprocessable(
-            "llm_key_wrong_organization",
-            "This key belongs to an account that is not permitted for this organization.",
+        OriginStatus::Mismatch => Err(with_detail(
+            ApiError::unprocessable(
+                "llm_key_wrong_organization",
+                "This key belongs to an account that is not permitted for this organization.",
+            ),
+            o,
         )),
-        OriginStatus::Unverifiable => Err(ApiError::unprocessable(
-            "llm_key_unverifiable",
-            "The provider cannot report which account this key belongs to.",
+        OriginStatus::Unverifiable => Err(with_detail(
+            ApiError::unprocessable(
+                "llm_key_unverifiable",
+                "The provider cannot report which account this key belongs to.",
+            ),
+            o,
         )),
         _ => Ok(()),
+    }
+}
+
+/// `details.detail` (C-502): why the verification was refused. Never key material.
+fn with_detail(e: ApiError, o: &StoredOrigin) -> ApiError {
+    match &o.detail {
+        Some(d) => e.with_details(serde_json::json!({ "detail": d })),
+        None => e,
     }
 }
 

@@ -281,6 +281,9 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
             "DEVELOPMENT ONLY: the development identity provider `dev` is enabled (auth.dev_idp); it signs users in without a password and must never be exposed"
         );
     }
+    for w in aurora_config::llm_endpoint_warnings(&cfg.llm) {
+        tracing::warn!("{w}");
+    }
     let state = aurora_api::app::AppState::try_new(pool.clone(), cfg.clone())?;
     aurora_api::http::auth::spawn_revocation_listener(pool.clone(), state.session_cache.clone());
     if let Err(e) = aurora_api::domains::runners_admin::service::bootstrap_default(&state).await {

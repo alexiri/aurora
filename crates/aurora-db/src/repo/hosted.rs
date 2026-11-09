@@ -874,6 +874,10 @@ pub async fn set_usage(
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct LlmCandidate {
     pub id: Uuid,
+    /// Shown to owners by the readiness route only; never in transcripts or logs.
+    pub name: String,
+    /// `active` | `proposed` | `rejected`; only `active` keys are usable (D-136 `not_active`).
+    pub status: String,
     pub workspace_id: Option<Uuid>,
     pub llm_provider: String,
     pub llm_endpoint_id: String,
@@ -881,7 +885,8 @@ pub struct LlmCandidate {
     pub value_version: i32,
 }
 
-/// Active LLM secrets granted to the agent (org- or workspace-scoped), oldest first.
+/// LLM secrets granted to the agent (org- or workspace-scoped), of any status, oldest first.
+/// Readiness (D-136) decides which are usable and why the others are not.
 pub async fn granted_llm_secrets(
     conn: &mut PgConnection,
     agent: Uuid,
@@ -889,9 +894,10 @@ pub async fn granted_llm_secrets(
     workspace: Uuid,
 ) -> Result<Vec<LlmCandidate>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT s.id, s.workspace_id, s.llm_provider, s.llm_endpoint_id, s.origin, s.value_version
+        "SELECT s.id, s.name, s.status, s.workspace_id, s.llm_provider, s.llm_endpoint_id,
+                s.origin, s.value_version
          FROM secrets s JOIN grants g ON g.secret_id = s.id AND g.agent_id = $1
-         WHERE s.kind = 'llm' AND s.status = 'active' AND s.org_id = $2
+         WHERE s.kind = 'llm' AND s.org_id = $2
            AND (s.workspace_id IS NULL OR s.workspace_id = $3)
            AND s.llm_provider IS NOT NULL AND s.llm_endpoint_id IS NOT NULL
          ORDER BY s.created_at, s.id",
