@@ -1,5 +1,9 @@
 use super::compile::{compile_connection_grant, compile_secret_grant};
-use super::dto::{ConnectionGrant, GrantMode, PutConnectionGrant, SecretGrant};
+use super::dto::{
+    BulkConnectionGrantItem, BulkConnectionGrantRequest, BulkSecretGrantItem, BulkStatus,
+    ConnectionGrant, ConnectionGrantView, GRANT_BULK_MAX, GrantMode, PutConnectionGrant,
+    SecretGrant, SecretGrantView,
+};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::apps::service as apps;
@@ -25,14 +29,53 @@ pub async fn visible_agent(
     Ok((row, auth))
 }
 
-/// Create (idempotent) the grant and its derived rule in one transaction, then invalidate
-/// the agent. The secret must be active and live in the agent's workspace or its org.
-pub async fn grant_secret(
+/// Where a grant write comes from (FIX-020, D-137, SEC-77). Both go through the same function
+/// and the same checks; they differ only in what happens to a grant that already exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// `PUT /agents/{agent}/grants/…`: idempotent / replacing, audited every time.
+    Agent,
+    /// Credential-side bulk routes: an existing grant is left unmodified and not audited;
+    /// created grants are audited with `details.via = "credential"`.
+    Credential,
+}
+
+impl Origin {
+    fn replaces(self) -> bool {
+        self == Self::Agent
+    }
+}
+
+/// Result of one grant write inside a caller-owned transaction.
+pub struct Written<T> {
+    pub grant: T,
+    /// `false` = the grant already existed and was left as it was (credential origin only).
+    pub created: bool,
+    /// The critical audit row to commit with the transaction (none for an untouched grant).
+    pub event: Option<AuditEvent>,
+}
+
+fn with_via(origin: Origin, mut meta: serde_json::Value) -> serde_json::Value {
+    if origin == Origin::Credential {
+        meta["via"] = json!("credential");
+    }
+    meta
+}
+
+/// THE authorization path of a secret grant (SEC-77): the agent must be visible and
+/// `can_own` (404 / 403), the secret active and in the agent's workspace or org (404), then
+/// the grant, its derived rule and the gateway invalidation are written in `tx`. The caller
+/// commits `tx` together with the returned audit event.
+pub async fn grant_secret_in_tx(
+    tx: &mut audit::Tx,
     state: &AppState,
     caller: &Caller,
-    agent: &AgentRow,
+    agent_id: Uuid,
     secret_id: Uuid,
-) -> Result<SecretGrant, ApiError> {
+    origin: Origin,
+) -> Result<Written<SecretGrant>, ApiError> {
+    let (agent, auth) = visible_agent(caller, state, agent_id).await?;
+    crate::http::auth::require_own(&auth)?;
     let secret = secrets::get(&state.pool, secret_id)
         .await?
         .filter(|s| {
@@ -41,17 +84,44 @@ pub async fn grant_secret(
                 && s.workspace_id.is_none_or(|w| w == agent.workspace_id)
         })
         .ok_or_else(|| ApiError::not_found("Secret not found."))?;
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
-    let g = grants::upsert_secret_grant(
-        &mut *tx,
-        agent.workspace_id,
-        agent.id,
-        secret.id,
-        Some(caller.user_id),
-    )
-    .await?;
+    let (g, created) = if origin.replaces() {
+        let g = grants::upsert_secret_grant(
+            &mut **tx,
+            agent.workspace_id,
+            agent.id,
+            secret.id,
+            Some(caller.user_id),
+        )
+        .await?;
+        (g, true)
+    } else {
+        match grants::insert_secret_grant_if_absent(
+            &mut **tx,
+            agent.workspace_id,
+            agent.id,
+            secret.id,
+            Some(caller.user_id),
+        )
+        .await?
+        {
+            Some(g) => (g, true),
+            None => {
+                let g = grants::get_secret_grant(&mut **tx, agent.id, secret.id)
+                    .await?
+                    .ok_or_else(|| ApiError::not_found("Grant not found."))?;
+                (g, false)
+            }
+        }
+    };
+    if !created {
+        return Ok(Written {
+            grant: g.into(),
+            created,
+            event: None,
+        });
+    }
     compile_secret_grant(
-        &mut tx,
+        tx,
         agent.org_id,
         agent.workspace_id,
         g.id,
@@ -60,15 +130,216 @@ pub async fn grant_secret(
         &secret.name,
     )
     .await?;
-    credentials::notify_gateway_invalidate(&mut *tx, "agent", agent.id).await?;
+    credentials::notify_gateway_invalidate(&mut **tx, "agent", agent.id).await?;
     let ev = event(
         caller,
         "grant.create",
-        agent,
-        json!({"secret_id": secret.id, "agent_handle": agent.handle}),
+        &agent,
+        with_via(
+            origin,
+            json!({"secret_id": secret.id, "agent_handle": agent.handle}),
+        ),
     );
-    audit::commit_critical(tx, &ev).await?;
-    Ok(g.into())
+    Ok(Written {
+        grant: g.into(),
+        created,
+        event: Some(ev),
+    })
+}
+
+/// Agent-side `PUT`: one grant in its own transaction, audited with it.
+pub async fn grant_secret(
+    state: &AppState,
+    caller: &Caller,
+    agent_id: Uuid,
+    secret_id: Uuid,
+) -> Result<SecretGrant, ApiError> {
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let w = grant_secret_in_tx(&mut tx, state, caller, agent_id, secret_id, Origin::Agent).await?;
+    if let Some(ev) = &w.event {
+        audit::commit_critical(tx, ev).await?;
+    }
+    Ok(w.grant)
+}
+
+/// Workspaces among `ids` the caller can own: credential-side lists never reveal agents of
+/// any other workspace (SEC-77).
+async fn owned_workspaces(
+    state: &AppState,
+    caller: &Caller,
+    ids: Vec<Uuid>,
+) -> Result<HashSet<Uuid>, ApiError> {
+    let mut out = HashSet::new();
+    let mut checked = HashSet::new();
+    for ws in ids {
+        if checked.insert(ws) && aurora_db::authz::can_own(&state.pool, caller.user_id, ws).await? {
+            out.insert(ws);
+        }
+    }
+    Ok(out)
+}
+
+/// Grants of a secret on agents of workspaces the caller can own (caller already authorized
+/// to read the secret's metadata).
+pub async fn list_secret_grants(
+    state: &AppState,
+    caller: &Caller,
+    secret_id: Uuid,
+) -> Result<Vec<SecretGrantView>, ApiError> {
+    let rows = grants::list_for_secret(&state.pool, secret_id).await?;
+    let ids = rows.iter().map(|r| r.workspace_id).collect();
+    let own = owned_workspaces(state, caller, ids).await?;
+    Ok(rows
+        .into_iter()
+        .filter(|r| own.contains(&r.workspace_id))
+        .map(|r| SecretGrantView {
+            grant: SecretGrant {
+                id: r.id,
+                agent_id: r.agent_id,
+                secret_id: r.secret_id,
+                created_at: r.created_at,
+            },
+            agent_name: r.agent_name,
+            workspace_id: r.workspace_id,
+            workspace_name: r.workspace_name,
+        })
+        .collect())
+}
+
+/// Grants of a connection on agents of workspaces the caller can own.
+pub async fn list_connection_grants(
+    state: &AppState,
+    caller: &Caller,
+    connection_id: Uuid,
+) -> Result<Vec<ConnectionGrantView>, ApiError> {
+    let rows = grants::list_views_for_connection(&state.pool, connection_id).await?;
+    let ids = rows.iter().map(|r| r.workspace_id).collect();
+    let own = owned_workspaces(state, caller, ids).await?;
+    Ok(rows
+        .into_iter()
+        .filter(|r| own.contains(&r.workspace_id))
+        .map(|r| ConnectionGrantView {
+            grant: ConnectionGrant::from(grants::ConnectionGrantRow {
+                id: r.id,
+                workspace_id: r.workspace_id,
+                agent_id: r.agent_id,
+                connection_id: r.connection_id,
+                mode: r.mode,
+                allow_tools: r.allow_tools,
+                ask_tools: r.ask_tools,
+                ask_timeout_secs: r.ask_timeout_secs,
+                created_at: r.created_at,
+            }),
+            agent_name: r.agent_name,
+            workspace_id: r.workspace_id,
+            workspace_name: r.workspace_name,
+        })
+        .collect())
+}
+
+fn bulk_check(agent_ids: &[Uuid]) -> Result<(), ApiError> {
+    use aurora_core::FieldError;
+    let bad = |m: &str| {
+        ApiError::invalid_request("Invalid request.", vec![FieldError::new("/agent_ids", m)])
+    };
+    if agent_ids.is_empty() || agent_ids.len() > GRANT_BULK_MAX {
+        return Err(bad(&format!("must hold 1 to {GRANT_BULK_MAX} agents")));
+    }
+    let mut seen = HashSet::new();
+    if !agent_ids.iter().all(|a| seen.insert(*a)) {
+        return Err(bad("must not contain duplicates"));
+    }
+    Ok(())
+}
+
+fn at_agent(e: ApiError, agent_id: Uuid) -> ApiError {
+    let mut d = e.details().cloned().unwrap_or_else(|| json!({}));
+    if let Some(o) = d.as_object_mut() {
+        o.insert("agent_id".into(), json!(agent_id));
+    }
+    e.with_details(d)
+}
+
+/// Credential-side bulk secret grant: every agent runs [`grant_secret_in_tx`] in ONE
+/// transaction; the first failure rolls everything back and is returned with `details.agent_id`.
+pub async fn bulk_grant_secret(
+    state: &AppState,
+    caller: &Caller,
+    secret_id: Uuid,
+    agent_ids: &[Uuid],
+) -> Result<Vec<BulkSecretGrantItem>, ApiError> {
+    bulk_check(agent_ids)?;
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let mut items = Vec::new();
+    let mut events = Vec::new();
+    for &agent_id in agent_ids {
+        let w = grant_secret_in_tx(
+            &mut tx,
+            state,
+            caller,
+            agent_id,
+            secret_id,
+            Origin::Credential,
+        )
+        .await
+        .map_err(|e| at_agent(e, agent_id))?;
+        events.extend(w.event);
+        items.push(BulkSecretGrantItem {
+            agent_id,
+            grant: w.grant,
+            status: status(w.created),
+        });
+    }
+    audit::commit_critical_many(tx, &events).await?;
+    Ok(items)
+}
+
+fn status(created: bool) -> BulkStatus {
+    if created {
+        BulkStatus::Created
+    } else {
+        BulkStatus::Existing
+    }
+}
+
+/// Credential-side bulk connection grant (see [`bulk_grant_secret`]).
+pub async fn bulk_grant_connection(
+    state: &AppState,
+    caller: &Caller,
+    connection_id: Uuid,
+    req: BulkConnectionGrantRequest,
+) -> Result<Vec<BulkConnectionGrantItem>, ApiError> {
+    bulk_check(&req.agent_ids)?;
+    let one = PutConnectionGrant {
+        mode: req.mode,
+        allow_tools: req.allow_tools,
+        ask_tools: req.ask_tools,
+        ask_timeout_secs: req.ask_timeout_secs,
+    };
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let mut items = Vec::new();
+    let mut events = Vec::new();
+    for &agent_id in &req.agent_ids {
+        let w = grant_connection_in_tx(
+            &mut tx,
+            state,
+            caller,
+            agent_id,
+            connection_id,
+            one.clone(),
+            Origin::Credential,
+        )
+        .await
+        .map_err(|e| at_agent(e, agent_id))?;
+        events.extend(w.event);
+        items.push(BulkConnectionGrantItem {
+            agent_id,
+            grant: w.grant,
+            status: status(w.created),
+        });
+    }
+    audit::commit_critical_many(tx, &events).await?;
+    Ok(items)
 }
 
 /// Security-critical audit event of a grant change (RFE-008): committed with the change.
@@ -112,15 +383,46 @@ fn dedupe(v: Vec<String>) -> Vec<String> {
     v.into_iter().filter(|t| seen.insert(t.clone())).collect()
 }
 
-/// Create or replace the connection grant and compile it (07 §Grants), one transaction,
-/// then invalidate the agent. The connection must be live in the agent's workspace or org.
+/// Agent-side `PUT`: create or replace the connection grant in its own transaction.
 pub async fn grant_connection(
     state: &AppState,
     caller: &Caller,
-    agent: &AgentRow,
+    agent_id: Uuid,
     connection_id: Uuid,
     req: PutConnectionGrant,
 ) -> Result<ConnectionGrant, ApiError> {
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let w = grant_connection_in_tx(
+        &mut tx,
+        state,
+        caller,
+        agent_id,
+        connection_id,
+        req,
+        Origin::Agent,
+    )
+    .await?;
+    if let Some(ev) = &w.event {
+        audit::commit_critical(tx, ev).await?;
+    }
+    Ok(w.grant)
+}
+
+/// THE authorization path of a connection grant (SEC-77; see [`grant_secret_in_tx`]): agent
+/// visible and `can_own`, connection live in the agent's workspace or org, the grant body
+/// valid (07 §Grants), then write, compile and invalidate in `tx`.
+pub async fn grant_connection_in_tx(
+    tx: &mut audit::Tx,
+    state: &AppState,
+    caller: &Caller,
+    agent_id: Uuid,
+    connection_id: Uuid,
+    req: PutConnectionGrant,
+    origin: Origin,
+) -> Result<Written<ConnectionGrant>, ApiError> {
+    let (agent, auth) = visible_agent(caller, state, agent_id).await?;
+    crate::http::auth::require_own(&auth)?;
+    let agent = &agent;
     let conn = connections::get(&state.pool, connection_id)
         .await?
         .filter(|c| {
@@ -181,21 +483,52 @@ pub async fn grant_connection(
             ));
         }
     }
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
-    let g = grants::upsert_connection_grant(
-        &mut *tx,
-        agent.workspace_id,
-        agent.id,
-        conn.id,
-        req.mode.as_str(),
-        &allow,
-        &ask,
-        ask_timeout,
-        Some(caller.user_id),
-    )
-    .await?;
+    let (g, created) = if origin.replaces() {
+        let g = grants::upsert_connection_grant(
+            &mut **tx,
+            agent.workspace_id,
+            agent.id,
+            conn.id,
+            req.mode.as_str(),
+            &allow,
+            &ask,
+            ask_timeout,
+            Some(caller.user_id),
+        )
+        .await?;
+        (g, true)
+    } else {
+        match grants::insert_connection_grant_if_absent(
+            &mut **tx,
+            agent.workspace_id,
+            agent.id,
+            conn.id,
+            req.mode.as_str(),
+            &allow,
+            &ask,
+            ask_timeout,
+            Some(caller.user_id),
+        )
+        .await?
+        {
+            Some(g) => (g, true),
+            None => {
+                let g = grants::get_connection_grant(&mut **tx, agent.id, conn.id)
+                    .await?
+                    .ok_or_else(|| ApiError::not_found("Grant not found."))?;
+                (g, false)
+            }
+        }
+    };
+    if !created {
+        return Ok(Written {
+            grant: g.into(),
+            created,
+            event: None,
+        });
+    }
     compile_connection_grant(
-        &mut tx,
+        tx,
         agent.org_id,
         agent.workspace_id,
         g.id,
@@ -208,17 +541,23 @@ pub async fn grant_connection(
         ask_timeout,
     )
     .await?;
-    credentials::notify_gateway_invalidate(&mut *tx, "agent", agent.id).await?;
+    credentials::notify_gateway_invalidate(&mut **tx, "agent", agent.id).await?;
     let ev = event(
         caller,
         "grant.create",
         agent,
-        json!({"connection_id": conn.id, "agent_handle": agent.handle,
-               "grant": {"mode": req.mode.as_str(), "allow_tools": allow, "ask_tools": ask,
-                         "ask_timeout_secs": ask_timeout}}),
+        with_via(
+            origin,
+            json!({"connection_id": conn.id, "agent_handle": agent.handle,
+                   "grant": {"mode": req.mode.as_str(), "allow_tools": allow, "ask_tools": ask,
+                             "ask_timeout_secs": ask_timeout}}),
+        ),
     );
-    audit::commit_critical(tx, &ev).await?;
-    Ok(g.into())
+    Ok(Written {
+        grant: g.into(),
+        created,
+        event: Some(ev),
+    })
 }
 
 /// Remove the connection grant and its derived rules (404 when absent).

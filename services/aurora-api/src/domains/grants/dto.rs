@@ -71,7 +71,90 @@ impl From<ConnectionGrantRow> for ConnectionGrant {
     }
 }
 
+/// (FIX-020, `02` `GRANT_BULK_MAX`) most agents in one credential-side bulk grant.
+pub const GRANT_BULK_MAX: usize = 50;
+
+/// A secret grant seen from the secret (FIX-020, C-503).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SecretGrantView {
+    #[serde(flatten)]
+    pub grant: SecretGrant,
+    pub agent_name: String,
+    pub workspace_id: Uuid,
+    pub workspace_name: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SecretGrantViewList {
+    pub items: Vec<SecretGrantView>,
+}
+
+/// A connection grant seen from the connection (FIX-020, C-504).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ConnectionGrantView {
+    #[serde(flatten)]
+    pub grant: ConnectionGrant,
+    pub agent_name: String,
+    pub workspace_id: Uuid,
+    pub workspace_name: String,
+}
+
+/// `POST /v1/secrets/{id}/grants` body.
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BulkSecretGrantRequest {
+    /// 1–`GRANT_BULK_MAX` distinct agent ids.
+    pub agent_ids: Vec<Uuid>,
+}
+
+/// `POST /v1/connections/{id}/grants` body: the agent-side grant body plus the agents.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BulkConnectionGrantRequest {
+    /// 1–`GRANT_BULK_MAX` distinct agent ids.
+    pub agent_ids: Vec<Uuid>,
+    pub mode: GrantMode,
+    #[serde(default)]
+    pub allow_tools: Vec<String>,
+    #[serde(default)]
+    pub ask_tools: Vec<String>,
+    #[serde(default)]
+    pub ask_timeout_secs: Option<i64>,
+}
+
+/// `created` | `existing` (an existing grant is never modified).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BulkStatus {
+    Created,
+    Existing,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BulkSecretGrantItem {
+    pub agent_id: Uuid,
+    pub grant: SecretGrant,
+    pub status: BulkStatus,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BulkSecretGrantResponse {
+    pub items: Vec<BulkSecretGrantItem>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BulkConnectionGrantItem {
+    pub agent_id: Uuid,
+    pub grant: ConnectionGrant,
+    pub status: BulkStatus,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BulkConnectionGrantResponse {
+    pub items: Vec<BulkConnectionGrantItem>,
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PutConnectionGrant {
     pub mode: GrantMode,
@@ -87,7 +170,7 @@ pub struct PutConnectionGrant {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ConnectionGrantList {
-    pub items: Vec<ConnectionGrant>,
+    pub items: Vec<ConnectionGrantView>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

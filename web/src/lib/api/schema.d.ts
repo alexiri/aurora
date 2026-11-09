@@ -1584,7 +1584,12 @@ export interface paths {
         /** Grants held on a connection (`can_own` / owner-admin; I-27). */
         get: operations["listConnectionGrants"];
         put?: never;
-        post?: never;
+        /**
+         * Grant a connection to several agents at once (FIX-020, C-504; `can_own` per agent). Each
+         *     agent passes exactly the checks of `PUT /agents/{agent}/grants/connections/{conn}`;
+         *     all-or-nothing; an existing grant is returned `existing` and not modified.
+         */
+        post: operations["grantConnectionToAgents"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2803,6 +2808,30 @@ export interface paths {
         put?: never;
         /** Accept an agent proposal: sets the value, activates it and grants it to the proposer. */
         post: operations["acceptSecretProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/secrets/{id}/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Agents granted a secret (FIX-020, C-503): `can_own` on the secret's scope; only agents of
+         *     workspaces the caller can own.
+         */
+        get: operations["listSecretGrants"];
+        put?: never;
+        /**
+         * Grant a secret to several agents at once (FIX-020, C-503; `can_own` per agent). Same checks
+         *     as `PUT /agents/{agent}/grants/secrets/{secret}`; all-or-nothing; idempotent.
+         */
+        post: operations["grantSecretToAgents"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4036,6 +4065,25 @@ export interface components {
             agent_id: string;
             decision: components["schemas"]["Decision"];
         };
+        BulkConnectionGrantItem: {
+            /** Format: uuid */
+            agent_id: string;
+            grant: components["schemas"]["ConnectionGrant"];
+            status: components["schemas"]["BulkStatus"];
+        };
+        /** @description `POST /v1/connections/{id}/grants` body: the agent-side grant body plus the agents. */
+        BulkConnectionGrantRequest: {
+            /** @description 1–`GRANT_BULK_MAX` distinct agent ids. */
+            agent_ids: string[];
+            allow_tools?: string[];
+            /** Format: int64 */
+            ask_timeout_secs?: number | null;
+            ask_tools?: string[];
+            mode: components["schemas"]["GrantMode"];
+        };
+        BulkConnectionGrantResponse: {
+            items: components["schemas"]["BulkConnectionGrantItem"][];
+        };
         /** @description `POST /workspaces/{ws}/automations/reassign`. */
         BulkReassignRequest: {
             /** Format: uuid */
@@ -4051,6 +4099,25 @@ export interface components {
             /** Format: int64 */
             reassigned: number;
         };
+        BulkSecretGrantItem: {
+            /** Format: uuid */
+            agent_id: string;
+            grant: components["schemas"]["SecretGrant"];
+            status: components["schemas"]["BulkStatus"];
+        };
+        /** @description `POST /v1/secrets/{id}/grants` body. */
+        BulkSecretGrantRequest: {
+            /** @description 1–`GRANT_BULK_MAX` distinct agent ids. */
+            agent_ids: string[];
+        };
+        BulkSecretGrantResponse: {
+            items: components["schemas"]["BulkSecretGrantItem"][];
+        };
+        /**
+         * @description `created` | `existing` (an existing grant is never modified).
+         * @enum {string}
+         */
+        BulkStatus: "created" | "existing";
         /**
          * @description BYO posture, ordered by strictness (`enabled` < `owners_only` < `disabled`).
          * @enum {string}
@@ -4245,7 +4312,14 @@ export interface components {
             mode: components["schemas"]["GrantMode"];
         };
         ConnectionGrantList: {
-            items: components["schemas"]["ConnectionGrant"][];
+            items: components["schemas"]["ConnectionGrantView"][];
+        };
+        /** @description A connection grant seen from the connection (FIX-020, C-504). */
+        ConnectionGrantView: components["schemas"]["ConnectionGrant"] & {
+            agent_name: string;
+            /** Format: uuid */
+            workspace_id: string;
+            workspace_name: string;
         };
         ConnectorAdmin: {
             /** Format: date-time */
@@ -7188,6 +7262,16 @@ export interface components {
             id: string;
             /** Format: uuid */
             secret_id: string;
+        };
+        /** @description A secret grant seen from the secret (FIX-020, C-503). */
+        SecretGrantView: components["schemas"]["SecretGrant"] & {
+            agent_name: string;
+            /** Format: uuid */
+            workspace_id: string;
+            workspace_name: string;
+        };
+        SecretGrantViewList: {
+            items: components["schemas"]["SecretGrantView"][];
         };
         /** @enum {string} */
         SecretKindSel: "generic" | "llm";
@@ -12647,6 +12731,69 @@ export interface operations {
             };
         };
     };
+    grantConnectionToAgents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Connection id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkConnectionGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description Grants */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkConnectionGrantResponse"];
+                };
+            };
+            /** @description Invalid agent_ids (empty, over GRANT_BULK_MAX, duplicates) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden (details.agent_id) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Agent or connection not found (details.agent_id) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description grant_invalid, as the agent-side route (details.agent_id) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listConnectors: {
         parameters: {
             query?: never;
@@ -16660,6 +16807,101 @@ export interface operations {
             };
             /** @description not_proposed */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listSecretGrants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Grants */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecretGrantViewList"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    grantSecretToAgents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Secret id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkSecretGrantRequest"];
+            };
+        };
+        responses: {
+            /** @description Grants */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkSecretGrantResponse"];
+                };
+            };
+            /** @description Invalid agent_ids (empty, over GRANT_BULK_MAX, duplicates) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden (details.agent_id) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Agent or secret not found (details.agent_id) */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
