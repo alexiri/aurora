@@ -105,11 +105,21 @@ pub fn parse(hash: &str, body: serde_json::Value) -> Result<Loaded, String> {
 pub struct SnapshotStore {
     cur: ArcSwapOption<Loaded>,
     last_rejected: Mutex<Option<String>>,
+    /// Wakes `run` for an immediate re-poll of the active hash (after a LISTEN reconnect).
+    poke: Arc<tokio::sync::Notify>,
 }
+
+/// Retry period of the loader while no snapshot is loaded (the gateway is `down` until one is).
+const LOAD_RETRY: Duration = Duration::from_secs(1);
 
 impl SnapshotStore {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    /// Notifier that makes the loader re-poll the active hash at once.
+    pub fn poke(&self) -> Arc<tokio::sync::Notify> {
+        self.poke.clone()
     }
 
     pub fn current(&self) -> Option<Arc<Loaded>> {
@@ -186,15 +196,21 @@ impl SnapshotStore {
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) {
         let mut listener = None;
-        let mut tick = tokio::time::interval(POLL_INTERVAL);
         loop {
             if listener.is_none() {
                 listener = Listener::connect(&pool, &[Channel::Registry]).await.ok();
             }
             let _ = self.refresh(&pool).await;
+            // Until the first snapshot is loaded (started with the database down) retry fast.
+            let wait = if self.is_loaded() {
+                POLL_INTERVAL
+            } else {
+                LOAD_RETRY
+            };
             tokio::select! {
                 _ = crate::invalidation::stopped(&mut shutdown) => return,
-                _ = tick.tick() => {}
+                _ = tokio::time::sleep(wait) => {}
+                _ = self.poke.notified() => {}
                 ev = async {
                     match listener.as_mut() {
                         Some(l) => l.next().await,

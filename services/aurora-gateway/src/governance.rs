@@ -49,7 +49,7 @@ impl GovSource for DbGovSource {
     async fn org_governance(&self, org: Uuid) -> Result<Option<serde_json::Value>, String> {
         repo::org_governance(&self.0, org)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| crate::health::db_err(&e))
     }
 
     async fn write_origin(&self, secret_id: Uuid, origin: serde_json::Value, status: &'static str) {

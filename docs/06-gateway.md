@@ -653,7 +653,12 @@ registry hash, then (5) returns to `ready`. Entries are repopulated on demand
 (each miss is a database lookup, so a flush right after recovery is bounded by
 the pool; misses are coalesced per key). If the reconnect itself keeps failing the
 state stays `degraded` and entries age out at their TTL: at no time is anything
-served beyond TTL.
+served beyond TTL. A LISTEN connection that stops delivering without closing is
+detected by a heartbeat (phase 3, RFE-014, D-108): every `GATEWAY_DB_PROBE_INTERVAL`
+the gateway NOTIFYs an instance-specific heartbeat through the pool and expects it back
+on the LISTEN connection; two in a row missed make the listener down (`degraded` at
+once) and trigger the same reconnect-then-flush, so a freeze or BYO tightening can
+never stay unseen behind a dead listener.
 
 **(c) Observability.**
 - `/readyz` (internal listener, unauthenticated like the other health routes):

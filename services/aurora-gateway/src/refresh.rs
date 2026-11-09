@@ -57,6 +57,8 @@ pub struct TokenManager {
     stripes: Vec<tokio::sync::Mutex<()>>,
     lock_wait: Duration,
     margin: Duration,
+    /// (RFE-014) A refresh needs Postgres: it is refused at once while that is unreachable.
+    health: Option<Arc<crate::health::Health>>,
 }
 
 pub fn expiring(expires_at: Option<DateTime<Utc>>, margin: Duration) -> bool {
@@ -77,7 +79,15 @@ impl TokenManager {
             stripes: (0..STRIPES).map(|_| tokio::sync::Mutex::new(())).collect(),
             lock_wait: REFRESH_LOCK_WAIT,
             margin: REFRESH_MARGIN,
+            health: None,
         }
+    }
+
+    /// (RFE-014) Refuse refreshes while the database is unreachable.
+    #[must_use]
+    pub fn with_health(mut self, h: Arc<crate::health::Health>) -> Self {
+        self.health = Some(h);
+        self
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -114,6 +124,9 @@ impl TokenManager {
         };
         if !force && !expiring(conn.expires_at, self.margin) {
             return Ok(conn.clone());
+        }
+        if self.health.as_ref().is_some_and(|h| h.db_unreachable()) {
+            return Err(RefreshError::Unavailable);
         }
         let pkg = snap
             .packages

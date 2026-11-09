@@ -97,6 +97,28 @@ pub fn credential_store_unavailable() -> ApiError {
     )
 }
 
+/// (phase 3, RFE-014, C-382) 503 `gateway_degraded`: the database is unreachable and the request
+/// needs state the caches do not hold. `reason` is `database_unavailable`,
+/// `credential_store_unavailable` or `snapshot_not_loaded`. Never a 407: the client must not
+/// conclude that its token is bad. Counted in `aurora_gateway_degraded_requests_total`.
+pub fn gateway_degraded(reason: &'static str) -> ApiError {
+    crate::health::count_refused(reason);
+    ApiError::unavailable(
+        "gateway_degraded",
+        "The gateway cannot reach its database and this request needs information it does not hold. Retry shortly.",
+    )
+    .with_details(json!({ "reason": reason }))
+}
+
+/// Codes answered with `retry-after: 5` and `x-should-retry: true` (C-382).
+fn is_degraded_refusal(err: &ApiError) -> bool {
+    err.status() == StatusCode::SERVICE_UNAVAILABLE
+        && matches!(
+            err.code(),
+            "gateway_degraded" | "approval_store_unavailable"
+        )
+}
+
 /// Renders an envelope. Definite (4xx) verdicts carry `x-should-retry: false`.
 pub fn response(err: &ApiError) -> Response<Body> {
     let mut res = Response::new(full_body(err.to_json_vec()));
@@ -109,6 +131,13 @@ pub fn response(err: &ApiError) -> Response<Body> {
     if err.status().is_client_error() {
         h.insert("x-should-retry", HeaderValue::from_static("false"));
     }
+    if is_degraded_refusal(err) {
+        h.insert("x-should-retry", HeaderValue::from_static("true"));
+        h.insert(
+            header::RETRY_AFTER,
+            HeaderValue::from(crate::health::RETRY_AFTER_SECS),
+        );
+    }
     if let Some(s) = err.retry_after_secs() {
         h.insert(header::RETRY_AFTER, HeaderValue::from(s));
     }
@@ -119,6 +148,14 @@ pub fn response(err: &ApiError) -> Response<Body> {
         );
     }
     res
+}
+
+/// 503 `gateway_restarting` for a new `CONNECT` while the gateway drains (C-382).
+pub fn restarting_error() -> ApiError {
+    ApiError::unavailable(
+        "gateway_restarting",
+        "The gateway is restarting. Retry shortly.",
+    )
 }
 
 /// 503 `gateway_restarting` with `retry-after: 1` (held request at SIGTERM).

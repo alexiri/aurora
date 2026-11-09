@@ -12,6 +12,7 @@ mod held_closure;
 mod hold;
 mod listener_binds;
 mod open_lane;
+mod outage;
 mod pipeline;
 mod policy_db;
 mod proxy;

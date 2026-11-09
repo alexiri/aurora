@@ -2,11 +2,12 @@
 #![forbid(unsafe_code)]
 
 use aurora_config::GatewayConfig;
-use aurora_core::service::{self, exit_config, ready_check};
+use aurora_core::service::{self, exit_config};
 use aurora_gateway::ca::{self, Ca};
 use aurora_gateway::decide::{PolicyHandler, PolicyHandlerParts};
 use aurora_gateway::governance::{DbGovSource, Governance, instance_from_config};
 use aurora_gateway::guard::Guard;
+use aurora_gateway::health::Health;
 use aurora_gateway::hold::Holds;
 use aurora_gateway::instance;
 use aurora_gateway::invalidation::Hub;
@@ -20,6 +21,7 @@ use aurora_gateway::reqlog::{DbWriter, FLUSH_INTERVAL, RequestLog};
 use aurora_gateway::resolve::{DbSource, Resolver};
 use aurora_gateway::resolver::DbCredentialResolver;
 use aurora_gateway::snapshot::SnapshotStore;
+use aurora_gateway::status::Outage;
 use base64::Engine;
 use clap::{Parser, Subcommand};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -133,9 +135,29 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         .connect_lazy(cfg.database_url.expose())?;
     let metrics = service::install_metrics(SERVICE);
     let hub = Hub::new();
-    let resolver = Arc::new(DbCredentialResolver::new(pool.clone()).with_byo(
-        aurora_llm::governance::ByoInstance::from_config(&cfg.governance.byo),
-    ));
+    // (phase 3, RFE-014) One availability state for the process: `down` until a registry snapshot
+    // is loaded, `degraded` while the database or the LISTEN connection is down.
+    let snapshots = SnapshotStore::new();
+    let health = {
+        let s = snapshots.clone();
+        Health::new(move || s.is_loaded())
+    };
+    hub.set_health(health.clone());
+    hub.set_registry_poke(snapshots.poke());
+    if cfg.gateway.resolve_cache_ttl_secs > 300 {
+        tracing::warn!(
+            resolve_cache_ttl_secs = cfg.gateway.resolve_cache_ttl_secs,
+            "gateway.resolve_cache_ttl_secs is above 300 s: cached entries (and a revocation or \
+             freeze that cannot arrive during an outage) stay in force that long"
+        );
+    }
+    let resolver = Arc::new(
+        DbCredentialResolver::new(pool.clone())
+            .with_byo(aurora_llm::governance::ByoInstance::from_config(
+                &cfg.governance.byo,
+            ))
+            .with_health(health.clone()),
+    );
     hub.register(resolver.cache());
     // (phase 2, RFE-025) Live BYO tunnels are re-evaluated on every invalidation that concerns
     // them; registered after the identity cache so a re-resolve never sees a stale identity.
@@ -170,7 +192,6 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     );
     // Registered before the resolver cache so a reload never sees stale governance.
     hub.register(governance.clone());
-    let snapshots = SnapshotStore::new();
     let policy_resolver = Arc::new(
         Resolver::with_ttl(
             Arc::new(DbSource(pool.clone())),
@@ -178,7 +199,8 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             Duration::from_secs(cfg.gateway.resolve_cache_ttl_secs),
         )
         .with_governance(governance.clone())
-        .with_snapshots(snapshots.clone()),
+        .with_snapshots(snapshots.clone())
+        .with_health(health.clone()),
     );
     hub.register(policy_resolver.cache());
     // `gateway.hookhost_url` (docs/15); bearer = the configured internal secret (W9).
@@ -194,14 +216,14 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         aurora_gateway::summarize_client::HttpSummarizer::new(&hookhost_url, &hook_bearer)
             .with_key_id(&hook_key_id),
     );
-    let tokens = Arc::new(aurora_gateway::refresh::TokenManager::new(
-        pool.clone(),
-        vault.clone(),
-        Some(minter),
-    ));
-    let plaintext = Arc::new(PlaintextCache::new(vault));
+    let tokens = Arc::new(
+        aurora_gateway::refresh::TokenManager::new(pool.clone(), vault.clone(), Some(minter))
+            .with_health(health.clone()),
+    );
+    let plaintext = Arc::new(PlaintextCache::new(vault).with_health(health.clone()));
     hub.register(plaintext.clone());
     let reqlog = RequestLog::new(Arc::new(DbWriter(pool.clone())));
+    reqlog.set_health(health.clone());
     let (tx, rx) = tokio::sync::watch::channel(false);
     let instance_id = uuid::Uuid::now_v7();
     let holds = Arc::new(
@@ -212,7 +234,8 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             Duration::from_secs(cfg.approvals.timeout_secs),
             Some(rx.clone()),
         )
-        .with_max_timeout(Duration::from_secs(cfg.approvals.max_timeout_secs)),
+        .with_max_timeout(Duration::from_secs(cfg.approvals.max_timeout_secs))
+        .with_health(health.clone()),
     );
     let handler = Arc::new(
         PolicyHandler::new(PolicyHandlerParts {
@@ -224,11 +247,12 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             touch_pool: Some(pool.clone()),
         })
         .with_governance(governance)
+        .with_health(health.clone())
         .with_tokens(tokens)
         .with_summarizer(summarizer)
         .with_condition_body_limit(cfg.gateway.condition_body_bytes as usize),
     );
-    let reqlog_task = tokio::spawn(reqlog.run(FLUSH_INTERVAL, rx.clone()));
+    let reqlog_task = tokio::spawn(reqlog.clone().run(FLUSH_INTERVAL, rx.clone()));
     let snapshot_task = tokio::spawn(snapshots.clone().run(pool.clone(), rx.clone()));
     let hub_task = tokio::spawn(hub.clone().run(pool.clone(), rx.clone()));
     let instance_task = tokio::spawn(instance::run(
@@ -237,48 +261,24 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         instance::HEARTBEAT_INTERVAL,
         rx.clone(),
     ));
-    let listener_hub = hub.clone();
-    let listener_check = ready_check(move || {
-        let connected = listener_hub.is_connected();
-        async move {
-            if connected {
-                Ok(())
-            } else {
-                Err("invalidation listener not connected".to_owned())
-            }
-        }
-    });
-    let snapshot_check = ready_check(move || {
-        let loaded = snapshots.is_loaded();
-        async move {
-            if loaded {
-                Ok(())
-            } else {
-                Err("registry snapshot not loaded".to_owned())
-            }
-        }
-    });
-    let db_check = ready_check(move || {
-        let pool = pool.clone();
-        async move {
-            sqlx::query("SELECT 1")
-                .execute(&pool)
-                .await
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        }
-    });
-    // Health and metrics are never served on the agent-reachable proxy port.
-    let internal = service::ops_router(
-        metrics,
-        vec![
-            ("database", db_check),
-            ("invalidation", listener_check),
-            ("registry", snapshot_check),
-        ],
-    )
-    .merge(aurora_gateway::status::router(ring))
-    .layer(axum::middleware::from_fn(service::trace_context));
+    let probe_task = tokio::spawn(health.clone().run_probe(pool.clone(), rx.clone()));
+    let reconcile_task = tokio::spawn(
+        holds
+            .clone()
+            .run_reconcile(Duration::from_secs(5), rx.clone()),
+    );
+    // Health and metrics are never served on the agent-reachable proxy port. (RFE-014) `/readyz`
+    // is the three-state answer of the outage state machine; the shared ops router (healthz,
+    // metrics, 404) answers everything else.
+    let outage = Outage {
+        health: health.clone(),
+        hub: hub.clone(),
+        reqlog: Some(reqlog.clone()),
+    };
+    let internal = aurora_gateway::status::readyz_router(outage.clone())
+        .merge(aurora_gateway::status::router_with(ring, Some(outage)))
+        .fallback_service(service::ops_router(metrics, Vec::new()))
+        .layer(axum::middleware::from_fn(service::trace_context));
     let ca = Arc::new(Ca::load(Path::new(&cfg.gateway.ca_dir))?);
     let bind = cfg.server.bind.as_str();
     let internal_bind = cfg.internal_bind.as_str();
@@ -367,12 +367,15 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             trusted_proxies,
             external_url: cfg.external_url.clone(),
             tunnels: Some(tunnels),
+            health: Some(health.clone()),
         },
     )?;
     let proxy_listener = service::bind(bind, PROXY_PORT).await?;
     let internal_listener = service::bind(internal_bind, INTERNAL_PORT).await?;
+    let drain_health = health.clone();
     tokio::spawn(async move {
         service::shutdown_signal().await;
+        drain_health.set_draining();
         let _ = tx.send(true);
     });
     let mut rx2 = rx.clone();
@@ -396,5 +399,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let _ = instance_task.await;
     let _ = reqlog_task.await;
     let _ = tls_task.await;
+    let _ = probe_task.await;
+    let _ = reconcile_task.await;
     Ok(())
 }
