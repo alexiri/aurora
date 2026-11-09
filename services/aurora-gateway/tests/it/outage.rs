@@ -61,6 +61,33 @@ enum Mode {
     Drop,
     /// Accept and never answer.
     Stall,
+    /// Established connections stay open but stop delivering in both directions (a dead TCP
+    /// path that never closes); new connections stall.
+    Blackhole,
+}
+
+/// Copies `r` to `w`; while the proxy is in `Blackhole` the bytes are read and discarded.
+async fn pump(
+    mut r: tokio::net::tcp::OwnedReadHalf,
+    mut w: tokio::net::tcp::OwnedWriteHalf,
+    st: Arc<FaultState>,
+) {
+    let mut buf = vec![0u8; 16 * 1024];
+    loop {
+        let Ok(n) = r.read(&mut buf).await else {
+            return;
+        };
+        if n == 0 {
+            let _ = w.shutdown().await;
+            return;
+        }
+        if *st.mode.lock().unwrap() == Mode::Blackhole {
+            continue;
+        }
+        if w.write_all(&buf[..n]).await.is_err() {
+            return;
+        }
+    }
 }
 
 struct FaultState {
@@ -99,10 +126,17 @@ impl Fault {
                         let _c = c;
                         std::future::pending::<()>().await;
                     }),
+                    // New connections in `Blackhole` stall; established ones are pumped by
+                    // `pump`, which discards the data while the mode is `Blackhole`.
+                    Mode::Blackhole => tokio::spawn(async move {
+                        let _c = c;
+                        std::future::pending::<()>().await;
+                    }),
                     Mode::Pass => tokio::spawn(async move {
-                        let mut c = c;
-                        if let Ok(mut s) = TcpStream::connect(st.target).await {
-                            let _ = tokio::io::copy_bidirectional(&mut c, &mut s).await;
+                        if let Ok(s) = TcpStream::connect(st.target).await {
+                            let (cr, cw) = c.into_split();
+                            let (sr, sw) = s.into_split();
+                            tokio::join!(pump(cr, sw, st.clone()), pump(sr, cw, st.clone()));
                         }
                     }),
                 };
@@ -115,7 +149,7 @@ impl Fault {
     /// Switches the mode; anything but `Pass` also cuts every open connection.
     fn set(&self, m: Mode) {
         *self.st.mode.lock().unwrap() = m;
-        if m != Mode::Pass {
+        if matches!(m, Mode::Drop | Mode::Stall) {
             for h in self.st.conns.lock().unwrap().drain(..) {
                 h.abort();
             }
@@ -163,6 +197,8 @@ struct Opts {
     probe: Duration,
     grace: Duration,
     log_cap: usize,
+    /// Listener heartbeat period.
+    heartbeat: Duration,
     /// Probe and flush timers off: only hot-path errors move the state.
     no_probe: bool,
     /// The org's uncredentialed default is `block` (`credentialed_only`).
@@ -180,6 +216,8 @@ impl Default for Opts {
             probe: Duration::from_millis(100),
             grace: Duration::from_millis(500),
             log_cap: 10_000,
+            // Long enough that a loaded test machine never misses two in a row by accident.
+            heartbeat: Duration::from_secs(3),
             no_probe: false,
             credentialed_only: false,
         }
@@ -345,8 +383,9 @@ async fn start(o: Opts) -> Gw {
     let target = db_addr(&db);
     let fault = Fault::start(target).await;
     let lfault = Fault::start(target).await;
-    let pool = fault.pool(&db, Duration::from_millis(1500));
-    let lpool = lfault.pool(&db, Duration::from_millis(1500));
+    // Generous: a loaded test machine must not read a slow connect as an outage.
+    let pool = fault.pool(&db, Duration::from_secs(5));
+    let lpool = lfault.pool(&db, Duration::from_secs(5));
 
     let snapshots = SnapshotStore::new();
     if o.snapshot {
@@ -357,12 +396,15 @@ async fn start(o: Opts) -> Gw {
         move || loaded.is_loaded(),
         o.grace,
         o.probe,
-        Duration::from_millis(400),
+        Duration::from_millis(1500),
     );
     let hub = Hub::new();
     hub.set_health(health.clone());
     hub.set_registry_poke(snapshots.poke());
     hub.set_backoff(Duration::from_millis(50), Duration::from_millis(400));
+    // The heartbeat's NOTIFY goes through the main pool, so a blackholed LISTEN path is the only
+    // thing that stops it from coming back.
+    hub.set_heartbeat(o.heartbeat, Some(pool.clone()));
 
     // Secrets: inline-sealed values (they need the platform database).
     let keyring = Arc::new(
@@ -507,6 +549,9 @@ async fn start(o: Opts) -> Gw {
         }
     });
 
+    let tunnels =
+        aurora_gateway::byo::TunnelRegistry::new(id_resolver.clone(), "https://aurora.test");
+    hub.register(tunnels.clone());
     let gw = ca::generate("gw").unwrap();
     let pl = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy_addr = pl.local_addr().unwrap();
@@ -525,6 +570,8 @@ async fn start(o: Opts) -> Gw {
         },
         ByoParts {
             health: Some(health.clone()),
+            external_url: "https://aurora.test".into(),
+            tunnels: Some(tunnels),
             ..ByoParts::default()
         },
     )
@@ -1529,6 +1576,97 @@ async fn listen_only_loss_keeps_caches_does_not_flap_within_the_grace_and_flushe
             .any(|e| e == &format!("invalidate:{:?}", Scope::Agent(g.w.agent)))
     })
     .await;
+}
+
+/// A silently dead LISTEN path (the TCP connection stays open but delivers nothing) is detected
+/// by the heartbeat; a freeze sent during the gap is honoured by the flush after the reconnect
+/// and closes the live tunnel.
+#[tokio::test]
+async fn a_silently_dead_listener_is_detected_and_a_freeze_closes_the_live_tunnel() {
+    let _s = SERIAL.read().await;
+    let g = start(Opts {
+        id_ttl: Duration::from_secs(30),
+        host_ttl: Duration::from_secs(30),
+        heartbeat: Duration::from_millis(300),
+        ..Opts::default()
+    })
+    .await;
+    sqlx::query(
+        "INSERT INTO gateway_credentials (id, kind, token_hash, display_prefix, agent_id, capabilities) \
+         VALUES ($1,'boot',$2,'x',$3, ARRAY['browser'])",
+    )
+    .bind(Uuid::now_v7())
+    .bind(aurora_core::token::hash("aub_outage").to_vec())
+    .bind(g.w.agent)
+    .execute(g.db.pool())
+    .await
+    .unwrap();
+    let echo = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let echo_addr = format!("localhost:{}", echo.local_addr().unwrap().port());
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = echo.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 256];
+                while let Ok(n) = s.read(&mut buf).await {
+                    if n == 0 || s.write_all(&buf[..n]).await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    let mut s = crate::common::connect(g.proxy).await;
+    let req = format!(
+        "CONNECT {echo_addr} HTTP/1.1\r\nHost: {echo_addr}\r\nProxy-Authorization: Basic {}\r\n\r\n",
+        base64::engine::general_purpose::STANDARD.encode("open:aub_outage")
+    );
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut head = Vec::new();
+    let mut b = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        s.read_exact(&mut b).await.unwrap();
+        head.push(b[0]);
+    }
+    assert!(String::from_utf8_lossy(&head).starts_with("HTTP/1.1 200"));
+    let mut got = [0u8; 4];
+    s.write_all(b"ping").await.unwrap();
+    s.read_exact(&mut got).await.unwrap();
+
+    // The LISTEN path goes silent without closing. Heartbeats are 300 ms apart: degraded
+    // (`listener_down`) within three periods, though the connection never closed and the
+    // database is fine.
+    let t = std::time::Instant::now();
+    g.lfault.set(Mode::Blackhole);
+    until("the dead listener to be detected", || {
+        g.health.state() == State::Degraded
+    })
+    .await;
+    assert!(t.elapsed() < Duration::from_secs(4), "{:?}", t.elapsed());
+    let (st, body) = internal(&g, "/readyz", false).await;
+    assert_eq!((st, &body["reason"]), (200, &json!("listener_down")));
+    assert!(!g.health.db_unreachable());
+
+    // A freeze published during the gap is missed; the tunnel is still open.
+    sqlx::query("UPDATE agents SET frozen_at = now() WHERE id = $1")
+        .bind(g.w.agent)
+        .execute(g.db.pool())
+        .await
+        .unwrap();
+    notify_agent(g.db.pool(), g.w.agent).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    s.write_all(b"pong").await.unwrap();
+    s.read_exact(&mut got).await.unwrap();
+
+    // Recovery: reconnect, flush after re-subscribing, and the freeze closes the tunnel.
+    g.lfault.set(Mode::Pass);
+    until("ready again", || g.health.state() == State::Ready).await;
+    let mut rest = Vec::new();
+    let closed = tokio::time::timeout(Duration::from_secs(8), s.read_to_end(&mut rest)).await;
+    assert!(
+        closed.is_ok(),
+        "the live tunnel of the frozen agent was closed by the flush"
+    );
 }
 
 #[tokio::test]

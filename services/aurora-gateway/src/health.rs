@@ -259,6 +259,19 @@ impl Health {
         self.evaluate();
     }
 
+    /// The LISTEN connection stopped delivering without closing (heartbeats missed): down, and
+    /// already past the grace, so the state is `degraded` (`listener_down`) at once.
+    pub fn set_listener_dead(&self) {
+        {
+            let Ok(mut g) = self.inner.lock() else { return };
+            g.listener_up = false;
+            g.listener_down_since = Instant::now()
+                .checked_sub(self.listen_grace + Duration::from_millis(1))
+                .unwrap_or_else(Instant::now);
+        }
+        self.evaluate();
+    }
+
     // ---- derived state ---------------------------------------------------------------------
 
     /// Derives the state from the inputs, publishes the gauges and logs a transition.

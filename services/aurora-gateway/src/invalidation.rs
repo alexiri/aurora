@@ -72,6 +72,10 @@ fn parse(channel: Channel, payload: &serde_json::Value) -> Option<Result<Invalid
     match channel {
         Channel::GatewayInvalidate => {
             let scope = payload.get("scope").and_then(|v| v.as_str());
+            // Listener heartbeats (RFE-014) concern no cache.
+            if scope == Some("heartbeat") {
+                return None;
+            }
             let s = match (scope, id) {
                 (Some("all"), _) => Scope::All,
                 (Some("org"), Some(i)) => Scope::Org(i),
@@ -110,6 +114,10 @@ pub struct Hub {
     /// Woken after a reconnect so the registry snapshot loader re-polls the active hash.
     registry_poke: std::sync::OnceLock<Arc<Notify>>,
     backoff: std::sync::OnceLock<(Duration, Duration)>,
+    /// Listener heartbeat period (default `GATEWAY_DB_PROBE_INTERVAL`) and the pool its NOTIFY
+    /// goes through (default: the pool of `run`).
+    heartbeat_interval: std::sync::OnceLock<Duration>,
+    heartbeat_pool: std::sync::OnceLock<PgPool>,
     /// Approval holds waiting for a `decided`/`expired` event, by approval id.
     approval_waiters: Mutex<HashMap<Uuid, Arc<Notify>>>,
 }
@@ -189,6 +197,14 @@ impl Hub {
     /// Overrides the reconnect backoff bounds (tests).
     pub fn set_backoff(&self, min: Duration, max: Duration) {
         let _ = self.backoff.set((min, max));
+    }
+
+    /// Overrides the heartbeat period and the pool its NOTIFY is sent through (tests).
+    pub fn set_heartbeat(&self, interval: Duration, pool: Option<PgPool>) {
+        let _ = self.heartbeat_interval.set(interval);
+        if let Some(p) = pool {
+            let _ = self.heartbeat_pool.set(p);
+        }
     }
 
     /// True while the LISTEN connection has been established.
@@ -287,6 +303,7 @@ impl Hub {
             .copied()
             .unwrap_or((health::RECONNECT_BACKOFF_MIN, health::RECONNECT_BACKOFF_MAX));
         let mut first = true;
+        let instance = Uuid::now_v7();
         loop {
             // (3) Connect with jittered exponential backoff; (4) the connection has re-issued
             // LISTEN on every channel when `connect_listener` returns.
@@ -324,12 +341,50 @@ impl Hub {
             if let Some(h) = self.health.get() {
                 h.set_listener(true);
             }
-            // Dispatch until the connection is lost.
+            // Dispatch until the connection is lost, visibly or silently (heartbeat).
+            let hb_every = self
+                .heartbeat_interval
+                .get()
+                .copied()
+                .unwrap_or(health::DB_PROBE_INTERVAL);
+            let mut tick = tokio::time::interval(hb_every);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            tick.tick().await;
+            let (mut seq, mut awaiting, mut missed) = (0u64, None::<u64>, 0u32);
+            let mut silent = false;
             loop {
                 let next = tokio::select! {
                     _ = stopped(&mut shutdown) => {
                         self.mark_listener_lost();
                         return;
+                    }
+                    _ = tick.tick() => {
+                        // A heartbeat sent through the pool must come back on the LISTEN
+                        // connection; two in a row that do not = a dead listener (a TCP
+                        // connection that no longer delivers but never closed). Without
+                        // this a freeze's invalidation would never close live tunnels.
+                        if awaiting.is_some() {
+                            missed += 1;
+                            if missed >= 2 {
+                                tracing::warn!("invalidation listener heartbeat missed twice; reconnecting");
+                                silent = true;
+                                break;
+                            }
+                        }
+                        seq += 1;
+                        awaiting = Some(seq);
+                        let pool = self.heartbeat_pool.get().cloned().unwrap_or_else(|| pool.clone());
+                        let payload = serde_json::json!({
+                            "scope": "heartbeat", "id": instance, "seq": seq
+                        });
+                        tokio::spawn(async move {
+                            let _ = tokio::time::timeout(
+                                Duration::from_secs(2),
+                                aurora_db::bus::notify(&pool, Channel::GatewayInvalidate, &payload),
+                            )
+                            .await;
+                        });
+                        continue;
                     }
                     r = listener.try_recv() => r,
                 };
@@ -338,8 +393,21 @@ impl Hub {
                         let Some(channel) = Channel::parse(n.channel()) else {
                             continue;
                         };
-                        match serde_json::from_str(n.payload()) {
+                        match serde_json::from_str::<serde_json::Value>(n.payload()) {
                             Ok(payload) => {
+                                if channel == Channel::GatewayInvalidate
+                                    && payload.get("scope").and_then(|v| v.as_str())
+                                        == Some("heartbeat")
+                                {
+                                    let mine = payload.get("id").and_then(|v| v.as_str())
+                                        == Some(instance.to_string().as_str());
+                                    let s = payload.get("seq").and_then(serde_json::Value::as_u64);
+                                    if mine && s.zip(awaiting).is_some_and(|(s, a)| s >= a) {
+                                        awaiting = None;
+                                        missed = 0;
+                                    }
+                                    continue;
+                                }
                                 self.handle(BusEvent::Notification { channel, payload });
                             }
                             Err(e) => tracing::warn!(
@@ -361,6 +429,10 @@ impl Hub {
             drop(listener);
             // (1) Caches are kept; only the flag changes.
             self.mark_listener_lost();
+            if silent && let Some(h) = self.health.get() {
+                // Already silent for two periods: degraded at once, no second grace.
+                h.set_listener_dead();
+            }
             tracing::warn!("invalidation listener lost; reconnecting");
         }
     }
