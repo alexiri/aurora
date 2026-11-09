@@ -35,7 +35,6 @@ MUST implement it exactly; any change starts here.
 | email | citext unique not null | lower-cased, trimmed |
 | email_verified_at | timestamptz null | |
 | display_name | text not null | ≤80 |
-| password_hash | text null | argon2id PHC string; null for SSO-only users |
 | is_instance_admin | bool not null default false | |
 | disabled_at | timestamptz null | instance-level disable |
 | default_org_id | uuid null FK→organizations (set null) | |
@@ -65,16 +64,6 @@ External identities linked to a user (OIDC).
 | expires_at | timestamptz not null | absolute expiry |
 | revoked_at | timestamptz null | |
 | reauth_at | timestamptz null | last successful OIDC re-authentication (`04 §OIDC`); account deletion needs it within 10 min (phase 1, RFE-004) |
-
-### `email_tokens`
-| Column | Type | Notes |
-|---|---|---|
-| id | uuid pk | |
-| user_id | uuid FK→users (cascade) | |
-| purpose | text CHECK in (`verify_email`,`reset_password`) | |
-| token_hash | bytea unique | `aui_` |
-| expires_at | timestamptz | verify 24 h, reset 1 h |
-| used_at | timestamptz null | |
 
 ### `organizations`
 | Column | Type | Notes |
@@ -1174,16 +1163,6 @@ phase-0 schema: the tables above are machine-checked against the migrations
 headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
-
-#### `users`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| password_hash | (existing column) | cleared (`NULL`) by the phase-1 migration and ignored from phase 1 (RFE-004); the column is dropped by the contract migration in a later release (`15 §Upgrades`, expand → migrate → contract) | 1 → dropped by CONTRACT-001, the first phase-3 task (RFE-004; owner Q9, D-78) |
-
-#### `email_tokens`
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| (whole table) | — | unused from phase 1 (no e-mail verification or password reset, RFE-004); existing rows are ignored and the table is dropped by the contract migration in a later release | 1 → dropped by CONTRACT-001, the first phase-3 task (RFE-004; owner Q9, D-78) |
 
 #### `gateway_credentials` (token age and use)
 | Planned column | Type | Notes | Phase |

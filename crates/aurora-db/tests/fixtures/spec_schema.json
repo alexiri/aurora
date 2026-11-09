@@ -328,14 +328,6 @@
       "integration_id",
       "platform_user_ref"
     ],
-    "email_tokens": [
-      "expires_at",
-      "id",
-      "purpose",
-      "token_hash",
-      "used_at",
-      "user_id"
-    ],
     "gateway_credentials": [
       "agent_id",
       "boot_id",
@@ -838,8 +830,7 @@
       "email_verified_at",
       "id",
       "is_instance_admin",
-      "last_login_at",
-      "password_hash"
+      "last_login_at"
     ],
     "watches": [
       "agent_id",

@@ -102,8 +102,8 @@ phase 1 removes are marked *(phase 0 only)*.
 From phase 1 the routes `POST /v1/auth/signup`, `/v1/auth/login`,
 `/v1/auth/verify-email[/resend]`, `/v1/auth/password/{forgot,reset,change}` answer
 404, the dashboard pages `/auth/signup|forgot|reset|verify` do not exist,
-`users.password_hash` is cleared by the phase-1 migration and ignored
-(`03 §Planned changes`), and the `argon2`/common-password machinery is removed. The
+the local password column was cleared by the phase-1 migration and dropped by
+CONTRACT-001 (`15 §Upgrades`), and the `argon2`/common-password machinery is removed. The
 phase-0 behaviour, for reference:
 
 - Passwords: argon2id (m=19 MiB, t=2, p=1), min 12 chars, max 256; checked
@@ -147,7 +147,7 @@ Flow:
    email (this also binds a **pre-provisioned** user, e.g. from
    `bootstrap-admin`). Else create a user if the sign-up mode allows (or JIT
    applies). A user created here has `email_verified_at = now()` (the provider
-   verified it) and no `password_hash`. A disabled user (`users.disabled_at`)
+   verified it) and no local password. A disabled user (`users.disabled_at`)
    is refused (`user_disabled`).
 4. JIT: if the provider has a `jit` block and the user is not a member of that
    org, add membership with the configured role and workspace bindings.

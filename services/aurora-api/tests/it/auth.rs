@@ -65,15 +65,8 @@ async fn open_sign_in_creates_user_org_and_cookie() {
         1
     );
     assert_eq!(whoami(&h, &s.cookie).await, StatusCode::OK);
-    // No local credential is ever stored.
-    assert_eq!(
-        count(
-            &h,
-            "SELECT count(*) FROM users WHERE password_hash IS NOT NULL"
-        )
-        .await,
-        0
-    );
+    // No local credential can be stored: CONTRACT-001 dropped the local password column, and the
+    // aurora-db `schema_matches_spec` test proves the column is absent.
     // A second sign-in of the same identity reuses the user.
     let again = h.sign_in("ann@example.com").await;
     assert_eq!(again.user_id, s.user_id);
