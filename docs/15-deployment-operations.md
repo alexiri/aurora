@@ -412,8 +412,9 @@ lower `attachments.org_quota_mib_max` to bound the sum).
 Streaming text takes the `DeltaBus` (`05 §The delta bus seam`); with the default
 `notify` implementation every delta is a Postgres `NOTIFY`, serialized in the
 commit path and delivered to **every** API replica. Back-of-envelope, for
-planning (to be re-measured by `scripts/perf/delta_bus.sh`, an acceptance item of
-the phase-1 task, on the target Postgres):
+planning (re-measure on the target Postgres with `bash scripts/perf/delta_bus.sh`: it
+runs in a throwaway database, prints PASS/WARN against the numbers below and never
+fails on a slow machine):
 
 | Quantity | Value |
 |----------|-------|

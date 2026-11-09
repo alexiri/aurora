@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{OnceCell, broadcast};
 use uuid::Uuid;
 
+/// Default coalescing window (`events.delta_coalesce_ms`, `docs/15 §Configuration`).
 pub const DELTA_FLUSH_AFTER: Duration = Duration::from_millis(100);
 pub const DELTA_FLUSH_CHARS: usize = 2_000;
 /// Keeps each NOTIFY payload far below the 7 000 byte bus limit even for multibyte text.
@@ -50,18 +51,53 @@ struct Pending {
     timer: bool,
 }
 
-#[derive(Default)]
 pub struct ConversationBus {
     tx: OnceCell<broadcast::Sender<BusMsg>>,
     /// Ephemeral delta fan-out (RFE-016); `notify` unless injected.
     delta_bus: OnceLock<Arc<dyn DeltaBus>>,
     pending: Mutex<HashMap<Key, Pending>>,
+    /// Coalescing window (`events.delta_coalesce_ms`).
+    window: Duration,
+}
+
+impl Default for ConversationBus {
+    fn default() -> Self {
+        Self::with_window(DELTA_FLUSH_AFTER)
+    }
 }
 
 impl ConversationBus {
+    /// The bus selected by `events.delta_bus` (`notify` is the only implementation; the id is
+    /// validated at startup) with `events.delta_coalesce_ms` as the coalescing window.
+    pub fn from_config(
+        events: &aurora_config::EventsSection,
+        pool: &PgPool,
+    ) -> Result<Self, String> {
+        let bus = aurora_db::bus::delta_bus_by_id(&events.delta_bus, pool)?;
+        Ok(Self::with_delta_bus_and_window(
+            bus,
+            Duration::from_millis(u64::from(events.delta_coalesce_ms)),
+        ))
+    }
+
+    /// A `notify` bus with an explicit coalescing window.
+    pub fn with_window(window: Duration) -> Self {
+        Self {
+            tx: OnceCell::new(),
+            delta_bus: OnceLock::new(),
+            pending: Mutex::new(HashMap::new()),
+            window,
+        }
+    }
+
     /// A bus whose deltas flow through `delta_bus` instead of the default NOTIFY channel.
     pub fn with_delta_bus(delta_bus: Arc<dyn DeltaBus>) -> Self {
-        let b = Self::default();
+        Self::with_delta_bus_and_window(delta_bus, DELTA_FLUSH_AFTER)
+    }
+
+    /// As [`Self::with_delta_bus`] with an explicit coalescing window.
+    pub fn with_delta_bus_and_window(delta_bus: Arc<dyn DeltaBus>, window: Duration) -> Self {
+        let b = Self::with_window(window);
         let _ = b.delta_bus.set(delta_bus);
         b
     }
@@ -170,12 +206,14 @@ impl ConversationBus {
                 text: String::new(),
                 chars: 0,
                 // A fresh buffer may be flushed immediately (nothing was sent within 100 ms).
-                last_flush: Instant::now() - DELTA_FLUSH_AFTER,
+                last_flush: Instant::now()
+                    .checked_sub(self.window)
+                    .unwrap_or_else(Instant::now),
                 timer: false,
             });
             p.text.push_str(text);
             p.chars += text.chars().count();
-            if p.chars >= DELTA_FLUSH_CHARS || p.last_flush.elapsed() >= DELTA_FLUSH_AFTER {
+            if p.chars >= DELTA_FLUSH_CHARS || p.last_flush.elapsed() >= self.window {
                 p.last_flush = Instant::now();
                 p.chars = 0;
                 (Some(std::mem::take(&mut p.text)), false)
@@ -200,8 +238,9 @@ impl ConversationBus {
         if arm {
             let bus = Arc::clone(self);
             let pool = pool.clone();
+            let window = self.window;
             tokio::spawn(async move {
-                tokio::time::sleep(DELTA_FLUSH_AFTER).await;
+                tokio::time::sleep(window).await;
                 bus.flush_key(&pool, &key).await;
             });
         }
@@ -378,6 +417,60 @@ mod tests {
             got.iter()
                 .any(|d| d.kind == DeltaKind::Activity && d.data == "running ls")
         );
+    }
+
+    /// A non-default window is honoured: with 300 ms, a delta sent 150 ms after the first is
+    /// still held (the default 100 ms would have emitted it), and the timer flushes it at 300 ms.
+    #[tokio::test]
+    async fn a_non_default_coalesce_window_is_honoured() {
+        let mem = Arc::new(InMemoryDeltaBus::new());
+        let mut sub = mem.subscribe().await.unwrap();
+        let events = aurora_config::EventsSection {
+            delta_coalesce_ms: 300,
+            ..Default::default()
+        };
+        let pool = unused_pool();
+        let configured = ConversationBus::from_config(&events, &pool).unwrap();
+        assert_eq!(configured.window, Duration::from_millis(300));
+        let bus = Arc::new(ConversationBus::with_delta_bus_and_window(
+            mem.clone(),
+            configured.window,
+        ));
+        let (c, t) = (Uuid::now_v7(), Uuid::now_v7());
+        let p = |s: &'static str| {
+            let (bus, pool) = (bus.clone(), pool.clone());
+            async move {
+                bus.publish_delta(&pool, c, t, "text.delta", (Some("m1"), None), s)
+                    .await
+            }
+        };
+        p("a").await; // flushed at once
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        p("b").await; // within the window: held
+        p("c").await;
+        let mut got = Vec::new();
+        // Nothing but "a" until the window (300 ms after "a") elapses.
+        while let Ok(Some(d)) = tokio::time::timeout(Duration::from_millis(50), sub.next()).await {
+            got.push(d.data);
+        }
+        assert_eq!(got, ["a"], "held within the 300 ms window");
+        tokio::time::sleep(Duration::from_millis(350)).await;
+        while let Ok(Some(d)) = tokio::time::timeout(Duration::from_millis(50), sub.next()).await {
+            got.push(d.data);
+        }
+        assert_eq!(got, ["a", "bc"], "flushed by the timer after the window");
+    }
+
+    #[tokio::test]
+    async fn from_config_rejects_an_unknown_bus_id() {
+        let events = aurora_config::EventsSection {
+            delta_bus: "kafka".into(),
+            ..Default::default()
+        };
+        let e = ConversationBus::from_config(&events, &unused_pool())
+            .err()
+            .unwrap();
+        assert!(e.contains("events.delta_bus"), "{e}");
     }
 
     #[tokio::test]

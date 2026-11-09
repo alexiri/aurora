@@ -32,7 +32,7 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 | [sign-in.md](sign-in.md) | OIDC-only sign-in (`auth.oidc_providers`), first administrator, the development IdP (`auth.dev_idp`, loopback only) |
 | [gateway-posture.md](gateway-posture.md) | TLS proxy listener (`gateway.proxy_tls.*`), open-lane posture, BYO posture and source allow-lists (`byo.*`, `gateway.trusted_proxies`, PROXY protocol), the database lane |
 | [retention-and-quota.md](retention-and-quota.md) | `retention.conversation_days_max`, `attachments.*`, org settings and the daily sweeps |
-| [limits-and-approvals.md](limits-and-approvals.md) | API rate limits (`ratelimit.api.*`), approval timeouts (`approvals.*`) and approval e-mail (`email.*`) |
+| [limits-and-approvals.md](limits-and-approvals.md) | API rate limits (`ratelimit.api.*`), approval timeouts (`approvals.*`), approval e-mail (`email.*`) and streaming fan-out (`events.*`) |
 | [apps-and-catalogue.md](apps-and-catalogue.md) | The built-in catalogue (signing, icons) and app instances for self-hosted servers |
 | [freeze.md](freeze.md) | The emergency freeze of an agent, workspace or organization |
 

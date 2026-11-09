@@ -142,6 +142,12 @@ impl AppState {
         let api_limiter = Arc::new(web::apilimit::Limiter::new(
             web::apilimit::Limits::from_config(&config.ratelimit.api),
         ));
+        let conversation_bus = Arc::new(
+            crate::domains::conversations::bus::ConversationBus::from_config(
+                &config.events,
+                &pool,
+            )?,
+        );
         Ok(Self {
             pool,
             config: Arc::new(config),
@@ -156,7 +162,7 @@ impl AppState {
             llm_http,
             approval_bus: Arc::default(),
             approval_watch: Arc::default(),
-            conversation_bus: Arc::default(),
+            conversation_bus,
             connector_bus: Arc::default(),
             derived,
             oidc,
