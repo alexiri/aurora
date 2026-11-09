@@ -440,6 +440,19 @@ source.
   org rights only sees the binding picker. The Members list of the org shows an
   "effective role" with the source ("Admin via <group>"); at 390 px every table
   collapses to the stacked-row pattern.
+- **Directory sync** (`/o/<org>/settings/directory`, phase 4, P4-GRP-2, D-132; **org owners only,
+  hidden unless the instance has `scim.enabled`**): an enable switch (turning it on opens the
+  re-authentication step), the required **e-mail domains** editor, the `exclusive` switch ("Only people
+  your directory provisions can join this organization", default off), the **SCIM base URL** with a copy
+  button, **tokens** (create → the `aud_` token is shown once in a copy dialog with the warning
+  "Store it in your identity provider now; it cannot be shown again", list with expiry and last use, a
+  banner 14 days before expiry, revoke with a confirm) and a **status** card (last request, user and group
+  counts by state, the last 20 errors). A short setup guide per IdP (Entra ID, Okta, Keycloak: base URL,
+  token, attribute mapping `userName`/`emails`/`active`, "do not send roles") is linked from the page. The
+  Members list marks directory-managed people with a "Directory" badge and their state, disables the role
+  and remove controls for them where SCIM owns the state ("Managed by your identity provider": suspend and
+  remove stay available to owners as the human override, which SCIM never reverses), and the offboarding view
+  lists the BYO agents the person created ("regenerate their tokens"). Built from the shared patterns only.
 - **Policy**: org rules editor (draft/publish). (phase 3, RFE-023) The **Default Rule** control carries the note "Does not affect LLM endpoints — see Governance" with a link to the governance page, and a tooltip explaining that explicit block rules naming an LLM host still apply.
 - **Credentials**: org secrets, org LLM keys, org app connections, OAuth clients.
 - **Apps**: app availability posture and allow-list.

@@ -176,6 +176,13 @@ the configuration names environment variables (`username_env`, `password_env`),
 filled from a Secret (Helm `counters.redis.existingSecret`), exactly like the Vault
 `approle` variables (`15`).
 
+(phase 4, P4-GRP-2) **SCIM directory tokens** (`aud_`, `00 §Token prefixes`) are plain
+capability tokens like every other prefix: 32 random bytes, shown once, stored only as a
+SHA-256 hash (`scim_tokens.token_hash`) with a display prefix, never sealed (there is
+nothing to read back) and never derived from the signing key, so rotating the signing key
+does not invalidate them. They authorize `/scim/v2` of their one organization and nothing
+else (`04 §SCIM`, SEC-72).
+
 **Keyring-style lists (phase 2, RFE-007, D-51).** Phase 0 held one static value
 for each of `AURORA_SIGNING_KEY` and `AURORA_INTERNAL_SECRET`, with no rotation.
 From phase 2 both accept the **same shape as the encryption keyring** (§3):

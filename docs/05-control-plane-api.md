@@ -47,6 +47,7 @@ if any declared id lacks an implementation.
 | Runner | `Authorization: Bearer aur_…` + `X-Aurora-Replica: <id>` (after register) | `/v1/runner/**` |
 | Connector | `Authorization: Bearer aun_…` + `X-Aurora-Replica` (phase 4, P4-MCON: or the connector host's `auh_…` + `Aurora-Connector: <id>` for a **managed** connector, C-458) | `/v1/connector/**` |
 | Connector host (phase 4, P4-MCON) | `Authorization: Bearer auh_…` | `/v1/connector-host/**` (C-455..C-457) |
+| SCIM client (IdP; phase 4, P4-GRP-2) | `Authorization: Bearer aud_…` (per org; cookies and `Origin` ignored) | **only** `/scim/v2/**` (`16 §W15`); the edge proxy routes `/scim/v2` to the API in addition to `/v1`; 404 while `scim.enabled = false`; an `aud_` bearer anywhere else is 401 |
 | Public capability | token in path | `POST /v1/hooks/{token}`, `GET /v1/public/avatars/{key}`, `GET /v1/oauth/callback`, OIDC callbacks |
 | Internal services (hook host) | `Authorization: Bearer <internal secret>` (phase 2, RFE-007: any key of the ring + `X-Aurora-Key-Id`) | `/internal/v1/**` |
 | Metrics / health | none | `/healthz`, `/readyz`, `/metrics` |
@@ -126,6 +127,9 @@ matrix:
     rejected bearer). **Exempt**: `/healthz`, `/readyz`, `/metrics`, the machine
     planes (`/v1/runner/*`, `/v1/connector/*`, `/internal/*`) which apply their own
     back-pressure, and `POST /v1/hooks/{token}` (its own 60/min per webhook).
+    (phase 4, P4-GRP-2) `/scim/v2/**` is not an authenticated `/v1` request: it has its own
+    per-token bucket `SCIM_RATE` (600/min, burst 120; `key = api:scim:token:<id>`, class
+    `management`, `04 §SCIM`) and the rejected-bearer limit for bad tokens.
   - **Token buckets**, in memory per API replica by default (the same
     approximation as the gateway, D-05; N replicas can allow up to N×).
     (phase 4, P4-CNT, D-119) With `ratelimit.counters.backend = postgres` or `redis`
@@ -347,6 +351,7 @@ claim-based and safe to run everywhere.
 | Attachment pending sweep (`ATTACH_PENDING_TTL`) | hourly | idempotent |
 | Conversation retention sweep (phase 2, RFE-010): delete conversations past the org window through the delete path; blob-orphan sweep | daily | singleton |
 | Attachment sweep (phase 2, RFE-015): purge attachment bytes past the org window, remove orphan blobs, reconcile `org_storage_usage`, quota notices; (phase 4, P4-S3) with the `s3` backend the orphan step lists the bucket prefix and honours `S3_ORPHAN_GRACE` (`10 §Attachments`) | daily | singleton |
+| SCIM token expiry (phase 4, P4-GRP-2): a notice to the org owners and an audit row 14 days and 1 day before a token expires; expired tokens are simply dead (read-time check) | daily | singleton |
 | Counter pruning (phase 4, P4-CNT, `postgres` backend only): delete dead `rate_limit_windows` / `rate_limit_buckets` rows | every `COUNTER_PRUNE_INTERVAL` (60 s) | `SKIP LOCKED` batches |
 | Blob store probe (phase 4, P4-S3, `s3` backend only): `HeadBucket` + versioning/encryption state, sets `aurora_blob_store_up` | every 30 s | per replica |
 | Request-log partition maintenance and retention | daily | singleton |
@@ -518,6 +523,22 @@ workspace bindings stay editable), 409 `stale_revision`.
 (phase 4, P4-GRP-1) The offboarding views of `§Organizations, members, keys` add
 `via_groups` to each row; `GET /v1/agents/{agent}/effective` and policy `simulate` take
 the speaker's groups into account (`07`).
+
+### SCIM management (phase 4, P4-GRP-2, D-132)
+Org `owner` only (`04 §SCIM`); every write is security-critical audited. The SCIM plane
+itself (`/scim/v2`, token auth, SCIM errors) is specified in `16 §W15`, not here.
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET/PUT `/v1/orgs/{org}/scim` | S (PUT: SO) | `{ available, enabled, email_domains: [domain], exclusive, base_url }` (`available` = instance `scim.enabled`; `base_url` = `<external>/scim/v2`); PUT validates domains (422 `scim_domain_invalid`, `scim_domain_not_allowed`, `scim_domains_required` when enabling) and needs a recent re-authentication when it turns SCIM on (412 `reauth_required`); 409 `scim_unavailable` when the instance switch is off |
+| GET/POST `/v1/orgs/{org}/scim/tokens`; DELETE `/v1/scim/tokens/{id}` | S (POST: SO) | list without material (`name`, `display_prefix`, `created_at`, `expires_at`, `last_used_at`, `expiring` within 14 days); POST `{ name, expires_in_days? }` → the `aud_` token once; 422 `scim_token_limit_reached`, `scim_not_enabled`; 412 `reauth_required`; DELETE is idempotent and effective at once |
+| GET `/v1/orgs/{org}/scim/status` | S | Directory sync page: `{ last_request_at, users: {active, suspended, removed}, groups, errors: [≤ SCIM_ERROR_LOG sanitized { at, method, resource, status, scim_type }] }` |
+
+Offboarding by SCIM is visible through the existing offboarding views
+(`GET /v1/orgs/{org}/members/{user}/offboarding`, RFE-021), which keep working for a
+`suspended` member and now carry `byo_agents_created` (id, name, workspace) next to the
+schedules and webhooks; members created or managed by SCIM carry `directory: {
+state, external_id? }` in `GET /v1/orgs/{org}/members`.
 
 ### Secrets and LLM
 | Method & path | Auth | Purpose |

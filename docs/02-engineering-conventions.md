@@ -283,12 +283,17 @@ overridden by the named configuration key (`15`).
 | `COUNTER_TIMEOUT` | (phase 4, P4-CNT) 50 ms per shared-counter store call (10–2000 ms) | `ratelimit.counters.timeout_ms` | 05, 06, 15 |
 | `COUNTER_BREAKER_FAILURES` / `COUNTER_BREAKER_COOLDOWN` | (phase 4, P4-CNT) 3 consecutive failures open the breaker; one probe after 5 s | — | 06, 15 |
 | `COUNTER_PRUNE_INTERVAL` / `COUNTER_PRUNE_BATCH` | (phase 4, P4-CNT) 60 s / 5 000 rows (`postgres` backend) | — | 03, 15 |
-| `GROUPS_PER_ORG` / `GROUP_MEMBERS_MAX` | (phase 4, P4-GRP-1) 500 groups per org / 5 000 members per group (422 `group_limit_reached` / `group_member_limit_reached`; SCIM: 413 `tooMany`-style `detail`, `04 §SCIM`) | — | 04, 05 |
+| `GROUPS_PER_ORG` / `GROUP_MEMBERS_MAX` | (phase 4, P4-GRP-1) 500 groups per org / 5 000 members per group (422 `group_limit_reached` / `group_member_limit_reached`; SCIM: 400 `invalidValue` with a `detail`, `04 §SCIM`) | — | 04, 05 |
 | `GROUPS_PER_USER` / `GROUP_BINDINGS_PER_GROUP` | (phase 4, P4-GRP-1) 100 groups per user / 200 workspace bindings per group | — | 04 |
 | `GROUP_NAME_MAX` / `GROUP_DESCRIPTION_MAX` | (phase 4, P4-GRP-1) 80 / 280 chars | — | 03, 04 |
 | `RULE_GROUP_IDENTITIES_MAX` | (phase 4, P4-GRP-1) 20 `group` identities per policy rule | — | 07 |
 | `GROUP_IMPACT_LIST_MAX` | (phase 4, P4-GRP-1) 200 users listed in a group impact view (the total is always given) | — | 05 |
 | `ACCESS_NOTIFY_BULK` | (phase 4, P4-GRP-1) above 1 000 users changed in one transaction a single org-wide `access` notification replaces per-user ones | — | 04, 05 |
+| `SCIM_RATE` | (phase 4, P4-GRP-2) 600 requests / min per token, burst 120 (class `management`; `scim.rate_per_minute`) | `scim.rate_per_minute` | 04, 05, 16 |
+| `SCIM_BODY_MAX` / `SCIM_MAX_PATCH_OPS` / `SCIM_MAX_MEMBERS_PER_REQUEST` | (phase 4, P4-GRP-2) 1 MiB / 100 operations / 1 000 members | — | 04, 16 |
+| `SCIM_PAGE_MAX` / `SCIM_PAGE_DEFAULT` | (phase 4, P4-GRP-2) 100 / 50 resources per page | — | 16 |
+| `SCIM_TOKENS_PER_ORG` / `SCIM_TOKEN_DEFAULT_DAYS` / `SCIM_TOKEN_MAX_DAYS` | (phase 4, P4-GRP-2) 5 active / 365 days / 730 days (no non-expiring token) | `scim.token_max_days` | 04, 15 |
+| `SCIM_ERROR_LOG` | (phase 4, P4-GRP-2) last 20 sanitized errors kept per org for the Directory sync page | — | 14 |
 | `API_STREAMS_PER_PRINCIPAL` | (phase 2, RFE-017) 20 concurrent SSE connections + long-polls | — | 05 |
 | `DELTA_COALESCE` | (phase 1, RFE-016) 100 ms or 2 000 chars per turn per delta | `events.delta_coalesce_ms` (100–500) | 05 |
 | `LONG_POLL_MAX` | 30 s | — | 05 |

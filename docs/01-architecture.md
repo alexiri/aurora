@@ -122,6 +122,13 @@ database, no keys, no ambient network. It is called only on slow paths.
     is a system of record for authorization, and an outage degrades attachments or
     quota accuracy, never policy (SEC-62, SEC-63). Bucket bytes are served only
     through the API's authorization, never by a pre-signed URL.
+11. **Identity provider directory** (phase 4, P4-GRP-2). An org's IdP may call the API's
+    `/scim/v2` with an org-scoped `aud_` token to provision members and groups. The IdP is
+    trusted for *directory state of its own org* and for nothing else: it cannot sign anyone in
+    (identity still comes from the OIDC sign-in and its verified e-mail), cannot set a role,
+    create or touch an owner, link a person by `externalId`, reach another org, or read any
+    Aurora data. Its writes pass the same authorization, limits and critical audit as the
+    dashboard's (SEC-72, SEC-73).
 
 ## End-to-end flows
 

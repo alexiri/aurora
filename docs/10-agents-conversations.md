@@ -200,6 +200,7 @@ turns become `aborted` immediately; dispatched/running ones get
 | Harness/provider terminal errors                   | `provider_auth`, `provider_rate_limited`, `provider_quota`, `provider_overloaded`, `provider_refusal`, `harness_failed` (classified by the supervisor, `12`) |
 | Restart requested                                  | active turns `failed` `agent_restarted`                                                                                                                      |
 | Agent effectively frozen (phase 2, RFE-006)        | `queued`/`joining` rows and live turns `aborted` with `error_code = frozen`; new turns refused (`04 §Freeze`)                                                |
+| Speaker deprovisioned by SCIM (phase 4, P4-GRP-2)  | `queued`/`joining` rows and live turns whose speaker is the deprovisioned user, in that org, `aborted` with `error_code = user_deprovisioned` (`turn.abort` for live ones); schedule/webhook/peer turns are not speaker turns and follow the creator re-check (`04 §SCIM`) |
 
 
 Error codes are an **open vocabulary**: the API stores any bounded code;

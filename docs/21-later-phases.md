@@ -150,6 +150,16 @@ tokens), group → workspace access bindings, group identities in policy
   conversations`, `14` (Groups page, workspace Access, policy editor), `02 §Limits`,
   `18 §Groups`. Not in phase 4: nested groups, JIT group assignment, group import or
   export.
+- **SCIM 2.0 — specified (phase 4, P4-GRP-2, D-132, D-135, SEC-72, SEC-73).** `/scim/v2`
+  Users and Groups (Entra ID, Okta, Keycloak subset), per-org hashed expiring `aud_`
+  tokens created by org owners, off unless `scim.enabled` and an owner enables it;
+  pre-provisioned unverified users linked only by the OIDC-verified e-mail; groups feed
+  P4-GRP-1; deprovisioning suspends or removes the membership, revokes the org's keys,
+  aborts speaker turns and cannot be undone by JIT; owners are never touched. Owning
+  sections: `04 §SCIM` and `§OIDC`, `16 §W15`, `03 §Planned changes`, `05` (SCIM
+  management routes), `08 §4`, `10 §Failure semantics`, `14` (Directory sync), `15 §SCIM
+  directory sync`, `01` (trust boundary 11), `02 §Limits`, `18 §SCIM`. Not in phase 4:
+  SCIM `roles`, Bulk, enterprise extension, ETags, filters beyond `eq`, nested groups.
 
 ## Other later items
 

@@ -163,6 +163,17 @@ Flow:
    org, add membership with the configured role and workspace bindings.
 5. Create a session; 302 to `return_to`.
 
+(phase 4, P4-GRP-2, D-132, SEC-73) **SCIM and sign-in.** SCIM provisions *directory
+state* (users, memberships, groups); it never signs anybody in and is never evidence of
+identity. A user pre-provisioned by SCIM is linked by step 3 exactly like a
+`bootstrap-admin` user — **only** through the provider's verified e-mail (D-118 trusted
+domains included) — and `externalId` is stored for the IdP's own correlation and is never
+used to find, link or authenticate a user. Steps 3 and 4 also never **create or
+reactivate a membership of an org that has a SCIM link for the user in state
+`suspended` or `removed`** (the sign-in succeeds for other orgs; JIT and invitation
+acceptance for that org are skipped, audited as refused), so a deprovisioned person cannot
+re-enter through JIT while their IdP session lingers (*SCIM*).
+
 **Re-authentication** (phase 1, RFE-004). `GET /v1/auth/oidc/{provider}/start?
 return_to=…&reauth=1` sends `prompt=login` and `max_age=0`; on the callback the
 core requires the same user and (when the IdP returns `auth_time`) a value within
@@ -373,6 +384,7 @@ the frozen payload.
 | Create, rename, delete a group; add/remove members of a `manual` group; set or clear a group's org-role mapping (phase 4, P4-GRP-1) | org `owner`/`admin` (a mapping to `admin` is as powerful as granting `admin` by role change, which admins may already do; `owner` can never be mapped) |
 | List groups with names, source and member counts; read a group's members (phase 4, P4-GRP-1) | members and the impact view: org `owner`/`admin`; names and counts only (for the binding picker): `can_own` of any workspace of the org; a member sees only the groups they belong to (`/v1/me`) |
 | Bind / unbind / change the role of a **group** on a workspace, read the workspace's group bindings and the group-derived members (phase 4, P4-GRP-1) | `can_own` of the workspace (the same authority as user bindings, including granting `owner`); the group must belong to the workspace's org |
+| Enable SCIM and set its e-mail domains / `exclusive`; create, list, revoke SCIM tokens; read Directory sync status (phase 4, P4-GRP-2) | org `owner` only; session only; enabling and token creation need a recent re-authentication (412 `reauth_required`) |
 | Plugins, trusted keys, host claims, connectors, runners | instance admin |
 
 Org admins/owners can therefore always repair a workspace; members of a shared
@@ -536,6 +548,134 @@ deletion deletes the org's groups after their children (the foreign key is `rest
 There is no nesting, no import and no export in phase 4; JIT (`§OIDC` step 4) assigns
 org membership and workspace bindings only, never groups.
 
+## SCIM (phase 4, P4-GRP-2, D-132, D-135, SEC-72, SEC-73)
+
+SCIM 2.0 (RFC 7643/7644) lets an organization's IdP (Entra ID, Okta, Keycloak) create,
+update, deactivate and delete **users** and maintain **groups** and their membership
+without anyone touching Aurora. It feeds `§Groups` and org membership and **nothing
+else**. Wire details (endpoints, filter and PATCH subset, errors): `16 §W15`; tables:
+`03 §Planned changes`; routes: `05`. Invisible until used: the surface answers 404
+unless the operator sets `scim.enabled = true` *and* an org owner enables SCIM for the
+org and creates a token.
+
+**Enabling and tokens.**
+
+- Instance `scim.enabled` (default `false`; `15`): while false `/scim/v2/**` answers 404
+  to everyone and the dashboard shows no SCIM page. An optional instance allow-list
+  `scim.allowed_email_domains` caps which domains any org may provision.
+- An org **owner** enables SCIM (`organizations.settings.scim = { enabled, email_domains,
+  exclusive }`, no new column) and **must list at least one e-mail domain**
+  (`email_domains`, exact and case-insensitive like D-118, no subdomains, each also in
+  the instance allow-list when that is set). Every provisioned e-mail must be in one of
+  them (*Users*). Only an org owner creates or revokes tokens and changes these
+  settings: the token can provision accounts and fill groups, so it is as sensitive as
+  an owner role. Session only; creating a token and enabling SCIM need a recent
+  re-authentication (412 `reauth_required`, as account deletion, `§OIDC`).
+- **Token** `aud_` + 43 base64url characters (`00`), shown once, stored hashed
+  (`scim_tokens.token_hash`) with a display prefix, per organization (at most 5 active),
+  with an expiry (default 365 days, maximum `scim.token_max_days` = 730; no "never"), a
+  name, `last_used_at` (churn column), `revoked_at`. It authorizes `/scim/v2/**` of its
+  **one** org and is refused with 401 everywhere else (a request that presents an `aud_`
+  bearer commits to it: no fall-through to cookies, and the SCIM routes ignore cookies and
+  `Origin` entirely). A token is **dead** when revoked, expired, its org's SCIM switch is
+  off, the instance switch is off, or the org no longer exists; every failure is the same
+  401 SCIM error (no oracle). Creating, revoking and expiring are audited
+  (`scim_token.create|revoke`, critical; `scim.update` for the settings, critical).
+
+**Scope of authority (the whole list).** A SCIM token may: create, update, suspend,
+reactivate and remove **members it manages** (below) and fill, rename, and delete
+**SCIM groups** of its org. It may **not**: set or read any role (there is no `roles`
+attribute; SCIM-created members are always org role `member`), create or change an
+`owner` (owners are never touched: every SCIM mutation of an owner is refused 403, see
+below), touch **manual** groups, any org-role mapping or workspace binding (those stay
+human decisions in the dashboard), touch another org, read or write any other Aurora
+data, or change a global attribute of a person who has signed in (*Users*).
+
+**Users.** A SCIM user is a **link** `scim_users` (`03`) between the org and a global
+`users` row, with its own SCIM id (not the Aurora user id, which would leak across orgs).
+`POST /Users` (all of it in one transaction, critical audit):
+
+1. The Aurora e-mail is the primary (else first) `emails[].value`, else `userName`;
+   lower-cased, syntactically valid, ≤ 254 chars, and **its domain must be in the org's
+   `email_domains`** — otherwise 400 `invalidValue`. `externalId` ≤ 256 chars. A second
+   user with the same e-mail or `externalId` in the org → 409 `uniqueness`.
+2. Resolve the global user **by e-mail only**: (a) none → create a **pre-provisioned**
+   user: `email_verified_at = NULL` (Aurora has verified nothing; SCIM is the org's claim,
+   not proof), no identity, no password, `display_name` from SCIM (sanitized, truncated to
+   80); it can do nothing until its first OIDC sign-in binds it (*OIDC step 3*); (b) a user
+   exists → link it and leave the `users` row **untouched**; (c) an unremoved link of this
+   org exists → 409.
+3. Create the `org_members` row (role `member`, status `active`; `active: false` → `suspended`),
+   or adopt an existing membership as it is (an invited admin keeps their role). The seat
+   cap `max_members` applies (403 with `detail` `member_limit_reached`). Group membership
+   comes from SCIM groups, never from the user resource. No e-mail is sent, no session or
+   key is created, a pending invitation is left alone.
+
+Updates (`PUT`, `PATCH`): `userName`/`emails` re-validated as above; `displayName` and
+`name.*` are stored on the link; **Aurora never changes `users.email` or
+`users.display_name` of a user who has an identity or a verified e-mail** (the org's IdP
+must not be able to rewrite a global account that other orgs and other IdPs use), and
+changes them only for a still-unbound pre-provisioned user. `active` drives *Deprovisioning*.
+An attempt to change the e-mail of a signed-in user is accepted into the link
+(`userName`) and ignored for the account (`200`, the response shows the link's value).
+
+**Members it manages.** SCIM may act on a membership only through a link. Where a person was
+already a member before SCIM (invited, JIT) and the IdP later `POST`s them, the membership
+is **adopted** with its role, and `owner` memberships can be linked (so they can be placed in
+SCIM groups) but are **never mutated by SCIM**: `PATCH active=false`, `PUT`, `DELETE` of an
+owner answer 403 (`detail`: "Organization owners are managed in Aurora"), so a compromised
+IdP cannot lock out the owners or touch the last-owner invariant. Admins (direct role) can be
+deprovisioned: that is the point of offboarding.
+
+**Groups** (`/Groups`, `source = scim`). `displayName` is the group name (unique per org, also
+against manual groups: 409 `uniqueness`), `externalId` is stored, `members[].value` are SCIM
+user ids of **this org's links** (an unknown id, a removed link, or a user of another org →
+400 `invalidValue`); a suspended link may be a member (it derives nothing, `§Groups`).
+Replacing or patching members writes one critical `group_member.add|remove` row per change,
+within the limits of `02 §Limits` (`GROUP_MEMBERS_MAX`, `GROUPS_PER_USER`; exceeding →
+400 `invalidValue` / `detail`). A SCIM group **grants nothing until an org admin maps or
+binds it** in the dashboard; renaming and deleting it in the dashboard is refused while SCIM
+is enabled (`group_managed_by_scim`), the mapping and the bindings are editable. Deleting a
+group in the IdP (`DELETE /Groups/{id}`) deletes it in Aurora with its bindings, which is how a
+compromised IdP can remove access — an availability, not a confidentiality, risk, and audited.
+
+**Deprovisioning** (D-135). Link states: `active` → `suspended` (IdP `active=false`) →
+`removed` (`DELETE /Users/{id}`); `POST` of a removed user re-provisions it. All in one
+transaction with critical audit rows (`member.update|remove`, `metadata.via = "scim"`), then
+invalidation (`org` and `user` scopes, `aurora_auth_revoked` kinds `access` and `session`):
+
+| Effect | Suspend | Remove |
+|--------|---------|--------|
+| Org membership | `suspended` (role kept; "non-member for every check", *Roles*) | row deleted; workspace bindings and group memberships go with it |
+| Sessions | revoked **only if the user has no other active membership** in any org (they would be signed into nothing); otherwise kept: the org's data is already 404 | same |
+| API keys (`auk_`, `auo_`) of this org owned by the user | **revoked** (`revoked_at`; not merely dormant: a reactivation never revives a key that may have leaked); keys of other orgs untouched | same |
+| Running work | turns spoken by the user in this org and `joining` follow-ups: queued ones `aborted`, live ones get `turn.abort` and end `aborted` with `error_code = user_deprovisioned`; their speaker binding is gone from the next gateway request | same |
+| Schedules, webhooks, peer tasks they created | disabled at their next fire by the creator re-check (`disabled_reason = authorization`, notice), anchored ones survive (RFE-021); directory sync cannot reassign, so the dashboard lists them in the org's offboarding view and a notice tells the owners | same |
+| BYO agents they created, agents and workspaces | nothing is deleted or rotated (agents belong to workspaces, a BYO token rotation would break a live service on an IdP hiccup); the audit row lists the BYO agents whose token the person saw (`agents.created_by`) and the dashboard shows "N BYO agents created by <user>: regenerate their tokens" to the owners | same |
+| Direct conversations, authored content | kept; owners still read them (`§The access law`); the content keeps its label | kept |
+| Pending invitations for the e-mail | cancelled | cancelled |
+| JIT / invitation / sign-in re-entry | refused for this org while `suspended` or `removed` (*OIDC* note) | same |
+| Reactivation (`active=true`) | membership `active` again **only if SCIM suspended it** (`scim_users.suspended_by_scim`): a membership an org admin suspended by hand is never reactivated by the IdP; revoked keys stay revoked, aborted turns stay aborted, disabled automations stay disabled (owners re-enable) | `POST` re-adds a member |
+
+SCIM never deletes a `users` row or an account and never touches other orgs: a person in two
+orgs deprovisioned by one remains a user of the other.
+
+**`exclusive` mode** (org setting, default `false`). When on, JIT and invitation acceptance for
+this org are refused for people without an `active` SCIM link: the IdP is then the only way in.
+It never changes existing members.
+
+**Rate limits and size.** Per token `SCIM_RATE` (600 requests/min, burst 120) through the
+`CounterStore` (class `management`, `05 §Conventions`), request bodies ≤ `SCIM_BODY_MAX` (1 MiB),
+`SCIM_MAX_PATCH_OPS` (100) operations per PATCH, `SCIM_MAX_MEMBERS_PER_REQUEST` (1 000),
+list pages ≤ `SCIM_PAGE_MAX` (100, default 50). Requests with a rejected `aud_` bearer fall
+under the existing 30/min/IP rejected-bearer limit (class `security`, never fails open). A refusal
+is `429` in SCIM error format with `retry-after`.
+
+**Audit.** `scim_token.create|revoke`, `scim.update`, and the membership and group rows above;
+SCIM rows have `actor_kind = service`, `actor_label = scim:<token name>`, `source = api`,
+`metadata.via = "scim"`. The dashboard shows "Directory sync" status (last request, counts,
+last 20 sanitized errors, token expiry, a warning 14 days before expiry).
+
 ## Freeze (phase 2, RFE-006, D-50)
 
 An emergency, **reversible** switch that stops an agent, every agent of a
@@ -688,6 +828,7 @@ strings are the ones the API already used and are listed in `SECURITY_CRITICAL_A
 | Roles and membership | `org_member.add\|role_change\|suspend\|reactivate\|remove`, `org.transfer_ownership`, `invitation.create\|accept\|cancel`, `workspace_access.put\|delete`, `user.instance_admin_grant\|revoke`, `user.disable\|enable`, `user.delete` |
 | Freeze (RFE-006) | `agent.freeze\|unfreeze`, `workspace.freeze\|unfreeze`, `org.freeze\|unfreeze` |
 | Groups (phase 4, P4-GRP-1) | `group.create\|update\|delete`, `group_member.add\|remove`, `group_access.set\|remove` (emitted as written; `§Groups`) |
+| SCIM (phase 4, P4-GRP-2) | `scim_token.create\|revoke`, `scim.update`; membership and group changes made by the IdP are the ordinary `member.add\|update\|remove` and `group*` rows with `metadata.via = "scim"` (`§SCIM`) |
 | Governance and tenant settings | `governance.update`, `app_availability.update`, `org.update`, `org.delete`, `workspace.delete`, `retention.update` (RFE-010/015) |
 | Channels | `channel_integration.create\|update\|delete\|autolink_enable\|autolink_disable` (RFE-001), `user_link.create\|delete` |
 | Data erasure and reassignment | `conversation.delete`, `transcript_event.redact`, `memory.redact`, `automation.reassign` (RFE-021) |

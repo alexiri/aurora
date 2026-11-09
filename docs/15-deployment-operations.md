@@ -175,6 +175,10 @@ one new entry without activating it.
 | `ratelimit.counters.redis.username_env`, `.password_env` | unset | api, gateway | (phase 4, P4-CNT) names of environment variables holding the Redis ACL user and password (both optional; an unset variable that is named refuses startup); never the values (`08 §4`) |
 | `ratelimit.counters.redis.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api, gateway | (phase 4, P4-CNT) PEM bundle verifying the Redis server |
 | `ratelimit.counters.redis.db`, `.key_prefix` | `0`, `aurora:rl:` | api, gateway | (phase 4, P4-CNT) database index and key prefix (lets several Aurora instances share one Redis); `key_prefix` ≤ 64 chars of `[A-Za-z0-9:_-]` |
+| `scim.enabled` | `false` | api | (phase 4, P4-GRP-2, D-132) serve `/scim/v2` and show the Directory sync page; while `false` every `/scim/v2` path is 404 and no org can enable SCIM. Helm `scim.enabled` also adds the edge route (`15 §Networking`) |
+| `scim.allowed_email_domains` | `[]` | api | (phase 4, P4-GRP-2) optional instance allow-list of the e-mail domains an org may provision (exact, case-insensitive); empty = any domain the org owner lists. Entries must be domains (no `@`, wildcard or single label), else startup refuses naming the key |
+| `scim.rate_per_minute` | 600 | api | (phase 4, P4-GRP-2) `SCIM_RATE` per token (burst is a fifth of it), 30–6000 |
+| `scim.token_max_days` | 730 | api | (phase 4, P4-GRP-2) longest lifetime of an `aud_` token, 1–1825; the default offered in the dashboard is 365 (never above this) |
 | `blobs.backend` | `postgres` | api | (phase 4, P4-S3, D-120) where **new** attachment bytes go: `postgres` (the `blobs` table) or `s3`; existing rows keep their own backend (`attachments.blob_backend`); any other value refuses startup. See *S3-compatible blob store* |
 | `blobs.s3.bucket`, `blobs.s3.region` | — (required for `s3`) | api | (phase 4, P4-S3) bucket name (3–63 chars, DNS-compatible) and signing region (any non-empty string for S3-compatible servers that ignore it, e.g. `us-east-1`) |
 | `blobs.s3.endpoint` | unset (AWS S3 for the region) | api | (phase 4, P4-S3) `https://host[:port]` of an S3-compatible server (MinIO, Ceph, …), no userinfo, path or query; `http://` accepted only for a loopback host or with `allow_insecure_http = true` |
@@ -269,7 +273,11 @@ override changes nothing else (same package list, same labels, same tag scheme
 
 - `server.external_url` is the single public origin. The **edge** routes
   `/v1/*` → API :4101 and everything else → web :4100. `/internal/*` and
-  `/metrics` are never routed.
+  `/metrics` are never routed. (phase 4, P4-GRP-2) With `scim.enabled = true` the edge
+  also routes **`/scim/v2/*`** → API :4101 (Helm: the Ingress and HTTPRoute templates add the
+  path only when `scim.enabled` is true, so a default deployment exposes nothing new, and the
+  edge-routes guard checks both renderings); SCIM requests are small and need no body or
+  buffering exception.
 - (phase 2, RFE-017) The API limits by authenticated principal, not by IP, except
   for unauthenticated routes (which trust the edge's overwritten `X-Forwarded-For`).
   Size `ratelimit.api.multiplier` up for deployments where service keys legitimately
@@ -683,3 +691,38 @@ section is the operator side.
   Job in the chart's `jobs` values). Keep `blobs.s3` configured for as long as any row
   names `s3`: removing it makes those attachments unreadable (503
   `blob_backend_not_configured`), not deleted.
+
+## SCIM directory sync (phase 4, P4-GRP-2, D-132, SEC-72, SEC-73)
+
+Optional; nothing changes for a deployment that does not set `scim.enabled`. SCIM needs **no new
+infrastructure**: the API serves it, state is in Postgres, rate limits use the configured
+`CounterStore`.
+
+- **Turn it on.** Set `scim.enabled: true` (Helm; the chart then also routes `/scim/v2` at the
+  edge, *Networking*) and, if the instance should restrict which domains an org may provision,
+  `scim.allowed_email_domains`. An org **owner** then enables SCIM for the org in the dashboard
+  (Directory sync), lists the org's e-mail domains, creates a token and pastes the base URL
+  (`<external_url>/scim/v2`) and the token into the IdP's provisioning settings.
+- **IdP setup** (details in the dashboard guide): Entra ID (*Enterprise application → Provisioning →
+  Automatic*, tenant URL = base URL, secret token = the `aud_` token, mappings: `userName`,
+  `emails[type eq "work"].value`, `displayName`, `active`, `externalId`; **remove** any `roles`
+  mapping), Okta (SCIM 2.0 app with *Push New Users*, *Push Profile Updates*, *Push Groups*,
+  unique identifier `userName`), Keycloak (a SCIM extension; same attributes). Aurora ignores the
+  enterprise extension.
+- **Token rotation.** Tokens expire (default 365 days, at most `scim.token_max_days`). Create
+  the new token (up to 5 may be active), update the IdP, revoke the old one. The org owners get a
+  notice and an audit row 14 days and 1 day before expiry; an expired token makes the IdP's next
+  sync fail with 401, which stops provisioning but never changes existing state.
+- **What it never does**: sign anyone in, change a role, create or touch an org owner, change the
+  global account of a person who has signed in, link by `externalId`, or reactivate a person an org
+  admin suspended by hand (`04 §SCIM`).
+- **Observability.** `aurora_scim_requests_total{resource,method,status}`,
+  `aurora_scim_provisioned_total{op}` (`user_created`, `user_linked`, `suspended`, `reactivated`,
+  `removed`, `group_member_added`, `group_member_removed`), `aurora_scim_auth_failures_total`;
+  alert on a rising `status=401` rate for a token that was recently valid (expired token or a
+  rotated one still in the IdP) and on `5xx`. The Directory sync page shows the same per org.
+- **Offboarding runbook.** SCIM deprovisioning does not rotate BYO agent tokens the person saw and
+  cannot reassign their automations (`04 §SCIM`); follow the offboarding view of the member
+  (`/o/<org>/members`) after the IdP removes them.
+- **Helm values**: `scim.enabled` (false), `scim.allowedEmailDomains` (`[]`), `scim.ratePerMinute`
+  (600), `scim.tokenMaxDays` (730); no Secret is generated (tokens are created in the dashboard).

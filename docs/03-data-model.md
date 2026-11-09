@@ -1316,6 +1316,41 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | created_at, updated_at | timestamptz not null default now() | | 4 (P4-GRP-1) |
 | index | `(workspace_id)` | "who has access to this workspace" | 4 (P4-GRP-1) |
 
+#### `groups` (SCIM columns; phase 4)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| external_id | text null | SCIM `externalId` (≤ 256); only for `source = scim`; unique `(org_id, external_id)` where not null. Stored for the IdP's correlation; never used to find, link or authenticate anything | 4 (P4-GRP-2) |
+
+#### `scim_tokens` (new table)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (P4-GRP-2) |
+| org_id | uuid not null FK→organizations (restrict) | at most `SCIM_TOKENS_PER_ORG` (5) with `revoked_at` null and unexpired | 4 (P4-GRP-2) |
+| name | text not null | ≤ 80, sanitized; shown in audit as `scim:<name>` | 4 (P4-GRP-2) |
+| token_hash | bytea unique not null | SHA-256 of the `aud_` token (`00`); the token is shown once | 4 (P4-GRP-2) |
+| display_prefix | text not null | first 12 characters | 4 (P4-GRP-2) |
+| created_by | uuid null FK→users (set null) | an org owner | 4 (P4-GRP-2) |
+| expires_at | timestamptz not null | ≤ `SCIM_TOKEN_MAX_DAYS` after creation; there is no non-expiring token | 4 (P4-GRP-2) |
+| revoked_at | timestamptz null | | 4 (P4-GRP-2) |
+| last_used_at | timestamptz null | churn column, ≤ 1 write/min | 4 (P4-GRP-2) |
+| created_at | timestamptz not null default now() | | 4 (P4-GRP-2) |
+
+#### `scim_users` (new table; the link between an org's SCIM user and a global user)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | the SCIM `id` of the user (not the Aurora user id) | 4 (P4-GRP-2) |
+| org_id | uuid not null FK→organizations (restrict) | unique `(org_id, user_id)` and `(org_id, external_id)` where not null | 4 (P4-GRP-2) |
+| user_id | uuid not null FK→users (cascade) | the global user; never modified through this link once the user has an identity (`04 §SCIM`) | 4 (P4-GRP-2) |
+| external_id | text null | ≤ 256, the IdP's id; correlation only | 4 (P4-GRP-2) |
+| user_name | citext not null | the e-mail as asserted by the IdP (domain checked against the org's `email_domains`) | 4 (P4-GRP-2) |
+| display_name, given_name, family_name | text null | ≤ 120 each, sanitized | 4 (P4-GRP-2) |
+| state | text not null CHECK in (`active`,`suspended`,`removed`) | `removed` rows are tombstones that keep JIT and invitations from re-admitting the person (`04 §OIDC` note) | 4 (P4-GRP-2) |
+| suspended_by_scim | bool not null default false | true only when SCIM made the membership `suspended`; reactivation by the IdP is refused when false (a human suspension wins) | 4 (P4-GRP-2) |
+| removed_at | timestamptz null | | 4 (P4-GRP-2) |
+| created_at, updated_at | timestamptz not null default now() | `meta.created` / `meta.lastModified` | 4 (P4-GRP-2) |
+
+`organizations.settings.scim` (jsonb key, no column): `{ "enabled": bool, "email_domains": [domain], "exclusive": bool }`, default absent = SCIM off. The gateway role gets nothing on these tables. Token liveness is read on every SCIM request (indexed by `token_hash`); there is no cache.
+
 `effective_access(user, workspace)` is one statement: the user's `org_members` row (active), the maximum of `org_members.role` and `groups.org_role` over the user's groups, the direct `workspace_access` row, and the maximum role over `group_workspace_access ⋈ group_members` for the workspace, returning the strongest role and the list of sources (`04 §Groups`). The gateway database role gains `SELECT` on `groups`, `group_members` and `group_workspace_access` (the speaker's group set is resolved at credential resolution, `06 §Credential authentication`); it never writes them. The `workspace_access` table, its CHECK and the `can_*` meaning are unchanged: a deployment without groups reads the same rows as before.
 
 #### `agents`, `conversations` (harness selection)
