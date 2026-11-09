@@ -126,9 +126,13 @@ matrix:
     rejected bearer). **Exempt**: `/healthz`, `/readyz`, `/metrics`, the machine
     planes (`/v1/runner/*`, `/v1/connector/*`, `/internal/*`) which apply their own
     back-pressure, and `POST /v1/hooks/{token}` (its own 60/min per webhook).
-  - **Token buckets**, in memory per API replica (the same approximation as the
-    gateway, D-05; N replicas can allow up to N×; a shared `CounterStore` backend
-    is the later seam, `06 §Rate limiting`). A request must obtain a token from
+  - **Token buckets**, in memory per API replica by default (the same
+    approximation as the gateway, D-05; N replicas can allow up to N×).
+    (phase 4, P4-CNT, D-119) With `ratelimit.counters.backend = postgres` or `redis`
+    the buckets are **shared by all API replicas** through the `CounterStore` trait
+    (`15 §Shared rate-limit counters`, `06 §Rate limiting`): the limits of this
+    section then hold for the whole deployment, not per replica; the table and the
+    429 shape are unchanged. See *Shared counters* below. A request must obtain a token from
     **every** bucket that applies: the principal's *general* bucket, the principal's
     *class* bucket, and the *org* bucket of the resource's organization:
 
@@ -161,6 +165,57 @@ matrix:
     `aurora_api_rate_limited_total{class,scope}`. Buckets idle for 10 minutes are
     evicted (LRU 100 000 entries); eviction only ever *refills* (fail-open for the
     individual, never fail-open for the instance because the entry cap bounds memory).
+  - **Shared counters (phase 4, P4-CNT, D-119, SEC-62).** Applies only when the
+    backend is `postgres` or `redis`; `memory` is exactly the text above.
+    - *Which limiters.* The authenticated buckets above (`general`, the class
+      buckets, `org`), the unauthenticated per-IP limits (`API_RATE_UNAUTH`, the
+      rejected-bearer limit, `OIDC_AUTH_RATE`) and the per-webhook 60/min of
+      `POST /v1/hooks/{token}`. **Not shared** (stay per replica, by design): the
+      concurrent-stream cap `API_STREAMS_PER_PRINCIPAL` (a concurrency gauge, not
+      a rate; sharing it needs leases with heartbeats, which is not worth it) and
+      CLI device-code polling (`interval` is enforced against the row in Postgres
+      already). Residual: the stream cap can reach N× (`17`).
+    - *Semantics.* Each bucket is a GCRA / virtual-scheduling state (one value per
+      key, `tat`) so a bucket needs one number per key in the store; refill and
+      burst are the table above; time comes from the store's clock. The three
+      buckets of one request are taken **all-or-nothing in one store call**
+      (`bucket_take`), so a refused request still consumes nothing from the
+      buckets that would have allowed it. `retry-after` and `ratelimit-*` come
+      from the blocking bucket as before.
+    - *Local pre-filter.* To keep refused floods off the store, each replica keeps
+      its own in-memory bucket per key with the **full** configured limit and checks
+      it first; a refusal there is final (a replica alone can never serve more than
+      the global limit, so the global bucket would refuse as well). A store refusal
+      refunds the local token. The pre-filter only ever refuses what the shared
+      state would also refuse, so it cannot loosen or tighten the shared limit.
+    - *Keys* (`api:<kind>:…`) use ids (`key:<id>`, `user:<id>`, `org:<id>`,
+      `agent:<id>`, webhook id). Keys derived from an **e-mail or an IP address**
+      (the unauthenticated limits) use `HMAC-SHA256(hkdf("ratelimit_key"), value)`
+      truncated to 128 bits, so a leaked Redis or Postgres dump does not reveal
+      e-mail addresses or client IPs and cannot be matched to them offline
+      (`08 §4`).
+    - *Unavailable backend.* The class decides (`ratelimit.counters.on_unavailable.<class>`,
+      default `local` for all): **`security`** (the unauthenticated per-IP limits,
+      rejected-bearer limit, `OIDC_AUTH_RATE`): `local` keeps brute-force
+      protection at today's strength; `closed` refuses the request with 503
+      `counter_unavailable` — these are the limiters that must **never** fail
+      open, and `open` is not a value for any class (startup refuses it).
+      **`management`** (`general`, class and `org` buckets, webhooks): `local`
+      keeps the API usable through a Redis outage with today's per-replica limit;
+      `closed` refuses authenticated writes and reads with 503, which turns a
+      cache outage into an API outage, so it is for operators who prefer that.
+      Health, metrics, the machine planes and the exempt routes are never
+      affected. The 503 carries `code = counter_unavailable`, `retry-after: 5`,
+      `details.limiter`. The refusal is never returned as 429 (a client must not
+      mistake an outage for its own rate).
+    - *Metrics:* `aurora_api_rate_limited_total{class,scope}` unchanged; plus the
+      `aurora_counters_*` series of `15 §Shared rate-limit counters`.
+    - *Cost.* Every authenticated request costs one store round-trip (three
+      buckets in one call). Redis is the recommended backend for the API limiter;
+      Postgres works for small deployments (≈ hundreds of requests per second in
+      total) and is the default shared choice because it adds no infrastructure.
+      Operators can keep the API limiter local and share only the gateway with
+      `ratelimit.counters.api = "memory"` (`15`).
 - (phase 2, RFE-010) The conversation SSE adds the ephemeral `event.redacted
   { seq }` (no `id:`), telling clients to re-read that event.
 - SSE: `Content-Type: text/event-stream`; durable events carry `id: <seq>`;
@@ -291,7 +346,9 @@ claim-based and safe to run everywhere.
 | Action-approval expiry | every 60 s | idempotent |
 | Attachment pending sweep (`ATTACH_PENDING_TTL`) | hourly | idempotent |
 | Conversation retention sweep (phase 2, RFE-010): delete conversations past the org window through the delete path; blob-orphan sweep | daily | singleton |
-| Attachment sweep (phase 2, RFE-015): purge attachment bytes past the org window, remove orphan blobs, reconcile `org_storage_usage`, quota notices | daily | singleton |
+| Attachment sweep (phase 2, RFE-015): purge attachment bytes past the org window, remove orphan blobs, reconcile `org_storage_usage`, quota notices; (phase 4, P4-S3) with the `s3` backend the orphan step lists the bucket prefix and honours `S3_ORPHAN_GRACE` (`10 §Attachments`) | daily | singleton |
+| Counter pruning (phase 4, P4-CNT, `postgres` backend only): delete dead `rate_limit_windows` / `rate_limit_buckets` rows | every `COUNTER_PRUNE_INTERVAL` (60 s) | `SKIP LOCKED` batches |
+| Blob store probe (phase 4, P4-S3, `s3` backend only): `HeadBucket` + versioning/encryption state, sets `aurora_blob_store_up` | every 30 s | per replica |
 | Request-log partition maintenance and retention | daily | singleton |
 | Retention pruning (inbox/ops/cards > `CHANNEL_LEDGER_RETENTION`, used action tokens, expired email/CLI tokens, sessions, expired context credentials) | daily | singleton |
 | Runtime daily rollup | hourly | singleton |
@@ -437,13 +494,13 @@ connector, **P** public capability. Permission checks per `04`.
 ### Secrets and LLM
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET/POST `/v1/workspaces/{ws}/secrets`, `/v1/orgs/{org}/secrets` | S/K | create: name, kind, llm fields or host/path/injection, `value` or `reference` |
+| GET/POST `/v1/workspaces/{ws}/secrets`, `/v1/orgs/{org}/secrets` | S/K | create: name, kind, llm fields or host/path/injection, `value` or `reference`; (phase 4, P4-LLM) for `aws_sigv4` the `value` is the JSON `{ access_key_id, secret_access_key, session_token? }` and for `gcp_service_account` the key-file JSON, validated for shape, `token_uri` and key type (422 `llm_key_invalid`) before any provider call; the same validation, governance and origin steps as every LLM secret (`08 §LLM secrets`) |
 | GET/PATCH/DELETE `/v1/secrets/{id}` | S/K | metadata only; values never returned |
 | PUT `/v1/secrets/{id}/value` | S/K | replace value |
 | POST `/v1/secrets/{id}/accept` | S | agent proposal: `{ value }` → secret `active` + grant to the proposing agent |
 | POST `/v1/secrets/{id}/reject` | S/K | agent proposal → `rejected`; a notice goes to the proposing conversation |
 | GET `/v1/secret-stores` | S/K | configured stores: id, kind, capabilities (no config) |
-| GET `/v1/llm/providers` | S/K | registry + configured endpoints |
+| GET `/v1/llm/providers` | S/K | registry + configured endpoints; (phase 4, P4-LLM) each provider lists its `auth_modes` with their value shape (`string`, `aws_sigv4` fields, `gcp_service_account` file), each endpoint its `dialects`, `region`/`project_id`/`location` where they exist and `models_source` (`listed` \| `static`); never credentials or endpoint internals |
 | GET `/v1/secrets/{id}/models` | S/K | model catalogue for an LLM secret (only allowed models) |
 | POST `/v1/secrets/{id}/verify` | S/K | re-run key-origin verification (`08 §11.3`) and return `origin` |
 
@@ -473,7 +530,7 @@ connector, **P** public capability. Permission checks per `04`.
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET `/v1/agents/{agent}/grants` | S/K | |
-| PUT/DELETE `/v1/agents/{agent}/grants/connections/{conn}` | S/K | `{ mode, allow_tools, ask_tools }`; (phase 2, RFE-011a) optional `ask_timeout_secs` |
+| PUT/DELETE `/v1/agents/{agent}/grants/connections/{conn}` | S/K | `{ mode, allow_tools, ask_tools }`; (phase 2, RFE-011a) optional `ask_timeout_secs`; (phase 4, P4-GRANTS, D-123) `mode = full` for a connection of an app whose manifest has `grants.custom_only` → 422 `full_grant_forbidden` (`details: { app_id }`); the grant response and `GET …/grants` carry `app_restrictions: { custom_only, block_untooled }` so clients can explain it; a grant converted by an upgrade is audited `grant.converted_by_app` |
 | PUT/DELETE `/v1/agents/{agent}/grants/secrets/{secret}` | S/K | |
 | GET `/v1/connections/{id}/grants` | S/K | agents granted |
 | GET `/v1/agents/{agent}/effective` | S/K | effective credentials and per-tool decisions with `org_ceiling`; (phase 2, RFE-005) optional `?speaker=<user_id>\|none` |
@@ -481,7 +538,7 @@ connector, **P** public capability. Permission checks per `04`.
 ### Policy
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/workspaces/{ws}/policy`, `/v1/orgs/{org}/policy` | S/K | published + draft + revision |
+| GET `/v1/workspaces/{ws}/policy`, `/v1/orgs/{org}/policy` | S/K | published + draft + revision; (phase 4, P4-CNT) plus `rate_limit_scope: "replica" \| "shared"` (`shared` when `ratelimit.counters.backend` is `postgres`/`redis` and the gateway share is not `memory`; the editor note of `14`) |
 | PUT `…/policy/draft` | S/K | whole-draft replace with `revision`; (phase 1, RFE-003) workspace scope also carries `open_lane_posture` (`enabled` \| `allowlist_only` \| `disabled`; a workspace can only tighten, so `enabled` simply adds no restriction beyond the org and instance) |
 | POST `…/policy/publish`, `…/policy/rollback` | S/K | `{ revision }` / `{ generation }` |
 | GET `…/policy/generations` | S/K | history |
@@ -506,7 +563,8 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET/POST `/v1/workspaces/{ws}/agents` | S/K | create returns `aug_` once for BYO; (phase 2, RFE-025) creating `kind = byo` is subject to the effective BYO posture: 403 `byo_not_permitted` (`owners_only`, caller lacks `can_own`) or 403 `byo_disabled`; the list/get shape carries `byo: { posture, posture_level, source_cidrs, require_context, effective_source_cidrs, effective_require_context }` for BYO agents |
-| GET/PATCH/DELETE `/v1/agents/{agent}` | S/K | name, brief, harness, model, effort, resource overrides (IA) |
+| GET/PATCH/DELETE `/v1/agents/{agent}` | S/K | name, brief, harness, model, effort, resource overrides (IA); (phase 4, P4-HAR) `harness` must be in `hosted.enabled_harnesses` (422 `harness_not_enabled`), cannot change while a turn is active (409 `turn_active`), and a change bumps every conversation's `harness_session_epoch`, queues session purges and drops incompatible model overrides with a notice (`12 §Harness selection and adapter contract`); audited |
+| GET `/v1/harnesses` | S/K | (phase 4, P4-HAR) enabled harnesses: `{ id, display_name, dialects, available }` where `available` means at least one live runner replica lists it; drives the dashboard picker |
 | POST `/v1/agents/{agent}/token` | S | BYO: regenerate, returns token once with `expires_at` (phase 3, RFE-013: null unless an agent-token maximum age applies, `08 §7`); (phase 2, RFE-025) same posture check as creation (`byo_not_permitted` / `byo_disabled`); audited `agent.token_regenerate` |
 | PUT `/v1/agents/{agent}/byo` | S/K | (phase 2, RFE-025) BYO only (hosted → 422 `not_byo`): `{ source_cidrs: [cidr..] \| null, require_context: bool }`; `can_own`; 422 `byo_cidr_invalid` (bad CIDR, `/0`, empty array, >32 entries) / `byo_cidr_outside_default`; live credentials are re-evaluated by invalidation scope `agent`; audited `agent.byo_settings.update` |
 | GET `/v1/agents/{agent}/container-config` | S/K | BYO bootstrap (`08 §BYO bootstrap`) |
@@ -533,7 +591,7 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 | GET `/v1/conversations/{id}/stream` | S/K | SSE |
 | POST `/v1/conversations/{id}/messages` | S/K | `{ text, attachment_ids? }` → `{ turn }` or `{ followup }`; (phase 3, RFE-018) optional header `Idempotency-Key` — a retry with the same key returns the original result (`Idempotent-Replayed: true`) and creates nothing; 422 `idempotency_key_invalid` / `idempotency_key_reused` (`### Idempotency keys`) |
 | POST `/v1/turns/{id}/abort`, `/v1/turns/{id}/send-now` | S/K | |
-| POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment; (phase 2, RFE-015) 422 `attachment_quota_exceeded` when the org quota would be exceeded |
+| POST `/v1/conversations/{id}/attachments` | S/K | multipart, returns pending attachment; (phase 2, RFE-015) 422 `attachment_quota_exceeded` when the org quota would be exceeded; (phase 4, P4-S3) with the `s3` blob backend also 503 `blob_store_unavailable` (`retry-after: 5`) and 503 `blob_store_busy`; downloads (`GET /v1/attachments/{id}/content`) add 503 `blob_store_unavailable`, 503 `blob_backend_not_configured` and 502 `blob_store_corrupt`, never 404/410 for a store failure (`10 §Attachments`) |
 | GET `/v1/attachments/{id}/content` | S/K | `Content-Disposition: attachment` always; (phase 2, RFE-015) 410 `attachment_purged` after retention/delete |
 | DELETE `/v1/attachments/{id}` | S/K | (phase 2, RFE-015) purge the bytes now; uploader or `can_own` |
 
@@ -568,15 +626,15 @@ workspace/approval is not visible); in phase 0/1 the requirement was `can_use`.
 ### Instance administration
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET `/v1/admin/overview` | IA | versions, gateways, hook hosts, runners, connectors, active snapshot |
+| GET `/v1/admin/overview` | IA | versions, gateways, hook hosts, runners, connectors, active snapshot; (phase 4) `counters: { backend, state }` (P4-CNT, `15`) and `blobs: { backend, healthy }` (P4-S3) |
 | GET/PATCH `/v1/admin/users` | IA | list, instance-admin flag, disable |
-| GET/POST `/v1/admin/plugins` (multipart upload); GET `/v1/admin/plugins/{id}`; POST `…/approve`, `…/reject`, `…/disable`, `…/enable`; DELETE `…?force=` | IA | (phase 3, RFE-022) GET `{id}` of a pending major upgrade carries `impact` (`09 §10`: `connections_needing_reauth`, `by_app`); `approve` activates and flips the failing connections to `reauth_required` in one transaction and returns the `PluginPackage` plus `connections_reauth: n` (phase 3, D-107) |
+| GET/POST `/v1/admin/plugins` (multipart upload); GET `/v1/admin/plugins/{id}`; POST `…/approve`, `…/reject`, `…/disable`, `…/enable`; DELETE `…?force=` | IA | (phase 3, RFE-022) GET `{id}` of a pending major upgrade carries `impact` (`09 §10`: `connections_needing_reauth`, `by_app`); (phase 4, P4-GRANTS) `impact` also carries `grants_to_convert` (count, by app and workspace) for an upgrade that introduces `grants.custom_only`, and approval then converts them atomically (`09 §10`, reason `converts_grants`); `approve` activates and flips the failing connections to `reauth_required` in one transaction and returns the `PluginPackage` plus `connections_reauth: n` (phase 3, D-107) |
 | GET `/v1/admin/host-claims`; PUT `/v1/admin/host-claims/{claim_key}` | IA | conflicts and winners |
 | GET/POST/DELETE `/v1/admin/trusted-keys` | IA | |
 | GET/POST/DELETE `/v1/admin/connectors`; POST `…/{id}/approve`, `…/{id}/token` | IA | provision token, approve manifest. (phase 4, P4-MCON) `POST` with `managed: true` adds a managed connector (no token; settings, secrets, reviewed digest approved, C-451); PATCH `/v1/admin/connectors/{id}` edits settings, secrets, `enabled` (C-453); `…/token` on a managed connector → 409 `connector_managed` |
 | GET `/v1/admin/connector-types` | IA | (phase 4, P4-MCON) catalogue of built-in connector types announced by live connector hosts (C-450) |
 | GET/POST/DELETE `/v1/admin/runners`; POST `…/{id}/token` | IA | |
-| GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`) |
+| GET `/v1/admin/storage` | IA | (phase 2, RFE-015) instance storage breakdown (`10 §Attachments`); (phase 4, P4-S3) plus `blobs: { backend, by_backend: [{ backend, attachments, bytes }], s3?: { bucket, prefix, healthy, last_probe_at, sse, versioning } }` (never credentials; counts come from `attachments`, not from listing the bucket) |
 | GET `/v1/admin/registry/snapshot` | IA | active snapshot (JSON) |
 | POST `/v1/admin/orgs/{org}/freeze` `{ reason }`; POST `/v1/admin/orgs/{org}/unfreeze` | IA | (phase 2, RFE-006) operator kill-switch; `frozen_authority = instance_admin`; org data stays inaccessible |
 | GET `/v1/admin/orgs` (`frozen=true` filter, paginated) | IA | (phase 2, RFE-006, D-76) organizations with their freeze state: id, slug, name only |

@@ -392,8 +392,13 @@ minted.
 5. **App and tool identification.** Look up the app serving (host, path) in the
    snapshot host index (longest path prefix wins among non-lost claims); find
    the matching tool in that app's catalogue (host, path, methods, GraphQL kind
-   via the fail-closed classifier, git operation). Unmatched requests to an app
-   host have `tool = None`.
+   via the fail-closed classifier, git operation; (phase 4, P4-GRANTS, Q8) a tool's
+   `params` conditions evaluated on the query, the urlencoded body prefix of step 4 or
+   `x-amz-target`, fail closed: an absent, repeated, conflicting, undecodable or truncated
+   parameter means the tool does not match, `09 §3.4 tools`). Unmatched requests to an app
+   host have `tool = None`. (phase 4, P4-GRANTS) The step-4 body prefix is also buffered when a
+   `form`-`params` tool may match, and the app's `grants` flags (`custom_only`,
+   `block_untooled`) are read from the snapshot for step 7 (`07 §Grants and their compilation`).
 6. **Credential selection (ids only, nothing decrypted).** Among the
    *selected* candidates (`07 §Injection selection`) that serve this request:
    - prefer the one named by `x-aurora-connection-id` (unknown/ungranted id →
@@ -423,6 +428,12 @@ minted.
    - a winning LLM secret and a non-empty effective model allow-list →
      `model_from_request` must yield an allowed model or `None`; otherwise 403
      `llm_model_not_allowed`.
+   - (phase 4, P4-LLM, SEC-65) a winning LLM secret of a provider with an
+     `inference_paths` set (`08 §Phase 4 providers`): the method and path (and, for
+     `vertex`, the project and location in it) must be in the set, else 403
+     `llm_path_not_permitted`; for `bedrock` with `aws_sigv4` a request body above
+     `LLM_SIGN_BODY_MAX` (8 MiB) → 413 `llm_request_too_large`. Both are decided before
+     policy and before any credential is opened (SEC-03).
 7. **Policy decision** (`07 §Evaluation`) with the winning credential known →
    `block` (403 `blocked_by_policy`), `default_denied` (403
    `blocked_by_default_policy`), `egress_denied` (403
@@ -440,7 +451,13 @@ minted.
     `connection_reauth_required` (with the dashboard URL).
 11. **Injection.** Apply the host entry's mechanisms (`09 §Mechanisms`) or the
     secret's injection recipe (`08`). Agent-supplied values for injected
-    headers/params are overwritten, never merged.
+    headers/params are overwritten, never merged. (phase 4, P4-LLM) LLM recipes add
+    `header` (Azure `api-key`), `aws_sigv4` (all agent `Authorization` and `X-Amz-*`
+    headers removed, then the final request signed; Bedrock) and
+    `gcp_service_account_token` (a gateway-minted access token from the in-memory
+    token cache, single-flight per secret version, no database lock; Vertex); the
+    mint or the signing key is never sent anywhere but the provider's token endpoint
+    and signing happens in the gateway only (`08 §Phase 4 providers`, SEC-64).
     **LLM key origin preflight** (`08 §11.3`): before an LLM key value is
     injected for the first time (per `LLM_ORIGIN_RECHECK`), verify its origin
     with the provider; non-compliant → 403 `llm_key_wrong_organization` /
@@ -527,6 +544,8 @@ dashboard URL to fix the problem when one exists.
 | `llm_key_unverifiable` | 403 | the key's account cannot be determined | `secret_id` |
 | `llm_model_not_allowed` | 403 | model not on the allow-list (or body unreadable) | `model`, `allowed_models` |
 | `llm_origin_check_unavailable` | 503 | provider unreachable during origin preflight | `endpoint_id` |
+| `llm_path_not_permitted` | 403 | (phase 4, P4-LLM) path outside the provider's inference set, or another Vertex project/location | `provider`, `endpoint_id` |
+| `llm_request_too_large` | 413 | (phase 4, P4-LLM) Bedrock request body above `LLM_SIGN_BODY_MAX` that must be buffered to be signed | `limit_bytes` |
 | `rate_limited` | 429 | rate-limit modifier | `limit`, `per` |
 | `manual_approval_denied` / `manual_approval_expired` | 403 | holds | `approval_id` |
 | `gateway_restarting` | 503 | shutdown during hold | — |
@@ -685,7 +704,7 @@ never stay unseen behind a dead listener.
 
 At boot the gateway loads the active snapshot for the highest contract it
 supports (`09 §Registry snapshot`), validates that every mechanism, decoder and
-finalizer it names is known, builds the host index and tool matchers, and swaps
+finalizer (phase 4, Q8: and tool classifier, `params`) it names is known, builds the host index and tool matchers, and swaps
 the structures atomically (`ArcSwap`). A snapshot naming an unknown mechanism is
 refused (logged, metric `gateway_snapshot_rejected_total`) and the previous one
 kept. `readyz` is false until a snapshot is loaded (an empty snapshot is valid).
@@ -695,8 +714,70 @@ kept. `readyz` is false until a snapshot is loaded (an empty snapshot is valid).
 Counters keyed by `(rule logical_id, agent_id, window start)` in memory per
 replica (fixed windows: minute/hour/day aligned to UTC). With N gateway
 replicas the effective limit can reach N× the configured value; this is
-documented in the dashboard next to rate-limit modifiers. A shared counter
-backend is a later-phase trait implementation (`CounterStore`).
+documented in the dashboard next to rate-limit modifiers.
+
+**Shared counters (phase 4, P4-CNT, D-119, SEC-62).** Everything above is the
+**`memory` backend**, which stays the default (`ratelimit.counters.backend =
+"memory"`, no new infrastructure, exact with one gateway replica). From phase 4
+the counters sit behind the `CounterStore` trait of `15 §Shared rate-limit
+counters` with two more backends, `postgres` and `redis`; with either, N replicas
+share one count and the N× approximation is gone for the limiters that use it.
+Phase 0–3 text above remains the description of the default; the rules below
+apply only to what the trait changes:
+
+- **What uses it.** Only the `rate_limit` modifier of policy rules (the sole
+  counter the gateway keeps). A request that matches no rate-limited rule never
+  touches the store, so the hot path of every other request is unchanged and the
+  P3 performance budgets (`18 §Performance budgets`) still describe it.
+- **Two steps per request, both through the store.** The evaluator
+  (`aurora-policy`) stays pure and synchronous (`07 §Evaluation`): before it runs,
+  the gateway reads the current counts of the rate-limited rules that match the
+  request (one batched `fixed_window_peek`, only when the cached ResolvedHost has
+  such a rule for this host), and passes them in. After the **final verdict is
+  `allow` or `needs_approval`** (unchanged rule: a blocked request consumes
+  nothing) it consumes one unit of each matched rule with one all-or-nothing
+  `fixed_window_consume`. The peek is advisory; **the consume is the authority**:
+  if another replica spent the last unit in between, the consume refuses and the
+  request is answered `rate_limited` exactly as if the evaluator had said so (the
+  request log row records it). So a shared limit is never exceeded, only
+  (rarely) refused slightly earlier than a peek suggested. A held (approval)
+  request consumes when the hold is created, as today, and is not charged again
+  on approval.
+- **Window clock.** With a shared backend, window starts and `retry_after_secs` are
+  computed by the **store's** clock (Postgres `clock_timestamp()`, Redis `TIME`),
+  not each replica's, so skewed replica clocks cannot split one window in two. The
+  `memory` backend uses the local UTC clock as before.
+- **Budget and breaker.** Each store call has a timeout (`COUNTER_TIMEOUT`, 50 ms
+  default, `ratelimit.counters.timeout_ms`). `COUNTER_BREAKER_FAILURES` (3)
+  consecutive failures or timeouts open a circuit breaker for
+  `COUNTER_BREAKER_COOLDOWN` (5 s), then one probe call decides; an open breaker
+  answers without calling the store.
+- **When the backend is unreachable** (timeout, connection error, breaker open;
+  also during a Postgres outage with the `postgres` backend, `§Operation during a
+  Postgres outage`): the gateway applies the policy configured for the class
+  `gateway` (`ratelimit.counters.on_unavailable.gateway`):
+  - `local` (**default**): count in the replica's own in-memory fixed windows
+    (today's behaviour, N× approximation) until the store answers again; the
+    local state is separate, so counts spent in the store are not lost and local
+    counts are not folded back (the extra over-allowance is bounded by the
+    outage). Never unlimited.
+  - `closed`: a request whose matched rules need a count the store cannot give is
+    refused **503 `counter_unavailable`** (`retry-after: 5`, `details.limiter =
+    "gateway_rule"`); requests that match no rate-limited rule are unaffected.
+  There is **no fail-open value**: configuration naming one refuses startup. The
+  rate-limit modifier is a quota on an *allowed* access, so degrading to the
+  per-replica quota keeps the limit and keeps agents working through a cache
+  outage; operators for whom a quota is a hard contractual cap choose `closed`.
+  Neither value ever allows a request that a loaded policy refuses; a store
+  failure is never read as "under the limit" and never as an approval or denial.
+- **Failure is visible**: the gateway logs once per state change, the request log
+  row of a request decided on the local fallback carries `reason =
+  counter_fallback`, and the metrics of `15 §Shared rate-limit counters` show the
+  state. `readyz` is unaffected (a counter fallback is not `degraded`: no
+  authority is widened, `SEC-62`).
+- **Keys** are `gw:rl:<rule logical_id>:<agent_id>:<period>` plus the window
+  start the store derives. They contain only ids; no secret, URL or token is ever
+  part of a key.
 
 ## Telemetry
 
@@ -719,4 +800,8 @@ tunnels; flush the request-log batch; set `gateway_instances.stopped_at`.
 
 Gateways hold only caches. Approvals and refreshed credentials are in Postgres;
 refresh is serialized by advisory locks; so any number of replicas may run.
-The only per-replica approximation is rate limiting (above).
+The only per-replica approximation is rate limiting (above). (phase 4, P4-CNT)
+With `ratelimit.counters.backend = postgres` or `redis` it disappears; the
+gateway then holds one more piece of external state (the counters), which is not a
+system of record: losing it resets windows and never changes any decision other
+than a quota count.

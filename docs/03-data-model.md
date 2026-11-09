@@ -488,7 +488,7 @@ Partitions are created ahead by the API (next 2 months) and dropped after
 `REQUEST_LOG_RETENTION`.
 
 ### `rate_limit_windows` — not used in phase 0
-Reserved name; phase 0 rate limiting is in-memory per gateway replica (`07`).
+Reserved name; phase 0 rate limiting is in-memory per gateway replica (`07`). (phase 4, P4-CNT) The shared-counter tables are specified under *Planned changes (later phases)* below and are created only by the phase-4 migration.
 
 ### `action_approvals`
 | Column | Type | Notes |
@@ -1230,4 +1230,62 @@ tables above in the same change (and this section shrinks).
 | state | text CHECK in (`running`,`error`) | | 4 (P4-MCON) |
 | message | text null CHECK (char_length ≤ 300) | sanitized; never a secret | 4 (P4-MCON) |
 | updated_at | timestamptz not null | | 4 (P4-MCON) |
+
+#### `rate_limit_windows` (shared fixed-window counters; the name reserved in §9)
+`UNLOGGED` table (counters are not a system of record: a Postgres crash or a failover to a standby that lacks unlogged data resets windows, which at worst grants one extra window of quota and is listed in `17` residual risks). Used only when `ratelimit.counters.backend = postgres` (`15 §Shared rate-limit counters`).
+
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| key | text not null | `gw:rl:<rule logical_id>:<agent_id>:<period>`, `api:…` (`06 §Rate limiting`, `05 §Conventions`); ids and keyed hashes only, ≤ 200 chars | 4 (P4-CNT) |
+| window_start | timestamptz not null | start of the UTC-aligned window, computed by the database (`date_bin(period, clock_timestamp(), 'epoch')`) | 4 (P4-CNT) |
+| count | bigint not null | units spent in the window | 4 (P4-CNT) |
+| expires_at | timestamptz not null | `window_start + period + 1 minute`; rows past it are dead | 4 (P4-CNT) |
+| primary key | `(key, window_start)` | | 4 (P4-CNT) |
+| index | `(expires_at)` | pruning | 4 (P4-CNT) |
+
+Atomic consume (one statement per rule, all rules of a request in **one transaction** with rows taken in key order, rolled back on the first refusal so the request consumes nothing): `INSERT … ON CONFLICT (key, window_start) DO UPDATE SET count = count + $cost WHERE count + $cost <= $limit RETURNING count`; no returned row means refused. Peek is a plain `SELECT`.
+
+#### `rate_limit_buckets` (shared token buckets of the management-API limiter)
+`UNLOGGED`, same remarks as above. One row per bucket key, GCRA state.
+
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| key | text pk | `api:general:user:<id>`, `api:class:<name>:key:<id>`, `api:org:<id>`, `api:ip:<hash>` (`05 §Conventions`); ids and keyed hashes only | 4 (P4-CNT) |
+| tat | timestamptz not null | theoretical arrival time of the next unit; a request is allowed when `max(tat, now) + emission_interval − now ≤ burst × emission_interval` (all of a request's buckets locked `FOR UPDATE` in key order inside one transaction and updated only if every bucket allows) | 4 (P4-CNT) |
+| expires_at | timestamptz not null | `tat` plus a margin; idle buckets are pruned | 4 (P4-CNT) |
+| index | `(expires_at)` | pruning | 4 (P4-CNT) |
+
+Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR UPDATE SKIP LOCKED`, batches of 5 000 rows, only rows with `expires_at < now()`) deletes dead rows from both tables. The gateway database role gains `SELECT, INSERT, UPDATE` on `rate_limit_windows` (and nothing on `rate_limit_buckets`: the gateway keeps only rule counters); it never deletes. Neither table holds an e-mail address, an IP address or a secret (`05 §Conventions`). The `redis` and `memory` backends need no table; the migration creates the two tables regardless of the configured backend (empty, no cost).
+
+#### `attachments` (S3 blob backend)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| blob_backend | (existing column) | gains the value **`s3`** next to `postgres` (the Notes of §6 say `postgres (phase 0)`); no schema change. A row's bytes live in the backend it names, so both can coexist and `aurora-api blobs migrate` moves rows one by one (`10 §Attachments`) | 4 (P4-S3) |
+| blob_key | (existing column) | for `s3` rows: `attachments/<org_id>/<attachment_id>` (the object key is `<blobs.s3.prefix>` + this); for `postgres` rows unchanged. Cleared on purge, as today | 4 (P4-S3) |
+| failure_reason | (existing open vocabulary) | gains `blob_store_unavailable` (a connector file could not be stored) | 4 (P4-S3) |
+
+`blobs` (the Postgres backend table), `agents.avatar_blob_key` (avatars) and `plugin_blobs` are unchanged and stay in Postgres. No new table: S3 state is the bucket. The `attachments` index on `blob_key` serves the S3 orphan sweep (rows are looked up by `(blob_backend, blob_key)`). `GET /v1/admin/storage` reports bytes and counts **per backend** from `attachments` (never by listing the bucket).
+
+#### `secrets` (LLM providers of phase 4)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| llm_provider | (existing open vocabulary) | gains `openai`, `azure_openai`, `bedrock`, `vertex`, `openai_compatible` (`08 §Phase 4 providers`); no schema change | 4 (P4-LLM) |
+| llm_auth_mode | (existing open vocabulary) | gains `aws_sigv4` (sealed JSON `{ access_key_id, secret_access_key, session_token? }`) and `gcp_service_account` (sealed service-account key JSON); `api_key` is unchanged | 4 (P4-LLM) |
+| injection | (existing jsonb `InjectionRecipe`) | gains the LLM-only kinds `header`, `aws_sigv4 { region, service }`, `gcp_service_account_token { scope }`; fixed by the provider, read-only | 4 (P4-LLM) |
+| origin | (existing jsonb) | for `bedrock` `organization_id` is the AWS account id; for `vertex` `workspace_id` is the GCP project id and `user_id` the service-account e-mail; for `openai` the organization and project of the key (`08 §Phase 4 providers`) | 4 (P4-LLM) |
+
+#### `grants`, `plugin_packages` (app-level grant restrictions)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| grants.mode | (existing) | no schema change: a `full` row for a `custom_only` app cannot be written (`07`); activation of a package that introduces `custom_only` rewrites existing `full` rows to `custom` with `allow_tools` = the whole catalogue (`09 §10`) | 4 (P4-GRANTS) |
+| plugin_packages.status_reason | (existing open vocabulary) | gains `converts_grants`: an upgrade held in `pending_approval` because it would convert full grants | 4 (P4-GRANTS) |
+| registry snapshot `apps[].grants` | `{ custom_only, block_untooled }` booleans, in the snapshot JSON only | no table; copied from the manifest (`09 §9`). Tool entries may also carry `params` (Q8, `09 §3.4`) | 4 (P4-GRANTS) |
+
+#### `agents`, `conversations` (harness selection)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| harness | (existing text) | gains `codex` (open vocabulary, validated against `hosted.enabled_harnesses` on write); no schema change | 4 (P4-HAR) |
+| harness_session_epoch | (existing bigint) | bumped on every conversation of an agent when its harness changes; `harness_session_ref` is also cleared, and a `session_purges` row is queued per old session (`12`) | 4 (P4-HAR) |
+
+`turns.usage` and `agents.model_provider` already carry free-text provider and model values; nothing changes except that the API stamps `provider`, `endpoint_id` and `model` from the turn's `ModelChoice` rather than from harness-reported values.
 

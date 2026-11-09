@@ -65,7 +65,7 @@ Both kinds share the gateway, the secret stores and the policy engine.
 | **Secret** | A stored credential not tied to an app: an **LLM key** or a **generic secret** bound to a host pattern (and optional path pattern) with an **injection recipe**. Its value is held by a **secret store**. |
 | **Secret store** | Pluggable backend that holds secret material. Phase 0: `inline` (AES-256-GCM ciphertext in Postgres). Phase 3: HashiCorp Vault. Every sensitive column holds a **SecretRef**, never raw ciphertext semantics. |
 | **SecretRef** | Opaque string naming where and how a secret value is stored (`inline:…` or `ext:…`). See `08`. |
-| **LLM provider** | Core registry entry describing a model API (phase 0: `litellm`, then `anthropic`): endpoints, auth recipe, model catalogue source, API dialects served. |
+| **LLM provider** | Core registry entry describing a model API (phase 0: `litellm`, then `anthropic`; phase 4: `openai`, `azure_openai`, `bedrock`, `vertex`, `openai_compatible`): endpoints, auth recipe, model catalogue source, API dialects served. |
 | **Governance** | Layered controls over which model accounts and destinations agents may use: instance ceiling → org governance → workspace policy → grants; each level can only tighten (`08 §11`). |
 | **Key origin** | The provider account a model key belongs to (e.g. Anthropic organization/workspace, LiteLLM team), verified at save, before first use and on responses. |
 | **LLM posture** | `open` or `sanctioned_only` (every request to a governed LLM host must carry a compliant key injected by Aurora). |

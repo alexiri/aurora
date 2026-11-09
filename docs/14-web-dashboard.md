@@ -482,9 +482,20 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
     (phase 3, RFE-018) The composer generates one UUID `Idempotency-Key` per composed
     message and reuses it for every automatic retry, so a timeout-retry never
     double-posts; editing the text or deliberately sending again uses a new key.
-  - **Instructions** — name, brief, avatar, harness, model (from
+  - **Instructions** — name, brief, avatar, harness (phase 4, P4-HAR: a picker from
+    `/v1/harnesses`, shown only when more than one is enabled; unavailable ones are disabled
+    with "no runner offers this"; changing it asks for confirmation: "Starts fresh sessions for
+    every conversation of this agent; the transcript is kept"; refused while a turn runs), model (from
     `/v1/agents/{a}/models`), effort, proactive messaging mode.
-  - **Access** — grants: connections (full / custom with allow/ask/block per
+  - **Access** — (phase 4, P4-GRANTS) for an app whose manifest is `custom_only` the grant
+    form has no "Full access" option, shows "This app only supports custom access: choose
+    the tools the agent may use" and starts with every tool on *block*; an app with
+    `block_untooled` shows the note "Requests that are not in the tool list are always
+    blocked" in the grant and in the effective view; the app catalogue and connection cards
+    carry a "Custom access only" badge; a conversion by an upgrade appears as a notice on the
+    affected agent's Access tab ("Access for <app> was converted from full to custom by an
+    app update"), and the plugin approval screen shows the "N agent grants will be converted"
+    banner next to the reconnect banner. Grants: connections (full / custom with allow/ask/block per
     tool, read/write groups, wildcard umbrellas only where valid, inert-tool
     flags), secrets, LLM keys; "effective" view with org-ceiling explanations.
   - **Channels** — presences (attach dedicated/shared per integration
@@ -525,7 +536,16 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 - **Credentials** — (phase 2, P2-DBL-2: a connection of a database app (`Connection.database`, C-230) shows a neutral `Notice` under its row with the libpq service name and `psql service=<name> -c 'select 1'`, and says that a name shared by two granted connections gets the id prefix) (phase 3, RFE-022: a connection in `reauth_required` because of a plugin major upgrade shows the reason and a Reconnect button) tabs: Apps (catalogue → connect window), Connections,
   Secrets (generic; reference-mode secrets when a reference-capable store is
   configured), LLM keys (provider/endpoint picker from `/v1/llm/providers`),
-  OAuth clients, agent-proposed secrets awaiting a value. The LLM key form
+  OAuth clients, agent-proposed secrets awaiting a value. (phase 4, P4-LLM) The LLM key
+  form adapts to the provider's auth mode from `/v1/llm/providers`: one password field
+  (`api_key`), three fields for AWS (access key id, secret access key, optional session
+  token, with the note that only the account id is shown afterwards and that the key
+  should be limited to `bedrock:InvokeModel*`), or a file/JSON import for a GCP
+  service-account key (the private key is never echoed or shown again; the page shows
+  project and service-account e-mail). Endpoints with static model lists (Azure OpenAI,
+  Vertex) say "models are configured by your administrator". A request refused with
+  `llm_path_not_permitted` appears in the request log and agent Computer tab as "Blocked:
+  not a model-inference call". The LLM key form
   offers only endpoints and scopes the governance permits, explains the
   required account ("Keys must belong to the corporate Anthropic
   organization"), shows the verified account after saving, and offers
@@ -547,7 +567,7 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 
 ### Instance administration (`/admin/*`, instance admins only)
 Overview (versions, gateways, hook hosts, runners, connectors, active snapshot
-hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze action; RFE-015: a **Storage** page — blob/attachment bytes per org, big-table sizes), Users, **Plugins** (installed packages, upload, pending approvals with a
+hash; phase 2, RFE-006: frozen orgs with an instance-admin freeze/unfreeze action; RFE-015: a **Storage** page — blob/attachment bytes per org, big-table sizes; phase 4, P4-S3: the active blob backend, bytes and counts per backend, and for `s3` the bucket, prefix, health ("reachable" / "unreachable since …"), encryption and versioning state — never credentials; an unreachable store shows a banner and uploads show "Attachment storage is temporarily unavailable, try again in a moment" instead of the quota text; an expired chip is unchanged), Users, **Plugins** (installed packages, upload, pending approvals with a
 permissions review screen showing publisher, version, signer, hooks, egress per
 hook, context variables, host claims, and the diff against the previously
 approved version; reject/disable/uninstall with orphan warnings), **Host
@@ -609,7 +629,12 @@ at 390 px).
   simulate panel (method + URL + body → decision trace; phase 2, RFE-005: a
   "speaker" picker, default you, plus "no speaker"), identity picker labelling
   `user` identities **"when <name> is speaking"** with the warning of `07`, warnings panel (phase 2, RFE-025: a rule with empty identities that selects credentials shows "Applies to all agents, including agents created later" inline, and publishing lists such rules in its confirmation step),
-  generation history with rollback.
+  generation history with rollback. (phase 4, P4-CNT) Next to a rate-limit modifier the editor
+  shows a note that depends on the deployment: **"Limits are counted per gateway replica;
+  with N replicas the effective limit can be up to N× this value"** when the counter backend
+  is `memory`, and **"Limits are shared by all gateways"** when it is `postgres` or `redis`
+  (the policy response carries `rate_limit_scope`, `05`; a transient fallback is not shown
+  there, it is an operator alert, `15`). No other dashboard change.
 - **Plugin approval**: the permissions review is mandatory reading — approve is
   disabled until the reviewer expands every section (hooks, egress, context,
   claims). (phase 3, RFE-022) For a major upgrade the review adds an **Impact**

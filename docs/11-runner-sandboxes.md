@@ -176,10 +176,11 @@ environment or memory), removes it from its environment and never passes it on.
   "capabilities": [ "browser" ],
   "ca_pem": "-----BEGIN CERTIFICATE-----…",
   "files": [ { "path": "/workspace/.config/…", "mode": "0600", "content_b64": "…", "only_if_absent_or_sentinel": true } ],
-  "harness": { "id": "claude-code", "capabilities_expected": [ "resume", "steer" ] },
-  "timezone": "Europe/Zurich"
+  "harness": { "id": "claude-code", "capabilities_expected": [ "resume", "steer" ] },  "timezone": "Europe/Zurich"
 }
 ```
+
+(phase 4, P4-HAR, D-122) `harness.id` is the agent's `agents.harness` (`claude-code`, `codex`, `fake`), chosen by the API only; an unknown id or a runtime missing from the image fails the boot with `reason_code = harness_unsupported` (`12 §Harness selection and adapter contract`). The runner registers `harnesses` from the image label `org.aurora.harnesses` (`16 §W5`); an image without the label is treated as `claude-code,fake`, so images built before phase 4 keep working.
 
 (FIX-010, D-87) `gateway.proxy` and `server_name` come from `gateway.sandbox_proxy_url`, not from the
 advertised proxy URL BYO agents get (`06`): on the Kubernetes backend the default is `aurora-gateway:4102`, the
@@ -326,7 +327,12 @@ Built from `images/sandbox/Containerfile`, published as
 - **Base layer** (rebuilt rarely, tagged by content hash): AlmaLinux 10 (phase 0–2 named the CERN registry image `gitlab-registry.cern.ch/linuxsupport/alma10-base`; **from phase 3 (RFE-019, D-63)** the specified base is the **public official AlmaLinux image**, `docker.io/library/almalinux:10`, pinned by digest in `images/sandbox/Containerfile` as `ARG SANDBOX_BASE_IMAGE=docker.io/library/almalinux:10@sha256:<digest recorded at release>`; a deployment that must use a private or mirrored base overrides the build argument `SANDBOX_BASE_IMAGE` — the package set and the image labels do not depend on which base is used; this deployment's override is the CERN `alma10-base` image, `15 §Deployment-specific settings example`), `git`, `curl`, `jq`, `ripgrep`, `fd-find`, `less`,`openssh-client`, `python3` + `pip` + `venv` + `uv`, Node.js LTS + npm, `build-essential`, `chromium` (headless), `unzip`, `zip`, `procps`, `tini`-free. (phase 1, RFE-003) The image carries the label `org.aurora.capabilities=browser` (it ships the Chromium wrapper); a custom image without Chromium omits it and its sandboxes get no open-lane listener.
 
 - **App layer**: `aurora-supervisor` binary, pinned harness runtimes (Claude Code
-CLI at a pinned version installed under `/opt/aurora/harness/claude-code`),
+CLI at a pinned version installed under `/opt/aurora/harness/claude-code`;
+(phase 4, P4-HAR, D-122) the pinned Codex CLI under `/opt/aurora/harness/codex`, installed
+by default and omitted with the build argument `SANDBOX_HARNESSES="claude-code"`, which
+shrinks the image by the size of the Codex binary; each runtime comes from a pinned,
+checksum-verified release artifact, and the image label `org.aurora.harnesses` lists the
+runtimes present, e.g. `claude-code,codex,fake`),
 entrypoint `/usr/local/bin/aurora-supervisor run`, user `agent` (uid 1000),
 `WORKDIR /workspace`.
 - Durable user-space installs live in the home: `npm config prefix ~/.local`, `pip --user`, `uv tool`; `~/.local/bin` is on `PATH`.

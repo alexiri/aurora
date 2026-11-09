@@ -19,7 +19,13 @@
 | **CLI** | `aurora` | Login, BYO `run`, management, plugin tooling | — | `~/.config/aurora` | — |
 
 There is **no Redis** and no message broker: Postgres provides the work queue
-(claims with `SKIP LOCKED`) and the event bus (`LISTEN/NOTIFY`).
+(claims with `SKIP LOCKED`) and the event bus (`LISTEN/NOTIFY`). (phase 4, P4-CNT)
+This stays true by default: **Redis is an optional backend** of the rate-limit
+`CounterStore` only (`15 §Shared rate-limit counters`); nothing is stored there that
+is a system of record, no feature requires it, and a deployment without it behaves as
+before. The rate-limit counters themselves may also live in Postgres (`postgres`
+backend). Trust boundary 4 (gateway ↔ database) gains one grant: the counter table
+(`03`).
 
 ## The planes
 
@@ -108,6 +114,14 @@ database, no keys, no ambient network. It is called only on slow paths.
    plaintext per call. Connectors see their own platform credentials.
 9. **Chat traffic** to platforms is platform traffic, not agent traffic: it
    does not pass through the gateway.
+10. **Optional external stores** (phase 4, P4-CNT, P4-S3). The **API** may talk to an
+    S3-compatible bucket (attachment bytes, nothing else) and the API and gateway
+    to a Redis (rate-limit counters, nothing else). Both are operator-run
+    infrastructure reached outbound over TLS with credentials from the workload
+    identity or environment variables; neither is reachable from a sandbox, neither
+    is a system of record for authorization, and an outage degrades attachments or
+    quota accuracy, never policy (SEC-62, SEC-63). Bucket bytes are served only
+    through the API's authorization, never by a pre-signed URL.
 
 ## End-to-end flows
 

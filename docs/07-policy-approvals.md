@@ -181,6 +181,16 @@ carve-out is deliberate and was undocumented until phase 3:
   governs requests to an LLM host on which Aurora injects nothing (the agent
   brought its own key): they are blocked unless allow-listed. (3) The `allow`
   Default Rule is unaffected (it allows anyway). (4) Everything in `08 §11`.
+- (phase 4, P4-LLM, D-121) **More endpoint hosts, same rule, still exact.** The
+  providers of `08 §Phase 4 providers` (OpenAI, Azure OpenAI, Bedrock, Vertex, generic
+  OpenAI-compatible) add the **exact hosts** of their configured endpoints to the
+  governed LLM hosts, so the carve-out covers them and only them: enabling Bedrock
+  exempts `bedrock-runtime.<region>.amazonaws.com`, never `*.amazonaws.com`, and the
+  S3/EC2 hosts of an AWS app connection stay under the Default Rule. Because such a
+  credential (an IAM key, a service account) could do more than call a model, the
+  carve-out is paired with the inference-only path set of `08` (SEC-65): a request
+  the set refuses is refused by governance before policy, whatever the Default Rule
+  says.
 - The carve-out is exactly the pseudocode condition `facts.injected and not
   facts.is_llm_host`; it is evaluated per scope, so an org Default Rule of `block`
   and a workspace one behave identically. Simulation and the effective view show
@@ -199,7 +209,16 @@ carve-out is deliberate and was undocumented until phase 3:
    `default_denied`; from an uncredentialed default, `egress_denied`.
 4. Rate-limit counters of matched rate-limited rules are incremented only when
    the final verdict is `allow` or `needs_approval` (a blocked request does not
-   consume quota).
+   consume quota). (phase 4, P4-CNT) The evaluator stays a pure function: the
+   caller passes in the current counts of the matched rate-limited rules (a
+   `counts` argument, empty for rules without a count) and receives the list of
+   `(rule logical_id, period, limit)` to consume when the final verdict allows;
+   the gateway then consumes them atomically through the `CounterStore`
+   (`06 §Rate limiting`), and a consume the store refuses turns the answer into
+   `rate_limited`. With a shared backend a peek can be stale by one request; the
+   consume is authoritative. Simulation (`POST …/policy/simulate`) neither
+   reads nor consumes counters, as before (it reports the rule's limit, never a
+   count), whatever the backend.
 5. The evaluator returns a **trace** (per scope: rules considered, the matching
    rule, why) used by simulation and the request log (`rule_logical_id`,
    `rule_name`).
@@ -260,6 +279,34 @@ grant write, and the gateway is invalidated (`agent` scope).
 | Secret `S` | 1. `allow` target `secret{S}` |
 | Connection `C`, mode `full` | 1. `allow` target `connection{C}` (all tools, including future ones) |
 | Connection `C`, mode `custom` | 1. `allow` target `connection{C, tools: allow_tools}` (if non-empty) · 2. `allow + require_approval` target `connection{C, tools: ask_tools}` (if non-empty; phase 2, RFE-011a: carrying the grant's optional `ask_timeout_secs` as `approval_timeout_secs`) · 3. `block` target `connection{C}` (everything else, including requests with no matching tool) |
+
+**App-level restrictions (phase 4, P4-GRANTS, D-123, SEC-67).** An app's manifest may
+declare `grants.custom_only` and `grants.block_untooled` (`09 §3.4 grants`). They are
+facts of the approved manifest, copied into the snapshot, and apply **below** the rules:
+
+- `custom_only`: creating or editing a grant of a connection of that app in mode `full` is
+  refused (422 `full_grant_forbidden`, `details: { app_id }`) on every path that writes grants
+  (routes, CLI, first-run and template flows, agent proposals); the table's `full` row is never
+  compiled for such an app. **Defence in depth** in the evaluator: for a request whose
+  winning credential is a connection of a `custom_only` app, a `connection` or
+  `app_connections` target **without `tools`** (whether in a derived or a hand-written rule)
+  matches nothing — it neither allows nor selects the credential for injection — so a stale
+  or hand-made full-style rule can never grant what the manifest forbids. Rules with
+  `tools` are unaffected. The warnings panel reports such a hand-written rule as inert
+  (`app_custom_only_target_inert`).
+- `block_untooled`: for a request whose winning credential is a connection of that app and
+  whose `tool_id` is `None`, the scope verdict is `block` before any rule is consulted
+  (403 `blocked_by_policy`, `details.reason = "app_untooled_blocked"`; reason
+  `app_untooled_blocked` in the trace and request log). No rule, allow or approval, can
+  override it, and it applies under every grant mode and to hand-written rules alike. It
+  does not apply at CONNECT time (no credential is injected there) and does not affect
+  requests to the same host without that connection as the winning credential.
+- **Composition.** The restrictions only tighten: they combine with grants, rules,
+  approvals, governance and the Default Rule by the usual strictness order (`block` wins), never
+  add an allow, and never change a custom grant's compilation (rules 1–3 above already block
+  untooled requests and unlisted tools). An `ask` tool still holds for approval; a `block`
+  entry still blocks. Activation of a package version that introduces `custom_only` converts
+  existing full grants (`09 §10`).
 
 (phase 2, RFE-011a) A grant may carry `ask_timeout_secs` (custom connection grants with `ask_tools`; validated like a rule's timeout, 422 `approval_timeout_out_of_range`).
 

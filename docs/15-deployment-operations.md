@@ -32,7 +32,11 @@ non-prerelease semver tag. Images carry OCI labels (source, revision, version, l
 `GPL-3.0-or-later`) plus SBOM and max-mode provenance attestations. The Helm chart defaults to
 `image.registry: ghcr.io/alexiri` with the chart `appVersion` as tag. The six service images are copies of a
 single compile of the workspace (`images/services/Containerfile`, cargo-chef dependency layer, lld).
-`aurora-sandbox-min` is the slim e2e sandbox (OS + supervisor).
+`aurora-sandbox-min` is the slim e2e sandbox (OS + supervisor). (phase 4, P4-HAR) The
+sandbox image installs the pinned Claude Code and Codex runtimes by default; build with
+`SANDBOX_HARNESSES="claude-code"` for a slimmer image. The label `org.aurora.harnesses`
+tells the runner what is inside. Helm: `hosted.enabledHarnesses` (default
+`[claude-code]`) renders `hosted.enabled_harnesses`.
 
 Service images are distroless (`gcr.io/distroless/cc` or equivalent), run as
 non-root, contain only their binary, and are built for linux/amd64. arm64 images are deferred
@@ -105,6 +109,8 @@ one new entry without activating it.
 | `secrets.stores[].managed_prefix` | `aurora` | api, gateway | managed values live at `<kv_mount>/data/<managed_prefix>/<org_id>/<purpose>/<owner_id>` (fixed layout; only the prefix is configurable); 1..128 chars, segments of `[A-Za-z0-9._-]`, no `.`/`..`/empty segment. The mount's `max_versions` SHOULD be ≥ 10 |
 | `secrets.stores[].reference_scopes[]` | `[]` (no org may reference) | api, gateway | which org may reference which paths (SEC-61; phase 3, D-107): entries `{ org_id, paths: [glob, …] }`. `org_id` is the organization's **immutable id** (a UUID string; anything else refuses startup naming the key), never its slug: a slug can be changed, freed and taken by another org, which must never inherit a scope. An id that matches no org grants nothing. Operators find an org's id with `GET /v1/admin/orgs` (instance admin; `id`, `slug`, `name` per org, C-203) or, as an org member, `GET /v1/resolve?org=<slug>` (`org.id`). `paths` non-empty, each glob either an exact path or a prefix ending in a single trailing `*` (the phase-0 `memory` store rule; `*` anywhere else is refused), relative to `kv_mount`, no leading `/`, no `.`/`..`/empty segment; a glob equal to, inside or covering `<managed_prefix>/` refuses startup (no reference can reach another org's managed values). Several entries for one id are unioned. Matched against the secret's org id at every resolve and open |
 | `llm.enabled_providers`, `llm.provider_preference`, `llm.endpoints[]` | `["litellm","anthropic"]` | api, gateway | `08 §6`; each endpoint may set `allowed_models` and `key_origin` (`method` = `endpoint` \| `litellm_team` \| `provider_account`, with `allowed_organization_ids`, `allowed_workspace_ids`, `allowed_team_ids`) |
+| `llm.endpoints[]` provider keys (phase 4, P4-LLM, D-121) | — | api, gateway | per provider, in addition to the common `id`, `provider`, `display_name`, `dialects`, `default_model`, `models`, `allowed_models`, `key_origin`: **`openai`**: `organization`, `project` (optional, not secrets); **`azure_openai`**: `base_url` (required, `https://<resource>.<azure-domain>`, host only), `models` and `default_model` required (deployment names); **`bedrock`**: `region` (required, e.g. `eu-central-1`), `base_url` (optional VPC endpoint override), `dialects` (default `["anthropic_bedrock"]`); **`vertex`**: `project_id` and `location` (required), `models` and `default_model` required; **`openai_compatible`**: `base_url` (required), `auth_header` (`authorization` default \| `api-key` \| `x-api-key`), `models_path`, `allowed_paths` (default derived from `dialects`; `["/**"]` opts out). Every provider also accepts `allowed_paths` to **narrow** its inference set. Credentials never appear here: an entry with a key such as `api_key`, `access_key*`, `secret*`, `private_key`, `password` or `token`, an unknown key, a non-https `base_url` (loopback excepted), or an invalid region/location/project id refuses startup naming the key (`08 §Phase 4 providers`) |
+| `llm.enabled_providers` additions | default unchanged | api, gateway | (phase 4, P4-LLM) accepts `openai`, `azure_openai`, `bedrock`, `vertex`, `openai_compatible` besides `litellm`, `anthropic`; the default stays `["litellm","anthropic"]`, so an existing configuration behaves exactly as before |
 | `governance.llm.allowed_key_scopes` | `["organization","workspace"]` | api, gateway | key scopes any org may permit (`08 §11`) |
 | `governance.llm.minimum_posture` | `open` | api, gateway | `open` or `sanctioned_only` — floor for every org |
 | `governance.llm.require_key_origin` | `false` | api, gateway | when `true`, startup fails unless every endpoint declares a `key_origin` |
@@ -115,7 +121,8 @@ one new entry without activating it.
 | `agents.default_name` | `Daneel` | api | default agent and shared-bot name |
 | `agents.default_brief` | (neutral text in `10`; phase 3, RFE-019: was the Daneel persona in phase 0–2) | api | brief given to the default agent of **new** workspaces; ≤20 000 chars; empty = the default; never changes existing agents |
 | `hosted.enabled` | `true` | api | hosted agents available |
-| `hosted.default_harness` | `claude-code` | api | |
+| `hosted.default_harness` | `claude-code` | api | must be in `hosted.enabled_harnesses` or startup fails |
+| `hosted.enabled_harnesses` | `["claude-code"]` | api | (phase 4, P4-HAR, D-122) harness ids agents may use (`claude-code`, `codex`; `fake` only with `hosted.allow_fake_harness`); an unknown id refuses startup. Enabling `codex` also needs a runner image that contains it (image label `org.aurora.harnesses`, `11 §Sandbox image`) and an LLM endpoint serving `openai_responses` or `openai_chat` (`08 §Phase 4 providers`) |
 | `hosted.allow_fake_harness` | `false` | api | tests/dev |
 | `hosted.default_timezone` | `UTC` | api | for new workspaces |
 | `hosted.idle_stop_secs`, `hosted.background_cap_secs`, `hosted.turn_ceiling_secs`, `hosted.turn_stall_secs` | `02 §Limits` | api | |
@@ -158,6 +165,29 @@ one new entry without activating it.
 | `events.delta_coalesce_ms` | 100 | api | (phase 1, RFE-016) delta coalescing window, 100–500 |
 | `ratelimit.api.enabled`, `ratelimit.api.multiplier` | `true`, `1.0` | api | (phase 2, RFE-017) management-API token buckets and a global multiplier (0.1–100) |
 | `ratelimit.api.classes.<name>`, `ratelimit.api.org_per_minute` | `05 §Conventions` | api | (phase 2, RFE-017) per-class `{ per_minute \| per_hour, burst }` overrides and the per-org bucket (default 3000) |
+| `ratelimit.counters.backend` | `memory` | api, gateway | (phase 4, P4-CNT, D-119) `memory` (per replica, today's behaviour, no infrastructure), `postgres` (shared, tables of `03`, no new infrastructure) or `redis`; any other value refuses startup. See *Shared rate-limit counters* |
+| `ratelimit.counters.api`, `ratelimit.counters.gateway` | `shared` | api, gateway | (phase 4, P4-CNT) `shared` (use the backend above) or `memory` (keep that limiter per replica): lets an operator share only the gateway's rule quotas and keep the API limiter local. With `backend = memory` both are `memory` whatever they say |
+| `ratelimit.counters.on_unavailable.security`, `.management`, `.gateway` | `local`, `local`, `local` | api (`security`, `management`), gateway (`gateway`) | (phase 4, P4-CNT) behaviour when the shared backend cannot be reached: `local` (per-replica in-memory counters until it recovers) or `closed` (refuse with 503 `counter_unavailable`). **There is no `open`**: any other value, `open` included, refuses startup (SEC-62). Classes in `05 §Conventions` *Shared counters* |
+| `ratelimit.counters.timeout_ms` | 50 | api, gateway | (phase 4, P4-CNT) `COUNTER_TIMEOUT` per store call, 10–2000 |
+| `ratelimit.counters.postgres.pool_size` | 4 | api, gateway | (phase 4, P4-CNT) size of the dedicated pool of the `postgres` backend, 1–32, separate from `database.max_connections` so a slow counter query cannot starve the data path; uses the service's own database role |
+| `ratelimit.counters.redis.address` | — (required for `redis`) | api, gateway | (phase 4, P4-CNT) `rediss://host[:port]` (TLS) with no userinfo, path or query; `redis://` is accepted only for a loopback host or with `allow_plaintext = true` (startup warning); a URL carrying a password refuses startup |
+| `ratelimit.counters.redis.allow_plaintext` | `false` | api, gateway | (phase 4, P4-CNT) explicit opt-in for `redis://` to a non-loopback host (in-cluster Redis without TLS) |
+| `ratelimit.counters.redis.username_env`, `.password_env` | unset | api, gateway | (phase 4, P4-CNT) names of environment variables holding the Redis ACL user and password (both optional; an unset variable that is named refuses startup); never the values (`08 §4`) |
+| `ratelimit.counters.redis.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api, gateway | (phase 4, P4-CNT) PEM bundle verifying the Redis server |
+| `ratelimit.counters.redis.db`, `.key_prefix` | `0`, `aurora:rl:` | api, gateway | (phase 4, P4-CNT) database index and key prefix (lets several Aurora instances share one Redis); `key_prefix` ≤ 64 chars of `[A-Za-z0-9:_-]` |
+| `blobs.backend` | `postgres` | api | (phase 4, P4-S3, D-120) where **new** attachment bytes go: `postgres` (the `blobs` table) or `s3`; existing rows keep their own backend (`attachments.blob_backend`); any other value refuses startup. See *S3-compatible blob store* |
+| `blobs.s3.bucket`, `blobs.s3.region` | — (required for `s3`) | api | (phase 4, P4-S3) bucket name (3–63 chars, DNS-compatible) and signing region (any non-empty string for S3-compatible servers that ignore it, e.g. `us-east-1`) |
+| `blobs.s3.endpoint` | unset (AWS S3 for the region) | api | (phase 4, P4-S3) `https://host[:port]` of an S3-compatible server (MinIO, Ceph, …), no userinfo, path or query; `http://` accepted only for a loopback host or with `allow_insecure_http = true` |
+| `blobs.s3.allow_insecure_http` | `false` | api | (phase 4, P4-S3) opt-in for `http://` to a non-loopback endpoint (in-cluster MinIO without TLS); startup warning |
+| `blobs.s3.path_style` | `false` | api | (phase 4, P4-S3) path-style addressing (`https://host/bucket/key`); needed by most self-hosted servers |
+| `blobs.s3.prefix` | `aurora/` | api | (phase 4, P4-S3) key prefix, ≤ 64 chars of `[A-Za-z0-9._/-]`, no leading `/`, no `..`, empty or ending in `/` |
+| `blobs.s3.credentials.source` | `provider_chain` | api | (phase 4, P4-S3) `provider_chain` (the standard AWS chain: web identity / IRSA / pod identity / instance profile / environment; **recommended**, no static key in Aurora's configuration) or `env` (static keys from the variables named below); never inline values |
+| `blobs.s3.credentials.access_key_id_env`, `.secret_access_key_env`, `.session_token_env` | — | api | (phase 4, P4-S3) `source = env`: names of the environment variables holding the keys (`session_token_env` optional); an unset or empty named variable refuses startup; values are filled from a Secret (Helm `blobs.s3.existingSecret`), never from `aurora.toml` or the database |
+| `blobs.s3.sse` | `AES256` | api | (phase 4, P4-S3) server-side encryption requested on every `PutObject`: `AES256` (SSE-S3), `aws:kms` (with `sse_kms_key_id`) or `none` (startup warning; only for servers without encryption support). The startup probe verifies that the server **confirms** the requested encryption (`x-amz-server-side-encryption` in the response) and refuses to start otherwise |
+| `blobs.s3.sse_kms_key_id` | unset | api | (phase 4, P4-S3) KMS key id/ARN for `aws:kms` (not a secret) |
+| `blobs.s3.ca_file` | unset (system roots, then `tls.extra_ca_bundle`) | api | (phase 4, P4-S3) PEM bundle verifying the endpoint |
+| `blobs.s3.allow_versioned_bucket` | `false` | api | (phase 4, P4-S3) accept a bucket with versioning enabled; purges then delete every version (`10 §Attachments`). Object-Lock buckets are never accepted |
+| `blobs.s3.upload_concurrency` | 16 | api | (phase 4, P4-S3) `S3_UPLOAD_CONCURRENCY`, 1–64 uploads in flight per replica |
 | `retention.request_log_days` | 30 | api | |
 | `attachments.default_org_quota_mib`, `attachments.org_quota_mib_max` | 10240, 51200 | api | (phase 2, RFE-015) default and ceiling of an org's attachment storage quota (MiB; `0` = unlimited) |
 | `attachments.days_max` | — (no ceiling) | api | (phase 2, RFE-015) instance maximum for an org's attachment retention window |
@@ -198,7 +228,10 @@ Built-in `known_llm_hosts` (maintained with releases): `api.openai.com`,
 `api.together.xyz`, `api.fireworks.ai`, `api.deepseek.com`, `api.x.ai`,
 `api.perplexity.ai`, `openrouter.ai`, `api.anthropic.com` (when no
 `anthropic` endpoint is configured). Hosts that are also endpoint hosts are
-removed from the list automatically.
+removed from the list automatically. (phase 4, P4-LLM) The list is unchanged: the
+hosts of OpenAI, Azure OpenAI, Bedrock and Vertex are already known LLM hosts, so
+until an operator configures an endpoint they stay refused under `sanctioned_only`;
+configuring one reserves exactly that endpoint's host and removes it from the list.
 
 ### Deployment-specific settings example (phase 3, RFE-019, D-63)
 
@@ -340,7 +373,11 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   providers, LLM endpoints for model listing, secret stores); gateway →
   postgres, hookhost, external egress; hookhost → api:4111 and external egress
   (hooks' fetch is additionally filtered in-process); runner → api, Kubernetes
-  API; connectors → api, their platform.
+  API; connectors → api, their platform. (phase 4, P4-CNT) With the Redis counter
+  backend api and gateway also reach the configured Redis peers
+  (`counters.redis.networkPolicy`) on its port; nothing else changes. (phase 4, P4-S3)
+  With the `s3` blob backend the **api** (only) also reaches the configured bucket
+  endpoint (`blobs.s3.networkPolicy`).
 - (phase 4, P4-MCON) **Connector host** (`connectorHost.enabled`, default `true`; replicas
   default 1, `connectorHost.testTypes` default `false`): Deployment `aurora-connector-host`,
   Service on 4110 (callbacks) routed by the edge rule `/connectors/` (Ingress and HTTPRoute;
@@ -401,6 +438,9 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   latencies, holds pending, refresh/mint outcomes, due-work arm durations and
   items, sandboxes by state, turns by status, inbox/ops depth and age,
   connector replicas live, hook calls/errors/duration, snapshot hash info.
+- (phase 4, P4-CNT) **Counter backend.** The `aurora_counters_*` series and alerts of
+  *Shared rate-limit counters* below: a `fallback` state means limits are per replica
+  again (warning), `policy="closed"` refusals are an outage of the affected limiter.
 - (phase 3, RFE-024) **Orphaned bots.** Alert on `aurora_channel_deprovision_failed_total`
   and on audit rows `presence.deprovision_failed`: the named bot account was not
   removed on the chat platform (connector down > 24 h or credentials revoked) and
@@ -413,7 +453,8 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
 
 ## Backups and state
 
-Stateful: Postgres (system of record), per-agent home volumes (PVC snapshots /
+Stateful: Postgres (system of record), (phase 4, P4-S3) the attachment bucket when
+`blobs.backend = "s3"` (restore it together with Postgres), per-agent home volumes (PVC snapshots /
 volume backups are the operator's job), the gateway CA Secret, the encryption
 keyring and signing key (phase 2: the signing-key and internal-secret **rings**,
 including retired entries still inside their rotation window). **Secrets are
@@ -427,8 +468,9 @@ occupy a slot permanently: size for steady state, not peak. Postgres: modest;
 
 ### Attachment storage (phase 2, RFE-015)
 
-Attachments live in Postgres (`blobs`, `bytea`) until the S3-compatible BlobStore
-exists, so they share the database's disk and backups. Budget for
+Attachments live in Postgres (`blobs`, `bytea`) by default (phase 4, P4-S3: or in an
+S3-compatible bucket with `blobs.backend = "s3"`, *S3-compatible blob store* below), so in
+the default they share the database's disk and backups. Budget for
 `Σ org quotas` (default 10 GiB each) in the worst case, expect real use to be far
 lower, and prefer short retention windows. `GET /v1/admin/storage` shows where the
 bytes are; the Postgres size alert should fire well before the disk is full
@@ -459,3 +501,185 @@ approaching the ceiling have three levers without code changes: raise coalescing
 (`events.delta_coalesce_ms`, default 100, up to 500), run fewer API replicas per
 streaming-heavy deployment, or switch `events.delta_bus` to a later
 implementation when available.
+
+## Shared rate-limit counters (phase 4, P4-CNT, D-119, SEC-62)
+
+Phase 0–3 keep every rate-limit counter in memory per replica (D-05, D-57): with N
+replicas a limit can be exceeded up to N×. From phase 4 the counters sit behind the
+**`CounterStore`** trait so replicas can share them. Nothing changes unless
+`ratelimit.counters.backend` is set: an existing `aurora.toml` and Helm values keep
+the `memory` backend, which is today's behaviour exactly.
+
+**Trait** (crate `aurora-counters`: the trait, the `memory` backend and the `redis`
+backend behind a cargo feature; the `postgres` backend lives in `aurora-db`, which
+implements the trait, so `aurora-counters` never depends on `aurora-db`):
+
+| Method | Semantics |
+|--------|-----------|
+| `fixed_window_peek(probes)` | read the current count of each `(key, period)`; `period` ∈ minute / hour / day, aligned to UTC by the **store's** clock; no side effect |
+| `fixed_window_consume(units)` | for each `(key, period, limit, cost = 1)`: add `cost` to the current window **only if** the result stays ≤ `limit`; **all-or-nothing** across the units of one call; returns `Allowed` or `Refused { key, retry_after }`; atomic (never exceeds `limit`, however many replicas call concurrently); a window's state expires with it (TTL) |
+| `bucket_take(takes)` | for each `(key, emission_interval, burst)`: GCRA token take, all-or-nothing across the takes of one call; returns `Allowed` or `Refused { key, retry_after }`; used by the API limiter |
+| `health()` | cheap liveness probe for the circuit breaker |
+
+Errors are only `Unavailable` (connection error, timeout, breaker open) and
+`Invalid` (a bug). **A backend error never means "allowed"**: the caller applies the
+class policy (`local` or `closed`) of `ratelimit.counters.on_unavailable.*`
+(`06 §Rate limiting`, `05 §Conventions`). `COUNTER_TIMEOUT` (50 ms), the breaker
+(`COUNTER_BREAKER_FAILURES` 3, `COUNTER_BREAKER_COOLDOWN` 5 s) and the `local`
+fallback are implemented once, in a wrapper over the trait, so every backend and
+every limiter behaves the same.
+
+**Limiters and failure policy** (the reason column is the design record):
+
+| Limiter | Class | Default when the backend is down | Why |
+|---------|-------|----------------------------------|-----|
+| gateway `rate_limit` rule quotas | `gateway` | `local` | a quota on an allowed access; the per-replica bound is today's behaviour; `closed` for hard caps |
+| sign-in/OIDC `start`/`callback`, rejected-bearer per-IP, unauthenticated per-IP GETs | `security` | `local` | brute-force and token-guessing protection must keep working at today's strength; **never open**; `closed` available (locks sign-in out during a Redis outage) |
+| API `general`, class and `org` buckets, per-webhook limit | `management` | `local` | availability of the management plane; per-replica limits are today's behaviour; `closed` turns a counter outage into an API outage |
+| stream concurrency cap, CLI polling, BYO admission (CIDR check), approval e-mail digest | — | not on the trait | gauge, row-based or not counters (`05`, `06`, `07`) |
+
+**Backends.**
+- `memory`: today's per-replica counters (default; exact with one replica).
+- `postgres`: the `rate_limit_windows` / `rate_limit_buckets` tables of `03`,
+  `UNLOGGED`, through a small dedicated pool; adds **no infrastructure**, one
+  round-trip per consume; suited to the gateway's rule quotas, auth limits and small
+  API deployments. The window and bucket arithmetic is done in SQL with the
+  database's clock; rows are pruned by the API's `counters_prune` arm. During a
+  Postgres outage this backend is unavailable too and falls back as above.
+- `redis`: a standalone Redis or a primary with replicas/Sentinel failover (**not
+  Redis Cluster**: a request's keys span slots); atomic scripts (`EVALSHA`, loaded
+  at start and on `NOSCRIPT`) implement the operations with `PEXPIRE` TTLs and the
+  Redis `TIME`. TLS by default (`rediss://`), ACL user and password from
+  environment variables, keys under `ratelimit.counters.redis.key_prefix`. The
+  Redis ACL needs only `EVALSHA`/`SCRIPT LOAD`/`GET`/`PING` on that prefix. Run it
+  with `maxmemory-policy noeviction` or `volatile-ttl` (an LRU policy evicts live
+  counters, which resets limits); persistence may be off. Redis is **optional and
+  never required**; every Aurora feature works without it.
+
+**Clock.** Replicas should be NTP-synchronized anyway, but counters do not depend
+on it: window starts and bucket times come from the store.
+
+**Metrics** (all services using the trait): `aurora_counters_calls_total{backend,op,result}`
+(`result` = `allowed|refused|error|timeout|breaker_open`), `aurora_counters_call_seconds{backend,op}`,
+`aurora_counters_state{backend,class,state="shared|fallback"}` (1 for the current
+state), `aurora_counters_fallback_total{class,policy}` (requests decided by the local
+fallback or refused by `closed`), `aurora_counters_pruned_total` (api). Alert on
+`aurora_counters_state{state="fallback"} == 1` for 5 min (warning: limits are per
+replica again) and on `aurora_counters_fallback_total{policy="closed"}` rate > 0
+(critical for `closed` classes: requests are being refused). `readyz` is **not**
+affected by a counter fallback.
+
+**Helm** (`deploy/helm/aurora/values.yaml`; all keys optional, defaults render the
+`memory` backend and the same manifests as before):
+
+```yaml
+counters:
+  backend: memory            # memory | postgres | redis  -> ratelimit.counters.backend
+  api: shared                # shared | memory
+  gateway: shared            # shared | memory
+  onUnavailable: {security: local, management: local, gateway: local}   # local | closed
+  timeoutMs: 50
+  postgres: {poolSize: 4}
+  redis:
+    address: ""              # rediss://redis.example.org:6379 (no password in it)
+    allowPlaintext: false
+    existingSecret: ""       # Secret with keys REDIS_USERNAME (optional) and REDIS_PASSWORD (optional);
+                             # exposed to api and gateway as the variables named by username_env/password_env
+    caFile: ""
+    db: 0
+    keyPrefix: "aurora:rl:"
+    networkPolicy: {egressTo: []}   # NetworkPolicy peers (podSelector/namespaceSelector/ipBlock) api and gateway may reach on the Redis port
+```
+
+With `backend = redis` the chart adds the Redis peers to the api and gateway
+NetworkPolicy egress (default deny stays: no peer, no egress) and fails `helm
+template` if `address` is empty or `existingSecret` and `address` carry a
+password inline. The chart **does not ship Redis**; an operator who wants one
+uses their own or any chart. With `postgres` nothing is added (the pods already
+reach Postgres).
+
+**Migrating and rolling back.** Switching `backend` is a rolling restart; windows
+and buckets start empty on the new backend (a limit's usage resets once). Going
+back to `memory` leaves the tables in place (they are pruned, not dropped). A mixed
+fleet (some replicas shared, some `memory`) is safe: each counts what it sees, so
+the effective limit is between the configured value and N× until the roll finishes.
+
+## S3-compatible blob store (phase 4, P4-S3, D-120, SEC-63)
+
+A second attachment backend beside Postgres, behind the same **BlobStore** trait
+(`put`, `get`, `delete`, `list(prefix)`, `health`; crate `aurora-blobstore`, with the
+`postgres` backend moved behind it unchanged and the `s3` backend built on
+`aws-sdk-s3` with rustls). It is **optional**: with no `blobs.*` configuration the
+deployment behaves exactly as in phase 3. Behaviour, key layout, streaming, purge,
+orphan sweep, unavailability and migration are specified in `10 §Attachments`; this
+section is the operator side.
+
+- **Who talks to the bucket.** Only the **API** (uploads, downloads, purge, sweep).
+  The gateway, runner, supervisor, connectors and sandboxes never reach it and
+  never see its credentials (the runner downloads inbox files through the API). Only
+  the API NetworkPolicy gains an egress rule (`blobs.s3.networkPolicy`).
+- **Credentials.** Prefer `provider_chain` (IRSA / pod identity / instance profile):
+  no static key exists in Aurora's configuration. For `env`, the Helm chart reads
+  a Secret (`blobs.s3.existingSecret` with keys `AWS_ACCESS_KEY_ID`,
+  `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`) and the configuration names
+  the variables (`*_env`); the values are not in `aurora.toml`, the database, a
+  response, a log line, a metric label or a sandbox (SEC-63).
+- **Least-privilege policy.** On `arn:aws:s3:::<bucket>/<prefix>attachments/*`:
+  `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`; on the bucket, with
+  `s3:prefix = <prefix>attachments/*`: `s3:ListBucket`; plus `s3:GetBucketVersioning`
+  and `s3:GetEncryptionConfiguration` for the startup probe (and `s3:ListBucketVersions`,
+  `s3:DeleteObjectVersion` only with `allow_versioned_bucket`). Nothing else; no
+  `s3:*`, no `PutBucketPolicy`, no ACL actions.
+- **Bucket requirements.** Private (S3 *Block Public Access* on), default encryption
+  enabled, **versioning off** (or `allow_versioned_bucket`), **Object Lock off**.
+  Aurora requests the configured SSE on every put and the startup probe writes,
+  reads and deletes a probe object under `<prefix>_probe/` to prove it; a server that
+  does not confirm the requested encryption, a missing bucket, a refused credential
+  or a versioned or locked bucket fails startup with a message naming the key.
+- **Timeouts and retries.** `S3_CONNECT_TIMEOUT` 5 s, `S3_REQUEST_TIMEOUT` 60 s per
+  call, idle body timeout 30 s; `S3_RETRIES` (2) with jittered backoff for
+  connection errors, 5xx and throttling on `get`, `delete`, `list`, `head` and on
+  `put` (a key is written once, so a retry is safe; a `412` on a retried conditional
+  put counts as success when the stored checksum equals the upload's); other 4xx are final.
+- **Metrics:** `aurora_blob_store_requests_total{backend,op,result}`,
+  `aurora_blob_store_seconds{backend,op}`, `aurora_blob_store_up{backend}`,
+  `aurora_blob_bytes{backend}` (from `attachments`), `aurora_blob_orphans_removed_total{backend}`.
+  Alert on `aurora_blob_store_up == 0` for 2 min: uploads and downloads of attachments
+  fail with 503 while it holds; the rest of the API keeps working and `readyz` does not
+  change.
+- **Backups and DR.** The bucket's durability, replication and backup are the operator's
+  job and are part of "stateful" (`§Backups and state`): restoring Postgres without the
+  bucket (or the reverse) leaves attachments readable only for the rows whose bytes exist
+  (a missing object reads as 503/502 and is logged, never silently empty).
+- **Helm:**
+
+  ```yaml
+  blobs:
+    backend: postgres            # postgres | s3  -> blobs.backend
+    s3:
+      bucket: ""
+      region: ""
+      endpoint: ""               # empty = AWS; https://minio.example.org for S3-compatible servers
+      allowInsecureHttp: false
+      pathStyle: false
+      prefix: aurora/
+      credentials: {source: provider_chain}   # provider_chain | env
+      existingSecret: ""         # source=env: Secret with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY [/ AWS_SESSION_TOKEN]
+      serviceAccountAnnotations: {}   # e.g. eks.amazonaws.com/role-arn for IRSA, on the api ServiceAccount only
+      sse: AES256                # AES256 | aws:kms | none
+      sseKmsKeyId: ""
+      caFile: ""
+      allowVersionedBucket: false
+      uploadConcurrency: 16
+      networkPolicy: {egressTo: []}   # peers/ports the api may reach (default deny stays)
+  ```
+
+  `helm template` fails when `backend: s3` has an empty `bucket` or `region`, when
+  `credentials.source: env` has no `existingSecret`, or when `existingSecret` and an
+  inline key are both set. The chart does not ship MinIO or any bucket.
+- **Switching and migrating.** Setting `blobs.backend: s3` changes only where **new**
+  attachments go (rolling restart). To move existing attachments run
+  `aurora-api blobs migrate --to s3` (resumable; `--dry-run` first; as a Kubernetes
+  Job in the chart's `jobs` values). Keep `blobs.s3` configured for as long as any row
+  names `s3`: removing it makes those attachments unreadable (503
+  `blob_backend_not_configured`), not deleted.

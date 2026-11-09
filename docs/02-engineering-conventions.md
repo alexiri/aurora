@@ -18,6 +18,8 @@ aurora/
     aurora-policy/            # host/path matchers, GraphQL classifier, rule evaluator, injection selection
     aurora-registry/          # plugin manifest types, validator/linter, package format, snapshot compiler + types
     aurora-llm/               # LLM provider registry (litellm, anthropic, …)
+    aurora-blobstore/         # (phase 4, P4-S3) `BlobStore` trait with the `postgres` and `s3` backends, startup probe, orphan listing; `aurora-api blobs migrate` uses it
+    aurora-counters/          # (phase 4, P4-CNT) `CounterStore` trait, `memory` and `redis` backends, breaker/fallback wrapper; the `postgres` backend is in aurora-db
     aurora-summary/           # approval summary templates, decoders, generic redacting summarizer
     aurora-protocol/          # every wire contract (runner, supervisor, connector, hookhost, gateway-internal) as serde types + JSON Schemas
     aurora-channels/          # neutral content, card schema, action tokens, capability model
@@ -27,7 +29,7 @@ aurora/
     aurora-connector-sdk/     # helper crate for connector authors: contract client, register/config/ops loops, conformance runner
     aurora-testkit/           # shared test utilities: ephemeral Postgres, mock upstreams, mock OAuth server, fixtures
   services/
-    aurora-api/               # bin: control plane (subcommands: serve, migrate, bootstrap-admin, secrets, plugins, openapi; phase 2, RFE-007: keys {generate,status})
+    aurora-api/               # bin: control plane (subcommands: serve, migrate, bootstrap-admin, secrets, plugins, openapi; phase 2, RFE-007: keys {generate,status}; phase 4, P4-S3: blobs migrate)
     aurora-gateway/           # bin: gateway (subcommands: serve, generate-ca, check-snapshot)
     aurora-hookhost/          # bin: hook host
     aurora-runner/            # bin: runner (backends: podman, kubernetes, fake)
@@ -88,6 +90,9 @@ loaders live in `aurora-db`.
 | Concurrency primitives | `arc-swap` (snapshot swaps), `dashmap`/`moka` (caches) |
 | MIME decoding (summaries) | `mail-parser` |
 | Postgres wire (phase 2 DB lane) | `pg_query` (statement classification), hand-written protocol framing |
+| Shared counters (phase 4, P4-CNT) | `redis` (async, `tokio-rustls`; cargo feature `redis` of `aurora-counters`, off unless the backend is built in); the Postgres backend uses `sqlx` |
+| LLM providers (phase 4, P4-LLM) | SigV4 through the existing `aws-sigv4`; GCP service-account JWT (RS256) signed with `aws-lc-rs`/`rsa`, token exchange with `reqwest`; no cloud SDK (`aws-sdk-*`, `google-cloud-*`) in `aurora-llm` or the gateway |
+| Blob store (phase 4, P4-S3) | `aws-sdk-s3` + `aws-config` (provider chain), `default-features = false` with rustls; crate `aurora-blobstore` |
 | Logging / tracing | `tracing`, `tracing-subscriber` (JSON), `opentelemetry-otlp` (optional) |
 | Metrics | `metrics` + `metrics-exporter-prometheus` |
 | Errors | `thiserror` in crates; `anyhow` only in `main` and tests |
@@ -232,6 +237,12 @@ overridden by the named configuration key (`15`).
 | `ATTACH_OUT_DAILY_PER_CONVERSATION` | 200 MiB | — | 10 |
 | `ATTACH_CAPTION_MAX` | 500 chars | — | 10 |
 | `ATTACH_PENDING_TTL` | 24 h | — | 10 |
+| `LLM_SIGN_BODY_MAX` | (phase 4, P4-LLM) 8 MiB request body buffered to SigV4-sign a Bedrock request (larger → 413 `llm_request_too_large`) | — | 06, 08 |
+| `LLM_TOKEN_MINT_TIMEOUT` / `LLM_TOKEN_SKEW` | (phase 4, P4-LLM) 10 s per OAuth2 token mint (Vertex) / tokens cached until 300 s before expiry, at most 55 min | — | 08 |
+| `S3_UPLOAD_CONCURRENCY` | (phase 4, P4-S3) 16 uploads in flight per API replica (1–64); wait ≤ 10 s then 503 `blob_store_busy` | `blobs.s3.upload_concurrency` | 10, 15 |
+| `S3_CONNECT_TIMEOUT` / `S3_REQUEST_TIMEOUT` / `S3_RETRIES` | (phase 4, P4-S3) 5 s / 60 s (idle body 30 s) / 2 retries | — | 15 |
+| `S3_ORPHAN_GRACE` / `S3_ORPHAN_SWEEP_MAX` | (phase 4, P4-S3) 2 h minimum object age before the sweep may delete an unreferenced object / 50 000 keys per org per run | — | 10 |
+| `S3_PROBE_INTERVAL` | (phase 4, P4-S3) 30 s | — | 05, 15 |
 | `ATTACH_ORG_QUOTA_DEFAULT` / `ATTACH_ORG_QUOTA_MAX` | (phase 2, RFE-015) 10 GiB / 50 GiB per org (`0` = unlimited) | `attachments.default_org_quota_mib` / `attachments.org_quota_mib_max` | 10 |
 | `ATTACH_QUOTA_NOTICE` | (phase 2, RFE-015) notices at 80 % and 100 % of the org quota | — | 10 |
 | `RETENTION_MIN_DAYS` / `RETENTION_MAX_DAYS` | (phase 2, RFE-010) 7 / 3 650 days (org conversation and attachment windows) | `retention.conversation_days_max` caps the upper bound | 10 |
@@ -269,6 +280,9 @@ overridden by the named configuration key (`15`).
 | `SSE_KEEPALIVE` | 15 s | — | 05 |
 | `API_RATE_*` | (phase 2, RFE-017) buckets of `05 §Conventions`: general 600/min (burst 120), write 120/min (30), message 30/min (10), upload 20/min (5), simulate 20/min (5), search 30/min (10), export 6/h (2), org 3 000/min (600) | `ratelimit.api.*` | 05 |
 | `API_RATE_UNAUTH` | (phase 2, RFE-017) 120 / min / IP public GETs; 30 / min / IP for requests with a rejected bearer | — | 05 |
+| `COUNTER_TIMEOUT` | (phase 4, P4-CNT) 50 ms per shared-counter store call (10–2000 ms) | `ratelimit.counters.timeout_ms` | 05, 06, 15 |
+| `COUNTER_BREAKER_FAILURES` / `COUNTER_BREAKER_COOLDOWN` | (phase 4, P4-CNT) 3 consecutive failures open the breaker; one probe after 5 s | — | 06, 15 |
+| `COUNTER_PRUNE_INTERVAL` / `COUNTER_PRUNE_BATCH` | (phase 4, P4-CNT) 60 s / 5 000 rows (`postgres` backend) | — | 03, 15 |
 | `API_STREAMS_PER_PRINCIPAL` | (phase 2, RFE-017) 20 concurrent SSE connections + long-polls | — | 05 |
 | `DELTA_COALESCE` | (phase 1, RFE-016) 100 ms or 2 000 chars per turn per delta | `events.delta_coalesce_ms` (100–500) | 05 |
 | `LONG_POLL_MAX` | 30 s | — | 05 |
