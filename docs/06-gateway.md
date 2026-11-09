@@ -423,6 +423,12 @@ minted.
    - a winning LLM secret and a non-empty effective model allow-list →
      `model_from_request` must yield an allowed model or `None`; otherwise 403
      `llm_model_not_allowed`.
+   - (phase 4, P4-LLM, SEC-65) a winning LLM secret of a provider with an
+     `inference_paths` set (`08 §Phase 4 providers`): the method and path (and, for
+     `vertex`, the project and location in it) must be in the set, else 403
+     `llm_path_not_permitted`; for `bedrock` with `aws_sigv4` a request body above
+     `LLM_SIGN_BODY_MAX` (8 MiB) → 413 `llm_request_too_large`. Both are decided before
+     policy and before any credential is opened (SEC-03).
 7. **Policy decision** (`07 §Evaluation`) with the winning credential known →
    `block` (403 `blocked_by_policy`), `default_denied` (403
    `blocked_by_default_policy`), `egress_denied` (403
@@ -440,7 +446,13 @@ minted.
     `connection_reauth_required` (with the dashboard URL).
 11. **Injection.** Apply the host entry's mechanisms (`09 §Mechanisms`) or the
     secret's injection recipe (`08`). Agent-supplied values for injected
-    headers/params are overwritten, never merged.
+    headers/params are overwritten, never merged. (phase 4, P4-LLM) LLM recipes add
+    `header` (Azure `api-key`), `aws_sigv4` (all agent `Authorization` and `X-Amz-*`
+    headers removed, then the final request signed; Bedrock) and
+    `gcp_service_account_token` (a gateway-minted access token from the in-memory
+    token cache, single-flight per secret version, no database lock; Vertex); the
+    mint or the signing key is never sent anywhere but the provider's token endpoint
+    and signing happens in the gateway only (`08 §Phase 4 providers`, SEC-64).
     **LLM key origin preflight** (`08 §11.3`): before an LLM key value is
     injected for the first time (per `LLM_ORIGIN_RECHECK`), verify its origin
     with the provider; non-compliant → 403 `llm_key_wrong_organization` /
@@ -527,6 +539,8 @@ dashboard URL to fix the problem when one exists.
 | `llm_key_unverifiable` | 403 | the key's account cannot be determined | `secret_id` |
 | `llm_model_not_allowed` | 403 | model not on the allow-list (or body unreadable) | `model`, `allowed_models` |
 | `llm_origin_check_unavailable` | 503 | provider unreachable during origin preflight | `endpoint_id` |
+| `llm_path_not_permitted` | 403 | (phase 4, P4-LLM) path outside the provider's inference set, or another Vertex project/location | `provider`, `endpoint_id` |
+| `llm_request_too_large` | 413 | (phase 4, P4-LLM) Bedrock request body above `LLM_SIGN_BODY_MAX` that must be buffered to be signed | `limit_bytes` |
 | `rate_limited` | 429 | rate-limit modifier | `limit`, `per` |
 | `manual_approval_denied` / `manual_approval_expired` | 403 | holds | `approval_id` |
 | `gateway_restarting` | 503 | shutdown during hold | — |

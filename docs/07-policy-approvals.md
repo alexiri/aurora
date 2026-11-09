@@ -181,6 +181,16 @@ carve-out is deliberate and was undocumented until phase 3:
   governs requests to an LLM host on which Aurora injects nothing (the agent
   brought its own key): they are blocked unless allow-listed. (3) The `allow`
   Default Rule is unaffected (it allows anyway). (4) Everything in `08 §11`.
+- (phase 4, P4-LLM, D-121) **More endpoint hosts, same rule, still exact.** The
+  providers of `08 §Phase 4 providers` (OpenAI, Azure OpenAI, Bedrock, Vertex, generic
+  OpenAI-compatible) add the **exact hosts** of their configured endpoints to the
+  governed LLM hosts, so the carve-out covers them and only them: enabling Bedrock
+  exempts `bedrock-runtime.<region>.amazonaws.com`, never `*.amazonaws.com`, and the
+  S3/EC2 hosts of an AWS app connection stay under the Default Rule. Because such a
+  credential (an IAM key, a service account) could do more than call a model, the
+  carve-out is paired with the inference-only path set of `08` (SEC-65): a request
+  the set refuses is refused by governance before policy, whatever the Default Rule
+  says.
 - The carve-out is exactly the pseudocode condition `facts.injected and not
   facts.is_llm_host`; it is evaluated per scope, so an org Default Rule of `block`
   and a workspace one behave identically. Simulation and the effective view show

@@ -153,9 +153,17 @@ tokens), group → workspace access bindings, group identities in policy
   Owning sections: `10 §Attachments`, `15 §S3-compatible blob store`, `03 §Planned
   changes`, `05` (storage and overview routes, jobs), `16 §W14`, `18 §S3-compatible
   blob store`.
-- Additional LLM providers: OpenAI, Azure OpenAI, AWS Bedrock, Google Vertex,
-  generic OpenAI-compatible endpoints; additional harness adapters (e.g. Codex)
-  declaring `openai_*` dialects.
+- **Additional LLM providers — specified (phase 4, P4-LLM, D-121, SEC-64, SEC-65):**
+  OpenAI, Azure OpenAI (key auth, v1 API), AWS Bedrock (gateway-side SigV4 or
+  Bedrock API key), Google Vertex (gateway-minted tokens from a service-account
+  key), generic OpenAI-compatible endpoints; credentials never reach a sandbox;
+  injection is limited to inference paths. Owning sections: `08 §Phase 4
+  providers`, `06` (step *LLM governance*), `07 §Why the Default Rule skips LLM
+  hosts`, `09` (reserved hosts), `12` (claude-code dialects), `15`, `16`, `18 §Additional
+  LLM providers`. Not in phase 4: Entra ID for Azure, assume-role or gateway-identity
+  AWS auth for Bedrock, Converse and Gemini-native dialects, gateway token counting.
+- Additional harness adapters (e.g. Codex) declaring `openai_*` dialects: P4-HAR,
+  after P4-LLM (specified below).
 - Live narration cards in chat (steps list updated under the connector's write
   rate hint), user-token features (`user_tokens` capability).
 - **Slack connector**: decision deferred; if built, it is a connector covering

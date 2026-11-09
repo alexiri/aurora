@@ -18,7 +18,7 @@ implementation repo and checked in (CI fails on drift).
 | W8 | Connector contract | connector → API `/v1/connector` | `aun_` + replica | `13` |
 | W9 | Hook host | API/gateway → hookhost :4104; hookhost → API :4111 | internal secret (ring from phase 2, `08 §4`) | `09` |
 | W10 | Platform callbacks | chat platform → connector | connector-defined | `20` |
-| W11 | Upstream | gateway → internet | guarded resolver | `06` |
+| W11 | Upstream | gateway → internet | guarded resolver; (phase 4, P4-LLM) LLM providers add gateway-side SigV4 (Bedrock) and gateway-minted OAuth2 access tokens (Vertex), `08 §Phase 4 providers` | `06` |
 | W12 | CLI / BYO | CLI → API; BYO agent → gateway | API key / agent token | `05`, `08` |
 | W13 | Counter backend (phase 4, P4-CNT) | API, gateway → Postgres or Redis | database role / Redis ACL user over TLS | `15 §Shared rate-limit counters` |
 | W14 | Blob store (phase 4, P4-S3) | API → S3-compatible bucket | SigV4 with workload identity or env keys, over TLS | `10 §Attachments`, `15 §S3-compatible blob store` |
@@ -85,7 +85,13 @@ All carry `{ item_id, kind, sandbox_id, boot_id }`.
 | `session.purge` | (phase 2, RFE-010) `{ conversation_id, session_ref }` — delete the stored harness session files (`12 §Session purge`) |
 
 `ModelChoice`: `{ provider, endpoint_id, base_url, dialect, model, effort,
-client_env: [[k,v]] }`. `TurnInput`: `{ text, speaker_label, door, recall: {
+client_env: [[k,v]] }`. (phase 4, P4-LLM) `provider` and `dialect` are open
+vocabularies: `provider` gains `openai`, `azure_openai`, `bedrock`, `vertex`,
+`openai_compatible`; `dialect` gains `anthropic_bedrock` and `anthropic_vertex`
+(`openai_chat` and `openai_responses` already exist). A supervisor that does not know
+a dialect refuses the turn with `harness_failed` and a clear message, never guessing.
+`client_env` never carries an AWS key, a service-account key or a token (placeholders
+or "skip auth" switches only). `TurnInput`: `{ text, speaker_label, door, recall: {
 index, snippets: [] }, notices: [] }`. `HomeSyncPart`: `{ kind: "skills" |
 "memory" | "render_inputs" | "tools" | "manifest" | "final", entries: [...] }`
 (`12 §Sync protocol`). (phase 3, RFE-020) `skills` parts carry the agent's **effective** set only; the three tiers and their precedence are resolved by the API, so the wire format is unchanged.

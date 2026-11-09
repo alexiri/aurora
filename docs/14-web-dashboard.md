@@ -525,7 +525,16 @@ Profile, password *(phase 0 only)*, sessions (sign out others), API keys
 - **Credentials** — (phase 2, P2-DBL-2: a connection of a database app (`Connection.database`, C-230) shows a neutral `Notice` under its row with the libpq service name and `psql service=<name> -c 'select 1'`, and says that a name shared by two granted connections gets the id prefix) (phase 3, RFE-022: a connection in `reauth_required` because of a plugin major upgrade shows the reason and a Reconnect button) tabs: Apps (catalogue → connect window), Connections,
   Secrets (generic; reference-mode secrets when a reference-capable store is
   configured), LLM keys (provider/endpoint picker from `/v1/llm/providers`),
-  OAuth clients, agent-proposed secrets awaiting a value. The LLM key form
+  OAuth clients, agent-proposed secrets awaiting a value. (phase 4, P4-LLM) The LLM key
+  form adapts to the provider's auth mode from `/v1/llm/providers`: one password field
+  (`api_key`), three fields for AWS (access key id, secret access key, optional session
+  token, with the note that only the account id is shown afterwards and that the key
+  should be limited to `bedrock:InvokeModel*`), or a file/JSON import for a GCP
+  service-account key (the private key is never echoed or shown again; the page shows
+  project and service-account e-mail). Endpoints with static model lists (Azure OpenAI,
+  Vertex) say "models are configured by your administrator". A request refused with
+  `llm_path_not_permitted` appears in the request log and agent Computer tab as "Blocked:
+  not a model-inference call". The LLM key form
   offers only endpoints and scopes the governance permits, explains the
   required account ("Keys must belong to the corporate Anthropic
   organization"), shows the verified account after saving, and offers

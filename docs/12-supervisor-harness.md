@@ -149,6 +149,19 @@ against `fake`, and against `claude-code` when an LLM endpoint is configured
   `ANTHROPIC_AUTH_TOKEN=aurora-placeholder`; for `anthropic`
   `ANTHROPIC_API_KEY=aurora-placeholder`; `ANTHROPIC_MODEL=<model>`;
   auto-update, telemetry and non-essential traffic disabled.
+- (phase 4, P4-LLM, D-121) The adapter's `dialects` become `[anthropic_messages,
+  anthropic_bedrock, anthropic_vertex]` (declared, never probed; a harness version
+  that cannot speak one removes it). Client environment for the new dialects, all
+  **without credentials** because the gateway signs or mints: `anthropic_bedrock` →
+  `CLAUDE_CODE_USE_BEDROCK=1`, `AWS_REGION=<region>`, `ANTHROPIC_BEDROCK_BASE_URL=<endpoint base URL>`,
+  `CLAUDE_CODE_SKIP_BEDROCK_AUTH=1`, `ANTHROPIC_MODEL=<model>` (no AWS key variables at
+  all, so nothing in the sandbox can be mistaken for a credential); `anthropic_vertex` →
+  `CLAUDE_CODE_USE_VERTEX=1`, `CLOUD_ML_REGION=<location>`, `ANTHROPIC_VERTEX_PROJECT_ID=<project_id>`,
+  `ANTHROPIC_VERTEX_BASE_URL=<endpoint base URL>`, `CLAUDE_CODE_SKIP_VERTEX_AUTH=1`,
+  `ANTHROPIC_MODEL=<model>`. The exact variable names are pinned next to the CLI version
+  and verified by the live conformance suite (env-gated, per provider), like the phase-0
+  ones. A pinned version that lacks the "skip auth" switch for a provider does not declare
+  that dialect.
 - MCP configuration: one stdio server `aurora` = `aurora-supervisor mcp-bridge
   --session <conversation_id>`.
 - Tool permission prompts are disabled (the sandbox is the isolation boundary;
@@ -173,6 +186,12 @@ The supervisor maps terminal harness errors to turn error codes:
 originated at the **gateway** (recognized by the gateway's error envelope or
 the `x-should-retry: false` + Aurora error code) is never presented as a
 provider refusal; it is reported as `gateway_refused` with the gateway code.
+(phase 4, P4-LLM) The classes for the new providers come from the shared
+`aurora-llm` table (`08 §Phase 4 providers`, *Error classification*), so a Bedrock
+`ThrottlingException`, an OpenAI `insufficient_quota` or a Vertex `PERMISSION_DENIED`
+map to `provider_rate_limited`, `provider_quota` and `provider_auth` the same way in
+every adapter. The new gateway codes `llm_path_not_permitted` and
+`llm_request_too_large` are gateway refusals (`gateway_refused`).
 
 ## Platform tools
 

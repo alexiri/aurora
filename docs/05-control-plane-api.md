@@ -493,13 +493,13 @@ connector, **P** public capability. Permission checks per `04`.
 ### Secrets and LLM
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET/POST `/v1/workspaces/{ws}/secrets`, `/v1/orgs/{org}/secrets` | S/K | create: name, kind, llm fields or host/path/injection, `value` or `reference` |
+| GET/POST `/v1/workspaces/{ws}/secrets`, `/v1/orgs/{org}/secrets` | S/K | create: name, kind, llm fields or host/path/injection, `value` or `reference`; (phase 4, P4-LLM) for `aws_sigv4` the `value` is the JSON `{ access_key_id, secret_access_key, session_token? }` and for `gcp_service_account` the key-file JSON, validated for shape, `token_uri` and key type (422 `llm_key_invalid`) before any provider call; the same validation, governance and origin steps as every LLM secret (`08 §LLM secrets`) |
 | GET/PATCH/DELETE `/v1/secrets/{id}` | S/K | metadata only; values never returned |
 | PUT `/v1/secrets/{id}/value` | S/K | replace value |
 | POST `/v1/secrets/{id}/accept` | S | agent proposal: `{ value }` → secret `active` + grant to the proposing agent |
 | POST `/v1/secrets/{id}/reject` | S/K | agent proposal → `rejected`; a notice goes to the proposing conversation |
 | GET `/v1/secret-stores` | S/K | configured stores: id, kind, capabilities (no config) |
-| GET `/v1/llm/providers` | S/K | registry + configured endpoints |
+| GET `/v1/llm/providers` | S/K | registry + configured endpoints; (phase 4, P4-LLM) each provider lists its `auth_modes` with their value shape (`string`, `aws_sigv4` fields, `gcp_service_account` file), each endpoint its `dialects`, `region`/`project_id`/`location` where they exist and `models_source` (`listed` \| `static`); never credentials or endpoint internals |
 | GET `/v1/secrets/{id}/models` | S/K | model catalogue for an LLM secret (only allowed models) |
 | POST `/v1/secrets/{id}/verify` | S/K | re-run key-origin verification (`08 §11.3`) and return `origin` |
 

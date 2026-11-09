@@ -632,5 +632,9 @@ arming conversation.
 whatever ends it, plus a reconcile sweep), control-plane timestamps only, no
 foreign keys. `runtime_daily` is rebuilt hourly.
 - **Token usage** per turn (`turns.usage`) as reported by the harness;
-aggregated in `GET /v1/workspaces/{ws}/usage`.
+aggregated in `GET /v1/workspaces/{ws}/usage`. (phase 4, P4-LLM) The API stamps
+`provider`, `endpoint_id` and `model` into `turns.usage` from the turn's `ModelChoice`
+(never from what the harness reports), and the aggregate gains a `by_model` breakdown
+keyed by `(provider, endpoint_id, model)` over the same token counters. The gateway
+counts no tokens; spend limits stay out of scope.
 - Budgets are out of scope (deferred).
