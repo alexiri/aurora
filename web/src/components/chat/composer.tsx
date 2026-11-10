@@ -46,7 +46,11 @@ export function Composer({
 }) {
   const qc = useQueryClient();
   // `?draft=` fills the box (the getting-started guide suggests a first message); it is never sent for the person.
-  const [text, setText] = useState(() => (autoFocus && typeof window !== "undefined" ? (new URLSearchParams(window.location.search).get("draft") ?? "").slice(0, 500) : ""));
+  // Read at mount regardless of `autoFocus`: on a slow load the composer mounts while the transcript is still
+  // loading (`autoFocus` false), and the initializer would never run again — the guide's suggested message was
+  // lost. The param only exists on links from the guide, and the box is empty on every other path, so an
+  // unconditional read cannot clobber a typed message.
+  const [text, setText] = useState(() => (typeof window !== "undefined" ? (new URLSearchParams(window.location.search).get("draft") ?? "").slice(0, 500) : ""));
   const [followups, setFollowups] = useState<Followup[]>([]);
   const [sendErr, setSendErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
