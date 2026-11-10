@@ -1,11 +1,11 @@
 package:
   id: aws-keys
-  version: 1.0.2
+  version: 1.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
   name: AWS (access keys)
-  description: Amazon S3 objects and EC2 API calls signed with an IAM access key pair (AWS Signature Version 4)
+  description: Amazon S3 objects, read-only EC2 Describe calls, GetCallerIdentity and other EC2 API calls signed with an IAM access key pair (AWS Signature Version 4)
   homepage: https://aws.amazon.com
 apps:
   - about:
@@ -61,8 +61,19 @@ apps:
             access_key: "{credentials.access_key_id}"
             secret_key: "{credentials.secret_access_key}"
             session_token: "{credentials.session_token}"
-      # No sts.*.amazonaws.com entry (D-95): AssumeRole, GetSessionToken and GetFederationToken
-      # answers carry usable credentials, so agents get no STS access.
+      # STS (P4-GRANTS, D-124): AssumeRole, GetSessionToken and GetFederationToken answers carry
+      # usable credentials (D-95), so the host is claimed ONLY to sign the one harmless action
+      # GetCallerIdentity, matched by the `sts_get_caller_identity` tool (`params`). `grants.
+      # block_untooled` below blocks every other STS request, even under a full grant.
+      - match: { host: "sts.*.amazonaws.com" }
+        inject: []
+        finalize:
+          aws_sigv4:
+            region: "{metadata.region}"
+            service: sts
+            access_key: "{credentials.access_key_id}"
+            secret_key: "{credentials.secret_access_key}"
+            session_token: "{credentials.session_token}"
       - match: { host: "ec2.*.amazonaws.com" }
         inject: []
         finalize:
@@ -72,12 +83,29 @@ apps:
             access_key: "{credentials.access_key_id}"
             secret_key: "{credentials.secret_access_key}"
             session_token: "{credentials.session_token}"
+    # Only catalogued tools may use these keys: a full grant never means "anything the keys can do".
+    grants:
+      block_untooled: true
     tools:
       read:
         items:
           - { id: s3_list_buckets, name: List buckets, host: "s3.*.amazonaws.com", path: /, methods: [GET] }
           - { id: s3_list_objects, name: List objects in a bucket, host: "s3.*.amazonaws.com", path: "/*", methods: [GET] }
           - { id: s3_get_object, name: Get or inspect an object, host: "s3.*.amazonaws.com", path: "/*/*/**", methods: [GET, HEAD] }
+          # Read-only EC2 Describe* calls (Action in a form body). Declared before the generic
+          # ec2_call, which keeps every other EC2 request (and every GET) as a held write tool.
+          - id: ec2_describe
+            name: Describe EC2 resources (read-only Describe* actions)
+            host: "ec2.*.amazonaws.com"
+            path: /
+            methods: [POST]
+            params: [ { source: form, name: Action, match: { prefix: Describe } } ]
+          - id: sts_get_caller_identity
+            name: Show which AWS identity the keys belong to (GetCallerIdentity)
+            host: "sts.*.amazonaws.com"
+            path: /
+            methods: [POST]
+            params: [ { source: form, name: Action, match: { equals: GetCallerIdentity } } ]
       write:
         items:
           - { id: s3_put_object, name: Upload or copy an object, host: "s3.*.amazonaws.com", path: "/*/*/**", methods: [PUT] }
@@ -110,7 +138,10 @@ apps:
         S3: use path-style URLs, https://s3.<region>.amazonaws.com/<bucket>/<key>; virtual-hosted
         bucket URLs are not covered. EC2 uses the Query API on https://ec2.<region>.amazonaws.com/
         with the Action and Version parameters (for example
-        Action=DescribeInstances&Version=2016-11-15); every EC2 call is held for approval because
-        the action is chosen by a request parameter. STS is not available to you: requests to
-        sts.<region>.amazonaws.com are not signed. A request to a region other than the
-        connection's will be signed for the wrong region and AWS will refuse it.
+        Action=DescribeInstances&Version=2016-11-15). Send the parameters as a POST body
+        (content-type application/x-www-form-urlencoded), once each and not also in the query:
+        read-only Describe* actions are then allowed without approval, and every other EC2 call
+        (including any GET) is held for approval. STS: only POST Action=GetCallerIdentity to
+        sts.<region>.amazonaws.com works; every other STS action is blocked. A request to a
+        region other than the connection's will be signed for the wrong region and AWS will
+        refuse it.

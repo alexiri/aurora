@@ -296,6 +296,94 @@ pub async fn list_for_connection<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (P4-GRANTS) `(connection id, app id)` of the given connections.
+pub async fn connection_apps<'e, E: PgExecutor<'e>>(
+    exec: E,
+    ids: &[Uuid],
+) -> Result<Vec<(Uuid, String)>, DbError> {
+    Ok(
+        sqlx::query_as("SELECT id, app_id FROM app_connections WHERE id = ANY($1)")
+            .bind(ids)
+            .fetch_all(exec)
+            .await?,
+    )
+}
+
+/// A `full` connection grant of a connection of one of the asked apps (P4-GRANTS, D-123).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct FullGrantRow {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub agent_id: Uuid,
+    pub connection_id: Uuid,
+    pub org_id: Uuid,
+    pub app_id: String,
+    pub label: String,
+}
+
+/// Every `full` connection grant, in any organization, on a connection of one of `app_ids`
+/// (the grants an activation that introduces `custom_only` converts), by `id`.
+pub async fn full_for_apps(
+    conn: &mut sqlx::PgConnection,
+    app_ids: &[String],
+) -> Result<Vec<FullGrantRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT g.id, g.workspace_id, g.agent_id, g.connection_id, c.org_id, c.app_id, c.label \
+         FROM grants g JOIN app_connections c ON c.id = g.connection_id \
+         WHERE g.mode = 'full' AND c.app_id = ANY($1) ORDER BY g.id",
+    )
+    .bind(app_ids)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// Rewrite a `full` grant to a custom grant with exactly `allow_tools` (nothing to ask, no ask
+/// timeout); false when the grant is no longer `full`.
+pub async fn convert_full_to_custom(
+    conn: &mut sqlx::PgConnection,
+    id: Uuid,
+    allow_tools: &[String],
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE grants SET mode = 'custom', allow_tools = $2, ask_tools = '{}', \
+         ask_timeout_secs = NULL, updated_at = now() WHERE id = $1 AND mode = 'full'",
+    )
+    .bind(id)
+    .bind(allow_tools)
+    .execute(conn)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
+/// A grant of an agent that an app update converted from full to custom access and nobody has
+/// changed since (P4-GRANTS, D-123; read from the `grant.converted_by_app` audit rows).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GrantConversionRow {
+    pub connection_id: Uuid,
+    pub app_id: String,
+    pub converted_at: DateTime<Utc>,
+}
+
+/// The conversions still standing on the agent's grants, latest per connection.
+pub async fn standing_conversions<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent_id: Uuid,
+) -> Result<Vec<GrantConversionRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT DISTINCT ON (g.connection_id) g.connection_id, c.app_id, a.created_at AS converted_at \
+         FROM audit_log a \
+         JOIN grants g ON g.agent_id = $1 AND g.connection_id::text = a.metadata->>'connection_id' \
+         JOIN app_connections c ON c.id = g.connection_id \
+         WHERE a.action = 'grant.converted_by_app' AND a.target_kind = 'agent' \
+           AND a.target_id = $1::text AND a.created_at >= g.updated_at \
+         ORDER BY g.connection_id, a.created_at DESC",
+    )
+    .bind(agent_id)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Delete the `(agent, connection)` grant; returns its id when it existed.
 pub async fn delete_connection_grant<'e, E: PgExecutor<'e>>(
     exec: E,

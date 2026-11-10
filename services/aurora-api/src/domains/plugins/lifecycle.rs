@@ -80,6 +80,7 @@ pub async fn act(
     let mut activated = false;
     let mut flipped = 0_i64;
     let mut flip_meta: Option<serde_json::Value> = None;
+    let mut converted_events: Vec<AuditEvent> = Vec::new();
     match action {
         Action::Reject => {
             if row.status != "pending_approval" {
@@ -148,6 +149,24 @@ pub async fn act(
             let done = upgrade::apply(&mut tx, &impact).await?;
             flipped = done.total;
             flip_meta = Some(done.metadata());
+            // (P4-GRANTS, D-123) One security-critical audit row per converted grant, committed
+            // with the activation (SEC-67).
+            converted_events = done
+                .converted
+                .iter()
+                .map(|c| {
+                    AuditEvent::new(actor.clone(), "grant.converted_by_app", Outcome::Success)
+                        .org(c.org_id)
+                        .workspace(c.workspace_id)
+                        .target("agent", c.agent_id)
+                        .metadata(json!({
+                            "grant_id": c.grant_id, "connection_id": c.connection_id,
+                            "app_id": c.app_id, "package_id": row.package_id,
+                            "version": row.version,
+                            "grant": {"from": "full", "mode": "custom", "tools": c.tools}
+                        }))
+                })
+                .collect();
             match registry::activate_snapshot(state, &mut tx, false).await {
                 Ok(_) => activated = true,
                 Err(CompileFail::Conflict(groups)) => {
@@ -187,7 +206,9 @@ pub async fn act(
     )
     .target("plugin_package", id)
     .metadata(meta);
-    audit::commit_critical(tx, &ev).await?;
+    let mut events = vec![ev];
+    events.append(&mut converted_events);
+    audit::commit_critical_many(tx, &events).await?;
     if activated {
         audit::record(
             state,

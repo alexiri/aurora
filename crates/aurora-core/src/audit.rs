@@ -48,6 +48,7 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "secret.value_update",
     "workspace.byo_posture.update",
     // Grants
+    "grant.converted_by_app",
     "grant.create",
     "grant.delete",
     // Policy

@@ -87,6 +87,23 @@ fn tools_ok(tools: &Option<Vec<String>>, f: &RequestFacts) -> bool {
     }
 }
 
+/// A target without `tools` (all tools, whatever the request).
+fn toolless(tools: &Option<Vec<String>>) -> bool {
+    tools.as_ref().is_none_or(Vec::is_empty)
+}
+
+/// (P4-GRANTS, D-123, SEC-67) Defence in depth: a toolless `connection` / `app_connections`
+/// target never matches or selects a connection of a `custom_only` app, whatever wrote the rule.
+fn custom_only_inert(c: &Credential, tools: &Option<Vec<String>>) -> bool {
+    matches!(
+        c,
+        Credential::Connection {
+            custom_only: true,
+            ..
+        }
+    ) && toolless(tools)
+}
+
 impl Target {
     pub fn matches(&self, f: &RequestFacts) -> bool {
         match self {
@@ -124,6 +141,17 @@ impl Target {
         }
     }
 
+    /// This target is a toolless `connection` / `app_connections` target and `c` is a connection
+    /// of a `custom_only` app (P4-GRANTS, D-123).
+    pub fn inert_for_custom_only(&self, c: &Credential) -> bool {
+        match self {
+            Self::Connection { tools, .. } | Self::AppConnections { tools, .. } => {
+                custom_only_inert(c, tools)
+            }
+            _ => false,
+        }
+    }
+
     /// Match at `CONNECT` time (07 §CONNECT-time evaluation). Only host, port and
     /// the serving app are knowable; credential targets never match (no credential
     /// is injected into a tunnel). `restrictive` rules treat every unknowable part
@@ -151,15 +179,21 @@ impl Target {
     /// Does this target *name* the candidate credential (injection selection)?
     pub fn selects(&self, c: &Credential) -> bool {
         match (self, c) {
-            (Self::Connection { id, .. }, Credential::Connection { id: cid, .. }) => id == cid,
+            (Self::Connection { id, tools }, Credential::Connection { id: cid, .. }) => {
+                id == cid && !custom_only_inert(c, tools)
+            }
             (
-                Self::AppConnections { app_id, scope, .. },
+                Self::AppConnections {
+                    app_id,
+                    scope,
+                    tools,
+                },
                 Credential::Connection {
                     app_id: a,
                     scope: l,
                     ..
                 },
-            ) => app_id == a && scope.covers(*l),
+            ) => app_id == a && scope.covers(*l) && !custom_only_inert(c, tools),
             (Self::Secret { id }, Credential::Secret { id: cid, .. }) => id == cid,
             (
                 Self::Secrets { scope, kind },
@@ -336,8 +370,19 @@ impl Rule {
         self.identities.is_empty() || self.identities.iter().any(|i| i.matches(who))
     }
 
+    /// (P4-GRANTS, D-123, SEC-67) An *allow* rule never matches the winning connection of a
+    /// `custom_only` app through a target without `tools` (inert: it neither allows nor holds).
+    /// Block rules are unaffected: the restrictions only tighten, and custom grants compile a
+    /// toolless `block` as their rule 3.
     pub fn targets_match(&self, f: &RequestFacts) -> bool {
-        self.targets.is_empty() || self.targets.iter().any(|t| t.matches(f))
+        self.targets.is_empty()
+            || self.targets.iter().any(|t| {
+                t.matches(f)
+                    && !(self.action == Action::Allow
+                        && f.winning_credential
+                            .as_ref()
+                            .is_some_and(|c| t.inert_for_custom_only(c)))
+            })
     }
 
     /// `CONNECT`-time targets + conditions (RFE-003). Restrictive rules: unknowable

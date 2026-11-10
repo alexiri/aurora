@@ -1,0 +1,12 @@
+description: block_untooled does not touch a catalogued tool, nor a request whose winning credential is not that app's connection
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: hand-allow, action: allow, targets: [{type: network, host: indico.example.org}]}]}
+facts:
+  host: indico.example.org
+  port: 443
+  path: /api/x
+  method: GET
+  app_id: indico
+  tool_id: export_event
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: indico, scope: workspace, block_untooled: true}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect: {verdict: allow, workspace_rule: hand-allow}

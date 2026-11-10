@@ -909,7 +909,10 @@ Fixture file format (`tests/*.yaml`):
 `expect.upstream.headers_absent` (D-86) lists header names (case-insensitive) that the upstream
 request must not carry, whether injected by the package or sent by the client. In a case without a
 `connection.instance_host`, the connection of an instance-bound app is its default-host connection
-(`{instance}` is the app's `default_host`).
+(`{instance}` is the app's `default_host`). (phase 4, P4-GRANTS) `request.body_truncated: true` says
+the body is longer than the gateway's condition buffer (the classifier then sees a truncated
+prefix; a fixture cannot carry 256 KiB), and `expect.no_tool: true` says the app matches but no
+catalogue tool does; the `params` fixtures of `§3.4 tools` use both.
 
 **Token lifecycle cases** (D-82; `token.kind: oauth2_refresh`). A case replays a stale upstream
 answer, the refresh exchange against a recorded token endpoint and what the gateway does next. It

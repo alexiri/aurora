@@ -26,6 +26,9 @@ pub struct AppSummary {
     pub available: bool,
     pub connection_count: i64,
     pub has_dark_icon: bool,
+    /// (phase 4, P4-GRANTS, D-123, C-414) the manifest's `grants` flags, so the dashboard can
+    /// show "Custom access only" and drop the full-access choice.
+    pub app_restrictions: crate::domains::grants::dto::AppRestrictions,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -163,6 +166,8 @@ pub struct AppDetail {
     pub available: bool,
     pub connection_count: i64,
     pub has_dark_icon: bool,
+    /// (phase 4, P4-GRANTS, D-123, C-414) the manifest's `grants` flags.
+    pub app_restrictions: crate::domains::grants::dto::AppRestrictions,
     pub api_docs: Option<String>,
     pub connect_note: Option<ConnectNote>,
     pub label_hint: Option<String>,

@@ -1,0 +1,11 @@
+description: SEC-67 custom_only - a toolless target never selects a custom_only connection; a target with tools does; other apps are unaffected
+org: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: org-appconn, action: allow, targets: [{type: app_connections, app_id: indico, scope: organization}, {type: app_connections, app_id: gh, scope: organization}]}]}
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: ws-conn-tools, action: allow, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c2, tools: [x]}]}, {logical_id: 00000000-0000-0000-0000-0000000000a3, name: ws-conn-toolless, action: allow, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}]}
+facts: {host: indico.example.org, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001}}
+select:
+  candidates:
+    - {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: indico, scope: workspace, custom_only: true}
+    - {type: connection, id: 00000000-0000-0000-0000-0000000000c2, app_id: indico, scope: workspace, custom_only: true}
+    - {type: connection, id: 00000000-0000-0000-0000-0000000000c3, app_id: indico, scope: organization, custom_only: true}
+    - {type: connection, id: 00000000-0000-0000-0000-0000000000c4, app_id: gh, scope: organization}
+  expect: [00000000-0000-0000-0000-0000000000c2, 00000000-0000-0000-0000-0000000000c4]

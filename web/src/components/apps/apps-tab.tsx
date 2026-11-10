@@ -6,10 +6,12 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { AppIcon } from "@/components/ui/app-icon";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
 import {
+  appIsCustomOnly,
   connectWindowPath,
   openConnectWindow,
   useApp,
@@ -104,6 +106,11 @@ function AppCard({
           </p>
         </div>
       </div>
+      {appIsCustomOnly(app) ? (
+        <div>
+          <Badge title="Agents get only the tools you choose; full access is not offered for this app.">Custom access only</Badge>
+        </div>
+      ) : null}
       <p className="line-clamp-2 text-sm text-ink-2">{app.description}</p>
       <div className="mt-auto flex flex-wrap gap-2">
         <Button size="sm" variant="outline" onClick={onOpen} aria-label={`Details of ${app.name}`}>Details</Button>

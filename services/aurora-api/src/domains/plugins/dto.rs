@@ -68,6 +68,18 @@ pub struct PluginImpactApp {
     pub connections: i64,
     /// Of those, the ones failing the required-field check (`0` unless a major upgrade).
     pub needing_reauth: i64,
+    /// (phase 4, P4-GRANTS, C-412) `full` agent grants of this app's connections that activation
+    /// converts to custom grants; absent unless the version introduces `grants.custom_only`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub grants_to_convert: i64,
+    /// (C-412) In how many workspaces those grants live (a count, never an id); absent with
+    /// `grants_to_convert`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub grant_workspaces: i64,
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
 }
 
 /// What activating a pending version does to live connections (C-340, `09 §10`). Advisory:
@@ -79,6 +91,11 @@ pub struct PluginImpact {
     pub from_version: Option<String>,
     pub connections_total: i64,
     pub connections_needing_reauth: i64,
+    /// (phase 4, P4-GRANTS, C-412) Agent grants activation converts from full to custom access
+    /// (`09 §10`): the sum of the per-app counts. A version with a non-zero count is held for an
+    /// admin (`status_reason = converts_grants`). Absent when `0`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub grants_to_convert: i64,
     /// The apps of the new version, ordered by `app_id`.
     pub by_app: Vec<PluginImpactApp>,
 }

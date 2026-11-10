@@ -16,8 +16,9 @@ use sha2::{Digest, Sha256};
 use crate::claims::{ConflictGroup, claim_key, claims, conflict_groups, static_host};
 use crate::manifest::{
     About, Agent, Approval, BodyFormat, ClientAuth, ClientField, Connect, CredentialDecl, Database,
-    Finalize, Hook, HostRule, INSTANCE_HOST, Inject, Instances, Intercept, Manifest, MetadataDecl,
-    Passthrough, RewriteHost, Tenant, Token, Tools, Transform, UrlOrTemplate, de_opt, de_vec,
+    Finalize, Grants, Hook, HostRule, INSTANCE_HOST, Inject, Instances, Intercept, Manifest,
+    MetadataDecl, Passthrough, RewriteHost, Tenant, Token, Tools, Transform, UrlOrTemplate, de_opt,
+    de_vec,
 };
 
 pub const FORMAT: u32 = 1;
@@ -116,6 +117,9 @@ pub struct AppEntry {
     pub approvals: BTreeMap<String, Approval>,
     pub agent: Option<Agent>,
     pub database: Option<Database>,
+    /// (P4-GRANTS, D-123) copied from the manifest; absent in older snapshots = both false.
+    #[serde(default)]
+    pub grants: Grants,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -346,6 +350,7 @@ pub fn compile(
                 approvals: a.approvals.clone(),
                 agent: a.agent.clone(),
                 database: a.database.clone(),
+                grants: a.grants,
             });
             for r in &a.hosts {
                 if r.matcher.host == INSTANCE_HOST {

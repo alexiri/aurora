@@ -1,0 +1,11 @@
+description: an app without the flags behaves exactly as before - the toolless connection allow rule allows
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: derived-full, action: allow, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}], default_action: block}
+facts:
+  host: indico.example.org
+  port: 443
+  path: /anything
+  method: GET
+  app_id: indico
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: indico, scope: workspace}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect: {verdict: allow}

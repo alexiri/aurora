@@ -43,6 +43,10 @@ pub struct ConnCand {
     pub instance_host: Option<String>,
     /// `status = reauth_required`: refused with reconnect guidance after the decision.
     pub reauth_required: bool,
+    /// (P4-GRANTS, D-123) The app's `grants` flags from the active snapshot (set by the resolver;
+    /// both `false` until then, which only matters for lanes that never evaluate policy).
+    pub custom_only: bool,
+    pub block_untooled: bool,
 }
 
 impl ConnCand {
@@ -69,7 +73,19 @@ impl ConnCand {
             instance_id: r.instance_id,
             instance_host: None,
             reauth_required: r.status == "reauth_required",
+            custom_only: false,
+            block_untooled: false,
         })
+    }
+
+    /// Copies the app's `grants` flags from the snapshot (SEC-67). An app missing from the
+    /// snapshot keeps both `false`: such a connection has no serving app to restrict.
+    pub fn with_app_restrictions(mut self, app: Option<&AppEntry>) -> Self {
+        if let Some(a) = app {
+            self.custom_only = a.grants.custom_only;
+            self.block_untooled = a.grants.block_untooled;
+        }
+        self
     }
 
     pub fn credential(&self) -> Credential {
@@ -77,6 +93,8 @@ impl ConnCand {
             id: self.id,
             app_id: self.app_id.clone(),
             scope: self.scope,
+            custom_only: self.custom_only,
+            block_untooled: self.block_untooled,
         }
     }
 }
@@ -259,10 +277,16 @@ fn serves(
         && (t.methods.is_empty() || t.methods.iter().any(|m| m.eq_ignore_ascii_case(method)))
 }
 
-/// A GraphQL-tagged tool may match: the body prefix is needed to classify.
+/// A GraphQL-tagged tool, or a tool with a `form` parameter condition (Q8, D-124), may match:
+/// the body prefix is needed to classify. Other requests are unaffected.
 pub fn needs_body(m: &AppMatch<'_>, host: &str, port: u16, path: &str, method: &str) -> bool {
-    tools(m.app)
-        .any(|t| t.graphql.is_some() && serves(m.app, m.instance, t, host, port, path, method))
+    tools(m.app).any(|t| {
+        (t.graphql.is_some()
+            || t.params
+                .as_deref()
+                .is_some_and(aurora_policy::params::needs_body))
+            && serves(m.app, m.instance, t, host, port, path, method)
+    })
 }
 
 /// The catalogue tool for the request; GraphQL tools match on the fail-closed operation
@@ -277,6 +301,7 @@ pub fn identify_tool<'a>(
     method: &str,
     body_prefix: &[u8],
     truncated: bool,
+    headers: &[(&str, &str)],
 ) -> Option<&'a ToolItem> {
     identify_tool_in(
         m.app,
@@ -288,6 +313,7 @@ pub fn identify_tool<'a>(
         method,
         body_prefix,
         truncated,
+        headers,
     )
 }
 
@@ -305,11 +331,23 @@ pub fn identify_tool_in<'a>(
     method: &str,
     body_prefix: &[u8],
     truncated: bool,
+    headers: &[(&str, &str)],
 ) -> Option<&'a ToolItem> {
     let gql = graphql::classify(body_prefix, truncated);
     let git = aurora_policy::git::classify(path, query);
+    let params = aurora_policy::ParamInput {
+        query,
+        headers,
+        body: body_prefix,
+        truncated,
+    };
     tools(app).find(|t| {
         serves(app, instance, t, host, port, path, method)
+            // (P4-GRANTS, Q8, D-124, SEC-68) fail closed: any doubt means "not this tool" and
+            // classification continues down the catalogue.
+            && t.params
+                .as_deref()
+                .is_none_or(|p| aurora_policy::params::matches(p, &params))
             && t.graphql.is_none_or(|k| {
                 matches!(
                     (k, gql),

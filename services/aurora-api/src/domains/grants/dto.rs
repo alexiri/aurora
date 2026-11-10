@@ -39,6 +39,24 @@ impl GrantMode {
     }
 }
 
+/// (phase 4, P4-GRANTS, D-123, C-410) The app's manifest restrictions, so clients can explain
+/// them: `custom_only` (no `full` grants) and `block_untooled` (requests matching no catalogue
+/// tool are blocked). Both `false` for an app without `grants`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, ToSchema)]
+pub struct AppRestrictions {
+    pub custom_only: bool,
+    pub block_untooled: bool,
+}
+
+impl From<aurora_registry::manifest::Grants> for AppRestrictions {
+    fn from(g: aurora_registry::manifest::Grants) -> Self {
+        Self {
+            custom_only: g.custom_only,
+            block_untooled: g.block_untooled,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ConnectionGrant {
     pub id: Uuid,
@@ -49,7 +67,17 @@ pub struct ConnectionGrant {
     pub ask_tools: Vec<String>,
     /// (phase 2, RFE-011a) hold deadline preference of the ask tools in seconds; `null` = none.
     pub ask_timeout_secs: Option<i32>,
+    /// (phase 4, P4-GRANTS, C-410) restrictions of the connection's app.
+    pub app_restrictions: AppRestrictions,
     pub created_at: DateTime<Utc>,
+}
+
+impl ConnectionGrant {
+    #[must_use]
+    pub fn restricted(mut self, r: AppRestrictions) -> Self {
+        self.app_restrictions = r;
+        self
+    }
 }
 
 impl From<ConnectionGrantRow> for ConnectionGrant {
@@ -66,6 +94,7 @@ impl From<ConnectionGrantRow> for ConnectionGrant {
             allow_tools: r.allow_tools,
             ask_tools: r.ask_tools,
             ask_timeout_secs: r.ask_timeout_secs,
+            app_restrictions: AppRestrictions::default(),
             created_at: r.created_at,
         }
     }
@@ -152,6 +181,8 @@ pub struct BulkConnectionGrantItem {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct BulkConnectionGrantResponse {
     pub items: Vec<BulkConnectionGrantItem>,
+    /// (phase 4, P4-GRANTS, C-504) the connection's app restrictions (also on each grant).
+    pub app_restrictions: AppRestrictions,
 }
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
@@ -173,10 +204,22 @@ pub struct ConnectionGrantList {
     pub items: Vec<ConnectionGrantView>,
 }
 
+/// (phase 4, P4-GRANTS, D-123, C-413) A grant an app update converted from full to custom access,
+/// still as the update left it: the Access tab says so ("Access for <app> was converted from
+/// full to custom by an app update").
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GrantConversion {
+    pub connection_id: Uuid,
+    pub app_id: String,
+    pub converted_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct GrantsResponse {
     pub secrets: Vec<SecretGrant>,
     pub connections: Vec<ConnectionGrant>,
+    /// (phase 4, P4-GRANTS, C-413) conversions by an app update still standing on these grants.
+    pub converted_by_app: Vec<GrantConversion>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

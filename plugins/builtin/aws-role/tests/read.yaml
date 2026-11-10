@@ -51,25 +51,7 @@
   connection: *conn
   request: { method: PATCH, url: "https://s3.eu-west-1.amazonaws.com/example-bucket/data.csv" }
   expect: { app: aws-role }
-- name: "agents get no STS: a GetCallerIdentity request to the regional STS host is claimed by no app"
-  connection: *conn
-  request: { method: GET, url: "https://sts.eu-west-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15" }
-  expect: { unmatched: true }
-- name: "agents get no STS: nothing is injected or signed on the regional STS host (GET)"
-  connection: *conn
-  request: { method: GET, url: "https://sts.eu-west-1.amazonaws.com/?Action=AssumeRole&Version=2011-06-15" }
-  expect:
-    upstream: { headers_absent: [authorization, x-amz-security-token, x-amz-date] }
-- name: "agents get no STS: nothing is injected or signed on the regional STS host (POST form)"
-  connection: *conn
-  request:
-    method: POST
-    url: "https://sts.eu-west-1.amazonaws.com/"
-    headers: { content-type: application/x-www-form-urlencoded }
-    body: "Action=GetSessionToken&Version=2011-06-15"
-  expect:
-    upstream: { headers_absent: [authorization, x-amz-security-token, x-amz-date] }
-- name: "ec2 host is signed with the session credentials (EC2 calls are write tools, see write.yaml)"
+- name: "ec2 host is signed with the session credentials (a GET Describe is not a read tool; EC2 calls are write tools, see write.yaml)"
   connection: *conn
   request: { method: GET, url: "https://ec2.eu-west-1.amazonaws.com/?Action=DescribeInstances&Version=2016-11-15" }
   expect:

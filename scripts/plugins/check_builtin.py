@@ -213,10 +213,13 @@ def check_app(app, paired, err):
                 if t["methods"] != ["POST"] or not str(t.get("host", "")).endswith(".db.aurora.internal"):
                     err(f"app {aid}: database tool {tid} must be POST on *.db.aurora.internal")
             elif group == "read":
+                # (P4-GRANTS, Q8, D-124) A `params` classifier (fail closed: the tool matches only
+                # when the parameter proves the read) may carry a body method, e.g. AWS Describe*.
                 ok = (t.get("git") == "fetch" or t.get("graphql") == "query"
+                      or bool(t.get("params"))
                       or set(t["methods"]) <= {"GET", "HEAD"})
                 if not ok:
-                    err(f"app {aid}: read tool {tid} allows {t['methods']}; reads are GET/HEAD, git fetch or graphql query")
+                    err(f"app {aid}: read tool {tid} allows {t['methods']}; reads are GET/HEAD, git fetch, graphql query or a `params` classifier")
             elif tid not in approvals:
                 err(f"app {aid}: write tool {tid} has no approvals template (clamped summary)")
 

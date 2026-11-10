@@ -37,6 +37,7 @@ mod freeze;
 mod governance;
 mod grants_bulk;
 mod grants_connections;
+mod grants_custom_only;
 mod home_checksum;
 mod home_render_inputs;
 mod hosted;

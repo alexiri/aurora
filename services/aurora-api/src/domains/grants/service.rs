@@ -1,8 +1,8 @@
 use super::compile::{compile_connection_grant, compile_secret_grant};
 use super::dto::{
-    BulkConnectionGrantItem, BulkConnectionGrantRequest, BulkSecretGrantItem, BulkStatus,
-    ConnectionGrant, ConnectionGrantView, GRANT_BULK_MAX, GrantMode, PutConnectionGrant,
-    SecretGrant, SecretGrantView,
+    AppRestrictions, BulkConnectionGrantItem, BulkConnectionGrantRequest, BulkSecretGrantItem,
+    BulkStatus, ConnectionGrant, ConnectionGrantView, GRANT_BULK_MAX, GrantMode,
+    PutConnectionGrant, SecretGrant, SecretGrantView,
 };
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
@@ -13,7 +13,7 @@ use aurora_db::DbError;
 use aurora_db::repo::agents::{self, AgentRow};
 use aurora_db::repo::{connections, credentials, derived_rules, grants, secrets};
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// Agent visible to the caller (`can_use` on its workspace), else 404.
@@ -206,6 +206,38 @@ pub async fn list_secret_grants(
         .collect())
 }
 
+/// (P4-GRANTS, D-123) The manifest restrictions of an app in the active snapshot; both `false`
+/// for an app without `grants` (or, never in practice, one the snapshot does not hold).
+pub async fn app_restrictions(state: &AppState, app_id: &str) -> Result<AppRestrictions, ApiError> {
+    Ok(apps::snapshot(state)
+        .await?
+        .and_then(|s| s.app(app_id).map(|a| a.grants.into()))
+        .unwrap_or_default())
+}
+
+/// [`app_restrictions`] of each of the given connections.
+pub async fn restrictions_by_connection(
+    state: &AppState,
+    connection_ids: &[Uuid],
+) -> Result<HashMap<Uuid, AppRestrictions>, ApiError> {
+    if connection_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let snap = apps::snapshot(state).await?;
+    let rows = grants::connection_apps(&state.pool, connection_ids).await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, app)| {
+            let r = snap
+                .as_ref()
+                .and_then(|s| s.app(&app))
+                .map(|a| AppRestrictions::from(a.grants))
+                .unwrap_or_default();
+            (id, r)
+        })
+        .collect())
+}
+
 /// Grants of a connection on agents of workspaces the caller can own.
 pub async fn list_connection_grants(
     state: &AppState,
@@ -215,6 +247,10 @@ pub async fn list_connection_grants(
     let rows = grants::list_views_for_connection(&state.pool, connection_id).await?;
     let ids = rows.iter().map(|r| r.workspace_id).collect();
     let own = owned_workspaces(state, caller, ids).await?;
+    let restr = restrictions_by_connection(state, &[connection_id])
+        .await?
+        .remove(&connection_id)
+        .unwrap_or_default();
     Ok(rows
         .into_iter()
         .filter(|r| own.contains(&r.workspace_id))
@@ -229,7 +265,8 @@ pub async fn list_connection_grants(
                 ask_tools: r.ask_tools,
                 ask_timeout_secs: r.ask_timeout_secs,
                 created_at: r.created_at,
-            }),
+            })
+            .restricted(restr),
             agent_name: r.agent_name,
             workspace_id: r.workspace_id,
             workspace_name: r.workspace_name,
@@ -431,6 +468,17 @@ pub async fn grant_connection_in_tx(
                 && c.workspace_id.is_none_or(|w| w == agent.workspace_id)
         })
         .ok_or_else(|| ApiError::not_found("Connection not found."))?;
+    // (P4-GRANTS, D-123, SEC-67) An app whose manifest says `custom_only` is never granted in
+    // `full` mode, on any path: this function is the only writer of connection grants, so the
+    // agent-side PUT and the credential-side bulk route both stop here.
+    let restrictions = app_restrictions(state, &conn.app_id).await?;
+    if restrictions.custom_only && req.mode == GrantMode::Full {
+        return Err(ApiError::unprocessable(
+            "full_grant_forbidden",
+            "This app only allows custom access: choose the tools it may use instead of full access.",
+        )
+        .with_details(json!({"app_id": conn.app_id})));
+    }
     let (allow, ask) = match req.mode {
         GrantMode::Full => (Vec::new(), Vec::new()),
         GrantMode::Custom => (dedupe(req.allow_tools), dedupe(req.ask_tools)),
@@ -520,9 +568,10 @@ pub async fn grant_connection_in_tx(
             }
         }
     };
+    let grant = ConnectionGrant::from(g).restricted(restrictions);
     if !created {
         return Ok(Written {
-            grant: g.into(),
+            grant,
             created,
             event: None,
         });
@@ -531,7 +580,7 @@ pub async fn grant_connection_in_tx(
         tx,
         agent.org_id,
         agent.workspace_id,
-        g.id,
+        grant.id,
         agent.id,
         conn.id,
         &conn.label,
@@ -554,7 +603,7 @@ pub async fn grant_connection_in_tx(
         ),
     );
     Ok(Written {
-        grant: g.into(),
+        grant,
         created,
         event: Some(ev),
     })

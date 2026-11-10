@@ -84,6 +84,7 @@ fn name_of(v: Verdict) -> (&'static str, Option<&'static str>) {
                 BlockReason::Rule => "rule",
                 BlockReason::DefaultDenied => "default_denied",
                 BlockReason::EgressDenied => "egress_denied",
+                BlockReason::AppUntooledBlocked => "app_untooled_blocked",
             }),
         ),
     }

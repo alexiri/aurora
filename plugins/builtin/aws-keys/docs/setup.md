@@ -5,9 +5,9 @@ Signature Version 4. Aurora signs each request your agents send; agents never se
 It is the access-key variant. To use short-lived credentials from an assumed IAM role instead,
 use the **AWS (assume role)** package (`aws-role`).
 
-**Both packages claim the same S3 and EC2 hosts** (`s3.*`, `ec2.*` of `amazonaws.com`), so an
+**Both packages claim the same S3, EC2 and STS hosts** (`s3.*`, `ec2.*`, `sts.*` of `amazonaws.com`), so an
 instance enables one of them for those hosts: the administrator's host-claim decision picks which.
-Neither package gives agents access to STS (see Limits).
+Neither package gives agents access to STS beyond `GetCallerIdentity` (see Limits).
 
 ## Create the keys
 
@@ -58,16 +58,30 @@ a second layer, not a replacement.
   - Not covered, so never allowed: creating or deleting buckets, multipart uploads, bulk delete
     (`DeleteObjects`), ACL and policy changes.
 - **EC2** (`https://ec2.<region>.amazonaws.com/`): read-only `Describe*` actions such as
-  `DescribeInstances`.
-- **STS is not available to agents.** Answers to `AssumeRole`, `GetSessionToken` and
-  `GetFederationToken` carry usable AWS credentials, and Aurora cannot yet limit a tool to a
-  harmless action such as `GetCallerIdentity`, so requests to `sts.<region>.amazonaws.com` are not
-  signed (follow-up FU-P2-CAT-5a).
+  `DescribeInstances` are allowed by default (tool "Describe EC2 resources").
+- **STS** (`https://sts.<region>.amazonaws.com/`): only `GetCallerIdentity` is available to agents
+  (tool "Show which AWS identity the keys belong to"). Answers to `AssumeRole`,
+  `GetSessionToken` and `GetFederationToken` carry usable AWS credentials, so every other STS
+  action is blocked, whatever the grant.
 
-EC2 uses the AWS Query API, where the action is a request parameter (`Action=...`) and a GET can
-run any action. Aurora cannot tell a `Describe*` call from a destructive one by method or path, so
-**every EC2 call is held for approval** and the approval shows the `Action`. Approve `Describe*`;
-refuse anything else. The IAM policy above is what actually prevents the others.
+EC2 and STS use the AWS Query API, where the action is a request parameter (`Action=...`). Aurora
+reads it from the **form body of a POST** (`content-type: application/x-www-form-urlencoded`,
+uncompressed, the parameter once and not also in the query string). When it can prove that the
+action is a `Describe*` call (or `GetCallerIdentity`), the request is a read tool; in any doubt
+(a GET, a repeated or missing `Action`, another body type, a compressed or very large body) it
+is not, and every other EC2 call is a write tool **held for approval**, showing the `Action`.
+Approve `Describe*`; refuse anything else. The IAM policy above is what actually prevents the
+others. Other STS requests match no tool and are blocked outright.
+
+## What changed in 1.1.0
+
+- New tools `ec2_describe` (read) and `sts_get_caller_identity` (read), declared before the
+  generic `ec2_call`. Requests that used to be the held `ec2_call` (a POST with a `Describe*`
+  action) are now `ec2_describe`; **existing custom grants do not list the new tools, so they
+  arrive blocked** until you allow them in the agent's Access tab. Full grants cover them.
+- The `sts.*` host is now claimed, only to sign `GetCallerIdentity`. The package sets
+  `grants.block_untooled`: a request on these keys that matches no tool of this package (for
+  example `CreateBucket`, any other STS action) is blocked even under a full grant.
 
 ## Limits
 
@@ -76,8 +90,8 @@ refuse anything else. The IAM policy above is what actually prevents the others.
   `eu-west-1` connection) carries a signature for the wrong region and AWS rejects it. Create a
   second connection for another region.
 - Only the regional endpoints `s3.<region>` and `ec2.<region>` of `amazonaws.com` are covered.
-  Virtual-hosted S3 URLs (`<bucket>.s3.<region>.amazonaws.com`), every STS endpoint, S3 Transfer
-  Acceleration, dual-stack and FIPS endpoints are not.
+  Virtual-hosted S3 URLs (`<bucket>.s3.<region>.amazonaws.com`), the global STS endpoint, S3
+  Transfer Acceleration, dual-stack and FIPS endpoints are not.
 - The keys are not validated when you connect; a wrong key shows up as an `InvalidClientTokenId`
   or `SignatureDoesNotMatch` error on the first request.
 - Rotate the access key regularly; Aurora stores it encrypted and replaces it on reconnect.

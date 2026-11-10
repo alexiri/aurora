@@ -3838,6 +3838,8 @@ export interface components {
             agent_instructions?: string | null;
             api_docs?: string | null;
             app_id: string;
+            /** @description (phase 4, P4-GRANTS, D-123, C-414) the manifest's `grants` flags. */
+            app_restrictions: components["schemas"]["AppRestrictions"];
             available: boolean;
             category?: string | null;
             connect: components["schemas"]["ConnectMethod"][];
@@ -3900,8 +3902,22 @@ export interface components {
             redirect_uri: string;
             setup_note?: string | null;
         };
+        /**
+         * @description (phase 4, P4-GRANTS, D-123, C-410) The app's manifest restrictions, so clients can explain
+         *     them: `custom_only` (no `full` grants) and `block_untooled` (requests matching no catalogue
+         *     tool are blocked). Both `false` for an app without `grants`.
+         */
+        AppRestrictions: {
+            block_untooled: boolean;
+            custom_only: boolean;
+        };
         AppSummary: {
             app_id: string;
+            /**
+             * @description (phase 4, P4-GRANTS, D-123, C-414) the manifest's `grants` flags, so the dashboard can
+             *     show "Custom access only" and drop the full-access choice.
+             */
+            app_restrictions: components["schemas"]["AppRestrictions"];
             available: boolean;
             category?: string | null;
             /** Format: int64 */
@@ -4102,6 +4118,8 @@ export interface components {
             mode: components["schemas"]["GrantMode"];
         };
         BulkConnectionGrantResponse: {
+            /** @description (phase 4, P4-GRANTS, C-504) the connection's app restrictions (also on each grant). */
+            app_restrictions: components["schemas"]["AppRestrictions"];
             items: components["schemas"]["BulkConnectionGrantItem"][];
         };
         /** @description `POST /workspaces/{ws}/automations/reassign`. */
@@ -4317,6 +4335,8 @@ export interface components {
             /** Format: uuid */
             agent_id: string;
             allow_tools: string[];
+            /** @description (phase 4, P4-GRANTS, C-410) restrictions of the connection's app. */
+            app_restrictions: components["schemas"]["AppRestrictions"];
             /**
              * Format: int32
              * @description (phase 2, RFE-011a) hold deadline preference of the ask tools in seconds; `null` = none.
@@ -4983,10 +5003,24 @@ export interface components {
             /** Format: int64 */
             revision: number;
         };
+        /**
+         * @description (phase 4, P4-GRANTS, D-123, C-413) A grant an app update converted from full to custom access,
+         *     still as the update left it: the Access tab says so ("Access for <app> was converted from
+         *     full to custom by an app update").
+         */
+        GrantConversion: {
+            app_id: string;
+            /** Format: uuid */
+            connection_id: string;
+            /** Format: date-time */
+            converted_at: string;
+        };
         /** @enum {string} */
         GrantMode: "full" | "custom";
         GrantsResponse: {
             connections: components["schemas"]["ConnectionGrant"][];
+            /** @description (phase 4, P4-GRANTS, C-413) conversions by an app update still standing on these grants. */
+            converted_by_app: components["schemas"]["GrantConversion"][];
             secrets: components["schemas"]["SecretGrant"][];
         };
         HookAccepted: {
@@ -6673,6 +6707,13 @@ export interface components {
             connections_total: number;
             /** @description The currently active version of the package (`null` for a first install). */
             from_version?: string | null;
+            /**
+             * Format: int64
+             * @description (phase 4, P4-GRANTS, C-412) Agent grants activation converts from full to custom access
+             *     (`09 §10`): the sum of the per-app counts. A version with a non-zero count is held for an
+             *     admin (`status_reason = converts_grants`). Absent when `0`.
+             */
+            grants_to_convert?: number;
             major_upgrade: boolean;
         };
         /** @description Per-app share of a [`PluginImpact`]: counts only (C-340). */
@@ -6683,6 +6724,18 @@ export interface components {
              * @description Live connections (`active`, `reauth_required`) of this app in every organization.
              */
             connections: number;
+            /**
+             * Format: int64
+             * @description (C-412) In how many workspaces those grants live (a count, never an id); absent with
+             *     `grants_to_convert`.
+             */
+            grant_workspaces?: number;
+            /**
+             * Format: int64
+             * @description (phase 4, P4-GRANTS, C-412) `full` agent grants of this app's connections that activation
+             *     converts to custom grants; absent unless the version introduces `grants.custom_only`.
+             */
+            grants_to_convert?: number;
             /**
              * Format: int64
              * @description Of those, the ones failing the required-field check (`0` unless a major upgrade).

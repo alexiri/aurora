@@ -1,0 +1,11 @@
+description: block_untooled does not apply at CONNECT time (nothing is injected into a tunnel)
+workspace: {default_action: allow}
+facts:
+  host: indico.example.org
+  port: 443
+  path: /
+  method: CONNECT
+  connect_time: true
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: indico, scope: workspace, block_untooled: true}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect: {verdict: allow}

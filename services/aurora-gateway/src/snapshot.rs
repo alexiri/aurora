@@ -63,6 +63,23 @@ fn validate(s: &Snapshot) -> Result<(), String> {
     if s.contract > SUPPORTED_CONTRACT {
         return Err(format!("unsupported contract {}", s.contract));
     }
+    // (P4-GRANTS, Q8, D-124) A classifier this gateway does not know never deserializes (unknown
+    // `params` source or key), so the snapshot is refused and the previous one kept; a known one
+    // must be well formed, so a `params` tool is never run as a path-only tool.
+    for a in &s.apps {
+        for g in a.tools.iter().flat_map(|t| [&t.read, &t.write]).flatten() {
+            for t in &g.items {
+                if let Some(p) = &t.params
+                    && (p.is_empty() || p.len() > aurora_policy::params::MAX_CONDITIONS)
+                {
+                    return Err(format!(
+                        "invalid params classifier on tool `{}` of `{}`",
+                        t.id, a.app_id
+                    ));
+                }
+            }
+        }
+    }
     for h in &s.hosts {
         if !HostPattern::lenient(&h.host).is_valid() {
             return Err(format!("invalid host pattern `{}`", h.host));

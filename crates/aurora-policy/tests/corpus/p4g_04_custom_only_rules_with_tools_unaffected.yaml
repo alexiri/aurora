@@ -1,0 +1,16 @@
+description: SEC-67 custom_only - custom-grant rules (with tools) still allow, hold and block; the toolless block (rule 3) still blocks
+workspace:
+  ordered_rules:
+    - {logical_id: 00000000-0000-0000-0000-0000000000a1, name: grant-allow, action: allow, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1, tools: [export_event]}]}
+    - {logical_id: 00000000-0000-0000-0000-0000000000a2, name: grant-ask, action: allow, require_approval: true, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1, tools: [book_room]}]}
+    - {logical_id: 00000000-0000-0000-0000-0000000000a3, name: grant-block, action: block, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}
+facts:
+  host: indico.example.org
+  port: 443
+  path: /export/event/1.json
+  method: GET
+  app_id: indico
+  tool_id: export_event
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: indico, scope: workspace, custom_only: true}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect: {verdict: allow, workspace_rule: grant-allow}

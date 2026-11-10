@@ -127,10 +127,13 @@ async fn compute_inner(
             } else {
                 Level::Organization
             };
+            let restrictions = snap.app(&c.app_id).map(|a| a.grants).unwrap_or_default();
             let cred = Credential::Connection {
                 id: c.id,
                 app_id: c.app_id.clone(),
                 scope: level,
+                custom_only: restrictions.custom_only,
+                block_untooled: restrictions.block_untooled,
             };
             let selected_by: Vec<_> = rules
                 .iter()

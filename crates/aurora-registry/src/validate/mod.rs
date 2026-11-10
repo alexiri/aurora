@@ -2,10 +2,12 @@
 //! rules ([`package`]). `hooks.wasm` world-shape checks: [`hooks_component`].
 mod hooks_component;
 mod package_rules;
+mod params_rules;
 mod wildcard;
 
 pub use hooks_component::hooks_component;
 pub use package_rules::{ValidationContext, package, zone_too_broad};
+pub use params_rules::fixtures as params_fixtures;
 pub use wildcard::wildcards;
 
 use std::collections::BTreeSet;
@@ -266,6 +268,7 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
             },
         };
         app_rules(&mut cx, &clients, &mut used_hooks);
+        params_rules::app_rules(app, &format!("/apps/{i}"), &mut cx.out);
         out.append(&mut cx.out);
     }
 

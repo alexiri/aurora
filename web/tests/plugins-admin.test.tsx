@@ -127,6 +127,40 @@ describe("PluginReview", () => {
     expect(await screen.findByText(/Approved\. 3 connections will need reconnecting/)).toBeInTheDocument();
   });
 
+  it("shows the grant conversion banner and gates approval on its section (P4-GRANTS)", async () => {
+    const conv: PluginPackage = {
+      ...plugin,
+      version: "1.1.0",
+      status_reason: "converts_grants",
+      impact: {
+        major_upgrade: false,
+        from_version: "1.0.0",
+        connections_total: 2,
+        connections_needing_reauth: 0,
+        grants_to_convert: 3,
+        by_app: [{ app_id: "indico", connections: 2, needing_reauth: 0, grants_to_convert: 3, grant_workspaces: 2 }],
+      },
+    };
+    const calls = mockFetch(() => json(200, { ...conv, status: "active", connections_reauth: 0 }));
+    wrap(<PluginReview plugin={conv} />);
+    expect(screen.getByRole("status", { name: "Grant conversion" })).toHaveTextContent(
+      "3 agent grants will be converted from full to custom access",
+    );
+    // Not a major upgrade: no reconnect banner.
+    expect(screen.queryByRole("status", { name: "Upgrade impact" })).toBeNull();
+    const approve = screen.getByRole("button", { name: "Approve" });
+    for (const name of [/Hooks/, /Egress per hook/, /Context variables/, /Host claims/]) {
+      fireEvent.click(screen.getByRole("button", { name }));
+    }
+    expect(approve).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Grants to convert/ }));
+    expect(approve).toBeEnabled();
+    expect(screen.getByText(/indico/)).toBeInTheDocument();
+    expect(screen.getByText(/3 grants in/)).toBeInTheDocument();
+    fireEvent.click(approve);
+    await waitFor(() => expect(calls.some((c) => c.path === "/v1/admin/plugins/p1/approve")).toBe(true));
+  });
+
   it("shows no impact banner or section for a non-major version", () => {
     mockFetch(() => json(200, plugin));
     wrap(

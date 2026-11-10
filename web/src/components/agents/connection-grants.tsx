@@ -53,6 +53,13 @@ export function ConnectionGrants({ agentId, wsId, orgId }: { agentId: string; ws
           Could not remove access: {errorMessage(remove.error)}
         </Notice>
       ) : null}
+      {/* A conversion by an app update (P4-GRANTS, D-123): the grant is custom now, with every tool allowed. */}
+      {(grants.data?.converted_by_app ?? []).map((c) => (
+        <Notice key={c.connection_id} tone="pending" role="status" aria-label="Access converted">
+          Access for {appNames.get(c.app_id)?.name ?? c.app_id} was converted from full to custom by an app update. The
+          agent can use every tool the app has today; tools added later start blocked. Review the choices with Edit.
+        </Notice>
+      ))}
       {connections.length === 0 ? (
         <EmptyState title="No connections in scope">Connect an app on the Credentials page, then give this agent access here.</EmptyState>
       ) : (

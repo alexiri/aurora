@@ -1,0 +1,181 @@
+# Parameter-level tools (P4-GRANTS, Q8, D-124, SEC-68): ec2_describe and sts_get_caller_identity
+# match on the `Action` form parameter. Every other case falls through (to the generic held
+# ec2_call, or to no tool, which `grants.block_untooled` then blocks). Fake credentials.
+- name: "ec2_describe: Describe* in a form body is a read tool"
+  connection: &conn
+    credentials: { access_key_id: "AKIDEXAMPLE", secret_access_key: "fixture-secret-key-1" }
+    metadata: { region: eu-west-1 }
+  request: &describe
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=DescribeInstances&Version=2016-11-15"
+  expect:
+    app: aws-keys
+    tool: ec2_describe
+    upstream: { url: "https://ec2.eu-west-1.amazonaws.com/" }
+- name: "ec2_describe: charset utf-8 is accepted"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/"
+    headers: { content-type: "application/x-www-form-urlencoded; charset=utf-8" }
+    body: "Version=2016-11-15&Action=DescribeVpcs"
+  expect: { tool: ec2_describe }
+- name: "negative ec2_describe: RunInstances (other value) is the held ec2_call"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=RunInstances&Version=2016-11-15"
+  expect: { tool: ec2_call }
+- name: "negative ec2_describe: Describe is case sensitive"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=describeInstances"
+  expect: { tool: ec2_call }
+- name: "negative ec2_describe: missing Action"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Version=2016-11-15"
+  expect: { tool: ec2_call }
+- name: "negative ec2_describe: repeated Action"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=DescribeInstances&Action=TerminateInstances"
+  expect: { tool: ec2_call }
+- name: "negative ec2_describe: Action in both the query and the body"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/?Action=TerminateInstances"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=DescribeInstances"
+  expect: { tool: ec2_call }
+- name: "negative ec2_describe: Action in the query only (a GET Describe stays a held tool)"
+  connection: *conn
+  request: { method: POST, url: "https://ec2.eu-west-1.amazonaws.com/?Action=DescribeInstances" }
+  expect: { tool: ec2_call }
+- name: "negative ec2_describe: not a urlencoded body"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/json }
+    body: "Action=DescribeInstances"
+  expect: { tool: ec2_call }
+- name: "negative ec2_describe: compressed body"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded, content-encoding: gzip }
+    body: "Action=DescribeInstances"
+  expect: { tool: ec2_call }
+- name: "negative ec2_describe: body longer than the buffer (truncated)"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=DescribeInstances"
+    body_truncated: true
+  expect: { tool: ec2_call }
+- name: "negative ec2_describe: value that is not valid UTF-8 after decoding"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://ec2.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=Describe%FF"
+  expect: { tool: ec2_call }
+- name: "sts_get_caller_identity: GetCallerIdentity in a form body is a read tool, signed for STS"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://sts.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=GetCallerIdentity&Version=2011-06-15"
+  expect:
+    app: aws-keys
+    tool: sts_get_caller_identity
+    upstream: { url: "https://sts.eu-west-1.amazonaws.com/" }
+- name: "negative sts_get_caller_identity: AssumeRole (other value) matches no tool"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://sts.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=AssumeRole&RoleArn=arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Fx&RoleSessionName=s&Version=2011-06-15"
+  expect: { app: aws-keys, no_tool: true }
+- name: "negative sts_get_caller_identity: GetSessionToken matches no tool"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://sts.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=GetSessionToken&Version=2011-06-15"
+  expect: { app: aws-keys, no_tool: true }
+- name: "negative sts_get_caller_identity: missing Action"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://sts.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Version=2011-06-15"
+  expect: { app: aws-keys, no_tool: true }
+- name: "negative sts_get_caller_identity: repeated Action"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://sts.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=GetCallerIdentity&Action=AssumeRole"
+  expect: { app: aws-keys, no_tool: true }
+- name: "negative sts_get_caller_identity: AssumeRole in the query, GetCallerIdentity in the body"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://sts.eu-west-1.amazonaws.com/?Action=AssumeRole"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=GetCallerIdentity"
+  expect: { app: aws-keys, no_tool: true }
+- name: "negative sts_get_caller_identity: a GET query request matches no tool"
+  connection: *conn
+  request: { method: GET, url: "https://sts.eu-west-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15" }
+  expect: { app: aws-keys, no_tool: true }
+- name: "negative sts_get_caller_identity: wrong content type"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://sts.eu-west-1.amazonaws.com/"
+    headers: { content-type: text/plain }
+    body: "Action=GetCallerIdentity"
+  expect: { app: aws-keys, no_tool: true }
+- name: "negative sts_get_caller_identity: compressed body"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://sts.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded, content-encoding: br }
+    body: "Action=GetCallerIdentity"
+  expect: { app: aws-keys, no_tool: true }
+- name: "negative sts_get_caller_identity: truncated body"
+  connection: *conn
+  request:
+    method: POST
+    url: "https://sts.eu-west-1.amazonaws.com/"
+    headers: { content-type: application/x-www-form-urlencoded }
+    body: "Action=GetCallerIdentity"
+    body_truncated: true
+  expect: { app: aws-keys, no_tool: true }
