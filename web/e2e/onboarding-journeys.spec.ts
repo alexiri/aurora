@@ -59,13 +59,20 @@ test("1. fresh instance: the admin walks the setup wizard to a working chat", as
   if (!page.url().includes("/admin/setup")) await page.goto("/admin/setup");
   await expect(page.getByRole("heading", { name: "Set up Aurora", level: 1 })).toBeVisible();
   const steps = page.getByRole("list", { name: "Setup steps" });
-  // Six steps (the placement step also embeds a "Personal organizations from before" region, so count the <li>s).
-  await expect(steps.getByRole("listitem")).toHaveCount(6);
+  // Six steps, by id (nested check lists make a role/li count meaningless).
+  for (const id of ["roles", "placement", "llm", "runners", "optional", "try"]) {
+    await expect(steps.locator(`#setup-${id}`)).toHaveCount(1);
+  }
 
   // 2. Where new users land: shared organization "Users" with personal workspaces (the recommended choice).
+  // On a fresh instance no organization exists yet, so the journey creates "Users" from the wizard.
   const placement = steps.getByRole("region", { name: "Where new users land" });
+  await placement.getByLabel("Organization").selectOption({ label: "Create a new organization…" });
+  await placement.getByLabel("New organization name").fill("Users");
   await placement.getByRole("button", { name: "Save placement" }).click();
-  await expect(placement.getByText("Saved. New sign-ins follow it from now on.")).toBeVisible({ timeout: 30_000 });
+  // The step is saved when the wizard shows it from the server's state (the "Saved…" status is transient:
+  // the form is re-keyed on the saved revision, so it remounts the moment the placement refetch lands).
+  await expect(placement.getByText("Ready", { exact: true })).toBeVisible({ timeout: 30_000 });
 
   // 3. LLM access: add an organization key for the default org, and give it to every new user's agent.
   const llm = steps.getByRole("region", { name: "LLM access" });
