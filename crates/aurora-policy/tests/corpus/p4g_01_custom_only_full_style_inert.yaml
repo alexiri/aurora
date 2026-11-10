@@ -1,0 +1,12 @@
+description: SEC-67 custom_only - a full-style (toolless) connection allow rule is inert for a custom_only app; the request falls to nothing
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: derived-full, action: allow, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}], default_action: block}
+facts:
+  host: indico.example.org
+  port: 443
+  path: /export/event/1.json
+  method: GET
+  app_id: indico
+  tool_id: export_event
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: indico, scope: workspace, custom_only: true}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect: {verdict: block, reason: default_denied}

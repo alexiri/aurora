@@ -24,10 +24,15 @@ import { ViolationList, statusTone } from "./plugins-view";
 
 const SECTIONS = ["hooks", "egress", "context", "claims"] as const;
 // "impact" joins the mandatory review of a pending major upgrade (RFE-022, 09 §10).
-type Section = (typeof SECTIONS)[number] | "impact";
+// "conversions" joins it when the version converts agent grants (P4-GRANTS, D-123, 09 §10).
+type Section = (typeof SECTIONS)[number] | "impact" | "conversions";
 
 function reconnectLine(n: number): string {
   return `${n} ${n === 1 ? "connection" : "connections"} will need reconnecting`;
+}
+
+function convertLine(n: number): string {
+  return `${n} agent ${n === 1 ? "grant" : "grants"} will be converted from full to custom access`;
 }
 
 function Collapsible({
@@ -91,7 +96,8 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
   };
   const impact = plugin.impact ?? null;
   const majorImpact = impact !== null && impact.major_upgrade;
-  const required: Section[] = majorImpact ? [...SECTIONS, "impact"] : [...SECTIONS];
+  const converting = impact !== null && (impact.grants_to_convert ?? 0) > 0;
+  const required: Section[] = [...SECTIONS, ...(majorImpact ? (["impact"] as const) : []), ...(converting ? (["conversions"] as const) : [])];
   const allSeen = required.every((s) => seen.has(s));
 
   const doUninstall = (force: boolean) =>
@@ -185,6 +191,35 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
             {impact.connections_needing_reauth === 1 ? "it" : "them"} are refused until a user reconnects.
           </p>
         </Notice>
+      ) : null}
+
+      {converting ? (
+        <Notice tone="pending" role="status" aria-label="Grant conversion">
+          <h2 className="font-medium">{convertLine(impact.grants_to_convert ?? 0)}</h2>
+          <p>
+            This version allows only custom access to its apps. Approving converts each full grant to a custom grant that
+            allows exactly the tools the app has today, so agents keep what they can do with listed tools and lose only
+            requests outside the tool list and tools added later. Nothing is converted back.
+          </p>
+        </Notice>
+      ) : null}
+
+      {converting ? (
+        <div className="space-y-2">
+          <Collapsible id="conversions" title="Grants to convert" open={opened.has("conversions")} onToggle={onToggle}>
+            <p>{convertLine(impact.grants_to_convert ?? 0)}. The count is advisory; approval recomputes it.</p>
+            <ul className="mt-2 list-disc pl-5">
+              {impact.by_app
+                .filter((a) => (a.grants_to_convert ?? 0) > 0)
+                .map((a) => (
+                  <li key={a.app_id}>
+                    <strong>{a.app_id}</strong>: {a.grants_to_convert} {a.grants_to_convert === 1 ? "grant" : "grants"} in{" "}
+                    {a.grant_workspaces ?? 0} {a.grant_workspaces === 1 ? "workspace" : "workspaces"}
+                  </li>
+                ))}
+            </ul>
+          </Collapsible>
+        </div>
       ) : null}
 
       {majorImpact ? (

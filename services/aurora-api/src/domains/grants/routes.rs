@@ -40,9 +40,28 @@ async fn list_grants(
     require_own(&auth)?;
     let secrets = grants::list_secret_grants(&state.pool, a.id).await?;
     let conns = grants::list_connection_grants(&state.pool, a.id).await?;
+    // (P4-GRANTS, C-410) each connection grant carries its app's restrictions.
+    let ids: Vec<Uuid> = conns.iter().map(|c| c.connection_id).collect();
+    let restr = service::restrictions_by_connection(&state, &ids).await?;
+    let converted_by_app = grants::standing_conversions(&state.pool, a.id)
+        .await?
+        .into_iter()
+        .map(|c| GrantConversion {
+            connection_id: c.connection_id,
+            app_id: c.app_id,
+            converted_at: c.converted_at,
+        })
+        .collect();
     Ok(Json(GrantsResponse {
+        converted_by_app,
         secrets: secrets.into_iter().map(Into::into).collect(),
-        connections: conns.into_iter().map(Into::into).collect(),
+        connections: conns
+            .into_iter()
+            .map(|c| {
+                let r = restr.get(&c.connection_id).copied().unwrap_or_default();
+                ConnectionGrant::from(c).restricted(r)
+            })
+            .collect(),
     }))
 }
 
@@ -215,7 +234,14 @@ async fn bulk_connection_grants(
     Json(req): Json<BulkConnectionGrantRequest>,
 ) -> Result<Json<BulkConnectionGrantResponse>, ApiError> {
     let items = service::bulk_grant_connection(&state, &caller, id, req).await?;
-    Ok(Json(BulkConnectionGrantResponse { items }))
+    let app_restrictions = service::restrictions_by_connection(&state, &[id])
+        .await?
+        .remove(&id)
+        .unwrap_or_default();
+    Ok(Json(BulkConnectionGrantResponse {
+        items,
+        app_restrictions,
+    }))
 }
 
 /// Agents granted a secret (FIX-020, C-503): `can_own` on the secret's scope; only agents of

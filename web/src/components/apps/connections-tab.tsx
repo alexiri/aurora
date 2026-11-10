@@ -11,9 +11,11 @@ import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
 import {
+  appIsCustomOnly,
   appKeys,
   connectWindowPath,
   openConnectWindow,
+  useApps,
   useConnectedListener,
   useConnections,
   useDeleteConnection,
@@ -31,7 +33,22 @@ const STATUS_LABEL: Record<string, string> = {
   orphaned: "Orphaned (package removed)",
 };
 
-function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Connection; canOwn: boolean; org?: string; ws?: string }) {
+function ConnectionRow({
+  scope,
+  c,
+  canOwn,
+  org,
+  ws,
+  customOnly = false,
+}: {
+  scope: ListScope;
+  c: Connection;
+  canOwn: boolean;
+  org?: string;
+  ws?: string;
+  /** The app's manifest allows only custom grants (`app_restrictions.custom_only`, P4-GRANTS). */
+  customOnly?: boolean;
+}) {
   const patch = usePatchConnection(scope);
   const del = useDeleteConnection(scope);
   const [confirm, setConfirm] = useState(false);
@@ -46,6 +63,7 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
           <span className="font-medium text-ink">{c.label}</span>
           <span className="font-mono text-xs text-muted">{c.app_id}</span>
           <Badge tone={bad ? "danger" : c.status === "active" ? "accent" : "neutral"}>{STATUS_LABEL[c.status] ?? c.status}</Badge>
+          {customOnly ? <Badge>Custom access only</Badge> : null}
           {c.instance ? (
             <Badge className="font-mono normal-case tracking-normal" title={`Self-hosted instance: ${c.instance.label}`}>
               {c.instance.host}
@@ -148,6 +166,10 @@ function ConnectionRow({ scope, c, canOwn, org, ws }: { scope: ListScope; c: Con
 export function ConnectionsTab({ scope, canOwn }: { scope: ListScope; canOwn: boolean }) {
   const params = useParams<{ org?: string; ws?: string }>();
   const list = useConnections(scope);
+  // The catalogue says which apps are custom-access-only (`app_restrictions`); the badge is a hint, so a
+  // failing or pending catalogue just shows none.
+  const apps = useApps(scope.kind === "workspace" ? scope.id : undefined);
+  const customOnly = new Set((apps.data?.items ?? []).filter((a) => appIsCustomOnly(a)).map((a) => a.app_id));
   const qc = useQueryClient();
   const refresh = useCallback(() => void qc.invalidateQueries({ queryKey: appKeys.connections(scope) }), [qc, scope]);
   useConnectedListener(refresh);
@@ -162,6 +184,7 @@ export function ConnectionsTab({ scope, canOwn }: { scope: ListScope; canOwn: bo
           scope={scope}
           c={c}
           canOwn={canOwn}
+          customOnly={customOnly.has(c.app_id)}
           org={scope.kind === "workspace" ? params.org : undefined}
           ws={scope.kind === "workspace" ? params.ws : undefined}
         />

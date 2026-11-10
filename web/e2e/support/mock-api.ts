@@ -40,6 +40,11 @@ export const PACKAGES: { id: string; name: string; description: string }[] = [
 const apps = PACKAGES.map((p) => ({
   app_id: p.id, available: true, category: "developer", connection_count: p.id === "github" ? 1 : 0, description: p.description,
   has_dark_icon: true, name: p.name, package_id: p.id, package_version: "1.0.0",
+  // Mirrors plugins/builtin/*/plugin.yaml `grants:` (P4-GRANTS): Indico is custom access only; the AWS packages block untooled requests.
+  app_restrictions: {
+    custom_only: p.id === "indico",
+    block_untooled: p.id === "indico" || p.id === "aws-keys" || p.id === "aws-role",
+  },
 }));
 
 const connection = (n: number, appId: string, label: string) => ({

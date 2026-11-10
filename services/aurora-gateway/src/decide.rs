@@ -439,6 +439,22 @@ impl PolicyHandler {
                     "blocked",
                 ))
             }
+            // (P4-GRANTS, D-123, SEC-67) Decided before any rule: the app's manifest says only
+            // catalogued tools may use its credential.
+            Verdict::Block {
+                reason: BlockReason::AppUntooledBlocked,
+            } => Some((
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "blocked_by_policy",
+                    "This app only allows the operations in its tool list, and this request matches none of them. No rule can allow it.".to_owned(),
+                )
+                .with_details(json!({
+                    "reason": "app_untooled_blocked", "method": method, "path": path,
+                    "manage_url": policy_url
+                })),
+                "app_untooled_blocked",
+            )),
             Verdict::Block {
                 reason: BlockReason::DefaultDenied,
             } => Some((
@@ -689,6 +705,16 @@ impl RequestHandler for PolicyHandler {
         } else {
             (Vec::new(), false, body)
         };
+        // (P4-GRANTS, Q8) Headers for `params` conditions; an unreadable value stays visible (as
+        // a replacement character) so that doubt can never look like "absent" or "identity".
+        let param_headers: Vec<(&str, &str)> = if app_match.is_some() {
+            headers
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.to_str().unwrap_or("\u{fffd}")))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let tool = app_match.as_ref().and_then(|m| {
             apps::identify_tool(
                 m,
@@ -699,6 +725,7 @@ impl RequestHandler for PolicyHandler {
                 method.as_str(),
                 &body_prefix,
                 truncated,
+                &param_headers,
             )
         });
         ctx.tool_id = tool.map(|t| t.id.clone());
@@ -1688,6 +1715,7 @@ impl DbAuthorizer for DbSession {
                 "POST",
                 &body_prefix,
                 truncated,
+                &[],
             )
         });
         ctx.tool_id = tool.map(|t| t.id.clone());

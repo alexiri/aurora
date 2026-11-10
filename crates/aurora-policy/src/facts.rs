@@ -27,6 +27,14 @@ pub enum Credential {
         id: Uuid,
         app_id: String,
         scope: Level,
+        /// (P4-GRANTS, D-123) The app's manifest says `grants.custom_only`: a target without
+        /// `tools` neither allows nor selects this connection (07 §App-level restrictions).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        custom_only: bool,
+        /// (P4-GRANTS, D-123) The app's manifest says `grants.block_untooled`: a request on
+        /// which this connection wins and that matches no catalogue tool is blocked.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        block_untooled: bool,
     },
     Secret {
         id: Uuid,

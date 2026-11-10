@@ -1,0 +1,15 @@
+description: SEC-67 custom_only - a toolless block rule still blocks an unlisted tool (restrictions only tighten)
+workspace:
+  ordered_rules:
+    - {logical_id: 00000000-0000-0000-0000-0000000000a1, name: grant-allow, action: allow, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1, tools: [export_event]}]}
+    - {logical_id: 00000000-0000-0000-0000-0000000000a3, name: grant-block, action: block, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}
+facts:
+  host: indico.example.org
+  port: 443
+  path: /api/other
+  method: POST
+  app_id: indico
+  tool_id: book_room
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: indico, scope: workspace, custom_only: true}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect: {verdict: block, reason: rule, workspace_rule: grant-block}

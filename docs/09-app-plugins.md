@@ -356,8 +356,12 @@ with `Action=DescribeInstances`, STS with `Action=GetCallerIdentity`), AWS JSON 
   classification. The linter requires, for every tool with `params`, fixtures for the positive case
   and for each of: other value, missing, repeated, query/body conflict, wrong content type,
   truncated body.
+- **Query conditions and a body.** Servers merge the query and an urlencoded body, so a `query`
+  condition holds only if the request has no body, or has a complete, uncompressed, urlencoded
+  UTF-8 body that does not carry the parameter at all; a body that cannot be checked (other
+  type, compressed, longer than the buffer) means the tool does not match.
 - **Cost.** The gateway buffers the body prefix only for a request whose host, path and
-  method already match a `params` tool with a `form` condition (the existing *Body prefix* step 4 of the
+  method already match a `params` tool with a `form` or `query` condition (the existing *Body prefix* step 4 of the
   `06` request pipeline); other requests are unaffected.
 - **Order and superset rules.** The first-match rule above is unchanged: a `params` tool is declared
   before the generic tool that would also match (`ec2_describe` before `ec2_call`). A group wildcard
@@ -909,7 +913,10 @@ Fixture file format (`tests/*.yaml`):
 `expect.upstream.headers_absent` (D-86) lists header names (case-insensitive) that the upstream
 request must not carry, whether injected by the package or sent by the client. In a case without a
 `connection.instance_host`, the connection of an instance-bound app is its default-host connection
-(`{instance}` is the app's `default_host`).
+(`{instance}` is the app's `default_host`). (phase 4, P4-GRANTS) `request.body_truncated: true` says
+the body is longer than the gateway's condition buffer (the classifier then sees a truncated
+prefix; a fixture cannot carry 256 KiB), and `expect.no_tool: true` says the app matches but no
+catalogue tool does; the `params` fixtures of `§3.4 tools` use both.
 
 **Token lifecycle cases** (D-82; `token.kind: oauth2_refresh`). A case replays a stale upstream
 answer, the refresh exchange against a recorded token endpoint and what the gateway does next. It

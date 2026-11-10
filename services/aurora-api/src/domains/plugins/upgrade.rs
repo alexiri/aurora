@@ -6,7 +6,10 @@
 //! carries counts (never an organization, workspace, connection label).
 
 use super::dto::{PluginImpact, PluginImpactApp};
+use crate::domains::grants::compile::compile_connection_grant;
+use crate::domains::grants::dto::GrantMode;
 use aurora_core::ApiError;
+use aurora_db::repo::grants::{self, FullGrantRow};
 use aurora_db::repo::{credentials, plugins};
 use aurora_registry::Manifest;
 use aurora_registry::upgrade as rules;
@@ -22,6 +25,13 @@ pub struct Flip {
     pub reason: String,
 }
 
+/// One `full` grant that activation converts to a custom grant (D-123, `09 §10`): its
+/// `allow_tools` are exactly the new version's whole catalogue.
+pub struct Convert {
+    pub grant: FullGrantRow,
+    pub allow_tools: Vec<String>,
+}
+
 pub struct Computed {
     pub major: bool,
     pub from_version: Option<String>,
@@ -31,6 +41,9 @@ pub struct Computed {
     pub by_app: Vec<PluginImpactApp>,
     /// The failing `active` ones: what activation flips.
     pub flips: Vec<Flip>,
+    /// (P4-GRANTS, D-123) The full grants activation converts to custom grants: those on
+    /// connections of an app the new version marks `grants.custom_only`.
+    pub converts: Vec<Convert>,
 }
 
 impl Computed {
@@ -40,21 +53,54 @@ impl Computed {
             from_version: self.from_version,
             connections_total: self.total,
             connections_needing_reauth: self.needing,
+            grants_to_convert: i64::try_from(self.converts.len()).unwrap_or(i64::MAX),
             by_app: self.by_app,
         }
     }
 }
 
-/// The result of flipping connections inside an activation transaction.
+/// Every tool id of an app's catalogue in the manifest (items and group wildcards): what a
+/// converted grant allows, so that what an agent can do with catalogued tools stays the same.
+fn catalogue_ids(app: &aurora_registry::manifest::App) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(t) = &app.tools {
+        for g in [&t.read, &t.write].into_iter().flatten() {
+            out.extend(g.wildcard.iter().map(|w| w.id.clone()));
+            out.extend(g.items.iter().map(|i| i.id.clone()));
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// A grant rewritten inside the activation transaction (for the audit row, one per grant).
+pub struct Converted {
+    pub grant_id: Uuid,
+    pub org_id: Uuid,
+    pub workspace_id: Uuid,
+    pub agent_id: Uuid,
+    pub connection_id: Uuid,
+    pub app_id: String,
+    pub tools: usize,
+}
+
+/// The result of flipping connections and converting grants inside an activation transaction.
 #[derive(Default)]
 pub struct Applied {
     pub total: i64,
     pub by_app: BTreeMap<String, i64>,
+    pub converted: Vec<Converted>,
 }
 
 impl Applied {
     pub fn metadata(&self) -> serde_json::Value {
-        json!({ "connections_reauth": self.total, "by_app": self.by_app })
+        let mut by_app_grants: BTreeMap<&str, i64> = BTreeMap::new();
+        for c in &self.converted {
+            *by_app_grants.entry(c.app_id.as_str()).or_default() += 1;
+        }
+        json!({ "connections_reauth": self.total, "by_app": self.by_app,
+                "grants_converted": self.converted.len(), "grants_converted_by_app": by_app_grants })
     }
 }
 
@@ -133,6 +179,32 @@ pub async fn compute_for(
             });
         }
     }
+    // (P4-GRANTS, D-123) Full grants on connections of an app this version marks `custom_only`
+    // become custom grants with exactly the catalogue; nothing is ever converted back.
+    let custom_only: Vec<&aurora_registry::manifest::App> = manifest
+        .apps
+        .iter()
+        .filter(|a| a.grants.custom_only)
+        .collect();
+    let mut converts = Vec::new();
+    if !custom_only.is_empty() {
+        let ids: Vec<String> = custom_only.iter().map(|a| a.about.id.clone()).collect();
+        for g in grants::full_for_apps(&mut *conn, &ids).await? {
+            if let Some(app) = custom_only.iter().find(|a| a.about.id == g.app_id) {
+                let allow_tools = catalogue_ids(app);
+                converts.push(Convert {
+                    grant: g,
+                    allow_tools,
+                });
+            }
+        }
+    }
+    let mut per_app: BTreeMap<&str, (i64, std::collections::BTreeSet<Uuid>)> = BTreeMap::new();
+    for c in &converts {
+        let e = per_app.entry(c.grant.app_id.as_str()).or_default();
+        e.0 += 1;
+        e.1.insert(c.grant.workspace_id);
+    }
     Ok(Computed {
         major,
         from_version: from,
@@ -140,13 +212,22 @@ pub async fn compute_for(
         needing,
         by_app: by_app
             .into_iter()
-            .map(|(app_id, (connections, needing_reauth))| PluginImpactApp {
-                app_id,
-                connections,
-                needing_reauth,
+            .map(|(app_id, (connections, needing_reauth))| {
+                let (grants_to_convert, ws) =
+                    per_app.get(app_id.as_str()).map_or((0, 0), |(n, w)| {
+                        (*n, i64::try_from(w.len()).unwrap_or(i64::MAX))
+                    });
+                PluginImpactApp {
+                    app_id,
+                    connections,
+                    needing_reauth,
+                    grants_to_convert,
+                    grant_workspaces: ws,
+                }
             })
             .collect(),
         flips,
+        converts,
     })
 }
 
@@ -160,6 +241,39 @@ pub async fn apply(conn: &mut PgConnection, c: &Computed) -> Result<Applied, Api
             out.total += 1;
             *out.by_app.entry(f.app_id.clone()).or_default() += 1;
         }
+    }
+    // (P4-GRANTS, D-123) Convert in the same transaction: the grant row, its derived rules
+    // (recompiled as a custom grant) and the gateway invalidation commit together with the
+    // activation and the snapshot (SEC-67).
+    for c in &c.converts {
+        let g = &c.grant;
+        if !grants::convert_full_to_custom(&mut *conn, g.id, &c.allow_tools).await? {
+            continue;
+        }
+        compile_connection_grant(
+            &mut *conn,
+            g.org_id,
+            g.workspace_id,
+            g.id,
+            g.agent_id,
+            g.connection_id,
+            &g.label,
+            GrantMode::Custom,
+            &c.allow_tools,
+            &[],
+            None,
+        )
+        .await?;
+        credentials::notify_gateway_invalidate(&mut *conn, "agent", g.agent_id).await?;
+        out.converted.push(Converted {
+            grant_id: g.id,
+            org_id: g.org_id,
+            workspace_id: g.workspace_id,
+            agent_id: g.agent_id,
+            connection_id: g.connection_id,
+            app_id: g.app_id.clone(),
+            tools: c.allow_tools.len(),
+        });
     }
     Ok(out)
 }

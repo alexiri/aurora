@@ -272,6 +272,13 @@ pub async fn ingest(
                 status: "pending_approval",
                 reason: Some("breaks_connections"),
             };
+        } else if !impact.converts.is_empty() && decision.reason != Some("claim_conflict") {
+            // (P4-GRANTS, D-123) An upgrade that converts full grants to custom grants is never
+            // activated automatically either: the admin sees "N agent grants will be converted".
+            decision = Decision {
+                status: "pending_approval",
+                reason: Some("converts_grants"),
+            };
         }
     }
     let auto = decision.status == "active";

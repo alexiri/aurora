@@ -184,4 +184,18 @@ describe("connection missing scopes", () => {
     await show(conn({}));
     expect(screen.queryByRole("status")).toBeNull();
   });
+  it("marks a connection of a custom_only app with the Custom access only badge (P4-GRANTS)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (req: Request | string) => {
+        const url = typeof req === "string" ? req : req.url;
+        return url.includes("/v1/apps")
+          ? json(200, { items: [{ app_id: "gmail", name: "Gmail", app_restrictions: { custom_only: true, block_untooled: false } }] })
+          : json(200, { items: [conn({})], next_cursor: null });
+      }),
+    );
+    wrap(<ConnectionsTab scope={{ kind: "workspace", id: "w1" }} canOwn />);
+    await screen.findByText("me@acme.io");
+    expect(await screen.findByText("Custom access only")).toBeInTheDocument();
+  });
 });

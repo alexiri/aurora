@@ -440,12 +440,15 @@ impl Resolver {
             .map_err(fail)?;
         let unavailable = restricted && !available.contains(&row.app_id);
         let status = row.status.clone();
+        let registry = self.snapshots.as_ref().and_then(|s| s.current());
         let conn = ConnCand::from_row(row, id.org_id).map_err(fail)?;
+        let app = registry.as_ref().and_then(|l| l.snapshot.app(&conn.app_id));
+        let conn = conn.clone().with_app_restrictions(app);
         Ok(Some(DbConnection {
             conn: Arc::new(conn),
             status,
             unavailable,
-            registry: self.snapshots.as_ref().and_then(|s| s.current()),
+            registry,
         }))
     }
 
@@ -651,7 +654,9 @@ impl Resolver {
                             .and_then(|i| i.default_host.clone()),
                     };
                     match ConnCand::from_row(r, k.org) {
-                        Ok(mut c) => {
+                        Ok(c) => {
+                            let app = l.snapshot.app(&c.app_id);
+                            let mut c = c.with_app_restrictions(app);
                             c.instance_host = host;
                             conns.push(Arc::new(c));
                         }

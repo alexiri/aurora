@@ -19303,6 +19303,7 @@
           "available",
           "connection_count",
           "has_dark_icon",
+          "app_restrictions",
           "connect",
           "tools",
           "hosts",
@@ -19325,6 +19326,10 @@
           },
           "app_id": {
             "type": "string"
+          },
+          "app_restrictions": {
+            "$ref": "#/components/schemas/AppRestrictions",
+            "description": "(phase 4, P4-GRANTS, D-123, C-414) the manifest's `grants` flags."
           },
           "available": {
             "type": "boolean"
@@ -19550,6 +19555,22 @@
           }
         }
       },
+      "AppRestrictions": {
+        "type": "object",
+        "description": "(phase 4, P4-GRANTS, D-123, C-410) The app's manifest restrictions, so clients can explain\nthem: `custom_only` (no `full` grants) and `block_untooled` (requests matching no catalogue\ntool are blocked). Both `false` for an app without `grants`.",
+        "required": [
+          "custom_only",
+          "block_untooled"
+        ],
+        "properties": {
+          "block_untooled": {
+            "type": "boolean"
+          },
+          "custom_only": {
+            "type": "boolean"
+          }
+        }
+      },
       "AppSummary": {
         "type": "object",
         "required": [
@@ -19560,11 +19581,16 @@
           "description",
           "available",
           "connection_count",
-          "has_dark_icon"
+          "has_dark_icon",
+          "app_restrictions"
         ],
         "properties": {
           "app_id": {
             "type": "string"
+          },
+          "app_restrictions": {
+            "$ref": "#/components/schemas/AppRestrictions",
+            "description": "(phase 4, P4-GRANTS, D-123, C-414) the manifest's `grants` flags, so the dashboard can\nshow \"Custom access only\" and drop the full-access choice."
           },
           "available": {
             "type": "boolean"
@@ -20237,9 +20263,14 @@
       "BulkConnectionGrantResponse": {
         "type": "object",
         "required": [
-          "items"
+          "items",
+          "app_restrictions"
         ],
         "properties": {
+          "app_restrictions": {
+            "$ref": "#/components/schemas/AppRestrictions",
+            "description": "(phase 4, P4-GRANTS, C-504) the connection's app restrictions (also on each grant)."
+          },
           "items": {
             "type": "array",
             "items": {
@@ -20989,6 +21020,7 @@
           "mode",
           "allow_tools",
           "ask_tools",
+          "app_restrictions",
           "created_at"
         ],
         "properties": {
@@ -21001,6 +21033,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "app_restrictions": {
+            "$ref": "#/components/schemas/AppRestrictions",
+            "description": "(phase 4, P4-GRANTS, C-410) restrictions of the connection's app."
           },
           "ask_timeout_secs": {
             "type": [
@@ -23171,6 +23207,28 @@
           }
         }
       },
+      "GrantConversion": {
+        "type": "object",
+        "description": "(phase 4, P4-GRANTS, D-123, C-413) A grant an app update converted from full to custom access,\nstill as the update left it: the Access tab says so (\"Access for <app> was converted from\nfull to custom by an app update\").",
+        "required": [
+          "connection_id",
+          "app_id",
+          "converted_at"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "connection_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "converted_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "GrantMode": {
         "type": "string",
         "enum": [
@@ -23182,7 +23240,8 @@
         "type": "object",
         "required": [
           "secrets",
-          "connections"
+          "connections",
+          "converted_by_app"
         ],
         "properties": {
           "connections": {
@@ -23190,6 +23249,13 @@
             "items": {
               "$ref": "#/components/schemas/ConnectionGrant"
             }
+          },
+          "converted_by_app": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GrantConversion"
+            },
+            "description": "(phase 4, P4-GRANTS, C-413) conversions by an app update still standing on these grants."
           },
           "secrets": {
             "type": "array",
@@ -29255,6 +29321,11 @@
             ],
             "description": "The currently active version of the package (`null` for a first install)."
           },
+          "grants_to_convert": {
+            "type": "integer",
+            "format": "int64",
+            "description": "(phase 4, P4-GRANTS, C-412) Agent grants activation converts from full to custom access\n(`09 §10`): the sum of the per-app counts. A version with a non-zero count is held for an\nadmin (`status_reason = converts_grants`). Absent when `0`."
+          },
           "major_upgrade": {
             "type": "boolean"
           }
@@ -29276,6 +29347,16 @@
             "type": "integer",
             "format": "int64",
             "description": "Live connections (`active`, `reauth_required`) of this app in every organization."
+          },
+          "grant_workspaces": {
+            "type": "integer",
+            "format": "int64",
+            "description": "(C-412) In how many workspaces those grants live (a count, never an id); absent with\n`grants_to_convert`."
+          },
+          "grants_to_convert": {
+            "type": "integer",
+            "format": "int64",
+            "description": "(phase 4, P4-GRANTS, C-412) `full` agent grants of this app's connections that activation\nconverts to custom grants; absent unless the version introduces `grants.custom_only`."
           },
           "needing_reauth": {
             "type": "integer",

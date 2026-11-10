@@ -116,6 +116,10 @@ struct Request {
     headers: BTreeMap<String, String>,
     #[serde(default)]
     body: Option<String>,
+    /// (P4-GRANTS, Q8) The body is longer than the gateway's condition buffer: the classifier
+    /// sees a truncated prefix (a fixture cannot carry 256 KiB).
+    #[serde(default)]
+    body_truncated: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -123,6 +127,9 @@ struct Request {
 struct Expect {
     app: Option<String>,
     tool: Option<String>,
+    /// (P4-GRANTS, Q8) Expect the app to match but no catalogue tool (`tool = None`).
+    #[serde(default)]
+    no_tool: bool,
     /// Expect no app match at all.
     #[serde(default)]
     unmatched: bool,
@@ -339,6 +346,12 @@ fn execute(
             }
         }
     }
+    let param_headers: Vec<(&str, &str)> = c
+        .request
+        .headers
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
     let tool = identify_tool(
         &m,
         &host,
@@ -347,7 +360,8 @@ fn execute(
         query.as_deref(),
         method.as_str(),
         body,
-        false,
+        c.request.body_truncated,
+        &param_headers,
     );
     let mut obs = json!({ "app": m.app.app_id, "tool": tool.map(|t| t.id.as_str()) });
     // The instance guard refused: nothing is injected (compared against `expect.refused`).
@@ -528,7 +542,7 @@ fn database_case(
         if transaction {
             return None;
         }
-        crate::apps::identify_tool_in(a, false, host, 443, &path, None, method, &[], false)
+        crate::apps::identify_tool_in(a, false, host, 443, &path, None, method, &[], false, &[])
             .map(|t| (a.app_id.as_str(), t.id.as_str()))
     });
     Some(json!({
@@ -754,6 +768,9 @@ fn compare(e: &Expect, o: &Value) -> Vec<String> {
         && got("tool") != Some(t)
     {
         f.push(format!("tool: expected `{t}`, got {:?}", got("tool")));
+    }
+    if e.no_tool && got("tool").is_some() {
+        f.push(format!("tool: expected none, got {:?}", got("tool")));
     }
     if let Some(u) = &e.upstream {
         let up = &o["upstream"];

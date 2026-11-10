@@ -107,37 +107,31 @@ export function useApp(app: string | undefined, workspaceId: string | undefined)
   });
 }
 
-/**
- * An app that allows only custom grants (`custom_only`, P4-GRANTS, D-123). The field is not in the generated schema
- * yet; until it is, the grant step also falls back on the 422 `full_grant_forbidden` (C-504).
- */
-export function appIsCustomOnly(app: unknown): boolean {
-  if (typeof app !== "object" || app === null) return false;
-  const a = app as { custom_only?: unknown; grants?: { custom_only?: unknown } | null };
-  return a.custom_only === true || a.grants?.custom_only === true;
-}
+/** The manifest's `grants` flags (P4-GRANTS, D-123, C-410): carried by apps, app details and connection grants. */
+export type AppRestrictions = components["schemas"]["AppRestrictions"];
 
-export interface AppRestrictions {
-  custom_only: boolean;
-  block_untooled: boolean;
+/** Anything that carries `app_restrictions`: an `AppSummary`, an `AppDetail` or a `ConnectionGrant`. */
+export interface HasAppRestrictions {
+  app_restrictions?: AppRestrictions | null;
 }
 
 /**
- * `app_restrictions: { custom_only, block_untooled }` as the grant response and `GET …/grants` carry it (05), read from
- * the first source that has it: a grant item, the grants response, or the app detail (`grants`, or flat flags). The
- * field is not in the generated schema yet, hence `unknown`; the editor also learns `custom_only` from a 422.
+ * An app that allows only custom grants (`custom_only`): full access is not offered, and the grant step asks for the
+ * tools first. A 422 `full_grant_forbidden` (C-411) still teaches the editor the same on a stale page.
  */
-export function appRestrictions(...sources: unknown[]): AppRestrictions {
+export function appIsCustomOnly(app: HasAppRestrictions | null | undefined): boolean {
+  return app?.app_restrictions?.custom_only === true;
+}
+
+/**
+ * The `app_restrictions` of the first sources that carry them, merged: restrictions only tighten, so a flag set by any
+ * source (a grant item, the grants response, the app) applies.
+ */
+export function appRestrictions(...sources: (HasAppRestrictions | null | undefined)[]): AppRestrictions {
   const out: AppRestrictions = { custom_only: false, block_untooled: false };
   for (const s of sources) {
-    if (typeof s !== "object" || s === null) continue;
-    const o = s as { app_restrictions?: unknown; grants?: unknown; custom_only?: unknown; block_untooled?: unknown };
-    for (const c of [o.app_restrictions, o.grants, o]) {
-      if (typeof c !== "object" || c === null) continue;
-      const r = c as { custom_only?: unknown; block_untooled?: unknown };
-      if (r.custom_only === true) out.custom_only = true;
-      if (r.block_untooled === true) out.block_untooled = true;
-    }
+    if (s?.app_restrictions?.custom_only === true) out.custom_only = true;
+    if (s?.app_restrictions?.block_untooled === true) out.block_untooled = true;
   }
   return out;
 }

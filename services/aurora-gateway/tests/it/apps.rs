@@ -1262,3 +1262,258 @@ async fn refresh_never_crosses_between_default_and_instance_hosts() {
         );
     }
 }
+
+// ---- P4-GRANTS (D-123, SEC-67): an Indico-like app with a broad token -------------------------
+
+/// A catalogue of two tools on an app whose token is far broader (`full:everything`).
+fn indico_like(custom_only: bool, block_untooled: bool) -> Value {
+    let mut app = app_json(
+        "demo",
+        json!({"read": {"items": [
+            {"id": "read_item", "name": "r", "host": "127.0.0.1", "path": "/items", "methods": ["GET"]}
+        ]}, "write": {"items": [
+            {"id": "write_item", "name": "w", "host": "127.0.0.1", "path": "/items", "methods": ["POST"]}
+        ]}}),
+        false,
+    );
+    app["grants"] = json!({"custom_only": custom_only, "block_untooled": block_untooled});
+    snapshot(
+        vec![app],
+        vec![host_json(
+            "demo",
+            None,
+            json!({"inject": [{"bearer": "{credentials.tok}"}]}),
+        )],
+    )
+}
+
+fn derived_custom(c: &AppConnectionRow) -> Vec<(Uuid, Value)> {
+    // The rules a custom grant compiles to (07 table): allow, then block everything else.
+    vec![
+        (
+            Uuid::now_v7(),
+            json!({"name":"g","enabled":true,"identities":[],"action":"allow",
+                   "targets":[{"type":"connection","id":c.id,"tools":["read_item"]}]}),
+        ),
+        (
+            Uuid::now_v7(),
+            json!({"name":"g-rest","enabled":true,"identities":[],"action":"block",
+                   "targets":[{"type":"connection","id":c.id}]}),
+        ),
+    ]
+}
+
+#[tokio::test]
+async fn custom_only_and_block_untooled_never_inject_an_untooled_request() {
+    let (env, ..) = start(
+        indico_like(true, true),
+        &[("c1", r#"{"tok":"BROADTOKEN"}"#)],
+        |w| {
+            let c = conn(w, "demo", "c1", None);
+            let mut r = Rows::default();
+            r.ws.derived.extend(derived_custom(&c));
+            // A stale full-style rule that something wrote by hand: inert for a custom_only app.
+            r.ws.rules.push(allow_conn(&c, None));
+            r.conns.push(c);
+            r
+        },
+    )
+    .await;
+    // A catalogued tool of the custom grant behaves per grant: injected.
+    let r = get(&env, "/items", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        r.body.contains("authorization: Bearer BROADTOKEN"),
+        "{}",
+        r.body
+    );
+    // Untooled request: blocked before any rule, reason app_untooled_blocked, token never sent.
+    let r = get(&env, "/anything/else", "").await;
+    assert_eq!(r.status, 403, "{}", r.body);
+    assert_eq!(r.code(), "blocked_by_policy");
+    let v: Value = serde_json::from_str(&r.body).unwrap();
+    assert_eq!(
+        v["error"]["details"]["reason"], "app_untooled_blocked",
+        "{}",
+        r.body
+    );
+    assert!(!r.body.contains("BROADTOKEN"));
+    // A catalogued tool that is not allowed stays blocked by the grant's rule 3 (not by the flag).
+    let r = send(&env, "POST", "/items", "", "{}").await;
+    assert_eq!(r.status, 403, "{}", r.body);
+    let v: Value = serde_json::from_str(&r.body).unwrap();
+    assert_ne!(
+        v["error"]["details"]["reason"], "app_untooled_blocked",
+        "{}",
+        r.body
+    );
+    assert!(!r.body.contains("BROADTOKEN"));
+}
+
+#[tokio::test]
+async fn custom_only_makes_a_full_style_rule_inert_and_block_untooled_alone_covers_full_grants() {
+    // custom_only without block_untooled: only a stale full-style allow rule exists. It neither
+    // allows nor selects the connection, so the token is never injected on any path.
+    let (env, ..) = start(
+        indico_like(true, false),
+        &[("c1", r#"{"tok":"BROADTOKEN"}"#)],
+        |w| {
+            let c = conn(w, "demo", "c1", None);
+            let mut r = Rows::default();
+            r.ws.rules.push(allow_conn(&c, None));
+            r.conns.push(c);
+            r
+        },
+    )
+    .await;
+    for p in ["/items", "/anything/else"] {
+        let r = get(&env, p, "").await;
+        assert!(!r.body.contains("BROADTOKEN"), "{p}: {}", r.body);
+        assert!(
+            !r.body.to_lowercase().contains("authorization: bearer"),
+            "{p}: {}",
+            r.body
+        );
+    }
+    // block_untooled without custom_only: a full grant covers catalogued tools only.
+    let (env, ..) = start(
+        indico_like(false, true),
+        &[("c1", r#"{"tok":"BROADTOKEN"}"#)],
+        |w| {
+            let c = conn(w, "demo", "c1", None);
+            let mut r = Rows::default();
+            r.ws.rules.push(allow_conn(&c, None));
+            r.conns.push(c);
+            r
+        },
+    )
+    .await;
+    let r = get(&env, "/items", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        r.body.contains("authorization: Bearer BROADTOKEN"),
+        "{}",
+        r.body
+    );
+    let r = get(&env, "/anything/else", "").await;
+    assert_eq!(r.status, 403, "{}", r.body);
+    let v: Value = serde_json::from_str(&r.body).unwrap();
+    assert_eq!(
+        v["error"]["details"]["reason"], "app_untooled_blocked",
+        "{}",
+        r.body
+    );
+    assert!(!r.body.contains("BROADTOKEN"));
+}
+
+#[tokio::test]
+async fn an_app_without_flags_is_unaffected_by_the_restrictions() {
+    let (env, ..) = start(
+        indico_like(false, false),
+        &[("c1", r#"{"tok":"T"}"#)],
+        |w| {
+            let c = conn(w, "demo", "c1", None);
+            let mut r = Rows::default();
+            r.ws.rules.push(allow_conn(&c, None));
+            r.conns.push(c);
+            r
+        },
+    )
+    .await;
+    let r = get(&env, "/anything/else", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(r.body.contains("authorization: Bearer T"), "{}", r.body);
+}
+
+/// SEC-01/SEC-67/SEC-68: the shape of the aws-keys / aws-role STS entry. Only a clean
+/// `Action=GetCallerIdentity` is classified (read) and injected; every credential-minting action
+/// and every doubtful request is blocked as `app_untooled_blocked` and nothing is sent upstream.
+#[tokio::test]
+async fn sts_credential_minting_actions_are_blocked_and_never_signed() {
+    let mut app = app_json(
+        "sts",
+        json!({"read": {"items": [{"id": "sts_get_caller_identity", "name": "w", "host": "127.0.0.1",
+            "path": "/", "methods": ["POST"],
+            "params": [{"source": "form", "name": "Action", "match": {"equals": "GetCallerIdentity"}}]}]}}),
+        false,
+    );
+    app["grants"] = json!({"custom_only": false, "block_untooled": true});
+    let snap = snapshot(
+        vec![app],
+        vec![host_json(
+            "sts",
+            None,
+            json!({"inject": [{"bearer": "{credentials.tok}"}]}),
+        )],
+    );
+    let (env, ..) = start(snap, &[("c1", r#"{"tok":"STSKEY"}"#)], |w| {
+        let c = conn(w, "sts", "c1", None);
+        let mut r = Rows::default();
+        // A full grant: the strongest one a user can hold on a block_untooled app.
+        r.ws.rules.push(allow_conn(&c, None));
+        r.conns.push(c);
+        r
+    })
+    .await;
+    const FORM: &str = "Content-Type: application/x-www-form-urlencoded\r\n";
+    let big = format!("Action=GetCallerIdentity&pad={}", "a".repeat(300 * 1024));
+    let cases: Vec<(&str, String, String, String)> = vec![
+        ("AssumeRole", "/".into(), FORM.into(), "Action=AssumeRole&RoleArn=x".into()),
+        ("AssumeRoleWithWebIdentity", "/".into(), FORM.into(), "Action=AssumeRoleWithWebIdentity".into()),
+        ("AssumeRoleWithSAML", "/".into(), FORM.into(), "Action=AssumeRoleWithSAML".into()),
+        ("GetSessionToken", "/".into(), FORM.into(), "Action=GetSessionToken".into()),
+        ("GetFederationToken", "/".into(), FORM.into(), "Action=GetFederationToken&Name=x".into()),
+        ("GetAccessKeyInfo", "/".into(), FORM.into(), "Action=GetAccessKeyInfo".into()),
+        ("repeated", "/".into(), FORM.into(), "Action=GetCallerIdentity&Action=AssumeRole".into()),
+        ("repeated, other order", "/".into(), FORM.into(), "Action=AssumeRole&Action=GetCallerIdentity".into()),
+        ("query and body differ", "/?Action=AssumeRole".into(), FORM.into(), "Action=GetCallerIdentity".into()),
+        ("query GCI, body AssumeRole", "/?Action=GetCallerIdentity".into(), FORM.into(), "Action=AssumeRole".into()),
+        ("query only", "/?Action=GetCallerIdentity".into(), FORM.into(), "Version=1".into()),
+        ("compressed", "/".into(), format!("{FORM}Content-Encoding: gzip\r\n"), "Action=GetCallerIdentity".into()),
+        ("truncated", "/".into(), FORM.into(), big),
+        ("lowercase value", "/".into(), FORM.into(), "Action=getcalleridentity".into()),
+        ("odd-cased value", "/".into(), FORM.into(), "Action=GetCallerIDentity".into()),
+        ("odd-cased name", "/".into(), FORM.into(), "ACTION=GetCallerIdentity".into()),
+        ("other content type", "/".into(), "Content-Type: text/plain\r\n".into(), "Action=GetCallerIdentity".into()),
+        (
+            "x-amz-target",
+            "/".into(),
+            "X-Amz-Target: AWSSecurityTokenServiceV20110615.GetCallerIdentity\r\nContent-Type: application/x-amz-json-1.1\r\n".into(),
+            "{}".into(),
+        ),
+    ];
+    for (name, path, extra, body) in cases {
+        let r = send(&env, "POST", &path, &extra, &body).await;
+        assert_eq!(r.status, 403, "{name}: {}", r.body);
+        let v: Value = serde_json::from_str(&r.body).unwrap();
+        assert_eq!(
+            v["error"]["details"]["reason"], "app_untooled_blocked",
+            "{name}: {}",
+            r.body
+        );
+        let low = r.body.to_lowercase();
+        for h in [
+            "authorization",
+            "x-amz-security-token",
+            "x-amz-date",
+            "stskey",
+        ] {
+            assert!(!low.contains(h), "{name}: {h} leaked: {}", r.body);
+        }
+    }
+    // Only the clean request is classified as the read tool and injected.
+    let r = send(
+        &env,
+        "POST",
+        "/",
+        FORM,
+        "Action=GetCallerIdentity&Version=2011-06-15",
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(
+        r.body.contains("authorization: Bearer STSKEY"),
+        "{}",
+        r.body
+    );
+}

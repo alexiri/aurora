@@ -40,6 +40,7 @@ pub fn package(
     };
     out.extend(super::manifest(&m));
     out.extend(super::wildcard::wildcards(&m));
+    super::params_rules::fixtures(&m, pkg, &mut out);
     zones(&m, &mut out);
     reserved_claims(&m, ctx, &mut out);
     egress(&m, ctx, &mut out);

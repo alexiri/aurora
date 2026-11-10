@@ -102,29 +102,45 @@ reconnect.
     and the first path segment of the key.
   - Not covered, so never allowed: creating or deleting buckets, multipart uploads, bulk delete,
     ACL and policy changes.
-- **EC2** (`https://ec2.<region>.amazonaws.com/`): read-only `Describe*` actions.
-- **STS is not available to agents.** Only Aurora's own hook calls STS (to assume the role).
-  Answers to `AssumeRole`, `GetSessionToken` and `GetFederationToken` carry usable AWS credentials,
-  and Aurora cannot yet limit a tool to a harmless action such as `GetCallerIdentity`, so requests
-  to `sts.<region>.amazonaws.com` are not signed (follow-up FU-P2-CAT-5a).
+- **EC2** (`https://ec2.<region>.amazonaws.com/`): read-only `Describe*` actions are allowed by
+  default (tool "Describe EC2 resources").
+- **STS** (`https://sts.<region>.amazonaws.com/`): agents get only `GetCallerIdentity` (tool "Show
+  which AWS identity the role session belongs to"). Aurora's own hook calls STS to assume the
+  role. Answers to `AssumeRole`, `GetSessionToken` and `GetFederationToken` carry usable AWS
+  credentials, so every other STS action is blocked, whatever the grant.
 
-EC2 uses the AWS Query API, where the action is a request parameter and a GET can run any action,
-so **every EC2 call is held for approval** and the approval shows the `Action`. Approve `Describe*`;
-refuse anything else.
+EC2 and STS use the AWS Query API, where the action is a request parameter (`Action=...`). Aurora
+reads it from the **form body of a POST** (`content-type: application/x-www-form-urlencoded`,
+uncompressed, the parameter once and not also in the query string). When it can prove that the
+action is a `Describe*` call (or `GetCallerIdentity`), the request is a read tool; in any doubt
+(a GET, a repeated or missing `Action`, another body type, a compressed or very large body) it
+is not, and every other EC2 call is a write tool **held for approval**, showing the `Action`.
+Approve `Describe*`; refuse anything else. Other STS requests match no tool and are blocked
+outright.
+
+## What changed in 1.1.0
+
+- New tools `ec2_describe` (read) and `sts_get_caller_identity` (read), declared before the
+  generic `ec2_call`. Requests that used to be the held `ec2_call` (a POST with a `Describe*`
+  action) are now `ec2_describe`; **existing custom grants do not list the new tools, so they
+  arrive blocked** until you allow them in the agent's Access tab. Full grants cover them.
+- The `sts.*` host is now claimed, only to sign `GetCallerIdentity`. The package sets
+  `grants.block_untooled`: a request on this role that matches no tool of this package (for
+  example `CreateBucket`, any other STS action) is blocked even under a full grant.
 
 ## Limits
 
 - **One role and one region per connection.** A request to a host in another region is signed for
   the connection's region and AWS rejects it. Create another connection for another role or region.
 - Only the regional endpoints `s3.<region>` and `ec2.<region>` of `amazonaws.com` are covered for
-  agents, and Aurora's hook calls only `sts.<region>.amazonaws.com`. Virtual-hosted S3 URLs, the
+  agents (STS: `GetCallerIdentity` only), and Aurora's hook calls only `sts.<region>.amazonaws.com`. Virtual-hosted S3 URLs, the
   global `sts.amazonaws.com` endpoint, the AWS China and isolated partitions, FIPS and dual-stack
   endpoints are not covered.
 - The source key must be a long-term IAM user key. Temporary source credentials (role chaining) are
   not supported.
 - Aurora's `ExternalId` is the organization's, so one role can serve one organization; give other
   organizations their own role or add their external id to a list in the trust condition.
-- **This package and *AWS (access keys)* (`aws-keys`) claim the same S3 and EC2 hosts** (`s3.*`,
-  `ec2.*` of `amazonaws.com`), so an instance enables one of them for those hosts: the
+- **This package and *AWS (access keys)* (`aws-keys`) claim the same S3, EC2 and STS hosts** (`s3.*`,
+  `ec2.*`, `sts.*` of `amazonaws.com`), so an instance enables one of them for those hosts: the
   administrator's host-claim decision picks which.
 - Rotate the source key regularly; Aurora stores it encrypted and replaces it on reconnect.

@@ -5,6 +5,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_yaml::Value;
 
+pub use aurora_policy::params::{ParamCondition, ParamMatch, ParamSource};
+
 use crate::template::Template;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +161,8 @@ pub struct App {
     pub approvals: BTreeMap<String, Approval>,
     pub agent: Option<Agent>,
     pub database: Option<Database>,
+    #[serde(default)]
+    pub grants: Grants,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -579,6 +583,22 @@ pub struct ToolItem {
     pub methods: Vec<String>,
     pub graphql: Option<GraphqlKind>,
     pub git: Option<GitKind>,
+    /// (phase 4, P4-GRANTS, Q8, D-124) 1–4 AND-ed parameter conditions (a classifier beside
+    /// `graphql` and `git`); absent = matched on host, method and path only, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<Vec<ParamCondition>>,
+}
+
+/// `apps[].grants` (phase 4, P4-GRANTS, D-123, SEC-67): restrictions that only tighten.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Grants {
+    /// `full` grants are refused for the app; the evaluator never lets a toolless target allow it.
+    #[serde(default)]
+    pub custom_only: bool,
+    /// A request on the app's winning connection that matches no catalogue tool is blocked.
+    #[serde(default)]
+    pub block_untooled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

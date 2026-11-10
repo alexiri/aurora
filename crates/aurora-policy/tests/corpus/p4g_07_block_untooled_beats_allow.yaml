@@ -1,0 +1,15 @@
+description: SEC-67 block_untooled - an untooled request on the app's winning connection is blocked before rules, even with a hand allow rule and an approval rule
+org: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a1, name: hand-allow, action: allow, targets: [{type: connection, id: 00000000-0000-0000-0000-0000000000c1}]}]}
+workspace: {ordered_rules: [{logical_id: 00000000-0000-0000-0000-0000000000a2, name: hand-approval, action: allow, require_approval: true, targets: [{type: app_connections, app_id: indico, scope: any}]}]}
+facts:
+  host: indico.example.org
+  port: 443
+  path: /api/admin/everything
+  method: POST
+  app_id: indico
+  winning_credential: {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: indico, scope: workspace, block_untooled: true}
+  identity: {agent_id: 00000000-0000-0000-0000-000000000001}
+expect:
+  verdict: block
+  reason: app_untooled_blocked
+  trace_via: {organization: app_untooled_blocked, workspace: app_untooled_blocked}

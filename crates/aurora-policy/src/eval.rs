@@ -53,6 +53,9 @@ pub enum BlockReason {
     Rule,
     DefaultDenied,
     EgressDenied,
+    /// (P4-GRANTS, D-123) The winning connection's app is `block_untooled` and no catalogue tool
+    /// matched the request; decided before any rule.
+    AppUntooledBlocked,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,6 +164,8 @@ pub enum Via {
     Uncredentialed,
     UncredentialedAllowlist,
     Nothing,
+    /// (P4-GRANTS, D-123) `block_untooled` decided before any rule was consulted.
+    AppUntooledBlocked,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -230,6 +235,19 @@ fn allowlisted(p: &ScopePolicy, f: &RequestFacts) -> bool {
     })
 }
 
+/// The winning credential is a connection of a `block_untooled` app and no tool matched.
+fn blocks_untooled(f: &RequestFacts) -> bool {
+    !f.connect_time
+        && f.tool_id.is_none()
+        && matches!(
+            f.winning_credential,
+            Some(crate::facts::Credential::Connection {
+                block_untooled: true,
+                ..
+            })
+        )
+}
+
 fn eval_scope(p: &ScopePolicy, f: &RequestFacts, counters: &dyn RateCounter) -> ScopeResult {
     let mut considered = Vec::with_capacity(p.ordered_rules.len());
     let finish = |considered, matched, via, verdict, hit| ScopeResult {
@@ -242,6 +260,19 @@ fn eval_scope(p: &ScopePolicy, f: &RequestFacts, counters: &dyn RateCounter) -> 
         hit,
         approval_timeout: None,
     };
+    // (P4-GRANTS, D-123, SEC-67) `block_untooled`: before any rule, unoverridable. Not at
+    // `CONNECT` time (nothing is injected into a tunnel).
+    if blocks_untooled(f) {
+        return finish(
+            Vec::new(),
+            None,
+            Via::AppUntooledBlocked,
+            Some(Verdict::Block {
+                reason: BlockReason::AppUntooledBlocked,
+            }),
+            None,
+        );
+    }
     for r in &p.ordered_rules {
         let mut t = RuleTrace {
             logical_id: r.logical_id,

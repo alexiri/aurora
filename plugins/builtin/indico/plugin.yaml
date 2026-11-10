@@ -1,6 +1,6 @@
 package:
   id: indico
-  version: 1.0.1
+  version: 1.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -93,6 +93,11 @@ apps:
           - bearer: "{credentials.access_token}"
       - match: { host: "{instance}", path_prefix: /event/create/prepare }
         inject: []
+    # The `full:everything` token is far broader than this catalogue: only catalogued tools may use
+    # it (P4-GRANTS, D-123, SEC-67). No full grants; untooled requests are blocked.
+    grants:
+      custom_only: true
+      block_untooled: true
     tools:
       read:
         items:

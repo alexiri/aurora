@@ -9,7 +9,7 @@ import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { Segmented } from "@/components/ui/segmented";
-import { useApp, appRestrictions, type Connection } from "@/lib/api/apps";
+import { useApp, appRestrictions, type Connection, type HasAppRestrictions } from "@/lib/api/apps";
 import { usePutAgentConnectionGrant, type ConnectionGrant } from "@/lib/api/credential-grants";
 import {
   ASK_TIMEOUT_MAX,
@@ -55,8 +55,8 @@ export function GrantEditor({
   wsId: string;
   connection: Connection;
   grant: ConnectionGrant | null;
-  /** `app_restrictions` of the grant response, when the API sends it. */
-  restrictions?: unknown;
+  /** The grant (or any item) carrying `app_restrictions`, as the API sends it (C-410). */
+  restrictions?: HasAppRestrictions | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -87,7 +87,7 @@ function EditorLoader({
   wsId: string;
   connection: Connection;
   grant: ConnectionGrant | null;
-  restrictions?: unknown;
+  restrictions?: HasAppRestrictions | null;
   onClose: () => void;
 }) {
   const app = useApp(connection.app_id, connection.workspace_id ?? wsId);

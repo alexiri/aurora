@@ -77,10 +77,21 @@ if you want both tiers.
 > endpoint. If you are an Indico administrator, that includes administration. Aurora narrows what
 > agents may do with it in two ways: the token is only added to the eight path prefixes the tools
 > use (never to `/user/tokens/`, `/oauth/`, `/admin/` or event management pages), and every
-> change is a separate, approval-held tool. But a **full** grant on the connection allows every
-> request through it without approval. Grant the Indico connection to agents with a **custom**
-> grant (reads allowed, changes asked), never with *full*, and do not connect with an
+> change is a separate, approval-held tool. In addition, this package is **custom access only**:
+> Aurora never offers or accepts a *full* grant for an Indico connection, and a request that is
+> not one of the tools listed below is blocked, whatever the grant or rules say. Agents get
+> Indico through a **custom** grant (reads allowed, changes asked). Do not connect with an
 > administrator account for agent use.
+
+## What changed in 1.1.0
+
+- Indico is now **custom access only** (`grants.custom_only`, `grants.block_untooled`). The first
+  time an organization activates this version, every existing *full* grant of an Indico connection
+  is converted, in the same step, to a **custom** grant with exactly the tools the package has
+  today: agents keep what they could do with catalogued tools, and lose only what a full grant
+  added (requests matching no tool, and tools added later, which now arrive blocked). The upgrade is
+  held for an administrator's approval, showing how many grants will be converted. Nothing is
+  converted back if a later version drops the restriction.
 
 ## 5. What agents can do
 

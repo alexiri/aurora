@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AccessTab } from "@/components/agents/access-tab";
 import { ConnectionGrants } from "@/components/agents/connection-grants";
-import { appRestrictions } from "@/lib/api/apps";
+import { appIsCustomOnly, appRestrictions } from "@/lib/api/apps";
 import {
   customBody,
   grantState,
@@ -98,13 +98,24 @@ interface Setup {
   appTools?: Tool[];
   appExtra?: Record<string, unknown>;
   put?: Handler;
+  /** `converted_by_app` of the grants response (C-413). */
+  converted?: unknown[];
+  /** `app_restrictions` of the catalogue entry of github. */
+  catalogueRestrictions?: { custom_only: boolean; block_untooled: boolean };
 }
 function setup(s: Setup = {}) {
   const grants = s.grants ?? [grant(C_JIRA, { mode: "full" }), grant(C_IND, { allow_tools: ["get_event"], ask_tools: ["get_current_user"], ask_timeout_secs: 600 })];
   routes[`GET /v1/workspaces/${WS}/connections`] = () => json(200, { items: [conn(C_GH, "github", "acme-bot"), conn(C_JIRA, "atlassian", "Jira Cloud"), conn(C_IND, "indico", "CERN Indico")] });
   routes[`GET /v1/orgs/${ORG}/connections`] = () => json(200, { items: [conn("c0000000-0000-4000-8000-000000000043", "github", "org-bot", "organization")] });
-  routes[`GET /v1/agents/${AGENT}/grants`] = () => json(200, { secrets: [], connections: grants });
-  routes["GET /v1/apps"] = () => json(200, { items: [appSummary("github", "GitHub"), appSummary("atlassian", "Atlassian"), appSummary("indico", "Indico")] });
+  routes[`GET /v1/agents/${AGENT}/grants`] = () => json(200, { secrets: [], connections: grants, converted_by_app: s.converted ?? [] });
+  routes["GET /v1/apps"] = () =>
+    json(200, {
+      items: [
+        { ...appSummary("github", "GitHub"), app_restrictions: s.catalogueRestrictions ?? { custom_only: false, block_untooled: false } },
+        appSummary("atlassian", "Atlassian"),
+        appSummary("indico", "Indico"),
+      ],
+    });
   routes["GET /v1/apps/github"] = () => json(200, appDetail("github", "GitHub", s.appTools ?? ghTools, s.appExtra));
   routes["GET /v1/apps/atlassian"] = () => json(200, appDetail("atlassian", "Atlassian", ghTools));
   routes["GET /v1/apps/indico"] = () => json(200, appDetail("indico", "Indico", indicoTools));
@@ -266,6 +277,20 @@ describe("editor", () => {
     expect(screen.getByText("Custom access only")).toBeTruthy();
   });
 
+  it("shows the Custom access only badge from the catalogue's app_restrictions", async () => {
+    setup({ catalogueRestrictions: { custom_only: true, block_untooled: false } });
+    view();
+    const list = await screen.findByRole("list", { name: "Connection grants" });
+    await waitFor(() => expect(within(within(list).getAllByRole("listitem")[0]).getByText("Custom access only")).toBeTruthy());
+  });
+
+  it("tells the owner when an app update converted a grant from full to custom", async () => {
+    setup({ converted: [{ connection_id: C_GH, app_id: "github", converted_at: now }] });
+    view();
+    const note = await screen.findByRole("status", { name: "Access converted" });
+    expect(note.textContent).toContain("Access for GitHub was converted from full to custom by an app update");
+  });
+
   it("learns custom_only from a 422 full_grant_forbidden and switches to the custom form", async () => {
     setup({ put: () => json(422, { error: { code: "full_grant_forbidden", message: "Full access is not allowed for this app.", details: { app_id: "github" } } }) });
     view();
@@ -278,7 +303,7 @@ describe("editor", () => {
   });
 
   it("shows the block_untooled note from the app detail", async () => {
-    setup({ appExtra: { grants: { custom_only: false, block_untooled: true } } });
+    setup({ appExtra: { app_restrictions: { custom_only: false, block_untooled: true } } });
     view();
     await openEditor("Give access to acme-bot");
     expect(await screen.findByText("Requests that are not in the tool list are always blocked.")).toBeTruthy();
@@ -369,7 +394,17 @@ describe("pure rules", () => {
 
   it("reads app_restrictions from a grant, the grants response or the app detail", () => {
     expect(appRestrictions(null, { app_restrictions: { custom_only: true, block_untooled: false } })).toEqual({ custom_only: true, block_untooled: false });
-    expect(appRestrictions({ grants: { block_untooled: true } })).toEqual({ custom_only: false, block_untooled: true });
+    expect(appRestrictions({ app_restrictions: { custom_only: false, block_untooled: true } })).toEqual({ custom_only: false, block_untooled: true });
     expect(appRestrictions(undefined, {})).toEqual({ custom_only: false, block_untooled: false });
+    // Restrictions only tighten: a flag from any source applies.
+    expect(
+      appRestrictions({ app_restrictions: { custom_only: true, block_untooled: false } }, { app_restrictions: { custom_only: false, block_untooled: true } }),
+    ).toEqual({ custom_only: true, block_untooled: true });
+  });
+
+  it("appIsCustomOnly reads the real app_restrictions field", () => {
+    expect(appIsCustomOnly({ app_restrictions: { custom_only: true, block_untooled: false } })).toBe(true);
+    expect(appIsCustomOnly({ app_restrictions: { custom_only: false, block_untooled: true } })).toBe(false);
+    expect(appIsCustomOnly(undefined)).toBe(false);
   });
 });
