@@ -148,10 +148,10 @@ async fn text_turn_ends_with_exactly_one_done_and_records_the_thread_id() {
     // The next turn resumes the thread; the prompt is on stdin, never in argv.
     drain(s.run_turn(turn("again")).await.unwrap()).await;
     let specs = specs.lock().unwrap();
-    assert_eq!(specs[0].args[..2], ["exec", "--json"]);
+    assert_eq!(specs[0].args[0], "exec");
     assert_eq!(
-        specs[1].args[..3],
-        ["exec", "resume", "01a1c3dc-f235-78e1-920f-5c889ce01480"]
+        specs[1].args[3..5],
+        ["resume", "01a1c3dc-f235-78e1-920f-5c889ce01480"]
     );
     assert_eq!(specs[1].stdin, "again");
     assert!(!specs[1].args.iter().any(|a| a.contains("again")));

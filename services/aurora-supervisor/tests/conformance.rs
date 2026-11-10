@@ -395,6 +395,17 @@ async fn codex_conforms_against_the_mock_responses_upstream() {
     let mk = move |case: &str, resume: Option<String>| codex_opts(&base, case, resume);
     suite_with(&adapter, &CODEX, &mk).await;
 
+    // A second turn of one session resumes the Codex thread (real `exec resume`) and ends Done.
+    let mut s = adapter.start_session(mk("say", None)).await.unwrap();
+    for _ in 0..2 {
+        let ev = drain(s.run_turn(turn(CODEX.say)).await.unwrap()).await;
+        assert!(
+            matches!(assert_one_terminal(&ev), HarnessEvent::Done { .. }),
+            "{ev:?}"
+        );
+    }
+    assert!(s.session_ref().is_some());
+
     // SEC-66 at the process level: every request that reached the upstream carried the
     // placeholder and nothing else as its credential.
     let seen = up.requests();

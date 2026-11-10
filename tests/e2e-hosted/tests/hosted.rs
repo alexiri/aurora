@@ -1087,7 +1087,29 @@ default_model = "say"
 
     // Turn 1: a plain answer.
     let conv = api.direct().await;
-    run_turn(&st, &api, &conv, "Reply with exactly the word: pong").await;
+    let v = api.say(&conv, "Reply with exactly the word: pong").await;
+    let (status, err) = st
+        .wait_turn(&turn_id(&v), &["done", "failed", "aborted"], 120)
+        .await;
+    if status != "done" {
+        let msgs: Vec<(String, Option<String>)> =
+            sqlx::query_as("SELECT status, error_message FROM turns")
+                .fetch_all(st.pool())
+                .await
+                .unwrap_or_default();
+        let logs: String = containers()
+            .iter()
+            .map(|c| {
+                let (_, l) = podman_rc(&["logs", "--tail", "60", c]);
+                let (_, cx) = exec_in(c, "ls -la /workspace/.codex 2>&1 | head; cat /workspace/.codex/config.toml 2>&1 | head -40");
+                format!("--- {c} ---\n{l}\n{cx}")
+            })
+            .collect();
+        panic!(
+            "codex turn {status} {err:?}: {msgs:?}\n{logs}\n{}",
+            st.log_tails()
+        );
+    }
     let t1 = transcript_text(&api.events(&conv).await);
     assert!(
         t1.contains("pong"),
@@ -1118,13 +1140,24 @@ default_model = "say"
         .execute(st.pool())
         .await
         .unwrap();
-    run_turn(
-        &st,
-        &api,
-        &conv,
-        "Run `echo hi` with your shell tool, then say done.",
-    )
-    .await;
+    let v = api
+        .say(&conv, "Run `echo hi` with your shell tool, then say done.")
+        .await;
+    let (status, err) = st
+        .wait_turn(&turn_id(&v), &["done", "failed", "aborted"], 120)
+        .await;
+    if status != "done" {
+        let msgs: Vec<(String, Option<String>)> =
+            sqlx::query_as("SELECT status, error_message FROM turns ORDER BY created_at")
+                .fetch_all(st.pool())
+                .await
+                .unwrap_or_default();
+        panic!(
+            "codex tool turn {status} {err:?}: {msgs:?}\nupstream saw {} requests\n{}",
+            up.requests().len(),
+            st.log_tails()
+        );
+    }
     let t2 = transcript_text(&api.events(&conv).await);
     assert!(
         t2.contains("shell") && t2.contains("done"),
@@ -1140,6 +1173,32 @@ default_model = "say"
             .any(|r| r.body.to_string().contains("pong")),
         "the resumed turn did not carry the earlier conversation: {} requests",
         seen.len()
+    );
+
+    // The model calls went THROUGH the gateway proxy (not bypassed by the sandbox's NO_PROXY):
+    // the gateway's request log attributes them to this conversation and the injected key.
+    let end = std::time::Instant::now() + Duration::from_secs(60);
+    let rows = loop {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(String, Option<String>, Option<String>, i32)> = sqlx::query_as(
+            "SELECT path, conversation_id::text, secret_id::text, status FROM request_log \
+             WHERE host LIKE '127.0.0.2%' AND path LIKE '/v1/responses%'",
+        )
+        .fetch_all(st.pool())
+        .await
+        .unwrap();
+        if rows.len() >= 2 || std::time::Instant::now() > end {
+            break rows;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    };
+    assert!(
+        rows.iter()
+            .any(|(_, c, s, status)| c.as_deref() == Some(conv.as_str())
+                && s.is_some()
+                && *status == 200),
+        "no attributed 200 /v1/responses row in the gateway request log: {rows:?}\n{}",
+        st.log_tails()
     );
 
     // SEC-01 / SEC-66: only the gateway held the key. The upstream received it; nothing else did.
@@ -1160,8 +1219,8 @@ default_model = "say"
         c,
         &format!(
             "grep -rIl --exclude-dir=proc --exclude-dir=sys -e '{SEED}' /workspace /run /tmp /etc 2>/dev/null; \
-                  tr '\\0' '\\n' < /proc/1/environ | grep -c '{SEED}'; \
-                  for p in /proc/[0-9]*; do tr '\\0' '\\n' < $p/environ 2>/dev/null; done | grep -c '{SEED}'"
+                  cat /proc/1/environ 2>/dev/null | tr '\\0' '\\n' | grep -c '{SEED}'; \
+                  for p in /proc/[0-9]*; do cat $p/environ 2>/dev/null | tr '\\0' '\\n'; done | grep -c '{SEED}'"
         ),
     );
     assert!(

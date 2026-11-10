@@ -190,17 +190,17 @@ pub fn build_env(opts: &SessionOptions, codex_home: &Path) -> Vec<(String, Strin
 /// Argv (without the program) for one turn; `resume` is the Codex thread id of the session.
 /// The prompt arrives on stdin (`-`).
 pub fn build_args(opts: &SessionOptions, resume: Option<&str>) -> Vec<String> {
-    let mut a: Vec<String> = vec!["exec".into()];
+    // `-C` is an option of `exec`, not of its `resume` subcommand: it goes first.
+    let mut a: Vec<String> = vec!["exec".into(), "-C".into()];
+    a.push(opts.working_dir.display().to_string());
     if let Some(r) = resume {
         a.extend(["resume".to_owned(), r.to_owned()]);
     }
     a.extend(
-        ["--json", "--skip-git-repo-check", "-C"]
+        ["--json", "--skip-git-repo-check", "-"]
             .iter()
             .map(|x| (*x).to_owned()),
     );
-    a.push(opts.working_dir.display().to_string());
-    a.push("-".into());
     a
 }
 
@@ -316,15 +316,19 @@ mod tests {
             build_args(&o, None),
             [
                 "exec",
-                "--json",
-                "--skip-git-repo-check",
                 "-C",
                 "/workspace",
+                "--json",
+                "--skip-git-repo-check",
                 "-"
             ]
         );
         let a = build_args(&o, Some("0199-thread"));
-        assert_eq!(&a[..3], ["exec", "resume", "0199-thread"]);
+        // `-C` precedes `resume`: the subcommand does not accept it.
+        assert_eq!(
+            &a[..5],
+            ["exec", "-C", "/workspace", "resume", "0199-thread"]
+        );
         assert_eq!(a.last().map(String::as_str), Some("-"));
         // Never a flag that weakens or replaces the rendered configuration.
         assert!(
