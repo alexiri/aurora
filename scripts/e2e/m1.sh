@@ -99,4 +99,6 @@ wait_for http://127.0.0.1:4101/v1/instance || exit 1
 wait_for http://localhost:4100/auth/login || exit 1
 
 cd web
-pnpm exec playwright test e2e/m1.spec.ts "$@"
+# The dev server on :4100 was started above from this checkout: reuse it (playwright.config.ts refuses
+# to reuse a server it did not start unless AURORA_E2E_REUSE=1).
+AURORA_E2E_REUSE=1 pnpm exec playwright test e2e/m1.spec.ts "$@"
