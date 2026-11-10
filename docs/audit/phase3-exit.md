@@ -291,15 +291,17 @@ Added by AUDIT-003-FU (the findings above are left as written):
 
 | Finding | Status | Closed by |
 |---------|--------|-----------|
-| F-1 | open → FIX-024 | `upgrade.sh` from a phase-2 base |
+| F-1 | closed (FIX-024, merge 7ab1eafb) | `upgrade.sh` gained a baseline-phase mode (auto-detected from the base ref); `UPGRADE_STRICT=1 UPGRADE_BASE=cc6ccbb…` **38 passed, 0 failed, 0 defects**; the phase-0 path `UPGRADE_BASE=baabe11f` unchanged, 36/0 |
 | F-2 | closed | `docs/tests/security-coverage.md`: rows SEC-53, SEC-57, SEC-58 added (`proven`), the six stale SEC-34..SEC-39 duplicates removed, the D-118 tests added to SEC-42, header range now SEC-01..SEC-79 |
 | F-3 | closed | `docs/03-data-model.md`: the three phase-3 "no schema change" rows moved into the notes of `organizations.governance`, `turns.source_event_id` and `plugin_packages.status_reason`; the planned sections removed |
 | F-4 | closed | `docs/FEATURES.md`: the 11 phase-3 rows marked `done` with their test evidence (Steps 3 and 8) and the header sentence fixed |
 | F-5 | closed | new `docs/operator/outage-and-alerts.md`, indexed in `docs/operator/README.md` |
 | F-6 | closed | `docs/operator/install-helm.md` §Images: dev-IdP build, connector image targets, "were not run" sentence updated |
 | F-7 | resolved | GitHub CI runs again since 2026-11-09 (billing restored); later master runs complete |
-| F-8 | open → FIX-024 | Playwright port |
-| F-9 | open → FIX-024 | base-image smoke test |
+| F-8 | closed (FIX-024) | `web/playwright.config.ts`: port from `AURORA_E2E_WEB_PORT` (default 4100), server reuse opt-in (`AURORA_E2E_REUSE=1`), so a server on the port fails fast instead of being tested |
+| F-9 | closed (FIX-024) | `scripts/images/sandbox-base-smoke.sh`: same package list (141) and `org.aurora.capabilities` label with and without `SANDBOX_BASE_IMAGE`; nightly job `sandbox-base-smoke` (full image there) |
+
+**Phase-3 exit: closed (coordinator, 2026-11-10).** Every finding is closed or resolved; every runnable check was green on the audited commit, and the upgrade from the phase-2 exit commit now passes.
 
 ## Real-cluster install and signing
 
