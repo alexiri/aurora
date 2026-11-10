@@ -457,6 +457,9 @@
       "workspace_id"
     ],
     "org_members": [
+      "base_role",
+      "idp_role",
+      "idp_source",
       "org_id",
       "role",
       "status",
@@ -839,6 +842,13 @@
       "subject",
       "user_id"
     ],
+    "user_idp_roles": [
+      "claim_values",
+      "granted",
+      "provider_id",
+      "synced_at",
+      "user_id"
+    ],
     "user_links": [
       "id",
       "integration_id",
@@ -854,6 +864,7 @@
       "email",
       "email_verified_at",
       "id",
+      "idp_admin_source",
       "is_instance_admin",
       "last_login_at"
     ],
@@ -894,6 +905,9 @@
       "verification"
     ],
     "workspace_access": [
+      "base_role",
+      "idp_role",
+      "idp_source",
       "role",
       "user_id",
       "workspace_id"

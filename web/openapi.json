@@ -777,6 +777,42 @@
         ]
       }
     },
+    "/v1/admin/identity": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "The Helm-configured role mapping per OIDC provider, read-only (D-139, C-511).",
+        "operationId": "adminIdentity",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminIdentity"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/oauth-clients": {
       "get": {
         "tags": [
@@ -18447,6 +18483,13 @@
           "email": {
             "type": "string"
           },
+          "idp_value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(phase 4, P4-IDP-1, C-514) The IdP role value behind this binding; `null` when manual."
+          },
           "implicit": {
             "type": "boolean",
             "description": "True for org owners/admins (no row)."
@@ -18612,6 +18655,21 @@
           }
         }
       },
+      "AdminIdentity": {
+        "type": "object",
+        "description": "`GET /v1/admin/identity` (C-511): the Helm-configured role mapping, read-only, no secrets.",
+        "required": [
+          "providers"
+        ],
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdentityProvider"
+            }
+          }
+        }
+      },
       "AdminOrg": {
         "type": "object",
         "description": "One organization in the instance-admin list (operator view: no org data).",
@@ -18768,6 +18826,24 @@
                   "null"
                 ],
                 "format": "date-time"
+              },
+              "idp_roles": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/IdpRoles",
+                    "description": "(phase 4, P4-IDP-1, C-512) The claim debugger: values of the last sign-in and what they\ngranted; `null` before a sign-in that read a role claim."
+                  }
+                ]
+              },
+              "instance_admin_idp_value": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "(phase 4, P4-IDP-1, C-512) The IdP role value that gives the instance-admin flag, or\n`null` when it is manual. A claim-derived flag cannot be changed here (409 `managed_by_idp`)."
               },
               "last_login_at": {
                 "type": [
@@ -23320,6 +23396,179 @@
           }
         ]
       },
+      "IdentityMapping": {
+        "type": "object",
+        "required": [
+          "value",
+          "instance_admin",
+          "workspaces"
+        ],
+        "properties": {
+          "instance_admin": {
+            "type": "boolean"
+          },
+          "org": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IdpOrgGrant"
+              }
+            ]
+          },
+          "value": {
+            "type": "string"
+          },
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdpWorkspaceGrant"
+            }
+          }
+        }
+      },
+      "IdentityProvider": {
+        "type": "object",
+        "required": [
+          "id",
+          "issuer",
+          "role_claim_source",
+          "require_role",
+          "role_mappings"
+        ],
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "issuer": {
+            "type": "string"
+          },
+          "require_role": {
+            "type": "boolean"
+          },
+          "role_claim": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Dot path of the role claim; `null` when the provider reads no roles."
+          },
+          "role_claim_source": {
+            "type": "string",
+            "description": "`id_token` | `userinfo`."
+          },
+          "role_mappings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdentityMapping"
+            }
+          }
+        }
+      },
+      "IdpGrant": {
+        "type": "object",
+        "description": "What one claim value granted (a `role_mappings[]` entry that matched).",
+        "required": [
+          "value",
+          "instance_admin",
+          "workspaces"
+        ],
+        "properties": {
+          "instance_admin": {
+            "type": "boolean"
+          },
+          "org": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IdpOrgGrant"
+              }
+            ]
+          },
+          "value": {
+            "type": "string"
+          },
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdpWorkspaceGrant"
+            }
+          }
+        }
+      },
+      "IdpOrgGrant": {
+        "type": "object",
+        "required": [
+          "slug",
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "description": "`owner` | `admin` | `member`."
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "IdpRoles": {
+        "type": "object",
+        "description": "Role values of a user's last sign-in and what they mapped to (C-512, C-513).",
+        "required": [
+          "provider",
+          "values",
+          "synced_at",
+          "granted"
+        ],
+        "properties": {
+          "granted": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdpGrant"
+            }
+          },
+          "provider": {
+            "type": "string"
+          },
+          "synced_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every value the claim carried, mapped or not."
+          }
+        }
+      },
+      "IdpWorkspaceGrant": {
+        "type": "object",
+        "required": [
+          "slug",
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "description": "`owner` | `approver` | `member`."
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
       "Injecting": {
         "type": "object",
         "required": [
@@ -24116,6 +24365,17 @@
             ],
             "format": "uuid"
           },
+          "idp_roles": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IdpRoles",
+                "description": "(phase 4, P4-IDP-1, C-513) \"Roles from your sign-in\": the role values of the last sign-in\nand what each granted; `null` when no sign-in read a role claim."
+              }
+            ]
+          },
           "memberships": {
             "type": "array",
             "items": {
@@ -24198,6 +24458,13 @@
           },
           "email": {
             "type": "string"
+          },
+          "idp_value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(phase 4, P4-IDP-1, C-514) The IdP role value that gives this role (\"From IdP role …\"\nbadge); `null` for a manual role. A role with a value cannot be edited or removed (409\n`managed_by_idp`)."
           },
           "role": {
             "$ref": "#/components/schemas/OrgRole"
@@ -25228,6 +25495,13 @@
                 "email": {
                   "type": "string"
                 },
+                "idp_value": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(phase 4, P4-IDP-1, C-514) The IdP role value behind this binding; `null` when manual."
+                },
                 "implicit": {
                   "type": "boolean",
                   "description": "True for org owners/admins (no row)."
@@ -25438,6 +25712,24 @@
                         "null"
                       ],
                       "format": "date-time"
+                    },
+                    "idp_roles": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/IdpRoles",
+                          "description": "(phase 4, P4-IDP-1, C-512) The claim debugger: values of the last sign-in and what they\ngranted; `null` before a sign-in that read a role claim."
+                        }
+                      ]
+                    },
+                    "instance_admin_idp_value": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "(phase 4, P4-IDP-1, C-512) The IdP role value that gives the instance-admin flag, or\n`null` when it is manual. A claim-derived flag cannot be changed here (409 `managed_by_idp`)."
                     },
                     "last_login_at": {
                       "type": [
@@ -26593,6 +26885,13 @@
                 },
                 "email": {
                   "type": "string"
+                },
+                "idp_value": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(phase 4, P4-IDP-1, C-514) The IdP role value that gives this role (\"From IdP role …\"\nbadge); `null` for a manual role. A role with a value cannot be edited or removed (409\n`managed_by_idp`)."
                 },
                 "role": {
                   "$ref": "#/components/schemas/OrgRole"

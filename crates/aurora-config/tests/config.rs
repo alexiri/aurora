@@ -522,6 +522,83 @@ fn oidc_trusted_email_domains_validation() {
     }
 }
 
+/// P4-IDP-1 (D-139, SEC-78): role mappings are validated at startup, each error names its key.
+#[test]
+fn oidc_role_mappings_validation() {
+    let p = "[[auth.oidc_providers]]\nid = \"corp\"\nissuer = \"https://idp.example.org\"\nclient_id = \"c\"\nclient_secret_env = \"CORP_SECRET\"\n";
+    let ok = load_with(
+        &format!(
+            "{BASE}{p}role_claim = \"resource_access.aurora.roles\"\nrequire_role = true\n\
+             [[auth.oidc_providers.role_mappings]]\nvalue = \"aurora-admins\"\ninstance_admin = true\n\
+             [[auth.oidc_providers.role_mappings]]\nvalue = \"it\"\norg = {{ slug = \"it\", role = \"owner\" }}\nworkspaces = [{{ slug = \"infra\", role = \"approver\" }}]\n"
+        ),
+        &[("CORP_SECRET", "s3cret")],
+    )
+    .unwrap();
+    let a = ok.api_config().unwrap();
+    let o = a
+        .auth
+        .oidc_providers
+        .iter()
+        .find(|p| p.id == "corp")
+        .unwrap();
+    assert_eq!(o.role_mappings.len(), 2);
+    assert!(o.require_role && !o.role_claim_from_userinfo());
+
+    let m = |extra: &str| format!("{BASE}{p}role_claim = \"roles\"\n{extra}");
+    let bad = [
+        (m("require_role = true\n"), "require_role"),
+        (
+            format!(
+                "{BASE}{p}[[auth.oidc_providers.role_mappings]]\nvalue = \"a\"\ninstance_admin = true\n"
+            ),
+            "role_claim",
+        ),
+        (m("role_claim_source = \"cookie\"\n"), "role_claim_source"),
+        (
+            m(
+                "[[auth.oidc_providers.role_mappings]]\nvalue = \"a\"\ninstance_admin = true\n[[auth.oidc_providers.role_mappings]]\nvalue = \"a\"\ninstance_admin = true\n",
+            ),
+            "role_mappings[1].value",
+        ),
+        (
+            m(
+                "[[auth.oidc_providers.role_mappings]]\nvalue = \"a\"\norg = { slug = \"it\", role = \"root\" }\n",
+            ),
+            "role_mappings[0].org.role",
+        ),
+        (
+            m(
+                "[[auth.oidc_providers.role_mappings]]\nvalue = \"a\"\norg = { slug = \"IT\", role = \"member\" }\n",
+            ),
+            "role_mappings[0].org.slug",
+        ),
+        (
+            m(
+                "[[auth.oidc_providers.role_mappings]]\nvalue = \"a\"\nworkspaces = [{ slug = \"ws\", role = \"member\" }]\n",
+            ),
+            "role_mappings[0].org",
+        ),
+        (
+            m(
+                "[[auth.oidc_providers.role_mappings]]\nvalue = \"a\"\norg = { slug = \"it\", role = \"member\" }\nworkspaces = [{ slug = \"ws\", role = \"admin\" }]\n",
+            ),
+            "workspaces[0].role",
+        ),
+        (
+            m("[[auth.oidc_providers.role_mappings]]\nvalue = \"a\"\nmystery = 1\n"),
+            "mystery",
+        ),
+    ];
+    for (toml, key) in bad {
+        let err = match load_with(&toml, &[("CORP_SECRET", "s3cret")]) {
+            Err(e) => e.to_string(),
+            Ok(raw) => raw.api_config().unwrap_err().to_string(),
+        };
+        assert!(err.contains(key), "{key}: {err}");
+    }
+}
+
 #[test]
 fn internal_and_ops_bind_resolve_and_validate() {
     // Defaults fall back to server.bind.

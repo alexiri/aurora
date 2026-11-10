@@ -227,6 +227,15 @@ export function useAdminStorage() {
   });
 }
 
+/** Helm-configured role mapping per OIDC provider (P4-IDP-1; instance admins; read-only). */
+export function useAdminIdentity() {
+  return useQuery({
+    queryKey: ["admin", "identity"] as const,
+    queryFn: () => unwrap(api.GET("/v1/admin/identity")),
+    retry: false,
+  });
+}
+
 /** Attachment retention window and quota; `undefined` leaves a value unchanged, `null` clears it. */
 export function usePutAttachmentLimits(orgId: string) {
   const qc = useQueryClient();

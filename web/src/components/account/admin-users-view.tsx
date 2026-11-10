@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { IdpRoleBadge } from "@/components/identity/idp-role-badge";
+import { IdpRolesList } from "@/components/identity/idp-roles-list";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -65,15 +67,27 @@ export function UsersTable({
                   <Badge tone={u.is_instance_admin ? "accent" : "neutral"}>
                     {u.is_instance_admin ? "Instance admin" : "User"}
                   </Badge>
+                  {u.instance_admin_idp_value ? <IdpRoleBadge value={u.instance_admin_idp_value} /> : null}
                   {disabled ? <Badge tone="danger">disabled</Badge> : null}
                 </div>
+                {u.idp_roles ? (
+                  <details className="mt-1.5 text-xs">
+                    <summary className="cursor-pointer text-muted">
+                      Role values ({u.idp_roles.values.length})
+                    </summary>
+                    <div className="mt-1.5 min-w-60">
+                      <IdpRolesList roles={u.idp_roles} />
+                    </div>
+                  </details>
+                ) : null}
               </Td>
               <Td className="space-y-1">
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={patch.isPending}
+                    disabled={patch.isPending || !!u.instance_admin_idp_value}
+                    title={u.instance_admin_idp_value ? "Granted by an identity provider role" : undefined}
                     onClick={() => change(u, { is_instance_admin: !u.is_instance_admin })}
                     aria-label={`${u.is_instance_admin ? "Remove admin from" : "Make admin"} ${u.email}`}
                   >

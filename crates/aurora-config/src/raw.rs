@@ -128,6 +128,12 @@ pub struct DevIdp {
     /// Where the API itself reaches the IdP (discovery, token, JWKS) when that differs from
     /// `issuer` (e.g. the in-cluster Service while the browser uses the ingress). Default: `issuer`.
     pub internal_url: Option<String>,
+    /// (P4-IDP-1) Role claim settings of the `dev` provider, as for `auth.oidc_providers[]`, so
+    /// e2e runs can drive roles through the dev IdP's configurable claims (`PUT /dev/claims/…`).
+    pub role_claim: Option<String>,
+    pub role_claim_source: String,
+    pub require_role: bool,
+    pub role_mappings: Vec<OidcRoleMapping>,
 }
 impl Default for AuthSection {
     fn default() -> Self {
@@ -165,6 +171,14 @@ pub struct OidcProvider {
     /// `email_verified = true`. For IdPs that never send the claim. Empty = claim required.
     pub trusted_email_domains: Vec<String>,
     pub jit: Option<OidcJit>,
+    /// (phase 4, P4-IDP-1, D-139) Dot path into the validated ID token (or userinfo response)
+    /// holding the IdP's role values, e.g. `cern_roles` or `resource_access.aurora.roles`.
+    pub role_claim: Option<String>,
+    /// `id_token` (default, also when empty) or `userinfo`.
+    pub role_claim_source: String,
+    /// A sign-in whose claim maps to nothing is refused (`no_mapped_role`, no user row).
+    pub require_role: bool,
+    pub role_mappings: Vec<OidcRoleMapping>,
 }
 impl Default for OidcProvider {
     fn default() -> Self {
@@ -179,7 +193,45 @@ impl Default for OidcProvider {
             allowed_email_domains: vec![],
             trusted_email_domains: vec![],
             jit: None,
+            role_claim: None,
+            role_claim_source: String::new(),
+            require_role: false,
+            role_mappings: vec![],
         }
+    }
+}
+
+/// (D-139) One exact, case-sensitive claim value and what it grants.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OidcRoleMapping {
+    pub value: String,
+    pub instance_admin: bool,
+    pub org: Option<OidcOrgRole>,
+    /// Workspaces of `org` (required when set).
+    pub workspaces: Vec<OidcWorkspaceRole>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OidcOrgRole {
+    pub slug: String,
+    /// `owner` | `admin` | `member`.
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OidcWorkspaceRole {
+    pub slug: String,
+    /// `owner` | `approver` | `member`.
+    pub role: String,
+}
+
+impl OidcProvider {
+    /// Whether the role claim is read from the userinfo response instead of the ID token.
+    pub fn role_claim_from_userinfo(&self) -> bool {
+        self.role_claim_source == "userinfo"
     }
 }
 

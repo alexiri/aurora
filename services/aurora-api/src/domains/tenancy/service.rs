@@ -372,6 +372,12 @@ pub async fn patch_member(
     if actor_role != OrgRole::Owner && (cur.role == "owner" || req.role == Some(OrgRole::Owner)) {
         return Err(admin_vs_owner());
     }
+    // D-139: a role the IdP's claims give is edited in the IdP, not here.
+    if req.role.is_some()
+        && aurora_db::repo::idp_roles::org_is_managed(&mut *tx, org_id, target).await?
+    {
+        return Err(crate::domains::admin::service::managed_by_idp());
+    }
     let loses_owner = req.role.is_some_and(|r| r != OrgRole::Owner)
         || req.status == Some(MemberStatus::Suspended);
     if cur.role == "owner" && cur.status == "active" && loses_owner && owners.len() <= 1 {
@@ -433,6 +439,9 @@ pub async fn remove_member(
         .ok_or_else(|| ApiError::not_found("Member not found."))?;
     if actor_role != OrgRole::Owner && cur.role == "owner" {
         return Err(admin_vs_owner());
+    }
+    if aurora_db::repo::idp_roles::org_is_managed(&mut *tx, org_id, target).await? {
+        return Err(crate::domains::admin::service::managed_by_idp());
     }
     if cur.role == "owner" && cur.status == "active" && owners.len() <= 1 {
         return Err(last_owner());

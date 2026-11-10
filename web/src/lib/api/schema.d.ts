@@ -166,6 +166,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Helm-configured role mapping per OIDC provider, read-only (D-139, C-511). */
+        get: operations["adminIdentity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/oauth-clients": {
         parameters: {
             query?: never;
@@ -3589,6 +3606,8 @@ export interface components {
         AccessBinding: {
             display_name: string;
             email: string;
+            /** @description (phase 4, P4-IDP-1, C-514) The IdP role value behind this binding; `null` when manual. */
+            idp_value?: string | null;
             /** @description True for org owners/admins (no row). */
             implicit: boolean;
             role: components["schemas"]["WorkspaceRole"];
@@ -3643,6 +3662,10 @@ export interface components {
         ActionDecision: "approve" | "deny";
         ActionDecisionBody: {
             decision: components["schemas"]["ActionDecision"];
+        };
+        /** @description `GET /v1/admin/identity` (C-511): the Helm-configured role mapping, read-only, no secrets. */
+        AdminIdentity: {
+            providers: components["schemas"]["IdentityProvider"][];
         };
         /** @description One organization in the instance-admin list (operator view: no org data). */
         AdminOrg: {
@@ -3701,6 +3724,12 @@ export interface components {
         AdminUser: components["schemas"]["User"] & {
             /** Format: date-time */
             disabled_at?: string | null;
+            idp_roles?: null | components["schemas"]["IdpRoles"];
+            /**
+             * @description (phase 4, P4-IDP-1, C-512) The IdP role value that gives the instance-admin flag, or
+             *     `null` when it is manual. A claim-derived flag cannot be changed here (409 `managed_by_idp`).
+             */
+            instance_admin_idp_value?: string | null;
             /** Format: date-time */
             last_login_at?: string | null;
         };
@@ -5041,6 +5070,49 @@ export interface components {
             /** @enum {string} */
             kind: "user";
         };
+        IdentityMapping: {
+            instance_admin: boolean;
+            org?: null | components["schemas"]["IdpOrgGrant"];
+            value: string;
+            workspaces: components["schemas"]["IdpWorkspaceGrant"][];
+        };
+        IdentityProvider: {
+            display_name?: string | null;
+            id: string;
+            issuer: string;
+            require_role: boolean;
+            /** @description Dot path of the role claim; `null` when the provider reads no roles. */
+            role_claim?: string | null;
+            /** @description `id_token` | `userinfo`. */
+            role_claim_source: string;
+            role_mappings: components["schemas"]["IdentityMapping"][];
+        };
+        /** @description What one claim value granted (a `role_mappings[]` entry that matched). */
+        IdpGrant: {
+            instance_admin: boolean;
+            org?: null | components["schemas"]["IdpOrgGrant"];
+            value: string;
+            workspaces: components["schemas"]["IdpWorkspaceGrant"][];
+        };
+        IdpOrgGrant: {
+            /** @description `owner` | `admin` | `member`. */
+            role: string;
+            slug: string;
+        };
+        /** @description Role values of a user's last sign-in and what they mapped to (C-512, C-513). */
+        IdpRoles: {
+            granted: components["schemas"]["IdpGrant"][];
+            provider: string;
+            /** Format: date-time */
+            synced_at: string;
+            /** @description Every value the claim carried, mapped or not. */
+            values: string[];
+        };
+        IdpWorkspaceGrant: {
+            /** @description `owner` | `approver` | `member`. */
+            role: string;
+            slug: string;
+        };
         Injecting: {
             host: string;
             lost_to_app_id?: string | null;
@@ -5262,6 +5334,7 @@ export interface components {
             client_address?: string | null;
             /** Format: uuid */
             default_org_id?: string | null;
+            idp_roles?: null | components["schemas"]["IdpRoles"];
             memberships: components["schemas"]["MeMembership"][];
             user: components["schemas"]["User"];
         };
@@ -5284,6 +5357,12 @@ export interface components {
             created_at: string;
             display_name: string;
             email: string;
+            /**
+             * @description (phase 4, P4-IDP-1, C-514) The IdP role value that gives this role ("From IdP role …"
+             *     badge); `null` for a manual role. A role with a value cannot be edited or removed (409
+             *     `managed_by_idp`).
+             */
+            idp_value?: string | null;
             role: components["schemas"]["OrgRole"];
             status: components["schemas"]["MemberStatus"];
             /** Format: uuid */
@@ -5631,6 +5710,8 @@ export interface components {
             items: {
                 display_name: string;
                 email: string;
+                /** @description (phase 4, P4-IDP-1, C-514) The IdP role value behind this binding; `null` when manual. */
+                idp_value?: string | null;
                 /** @description True for org owners/admins (no row). */
                 implicit: boolean;
                 role: components["schemas"]["WorkspaceRole"];
@@ -5691,6 +5772,12 @@ export interface components {
             items: (components["schemas"]["User"] & {
                 /** Format: date-time */
                 disabled_at?: string | null;
+                idp_roles?: null | components["schemas"]["IdpRoles"];
+                /**
+                 * @description (phase 4, P4-IDP-1, C-512) The IdP role value that gives the instance-admin flag, or
+                 *     `null` when it is manual. A claim-derived flag cannot be changed here (409 `managed_by_idp`).
+                 */
+                instance_admin_idp_value?: string | null;
                 /** Format: date-time */
                 last_login_at?: string | null;
             })[];
@@ -6005,6 +6092,12 @@ export interface components {
                 created_at: string;
                 display_name: string;
                 email: string;
+                /**
+                 * @description (phase 4, P4-IDP-1, C-514) The IdP role value that gives this role ("From IdP role …"
+                 *     badge); `null` for a manual role. A role with a value cannot be edited or removed (409
+                 *     `managed_by_idp`).
+                 */
+                idp_value?: string | null;
                 role: components["schemas"]["OrgRole"];
                 status: components["schemas"]["MemberStatus"];
                 /** Format: uuid */
@@ -8436,6 +8529,33 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminIdentity"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

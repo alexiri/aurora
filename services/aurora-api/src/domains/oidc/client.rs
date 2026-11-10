@@ -83,6 +83,36 @@ impl OidcClients {
         Ok(m)
     }
 
+    /// (P4-IDP-1) The provider's userinfo response (plain JSON) fetched with the flow's own access
+    /// token. Never follows redirects; a non-200 or non-JSON answer is an error.
+    pub(super) async fn userinfo(
+        &self,
+        p: &OidcProvider,
+        access_token: &str,
+    ) -> Result<serde_json::Value, String> {
+        let meta = self.metadata(p).await?;
+        let url = meta
+            .userinfo_endpoint()
+            .ok_or("the provider has no userinfo endpoint")?
+            .url()
+            .to_string();
+        let req = http::Request::builder()
+            .method(http::Method::GET)
+            .uri(url)
+            .header(
+                http::header::AUTHORIZATION,
+                format!("Bearer {access_token}"),
+            )
+            .header(http::header::ACCEPT, "application/json")
+            .body(Vec::new())
+            .map_err(|e| e.to_string())?;
+        let res = self.http.call(req).await.map_err(|e| e.to_string())?;
+        if res.status() != http::StatusCode::OK {
+            return Err(format!("userinfo answered {}", res.status()));
+        }
+        serde_json::from_slice(res.body()).map_err(|e| format!("userinfo is not JSON: {e}"))
+    }
+
     /// Drop cached metadata (e.g. after a signature failure, to pick up rotated keys).
     pub(super) async fn forget(&self, id: &str) {
         self.cache.lock().await.remove(id);

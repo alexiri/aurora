@@ -17,6 +17,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_users))
         .routes(routes!(patch_user))
+        .routes(routes!(identity))
 }
 
 /// List all users (instance administrators).
@@ -34,10 +35,73 @@ async fn list_users(
     let rows =
         account::list_users(&s.pool, needle, p.after.map(|c| (c.t, c.id)), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
+    let ids: Vec<Uuid> = page.items.iter().map(|r| r.id).collect();
+    let mut states: std::collections::HashMap<Uuid, IdpRoles> =
+        aurora_db::repo::idp_roles::states_of(&s.pool, &ids)
+            .await?
+            .into_iter()
+            .map(|st| (st.user_id, IdpRoles::from(st)))
+            .collect();
     Ok(Json(Page {
-        items: page.items.into_iter().map(AdminUser::from).collect(),
+        items: page
+            .items
+            .into_iter()
+            .map(|r| {
+                let id = r.id;
+                let mut u = AdminUser::from(r);
+                u.idp_roles = states.remove(&id);
+                u
+            })
+            .collect(),
         next_cursor: page.next_cursor,
     }))
+}
+
+/// The Helm-configured role mapping per OIDC provider, read-only (D-139, C-511).
+#[utoipa::path(get, path = "/admin/identity", operation_id = "adminIdentity", tag = "admin",
+    responses((status = 200, body = AdminIdentity), (status = 403, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn identity(_c: InstanceAdmin, State(s): State<AppState>) -> Json<AdminIdentity> {
+    Json(AdminIdentity {
+        providers: s
+            .config
+            .auth
+            .oidc_providers
+            .iter()
+            .map(|p| IdentityProvider {
+                id: p.id.clone(),
+                display_name: p.display_name.clone(),
+                issuer: p.issuer.clone(),
+                role_claim: p.role_claim.clone(),
+                role_claim_source: if p.role_claim_from_userinfo() {
+                    "userinfo".into()
+                } else {
+                    "id_token".into()
+                },
+                require_role: p.require_role,
+                role_mappings: p
+                    .role_mappings
+                    .iter()
+                    .map(|m| IdentityMapping {
+                        value: m.value.clone(),
+                        instance_admin: m.instance_admin,
+                        org: m.org.as_ref().map(|o| IdpOrgGrant {
+                            slug: o.slug.clone(),
+                            role: o.role.clone(),
+                        }),
+                        workspaces: m
+                            .workspaces
+                            .iter()
+                            .map(|w| IdpWorkspaceGrant {
+                                slug: w.slug.clone(),
+                                role: w.role.clone(),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    })
 }
 
 /// Grant/revoke instance-admin, disable/enable a user.

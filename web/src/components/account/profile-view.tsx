@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 
 import { ApprovalNotifications } from "@/components/account/approval-notifications";
+import { IdpRolesList } from "@/components/identity/idp-roles-list";
 import { ErrorState, Loading } from "@/components/states";
 import { ThemeSwitch } from "@/components/theme/theme-switch";
 import { Button } from "@/components/ui/button";
@@ -101,6 +102,15 @@ export function ProfileView() {
       <Section id="profile" title="Profile" description="How you appear to other people in your organizations." card>
         <ProfileForm key={me.dataUpdatedAt} me={me.data} />
       </Section>
+      {me.data.idp_roles ? (
+        <Section
+          id="idp-roles"
+          title="Roles from your sign-in"
+          description="The role values your identity provider sent and what each one gives you here. Roles from the provider are changed there."
+        >
+          <IdpRolesList roles={me.data.idp_roles} />
+        </Section>
+      ) : null}
       <Section
         id="notifications"
         title="Approval notifications"

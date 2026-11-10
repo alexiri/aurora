@@ -33,6 +33,9 @@ pub struct Me {
     /// (NAT, load balancer, PROXY protocol). `null` when unknown. Set on `GET`/`PATCH /v1/me`.
     pub client_address: Option<String>,
     pub memberships: Vec<MeMembership>,
+    /// (phase 4, P4-IDP-1, C-513) "Roles from your sign-in": the role values of the last sign-in
+    /// and what each granted; `null` when no sign-in read a role claim.
+    pub idp_roles: Option<crate::domains::admin::dto::IdpRoles>,
 }
 
 #[derive(Deserialize, ToSchema)]

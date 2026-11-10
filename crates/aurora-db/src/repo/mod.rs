@@ -32,6 +32,7 @@ pub mod governance;
 pub mod grants;
 pub mod hosted;
 pub mod identities;
+pub mod idp_roles;
 pub mod invitations;
 pub mod lifecycle;
 pub mod link_requests;

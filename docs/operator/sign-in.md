@@ -58,6 +58,73 @@ Addresses in other domains (for example the Google, GitHub, eduGAIN or guest acc
 **First administrator.** `aurora-api bootstrap-admin --email <you>` pre-provisions an instance administrator with a verified e-mail and no credential. Their first OIDC sign-in with that e-mail binds the identity
 ([install-helm.md](install-helm.md#post-install-checks)). It refuses to run when no provider is configured.
 
+## Roles from the IdP's claims (phase 4, P4-IDP-1)
+
+The IdP already knows who administers what. Aurora reads the **role values** in the token and maps them to Aurora roles; mapping e-groups to role values stays in the IdP. Normative text: [docs/04 §OIDC role claims](../04-identity-tenancy.md#oidc-role-claims-phase-4-p4-idp-1-d-139-sec-78) and D-139, D-143.
+
+| Key (per `auth.oidc_providers[]`) | Default | Meaning |
+|-----|---------|---------|
+| `role_claim` | unset | Dot path into the **validated ID token** (or the userinfo response) holding the role values: `cern_roles`, `roles`, `resource_access.aurora.roles`. An array of strings, or one string separated by spaces or commas. |
+| `role_claim_source` | `id_token` | or `userinfo`: Aurora then fetches the userinfo endpoint with the sign-in's own access token (and ignores the answer if its `sub` differs from the ID token's). |
+| `require_role` | `false` | `true`: a sign-in whose claim maps to no grant is refused (`no_mapped_role`), including people who could otherwise sign in and instance administrators listed in `auth.instance_admins`. |
+| `role_mappings[]` | `[]` | `{ value, instance_admin, org: { slug, role }, workspaces: [{ slug, role }] }`. `value` is matched **exactly** (case-sensitive, no wildcards). `org.role` is `owner`, `admin` or `member`; workspace roles are `owner`, `approver` or `member` in that org. |
+
+Startup refuses unknown keys, duplicate `value`s, an invalid role or slug, a mapping that grants nothing, `workspaces` without `org`, `role_mappings` without `role_claim` and `require_role` without mappings, and names the key.
+
+What happens at **every** sign-in:
+
+- Roles match what the token says right now. New values add roles; values that disappeared remove the roles those values gave, at the next sign-in. A role removed in the IdP is therefore effective at the person's next sign-in (bounded by `auth.session_absolute_secs`); use SCIM or disable the user for immediate removal.
+- Roles given any other way (invitation, dashboard, `jit`, `bootstrap-admin`, `auth.instance_admins`) are never changed or removed. A claim can only **raise** a manual role; when the claim goes, the manual role comes back. The last owner of an organization is never removed (audited as `org_role.idp_sync_blocked`).
+- An organization or workspace named by a mapping that does not exist is created at the first sign-in that needs it (an organization with its default workspace and default agent), so a fresh instance needs no hand-made orgs.
+- Under `invite_only` and `sso_jit` a **new** person whose claim maps to at least one grant is admitted (D-143); everything else (verified e-mail, `allowed_email_domains`, disabled users) still applies first.
+- In the dashboard, roles from the IdP show "From IdP role `value`" and cannot be edited or removed there. People see "Roles from your sign-in" on their account page; instance admins see the same per user on **Admin › Users** and the mapping table on **Admin › Identity** (both read-only). Mappings live only in the Helm values.
+
+**CERN SSO** (`cern_roles` carries the application roles that e-groups were given in the Application Portal):
+
+```yaml
+config:
+  auth:
+    signup_mode: invite_only
+    oidc_providers:
+      - id: cern
+        display_name: CERN SSO
+        issuer: https://auth.cern.ch/auth/realms/cern
+        client_id: aurora
+        client_secret_env: AURORA_CERN_OIDC_CLIENT_SECRET
+        trusted_email_domains: [cern.ch]
+        allowed_email_domains: [cern.ch]
+        role_claim: cern_roles
+        require_role: true
+        role_mappings:
+          - value: aurora-admins
+            instance_admin: true
+          - value: aurora-users
+            org: { slug: users, role: member }
+          - value: it-ai-team
+            org: { slug: it, role: owner }
+            workspaces: [{ slug: infra, role: owner }, { slug: research, role: approver }]
+```
+
+**Keycloak** (client roles are in `resource_access.<client>.roles`):
+
+```yaml
+config:
+  auth:
+    oidc_providers:
+      - id: keycloak
+        issuer: https://sso.example.org/realms/main
+        client_id: aurora
+        client_secret_env: AURORA_KEYCLOAK_OIDC_CLIENT_SECRET
+        role_claim: resource_access.aurora.roles
+        role_mappings:
+          - value: admin
+            instance_admin: true
+          - value: member
+            org: { slug: example, role: member }
+```
+
+**"It does not work."** Sign in, open **Account › Roles from your sign-in** and compare the values with the mapping table under **Admin › Identity**. A value that is not listed under *Grants* matched no mapping (values are case-sensitive); an empty list means the token carried no value at the `role_claim` path (check the client's mappers and scopes, or use `role_claim_source: userinfo`). To try it locally, run the development IdP and set a user's claims with `PUT <dev-idp>/dev/claims/<email>` and a body such as `{"cern_roles": ["aurora-admins"]}`.
+
 Verify: `curl -fsS https://<host>/v1/instance` lists every way to sign in under `oidc_providers`. Then sign in through the dashboard (`<external_url>/auth/login`).
 A failed start names the key (for example `auth.oidc_providers[0].client_secret_env: environment variable AURORA_OIDC_CORP_SECRET (or AURORA_OIDC_CORP_SECRET_FILE) is not set`).
 
