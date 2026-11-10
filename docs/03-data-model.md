@@ -154,6 +154,15 @@ owner cannot be demoted or removed).
 | starter_grants | jsonb not null default `[]` | `[{ kind: secret|connection, id }]`, org-scope credentials of the default org |
 | updated_by | uuid null FK→users (set null) | `updated_at` is implicit (`§Conventions`) |
 
+### `user_onboarding`
+(phase 4, P4-ONB-2, D-141) Per-user onboarding progress: Welcome seen, dismissed guides, tour. Only what cannot be computed is stored; guide step completion is derived from real state (model readiness, grants, conversations) and never stored.
+| Column | Type | Notes |
+|---|---|---|
+| user_id | uuid pk FK→users (cascade) | |
+| welcome_seen | boolean not null default false | the Welcome page was opened (or skipped); people who existed when the migration ran start at `true` (they are not newcomers) |
+| guide_dismissed | uuid[] not null default `{}` | workspaces whose getting-started guide the person dismissed (≤ 200) |
+| tour_completed_at | timestamptz null | when the navigation tour was finished or skipped; `null` = not yet |
+
 ### `workspace_access`
 | Column | Type | Notes |
 |---|---|---|

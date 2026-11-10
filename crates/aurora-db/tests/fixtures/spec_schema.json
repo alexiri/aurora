@@ -879,6 +879,12 @@
       "platform_user_ref",
       "user_id"
     ],
+    "user_onboarding": [
+      "guide_dismissed",
+      "tour_completed_at",
+      "user_id",
+      "welcome_seen"
+    ],
     "users": [
       "approval_email_enabled",
       "default_org_id",
