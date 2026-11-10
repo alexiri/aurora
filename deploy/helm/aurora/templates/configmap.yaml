@@ -7,7 +7,13 @@
 {{- with .Values.runner.k8s.nodeSelector }}{{ $_ := set $k8s "node_selector" . }}{{ end -}}
 {{- with .Values.runner.k8s.tolerations }}{{ $_ := set $k8s "tolerations" . }}{{ end -}}
 {{- with .Values.runner.sandboxImagePullSecrets }}{{ $_ := set $k8s "image_pull_secrets" . }}{{ end -}}
-{{- $_ := set $cfg "runner" (merge (dict "backend" "kubernetes" "api_url" (printf "http://%s-api:4101" $full) "k8s" $k8s) (default (dict) $cfg.runner)) -}}
+{{- /* (D-159) sandbox image defaults to the same registry/tag as the service images, so one
+      `image.tag` bump retargets every component (the sandbox image is published under the same
+      tags as the services, docs/15 §Images). */ -}}
+{{- $sandboxImage := printf "aurora-sandbox:%s" (default .Chart.AppVersion .Values.image.tag) -}}
+{{- with .Values.image.registry }}{{ $sandboxImage = printf "%s/aurora-sandbox:%s" (trimSuffix "/" .) (default $.Chart.AppVersion $.Values.image.tag) }}{{ end -}}
+{{- $sandboxImage := default $sandboxImage .Values.runner.sandboxImage -}}
+{{- $_ := set $cfg "runner" (merge (dict "backend" "kubernetes" "api_url" (printf "http://%s-api:4101" $full) "image" (default $sandboxImage ($cfg.runner).image) "k8s" $k8s) (default (dict) $cfg.runner)) -}}
 {{- $_ := set $cfg "connector_host" (merge (dict "api_url" (printf "http://%s-api:4101" $full) "test_types" (.Values.connectorHost.testTypes | default false)) (default (dict) $cfg.connector_host)) -}}
 {{- /* (P4-GSL, D-154) the API reaches the gateway's internal port (library fetch) by this release's Service name */ -}}
 {{- $_ := set $cfg "api" (merge (dict "gateway_internal_url" (printf "http://%s-gateway:4103" $full)) (default (dict) $cfg.api)) -}}

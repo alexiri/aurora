@@ -154,6 +154,9 @@ config:
   # auth: {signup_mode: invite_only}
   # oidc / llm endpoints / secret stores: add sections here (see docs/15 reference).
   # plugins.dir is rendered from `plugins.dir` below; do not set it here.
+  # runner.image is derived from image.registry/image.tag (D-159); set runner.sandboxImage
+  # above for a different sandbox image. `runner.backend`, `runner.api_url` and `runner.k8s.*`
+  # are also set by the chart.
 
 # ---- Workloads -----------------------------------------------------------------
 api:
@@ -223,6 +226,12 @@ runner:
   # sandboxes namespace (`sandboxes.namespace`); the top-level imagePullSecrets live in the
   # release namespace and are not visible to sandbox Pods.
   sandboxImagePullSecrets: []
+  # Sandbox image for config.runner.image. Empty (default): derived from the top-level
+  # `image.registry`/`image.tag` as <registry>/aurora-sandbox:<tag>, so one tag bump retargets
+  # the services and the sandbox image together (D-159; the legacy `config.runner.image` in the
+  # config block still works and takes precedence over the derived default). Set this only for
+  # a genuinely different sandbox image.
+  sandboxImage: ""
   k8s:                    # rendered into [runner.k8s]
     storageClass: ""
     runtimeClass: ""      # gVisor / Kata recommended

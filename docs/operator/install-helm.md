@@ -23,10 +23,11 @@ contains `aurora`, otherwise `<release>-aurora`
   (tag defaults to the chart's appVersion). **The default registry `ghcr.io/alexiri` works only if the project's CI has published
   that tag and the packages were made public**; otherwise pulls fail with `unauthorized`. Read
   [Images: publish, pull, or build and load](#images-publish-pull-or-build-and-load) before your first install.
-- The sandbox image must be pullable by the nodes under the name in `config.runner.image`
-  (default `aurora-sandbox:<version>`, which containerd resolves to
-  `docker.io/library/aurora-sandbox:<version>`). The runner applies that setting to every
-  sandbox Pod and the API reports it as the sandbox's `image`; set it to your mirrored name.
+- The sandbox image must be pullable by the nodes under the name in `config.runner.image`.
+  The chart derives it from `image.registry`/`image.tag` as `<registry>/aurora-sandbox:<tag>`
+  (D-159) — the same tags the CI publishes for the services — and the runner applies that
+  setting to every sandbox Pod and the API reports it as the sandbox's `image`; set it to
+  your mirrored name (or `runner.sandboxImage` / `config.runner.image` for a different image).
 
 The chart is checked with `helm lint`, `helm template` and an install on a local kind
 cluster (see [Test on a local kind cluster](#test-on-a-local-kind-cluster)), which runs the
@@ -91,9 +92,8 @@ image:
   registry: registry.example.org/aurora
   tag: "0.1.0"
   pullSecrets: [{name: regcred}]           # a docker-registry Secret in the release namespace
-config:
-  runner:
-    image: registry.example.org/aurora/aurora-sandbox:0.1.0
+# config.runner.image is derived: registry.example.org/aurora/aurora-sandbox:0.1.0 (D-159).
+# Set config.runner.image (or runner.sandboxImage) only for a different sandbox image.
 runner:
   sandboxImagePullSecrets: [sandbox-registry]   # a docker-registry Secret in the sandboxes namespace
 ```
@@ -109,7 +109,7 @@ done
 
 ```yaml
 image: {registry: localhost/aurora, tag: local, pullPolicy: Never}
-config: {runner: {image: localhost/aurora/aurora-sandbox:local}}
+# with an empty registry the derived sandbox image keeps the bare name: aurora-sandbox:local
 ```
 
 `image.registry: ""` means bare image names (`aurora-api:<tag>`), which is only right when the nodes already hold images under exactly those names.
@@ -290,6 +290,11 @@ Secrets and does not reuse the service `imagePullSecrets`: create them in the sa
 namespace (`sandboxes.namespace`), for example
 `kubectl -n aurora-sandboxes create secret docker-registry sandbox-registry --docker-server=registry.example.org --docker-username=<user> --docker-password=<token>`
 (see [runners.md](runners.md#kubernetes-backend)).
+
+The sandbox image name itself comes from `config.runner.image`, which the chart derives from
+`image.registry`/`image.tag` (`<registry>/aurora-sandbox:<tag>`, D-159); override with
+`runner.sandboxImage` (or the legacy `config.runner.image`) only when your sandbox image is
+not the one published under the service tags.
 
 ### Plugin packages
 
