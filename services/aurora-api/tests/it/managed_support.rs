@@ -65,17 +65,30 @@ pub fn manifest(id: &str) -> Value {
 
 impl M {
     pub async fn new() -> Self {
-        Self::build(None).await
+        Self::build(None, false).await
+    }
+
+    /// `plugins.allow_unsigned = true` (development, D-142).
+    pub async fn with_allow_unsigned() -> Self {
+        Self::build(None, true).await
     }
 
     /// With a memory store as the default secret store, which a test can make unavailable and
     /// whose managed values it can count.
     pub async fn with_memory_store() -> Self {
-        Self::build(Some(Arc::new(aurora_secrets::MemoryStore::new("memory")))).await
+        Self::build(
+            Some(Arc::new(aurora_secrets::MemoryStore::new("memory"))),
+            false,
+        )
+        .await
     }
 
-    async fn build(mem: Option<Arc<aurora_secrets::MemoryStore>>) -> Self {
-        let mut h = Harness::new().await;
+    async fn build(mem: Option<Arc<aurora_secrets::MemoryStore>>, allow_unsigned: bool) -> Self {
+        let mut h = if allow_unsigned {
+            Harness::with_config(|c| c.plugins.allow_unsigned = true).await
+        } else {
+            Harness::new().await
+        };
         if let Some(mem) = &mem {
             let keyring = Arc::new(
                 aurora_crypto::Keyring::parse(&format!("k1:{}", base64_key()), "k1").unwrap(),

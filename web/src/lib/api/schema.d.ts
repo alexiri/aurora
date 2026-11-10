@@ -4435,6 +4435,11 @@ export interface components {
             name: string;
             publisher: string;
             setup_guide_md?: string | null;
+            /**
+             * @description `false` for a type accepted without a signature under `plugins.allow_unsigned`
+             *     (development only, D-142).
+             */
+            signed: boolean;
             type_id: string;
             version: string;
         };

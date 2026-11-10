@@ -70,8 +70,10 @@ Host-built binaries are not used: the host glibc is newer than the distroless ba
 The connector host (`aurora-connector-host`) is part of every dev cluster (the chart enables it
 by default), so managed connectors can be added in the dashboard under Admin → Connectors
 ([plugins-and-connectors.md](plugins-and-connectors.md#add-a-managed-connector-dashboard)). The dev
-images are built without the project signing key: the host announces unsigned manifests, which the API
-refuses, so the type list stays empty here (and the page says so). The managed-connector round trip
+images are built without the project signing key: the host announces unsigned manifests. With
+`plugins.allow_unsigned` on (development only; [15](../15-deployment-operations.md)) the API accepts them and the
+dashboard badges the types "Unsigned (development)"; with it off, the API refuses them and the type
+list stays empty (the page says so). The managed-connector round trip
 is proven by `scripts/e2e/kind.sh`, whose profile (`deploy/kind/values-e2e.yaml`,
 `connectorHost.testTypes: true`) makes the host announce the `fake` type, signed with a key of its
 own that the test trusts for its publisher.

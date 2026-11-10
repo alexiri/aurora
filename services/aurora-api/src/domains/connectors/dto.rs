@@ -109,6 +109,9 @@ pub struct ConnectorType {
     pub instance_setup: serde_json::Value,
     /// Live hosts announcing exactly this digest.
     pub hosts: i64,
+    /// `false` for a type accepted without a signature under `plugins.allow_unsigned`
+    /// (development only, D-142).
+    pub signed: bool,
     /// A connector with this id already exists.
     pub added: bool,
 }

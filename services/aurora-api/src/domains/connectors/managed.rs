@@ -63,6 +63,8 @@ pub struct CatalogType {
     pub manifest: ConnectorManifest,
     pub digest: String,
     pub hosts: i64,
+    /// `false` only for a type accepted unsigned under `plugins.allow_unsigned` (D-142).
+    pub signed: bool,
 }
 
 fn version_key(v: &str) -> Vec<u64> {
@@ -86,6 +88,7 @@ pub async fn live_catalogue(s: &AppState) -> Result<(bool, Vec<CatalogType>), Ap
         key: (Vec<u64>, chrono::DateTime<Utc>),
         digest: String,
         manifest: ConnectorManifest,
+        signed: bool,
     }
     let mut by_type: BTreeMap<String, Vec<Entry>> = BTreeMap::new();
     for h in &hosts {
@@ -105,6 +108,8 @@ pub async fn live_catalogue(s: &AppState) -> Result<(bool, Vec<CatalogType>), Ap
                 key: (version_key(&h.version), h.last_seen_at),
                 digest: digest.to_owned(),
                 manifest: m,
+                // Rows stored before D-142 were all verified.
+                signed: t.get("signed").and_then(Value::as_bool).unwrap_or(true),
             });
         }
     }
@@ -121,6 +126,7 @@ pub async fn live_catalogue(s: &AppState) -> Result<(bool, Vec<CatalogType>), Ap
             manifest: best.manifest.clone(),
             digest,
             hosts,
+            signed: best.signed,
         });
     }
     Ok((running, out))
@@ -152,6 +158,7 @@ pub async fn catalogue(s: &AppState) -> Result<ConnectorTypeList, ApiError> {
                 "fields": m.instance_setup.as_ref().map(|s| s.fields.clone()).unwrap_or_default()
             }),
             hosts: t.hosts,
+            signed: t.signed,
             added: existing.contains(&t.type_id),
             type_id: t.type_id,
         });

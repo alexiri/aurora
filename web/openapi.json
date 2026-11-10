@@ -21277,6 +21277,7 @@
           "manifest_digest",
           "instance_setup",
           "hosts",
+          "signed",
           "added"
         ],
         "properties": {
@@ -21317,6 +21318,10 @@
               "string",
               "null"
             ]
+          },
+          "signed": {
+            "type": "boolean",
+            "description": "`false` for a type accepted without a signature under `plugins.allow_unsigned`\n(development only, D-142)."
           },
           "type_id": {
             "type": "string"

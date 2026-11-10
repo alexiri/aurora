@@ -160,6 +160,7 @@ async fn catalogue_lists_verified_types_and_drops_stale_hosts() {
     assert_eq!(t["publisher"], "acme");
     assert_eq!(t["manifest_digest"], m.digest(&good));
     assert_eq!(t["hosts"], 1);
+    assert_eq!(t["signed"], true);
     assert_eq!(t["added"], false);
     assert_eq!(t["instance_setup"]["fields"].as_array().unwrap().len(), 6);
     assert!(t["manifest"]["about"].get("icon_png_b64").is_none());
@@ -173,6 +174,94 @@ async fn catalogue_lists_verified_types_and_drops_stale_hosts() {
         .admin(Method::GET, "/v1/admin/connector-types", None)
         .await;
     assert_eq!(v["host_running"], false);
+    assert_eq!(v["items"], json!([]));
+}
+
+fn rejected_of(v: &Value) -> Vec<(String, String)> {
+    let mut r: Vec<(String, String)> = v["rejected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["type_id"].as_str().unwrap().to_owned(),
+                r["reason"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    r.sort();
+    r
+}
+
+// D-142: with the flag off (the default) an empty signature is rejected.
+#[tokio::test]
+async fn unsigned_type_is_rejected_with_allow_unsigned_off() {
+    let m = M::new().await;
+    let a = manifest("alpha");
+    let types = json!([{"type_id": "alpha", "manifest": a, "manifest_signature": ""}]);
+    let (s, v) = m.host_register_raw(Uuid::now_v7(), "1.0.0", types).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(rejected_of(&v), [("alpha".into(), "signature".into())]);
+    let (_, v) = m
+        .admin(Method::GET, "/v1/admin/connector-types", None)
+        .await;
+    assert_eq!(v["items"], json!([]));
+}
+
+// D-142: with the flag on an empty signature is accepted and the type is marked unsigned; a
+// signed type stays `signed: true`.
+#[tokio::test]
+async fn unsigned_type_is_accepted_and_marked_with_allow_unsigned_on() {
+    let m = M::with_allow_unsigned().await;
+    let a = manifest("alpha");
+    let b = manifest("bravo");
+    let types = json!([
+        {"type_id": "alpha", "manifest": a, "manifest_signature": ""},
+        {"type_id": "bravo", "manifest": b, "manifest_signature": m.sign(&b)},
+    ]);
+    let (s, v) = m.host_register_raw(Uuid::now_v7(), "1.0.0", types).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["rejected"], json!([]));
+    let (_, v) = m
+        .admin(Method::GET, "/v1/admin/connector-types", None)
+        .await;
+    let items = v["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "{v}");
+    let by = |id: &str| items.iter().find(|t| t["type_id"] == id).unwrap();
+    assert_eq!(by("alpha")["signed"], false);
+    assert_eq!(by("alpha")["manifest_digest"], m.digest(&a));
+    assert_eq!(by("bravo")["signed"], true);
+}
+
+// D-142: a present but invalid signature, an id mismatch and an invalid manifest are still
+// rejected with the flag on.
+#[tokio::test]
+async fn invalid_signature_and_id_mismatch_are_rejected_even_with_allow_unsigned_on() {
+    let m = M::with_allow_unsigned().await;
+    let bad_sig = manifest("bravo");
+    let other = manifest("alpha");
+    let mismatch = manifest("charlie");
+    let types = json!([
+        // Signature of another manifest.
+        {"type_id": "bravo", "manifest": bad_sig, "manifest_signature": m.sign(&other)},
+        // Garbage that is not an empty signature.
+        {"type_id": "alpha", "manifest": other, "manifest_signature": "garbage"},
+        // Unsigned but `package.id` differs from `type_id`.
+        {"type_id": "other", "manifest": mismatch, "manifest_signature": ""},
+    ]);
+    let (s, v) = m.host_register_raw(Uuid::now_v7(), "1.0.0", types).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        rejected_of(&v),
+        [
+            ("alpha".into(), "signature".into()),
+            ("bravo".into(), "signature".into()),
+            ("other".into(), "id_mismatch".into()),
+        ]
+    );
+    let (_, v) = m
+        .admin(Method::GET, "/v1/admin/connector-types", None)
+        .await;
     assert_eq!(v["items"], json!([]));
 }
 

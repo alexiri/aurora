@@ -109,7 +109,9 @@ protocol's replica and integration ownership (§4) already handles several repli
 **Host protocol** (`/v1/connector-host/*`, `auh_` only):
 - `register` announces the host version and its **catalogue**: per type, the manifest and its
   detached signature (signed like any connector manifest, §3; built-in manifests are signed with
-  the project key in the release build; `plugins.allow_unsigned` covers development).
+  the project key in the release build). With `plugins.allow_unsigned = true` (development
+  only) a type with an empty signature is accepted and shown as "Unsigned (development)"; an
+  invalid signature is never accepted, and with the flag off an unsigned type is rejected (D-142).
 - `assignments` (long poll) returns the enabled managed connectors with their type, non-secret
   settings, and secret settings **decrypted for the host only**, plus a revision; the host
   starts, restarts (settings changed) or stops connector instances to match.
