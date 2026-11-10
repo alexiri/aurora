@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use aurora_config::{OrphanReap, RunnerConfig};
 use aurora_protocol::runner::{
-    Capacity, MAX_WAIT_SECS, RegisterRequest, ReportBody, SandboxDefaults, WorkRequest,
+    Capacity, HarnessId, MAX_WAIT_SECS, RegisterRequest, ReportBody, SandboxDefaults, WorkRequest,
     frame_report_id,
 };
 use chrono::Utc;
@@ -38,6 +38,8 @@ pub struct RunnerSettings {
     pub held_awake_ceiling: Option<u32>,
     /// `runner.sandbox_*` / `runner.home_gib`, advertised at registration (FIX-011, D-90).
     pub defaults: Option<SandboxDefaults>,
+    /// `runner.image_harnesses`: for backends that cannot read the image label (Kubernetes).
+    pub image_harnesses: Vec<HarnessId>,
     pub api_url: String,
     pub token: String,
     pub version: String,
@@ -59,6 +61,12 @@ impl RunnerSettings {
                 pids: cfg.runner.sandbox_pids,
                 home_gib: cfg.runner.home_gib,
             }),
+            image_harnesses: cfg
+                .runner
+                .image_harnesses
+                .iter()
+                .filter_map(|h| HarnessId::from_wire(h).ok())
+                .collect(),
             api_url: cfg.api_url.clone(),
             token: cfg.token.expose().clone(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -115,6 +123,12 @@ impl Runner {
         caps.defaults = self.settings.defaults;
         if let Some(image) = &self.settings.executor.image {
             caps.image_capabilities = self.backend.image_capabilities(image).await;
+            // (P4-HAR) The registered `harnesses` are what the image contains.
+            if let Some(h) = self.backend.image_harnesses(image).await {
+                caps.harnesses = h;
+            } else if !self.settings.image_harnesses.is_empty() {
+                caps.harnesses.clone_from(&self.settings.image_harnesses);
+            }
         }
         let max = caps.max_sandboxes;
         let max_attachment_bytes = caps.max_attachment_bytes;

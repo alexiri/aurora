@@ -5,7 +5,7 @@ use crate::http::auth::Caller;
 use aurora_core::token::{self, TokenPrefix};
 use aurora_core::{ApiError, FieldError};
 use aurora_db::repo::agents::{self, AgentPatch, AgentRow, NewAgent};
-use aurora_db::repo::credentials;
+use aurora_db::repo::{credentials, hosted};
 use aurora_db::{DbError, conflict_code};
 use std::collections::BTreeMap;
 use uuid::Uuid;
@@ -27,6 +27,21 @@ fn name_ok(n: &str) -> Result<String, ApiError> {
         ));
     }
     Ok(t.to_owned())
+}
+
+/// (P4-HAR, D-122) A harness must be one `hosted.enabled_harnesses` allows (`fake` only with
+/// `hosted.allow_fake_harness`); the API is the only place it is chosen.
+fn harness_ok(state: &AppState, h: &str) -> Result<(), ApiError> {
+    if crate::domains::hosted::model::allowed_harnesses(state)
+        .iter()
+        .any(|a| a == h)
+    {
+        return Ok(());
+    }
+    Err(ApiError::unprocessable(
+        "harness_not_enabled",
+        "This harness is not enabled on this instance.",
+    ))
 }
 
 fn brief_ok(b: &str) -> Result<(), ApiError> {
@@ -215,11 +230,12 @@ pub async fn create(
         None => None,
     };
     let harness = if req.kind == "hosted" {
-        Some(
-            req.harness
-                .clone()
-                .unwrap_or_else(|| state.config.hosted.default_harness.clone()),
-        )
+        let h = req
+            .harness
+            .clone()
+            .unwrap_or_else(|| state.config.hosted.default_harness.clone());
+        harness_ok(state, &h)?;
+        Some(h)
     } else {
         req.harness.clone()
     };
@@ -401,8 +417,39 @@ pub async fn patch(
             "Only instance administrators can set resource overrides.",
         ));
     }
+    if let Some(h) = &req.harness {
+        harness_ok(state, h)?;
+    }
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    // (P4-HAR, D-122) A harness switch: lock the agent, refuse during a turn, and after the
+    // update give every conversation a fresh session, queue the purge of the old ones and
+    // restart the computer so it boots with the new adapter.
+    let current = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT kind, harness FROM agents WHERE id = $1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(DbError::from)?
+    .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    let switch_from = match (&req.harness, current.0.as_str()) {
+        (Some(new), "hosted") => {
+            let old = current
+                .1
+                .clone()
+                .unwrap_or_else(|| state.config.hosted.default_harness.clone());
+            (*new != old).then_some(old)
+        }
+        _ => None,
+    };
+    if switch_from.is_some() && !hosted::active_turns_of_agent(&mut tx, id).await?.is_empty() {
+        return Err(ApiError::conflict(
+            "turn_active",
+            "The agent's harness cannot change while a turn is running.",
+        ));
+    }
     let updated = agents::update(
-        &state.pool,
+        &mut *tx,
         id,
         &AgentPatch {
             name: name.as_deref(),
@@ -417,6 +464,12 @@ pub async fn patch(
         },
     )
     .await?;
+    if let Some(old) = &switch_from {
+        aurora_db::repo::lifecycle::switch_harness_sessions(&mut tx, id, old).await?;
+        hosted::request_restart(&mut tx, id).await?;
+        crate::domains::conversations::service::notify_work(&mut tx).await?;
+    }
+    tx.commit().await.map_err(DbError::from)?;
     if let Some(n) = &name {
         // Dedicated channel bots follow the agent's name (best effort: the patch succeeded).
         if let Err(e) = crate::domains::channels::presences::on_agent_renamed(state, id, n).await {

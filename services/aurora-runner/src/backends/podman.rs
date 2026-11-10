@@ -474,6 +474,16 @@ impl Backend for PodmanBackend {
         }
     }
 
+    async fn image_harnesses(&self, image: &str) -> Option<Vec<HarnessId>> {
+        self.ensure_image(image).await.ok()?;
+        let i = self.docker.inspect_image(image).await.ok()?;
+        let label = i
+            .config
+            .and_then(|c| c.labels)
+            .and_then(|l| l.get(crate::backend::HARNESSES_LABEL).cloned());
+        Some(crate::backend::parse_harnesses(label.as_deref()))
+    }
+
     async fn provision_home(
         &self,
         sandbox_id: Uuid,
@@ -675,6 +685,20 @@ mod tests {
         assert_eq!(
             parse_capabilities(Some(" browser, ,browser,future ")),
             ["browser", "future"]
+        );
+    }
+
+    #[test]
+    fn harnesses_label_is_parsed_and_defaults_for_old_images() {
+        use crate::backend::parse_harnesses;
+        assert_eq!(
+            parse_harnesses(None),
+            [HarnessId::ClaudeCode, HarnessId::Fake]
+        );
+        assert!(parse_harnesses(Some("")).is_empty());
+        assert_eq!(
+            parse_harnesses(Some(" claude-code, codex ,codex,fake")),
+            [HarnessId::ClaudeCode, HarnessId::Codex, HarnessId::Fake]
         );
     }
 

@@ -2,8 +2,8 @@
 //! (contract M4).
 
 use super::dto::{
-    DefaultModel, KeyReadiness, ModelOption, ModelOptions, ModelReadiness, SandboxPort,
-    SandboxProcess, SandboxView,
+    DefaultModel, HarnessList, HarnessView, KeyReadiness, ModelOption, ModelOptions,
+    ModelReadiness, SandboxPort, SandboxProcess, SandboxView,
 };
 use super::{lifecycle, model};
 use crate::app::AppState;
@@ -28,6 +28,45 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(restart))
         .routes(routes!(list_models))
         .routes(routes!(model_readiness))
+        .routes(routes!(list_harnesses))
+}
+
+/// The harnesses agents may use on this instance (`hosted.enabled_harnesses`) and whether a
+/// live runner replica offers each one (C-420).
+#[utoipa::path(get, path = "/harnesses", operation_id = "listHarnesses", tag = "agents",
+    responses((status = 200, body = HarnessList)),
+    security(("session" = []), ("api_key" = [])))]
+async fn list_harnesses(
+    _c: Caller,
+    State(s): State<AppState>,
+) -> Result<Json<HarnessList>, ApiError> {
+    let live = aurora_db::repo::runners::live_harnesses(
+        &s.pool,
+        aurora_core::limits::REPLICA_ONLINE_THRESHOLD.as_secs_f64(),
+    )
+    .await?;
+    let items = s
+        .config
+        .hosted
+        .enabled_harnesses
+        .iter()
+        .filter_map(|id| {
+            let (_, name) = model::HARNESSES.iter().find(|(h, _)| h == id)?;
+            Some(HarnessView {
+                id: id.clone(),
+                display_name: (*name).to_owned(),
+                dialects: model::harness_dialects(id)
+                    .iter()
+                    .map(|d| d.as_str().to_owned())
+                    .collect(),
+                available: live.iter().any(|l| l == id),
+            })
+        })
+        .collect();
+    Ok(Json(HarnessList {
+        items,
+        default: s.config.hosted.default_harness.clone(),
+    }))
 }
 
 async fn hosted_agent(

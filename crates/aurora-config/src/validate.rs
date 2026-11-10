@@ -720,6 +720,14 @@ impl RawConfig {
         if r.image.is_empty() {
             c.err("runner.image", "must not be empty");
         }
+        for id in &r.image_harnesses {
+            if !KNOWN_HARNESSES.contains(&id.as_str()) {
+                c.err(
+                    "runner.image_harnesses",
+                    format!("unknown harness {id:?}; known: claude-code, codex, fake"),
+                );
+            }
+        }
         for (i, n) in r.k8s.image_pull_secrets.iter().enumerate() {
             if !is_dns_subdomain(n) {
                 c.err(
@@ -852,6 +860,9 @@ impl RawConfig {
 struct Ctx {
     errors: Vec<ConfigError>,
 }
+
+/// Harness ids of the compile-time supervisor registry (`12 §Harness selection`).
+pub const KNOWN_HARNESSES: [&str; 3] = ["claude-code", "codex", "fake"];
 
 /// Longest brief an agent may carry (`10 §Default agent`).
 const MAX_BRIEF_CHARS: usize = 20_000;
@@ -2122,6 +2133,32 @@ fn check_hosted(c: &mut Ctx, h: &HostedSection) {
     }
     if h.default_harness.is_empty() {
         c.err("hosted.default_harness", "must not be empty");
+    }
+    // (P4-HAR, D-122) the registry of compile-time harnesses; `fake` only for tests and dev.
+    if h.enabled_harnesses.is_empty() {
+        c.err("hosted.enabled_harnesses", "must not be empty");
+    }
+    for id in &h.enabled_harnesses {
+        if !KNOWN_HARNESSES.contains(&id.as_str()) {
+            c.err(
+                "hosted.enabled_harnesses",
+                format!("unknown harness {id:?}; known: claude-code, codex, fake"),
+            );
+        } else if id == "fake" && !h.allow_fake_harness {
+            c.err(
+                "hosted.enabled_harnesses",
+                "`fake` needs hosted.allow_fake_harness = true",
+            );
+        }
+    }
+    if !h.default_harness.is_empty()
+        && !h.enabled_harnesses.contains(&h.default_harness)
+        && !(h.default_harness == "fake" && h.allow_fake_harness)
+    {
+        c.err(
+            "hosted.default_harness",
+            "must be one of hosted.enabled_harnesses",
+        );
     }
     if h.default_timezone.is_empty() {
         c.err("hosted.default_timezone", "must not be empty");

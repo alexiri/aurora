@@ -137,6 +137,15 @@ fn assert_one_terminal(ev: &[HarnessEvent]) -> &HarnessEvent {
 }
 
 async fn suite(a: &dyn HarnessAdapter, p: &Profile) {
+    suite_with(a, p, &opts).await;
+}
+
+async fn suite_with(
+    a: &dyn HarnessAdapter,
+    p: &Profile,
+    mk: &dyn Fn(&str, Option<String>) -> SessionOptions,
+) {
+    let opts = mk;
     let t0 = std::time::Instant::now();
     let caps = a.capabilities();
 
@@ -316,4 +325,124 @@ async fn claude_code_live_conforms_when_enabled() {
         LIVE
     };
     suite(&ClaudeCodeAdapter::default(), &profile).await;
+}
+
+// ---- codex (phase 4, P4-HAR, D-122): the same cases against the mock Responses upstream of
+// `aurora-testkit`, run with the real pinned CLI. Skipped when the binary is not installed
+// (`AURORA_CODEX_BIN`, default `/opt/aurora/harness/codex/codex`); the env-gated variant
+// `AURORA_TEST_HARNESS_CODEX_LIVE=1` (+ `OPENAI_BASE_URL`, `AURORA_LIVE_MODEL`) runs against a
+// real OpenAI endpoint instead.
+
+use aurora_supervisor::adapters::codex::CodexAdapter;
+use aurora_supervisor::adapters::codex::launcher::codex_bin;
+
+const CODEX: Profile = Profile {
+    say: "Reply with exactly the word: pong",
+    long_running: "Count slowly from 1 to 500.",
+    fail: Some(("fail please", "provider_quota")),
+    tool: Some("Run `echo hi` with your shell tool, then say done."),
+    // `steer = false`: a follow-up becomes a separate turn, so nothing is steerable.
+    steerable: None,
+};
+
+fn codex_opts(base: &str, case: &str, resume: Option<String>) -> SessionOptions {
+    let dir = std::env::temp_dir().join(format!("p4-har-conf-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let model = match case {
+        "long" => "long",
+        "tool" => "tool",
+        "fail" => "fail-quota",
+        _ => "say",
+    };
+    SessionOptions {
+        conversation_id: Uuid::now_v7(),
+        working_dir: dir,
+        resume_ref: resume,
+        model: ModelChoice {
+            provider: "litellm".into(),
+            endpoint_id: "mock".into(),
+            base_url: format!("{base}/v1"),
+            dialect: "openai_responses".into(),
+            model: model.into(),
+            effort: "low".into(),
+            client_env: vec![],
+        },
+        // No gateway here: the proxy points at a dead port and the mock is on loopback.
+        proxy_url: "http://127.0.0.1:9".into(),
+        mcp_bridge: McpBridgeSpec {
+            command: vec!["/bin/true".into()],
+        },
+        env: vec![("NO_PROXY".into(), "127.0.0.1,localhost".into())],
+    }
+}
+
+#[tokio::test]
+async fn codex_conforms_against_the_mock_responses_upstream() {
+    let bin = codex_bin();
+    if !bin.exists() {
+        eprintln!(
+            "skipped: {} not installed (set AURORA_CODEX_BIN)",
+            bin.display()
+        );
+        return;
+    }
+    let up = aurora_testkit::responses::MockResponses::start().await;
+    let base = up.base().to_owned();
+    // Resume needs the same CODEX_HOME across sessions of one conversation.
+    let shared = std::env::temp_dir().join(format!("p4-har-conf-home-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&shared).unwrap();
+    let adapter = CodexAdapter::default().codex_home(shared.join(".codex"));
+    let mk = move |case: &str, resume: Option<String>| codex_opts(&base, case, resume);
+    suite_with(&adapter, &CODEX, &mk).await;
+
+    // A second turn of one session resumes the Codex thread (real `exec resume`) and ends Done.
+    let mut s = adapter.start_session(mk("say", None)).await.unwrap();
+    for _ in 0..2 {
+        let ev = drain(s.run_turn(turn(CODEX.say)).await.unwrap()).await;
+        assert!(
+            matches!(assert_one_terminal(&ev), HarnessEvent::Done { .. }),
+            "{ev:?}"
+        );
+    }
+    assert!(s.session_ref().is_some());
+
+    // SEC-66 at the process level: every request that reached the upstream carried the
+    // placeholder and nothing else as its credential.
+    let seen = up.requests();
+    assert!(!seen.is_empty());
+    for r in &seen {
+        assert_eq!(
+            r.authorization.as_deref(),
+            Some("Bearer aurora-placeholder"),
+            "{r:?}"
+        );
+    }
+    assert!(!shared.join(".codex/auth.json").exists());
+    let cfg = std::fs::read_to_string(shared.join(".codex/config.toml")).unwrap();
+    assert!(cfg.contains("approval_policy = \"never\""));
+}
+
+#[tokio::test]
+async fn codex_live_conforms_when_enabled() {
+    if std::env::var("AURORA_TEST_HARNESS_CODEX_LIVE").as_deref() != Ok("1") {
+        eprintln!(
+            "skipped: set AURORA_TEST_HARNESS_CODEX_LIVE=1 (+ OPENAI_BASE_URL) for the live suite"
+        );
+        return;
+    }
+    let base = std::env::var("OPENAI_BASE_URL")
+        .expect("AURORA_TEST_HARNESS_CODEX_LIVE needs OPENAI_BASE_URL");
+    let model = std::env::var("AURORA_LIVE_MODEL").unwrap_or_else(|_| "gpt-5.1-codex".into());
+    let mk = move |case: &str, resume: Option<String>| {
+        let mut o = codex_opts("", case, resume);
+        o.model.base_url = base.clone();
+        o.model.model = model.clone();
+        o.env = vec![];
+        o
+    };
+    let profile = Profile {
+        fail: None,
+        ..CODEX
+    };
+    suite_with(&CodexAdapter::default(), &profile, &mk).await;
 }

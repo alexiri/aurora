@@ -8913,6 +8913,35 @@
         ]
       }
     },
+    "/v1/harnesses": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "The harnesses agents may use on this instance (`hosted.enabled_harnesses`) and whether a\nlive runner replica offers each one (C-420).",
+        "operationId": "listHarnesses",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HarnessList"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/hooks/{token}": {
       "post": {
         "tags": [
@@ -23550,6 +23579,55 @@
             "items": {
               "$ref": "#/components/schemas/SecretGrant"
             }
+          }
+        }
+      },
+      "HarnessList": {
+        "type": "object",
+        "required": [
+          "items",
+          "default"
+        ],
+        "properties": {
+          "default": {
+            "type": "string",
+            "description": "The harness a new hosted agent gets (`hosted.default_harness`)."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessView"
+            }
+          }
+        }
+      },
+      "HarnessView": {
+        "type": "object",
+        "description": "(phase 4, P4-HAR, C-420) One harness an agent may use.",
+        "required": [
+          "id",
+          "display_name",
+          "dialects",
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "description": "At least one live runner replica lists the harness (its image contains the runtime)."
+          },
+          "dialects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Declared dialects, in preference order."
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "`claude-code` | `codex` (| `fake` when enabled)."
           }
         }
       },

@@ -10,9 +10,69 @@ use aurora_protocol::runner::ModelChoice;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-/// Dialects each harness speaks (`12 §Harness interface`, declared by the adapters).
-pub fn harness_dialects(_harness: &str) -> &'static [Dialect] {
-    &[Dialect::AnthropicMessages]
+/// Dialects each harness speaks, **in preference order** (`12 §Harness selection and adapter
+/// contract`, declared by the adapters): the dialect used is the first one the endpoint serves.
+pub fn harness_dialects(harness: &str) -> &'static [Dialect] {
+    match harness {
+        // The pinned Codex CLI (0.167.0) dropped `wire_api = "chat"`: a version that drops a
+        // dialect removes it here (`12 §Harness selection`, D-153).
+        "codex" => &[Dialect::OpenaiResponses],
+        _ => &[Dialect::AnthropicMessages],
+    }
+}
+
+/// The dialect used: the **first of the harness's own list** that the endpoint also serves
+/// (`12 §Harness selection`, `08 §Model selection`); `None` = the key is `no_shared_dialect`.
+pub fn first_shared(harness: &str, endpoint: &[Dialect]) -> Option<Dialect> {
+    harness_dialects(harness)
+        .iter()
+        .copied()
+        .find(|d| endpoint.contains(d))
+}
+
+#[cfg(test)]
+mod dialect_tests {
+    use super::*;
+
+    #[test]
+    fn dialect_is_the_first_of_the_harness_list_the_endpoint_serves() {
+        use Dialect::{AnthropicMessages as A, OpenaiChat as C, OpenaiResponses as R};
+        // LiteLLM serves all three (chat listed first): codex still gets `responses`.
+        assert_eq!(first_shared("codex", &[C, R, A]), Some(R));
+        assert_eq!(first_shared("claude-code", &[C, R, A]), Some(A));
+        // Chat-only and anthropic-only endpoints do not serve the pinned Codex.
+        assert_eq!(first_shared("codex", &[C]), None);
+        assert_eq!(first_shared("codex", &[A]), None);
+        assert_eq!(first_shared("claude-code", &[C, R]), None);
+        assert_eq!(first_shared("codex", &[]), None);
+    }
+
+    #[test]
+    fn registry_names_every_known_harness_and_dialects_are_declared() {
+        for (id, name) in HARNESSES {
+            assert!(!name.is_empty() && !harness_dialects(id).is_empty(), "{id}");
+        }
+        assert_eq!(harness_dialects("codex"), &[Dialect::OpenaiResponses]);
+    }
+}
+
+/// Registry of the harnesses this build knows, `(id, display name)`; `hosted.enabled_harnesses`
+/// selects among them (`fake` only with `hosted.allow_fake_harness`).
+pub const HARNESSES: [(&str, &str); 3] = [
+    ("claude-code", "Claude Code"),
+    ("codex", "OpenAI Codex"),
+    ("fake", "Scripted test harness"),
+];
+
+/// Harness ids agents may use on this instance: `hosted.enabled_harnesses`, plus `fake` when it
+/// is allowed (tests and dev).
+pub fn allowed_harnesses(state: &AppState) -> Vec<String> {
+    let h = &state.config.hosted;
+    let mut v = h.enabled_harnesses.clone();
+    if h.allow_fake_harness && !v.iter().any(|x| x == "fake") {
+        v.push("fake".into());
+    }
+    v
 }
 
 /// A usable granted key together with its endpoint.
@@ -217,11 +277,7 @@ fn key_reason<'a>(
         }
     }
     let eps = provider.dialects(ep);
-    let Some(dialect) = harness_dialects(harness)
-        .iter()
-        .copied()
-        .find(|d| eps.contains(d))
-    else {
+    let Some(dialect) = first_shared(harness, &eps) else {
         return (Some(ep), Some(Reason::NoSharedDialect), None);
     };
     (Some(ep), None, Some(dialect))

@@ -725,6 +725,7 @@ Pending deletions of harness session files after a conversation delete or a `res
 | agent_id | uuid FK→agents (cascade) | |
 | conversation_id | uuid null | the conversation that is gone (no FK) |
 | session_ref | text not null | `harness_session_ref` to purge |
+| harness | text null | (phase 4, P4-HAR, D-153) the harness that created the session; the supervisor deletes the files with **that** harness's adapter. `NULL` = the sandbox's own harness (every row before a switch) |
 | leased_until | timestamptz null | live-delivery lease: the `session.purge` work item is re-sent after it lapses |
 | done_at | timestamptz null | stamped on `session.purged { ok: true }`; index (agent_id) WHERE done_at IS NULL |
 

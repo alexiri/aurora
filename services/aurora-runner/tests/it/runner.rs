@@ -46,6 +46,7 @@ fn settings(url: &str) -> RunnerSettings {
             pids: 512,
             home_gib: 10,
         }),
+        image_harnesses: vec![],
         api_url: url.to_owned(),
         token: TOKEN.into(),
         version: "test".into(),
@@ -412,6 +413,85 @@ async fn supervisor_frames_become_reports_with_deterministic_ids() {
     task.await.unwrap().unwrap();
 }
 
+/// (P4-HAR, D-153) A supervisor that refuses its boot (`harness_unsupported`) reports the
+/// sandbox as failed with that reason, before any `ready`.
+#[tokio::test]
+async fn supervisor_boot_refusal_becomes_a_failed_status_report() {
+    let server = MockServer::start().await;
+    mount_basics(&server, Uuid::new_v4(), ReportStatus::Applied, vec![]).await;
+    let hub = Arc::new(StubHub::default());
+    let (tx, rx) = watch::channel(false);
+    let task = tokio::spawn(
+        Runner::new(
+            settings(&server.uri()),
+            Arc::new(FakeBackend::new(4)),
+            hub.clone(),
+        )
+        .run(rx),
+    );
+    hub.emit(HubEvent {
+        sandbox_id: Uuid::new_v4(),
+        boot_id: Uuid::new_v4(),
+        seq: 1,
+        frame: Frame {
+            kind: "sandbox.status".into(),
+            body: json!({"state": "failed", "reason_code": "harness_unsupported",
+                         "message": "the codex runtime is not in this image"}),
+        },
+    })
+    .await;
+    let reports = wait_reports(&server, 1).await;
+    assert!(matches!(
+        &reports[0].body,
+        ReportBody::SandboxStatus(s)
+            if s.state == SandboxState::Failed
+                && s.reason_code.as_ref().map(|c| c.as_str()) == Some("harness_unsupported")
+    ));
+    tx.send(true).unwrap();
+    task.await.unwrap().unwrap();
+}
+
+/// (P4-HAR) The registered `harnesses` come from the image (label) or, for a backend that cannot
+/// read labels, from `runner.image_harnesses`; without either the backend's own list stays.
+#[tokio::test]
+async fn registration_carries_the_configured_image_harnesses() {
+    let server = MockServer::start().await;
+    mount_basics(&server, Uuid::new_v4(), ReportStatus::Applied, vec![]).await;
+    let (tx, rx) = watch::channel(false);
+    let mut st = settings(&server.uri());
+    st.executor.image = Some("aurora-sandbox:test".into());
+    st.image_harnesses = vec![
+        aurora_protocol::runner::HarnessId::ClaudeCode,
+        aurora_protocol::runner::HarnessId::Codex,
+    ];
+    let task = tokio::spawn(
+        Runner::new(
+            st,
+            Arc::new(FakeBackend::new(4)),
+            Arc::new(StubHub::default()),
+        )
+        .run(rx),
+    );
+    let reqs = loop {
+        let r = server.received_requests().await.unwrap();
+        if r.iter().any(|q| q.url.path().ends_with("/register")) {
+            break r;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    let register = reqs
+        .iter()
+        .find(|r| r.url.path().ends_with("/register"))
+        .unwrap();
+    let reg: Value = serde_json::from_slice(&register.body).unwrap();
+    assert_eq!(
+        reg["capabilities"]["harnesses"],
+        json!(["claude-code", "codex"])
+    );
+    tx.send(true).unwrap();
+    task.await.unwrap().unwrap();
+}
+
 #[tokio::test]
 async fn executor_serializes_per_sandbox_and_forwards_socket_work() {
     let server = MockServer::start().await;
@@ -464,6 +544,7 @@ async fn executor_serializes_per_sandbox_and_forwards_socket_work() {
         WorkItemBody::SessionPurge(aurora_protocol::runner::SessionPurge {
             conversation_id: turn,
             session_ref: "sess-1".into(),
+            harness: None,
         }),
     ] {
         exec.submit(WorkItem {

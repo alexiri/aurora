@@ -86,7 +86,7 @@ All carry `{ item_id, kind, sandbox_id, boot_id }`.
 | `turn.abort` | `{ turn_id }` |
 | `turn.notice` | `{ turn_id, text }` (platform notice steered into the live run, e.g. ceiling warning) |
 | `session.release` | `{ conversation_id }` (surface changed; release idle session) |
-| `session.purge` | (phase 2, RFE-010) `{ conversation_id, session_ref }` — delete the stored harness session files (`12 §Session purge`) |
+| `session.purge` | (phase 2, RFE-010) `{ conversation_id, session_ref, harness? }` — delete the stored harness session files (`12 §Session purge`); (phase 4, P4-HAR, D-153) `harness` names the adapter that deletes them (the one that created the session, after a switch); absent = the sandbox's own |
 | `preview.start` | (phase 4, P4-PRV-1, D-145) `{ share_id }` — ask the supervisor to start the share's command on demand (`11 §Port previews`); the runner forwards `preview.start { port }` on the supervisor channel and the supervisor resolves the command from its own share list |
 
 `ModelChoice`: `{ provider, endpoint_id, base_url, dialect, model, effort,
@@ -110,7 +110,7 @@ are dropped.
 
 | Kind | Body | API effect |
 |------|------|------------|
-| `sandbox.status` | `{ state: "running"|"stopped"|"failed"|"held", container_ref?, reason_code?, message?, observed?: { cpu_millis, memory_mib } }` | lifecycle transition (`11`) |
+| `sandbox.status` | `{ state: "running"|"stopped"|"failed"|"held", container_ref?, reason_code?, message?, observed?: { cpu_millis, memory_mib } }` | lifecycle transition (`11`); (phase 4, P4-HAR, D-153) also sent **by the supervisor** (frame kind `sandbox.status`, forwarded 1:1) as `failed` / `harness_unsupported` instead of `ready` when the boot document's harness is unknown or its runtime is not in the image |
 | `supervisor.ready` | `{ version, harness: { id, capabilities } }` | full home sync scheduled |
 | `home.synced` | `{ generation }` | `home_applied_generation` |
 | `turn.started` | `{ turn_id }` | `running` |

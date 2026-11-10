@@ -164,6 +164,40 @@ pub async fn stats<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (P4-HAR) Harness availability over live replicas: `(any live replica, one lists `harness`)`.
+/// A runner's `capabilities.harnesses` comes from its image label (`org.aurora.harnesses`).
+pub async fn harness_availability<'e, E: PgExecutor<'e>>(
+    exec: E,
+    harness: &str,
+    online_secs: f64,
+) -> Result<(bool, bool), DbError> {
+    Ok(sqlx::query_as(
+        "SELECT count(*) > 0,
+                coalesce(bool_or(coalesce(r.capabilities->'harnesses', '[]'::jsonb) ? $1), false)
+         FROM runners r JOIN runner_replicas p ON p.runner_id = r.id
+         WHERE p.retired_at IS NULL AND p.last_seen_at > now() - make_interval(secs => $2)",
+    )
+    .bind(harness)
+    .bind(online_secs)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// Ids of the harnesses at least one live replica lists (drives `GET /v1/harnesses`).
+pub async fn live_harnesses<'e, E: PgExecutor<'e>>(
+    exec: E,
+    online_secs: f64,
+) -> Result<Vec<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT DISTINCT h FROM runners r JOIN runner_replicas p ON p.runner_id = r.id,
+                jsonb_array_elements_text(coalesce(r.capabilities->'harnesses', '[]'::jsonb)) h
+         WHERE p.retired_at IS NULL AND p.last_seen_at > now() - make_interval(secs => $1)",
+    )
+    .bind(online_secs)
+    .fetch_all(exec)
+    .await?)
+}
+
 pub async fn list_replicas<'e, E: PgExecutor<'e>>(
     exec: E,
     runner_id: Uuid,

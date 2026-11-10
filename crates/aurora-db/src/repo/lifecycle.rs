@@ -124,18 +124,33 @@ pub struct SessionPurgeRow {
     pub agent_id: Uuid,
     pub conversation_id: Option<Uuid>,
     pub session_ref: String,
+    /// (D-153) The harness that created the session; `None` = the sandbox's own.
+    pub harness: Option<String>,
 }
 
 /// Queue the deletion of a stored harness session (idempotent per agent, conversation and ref).
+/// The session belongs to the sandbox's own harness (`harness` stays NULL).
 pub async fn enqueue_purge(
     conn: &mut PgConnection,
     agent: Uuid,
     conversation: Option<Uuid>,
     session_ref: &str,
 ) -> Result<(), DbError> {
+    enqueue_purge_of(conn, agent, conversation, session_ref, None).await
+}
+
+/// [`enqueue_purge`] for a session of an explicit `harness` (the old one, when an agent's
+/// harness is being switched).
+pub async fn enqueue_purge_of(
+    conn: &mut PgConnection,
+    agent: Uuid,
+    conversation: Option<Uuid>,
+    session_ref: &str,
+    harness: Option<&str>,
+) -> Result<(), DbError> {
     sqlx::query(
-        "INSERT INTO session_purges (id, agent_id, conversation_id, session_ref)
-         SELECT $1, $2, $3, $4
+        "INSERT INTO session_purges (id, agent_id, conversation_id, session_ref, harness)
+         SELECT $1, $2, $3, $4, $5
          WHERE NOT EXISTS (SELECT 1 FROM session_purges WHERE agent_id = $2 AND done_at IS NULL
                            AND conversation_id IS NOT DISTINCT FROM $3 AND session_ref = $4)",
     )
@@ -143,6 +158,7 @@ pub async fn enqueue_purge(
     .bind(agent)
     .bind(conversation)
     .bind(session_ref)
+    .bind(harness)
     .execute(conn)
     .await?;
     Ok(())
@@ -154,12 +170,16 @@ pub async fn pending_for_agent(
     agent: Uuid,
 ) -> Result<Vec<SessionPurgeRow>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT id, agent_id, conversation_id, session_ref FROM session_purges
-         WHERE agent_id = $1 AND done_at IS NULL
-           AND (conversation_id IS NULL OR NOT EXISTS (
-                SELECT 1 FROM turns t WHERE t.conversation_id = session_purges.conversation_id
+        "SELECT p.id, p.agent_id, p.conversation_id, p.session_ref, p.harness
+         FROM session_purges p JOIN agents a ON a.id = p.agent_id
+         WHERE p.agent_id = $1 AND p.done_at IS NULL
+           AND (p.conversation_id IS NULL
+                -- (D-153) a session of another harness than the agent's is no live session
+                OR (p.harness IS NOT NULL AND p.harness IS DISTINCT FROM a.harness)
+                OR NOT EXISTS (
+                SELECT 1 FROM turns t WHERE t.conversation_id = p.conversation_id
                   AND t.role = 'turn' AND t.status IN ('queued','dispatched','running')))
-         ORDER BY created_at, id",
+         ORDER BY p.created_at, p.id",
     )
     .bind(agent)
     .fetch_all(conn)
@@ -171,6 +191,7 @@ pub struct PurgeClaim {
     pub id: Uuid,
     pub conversation_id: Option<Uuid>,
     pub session_ref: String,
+    pub harness: Option<String>,
     pub sandbox_id: Uuid,
     pub boot_id: Uuid,
 }
@@ -192,12 +213,14 @@ pub async fn claim_live(
              AND (p.leased_until IS NULL OR p.leased_until < now())
              AND s.runner_id = $1 AND s.channel_replica_id = $2 AND s.state = 'running'
              AND s.boot_id IS NOT NULL AND s.home_applied_generation > 0
-             AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.conversation_id = p.conversation_id
+             AND (NOT EXISTS (SELECT 1 FROM turns t WHERE t.conversation_id = p.conversation_id
                              AND t.role = 'turn' AND t.status IN ('queued','dispatched','running'))
+                  OR (p.harness IS NOT NULL
+                      AND p.harness IS DISTINCT FROM (SELECT a.harness FROM agents a WHERE a.id = p.agent_id)))
            ORDER BY p.created_at LIMIT $4 FOR UPDATE OF p SKIP LOCKED)
          UPDATE session_purges p SET leased_until = now() + make_interval(secs => $3)
          FROM cand, sandboxes s WHERE p.id = cand.id AND s.agent_id = p.agent_id
-         RETURNING p.id, p.conversation_id, p.session_ref, s.id AS sandbox_id, s.boot_id",
+         RETURNING p.id, p.conversation_id, p.session_ref, p.harness, s.id AS sandbox_id, s.boot_id",
     )
     .bind(runner)
     .bind(replica)
@@ -335,6 +358,36 @@ pub async fn reset_session(
     .bind(conversation)
     .fetch_one(conn)
     .await?)
+}
+
+/// (P4-HAR, D-122) The agent's harness changed from `old_harness`: every conversation gets a
+/// fresh session on its next turn (epoch bumped, reference cleared) and the old sessions are
+/// queued for purge by the old harness's adapter. The transcript is untouched. Returns the
+/// number of conversations affected.
+pub async fn switch_harness_sessions(
+    conn: &mut PgConnection,
+    agent: Uuid,
+    old_harness: &str,
+) -> Result<u64, DbError> {
+    let old: Vec<(Uuid, Option<String>)> = sqlx::query_as(
+        "SELECT id, harness_session_ref FROM conversations WHERE agent_id = $1 ORDER BY id",
+    )
+    .bind(agent)
+    .fetch_all(&mut *conn)
+    .await?;
+    for (id, r) in &old {
+        if let Some(r) = r.as_deref().filter(|r| !r.is_empty()) {
+            enqueue_purge_of(&mut *conn, agent, Some(*id), r, Some(old_harness)).await?;
+        }
+    }
+    Ok(sqlx::query(
+        "UPDATE conversations SET harness_session_epoch = harness_session_epoch + 1,
+             harness_session_ref = NULL, updated_at = now() WHERE agent_id = $1",
+    )
+    .bind(agent)
+    .execute(conn)
+    .await?
+    .rows_affected())
 }
 
 // ------------------------------------------------------------------ retention sweep

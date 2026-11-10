@@ -222,6 +222,8 @@ aurora-runner = "{bridge}"
 [hosted]
 enabled = true
 allow_fake_harness = true
+# P4-HAR: Codex is opt-in; only an image whose label lists it (the full image) offers it.
+enabled_harnesses = ["claude-code", "codex"]
 idle_stop_secs = {idle}
 
 [auth]
@@ -238,7 +240,7 @@ log_level = "info"
 
 [gateway]
 internal_bind = "{ops_ip}"
-allowed_private = ["127.0.0.1/32"{db_target_allowed}]
+allowed_private = ["127.0.0.1/32", "127.0.0.2/32"{db_target_allowed}]
 ca_dir = "{ca}"
 advertised_proxy_url = "https://aurora-gateway:4102"
 

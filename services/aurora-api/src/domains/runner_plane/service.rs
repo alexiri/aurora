@@ -325,7 +325,16 @@ async fn fail_start(
         return Ok(());
     };
     let code = reason
-        .filter(|c| ["image_unavailable", "at_capacity", "agent_start_failed"].contains(c))
+        .filter(|c| {
+            [
+                "image_unavailable",
+                "at_capacity",
+                "agent_start_failed",
+                // (P4-HAR) the supervisor refused the boot: unknown id or runtime not in the image
+                "harness_unsupported",
+            ]
+            .contains(c)
+        })
         .unwrap_or("agent_start_failed");
     for (turn, conv) in hosted::queued_turns_of_agent(conn, f.agent_id).await? {
         aurora_db::repo::conversations::lock(&mut *conn, conv).await?;

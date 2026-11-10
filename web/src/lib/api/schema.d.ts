@@ -1931,6 +1931,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/harnesses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The harnesses agents may use on this instance (`hosted.enabled_harnesses`) and whether a
+         *     live runner replica offers each one (C-420).
+         */
+        get: operations["listHarnesses"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/hooks/{token}": {
         parameters: {
             query?: never;
@@ -5136,6 +5156,21 @@ export interface components {
             /** @description (phase 4, P4-GRANTS, C-413) conversions by an app update still standing on these grants. */
             converted_by_app: components["schemas"]["GrantConversion"][];
             secrets: components["schemas"]["SecretGrant"][];
+        };
+        HarnessList: {
+            /** @description The harness a new hosted agent gets (`hosted.default_harness`). */
+            default: string;
+            items: components["schemas"]["HarnessView"][];
+        };
+        /** @description (phase 4, P4-HAR, C-420) One harness an agent may use. */
+        HarnessView: {
+            /** @description At least one live runner replica lists the harness (its image contains the runtime). */
+            available: boolean;
+            /** @description Declared dialects, in preference order. */
+            dialects: string[];
+            display_name: string;
+            /** @description `claude-code` | `codex` (| `fake` when enabled). */
+            id: string;
         };
         HookAccepted: {
             /** Format: uuid */
@@ -14013,6 +14048,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InstanceGovernance"];
+                };
+            };
+        };
+    };
+    listHarnesses: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HarnessList"];
                 };
             };
         };

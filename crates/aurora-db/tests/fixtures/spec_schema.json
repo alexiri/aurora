@@ -753,6 +753,7 @@
       "agent_id",
       "conversation_id",
       "done_at",
+      "harness",
       "id",
       "leased_until",
       "session_ref"
