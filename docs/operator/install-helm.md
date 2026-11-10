@@ -247,7 +247,12 @@ it hands to sandboxes. It never receives `ca.key`.
 
 ## Configuration
 
-`config.*` in `values.yaml` is rendered into `aurora.toml`. The chart sets these keys
+`config.*` in `values.yaml` is rendered into `aurora.toml`. A reference of
+**every** chart value — including this block, the per-service keys and the
+feature flags — lives in [`docs/23-helm-values.md`](../23-helm-values.md); the
+keys of `aurora.toml` itself are in
+[docs/15 §Configuration reference](../15-deployment-operations.md#configuration-reference-keys-and-defaults).
+The chart sets these keys
 itself, so do not override them:
 
 - `server.external_url` from `externalUrl`;

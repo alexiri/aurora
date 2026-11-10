@@ -40,6 +40,7 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 | [freeze.md](freeze.md) | The emergency freeze of an agent, workspace or organization |
 | [harnesses.md](harnesses.md) | Harnesses (phase 4, P4-HAR): enabling the Codex harness (`hosted.enabled_harnesses`, `runner.image_harnesses`, the sandbox image build argument `SANDBOX_HARNESSES`), switching an agent's harness, failure codes |
 | [skill-libraries.md](skill-libraries.md) | Git skill libraries (phase 4, P4-GSL): connecting a repository, `skills.library.*`, `api.gateway_internal_url`, what is read and stored, the review of proposed updates, metrics and audit |
+| [../23-helm-values.md](../23-helm-values.md) | Every Helm chart value in one table: type, allowed values, default, explanation and links to the detail pages (the chart key index over the pages above) |
 
 ## Phase 1 and 2 topics
 

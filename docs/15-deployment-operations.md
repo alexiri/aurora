@@ -445,6 +445,11 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   backend settings (storage class, runtime class, node selectors), connectors
   (list of `{id, image, token secret, callback ingress}`), plugin packages
   (ConfigMap or PVC mounted at `plugins.dir`).
+- (phase 4) **Every Helm value in one place**: `docs/23-helm-values.md` is the
+  reference of all chart values — type and allowed values, default, what it
+  does, which keys the chart injects into `aurora.toml` (do not override those
+  in `config`), and links to the section of this or the operator docs that
+  explains the feature.
 - The chart renders the `aurora.toml` structure into a ConfigMap (the kind dev profiles use the same chart).
 
 ## Upgrades
