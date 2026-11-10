@@ -78,13 +78,14 @@ export function usePatchWorkspace(wsId: string) {
 export const deleteWorkspace = (wsId: string, confirm: string) =>
   unwrap(api.DELETE("/v1/workspaces/{ws}", { params: { path: { ws: wsId } }, body: { confirm } }));
 
-export function useAccess(wsId: string) {
+export function useAccess(wsId: string, enabled = true) {
   return useQuery({
     queryKey: accountKeys.access(wsId),
     queryFn: () =>
       unwrap(
         api.GET("/v1/workspaces/{ws}/access", { params: { path: { ws: wsId } } }),
       ),
+    enabled,
     retry,
   });
 }

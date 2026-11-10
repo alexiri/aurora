@@ -55,7 +55,7 @@ export interface GuideProps {
 
 /** Workspace owners' names for a member who cannot do a step. `can_own` is needed to read them. */
 function useOwnerNames(wsId: string, enabled: boolean): string[] {
-  const access = useAccess(enabled ? wsId : "");
+  const access = useAccess(wsId, enabled);
   if (!enabled) return [];
   return (access.data?.items ?? []).filter((b) => b.role === "owner").map((b) => b.display_name).slice(0, 3);
 }
