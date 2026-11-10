@@ -20,6 +20,33 @@ recommended" because the listener was plaintext; from phase 1 the listener is
 TLS-only and that caveat no longer applies (restricting source networks remains
 good practice).
 
+### Library fetch (internal; phase 4, P4-GSL, D-149, SEC-84)
+
+The skill library (`10 §Skills`) reads repository files with a connection's credential. That
+credential is used **only here**, by the gateway, so the API never holds a plaintext token and the
+refresh and host guard (`08 §8`) stay in one place. The internal listener (4103) serves one more route,
+`POST /internal/v1/library-fetch`, with the same internal-secret auth and the same reachability
+(API replicas only, never a sandbox, SEC-09):
+
+`{ org_id, connection_id, step: "resolve_ref"|"list_tree"|"get_blob", params: { repo, ref?, sha?, blob? }, max_bytes }`
+→ `200 { status, headers: { link? }, body (≤ max_bytes) }` or `{ error }`.
+
+The gateway **builds the request itself** from the active snapshot's `apps[].library` block of the
+connection's app (`09 §3.4 library`): it validates every parameter against the block's patterns
+(a parameter that does not match is 400 `library_param`), substitutes it into the declared `path`,
+requires the connection to exist in the named org, to be **org-scoped**, `active` and of an app whose
+block is present (else 409 `library_unavailable`), and sends a `GET` to `request_host` through the
+ordinary guarded resolver (destination guard, SEC-06), the host entry's inject stage and OAuth refresh,
+TLS verification as for any request, **no redirects**, a response cap of `min(max_bytes, 4 MiB)`,
+and a total timeout of `LIBRARY_FETCH_TIMEOUT` (20 s). Policy, grants, approvals, agent rate limits and the
+request log of agents do **not** apply (there is no agent; the authority is an org owner/admin who
+connected the library and an instance admin who approved the manifest); instead the route is limited
+to the three templates of the block, has its own rate limit (`LIBRARY_FETCH_RATE`, 20/s per gateway,
+per-org 5/s) and counts in `aurora_gateway_library_fetch_total{step,status}`; a connection
+that needs re-authorization answers 409 `reauth_required` and sets the usual flag. No credential,
+header or token ever appears in the response or in logs. SEC-03 (policy before credentials) concerns
+agent requests and is unchanged: no agent request can reach this route.
+
 ### Proxy listener TLS (phase 1, RFE-002)
 
 Owner decision (D-44): **one TLS proxy listener, used by in-cluster and external

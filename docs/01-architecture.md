@@ -13,6 +13,7 @@
 | **Supervisor** | `aurora-supervisor` (in sandbox image) | Harness driver, home projection, platform-tool bridge, process manager, loopback proxies | loopback only | home volume | nothing (dials runner) |
 | **Connector** (per platform) | `aurora-connector-<id>` | Chat platform transport, translation, provisioning | platform callbacks only (e.g. 4110) | none | its chat platform only |
 | **Connector host** (phase 4, P4-MCON) | `aurora-connector-host` | Runs the built-in connector types as **managed connectors** added from the dashboard (`13 §3.1`); speaks the connector contract on their behalf | 4110 platform callbacks (`/connectors/<id>/…` via the edge); 4192 health/metrics | none | edge (platform callbacks) |
+| **Preview relay** (phase 4, P4-PRV-2; **only when `previews.enabled`**) | `aurora-relay` | Browser-facing HTTP/WebSocket reverse proxy for preview hostnames: authenticates the browser (`04 §Preview access`), resolves hostnames through the API, opens byte streams to a sandbox port through the runner (`16 §W17`, `§W18`) | 4112 (edge-routed wildcard host); 4193 health/metrics | none (in-memory caches only) | edge (wildcard preview host) |
 | **SSH terminator** (phase 4) | `aurora-terminator` | Certificate-authenticated SSH into sandboxes | 2222 | none | users |
 | **PostgreSQL** | — | System of record, queue, event bus | 5432 | yes | API, gateway |
 | **Migrations job** | `aurora-api migrate` | Forward-only schema migrations before API starts | — | — | — |
@@ -96,7 +97,9 @@ database, no keys, no ambient network. It is called only on slow paths.
    instance rows.
 5. **Gateway control port (4103)** is internal: reachable from API replicas
    only (network policy), authenticated with the internal secret. It is never
-   on the sandbox network.
+   on the sandbox network. (phase 4, P4-GSL) It also serves `POST /internal/v1/library-fetch`,
+   through which the API's skill-library jobs read repository files with an org connection's
+   credential without ever holding it (`06 §Library fetch`).
 6. **Hook host.** Plugin code is untrusted. It receives per call exactly the
    data one hook invocation may see; egress is limited to the package's
    approved hosts; `approval.summarize` has no egress at all.
@@ -135,6 +138,19 @@ database, no keys, no ambient network. It is called only on slow paths.
     service is untrusted for confidentiality: the payload is encrypted to the browser and
     contains no secret, request detail or approval title (SEC-75); a subscription URL supplied by
     a user is never trusted as a destination (SEC-76). No sandbox, gateway or runner takes part.
+13. **Preview relay and preview origins** (phase 4, P4-PRV-2). When `previews.enabled`, the
+    relay is the only component that faces browsers on preview hostnames. It is **untrusted
+    with respect to authorization**: it holds no database access, no secret key and no
+    credential that opens anything by itself; every decision (who, which share, which sandbox,
+    which port) is made by the API and re-enforced by the runner and the supervisor, so a
+    compromised relay can at most deny service or relay for a user who already holds a valid
+    preview session of a share (SEC-82). A preview **origin** is untrusted web content (the
+    app inside a sandbox is untrusted, boundary 1): it is a different origin from the dashboard,
+    never receives the dashboard session, and cannot make credentialed requests to the dashboard
+    or to other previews (SEC-81). The path *browser → relay → runner → supervisor → loopback port*
+    is the only inbound path into a sandbox; there is no listening socket in the sandbox other than
+    the app's own, and the sandbox network policy is unchanged (it still reaches only the gateway
+    and runner channel ports, SEC-02).
 
 ## End-to-end flows
 

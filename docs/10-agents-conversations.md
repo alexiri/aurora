@@ -73,9 +73,19 @@ is also `agents.default_name` (`13`).
 no turns, no gateway access, sandbox parked, schedules/webhooks/presences paused,
 state kept; reversible with `unfreeze`. Full rules: `04 §Freeze`.
 
+### Port previews of an agent (phase 4, P4-PRV-1, D-144)
+
+A hosted agent may have **preview shares** (`11 §Port previews`): a port of its sandbox opened
+to the workspace's people in their browser. They are created and deleted by people only (never
+by agent tools; the agent can name a port in chat and a person decides), follow the agent through
+park, wake, restart and freeze (inert while frozen), and are deleted with the agent. The
+supervisor receives the active shares as the `previews` home-sync part and refuses every stream
+for any other port. A preview request never creates a turn and never counts as the person
+engaging the agent.
+
 ### Deleting an agent
 
-Cascades in the database to everything it owns (conversations included; the sandbox home, which holds harness session files, is destroyed with it). Before the delete commits, the
+Cascades in the database to everything it owns (conversations included, (phase 4, P4-PRV-1) preview shares and their sessions; the sandbox home, which holds harness session files, is destroyed with it). Before the delete commits, the
 API enqueues connector `presence.deprovision` operations for dedicated
 presences and revokes all gateway credentials. (phase 3, RFE-024) The operations
 are **self-contained** (they snapshot the bot reference and a sealed, op-bound copy
@@ -588,7 +598,101 @@ no name equal to `skill.md` case-insensitively; optional executable bit
 - Projection: `<harness skills dir>/<name>/SKILL.md` + files, read-only; the
 supervisor prunes by manifest.
 - Agents may create/update/delete their **own agent-tier** skills via tools;
-org skills (and, from phase 3, workspace skills) are dashboard/API-only. (The git-backed skill library is phase 4.)
+org skills (and, from phase 3, workspace skills) are dashboard/API-only. (Phase 4, P4-GSL: skills may also come from an org's **git skill library**, below; those are pinned and read-only.)
+
+### Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
+
+An organization may connect a git repository as a **skill library**: a catalogue of skills
+(`<dir>/SKILL.md` plus files, the format above) that people **add** to agents, workspaces or the
+org. The library is a *source*, never a tier: nothing in a repository reaches an agent until a
+person adds a specific skill at a specific commit, and nothing a later push changes reaches an agent
+until a person approves that exact change.
+
+**Opt-out switch and visibility.** Always available but invisible until used: `skills.library.enabled`
+(default `true`, an instance kill-switch) and an org owner/admin who creates a library. It needs no
+new infrastructure: it uses an **org-scoped app connection of a git-hosting package** (GitHub or
+GitLab built-in, or any package whose manifest has a `library` block, `09 §3.4 library`); reads go
+through the gateway (`06 §Library fetch`).
+
+**Connecting.** Org `owner`/`admin` creates a library: `{ label, connection_id, repo, ref?, path? }`
+where the connection is **org-scoped**, `active`, of an app that declares `library`; `repo` must match
+the package's `repo_pattern`; `ref` (branch, tag or sha; default the repository's default branch)
+matches the ref grammar; `path` is the directory that holds the skill directories (default the root;
+at most 4 segments). Creation performs one `resolve_ref` through the gateway and fails with the
+reason if the repository is unreachable or the connection lacks access (422 `library_unreachable`,
+sanitized). Up to `LIBRARIES_PER_ORG` (10) libraries. The dashboard warns when the connection is not
+read-only (`required_access`): use a read-only token or a deploy key's OAuth equivalent; Aurora only
+ever sends `GET`s.
+
+**Catalogue (browse).** `GET …/skills` reads the library's current head live (resolve → recursive
+tree → each `SKILL.md` for name and description, at most `LIBRARY_BROWSE_MAX` (200) entries,
+cached in memory for 5 minutes). A skill is a directory directly under `path` (depth 1) that
+contains `SKILL.md`; its name is the directory name and must be a valid skill name (`[a-z0-9]+(-[a-z0-9]+)*`
+≤ 64, not `aurora-*`); a directory that fails validation is listed as `invalid` with the reason.
+Browsing **stores nothing**. Who may browse: any person who can use a workspace of the org (names and
+descriptions are what an agent would be told anyway; the page marks them untrusted repository text and
+renders them as data).
+
+**Adding (the only way library content is stored).** The create routes of the three tiers accept
+`from_library: { library_id, path, commit_sha }` instead of a body: the server fetches **that exact
+commit** (the sha the person saw in browse; absent → 422) and stores the skill as an ordinary
+`skills` row (and `skill_files`) at the chosen tier with a **source**: `library_id`, `path`,
+`commit_sha`, the blob id of every file and a `content_sha256` of the canonical content. The same
+authority as writing a skill of that tier applies: **agent tier `can_use`, workspace tier `can_own`,
+org tier org owner/admin** (`04 §Permission matrix`), so SEC-56 holds unchanged: library skills never
+widen who may put instructions in front of a whole workspace or org. Validation is the manual
+skills' (`name`, `SKILL_BODY_MAX`, `SKILL_TOTAL_MAX`, file rules, executable bit from file mode
+`100755`) plus library rules: **symlinks (mode `120000`), submodules (`160000`) and non-regular
+entries are refused**, a file larger than `LIBRARY_FILE_MAX` (64 KiB) is refused, `SKILL.md`
+frontmatter must parse and its `name` (if present) must equal the directory name; failures are 422
+`library_skill_invalid` with the reason and nothing is stored. Names stay unique per tier (409
+`skill_exists`), precedence agent > workspace > org and the disabled/shadow rules are unchanged: the
+effective set, projection and wire format (`16`) do not know about libraries.
+
+**Budgets** (per tier, counting only library-sourced content: body + files, binary as base64 length):
+`LIBRARY_BYTES_PER_AGENT` 1 MiB / `LIBRARY_SKILLS_PER_AGENT` 25; per workspace 2 MiB / 50; per
+org 4 MiB / 100; a skill that would exceed a budget is refused 422 `library_budget_exceeded` (a
+pending update larger than the headroom stays pending, flagged "over budget", until the person frees
+space or rejects it). Library skills count in the ordinary skill projection limits too.
+
+**Library skills are read-only.** `PATCH`/`PUT` of body, description or files → 409
+`library_skill_readonly`; **agent tools cannot update or delete them** (`skill_update`,
+`skill_delete` refuse with the same code; `skill_list`/`skill_get` show `source`). Allowed: enable or
+disable (as any skill), **remove** (delete), and **detach** (convert to an ordinary editable skill of
+the same tier, severing the library link and any pending update; audited; the one-way "fork" a person
+uses when they want to edit). Authority for all three is the tier's write authority.
+
+**Refresh without surprises** (D-149, SEC-83). A background job (`05 §Background jobs`, under a
+per-library lease) re-reads each library that has at least one added skill, every
+`LIBRARY_REFRESH_INTERVAL` (15 min; 5 min minimum; "Check now" for org admins at most once per
+`LIBRARY_CHECK_NOW_INTERVAL`): `resolve_ref` → if the commit sha is unchanged, stop; otherwise one
+recursive tree call, and for each added skill compare the blob ids of its files with the pinned ones.
+A skill whose files changed, or whose directory vanished, gets a **proposed update**
+(`skill_library_updates`, `03`): the proposed content (`changed`), or a marker (`removed`), or the
+validation failure (`invalid`), with the new commit sha and `content_sha256`. **Nothing is applied.**
+The skill keeps its pinned content and commit, projection is untouched, no home sync is triggered.
+A newer proposal for the same skill supersedes the older one. At most one open proposal per skill;
+open proposals are bounded by `LIBRARY_PENDING_BYTES_PER_ORG` (4 MiB; beyond it the job records the
+fact (`status = over_budget`) and stops proposing for that library until space is freed).
+**Applying** a proposal is a human act by the tier's write authority (agent: `can_use`; workspace:
+`can_own`; org: org owner/admin) through `POST …/updates/{id}/approve` with the proposal's
+`content_sha256` (the person approved *that* content: a superseded or changed proposal answers 409
+`update_superseded`); it re-validates, replaces the stored content in one transaction with the new
+commit sha, bumps the home-sync generation of the affected agents and writes the critical audit row
+`skill.library.update_apply`. `removed` proposals, when approved, remove the skill; **rejecting**
+(`…/reject`) ignores that commit (the same blob set is not proposed again; a later change is). There
+is **no auto-update and no "track the branch" mode in phase 4**. When the connection fails
+(revoked, `reauth_required`, package updated without `library`, repository deleted) or the library is
+deleted, the **pinned skills keep working unchanged**: the library shows `error` or is gone, deleting a
+library **detaches** its skills (they keep their content and a read-only "was from <repo>@<sha>"
+note) rather than deleting instructions agents rely on.
+
+**Untrusted text.** Everything that comes from the repository (names, descriptions, bodies,
+commit messages, paths, error text) is untrusted: sanitized on load, shown in the dashboard as data
+never as markup, never interpolated into platform-voiced text (cards, notices, e-mails), and the body is
+exactly what an agent would be told: the approval screen shows the **full diff** of the stored content (or the full
+new content for an add) so a human reads what will be projected. Rendering the same bytes the agent
+receives is the invariant; the dashboard does not summarize or truncate the diff.
 
 ## Schedules
 

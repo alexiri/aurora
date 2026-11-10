@@ -1392,6 +1392,135 @@ Absent when the operator supplies the key through `push.vapid.private_key_env` (
 
 The gateway role has no access to any of these tables. Rows of revoked or expired sessions are removed by the daily session pruning (the foreign key cascades).
 
+#### `preview_shares` (new table; port previews, phase 4, P4-PRV-1, D-144, D-145)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (P4-PRV-1) |
+| org_id | uuid FK→organizations (restrict) | denormalized for the per-org limit and the gateway-free authorization checks | 4 (P4-PRV-1) |
+| workspace_id | uuid FK→workspaces (cascade) | | 4 (P4-PRV-1) |
+| agent_id | uuid FK→agents (cascade) | hosted agents only (service-enforced); the share dies with the agent | 4 (P4-PRV-1) |
+| port | int not null CHECK (port BETWEEN 1024 AND 65535) | unique `(agent_id, port)`; supervisor-reserved ports refused by the service | 4 (P4-PRV-1) |
+| label | text not null | the hostname label, `p` + 24 base32 chars, **unique index**, immutable, never reused (`11 §Port previews`) | 4 (P4-PRV-1) |
+| visibility | text not null default `private` CHECK in (`private`) | the only value in phase 4 | 4 (P4-PRV-1) |
+| state | text not null default `active` CHECK in (`active`,`paused`) | | 4 (P4-PRV-1) |
+| start_command | text null CHECK (length ≤ 1024 and no newline) | run on demand by the supervisor; never audited or sent to the relay | 4 (P4-PRV-1) |
+| cwd | text null | relative to `/workspace`, no `..`, ≤ 200 | 4 (P4-PRV-1) |
+| last_start_at, last_start_exit_code, last_start_tail | timestamptz null, int null, text null (≤ 4 KiB, sanitized, secrets redacted like transcripts) | for the dashboard (churn columns) | 4 (P4-PRV-1) |
+| start_attempts | jsonb not null default `[]` | timestamps of the attempts inside `PREVIEW_START_WINDOW` (≤ 3) | 4 (P4-PRV-1) |
+| wake_attempts | jsonb not null default `[]` | timestamps of the wakes inside the hour (≤ `PREVIEW_WAKES_PER_SHARE_HOUR`) | 4 (P4-PRV-1) |
+| created_by_user_id | uuid null FK→users (set null) | label denormalized (`created_by_label`) | 4 (P4-PRV-1) |
+| created_at, updated_at, last_accessed_at | timestamptz | `last_accessed_at` is written at most once a minute per share (relay heartbeat) | 4 (P4-PRV-1) |
+| indexes | unique `(label)`; unique `(agent_id, port)`; `(org_id)`; `(workspace_id)` | | 4 (P4-PRV-1) |
+
+The gateway database role gets nothing on this table (the gateway has no part in previews).
+Deleting the agent, workspace or org deletes the shares (the org delete service removes them in
+dependency order). The `previews` home-sync part is computed from this table (`16 §W5`).
+
+#### `preview_sessions` (new table; phase 4, P4-PRV-2, D-146)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (P4-PRV-2) |
+| token_hash | bytea unique not null | SHA-256 of the `auv_` value; the value is returned once to the relay and never stored | 4 (P4-PRV-2) |
+| display_prefix | text not null | first 12 characters, for support | 4 (P4-PRV-2) |
+| share_id | uuid FK→preview_shares (cascade) | the one share (hostname) the credential is valid for | 4 (P4-PRV-2) |
+| user_id | uuid FK→users (cascade) | | 4 (P4-PRV-2) |
+| session_id | uuid FK→sessions (cascade) | the dashboard session that authorized it: signing out or revoking it deletes this row | 4 (P4-PRV-2) |
+| created_at, last_seen_at, expires_at | timestamptz | `expires_at = created_at + PREVIEW_SESSION_TTL` (capped by the dashboard session's own absolute expiry); `last_seen_at` is advanced at most once a minute; idle past `PREVIEW_SESSION_IDLE` is dead | 4 (P4-PRV-2) |
+| indexes | `(share_id)`, `(session_id)`, `(user_id)`, `(expires_at)` | | 4 (P4-PRV-2) |
+
+#### `preview_grant_uses` (new table; single-use ledger of authorization grants)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| jti | uuid pk | insert-on-conflict claims a grant exactly once | 4 (P4-PRV-2) |
+| expires_at | timestamptz not null | grant expiry + 60 s; pruned by the preview housekeeping job | 4 (P4-PRV-2) |
+
+#### `preview_stream_grants` (new table; phase 4, P4-PRV-2, D-147)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| token_hash | bytea pk | SHA-256 of the `aux_` grant | 4 (P4-PRV-2) |
+| share_id, sandbox_id, boot_id | uuid | the binding the runner receives; no FK (short-lived) | 4 (P4-PRV-2) |
+| port | int not null | copied from the share at mint time | 4 (P4-PRV-2) |
+| session_hash | bytea not null | the preview session it was minted for (for accounting only) | 4 (P4-PRV-2) |
+| expires_at, consumed_at | timestamptz | ≤ 30 s; `consumed_at` set by one compare-and-set on redemption | 4 (P4-PRV-2) |
+
+#### `relay_tokens`, `relay_replicas` (new tables; phase 4, P4-PRV-2)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| `relay_tokens.id`, `.token_hash` | uuid pk, bytea unique | `aul_`, from `AURORA_BOOTSTRAP_RELAY_TOKEN` (same shape as `connector_host_tokens`) | 4 (P4-PRV-2) |
+| `relay_replicas.id` | uuid pk | the replica id returned by `register` | 4 (P4-PRV-2) |
+| `relay_replicas.version`, `.last_seen_at`, `.streams_open` | text, timestamptz, int | heartbeat (`report`); churn columns; rows older than 24 h pruned | 4 (P4-PRV-2) |
+
+The gateway role gets nothing on any preview table. Preview sessions are deleted by cascade when
+their share, user or dashboard session goes; the `sessions` retention job's deletes cascade too.
+
+#### `sandboxes` (preview columns; phase 4, P4-PRV-1)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| preview_wake_at | timestamptz null | a preview request found the sandbox stopped; the start arm treats it as due work for `PREVIEW_WAKE_WINDOW` (churn column) | 4 (P4-PRV-1) |
+| preview_start_requested_at | timestamptz null | a request is waiting for the share's port; drives `preview.start` (churn column) | 4 (P4-PRV-1) |
+| preview_active_until | timestamptz null | `now() + PREVIEW_AWAKE_GRACE` at each relay heartbeat that reports an open or recent stream; keep-awake reason `preview` | 4 (P4-PRV-1) |
+| preview_awake_since | timestamptz null | first heartbeat of the current boot; the `PREVIEW_AWAKE_CAP` clock; reset at every start claim | 4 (P4-PRV-1) |
+
+`organizations.settings.previews_enabled` (jsonb key, no column): bool, default absent = off
+(`11 §Port previews`). The home-sync desired generation (`12 §Sync protocol`) already moves with
+the agent's own generation; a share change bumps `agents.home_sync_generation`.
+
+#### `skill_libraries` (new table; git skill library, phase 4, P4-GSL, D-148, D-149)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (P4-GSL) |
+| org_id | uuid FK→organizations (cascade) | | 4 (P4-GSL) |
+| label | text not null | 1..80, unique per org (`skill_libraries_label_uq`) | 4 (P4-GSL) |
+| connection_id | uuid null FK→app_connections (set null) | **org-scoped** connection (service-enforced at create and at every refresh); set null when the connection is deleted → `status = error`, `last_error = connection_deleted` | 4 (P4-GSL) |
+| app_id | text not null | the git-hosting app (snapshot id) at creation, for the dashboard | 4 (P4-GSL) |
+| repo | text not null | validated against the package's `repo_pattern` | 4 (P4-GSL) |
+| ref | text null | validated ref; null = the repository's default branch | 4 (P4-GSL) |
+| path | text not null default `` | directory holding the skill directories, ≤ 4 segments | 4 (P4-GSL) |
+| status | text not null default `active` CHECK in (`active`,`paused`,`error`,`over_budget`) | `paused` = an admin stopped refreshing | 4 (P4-GSL) |
+| last_head_sha, last_refresh_at, next_refresh_at | text null, timestamptz null, timestamptz | churn columns; `next_refresh_at` includes jitter and error backoff (15 min → 1 h → 6 h) | 4 (P4-GSL) |
+| last_error | text null | sanitized, ≤ 200 chars, never a token or a URL with credentials | 4 (P4-GSL) |
+| refresh_lease_until, lease_owner | timestamptz null, uuid null | the per-library lease of the refresh job (`LIBRARY_LEASE`) | 4 (P4-GSL) |
+| created_by_user_id | uuid null FK→users (set null) | | 4 (P4-GSL) |
+| created_at, updated_at | timestamptz | | 4 (P4-GSL) |
+| indexes | `(org_id)`; `(next_refresh_at) WHERE status = 'active'` | | 4 (P4-GSL) |
+
+#### `skills` (library source columns; phase 4, P4-GSL)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| library_id | uuid null FK→skill_libraries (set null) | non-null ⇒ the skill was added from a library and is **read-only** (`10 §Skills`); set null when the library is deleted (the skill is then detached; the service also nulls `library_blobs` and deletes the pending update in the same transaction) | 4 (P4-GSL) |
+| library_label, library_repo, library_path | text null | provenance snapshot (survives library deletion) | 4 (P4-GSL) |
+| library_commit_sha | text null | the commit the stored content was read from (the pin) | 4 (P4-GSL) |
+| library_blobs | jsonb null | `{ "<relative path>": "<blob id>" }` for `SKILL.md` and every file, used to detect change without refetching | 4 (P4-GSL) |
+| library_content_sha256 | bytea null | SHA-256 of the canonical content (body, then files sorted by path with mode) | 4 (P4-GSL) |
+| library_pinned_at, library_pinned_by_user_id | timestamptz null, uuid null | who added or last approved | 4 (P4-GSL) |
+| CHECK `skills_library_cols` | `library_id IS NULL OR (library_path IS NOT NULL AND library_commit_sha IS NOT NULL AND library_blobs IS NOT NULL AND library_content_sha256 IS NOT NULL)` | | 4 (P4-GSL) |
+
+A skill is **library-sourced and read-only iff `library_id IS NOT NULL`**. A **detach** (a person) and
+a **library deletion** both set `library_id = NULL`, `library_blobs = NULL` and delete the skill's
+pending update, and keep the text provenance columns as an informational "was from <repo>@<sha>" note:
+the skill becomes an ordinary editable skill of its tier. The tiers, uniqueness and indexes of `skills`
+are unchanged (`§skills`); the home-sync generation moves exactly as for any skill change.
+
+#### `skill_library_updates` (new table; proposed updates, phase 4, P4-GSL, D-148)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (P4-GSL) |
+| skill_id | uuid FK→skills (cascade) | at most one `pending` per skill (partial unique index) | 4 (P4-GSL) |
+| library_id | uuid null FK→skill_libraries (set null) | | 4 (P4-GSL) |
+| kind | text CHECK in (`changed`,`removed`,`invalid`) | | 4 (P4-GSL) |
+| status | text CHECK in (`pending`,`applied`,`rejected`,`superseded`) | | 4 (P4-GSL) |
+| commit_sha | text not null | the proposed commit | 4 (P4-GSL) |
+| proposed | jsonb null | for `changed`: `{ body, description, files: [{ path, content_b64, executable }], blobs }` validated; bounded by the skill limits; null for `removed`/`invalid` | 4 (P4-GSL) |
+| content_sha256 | bytea null | what an approval must quote | 4 (P4-GSL) |
+| reason | text null | sanitized validation failure for `invalid` | 4 (P4-GSL) |
+| created_at, decided_at | timestamptz | | 4 (P4-GSL) |
+| decided_by_user_id | uuid null FK→users (set null) | | 4 (P4-GSL) |
+| indexes | unique `(skill_id) WHERE status = 'pending'`; `(library_id)` | | 4 (P4-GSL) |
+
+Decided rows older than 90 days are pruned by the daily retention job (the audit row remains). The
+gateway database role gets nothing on these tables. Deleting an agent, workspace or org deletes its
+skills and, with them, their updates; deleting an org deletes its libraries after their skills.
+
 #### `agents`, `conversations` (harness selection)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

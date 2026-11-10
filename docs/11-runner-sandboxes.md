@@ -264,7 +264,9 @@ A running sandbox is **kept awake** if any of:
 - an active turn or `joining` follow-up exists;
 - a **busy** process (recent output or CPU) on the current boot, or an **armed
 watch** — both only while `now − last_engaged_at < BACKGROUND_CAP`;
-- (phase 4) a lease-current SSH session.
+- (phase 4) a lease-current SSH session;
+- (phase 4, P4-PRV-1, D-145) a **preview in use**: `preview_active_until > now()` and fewer than
+  `PREVIEW_AWAKE_CAP` (4 h) since the first preview heartbeat of this boot (`§Port previews`).
 
 (phase 4, RFE-011b) A **parked approval is not a keep-awake reason** (`07 §Park and resume`):
 the agent was refused, its turn ends, and the pending decision lives in Postgres. The
@@ -305,6 +307,151 @@ A container exiting outside a stop → `failed` with the substrate phase as reas
 code; active turns are revived once or failed (`10`); processes `lost`. Restart
 backoff for repeated start failures: 30 s, 2 min, 10 min (then only on new user
 engagement).
+
+## Port previews (phase 4, P4-PRV-1, D-144, D-145, SEC-80)
+
+A **preview share** lets people of the workspace open a web app that the agent runs on a TCP port
+inside its sandbox (a dev server, a report, a notebook) from their browser, at a stable
+hostname, without any inbound path into the sandbox. This section owns the share model and
+its lifecycle; the browser-facing service, authentication and byte streams are P4-PRV-2
+(`16 §W17`, `04 §Preview access`, `15 §Port previews`).
+
+**Off unless configured, at three levels.** A share exists and works only when (1) the
+instance sets `previews.enabled` **and** a valid `previews.domain` (a wildcard DNS name and
+TLS certificate are required, `15 §Port previews`); (2) the organization's owner or admin turned
+**Port previews** on for the org (`organizations.settings.previews_enabled`, default `false`,
+audited `org.previews.update`, security-critical); (3) a person created the share. With any of
+the three missing the product behaves exactly as before: no tab, no routes beyond
+`404 previews_disabled`, no allow-list in the sandbox (the supervisor refuses every stream, a
+second line of defence), no relay needed. Existing configurations are unchanged.
+
+**Share model** (`03 §Planned changes`, `preview_shares`).
+
+- One share per `(agent, port)`. Only **hosted** agents (a BYO agent has no sandbox: 422
+  `preview_not_supported`). Port `1024..65535` and not one of the supervisor's own
+  loopback listeners (`3128`, `3129`, `3130`, the per-session proxy ports are ephemeral and refused
+  because the supervisor knows them, `12`): 422 `preview_port_forbidden`. The port does not
+  need to be listening when the share is created (a start command may bring it up).
+- **Hostname**: `<label>.<previews.domain>`, `label = "p" + 24 base32 characters` (lowercase
+  `a-z2-7`, 120 random bits from the OS CSPRNG, unique index). The label contains **no**
+  agent, org, workspace or port information, is **stable for the life of the share**
+  (survives park, wake, restart, pause, freeze) and is **never reused**: deleting a share and
+  creating it again for the same port yields a new hostname (a bookmark, a cached redirect
+  or a stale grant can never reach a later share). The hostname is an address, not a secret:
+  access is always authenticated (below).
+- **Visibility**: exactly one value exists in phase 4, **`private`**: a person who has a live
+  dashboard session and for whom `can_use(workspace)` holds at the time of the request
+  (the access law, `04`: members, org owners and admins). There is **no** `public`,
+  `org`, link-with-token or per-person visibility, and no API key access (a preview is a browser
+  surface; machine callers use the agent's own tools). The column is `CHECK (visibility IN
+  ('private'))`; a later visibility is an additive migration and a new decision.
+- **Who may create, change and delete a share**: `can_use` of the agent's workspace
+  (`04 §Permission matrix`): it is the same authority as operating the agent (chat, schedules,
+  restart) and exposes the app only to people who can already read the agent's transcripts.
+  **Agent tools can never create, change or delete a share** (SEC-80): an agent cannot publish
+  itself; it can only tell its people the port in chat. Limits: `PREVIEW_SHARES_PER_AGENT` (10),
+  `PREVIEW_SHARES_PER_ORG` (200); 409 `preview_limit` beyond them; 409 `preview_exists` for a
+  second share on the same port.
+- **State**: `active` or `paused` (an owner or operator pauses a share without deleting it: the
+  hostname is kept, access is refused with 403 `preview_paused`, no wake, no start command).
+  The *displayed* status adds `waking`, `listening`, `not_listening`, `frozen`,
+  derived from the sandbox and `ports.state` (not stored).
+- **Start command** (optional, ≤ `PREVIEW_START_COMMAND_MAX` 1 024 chars, one line, plus an
+  optional `cwd` relative to `/workspace`): the command the supervisor runs **on demand** to bring
+  the app up when a preview request finds the port not listening (below). It runs through the
+  process manager as the agent user with the container's ordinary environment (machine proxy, no
+  platform credential, no `AURORA_*` variable): exactly the privilege the agent already has,
+  never more. The command text is stored in the share row, shown to people who can use the
+  workspace, **never** written to the audit log (only `start_command_set` and the first 12 hex
+  characters of its SHA-256), and never given to the relay.
+
+**Port discovery.** The supervisor already reports `ports.state { ports: [int] }` (`16 §W5`),
+stored as `sandboxes.listening_ports` (a churn column, reset at every boot). The dashboard's
+"Add share" dialog offers the currently listening ports (from `GET /v1/agents/{a}/sandbox`),
+and a share's `listening` status is `port ∈ listening_ports` of the current boot. Discovery is
+informational only: it never creates a share and the allow-list never contains a port merely
+because it listens.
+
+**Allow-list in the sandbox.** The supervisor learns which ports are shared only from the API,
+through a new home-sync part `previews` (`16 §W5`, `12 §Previews`): `{ shares: [{ share_id,
+port, start_command?, cwd? }] }`, containing the **active** shares of the agent (none while the
+instance, the org or the agent is switched off or the agent is frozen). It is held in the
+supervisor's memory (never read back from the home, which the agent can write). A share
+change bumps the agent's `home_sync_generation` (like skills) so a running sandbox receives it
+at once; a bump never wakes a parked sandbox. The runner independently enforces the same
+binding from the API's answer when a stream opens (`16 §W17`): both ends must agree on
+the port, so neither a compromised relay nor a compromised agent can reach another port.
+
+**Wake and start on a preview request** (D-145). A request to a share of a **parked** sandbox
+is a **wake demand**: the relay's resolve call (`05 §Relay plane`) sets
+`sandboxes.preview_wake_at = now()` (rate limit `PREVIEW_WAKES_PER_SHARE_HOUR` 12 per share;
+beyond it 429 `preview_wake_limited`, shown by the relay as a "try later" page), and the **start arm**
+of the due-work engine (`05`) treats a demand younger than `PREVIEW_WAKE_WINDOW` (60 s) as due work
+for a sandbox that is not effectively frozen, subject to the ordinary start backoff
+(`§Failure`) and the runner's capacity. The boot is the normal boot (`§Start`); then:
+
+1. when `home_applied_generation >= desired` (the `previews` part is applied) and the share has
+   a start command and its port is not in `listening_ports`, the API enqueues the work item
+   `preview.start { share_id }` (`16 §W5`), the runner forwards the frame `preview.start { port }`
+   and the supervisor starts the share's command as a process named `preview:<port>`
+   (kind `preview` in `process.state`, visible in the Computer tab, ends with the boot). It looks
+   the command up in its own allow-list by port: the frame carries no command text;
+2. the relay keeps the browser's request waiting until the port is listening, at most
+   `PREVIEW_WAKE_WAIT` (45 s); otherwise it answers a `503` page that refreshes itself;
+3. a start command that exits is relaunched by a later request, at most `PREVIEW_START_ATTEMPTS`
+   (3) times per share per `PREVIEW_START_WINDOW` (10 min); the dashboard shows the last exit
+   code and the tail of the process output for people who can use the workspace.
+
+A share **without** a start command never starts anything: a request to a running sandbox
+whose port is not listening waits up to `PREVIEW_LISTEN_WAIT` (5 s) and then answers 502
+"nothing is listening on this port"; a request to a parked sandbox still wakes it (the agent
+may bring the app up by itself, e.g. from its shell history or a schedule) and waits the same
+`PREVIEW_WAKE_WAIT`. A preview **never** creates a turn, a conversation event or a
+`last_engaged_at` stamp.
+
+**Keep-awake** (`§Keep-awake`). While people are really using a preview the sandbox must not
+park under them: the relay's heartbeat (`05 §Relay plane`) refreshes
+`sandboxes.preview_active_until = now() + PREVIEW_AWAKE_GRACE` (120 s) whenever at least one
+stream is open or one completed in the last grace period, and the keep-awake predicate gains
+the reason **`preview`** while `preview_active_until > now()` **and** `now() − preview_awake_since
+< PREVIEW_AWAKE_CAP` (4 h; `preview_awake_since` is set when the first heartbeat of a boot
+arrives and reset at the next boot), so an open WebSocket cannot hold a sandbox awake forever.
+Past the cap the sandbox parks like any idle one (`stop_reason = cap`) and the next request wakes
+it again. The dashboard's "awake because…" badge says "Preview in use".
+
+**Lifecycle of a share** (the table is normative; "stays" means the row and hostname are kept):
+
+| Event | Effect on shares | Effect on access and streams |
+|-------|------------------|------------------------------|
+| Sandbox idle-parks, cap, evict | stay | request wakes the sandbox (above); open streams were closed by the stop (`channel_lost`) |
+| Agent restart, runner restart, W6 reconnect that lost state | stay | streams closed; the browser retries |
+| Agent **frozen** (agent, workspace or org, RFE-006) | stay, inert | **no wake, no start, no stream**: 423 `frozen` page "paused by an administrator"; open streams closed within `PREVIEW_AUTH_CACHE` (15 s); allow-list emptied; unfreezing restores access, nothing is replayed |
+| Share paused | stay | 403 `preview_paused`; streams closed within 15 s; allow-list loses the port |
+| Share deleted | row deleted; hostname never reused | sessions of that share deleted; 404; streams closed within 15 s; allow-list loses the port at the next sync |
+| Agent deleted (or workspace, org deleted) | cascade-deleted with the agent | as deleted; the sandbox is destroyed by reconcile |
+| Org **Port previews** switched off, or `previews.enabled` removed | stay, inert | 404 `previews_disabled`; streams closed; allow-list emptied; switching on restores them |
+| Member loses access, is suspended, removed, or signs out | stay | that person's preview sessions end (below, `04 §Preview access`) within 15 s |
+| Harness changed, agent moved to another runner | stay | streams closed; the next request resolves the new placement |
+
+**Runner stream listener** (P4-PRV-2, D-147). When `previews.enabled`, each runner replica opens a
+third listener, `runner.stream_bind` (default `server.bind`) port **4108**, that serves only
+`GET /v1/preview-stream` (`16 §W18`); startup warns when its address overlaps the one
+of the sandbox-facing 4105 listener (the same rule as `runner.ops_bind`). It admits a connection only with a valid stream
+grant, which the runner redeems at the API; it holds no secret and never accepts a
+port or sandbox from the caller. It is reachable from the relay and nothing else: the sandboxes
+namespace has no route to it (NetworkPolicy and the `listener_binds`-style guard, SEC-09/SEC-82).
+The runner multiplexes the streams of a sandbox over that sandbox's supervisor channel
+(`16 §W18`), keeps per-stream buffers of at most `PREVIEW_STREAM_WINDOW`, enforces
+`PREVIEW_STREAMS_PER_SANDBOX`, closes every stream of a sandbox when its channel ends, the boot
+changes, or the sandbox stops, and tells the API when a stream closes (accounting only). A runner
+without `previews` support (older version) does not open the listener and registers without the
+capability `previews`; the API places no preview on it (`unavailable`).
+
+**Audit** (`04 §Audit`; security-critical, same transaction): `preview.share.create`,
+`preview.share.update` (pause/resume, start command changed), `preview.share.delete`,
+`org.previews.update`. Not audited per request (volume): access is visible as metrics and
+`preview_shares.last_accessed_at`; a person's first access per preview session writes the
+best-effort row `preview.session.create` (`04 §Preview access`).
 
 ## Reconcile and orphan reaping
 

@@ -466,6 +466,15 @@ again" and "Show the getting-started guide again".
   lists the BYO agents the person created ("regenerate their tokens"). Built from the shared patterns only.
 - **Policy**: org rules editor (draft/publish). (phase 3, RFE-023) The **Default Rule** control carries the note "Does not affect LLM endpoints — see Governance" with a link to the governance page, and a tooltip explaining that explicit block rules naming an LLM host still apply.
 - **Credentials**: org secrets, org LLM keys, org app connections, OAuth clients.
+- **Port previews** (`/o/<org>/settings/previews`, phase 4, P4-PRV-1, D-144; org owners/admins;
+  the page and its nav entry exist **only when `GET /v1/instance` reports `previews.enabled`**):
+  a single card built from the shared settings patterns with a switch "Allow port previews in
+  this organization" (off by default), the text "Lets people who can use a workspace open web
+  apps that its agents run, at `https://<random>.<previews.domain>`. Only signed-in people who
+  can use that workspace can open them, and agents cannot create them", the preview domain
+  (read-only), and a table of the org's shares (agent, workspace, port, state, last accessed)
+  with a link to each agent. Turning it off asks for confirmation ("Existing links stop working
+  until you turn it back on") and is audited.
 - **Apps**: app availability posture and allow-list.
 - **Instances** (`/o/<org>/instances`, phase 2, D-74): the org's registered self-hosted app instances plus the read-only instance-wide ones; owners/admins register (app, host, label), disable/enable and delete (the confirm says its connections are disabled and its OAuth clients removed). The connect dialog of an instance-bound app shows an instance picker (default host first), and OAuth clients can be bound to an instance.
 - **Governance** (`08 §11`; phase 3, RFE-013: a **BYO agent tokens** setting "maximum age (days)", empty = never expire, shown locked with "enforced by instance" when the instance value is lower, plus a stale/expiring token list with Regenerate shortcuts; phase 2, RFE-025: a **BYO agents** panel — posture selector limited to values not below the instance floor, default source CIDR list, org default "require context credentials"; shown locked with "enforced by instance" when `byo.enabled = false`):
@@ -490,6 +499,15 @@ again" and "Show the getting-started guide again".
   automatically by verified email"** (default off; shown only when the
   connector offers `email_verified`), with the trust warning of `13 §5.9`;
   toggling it needs a confirm dialog.
+- **Skill libraries** (`/o/<org>/skills/libraries`, phase 4, P4-GSL, D-148; org owners/admins; a tab of
+  the org Skills page): a table (label, repository `owner/name`, ref, path, status chip with the sanitized
+  last error and "Reconnect" link when the connection needs it, last checked, skills in use by tier,
+  pending updates) and **Connect a repository** (dialog: pick an org-scoped connection of an app that can
+  serve a library, repository, optional branch/tag, optional folder; the read-only warning from
+  `required_access`; the creation check's failure shown in words), **Check now**, Pause/Resume, Delete
+  (confirm: "N skills keep their content and become editable skills"). No library exists until an admin
+  creates one; with none, the org Skills page shows an inline "Add a library" call to action only to
+  owners/admins.
 - **Skills**: org skills editor (tier badge "Organization"; phase 3, RFE-020: states that workspace and agent skills with the same name take precedence).
 - **Retention** (phase 2, RFE-010/015): conversation and attachment windows,
   attachment quota with the storage breakdown (by workspace and direction), a
@@ -552,6 +570,20 @@ again" and "Show the getting-started guide again".
   - **Memory** — list, editor with revisions, restore, redact, search; banner
     "Memories in this workspace are written in <Language>".
   - **Skills** — editor with file tree, executable bit, size meter. (phase 3, RFE-020) Lists the agent's **effective** skills with a tier badge (Agent / Workspace / Organization) and, for shadowing, "overrides the Workspace skill of the same name" / "overridden by …"; workspace and org skills open read-only here with a link to where they are edited.
+    (phase 4, P4-GSL, D-148) **Add from library…** (next to New skill, shown only when the org has an
+    active library): a picker of libraries → a searchable list of the library's skills at its current
+    commit (name, description, size, "already added" chips, invalid ones disabled with the reason) → a
+    full preview of exactly what would be stored (`SKILL.md` and files, rendered as text) with the
+    commit sha and the sentence "Pinned to this commit. Changes in the repository are not applied until
+    someone with permission approves them." → **Add** (disabled when over budget, with the numbers).
+    A library skill carries the badge "Library · <repo> · <sha7>", opens **read-only** with the banner
+    "Managed by a skill library; edit it in the repository or detach it" and the actions Enable/Disable,
+    **Detach** (confirm: becomes an editable skill) and Remove; an **Update available** chip opens the
+    review dialog: whole-content diff (no truncation), the new commit sha, kind (changed / removed /
+    invalid), budget impact, **Approve** (the tier's write authority; disabled with the explanation for
+    others, who can still read the diff) and **Reject**. The same flow on the workspace Skills page
+    (`can_own` to add or approve) and the org Skills page (org owners/admins); repository text is
+    shown as data, never as HTML or markdown with links that auto-open.
   - **Schedules**, **Webhooks** (URL shown once on create/rotate; phase 2,
     RFE-021: each item shows its owner — a person or "Workspace" — with
     **Reassign…** (picker of members who can use the workspace; re-enable option
@@ -563,6 +595,26 @@ again" and "Show the getting-started guide again".
     (reason required, confirm dialog listing the effects); a frozen agent shows a
     banner "Frozen by <name> on <date>: <reason>" with Unfreeze (disabled with the
     explanation when a higher authority froze it).
+  - **Previews** (phase 4, P4-PRV-1, D-144; the tab exists only for hosted agents when
+    `previews.enabled` and the org has switched Port previews on; otherwise the Computer
+    tab's port list simply shows no "Share" action) — a table of the agent's shares from
+    `GET /v1/agents/{a}/previews` (shared `DataTable`, status chips from the token set):
+    the URL (monospace, **Copy** and **Open** buttons; Open uses `rel="noopener noreferrer"` in a
+    new tab), port, status (Listening / Not listening / Waking / Paused / Frozen, each with a
+    word, never colour alone), start command (truncated, full in the row dialog), last started
+    (exit code and the output tail in a dialog for people who can use the workspace), last
+    accessed, and row actions **Start now**, **Pause/Resume**, **Edit**, **Delete** (confirm).
+    **Add share** (dialog): a port field with the currently listening ports offered as chips
+    (from `/sandbox`, with "Nothing listening yet — you can still add a start command"), an
+    optional start command and working folder with the note "Runs inside the agent's computer
+    when someone opens the link and nothing is listening. It can do whatever the agent can do."
+    and the visibility line "Private: signed-in people who can use this workspace". Errors map
+    to field messages (port forbidden, limit, exists). A frozen agent shows its freeze banner and
+    read-only rows; a banner "Previews need a wildcard domain" is **never** shown to members
+    (instance admins see the status on Admin → Overview). The Computer tab's port list gains a
+    **Share…** action per listening port that opens the same dialog prefilled, and "awake
+    because…" shows "Preview in use". No horizontal scroll at 390 px (rows collapse to cards, the
+    URL wraps), both themes, tokens and primitives only.
   - **Computer** — sandbox state, "awake because…" reasons, processes,
     restart; BYO agents instead show **Connect** (token regenerate, container
     config, `aurora run` snippet, CA download). (phase 2, RFE-025) The Connect
@@ -620,7 +672,7 @@ again" and "Show the getting-started guide again".
     have it (`GET …/grants`), "Remove" per agent (agent-side `DELETE`) and the
     same add picker.
 - **Policy** — workspace rules editor. (phase 3, RFE-023) Its Default Rule control carries the same note ("Does not affect LLM endpoints — see Governance"); simulate shows `default_rule_skipped_llm_host` when the carve-out applied.
-- **Skills** (phase 3, RFE-020) — workspace skills editor (owners; members read-only): same editor as the agent tier, a banner "Applies to every agent in this workspace", and a per-skill list of the agents it reaches and any agent-level skill that overrides it.
+- **Skills** (phase 3, RFE-020; phase 4, P4-GSL: also **Add from library…**, library badges, read-only library skills and the update review, as on the agent Skills tab, with `can_own` as the authority) — workspace skills editor (owners; members read-only): same editor as the agent tier, a banner "Applies to every agent in this workspace", and a per-skill list of the agents it reaches and any agent-level skill that overrides it.
 - **Activity** — request log (decision, rule name, app/tool, conversation
   link), usage.
 - **Policy** also edits the workspace's uncredentialed default and allow-list
@@ -652,6 +704,8 @@ claims** (conflicts and winners), **Trusted keys**, **Connectors** (provision,
 token rotation, manifest approval with capability/setup-field diff; (phase 4, P4-MCON) see
 below), **Runners**
 (provision, token, replicas, capacity), **Instances** (instance-wide app instances, D-74), **OAuth clients** (instance-level).
+(phase 4, P4-PRV-2) a **Previews** line when `previews.enabled`: relay replicas
+(`GET /v1/admin/relays`), the domain, share count and a "no relay seen" warning.
 (phase 4, P4-ONB-1, D-140) **Sign-up & placement** (`04 §New-user placement`): sign-up
 mode shown read-only (config); placement mode; default org (pick or create); shared
 workspaces with roles; personal workspace on/off, role, name template with a live

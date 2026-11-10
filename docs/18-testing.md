@@ -501,6 +501,114 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - **Dashboard and service worker** (`web/tests`): the Notifications card states (unsupported, insecure origin, permission denied, iOS Home Screen note, registered, paused, not receiving, key rotated → silent re-subscribe), the gesture requirement, sign-out removes the device; the service worker (unit tests in a service-worker test environment) shows the generic notification for a malformed or unknown-version payload, builds text only from the fixed fields, `notificationclick` navigates only to a same-origin path starting with `/o/` and falls back to `/` for `//evil`, `https://…`, `javascript:`, backslashes, and has no `fetch` handler; parked chips and sentences on the Approvals page, chat and overview; both themes, 390 px.
 - **e2e** (extension of `scripts/e2e/`, owned by its lane; the browser-push leg uses the mock push service and headless Chrome's push emulation): a rule with a 2-hour timeout and parking on → the agent is refused `approval_parked`, ends its turn, the sandbox parks, the approver approves from a card, the system follow-up wakes the agent and the identical request succeeds exactly once.
 
+### Port previews (phase 4, P4-PRV-1, P4-PRV-2, D-144..D-147, SEC-80..SEC-82, SEC-85)
+- **Shares, API** (`api/it/previews.rs`, real Postgres, `fake` runner): off by default (no
+  `previews.enabled` → every route 404 `previews_disabled` and `GET /v1/instance` says so; org
+  switch off → 409 `previews_not_enabled_for_org`); create/list/patch/delete matrix (`can_use`
+  member yes, non-member 404, **agent tool call and agent credential refused** (SEC-80), API key
+  allowed for management only); BYO agent 422; port bounds and the supervisor-reserved ports 422;
+  duplicate port 409; per-agent and per-org limits; label shape (`p` + 24 base32), uniqueness
+  under 1 000 creations, **never reused** after delete and re-create; visibility accepts only
+  `private` (a `public`/`org` value is 422, the CHECK constraint rejects it in SQL); start
+  command validation (length, newline, cwd traversal) and the audit rows (`preview.share.*`,
+  `org.previews.update`, security-critical, same transaction; the command text is **not** in any
+  audit row, only its hash prefix).
+- **Lifecycle** (`api` + `fake` runner): park/wake keeps the share and the hostname; a wake demand
+  starts a stopped sandbox once and honours the start backoff and `PREVIEW_WAKES_PER_SHARE_HOUR`;
+  `preview.start` is emitted only after the `previews` part is applied, only for a share with a start
+  command whose port is not listening, at most `PREVIEW_START_ATTEMPTS` per window; effectively
+  frozen (agent, workspace, org): no wake, no `preview.start`, allow-list empty, 423, share kept, and
+  unfreeze restores it with nothing replayed; paused share; org switch off/on; agent/workspace/org
+  delete cascades (sessions too); a preview never creates a turn or stamps `last_engaged_at`; the
+  `preview` keep-awake reason lasts `PREVIEW_AWAKE_GRACE` after the last heartbeat and ends at
+  `PREVIEW_AWAKE_CAP` (a held WebSocket cannot keep the sandbox awake forever); `ports` list
+  carries `shared`.
+- **Supervisor** (`sup`): the share list lives in memory only (a file planted in the home changes
+  nothing); `preview.start` for an unknown port, a share without command, an already listening port or
+  an empty list is a no-op; a started command runs as the agent user with the container environment (no
+  `AURORA_*` variable, no platform credential) as process `preview:<port>`; the frame carries no
+  command text.
+- **Config** (`config` crate): `previews.enabled` without a valid domain refuses to start; domain
+  equal to, containing or under the dashboard host, a trusted origin or the gateway host; one label;
+  public suffix; upper case; too long.
+- **Browser authorization** (`api/it/preview_auth.rs`, real Postgres; the relay logic is
+  exercised through the relay crate's test harness with the API in process): the full grant
+  exchange (no cookie → state cookie + `302` to `authorize` → `302` to `/_aurora/grant` →
+  cookie → path); matrix of failures with the uniform 404 (unknown label, instance/org off, paused,
+  no access, member of another workspace); grant replay (second redeem 400), expiry, wrong host, tampered
+  seal, wrong user, session revoked in between, missing or mismatched state cookie (login CSRF), a
+  `path` that is `//evil`, absolute or under `/_aurora/`; the redirect target is always `https://<label>.<domain>`
+  (property test with hostile `host`/`state` parameters); cookie attributes of `__Host-aurora_preview`
+  and `__Host-aurora_pstate`; **every Aurora cookie lacks `Domain`**, and a request to a preview
+  host in the browser-level e2e never carries `aurora_session`; revocation: sign-out, session revoke,
+  member suspended/removed, `can_use` lost through a group, share paused/deleted, freeze, org switch off →
+  next resolve denies and open streams close within `PREVIEW_AUTH_CACHE`; preview credential is
+  accepted by no API route; `csrf_rejected` for `Sec-Fetch-Site: same-site` XHR with the session cookie
+  while previews are on (and no change while off); `preview.session.create` audit.
+- **Relay** (`relay` crate tests with a fake runner and fake API): Fetch Metadata matrix (navigation
+  allowed; same-site/cross-site fetch, form post, iframe, image refused), WebSocket `Origin`; header hygiene
+  both ways (cookie stripped, Aurora headers never forwarded, `Host` kept, `X-Forwarded-*` set, hop-by-hop
+  removed, `Set-Cookie` `Domain` removed and `__Host-aurora_*` dropped, cache/robots/HSTS headers); smuggling
+  corpus (CL.TE/TE.CL, duplicate `Content-Length`, line folding, absolute-form, `Host` mismatch, `/_aurora/` traversal);
+  streaming of large bodies without buffering (memory stays flat for a 1 GiB response), range requests,
+  chunked, HTTP keep-alive over one stream, WebSocket echo, server-sent events, slow-loris, idle/lifetime
+  timeouts, per-share/sandbox/user stream limits, daily byte quota; wake wait (parked sandbox → 503 page with
+  refresh after 45 s; success when the port starts in time), start-command exit page, uniform 404/423 pages,
+  resolve cache (15 s) and revalidation closing streams.
+- **Streams** (`run` and `sup` crates, the W6 mock): `stream.open` for an unshared port, a reserved
+  port, with an empty list, after the share was removed → refused; connect only to loopback (a share whose
+  port is bound only on another interface fails, no other address is tried); credit accounting (a sender never
+  exceeds the window, a credit above the window or a data frame without credit closes the stream, 64 concurrent
+  streams × 128 KiB bound), round-robin fairness under a hostile fast stream, binary framing, control frames
+  outside seq/ack (a W6 reconnect ends every stream, nothing is replayed), runner redeems the grant and ignores
+  relay parameters (stolen grant opens only its own share; expired, used, stale boot, stopped sandbox,
+  frozen); an older supervisor answers nothing → `4502`; the stream listener is unreachable from the sandboxes
+  network (kind/e2e and a guard in `scripts/guards`), TLS option.
+- **Helm** (`deploy/helm` render tests, part of the edge-routes guard): with `previews.enabled=false` the chart
+  renders no relay, no wildcard host, no NetworkPolicy change (golden diff against the current render);
+  enabled renders exactly the relay Deployment/Service/PDB, the wildcard host routing only to the relay
+  (Ingress and HTTPRoute), the NetworkPolicies of `15 §Port previews`; `previews.enabled` without a domain or with
+  a domain under the dashboard host fails the render and the API start.
+- **Dashboard** (`web/tests`): tab absent when previews are off/the org has them off/BYO; add dialog
+  with listening-port chips and error mapping; copy/open (rel attributes); frozen read-only; org
+  settings page and confirmation; no horizontal scroll at 390 px, both themes.
+
+### Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
+- **Fake git host** in the test kit (`tests/kit`): serves a GitHub-shaped and a GitLab-shaped API (ref
+  resolution, recursive and paginated trees, blobs, raw files, rate-limit responses, truncated trees, a
+  moving head, renames/deletions, symlink and submodule entries, oversize files, hostile names and
+  descriptions) behind the gateway's guarded resolver (loopback allowed only in the test configuration).
+- **Registry** (`reg/it/library.rs`): the `library` linter matrix of `09 §3.4 library` (non-exact or
+  wildcard host, host not in `hosts[]`, free placeholders, non-GET, JSON path shapes, bad
+  `repo_pattern`, unknown keys), snapshot copy, re-approval when the block changes, the built-in GitHub
+  and GitLab packages validate with their fixtures (resolve, tree incl. pagination, blob; instance-bound
+  GitLab host).
+- **Gateway** (`gw/it/library_fetch.rs`): parameter fuzzing → 400 `library_param`; connection checks (other
+  org, workspace-scoped, disabled, other app, no `library` block) → 409/404; the request is built from the
+  template (the fake host sees exactly one `GET` per step with the injected credential, no agent headers);
+  redirect not followed; size/time caps; OAuth refresh and `reauth_required`; the route needs the internal
+  secret and is not on the proxy listener; no log line or response contains a credential; rate limits.
+- **API** (`api/it/skill_library.rs`, real Postgres, the fake host, a fake gateway client where useful):
+  create/list/patch/delete with the permission matrix (org admin yes, member no, workspace-scoped connection
+  422, limit 409), browse (live, nothing stored, validity and reasons, caching 5 min), **add** at each tier
+  with its authority (agent `can_use`, workspace `can_own`, org admin; agent tool and agent credential
+  refused; the exact requested commit is read even if the head moved), validation (symlink, submodule, big
+  file, bad frontmatter name, reserved name, size limits), uniqueness and shadowing across tiers unchanged,
+  **budgets** per agent/workspace/org at add and approve, **read-only** enforcement through every route and tool,
+  detach and library deletion; **refresh** under the lease (two replicas never refresh one library; lease
+  expiry; backoff; unchanged head costs one call; changed blobs → one proposal; superseding; deletion →
+  `removed`; invalid → `invalid`; over-budget; connection revoked/deleted/`reauth_required`; package without
+  `library`; interval floor) with the invariant checks of SEC-83 (no change to `skills`, `skill_files`, any
+  home-sync generation or the sync parts until approval); **approve** (session only; hash quoted; race with
+  a newer proposal → 409 `update_superseded`; re-validation; audit rows critical; generation bump for exactly
+  the affected agents), reject remembered, `skill.library.update_proposed` best-effort.
+- **Supervisor/projection** (`sup`, `api` + `fake` runner): library skills are projected exactly like manual
+  skills (read-only modes, manifest pruning, tier precedence); a pending proposal changes nothing in the home.
+- **Dashboard** (`web/tests`): libraries page and connect dialog (errors in words, read-only warning), Add from
+  library flow (preview of the exact stored content, over-budget disabled), badge and read-only banner, detach and
+  remove confirms, update review (full diff, disabled approve for non-authority with explanation), repository text
+  rendered as data (an HTML/markdown/URL payload is inert), no horizontal scroll at 390 px, both themes.
+
 ### API rate limiting (phase 2, RFE-017)
 - Bucket semantics per class (burst then steady refill), a request must pass
   general + class + org buckets and a refused request consumes none of the others;

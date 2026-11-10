@@ -353,7 +353,7 @@ arguments; state changes are reported to the API.
 | Family | Tools |
 |--------|-------|
 | Memory | `memory_save {key, title?, description?, content}`, `memory_get {key}`, `memory_list {}`, `memory_search {query}`, `memory_delete {key}` |
-| Skills | `skill_list {}`, `skill_get {name}`, `skill_create {name, description, body, files?}`, `skill_update {name, …}`, `skill_delete {name}` (agent tier only; phase 3, RFE-020: `skill_list`/`skill_get` return the effective set of all three tiers with `tier` and `shadows`, writes touch the agent tier only) |
+| Skills | `skill_list {}`, `skill_get {name}`, `skill_create {name, description, body, files?}`, `skill_update {name, …}`, `skill_delete {name}` (agent tier only; phase 3, RFE-020: `skill_list`/`skill_get` return the effective set of all three tiers with `tier` and `shadows`, writes touch the agent tier only; phase 4, P4-GSL: `skill_list`/`skill_get` also return `source` for a library skill, and `skill_update`/`skill_delete` on a library skill are refused with `library_skill_readonly` — only people change what a library pinned, `10 §Skills`; `skill_create` cannot take a library source) |
 | Schedules | `schedule_create {name, prompt, cron, timezone?, gate_command?, gate_description?}`, `schedule_list {}`, `schedule_update {id, …}`, `schedule_delete {id}` |
 | Webhooks | `webhook_list {}`, `webhook_deliveries {id}`, `webhook_update {id, instructions?, enabled?}` |
 | Processes (local) | `process_start {name, command, cwd?}`, `process_status {id?}`, `process_stop {id}`, `process_watch {id, kind, pattern?, silence_secs?}` |
@@ -381,7 +381,7 @@ The home (`/workspace`) holds:
 - Part kinds: `skills` (full files), `memory` (rendered files), `render_inputs`
   (preamble data, brief, capability fragment inputs: apps with snippets and
   docs links, presences, peers, memory language, schedules summary, timezone),
-  `tools` (catalogue), `manifest` (the complete list of managed paths), `final`.
+  `tools` (catalogue), (phase 4, P4-PRV-1) `previews` (the active preview shares, held in memory only, `§Previews`), `manifest` (the complete list of managed paths), `final`.
 - The supervisor applies each part idempotently without buffering; only the
   **final** part prunes managed roots to the manifest, re-renders instruction
   files, and acks `home.synced { generation }`. A crash mid-generation leaves
@@ -449,6 +449,36 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
 - Harness-run background tasks (if the adapter exposes them) are mirrored
   through the same `process.state` path so the platform knows about all
   background work.
+
+### Previews (phase 4, P4-PRV-1, D-144, D-145; streams in P4-PRV-2)
+
+- The supervisor keeps the **share list** in memory only: the `previews` part of the home sync
+  (`{ shares: [{ share_id, port, start_command?, cwd? }] }`, replaced as a whole by each full
+  sync, empty when previews are off, the org has them off, the share is paused or the agent is
+  frozen). Nothing is read back from the home (the agent can write it) and nothing is persisted.
+- `ports.state` discovery is unchanged (informational). The allow-list for streams is the share
+  list, **never** the discovery result (`12 §Streams`).
+- **On-demand start**: the frame `preview.start { port }` (from the work item `preview.start`)
+  looks the port up in the share list; with a `start_command` and the port not listening, the
+  supervisor starts it as a background process `preview:<port>` (kind `preview` in
+  `process.state`, `/workspace` or the share's `cwd`, container environment, own process group,
+  counted in the ordinary process limits, output in the ring buffer like any process). An
+  unknown port, a share without a command or a port that is already listening is a no-op.
+  A start never carries command text on the wire and never runs while the agent is frozen
+  (the share list is empty).
+- **Streams** (P4-PRV-2, `16 §W18`): on `stream.open { stream_id, port, window }` the supervisor
+  accepts only a port of its **share list**, 1024..65535 and not one of its own listeners;
+  connects to `127.0.0.1:<port>` (then `[::1]`) only, 5 s timeout, no proxy, no other address;
+  answers `stream.opened`/`stream.refused`; relays bytes with credit-based flow control (128 KiB
+  windows, 16 KiB chunks, round-robin between streams, control frames first); at most
+  `PREVIEW_STREAMS_PER_SANDBOX` (64) concurrently, more → `refused { limit }`; closes everything on
+  channel loss, `shutdown` or a changed share list that removed the port. Stream bytes never pass
+  through the harness, the gateway or the loopback proxies and are never logged or stored (only
+  counts). With an empty list the supervisor refuses every `stream.open`: that is the state of every
+  sandbox of an instance, org or agent without previews.
+- A preview-started process is an ordinary process: it is *busy* by the usual rule, parks and
+  is marked `parked` with the boot, and keeps the sandbox awake only through the ordinary
+  background rule; the `preview` keep-awake reason comes from stream activity alone.
 
 ## Outbound files
 

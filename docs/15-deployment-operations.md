@@ -86,6 +86,17 @@ one new entry without activating it.
 | `connector_host.api_url` | `http://127.0.0.1:4101` | connector-host | (phase 4, P4-MCON) the API the host registers with; the token comes from `AURORA_CONNECTOR_HOST_TOKEN` (`auh_`) |
 | `connector_host.listen` / `connector_host.ops_port` | `0.0.0.0:4110` / `4192` | connector-host | (phase 4, P4-MCON) platform callbacks (`/connectors/<id>/…`) / health and metrics |
 | `connector_host.test_types` | `false` | connector-host | (phase 4, P4-MCON) also announce the `fake` type (development and e2e only; startup warns) |
+| `skills.library.enabled` | `true` | api | (phase 4, P4-GSL) kill-switch of the git skill library; invisible until an org admin connects a repository; no new infrastructure (`§Git skill library`) |
+| `skills.library.refresh_interval_secs`, `skills.library.bytes_per_agent` | 900 (≥ 300), 1 MiB (lower only) | api | (phase 4, P4-GSL) `LIBRARY_REFRESH_INTERVAL`, `LIBRARY_BYTES_PER_AGENT` (`02 §Limits`) |
+| `previews.enabled` | `false` | api, relay | (phase 4, P4-PRV-1) master switch for port previews; **off unless configured**; when `true` the API refuses to start without a valid `previews.domain` (`§Port previews`) |
+| `previews.domain` | — | api, relay | (phase 4, P4-PRV-1) the DNS suffix of preview hostnames, e.g. `preview.example.org`; needs a wildcard DNS record and a wildcard TLS certificate; must not be, contain or sit under the dashboard host (startup validation, `§Port previews`) |
+| `previews.session_ttl_secs`, `previews.session_idle_secs`, `previews.bytes_per_share_day` | 28800, 3600, 5 GiB | api, relay | (phase 4, P4-PRV-2) lower only for the first two (`02 §Limits`) |
+| `relay.api_url` | `http://127.0.0.1:4101` | relay | (phase 4, P4-PRV-2) the API it registers with; the anchor token comes from `AURORA_RELAY_TOKEN` (`aul_`) |
+| `relay.listen` / `relay.ops_port` | `0.0.0.0:4112` / `4193` | relay | (phase 4, P4-PRV-2) edge-facing HTTP / health and metrics |
+| `relay.max_streams`, `relay.max_streams_per_user`, `relay.request_body_max_bytes` | 2048, 64, 100 MiB | relay | (phase 4, P4-PRV-2) per replica; lower only for the last two |
+| `runner.stream_bind` / `runner.stream_tls.*` | `server.bind`:4108 / off | runner | (phase 4, P4-PRV-2) the relay-facing stream listener (only opened when the API's `previews.enabled` is true at registration) and optional TLS (`cert_file`, `key_file`; the relay then verifies against `relay.runner_ca_file`) |
+| `previews.shares_per_agent`, `previews.shares_per_org` | 10, 200 | api | (phase 4, P4-PRV-1) lower only (`02 §Limits`) |
+| `previews.awake_cap_secs` | 14400 | api | (phase 4, P4-PRV-1) `PREVIEW_AWAKE_CAP`, at most `hosted.background_cap_secs` |
 | `database.max_connections` | 20 (api), 10 (gateway) | api, gateway | pool size |
 | `database.gateway_role` | — | api (migrations) | login role the **operator creates** (`CREATE ROLE <r> LOGIN PASSWORD '…'`); `migrate` only grants it the gateway privileges (`03`) and fails if it does not exist. The gateway must then connect as it (its own `AURORA_DATABASE_URL`; Helm `database.gatewayExistingSecret`) |
 | `auth.signup_mode` | `invite_only` | api | `open`, `invite_only`, `sso_jit` |
@@ -292,6 +303,9 @@ override changes nothing else (same package list, same labels, same tag scheme
   path only when `scim.enabled` is true, so a default deployment exposes nothing new, and the
   edge-routes guard checks both renderings); SCIM requests are small and need no body or
   buffering exception.
+- (phase 4, P4-PRV-2) With `previews.enabled` the edge also serves the **wildcard host**
+  `*.<previews.domain>` → relay :4112 (a second host, never a path of `server.external_url`;
+  `§Port previews`). Without it nothing about the edge changes.
 - (phase 2, RFE-017) The API limits by authenticated principal, not by IP, except
   for unauthenticated routes (which trust the edge's overwritten `X-Forwarded-For`).
   Size `ratelimit.api.multiplier` up for deployments where service keys legitimately
@@ -777,3 +791,123 @@ in `push.allowed_endpoint_hosts`). Helm values: `approvals.park.*`, `push.enable
 `push.allowedEndpointHosts`, `push.networkPolicy.egressTo`. A subscription (and so the notification)
 belongs to the browser profile and the Aurora session that created it: shared-computer users should
 sign out, which ends delivery.
+
+## Port previews (phase 4, P4-PRV-1, P4-PRV-2, D-144..D-147, SEC-80..SEC-82, SEC-85)
+
+**Optional and off by default.** Port previews (`11 §Port previews`) need infrastructure no other
+feature needs, so a deployment that does not set `previews.enabled` has no relay, no wildcard DNS or
+certificate, no extra Service, no extra Ingress rule and no extra NetworkPolicy; every other
+behaviour is unchanged and an upgrade changes nothing. The feature is also off per organization
+until an org owner or admin switches **Port previews** on.
+
+**Requirements** (all three, before `previews.enabled: true` is accepted):
+
+1. **A preview domain** `previews.domain`, a DNS suffix **you control**, e.g. `preview.example.org`.
+   Browsers treat every host under it as a separate origin, so it is the isolation boundary between
+   previews and the dashboard (`04 §Preview access`). Startup validation (API and relay) refuses
+   the configuration (exit with the reason) when the domain: is not a valid lower-case DNS name of at
+   most 120 characters; **is, contains or sits under** the host of `server.external_url`, of any
+   `auth.trusted_origins` entry or of the gateway's advertised proxy host (so a preview hostname can
+   never be, or be a parent of, a host that carries a session or a credential); is a single label;
+   or is a bare public suffix. Prefer a **separate registrable domain** (`aurora-previews.example.org`
+   next to `aurora.example.org` is acceptable, `example.org` is not); the Aurora session cookie is
+   host-only and previews never see it either way, but a separate registrable domain also protects
+   *other* applications on your domain from cookies a preview app could set.
+2. **Wildcard DNS**: `*.<previews.domain>` → the edge (an `A`/`AAAA`/`CNAME` record). Nothing else
+   resolves under it; Aurora never creates DNS records.
+3. **A wildcard TLS certificate** for `*.<previews.domain>` served by the edge (HTTP-01 cannot issue
+   wildcards; use DNS-01 through cert-manager, e.g. `previews.tls.certManager.issuerRef`, or provide
+   an existing Secret `previews.tls.secretName`). The relay serves plain HTTP behind the edge (it
+   never holds the certificate key) and trusts the edge's overwritten `X-Forwarded-Proto`/`-For`
+   exactly like the API (`server.trusted_proxies`). Browsers must reach the preview host on 443;
+   previews are **https only** (the edge redirects `http` and the relay refuses to mint a grant for
+   a non-https redirect target).
+
+**Turn it on**: install the relay (`relay.enabled`, chart default `true` when `previews.enabled` is
+`true`, otherwise nothing is rendered), set `previews.enabled: true` and `previews.domain`, wait for
+`aurora_relay_up` and the Admin → Overview "Previews" line (relay replicas seen by the API), then an
+org owner or admin enables **Port previews** in the org settings. **Turn it off**: unset
+`previews.enabled` (shares are kept but inert; the supervisor allow-list is emptied at the next
+sync) or switch the org setting off.
+
+**Wildcard edge rule**: Ingress and HTTPRoute templates add one host rule `*.<previews.domain>`
+→ `aurora-relay:4112` only when `previews.enabled` is true (no change to the rules of
+`server.external_url`, `/internal` and `/metrics` stay unrouted). The edge must not buffer
+responses, must allow WebSocket upgrades, read timeouts ≥ 600 s and request bodies up to
+`PREVIEW_REQUEST_BODY_MAX`. The edge-routes guard is extended to render the chart with previews
+enabled and check that the wildcard host routes **only** to the relay and that the dashboard
+host is untouched (an implementation task of P4-PRV-2).
+
+**Runners.** The relay reaches each runner replica on its **stream listener** `runner.stream_bind`
+(default `server.bind`, port **4108**, `16 §W17`), at the replica's `advertised_host`. A runner
+inside the cluster needs only the NetworkPolicy of *Port previews relay* below; a runner **outside**
+the cluster must make 4108 reachable from the relay (overlay network or private link). Without
+that, previews for sandboxes of that runner answer 502 `preview_unreachable` and the dashboard
+says so; nothing else is affected. The sandboxes namespace never reaches 4108 (SEC-09 style
+guard, `18`).
+
+**The relay** (`aurora-relay`, image `aurora-relay`, P4-PRV-2). A stateless Rust service (hyper,
+`tokio-tungstenite`; no database, no key, no Vault). Helm (`relay.*`; rendered **only** when
+`previews.enabled`): Deployment `aurora-relay` (replicas 2, `relay.resources`, PodDisruptionBudget,
+read-only root filesystem, dropped capabilities, non-root), Service on 4112 (edge-routed) and a headless
+ops Service on 4193. Its anchor token `aul_` is generated by the `secrets` hook into the instance
+Secret (`AURORA_BOOTSTRAP_RELAY_TOKEN`, never shown), given to the API under the same name and to the
+relay as `AURORA_RELAY_TOKEN`. The relay sets no cookie other than `__Host-aurora_preview` and
+`__Host-aurora_pstate` and keeps no state beyond in-memory caches (resolve results ≤ 15 s), so a
+restart loses only open streams.
+
+**NetworkPolicy** (default deny stays; each rule is rendered only with `previews.enabled`):
+relay ingress from the edge (and the Cilium edge entities) on 4112 and from the monitoring
+namespace on 4193; relay egress to **api:4101** and **runner:4108** (runner pods of this release,
+or `relay.networkPolicy.runnerEgressTo` for runners elsewhere) and DNS **only**: no Postgres, no
+gateway, no hook host, no sandboxes, no Internet; api ingress from the relay on 4101; runner ingress
+on 4108 from the relay pods **only** (the sandboxes namespace gets nothing new: sandboxes → gateway:4102
+and runner:4105 only, unchanged). The `aurora-relay` pod runs in the control-plane namespace, never in
+the sandboxes namespace.
+
+**Metrics** (4193 `/metrics`, plus API gauges): `aurora_relay_up`, `aurora_relay_requests_total{outcome}`
+(`ok`, `login`, `not_found`, `paused`, `frozen`, `cross_site`, `quota`, `wake_limited`, `unreachable`,
+`upstream_error`), `aurora_relay_request_duration_seconds`, `aurora_relay_streams_open`,
+`aurora_relay_stream_bytes_total{direction}`, `aurora_relay_stream_closed_total{reason}`,
+`aurora_relay_grants_total{result}` (`redeemed`, `invalid`, `replayed`, `no_state`),
+`aurora_relay_wake_wait_seconds`, `aurora_relay_resolve_cache_hit_ratio`; API: `aurora_preview_shares{state}`,
+`aurora_preview_sessions`, `aurora_preview_wakes_total{result}`; runner: `aurora_runner_preview_streams_open`,
+`aurora_runner_preview_stream_refused_total{reason}`. Alert on a rising `grants_total{result="replayed"}` or
+`result="no_state"` (attempted login CSRF or a replayed link), on `stream_closed_total{reason="refused"}` for
+`not_shared` (a relay or runner disagreeing with the API) and on `aurora_relay_up == 0`. Logs carry the label,
+share id, outcome and byte counts; never paths with query strings, headers, cookies or bodies.
+
+**Upgrade and rollback.** The relay and the preview columns are additive: an older API ignores them, an
+older runner reports no `previews` capability. Rolling back removes the relay Deployment; shares stay in
+the database inert. Preview traffic is not part of the request log.
+
+## Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
+
+Optional by use: nothing to deploy, no new Service, Secret or NetworkPolicy. Requirements: the gateway
+can reach the git host's API **as it already does for agents** (the host is already one of the app's
+claimed hosts; the gateway's egress policy covers it), the API can reach the gateway's internal
+port 4103 (already true), and the **git-hosting package** (the built-in GitHub or GitLab package, at
+the release that adds the `library` block, re-approved by an instance admin like any package update,
+`09 §10`) is installed and approved. To use it an **org owner/admin** (1) connects the git host as an
+**org-scoped** app connection with a **read-only** credential (a fine-grained token limited to the
+skills repository is ideal; GitHub: *Contents: read*; GitLab: *read_repository*), then (2) Skills →
+Libraries → *Connect a repository*. Disable with `skills.library.enabled: false` (stored skills keep
+working; the dashboard hides the feature and the refresh job stops).
+
+- **What leaves the cluster**: `GET`s of repository metadata and the files of skills people added or
+  browsed, from the git host's API, through the gateway. **What is stored**: only skills added to
+  agents, workspaces or the org (content, commit sha, blob ids) and open proposed updates (bounded,
+  `02 §Limits`). Nothing is cloned.
+- **Rate limits of the host**: a library with added skills costs one `resolve_ref` call per
+  `LIBRARY_REFRESH_INTERVAL` (15 min) while unchanged, plus a tree and changed files after a push;
+  browsing costs a tree and up to 200 file reads (cached 5 minutes). Self-hosted instances apply
+  their own limits; raise the interval with `skills.library.refresh_interval_secs`.
+- **Operations**: the Libraries page shows each library's status and last error (revoked token, repository
+  moved, host unreachable). A library in `error` leaves agents untouched. Metrics:
+  `aurora_skill_library_refresh_total{result}` (`unchanged`, `proposed`, `error`),
+  `aurora_skill_library_pending_updates`, `aurora_skill_library_refresh_duration_seconds`,
+  `aurora_gateway_library_fetch_total{step,status}`. Alert on sustained `result="error"` and on pending
+  updates older than a week (nobody is reviewing: agents keep running the pinned skills, which is safe
+  but stale).
+- **Upgrade and rollback**: additive tables and columns; rolling the API back leaves the tables and the
+  pinned skills (which are ordinary skill rows) in place and the library features disappear.

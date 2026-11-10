@@ -119,6 +119,35 @@ port-stream API multiplexed over the supervisor channel with credit-based flow
 control; allow-list enforced at runner and supervisor; preview-caused wakes
 relaunch the share's start command.
 
+- **Shares — specified (phase 4, P4-PRV-1, D-144, D-145, SEC-80).** Off unless the instance
+  sets `previews.enabled` with a validated `previews.domain` (wildcard DNS and TLS certificate
+  required) **and** the org owner/admin switches Port previews on; table `preview_shares`
+  (one per hosted agent port, random never-reused `p…` label, visibility `private` only, optional
+  start command run on demand by the supervisor); created, paused and deleted by people with
+  `can_use` (never by agent tools, never by API-key browsing); wake demand starts the sandbox, then
+  `preview.start`; keep-awake reason `preview` (4 h cap); shares stay inert while frozen (RFE-006)
+  and die with the agent; the supervisor's allow-list is the `previews` home-sync part. Owning
+  sections: `11 §Port previews`, `03 §Planned changes`, `04` (matrix), `05 §Port previews`, `10`,
+  `12 §Previews`, `14` (agent Previews tab, org Port previews page), `15 §Port previews`,
+  `02 §Limits`, `16 §W5`, `17` SEC-80, `18 §Port previews`. Not in phase 4: public, org-wide or
+  link visibility, agent-created shares, non-HTTP protocols as a product (raw TCP bytes are carried,
+  but the relay speaks HTTP and WebSocket only), per-person sharing.
+- **Relay — specified (phase 4, P4-PRV-2, D-146, D-147, SEC-81, SEC-82, SEC-85).** `aurora-relay`
+  (stateless; no database or key; port 4112 behind a wildcard edge host, 4193 ops) authenticates the
+  browser with a **per-share `__Host-aurora_preview` cookie** obtained by a sealed, single-use,
+  state-bound grant exchange with the dashboard origin (the dashboard session never reaches a preview;
+  disjoint validated domains; Fetch Metadata and `Origin` checks; dashboard API tightened while previews
+  are on); resolves hostnames and mints single-use stream grants through the API (`/v1/relay`, `aul_`
+  anchor); opens one WebSocket per upstream connection to the runner's stream listener (4108), which
+  multiplexes streams over the supervisor channel with **credit-based flow control** (128 KiB windows,
+  binary frames outside the seq/ack lineage); allow-list at the runner (API binding) and the supervisor
+  (its in-memory share list; loopback dial only); limits, quotas, metrics, Helm and NetworkPolicy. D-138:
+  does not wait for SSH. Owning sections: `04 §Preview access`, `16 §W17/§W18`, `01` (component, trust
+  boundary 13), `05 §Relay plane`, `11 §Port previews`, `12 §Previews`, `15 §Port previews`, `03`, `02 §Limits`,
+  `17` SEC-81/82/85, `18 §Port previews`, `00` (`aul_`, `auv_`, `aux_`). Not in phase 4: public or shareable
+  links, HTTP/2 or HTTP/3 to the app, TCP/SSH tunnelling as a product, request logging or inspection, custom
+  domains per share, a relay outside the cluster network of the API.
+
 ## Phase 4 — Evals
 
 Per-agent questions with expected answers (numeric, text, judged), runs as real
@@ -131,6 +160,22 @@ schedules; judge calls through the `PlatformLlm` service with a granted key.
 An org connects a repository (through an app connection of a git-hosting
 plugin) as a skill library; only skills added to agents are stored (with commit
 sha); background refresh under a lease; byte budget per agent.
+
+- **Specified (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84).** A library is an org-scoped
+  connection of a git-hosting package plus `repo`/`ref`/`path` (`skill_libraries`); a package opts in with
+  the manifest block `library` (declarative GET templates and JSON paths, `09 §3.4`; the built-in GitHub
+  and GitLab packages are the first), and the **gateway** performs the reads (`POST
+  /internal/v1/library-fetch`, `06`), so the API never holds a token. Browsing stores nothing; **adding**
+  a skill to an agent, workspace or org (the tier's write authority, SEC-56 unchanged) stores it pinned
+  to an exact commit, read-only, within per-tier byte budgets (1 MiB per agent); the refresh job (lease
+  per library, 15 min) only writes **proposed updates**, which a person with the tier's authority approves
+  by quoting the content hash after reading the full diff — no auto-update in phase 4; detach and library
+  deletion keep content. Owning sections: `10 §Skills`, `09 §3.4 library`, `06 §Library fetch`, `03
+  §Planned changes`, `04` (matrix, audit), `05 §Skill libraries` and jobs, `12` (tools), `14`
+  (Skill libraries, Add from library, update review), `15 §Git skill library`, `02 §Limits`, `17` SEC-83/84,
+  `18 §Git skill library`. Not in phase 4: tracking a branch automatically, libraries scoped to a workspace,
+  writing back to the repository, webhooks from the git host, libraries of non-git sources, signed-commit
+  verification.
 
 ## Phase 4 — Groups and SCIM
 

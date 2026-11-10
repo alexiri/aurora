@@ -303,6 +303,30 @@ overridden by the named configuration key (`15`).
 | `SCIM_PAGE_MAX` / `SCIM_PAGE_DEFAULT` | (phase 4, P4-GRP-2) 100 / 50 resources per page | — | 16 |
 | `SCIM_TOKENS_PER_ORG` / `SCIM_TOKEN_DEFAULT_DAYS` / `SCIM_TOKEN_MAX_DAYS` | (phase 4, P4-GRP-2) 5 active / 365 days / 730 days (no non-expiring token) | `scim.token_max_days` | 04, 15 |
 | `SCIM_ERROR_LOG` | (phase 4, P4-GRP-2) last 20 sanitized errors kept per org for the Directory sync page | — | 14 |
+| `PREVIEW_SHARES_PER_AGENT` / `PREVIEW_SHARES_PER_ORG` | (phase 4, P4-PRV-1) 10 / 200 shares | `previews.shares_per_agent`, `previews.shares_per_org` (lower only) | 11, 05 |
+| `PREVIEW_START_COMMAND_MAX` | (phase 4, P4-PRV-1) 1 024 chars, one line | — | 11 |
+| `PREVIEW_WAKE_WINDOW` / `PREVIEW_WAKE_WAIT` / `PREVIEW_LISTEN_WAIT` | (phase 4, P4-PRV-1) 60 s a wake demand stays due / 45 s a browser request waits for a woken port / 5 s for a port of a running sandbox | — | 11, 05 |
+| `PREVIEW_WAKES_PER_SHARE_HOUR` | (phase 4, P4-PRV-1) 12 wakes per share per hour (429 `preview_wake_limited`) | — | 11 |
+| `PREVIEW_START_ATTEMPTS` / `PREVIEW_START_WINDOW` | (phase 4, P4-PRV-1) 3 start-command launches per share per 10 min | — | 11 |
+| `PREVIEW_AWAKE_GRACE` / `PREVIEW_AWAKE_CAP` | (phase 4, P4-PRV-1) 120 s after the last stream activity / 4 h per boot of preview-held wakefulness | `previews.awake_cap_secs` (≤ `BACKGROUND_CAP`) | 11 |
+| `PREVIEW_SESSION_TTL` / `PREVIEW_SESSION_IDLE` | (phase 4, P4-PRV-2) 8 h absolute (never past the dashboard session) / 1 h idle | `previews.session_ttl_secs`, `previews.session_idle_secs` (lower only) | 04 |
+| `PREVIEW_GRANT_TTL` / `PREVIEW_STREAM_GRANT_TTL` | (phase 4, P4-PRV-2) 60 s single-use authorization grant / 30 s single-use stream grant | — | 04, 16 |
+| `PREVIEW_AUTH_CACHE` | (phase 4, P4-PRV-2) 15 s positive, 5 s negative relay cache of a resolve; also the open-stream revalidation interval | — | 04, 15 |
+| `PREVIEW_STREAMS_PER_SHARE` / `_PER_SANDBOX` / `_PER_USER` | (phase 4, P4-PRV-2) 32 / 64 / 64 concurrent streams (the per-user value is per relay replica) | `relay.max_streams_per_user` (lower only) | 16 |
+| `PREVIEW_STREAM_WINDOW` / `PREVIEW_CHUNK` | (phase 4, P4-PRV-2) 128 KiB credit window per direction per stream / 16 KiB data chunk | — | 16 |
+| `PREVIEW_IDLE_TIMEOUT` / `PREVIEW_WS_IDLE_TIMEOUT` / `PREVIEW_STREAM_LIFETIME` | (phase 4, P4-PRV-2) 120 s plain HTTP stream / 600 s upgraded stream / 4 h | — | 16 |
+| `PREVIEW_CONNECT_TIMEOUT` / `PREVIEW_HEADER_TIMEOUT` | (phase 4, P4-PRV-2) 10 s to open a stream (supervisor connect 5 s) / 60 s for upstream response headers | — | 16 |
+| `PREVIEW_REQUEST_BODY_MAX` | (phase 4, P4-PRV-2) 100 MiB | `relay.request_body_max_bytes` (lower only) | 15, 16 |
+| `PREVIEW_BYTES_PER_SHARE_DAY` | (phase 4, P4-PRV-2) 5 GiB per share per UTC day (429 `preview_quota`) | `previews.bytes_per_share_day` | 16 |
+| `PREVIEW_API_RATE` | (phase 4, P4-PRV-2) 100 relay-plane requests/s per relay replica, burst 200 | — | 16 |
+| `PREVIEW_GRANT_RATE` | (phase 4, P4-PRV-2) 30 grant redemptions per minute per client address (and 10 per minute per share) at the relay | — | 04 |
+| `LIBRARIES_PER_ORG` | (phase 4, P4-GSL) 10 skill libraries | — | 10, 05 |
+| `LIBRARY_BYTES_PER_AGENT` / `_SKILLS_PER_AGENT` | (phase 4, P4-GSL) 1 MiB / 25 library-sourced skills at the agent tier (workspace tier 2 MiB / 50, org tier 4 MiB / 100: `LIBRARY_BYTES_PER_WORKSPACE`, `LIBRARY_SKILLS_PER_WORKSPACE`, `LIBRARY_BYTES_PER_ORG`, `LIBRARY_SKILLS_PER_ORG`) | `skills.library.bytes_per_agent` (lower only) | 10 |
+| `LIBRARY_FILE_MAX` / `LIBRARY_TREE_MAX` / `LIBRARY_BROWSE_MAX` | (phase 4, P4-GSL) 64 KiB per file / 20 000 tree entries (a truncated or longer tree is `library_tree_too_large`: narrow `path`) / 200 listed skills | — | 09, 10 |
+| `LIBRARY_PENDING_BYTES_PER_ORG` | (phase 4, P4-GSL) 4 MiB of open proposed updates per org | — | 10 |
+| `LIBRARY_REFRESH_INTERVAL` / `LIBRARY_LEASE` / `LIBRARY_REFRESH_CONCURRENCY` | (phase 4, P4-GSL) 15 min (minimum 5 min) per library / 5 min lease / 4 refreshes per API replica | `skills.library.refresh_interval_secs` (≥ 300) | 05, 10 |
+| `LIBRARY_CHECK_NOW_INTERVAL` | (phase 4, P4-GSL) 60 s per library | — | 05 |
+| `LIBRARY_FETCH_TIMEOUT` / `LIBRARY_FETCH_RATE` | (phase 4, P4-GSL) 20 s per fetch / 20 per second per gateway, 5 per second per org | — | 06 |
 | `API_STREAMS_PER_PRINCIPAL` | (phase 2, RFE-017) 20 concurrent SSE connections + long-polls | — | 05 |
 | `DELTA_COALESCE` | (phase 1, RFE-016) 100 ms or 2 000 chars per turn per delta | `events.delta_coalesce_ms` (100–500) | 05 |
 | `LONG_POLL_MAX` | 30 s | — | 05 |

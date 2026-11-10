@@ -447,6 +447,58 @@ package (unknown key; packages that use it declare `min_core` of the release tha
 introduces it), which fails closed. The linter also rejects unknown keys inside `grants` and
 non-boolean values. Both flags are copied into the snapshot's `apps[].grants` (`§9`).
 
+#### `library` (phase 4, P4-GSL, D-148, D-149, SEC-84)
+```yaml
+library:                                  # optional, per app: "this app is a git host that can serve a skill library"
+  repo_pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"   # what an admin may type as the repository
+  request_host: api.github.com            # exactly one host of the app's `hosts[]` (an `{instance}` host for instance-bound apps)
+  resolve_ref:                            # ref (branch, tag or sha; empty = the default) → commit sha
+    path: "/repos/{repo}/commits/{ref}"
+    default_path: "/repos/{repo}"         # used when no ref is set: the default branch is read from the response
+    sha: "$.sha"
+    default_branch: "$.default_branch"
+  list_tree:                              # the files of one commit
+    path: "/repos/{repo}/git/trees/{sha}?recursive=1"
+    entries: "$.tree[*]"
+    fields: { path: "$.path", type: "$.type", mode: "$.mode", blob: "$.sha", size: "$.size" }
+    file_type: blob
+    truncated: "$.truncated"
+    paginate: none                        # none | link_header | page_param (+ max_pages)
+  get_blob:                               # one file by blob id
+    path: "/repos/{repo}/git/blobs/{blob}"
+    content: "$.content"
+    encoding: "$.encoding"                # base64 | raw (a `raw` endpoint returns the bytes themselves)
+  required_access: read                   # the connection should be read-only (the dashboard warns otherwise)
+```
+Optional, per app; **absent = the app cannot serve a library** (no existing package changes). The
+block is **data, not code**: three GET request templates, a ref grammar and JSON-path extractors
+(the `json` decoder of `§4`, no hooks, no new mechanism), so the core stays integration-neutral
+(SEC-33; the built-in GitHub and GitLab packages are the first users, **GitLab** with the
+repository tree endpoint paginated by `link_header` and the blob endpoint `encoding: raw`, a
+project path URL-encoded by the template function `{repo|urlencode}`). Rules (the linter enforces
+them; ids in the errors are `library_*`):
+
+- `request_host` is **exactly** one of the app's exact `hosts[]` entries (no wildcard, no
+  `rewrite_host`; for an instance-bound app the `{instance}` host, `§Instance-bound hosts`), over
+  https. Every `path` starts with `/` and may contain only the placeholders `{repo}`,
+  `{repo|urlencode}`, `{ref}`, `{sha}`, `{blob}` and a literal query; `{repo}` is substituted only
+  after it matched `repo_pattern`; `{ref}` only after matching the ref grammar `[A-Za-z0-9._/-]{1,200}`
+  with no `..`, no leading `-`, no `//`; `{sha}` and `{blob}` only after matching `[0-9a-f]{40,64}`.
+  Nothing else (no free-form path or query) can reach the request line.
+- Only `GET`. No request body, no header templates, no redirects followed. The response must be JSON
+  (or raw bytes for `encoding: raw`), at most the size limits of `02 §Limits` (`LIBRARY_FILE_MAX`,
+  `LIBRARY_TREE_MAX`); every JSON path is validated at load (anchored, no recursive descent, no
+  filters, ≤ 3 segments of wildcards).
+- **Credentials are never named or read by the block**: the request is made by the gateway with the
+  host entry's ordinary inject stage (`§3.4 hosts`), so the credential, its refresh and the host
+  guard are exactly those of an agent's request to the same host (`06 §Library fetch`).
+- It is part of the manifest the instance admin approves: the permissions review shows
+  "Can serve a skill library: reads repository files from `<request_host>`" and a package update
+  that **adds or changes** `library` needs the same re-approval as a widened host claim (`§10`). It
+  sits in contract 1 as an additive key; a core that does not know it rejects the package, which
+  fails closed, and the linter rejects unknown keys inside `library` and non-conforming values. The
+  block is copied into the snapshot's `apps[].library` (`§9`).
+
 #### `database` (phase 2)
 ```yaml
 database: { engine: postgres }
@@ -541,6 +593,10 @@ if any of:
   **after** a broader tool that would shadow it (the linter proves the order by testing the
   tool's own first example against the earlier tools); a group wildcard carrying `params`; a
   `params` tool missing any of the required fixtures (`§3.4 tools`);
+- (phase 4, P4-GSL) `library` violating the rules of `§3.4 library` (`library_host_not_exact`,
+  `library_path_placeholder`, `library_repo_pattern`, `library_json_path`, `library_method`,
+  unknown keys or non-conforming values), or `library` on an app without a credential that can
+  authenticate requests to `request_host`;
 - `env` or stub paths violating the rules above.
 
 A host **conflict** with another active package is not a rejection: the package
