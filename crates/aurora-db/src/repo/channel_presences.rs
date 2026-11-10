@@ -364,11 +364,9 @@ pub async fn setup_owners<'e, E: PgExecutor<'e>>(
            FROM channel_presences p
            JOIN agents a ON a.id = p.agent_id
            JOIN workspaces w ON w.id = a.workspace_id
-           JOIN org_members m ON m.org_id = w.org_id AND m.status='active'
-           LEFT JOIN workspace_access wa ON wa.workspace_id = w.id AND wa.user_id = m.user_id
-           JOIN users u ON u.id = m.user_id
+           JOIN effective_workspace_access ea ON ea.workspace_id = w.id AND ea.role = 'owner'
+           JOIN users u ON u.id = ea.user_id
           WHERE p.integration_id=$1 AND p.mode='shared' AND p.status='active'
-            AND (m.role IN ('owner','admin') OR wa.role='owner')
           ORDER BY u.display_name, u.id LIMIT $2",
     )
     .bind(integration)

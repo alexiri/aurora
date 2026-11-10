@@ -54,19 +54,15 @@ const SELECT: &str = "SELECT a.id, a.org_id, a.workspace_id, a.agent_id, ag.name
 
 /// `$1` = user: the access law for `can_approve` on the approval's workspace (phase 2, RFE-012:
 /// workspace owner/approver or org owner/admin; a plain member is excluded).
-const MAY_DECIDE_BASE: &str = "EXISTS (SELECT 1 FROM workspaces w \
-    JOIN org_members m ON m.org_id = w.org_id AND m.user_id = $1 AND m.status = 'active' \
-    LEFT JOIN workspace_access wa ON wa.workspace_id = w.id AND wa.user_id = $1 \
-    WHERE w.id = a.workspace_id AND w.org_id = a.org_id \
-      AND (m.role IN ('owner', 'admin') OR wa.role IN ('owner', 'approver')))";
+const MAY_DECIDE_BASE: &str = "EXISTS (SELECT 1 FROM effective_workspace_access ea \
+    WHERE ea.workspace_id = a.workspace_id AND ea.org_id = a.org_id AND ea.user_id = $1 \
+      AND ea.role IN ('owner', 'approver'))";
 
 /// `$1` = user: a plain workspace member of the approval's workspace (`can_use` but not
 /// `can_approve`).
-const MEMBER_ONLY: &str = "EXISTS (SELECT 1 FROM workspaces w \
-    JOIN org_members m ON m.org_id = w.org_id AND m.user_id = $1 AND m.status = 'active' \
-    JOIN workspace_access wa ON wa.workspace_id = w.id AND wa.user_id = $1 \
-    WHERE w.id = a.workspace_id AND w.org_id = a.org_id \
-      AND m.role = 'member' AND wa.role = 'member')";
+const MEMBER_ONLY: &str = "EXISTS (SELECT 1 FROM effective_workspace_access ea \
+    WHERE ea.workspace_id = a.workspace_id AND ea.org_id = a.org_id AND ea.user_id = $1 \
+      AND ea.role = 'member')";
 
 /// Does a batch of `agent` exist whose approvals the user can use-but-not-decide (RFE-012)?
 pub async fn batch_undecidable(

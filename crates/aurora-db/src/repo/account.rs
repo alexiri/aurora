@@ -47,11 +47,9 @@ pub async fn usable_workspaces<'e, E: PgExecutor<'e>>(
 ) -> Result<Vec<UsableWorkspaceRow>, DbError> {
     Ok(sqlx::query_as(
         "SELECT w.org_id, w.id, w.slug, w.name,
-                CASE WHEN m.role IN ('owner','admin') THEN 'owner' ELSE a.role END AS role
+                ea.role AS role
          FROM workspaces w
-         JOIN org_members m ON m.org_id = w.org_id AND m.user_id = $1 AND m.status = 'active'
-         LEFT JOIN workspace_access a ON a.workspace_id = w.id AND a.user_id = $1
-         WHERE m.role IN ('owner','admin') OR a.user_id IS NOT NULL
+         JOIN effective_workspace_access ea ON ea.workspace_id = w.id AND ea.user_id = $1
          ORDER BY w.created_at, w.id",
     )
     .bind(user)

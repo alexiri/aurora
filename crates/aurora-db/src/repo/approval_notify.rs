@@ -14,10 +14,9 @@ use uuid::Uuid;
 /// visibility (RFE-009). Mirrors `approvals::may_decide`.
 fn may_decide(user: &str) -> String {
     format!(
-        "(EXISTS (SELECT 1 FROM org_members m LEFT JOIN workspace_access wa \
-             ON wa.workspace_id = w.id AND wa.user_id = {user} \
-           WHERE m.org_id = w.org_id AND m.user_id = {user} AND m.status = 'active' \
-             AND (m.role IN ('owner', 'admin') OR wa.role IN ('owner', 'approver'))) \
+        "(EXISTS (SELECT 1 FROM effective_workspace_access ea \
+           WHERE ea.workspace_id = w.id AND ea.user_id = {user} \
+             AND ea.role IN ('owner', 'approver')) \
          AND NOT {})",
         crate::authz::hidden_direct_conversation_sql("a.conversation_id", user, "a.workspace_id")
     )
@@ -33,10 +32,9 @@ pub async fn watched_workspaces(
 ) -> Result<Vec<Uuid>, DbError> {
     Ok(sqlx::query_scalar(
         "SELECT w.id FROM workspaces w \
-         JOIN org_members m ON m.org_id = w.org_id AND m.user_id = $1 AND m.status = 'active' \
-         LEFT JOIN workspace_access wa ON wa.workspace_id = w.id AND wa.user_id = $1 \
+         JOIN effective_workspace_access ea ON ea.workspace_id = w.id AND ea.user_id = $1 \
          WHERE ($2::uuid IS NULL OR w.org_id = $2) AND ($3::uuid IS NULL OR w.id = $3) \
-           AND (m.role IN ('owner', 'admin') OR wa.role IN ('owner', 'approver'))",
+           AND ea.role IN ('owner', 'approver')",
     )
     .bind(user)
     .bind(org)
@@ -201,12 +199,18 @@ pub async fn deciders(
         "WITH explicit AS ( \
              SELECT m.user_id FROM org_members m \
              JOIN workspace_access wa ON wa.user_id = m.user_id AND wa.workspace_id = $2 \
-             WHERE m.org_id = $1 AND m.status = 'active' AND wa.role IN ('owner', 'approver')), \
+             WHERE m.org_id = $1 AND m.status = 'active' AND wa.role IN ('owner', 'approver') \
+             UNION \
+             SELECT gm.user_id FROM group_workspace_access b \
+             JOIN group_members gm ON gm.group_id = b.group_id AND gm.org_id = b.org_id \
+             JOIN org_members m ON m.org_id = gm.org_id AND m.user_id = gm.user_id \
+                  AND m.status = 'active' \
+             WHERE b.org_id = $1 AND b.workspace_id = $2 AND b.role IN ('owner', 'approver')), \
          recipients AS ( \
              SELECT user_id FROM explicit \
              UNION \
-             SELECT m.user_id FROM org_members m \
-             WHERE m.org_id = $1 AND m.status = 'active' AND m.role IN ('owner', 'admin') \
+             SELECT m.user_id FROM effective_org_members m \
+             WHERE m.org_id = $1 AND m.role IN ('owner', 'admin') \
                AND NOT EXISTS (SELECT 1 FROM explicit)) \
          SELECT u.id AS user_id, u.email::text AS email, u.display_name \
          FROM recipients r JOIN users u ON u.id = r.user_id \
@@ -308,8 +312,8 @@ pub async fn org_owners(
             .fetch_one(pool)
             .await?;
     let owners = sqlx::query_as(
-        "SELECT u.id, u.email::text FROM org_members m JOIN users u ON u.id = m.user_id \
-         WHERE m.org_id = $1 AND m.status = 'active' AND m.role IN ('owner', 'admin') \
+        "SELECT u.id, u.email::text FROM effective_org_members m JOIN users u ON u.id = m.user_id \
+         WHERE m.org_id = $1 AND m.role IN ('owner', 'admin') \
            AND u.disabled_at IS NULL ORDER BY u.id",
     )
     .bind(org)
