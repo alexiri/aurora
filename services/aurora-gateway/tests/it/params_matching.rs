@@ -36,7 +36,7 @@ apps:
               params: [ { source: form, name: Action, match: { equals: GetCallerIdentity } } ] }
           - { id: ddb_query, name: Query, host: "dynamodb.*.amazonaws.com", path: /, methods: [POST],
               params: [ { source: header, name: x-amz-target, match: { prefix: "DynamoDB_20120810.Query" } } ] }
-          - { id: q_list, name: List, host: q.example.com, path: /api, methods: [GET],
+          - { id: q_list, name: List, host: q.example.com, path: /api, methods: [GET, POST],
               params: [ { source: query, name: Action, match: { in: [ListThings, ListOthers] } } ] }
           - { id: two, name: Two, host: q.example.com, path: /two, methods: [POST],
               params: [ { source: query, name: kind, match: { equals: alpha } },
@@ -212,6 +212,64 @@ fn every_fail_closed_case_falls_through_to_the_generic_write_tool_or_to_none() {
 }
 
 #[test]
+fn a_query_source_tool_fails_closed_when_the_request_has_a_body() {
+    let post = |ct: &str, body: &str, extra: &str, name: &str, expect: &str| {
+        format!(
+            "- name: {name}\n{CONN}  request: {{ method: POST, url: \"https://q.example.com/api?Action=ListThings\", headers: {{ {ct} }}, body: \"{body}\"{extra} }}\n  expect: {expect}\n"
+        )
+    };
+    let form = "content-type: application/x-www-form-urlencoded";
+    let none = "{ app: aws, no_tool: true }";
+    let mut y = String::new();
+    // an unrelated urlencoded body does not hide anything: still the tool
+    y += &post(
+        form,
+        "other=1",
+        "",
+        "unrelated form body",
+        "{ tool: q_list }",
+    );
+    // the same parameter in the body: conflicting value, equal value
+    y += &post(
+        form,
+        "Action=DeleteThings",
+        "",
+        "conflicting form body",
+        none,
+    );
+    y += &post(
+        form,
+        "Action=ListThings",
+        "",
+        "equal value in the body",
+        none,
+    );
+    // a body that cannot be checked
+    y += &post(
+        "content-type: application/json",
+        "{}",
+        "",
+        "non-form body",
+        none,
+    );
+    y += &post(
+        "content-type: application/x-www-form-urlencoded, content-encoding: gzip",
+        "other=1",
+        "",
+        "compressed body",
+        none,
+    );
+    y += &post(
+        form,
+        "other=1",
+        ", body_truncated: true",
+        "oversized body",
+        none,
+    );
+    run_cases(&y);
+}
+
+#[test]
 fn credentials_cookies_and_injected_headers_are_never_a_source() {
     // The classifier never reads credentials, cookies or injected headers: a request carrying
     // the parameter only in `authorization` or `cookie` matches nothing.
@@ -271,7 +329,8 @@ fn the_body_is_buffered_only_when_a_form_params_tool_may_match() {
         "POST"
     ));
     let m = app("q.example.com", "/api");
-    assert!(!needs_body(&m, "q.example.com", 443, "/api", "GET"));
+    // A query-only tool must prove the body does not carry the parameter too (SEC-68): buffered.
+    assert!(needs_body(&m, "q.example.com", 443, "/api", "GET"));
     // A two-condition tool with a form condition does.
     assert!(needs_body(&m, "q.example.com", 443, "/two", "POST"));
 }

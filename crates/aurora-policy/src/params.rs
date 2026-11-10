@@ -98,9 +98,12 @@ impl ParamInput<'_> {
     };
 }
 
-/// A `form` condition needs the request body.
+/// A `form` condition reads the request body; a `query` condition must prove the body does not
+/// carry the same parameter (SEC-68), so both need it buffered.
 pub fn needs_body(conds: &[ParamCondition]) -> bool {
-    conds.iter().any(|c| c.source == ParamSource::Form)
+    conds
+        .iter()
+        .any(|c| matches!(c.source, ParamSource::Form | ParamSource::Query))
 }
 
 /// All conditions hold (and every one is knowable). Empty list: never (a `params` tool has 1–4).
@@ -135,7 +138,12 @@ pub enum Outcome {
 pub fn outcome(c: &ParamCondition, input: &ParamInput<'_>) -> Outcome {
     let value = match c.source {
         ParamSource::Query => match input.query {
-            Some(q) => once(q.as_bytes(), &c.name, false),
+            // SEC-68: servers merge the query and an urlencoded body, so a request that has a
+            // body must prove the parameter is not also there, or it does not match.
+            Some(q) => once(q.as_bytes(), &c.name, false).and_then(|v| {
+                query_without_body_conflict(&c.name, input)?;
+                Ok(v)
+            }),
             None => Err(Outcome::Missing),
         },
         ParamSource::Header => header_once(input.headers, &c.name),
@@ -145,6 +153,45 @@ pub fn outcome(c: &ParamCondition, input: &ParamInput<'_>) -> Outcome {
         Ok(v) if c.matcher.accepts(&v) => Outcome::Match,
         Ok(_) => Outcome::OtherValue,
         Err(o) => o,
+    }
+}
+
+/// A body is present (buffered bytes, or longer than the buffer).
+fn has_body(input: &ParamInput<'_>) -> bool {
+    !input.body.is_empty() || input.truncated
+}
+
+/// For a `query` condition: with no body there is nothing to conflict; with a body it must be a
+/// complete, uncompressed, urlencoded UTF-8 document that does not carry the parameter at all.
+/// A body that cannot be checked (other type, compressed, oversized) is doubt: no match.
+fn query_without_body_conflict(name: &str, input: &ParamInput<'_>) -> Result<(), Outcome> {
+    if !has_body(input) {
+        return Ok(());
+    }
+    if input.truncated {
+        return Err(Outcome::Truncated);
+    }
+    let mut ct = input
+        .headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("content-type"));
+    match (ct.next(), ct.next()) {
+        (Some((_, v)), None) if is_urlencoded(v) => {}
+        _ => return Err(Outcome::WrongContentType),
+    }
+    if input.headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("content-encoding")
+            && !v.trim().is_empty()
+            && !v.trim().eq_ignore_ascii_case("identity")
+    }) {
+        return Err(Outcome::Compressed);
+    }
+    if std::str::from_utf8(input.body).is_err() {
+        return Err(Outcome::WrongContentType);
+    }
+    match once(input.body, name, true) {
+        Err(Outcome::Missing) => Ok(()),
+        _ => Err(Outcome::Conflict),
     }
 }
 
@@ -464,6 +511,33 @@ mod tests {
         ));
         assert!(!matches(&c, &i(None)));
         assert!(!matches(&c, &i(Some("action=GetCallerIdentity"))));
+    }
+
+    #[test]
+    fn query_source_fails_closed_on_a_body() {
+        let c = vec![cond(ParamSource::Query, "Action", eq("GetCallerIdentity"))];
+        let q = Some("Action=GetCallerIdentity");
+        let ok = [FORM];
+        // no body: matches; an unrelated urlencoded body: matches
+        assert!(matches(&c, &form_input(q, &ok, "", false)));
+        assert!(matches(&c, &form_input(q, &ok, "Version=1", false)));
+        // the same parameter in the body, different or equal value: conflict
+        assert!(!matches(
+            &c,
+            &form_input(q, &ok, "Action=AssumeRole", false)
+        ));
+        assert!(!matches(
+            &c,
+            &form_input(q, &ok, "Action=GetCallerIdentity", false)
+        ));
+        // body that cannot be checked: other type, none, compressed, oversized, invalid UTF-8
+        let json = [("content-type", "application/json")];
+        assert!(!matches(&c, &form_input(q, &json, "{}", false)));
+        assert!(!matches(&c, &form_input(q, &[], "x=1", false)));
+        let gz = [FORM, ("content-encoding", "gzip")];
+        assert!(!matches(&c, &form_input(q, &gz, "x=1", false)));
+        assert!(!matches(&c, &form_input(q, &ok, "x=1", true)));
+        assert!(!matches(&c, &form_input(q, &ok, "Bad%zz=1", false)));
     }
 
     #[test]

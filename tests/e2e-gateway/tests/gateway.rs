@@ -1294,3 +1294,212 @@ async fn s18_instance_bound_connection_is_injected_on_its_instance_host_only() {
     );
     st.finish().await;
 }
+
+// ---- P4-GRANTS (D-123, SEC-67): custom_only activation seen by both gateways -------------------
+
+const CUSTOM_HOST: &str = "api.custom.example.test";
+
+fn custom_pkg(version: &str, grants: &str) -> String {
+    format!(
+        "package: {{ id: cust, version: {version}, contract: 1, min_core: 0.1.0, publisher: acme, name: P }}\napps:\n  - about: {{ id: cust_app, name: Cust }}\n    credentials: [ {{ name: api_token, secret: true }} ]\n    connect:\n      - id: api_key\n        kind: fields\n        fields: [ {{ name: api_token, label: T, type: secret, required: true }} ]\n{grants}    tools:\n      read:\n        items:\n          - {{ id: list_items, name: List, host: {CUSTOM_HOST}, path: /items, methods: [GET] }}\n    hosts:\n      - match: {{ host: {CUSTOM_HOST} }}\n        inject:\n          - bearer: \"{{credentials.api_token}}\"\n"
+    )
+}
+
+#[tokio::test]
+async fn s19_custom_only_activation_is_seen_consistently_by_both_gateways() {
+    use aurora_registry::builder::PackageBuilder;
+    use aurora_secrets::{Purpose, SealContext, SecretVault, StoreRegistry};
+    let (up, up_ca, seen) = https_upstream_for(&[CUSTOM_HOST]).await;
+    let (proxy, _tunnels) = connect_proxy(up).await;
+    let st = Stack::start(Opts {
+        extra_ca_bundle: Some(up_ca),
+        egress_proxy: Some(format!("http://{proxy}")),
+        ..Opts::default()
+    })
+    .await;
+    let mut api = st.signup("owner@e2e.test").await;
+    let (agent, token) = api.byo_agent("cust-agent").await;
+    sqlx::query("UPDATE users SET is_instance_admin = true")
+        .execute(st.pool())
+        .await
+        .unwrap();
+    api.relogin("owner@e2e.test").await;
+    api.set_policy("allow", json!([])).await;
+
+    // A trusted publisher key of our own; two versions of one package.
+    let key = aurora_crypto::generate_signing_key().unwrap();
+    let (s, v) = api
+        .post(
+            "/v1/admin/trusted-keys",
+            json!({"publisher": "acme", "name": "e2e", "public_key": PackageBuilder::key_id(&key)}),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let build = |version: &str, grants: &str| {
+        let mut b = PackageBuilder::new(&custom_pkg(version, grants));
+        b.sign(&key, &PackageBuilder::key_id(&key));
+        b.build().unwrap()
+    };
+    let (s, v) = api.upload_plugin(&build("1.0.0", "")).await;
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = api
+        .post(
+            &format!("/v1/admin/plugins/{}/approve", v["id"].as_str().unwrap()),
+            json!({}),
+        )
+        .await;
+    assert_eq!((s, v["status"].as_str()), (200, Some("active")), "{v}");
+
+    // A sealed connection with a FULL grant (and the derived allow rule a full grant compiles to).
+    let (org, ws): (uuid::Uuid, uuid::Uuid) = (api.org.parse().unwrap(), api.ws.parse().unwrap());
+    let conn = uuid::Uuid::now_v7();
+    let keys = {
+        use base64::Engine;
+        format!(
+            "k1:{}",
+            base64::engine::general_purpose::STANDARD.encode([b'a'; 32])
+        )
+    };
+    let keyring = std::sync::Arc::new(aurora_crypto::Keyring::parse(&keys, "k1").unwrap());
+    let vault = SecretVault::new(
+        StoreRegistry::from_config(&aurora_config::SecretsSection::default(), keyring).unwrap(),
+    );
+    let sealed = vault
+        .seal(
+            &SealContext {
+                purpose: Purpose::ConnectionCredentials,
+                owner_id: conn,
+                org_id: org,
+                workspace_id: Some(ws),
+            },
+            aurora_core::Secret::from(
+                serde_json::to_vec(&json!({"api_token": "CUSTSECRET"})).unwrap(),
+            ),
+        )
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'cust_app','cust','1.0.0','cc','active',$4)")
+        .bind(conn).bind(org).bind(ws).bind(sealed.to_column())
+        .execute(st.pool()).await.unwrap();
+    let grant = uuid::Uuid::now_v7();
+    sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4,'full')")
+        .bind(grant).bind(ws).bind(agent.parse::<uuid::Uuid>().unwrap()).bind(conn)
+        .execute(st.pool()).await.unwrap();
+    sqlx::query("INSERT INTO derived_rules (id, org_id, workspace_id, source_kind, source_id, ordinal, logical_id, rule) VALUES ($1,$2,$3,'grant',$4,0,$5,$6)")
+        .bind(uuid::Uuid::now_v7()).bind(org).bind(ws).bind(grant).bind(uuid::Uuid::now_v7())
+        .bind(json!({"name": "Grant: cc", "enabled": true,
+            "identities": [{"kind": "agent", "id": agent}],
+            "targets": [{"type": "connection", "id": conn}],
+            "action": "allow", "require_approval": false, "rate_limit": null, "conditions": []}))
+        .execute(st.pool()).await.unwrap();
+    sqlx::query("SELECT pg_notify('aurora_gateway_invalidate', $1)")
+        .bind(json!({"scope": "org", "id": org}).to_string())
+        .execute(st.pool())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let heads = || seen.lock().unwrap().clone();
+    // One probe: does this gateway inject the connection's token on `path`?
+    let probe = |gw: String, p: &'static str| {
+        let (token, ca) = (token.clone(), st.ca_pem.clone());
+        let n_before = heads().len();
+        async move {
+            let c = via_proxy(&gw, &token, &ca);
+            let r = c
+                .get(format!("https://{CUSTOM_HOST}{p}"))
+                .send()
+                .await
+                .unwrap();
+            (r.status().as_u16(), n_before)
+        }
+    };
+    let injected = |n_before: usize| {
+        let hs = heads();
+        hs.len() > n_before && hs.last().unwrap().contains("CUSTSECRET")
+    };
+
+    // Before: a full grant injects on every path, on both gateways.
+    for gw in [&st.gw_a, &st.gw_b] {
+        for p in ["/items", "/anything"] {
+            let (s, n) = probe(gw.clone(), p).await;
+            assert_eq!(s, 200, "{gw} {p}\n{}", st.log_tails());
+            assert!(injected(n), "{gw} {p} must inject before the upgrade");
+        }
+    }
+
+    // Activation of 1.1.0 (custom_only): held, then approved. Both gateways are probed in a
+    // tight loop from the moment of approval: once a gateway has refused an untooled request it
+    // never injects one again, and both converge.
+    let (s, v) = api
+        .upload_plugin(&build(
+            "1.1.0",
+            "    grants: { custom_only: true, block_untooled: true }\n",
+        ))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["status_reason"], "converts_grants", "{v}");
+    let pid = v["id"].as_str().unwrap().to_owned();
+    let (s, v) = api
+        .post(&format!("/v1/admin/plugins/{pid}/approve"), json!({}))
+        .await;
+    assert_eq!((s, v["status"].as_str()), (200, Some("active")), "{v}");
+    // Committed: the grant is custom in the database.
+    let mode: String = sqlx::query_scalar("SELECT mode FROM grants WHERE id = $1")
+        .bind(grant)
+        .fetch_one(st.pool())
+        .await
+        .unwrap();
+    assert_eq!(mode, "custom");
+
+    let mut blocked = [false, false];
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && !(blocked[0] && blocked[1]) {
+        for (i, gw) in [&st.gw_a, &st.gw_b].into_iter().enumerate() {
+            let (s, n) = probe(gw.clone(), "/anything").await;
+            if injected(n) {
+                assert!(
+                    !blocked[i],
+                    "gateway {i} injected an untooled request after it had refused one"
+                );
+            } else {
+                assert_eq!(s, 403, "gateway {i}: {}", st.log_tails());
+                blocked[i] = true;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        blocked[0] && blocked[1],
+        "gateways did not converge: {blocked:?}\n{}",
+        st.log_tails()
+    );
+
+    // After convergence, on both gateways: the untooled request is refused as
+    // app_untooled_blocked and never injected, and the catalogued tool of the converted
+    // custom grant still is (what the agent could do with listed tools is unchanged).
+    for gw in [&st.gw_a, &st.gw_b] {
+        let n = heads().len();
+        let c = via_proxy(gw, &token, &st.ca_pem);
+        let r = c
+            .get(format!("https://{CUSTOM_HOST}/anything"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 403);
+        let b = r.text().await.unwrap();
+        let v: Value = serde_json::from_str(&b).unwrap();
+        assert_eq!(
+            v["error"]["details"]["reason"], "app_untooled_blocked",
+            "{b}"
+        );
+        assert_eq!(heads().len(), n, "nothing reached the upstream");
+        let (s, n) = probe(gw.clone(), "/items").await;
+        assert_eq!(s, 200, "{}", st.log_tails());
+        assert!(
+            injected(n),
+            "{gw}: the catalogued tool must still be injected"
+        );
+    }
+    st.finish().await;
+}

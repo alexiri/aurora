@@ -356,8 +356,12 @@ with `Action=DescribeInstances`, STS with `Action=GetCallerIdentity`), AWS JSON 
   classification. The linter requires, for every tool with `params`, fixtures for the positive case
   and for each of: other value, missing, repeated, query/body conflict, wrong content type,
   truncated body.
+- **Query conditions and a body.** Servers merge the query and an urlencoded body, so a `query`
+  condition holds only if the request has no body, or has a complete, uncompressed, urlencoded
+  UTF-8 body that does not carry the parameter at all; a body that cannot be checked (other
+  type, compressed, longer than the buffer) means the tool does not match.
 - **Cost.** The gateway buffers the body prefix only for a request whose host, path and
-  method already match a `params` tool with a `form` condition (the existing *Body prefix* step 4 of the
+  method already match a `params` tool with a `form` or `query` condition (the existing *Body prefix* step 4 of the
   `06` request pipeline); other requests are unaffected.
 - **Order and superset rules.** The first-match rule above is unchanged: a `params` tool is declared
   before the generic tool that would also match (`ec2_describe` before `ec2_call`). A group wildcard
