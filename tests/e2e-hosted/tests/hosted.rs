@@ -1037,7 +1037,9 @@ async fn s12_codex_agent_answers_through_the_gateway_and_the_sandbox_holds_no_cr
         return;
     };
     const SEED: &str = "sk-e2e-codex-SEEDED-7c1d9a40";
-    let up = aurora_testkit::responses::MockResponses::start().await;
+    // 127.0.0.2: the sandbox's NO_PROXY covers 127.0.0.1 and localhost, so the model call must
+    // go through the proxy to the gateway (which may dial exactly this address).
+    let up = aurora_testkit::responses::MockResponses::start_on("127.0.0.2").await;
     let toml = format!(
         r#"
 [llm]

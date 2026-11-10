@@ -170,6 +170,12 @@ async fn responses(State(me): State<MockResponses>, headers: HeaderMap, body: By
 
 impl MockResponses {
     pub async fn start() -> Self {
+        Self::start_on("127.0.0.1").await
+    }
+
+    /// [`MockResponses::start`] bound to another loopback address (an address the sandbox's
+    /// `NO_PROXY` does not cover, so the call goes through the proxy and the gateway).
+    pub async fn start_on(ip: &str) -> Self {
         let me = Self {
             seen: Arc::default(),
             base: String::new(),
@@ -177,7 +183,9 @@ impl MockResponses {
         let app = Router::new()
             .route("/v1/responses", post(responses))
             .with_state(me.clone());
-        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let l = tokio::net::TcpListener::bind(format!("{ip}:0"))
+            .await
+            .unwrap();
         let base = format!("http://{}", l.local_addr().unwrap());
         tokio::spawn(async move {
             let _ = axum::serve(l, app).await;

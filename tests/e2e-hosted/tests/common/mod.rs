@@ -239,7 +239,7 @@ log_level = "info"
 
 [gateway]
 internal_bind = "{ops_ip}"
-allowed_private = ["127.0.0.1/32"{db_target_allowed}]
+allowed_private = ["127.0.0.1/32", "127.0.0.2/32"{db_target_allowed}]
 ca_dir = "{ca}"
 advertised_proxy_url = "https://aurora-gateway:4102"
 
