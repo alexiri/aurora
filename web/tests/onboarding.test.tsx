@@ -297,12 +297,13 @@ describe("instance setup wizard (D-141)", () => {
     };
     wrap(<SetupView />);
     const sw = await screen.findByRole("checkbox", { name: "Give it to every new user's agent" });
-    await waitFor(() => expect(sw).toBeEnabled());
+    await waitFor(() => expect(sw).toBeEnabled(), { timeout: 3000 });
     fireEvent.click(sw);
+    // (3s windows: the PUT -> refetch -> re-render chain has to fit, which can be slow on a loaded host.)
     await waitFor(() => expect(calls.find((c) => c.key === "PUT /v1/admin/placement")?.body).toMatchObject({
       mode: "shared_org", default_org_id: "o1", starter_grants: [{ kind: "secret", id: "k9" }],
-    }));
-    await waitFor(() => expect(sw).toBeChecked());
+    }), { timeout: 3000 });
+    await waitFor(() => expect(sw).toBeChecked(), { timeout: 3000 });
   });
 
   it("without a saved shared placement the switch is off and says why", async () => {

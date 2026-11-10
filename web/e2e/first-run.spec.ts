@@ -50,12 +50,14 @@ test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's
   await form.getByLabel("Provider endpoint").selectOption({ label: "LiteLLM (VidaiMock, dev only) (litellm)" });
   await form.getByLabel("API key").fill(MOCK_KEY);
   await form.getByRole("button", { name: "Add LLM key" }).click();
-  await expect(guide.getByText("Saved Mock LLM")).toBeVisible({ timeout: 60_000 });
+  // The key is saved when the guide shows it from the server's state: the key step collapses ("Saved …" is
+  // transient — the form unmounts the moment the invalidated queries refetch and the step ticks done).
+  await expect(guide.getByText("1 of 3 done")).toBeVisible({ timeout: 60_000 });
 
   // 3. Step 2 gives Daneel access, preselected: one click.
   await expect(guide.getByRole("checkbox", { name: /Daneel/ })).toBeChecked();
   await guide.getByRole("button", { name: "Give access" }).click();
-  await expect(guide.getByText(/Access given to 1 agent/)).toBeVisible();
+  // Access given, from the server's state (the "Access given…" status is transient).
   // Key and access are done from the server's state (the mock endpoint has a default model: no model step).
   await expect(guide.getByText("2 of 3 done")).toBeVisible({ timeout: 30_000 });
 

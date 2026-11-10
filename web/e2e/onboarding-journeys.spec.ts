@@ -59,7 +59,8 @@ test("1. fresh instance: the admin walks the setup wizard to a working chat", as
   if (!page.url().includes("/admin/setup")) await page.goto("/admin/setup");
   await expect(page.getByRole("heading", { name: "Set up Aurora", level: 1 })).toBeVisible();
   const steps = page.getByRole("list", { name: "Setup steps" });
-  await expect(steps.getByRole("region")).toHaveCount(6);
+  // Six steps (the placement step also embeds a "Personal organizations from before" region, so count the <li>s).
+  await expect(steps.getByRole("listitem")).toHaveCount(6);
 
   // 2. Where new users land: shared organization "Users" with personal workspaces (the recommended choice).
   const placement = steps.getByRole("region", { name: "Where new users land" });
@@ -73,9 +74,10 @@ test("1. fresh instance: the admin walks the setup wizard to a working chat", as
   await form.getByLabel("Provider endpoint").selectOption({ label: ENDPOINT_LABEL });
   await form.getByLabel("API key").fill(MOCK_KEY);
   await form.getByRole("button", { name: "Add LLM key" }).click();
-  await expect(llm.getByText("Saved Mock LLM")).toBeVisible({ timeout: 60_000 });
-  await llm.getByRole("button", { name: "Skip" }).click();
+  // The key is saved when the wizard shows it from the server's state: the form gives way to the starter
+  // switch ("Saved …" is transient — the Setup query refetch replaces the form as soon as the key exists).
   const starter = llm.getByRole("checkbox", { name: "Give it to every new user's agent" });
+  await expect(starter).toBeVisible({ timeout: 60_000 });
   await starter.check();
   await expect(starter).toBeChecked({ timeout: 30_000 });
 
@@ -142,7 +144,9 @@ test("3. new user without a starter grant: the guide walks key, access and reply
   await form.getByLabel("Provider endpoint").selectOption({ label: ENDPOINT_LABEL });
   await form.getByLabel("API key").fill(MOCK_KEY);
   await form.getByRole("button", { name: "Add LLM key" }).click();
-  await expect(guide.getByText("Saved My key")).toBeVisible({ timeout: 60_000 });
+  // The key is saved when the guide shows it from the server's state: the key step collapses ("Saved …" is
+  // transient — the form unmounts the moment the invalidated queries refetch and the step ticks done).
+  await expect(guide.getByText("1 of 3 done")).toBeVisible({ timeout: 60_000 });
 
   // Access: Daneel is preselected.
   await expect(guide.getByRole("checkbox", { name: /Daneel/ })).toBeChecked();
