@@ -1124,6 +1124,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/skill-library-updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pending proposed updates of an agent's own skills (`can_use`). */
+        get: operations["listAgentSkillLibraryUpdates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/skills": {
         parameters: {
             query?: never;
@@ -2632,6 +2649,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{org}/skill-libraries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the organization's libraries: owners/admins get everything; other people who can use a
+         *     workspace get `id`, `label` and `status` of the active ones (the browse picker).
+         */
+        get: operations["listSkillLibraries"];
+        put?: never;
+        /** Connect a repository as a skill library (org owner/admin). */
+        post: operations["createSkillLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/skill-library-updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pending proposed updates of the organization-tier skills (org owner/admin). */
+        get: operations["listOrgSkillLibraryUpdates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/skills": {
         parameters: {
             query?: never;
@@ -3018,6 +3073,79 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/skill-libraries/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one library (org owner/admin). */
+        get: operations["getSkillLibrary"];
+        put?: never;
+        post?: never;
+        /** Delete the library; every skill added from it is detached and keeps its content. */
+        delete: operations["deleteSkillLibrary"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename, pause or resume, or change connection, ref or path (re-resolves; stored skills are
+         *     never touched).
+         */
+        patch: operations["updateSkillLibrary"];
+        trace?: never;
+    };
+    "/v1/skill-libraries/{id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** "Check now": refresh soon (at most once per minute per library). */
+        post: operations["refreshSkillLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skill-libraries/{id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browse the library's current head live (nothing is stored; cached for 5 minutes). */
+        get: operations["browseSkillLibrary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skill-libraries/{id}/skills/{path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One skill's full content at a commit: exactly what an add would store (and the diff base). */
+        get: operations["getSkillLibrarySkill"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/skills/{id}": {
         parameters: {
             query?: never;
@@ -3050,6 +3178,74 @@ export interface paths {
         post?: never;
         /** Delete one skill file. */
         delete: operations["deleteSkillFile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The library link of a skill, its pin and any open proposed update with the whole diff. */
+        get: operations["getSkillLibraryInfo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/library/detach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Detach: the skill becomes an ordinary editable skill (the one-way fork). */
+        post: operations["detachSkillFromLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/library/updates/{uid}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve: applies exactly the quoted content, re-validated, in one transaction. */
+        post: operations["approveSkillLibraryUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/library/updates/{uid}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject: that repository state is not proposed again; a later change is. */
+        post: operations["rejectSkillLibraryUpdate"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3623,6 +3819,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/skill-library-updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pending proposed updates of a workspace's skills (`can_own`). */
+        get: operations["listWorkspaceSkillLibraryUpdates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/skills": {
         parameters: {
             query?: never;
@@ -3960,6 +4173,8 @@ export interface components {
             oauth_clients: components["schemas"]["AppOauthClient"][];
             package_id: string;
             package_version: string;
+            /** @description (phase 4, P4-GSL) as on `AppSummary`. */
+            serves_library: boolean;
             tools: components["schemas"]["Tool"][];
         };
         /** @description A self-hosted app instance: a host an admin registered for one app (C-240, D-74). */
@@ -4030,6 +4245,11 @@ export interface components {
             name: string;
             package_id: string;
             package_version: string;
+            /**
+             * @description (phase 4, P4-GSL, D-149) the app declares a `library` block: it can serve a git skill
+             *     library (the dashboard offers its org-scoped connections when connecting a repository).
+             */
+            serves_library: boolean;
         };
         Approval: {
             agent?: null | components["schemas"]["ApprovalAgent"];
@@ -4130,6 +4350,10 @@ export interface components {
         ApproveConnectorRequest: {
             /** @description Digest of exactly the manifest being approved (`manifest_digest` of the connector). */
             manifest_digest: string;
+        };
+        ApproveLibraryUpdateRequest: {
+            /** @description The proposal's `content_sha256`: the content the person reviewed. */
+            content_sha256: string;
         };
         ApproveRequest: {
             user_code: string;
@@ -4483,6 +4707,13 @@ export interface components {
             workspace_id: string;
             workspace_name: string;
         };
+        ConnectionRef: {
+            /** Format: uuid */
+            id: string;
+            label: string;
+            /** @description `active`, `reauth_required`, `disabled`, … */
+            status: string;
+        };
         ConnectorAdmin: {
             /** Format: date-time */
             approved_at?: string | null;
@@ -4819,13 +5050,33 @@ export interface components {
             /** @description Managed value (exactly one of `value` / `reference`). */
             value?: string | null;
         };
+        CreateSkillLibraryRequest: {
+            /**
+             * Format: uuid
+             * @description An **org-scoped**, active connection of an app that declares a `library` block.
+             */
+            connection_id: string;
+            /** @description 1 to 80 characters, unique in the organization. */
+            label: string;
+            /** @description Directory that holds the skill directories (at most 4 segments); default the root. */
+            path?: string | null;
+            /** @description Branch, tag or commit; default the repository's default branch. */
+            ref?: string | null;
+            /** @description `owner/name` (the package's `repo_pattern`). */
+            repo: string;
+        };
         CreateSkillRequest: {
-            body: string;
-            /** @description Single line, at most 500 characters. */
-            description: string;
+            /** @description Required unless `from_library` is given. */
+            body?: string | null;
+            /** @description Single line, at most 500 characters. Required unless `from_library` is given. */
+            description?: string | null;
             enabled?: boolean | null;
-            /** @description Immutable kebab-case directory name, at most 64 characters; `aurora-*` is reserved. */
-            name: string;
+            from_library?: null | components["schemas"]["FromLibrary"];
+            /**
+             * @description Immutable kebab-case directory name, at most 64 characters; `aurora-*` is reserved.
+             *     Required unless `from_library` is given.
+             */
+            name?: string | null;
         };
         CreateTrustedKeyRequest: {
             name: string;
@@ -5113,6 +5364,15 @@ export interface components {
              */
             effective_frozen: boolean;
             frozen?: null | components["schemas"]["Frozen"];
+        };
+        /** @description Which library skill to add (`10 §Git skill library`). */
+        FromLibrary: {
+            /** @description The commit the person saw in browse. Required: a later push is never fetched silently. */
+            commit_sha?: string | null;
+            /** Format: uuid */
+            library_id: string;
+            /** @description The skill's directory name under the library path, as browse lists it. */
+            path: string;
         };
         /** @description A freeze record (phase 2, RFE-006). */
         Frozen: {
@@ -5430,6 +5690,107 @@ export interface components {
             /** Format: uuid */
             secret_id: string;
             usable: boolean;
+        };
+        LibraryCatalogue: {
+            /** @description The commit the listing was read at: quote it when adding. */
+            commit_sha: string;
+            items: components["schemas"]["LibrarySkillItem"][];
+            next_cursor?: string | null;
+            /** @description More than `LIBRARY_BROWSE_MAX` skills: the listing is cut; narrow the folder. */
+            truncated: boolean;
+        };
+        /** @description The whole stored-versus-proposed content: never a summary and never truncated. */
+        LibraryDiff: {
+            body: components["schemas"]["LibraryTextChange"];
+            description: components["schemas"]["LibraryTextChange"];
+            files: components["schemas"]["LibraryFileChange"][];
+        };
+        LibraryFile: {
+            binary: boolean;
+            /** @description Text content (UTF-8 files); null for binary files. */
+            content?: string | null;
+            /** @description Base64 content of a binary file. */
+            content_b64?: string | null;
+            executable: boolean;
+            path: string;
+            size: number;
+        };
+        LibraryFileChange: {
+            /** @description Binary files are compared by content but not shown. */
+            binary: boolean;
+            /** @description `added` | `removed` | `modified` | `unchanged`. */
+            change: string;
+            new?: string | null;
+            new_executable?: boolean | null;
+            old?: string | null;
+            old_executable?: boolean | null;
+            path: string;
+        };
+        LibraryRef: {
+            /** Format: uuid */
+            id: string;
+            label: string;
+            path: string;
+            repo: string;
+        };
+        /** @description One skill at one commit: exactly what an add would store. */
+        LibrarySkillContent: {
+            body?: string | null;
+            commit_sha: string;
+            /** @description Lowercase hex SHA-256 of the canonical content. */
+            content_sha256?: string | null;
+            description?: string | null;
+            files: components["schemas"]["LibraryFile"][];
+            name: string;
+            path: string;
+            reason?: string | null;
+            /** @description Characters of body and files (binary as base64 length): the budget unit. */
+            size: number;
+            valid: boolean;
+        };
+        LibrarySkillItem: {
+            /** @description Where this library's version of the skill is already added. */
+            added: components["schemas"]["LibrarySkillPlacement"][];
+            description?: string | null;
+            files: number;
+            name: string;
+            /** @description The skill's directory name under the library path. */
+            path: string;
+            /** @description Why an invalid skill cannot be added (sanitized fixed texts). */
+            reason?: string | null;
+            /**
+             * Format: int64
+             * @description Characters of body and files (an estimate before the files are read).
+             */
+            size: number;
+            valid: boolean;
+        };
+        /** @description Where a library skill is already added (the same `{ id, tier }` shape as the skills' `TierRef`). */
+        LibrarySkillPlacement: {
+            /** Format: uuid */
+            id: string;
+            tier: string;
+        };
+        LibraryTextChange: {
+            changed: boolean;
+            new: string;
+            old: string;
+        };
+        LibraryUpdateView: {
+            commit_sha: string;
+            /** @description What an approval must quote (lowercase hex SHA-256 of the proposed content). */
+            content_sha256: string;
+            /** Format: date-time */
+            created_at: string;
+            diff?: null | components["schemas"]["LibraryDiff"];
+            /** Format: uuid */
+            id: string;
+            /** @description `changed` | `removed` | `invalid`. */
+            kind: string;
+            /** @description Approving would exceed the tier's library budget. */
+            over_budget: boolean;
+            /** @description Why an `invalid` proposal cannot be applied (repository text: untrusted). */
+            reason?: string | null;
         };
         /** @enum {string} */
         LinkMethod: "verified_email" | "sign_in_link" | "admin";
@@ -6636,6 +6997,7 @@ export interface components {
                 overridden_in?: components["schemas"]["OverriddenAgent"][] | null;
                 /** @description `agent` | `workspace` | `organization` (kept for compatibility, D-107). */
                 scope: string;
+                source?: null | components["schemas"]["SkillSource"];
                 /** @description `agent` | `workspace` | `org`. */
                 tier: string;
                 /** @description Body plus files, in characters (binary counted as base64 length). */
@@ -6644,6 +7006,31 @@ export interface components {
                 updated_at: string;
                 /** Format: uuid */
                 workspace_id?: string | null;
+            }[];
+            next_cursor?: string | null;
+        };
+        Page_SkillLibrary: {
+            items: {
+                app_id?: string | null;
+                connection?: null | components["schemas"]["ConnectionRef"];
+                /** Format: date-time */
+                created_at?: string | null;
+                /** Format: uuid */
+                id: string;
+                label: string;
+                /** @description Sanitized, at most 200 characters; never a token or a URL with credentials. */
+                last_error?: string | null;
+                last_head_sha?: string | null;
+                /** Format: date-time */
+                last_refresh_at?: string | null;
+                path?: string | null;
+                /** Format: int64 */
+                pending_updates?: number | null;
+                ref?: string | null;
+                repo?: string | null;
+                skill_counts?: null | components["schemas"]["SkillCounts"];
+                /** @description `active` | `paused` | `error` | `over_budget`. */
+                status: string;
             }[];
             next_cursor?: string | null;
         };
@@ -6836,6 +7223,16 @@ export interface components {
             name?: string | null;
             path_pattern?: string | null;
         };
+        PatchSkillLibraryRequest: {
+            /** Format: uuid */
+            connection_id?: string | null;
+            label?: string | null;
+            path?: string | null;
+            /** @description `null` is not distinguishable from absent; send an empty string to clear the ref. */
+            ref?: string | null;
+            /** @description `active` | `paused`. */
+            status?: string | null;
+        };
         PatchWorkspaceRequest: {
             /**
              * @description (phase 2, RFE-025) `enabled` | `owners_only` | `disabled`; absent = unchanged, `null` =
@@ -6886,8 +7283,35 @@ export interface components {
             /** Format: uuid */
             id: string;
         };
+        PendingLibrarySkill: {
+            /** Format: uuid */
+            agent_id?: string | null;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            tier: string;
+            /** Format: uuid */
+            workspace_id?: string | null;
+        };
+        PendingLibraryUpdate: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            kind: string;
+            library?: null | components["schemas"]["PendingUpdateLibrary"];
+            skill: components["schemas"]["PendingLibrarySkill"];
+        };
+        PendingLibraryUpdates: {
+            items: components["schemas"]["PendingLibraryUpdate"][];
+        };
         PendingList: {
             items: components["schemas"]["Approval"][];
+        };
+        PendingUpdateLibrary: {
+            /** Format: uuid */
+            id: string;
+            label?: string | null;
         };
         /** @enum {string} */
         Per: "minute" | "hour" | "day";
@@ -6972,6 +7396,11 @@ export interface components {
         };
         PluginAppRef: {
             app_id: string;
+            /**
+             * @description (phase 4, P4-GSL, D-149) "Can serve a skill library: reads repository files from
+             *     `<library_host>`": the app declares a `library` block (shown in the permissions review).
+             */
+            library_host?: string | null;
             name: string;
         };
         /**
@@ -7846,6 +8275,7 @@ export interface components {
             overridden_in?: components["schemas"]["OverriddenAgent"][] | null;
             /** @description `agent` | `workspace` | `organization` (kept for compatibility, D-107). */
             scope: string;
+            source?: null | components["schemas"]["SkillSource"];
             /** @description `agent` | `workspace` | `org`. */
             tier: string;
             /** @description Body plus files, in characters (binary counted as base64 length). */
@@ -7855,11 +8285,78 @@ export interface components {
             /** Format: uuid */
             workspace_id?: string | null;
         };
+        SkillCounts: {
+            /** Format: int64 */
+            agent: number;
+            /** Format: int64 */
+            org: number;
+            /** Format: int64 */
+            workspace: number;
+        };
         SkillFile: {
             executable: boolean;
             path: string;
             /** @description Characters for text, base64 length for binary content. */
             size: number;
+        };
+        /**
+         * @description A skill library. Org owners/admins see every field; other members who can use a workspace of
+         *     the org get `id`, `label` and `status` of the active libraries (the browse picker).
+         */
+        SkillLibrary: {
+            app_id?: string | null;
+            connection?: null | components["schemas"]["ConnectionRef"];
+            /** Format: date-time */
+            created_at?: string | null;
+            /** Format: uuid */
+            id: string;
+            label: string;
+            /** @description Sanitized, at most 200 characters; never a token or a URL with credentials. */
+            last_error?: string | null;
+            last_head_sha?: string | null;
+            /** Format: date-time */
+            last_refresh_at?: string | null;
+            path?: string | null;
+            /** Format: int64 */
+            pending_updates?: number | null;
+            ref?: string | null;
+            repo?: string | null;
+            skill_counts?: null | components["schemas"]["SkillCounts"];
+            /** @description `active` | `paused` | `error` | `over_budget`. */
+            status: string;
+        };
+        SkillLibraryInfo: {
+            commit_sha: string;
+            /** @description The library link is gone (detach or library deletion). */
+            detached: boolean;
+            library?: null | components["schemas"]["LibraryRef"];
+            /** Format: date-time */
+            pinned_at?: string | null;
+            /** Format: uuid */
+            pinned_by?: string | null;
+            update?: null | components["schemas"]["LibraryUpdateView"];
+        };
+        /**
+         * @description Provenance of a skill added from a git skill library (`10 §Git skill library`). Repository
+         *     text: untrusted, shown as data.
+         */
+        SkillSource: {
+            commit_sha?: string | null;
+            /** @description The library link is gone (detach or library deletion): an ordinary editable skill. */
+            detached: boolean;
+            /** @description Always `library`. */
+            kind: string;
+            label?: string | null;
+            /**
+             * Format: uuid
+             * @description Null once the skill was detached or its library deleted.
+             */
+            library_id?: string | null;
+            path?: string | null;
+            /** Format: date-time */
+            pinned_at?: string | null;
+            repo?: string | null;
+            update_pending: boolean;
         };
         Sourced_Option_Vec_String: {
             /** @description `instance` | `org`. */
@@ -11764,6 +12261,44 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listAgentSkillLibraryUpdates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingLibraryUpdates"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -16610,6 +17145,148 @@ export interface operations {
             };
         };
     };
+    listSkillLibraries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_SkillLibrary"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createSkillLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSkillLibraryRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillLibrary"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listOrgSkillLibraryUpdates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingLibraryUpdates"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listOrgSkills: {
         parameters: {
             query?: never;
@@ -17820,6 +18497,309 @@ export interface operations {
             };
         };
     };
+    getSkillLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Library id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillLibrary"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteSkillLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Library id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    updateSkillLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Library id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchSkillLibraryRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillLibrary"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    refreshSkillLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Library id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    browseSkillLibrary: {
+        parameters: {
+            query?: {
+                /** @description Case-insensitive filter on name and description. */
+                q?: string;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Library id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryCatalogue"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getSkillLibrarySkill: {
+        parameters: {
+            query?: {
+                /** @description The commit to read; default the current head. */
+                commit_sha?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Library id */
+                id: string;
+                /** @description The skill's directory name */
+                path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibrarySkillContent"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getSkill: {
         parameters: {
             query?: never;
@@ -18038,6 +19018,189 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getSkillLibraryInfo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Skill id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillLibraryInfo"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    detachSkillFromLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Skill id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Skill"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    approveSkillLibraryUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Skill id */
+                id: string;
+                /** @description Update id */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveLibraryUpdateRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Skill"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    rejectSkillLibraryUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Skill id */
+                id: string;
+                /** @description Update id */
+                uid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rejected */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19993,6 +21156,44 @@ export interface operations {
             };
             /** @description secret_store_unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWorkspaceSkillLibraryUpdates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingLibraryUpdates"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

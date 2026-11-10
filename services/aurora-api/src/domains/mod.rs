@@ -39,6 +39,7 @@ pub mod runner_plane;
 pub mod runners_admin;
 pub mod schedules;
 pub mod secrets;
+pub mod skill_libraries;
 pub mod skills;
 pub mod tenancy;
 pub mod tools;

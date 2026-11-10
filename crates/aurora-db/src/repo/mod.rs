@@ -52,6 +52,7 @@ pub mod sandboxes;
 pub mod schedules;
 pub mod secrets;
 pub mod sessions;
+pub mod skill_libraries;
 pub mod skills;
 pub mod space_bindings;
 pub mod thread_links;

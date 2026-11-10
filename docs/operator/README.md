@@ -39,6 +39,7 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 | [outage-and-alerts.md](outage-and-alerts.md) | Gateway behaviour during a Postgres outage (phase 3, RFE-014): `readyz` states (`?strict=true`), what is served from cache and for how long, refusal codes, recovery, the alert rules and a recovery check |
 | [freeze.md](freeze.md) | The emergency freeze of an agent, workspace or organization |
 | [harnesses.md](harnesses.md) | Harnesses (phase 4, P4-HAR): enabling the Codex harness (`hosted.enabled_harnesses`, `runner.image_harnesses`, the sandbox image build argument `SANDBOX_HARNESSES`), switching an agent's harness, failure codes |
+| [skill-libraries.md](skill-libraries.md) | Git skill libraries (phase 4, P4-GSL): connecting a repository, `skills.library.*`, `api.gateway_internal_url`, what is read and stored, the review of proposed updates, metrics and audit |
 
 ## Phase 1 and 2 topics
 

@@ -186,6 +186,10 @@ pub struct ApiConfig {
     /// presents an operator certificate, so BYO clients verify the outer leg with system roots.
     pub gateway_proxy_operator_cert: bool,
     pub hookhost_url: String,
+    /// (phase 4, P4-GSL, D-154) `api.gateway_internal_url`.
+    pub gateway_internal_url: String,
+    /// (phase 4, P4-GSL) validated `[skills.library]`.
+    pub skills_library: SkillsLibrarySection,
     pub plugins: PluginsSection,
     pub retention: RetentionSection,
     pub attachments: AttachmentsSection,
@@ -424,6 +428,25 @@ impl RawConfig {
         );
         check_sandbox_proxy_url(&mut c, self.gateway.sandbox_proxy_url.as_deref());
         check_url(&mut c, "api.hookhost_url", Some(&self.api.hookhost_url));
+        check_url(
+            &mut c,
+            "api.gateway_internal_url",
+            Some(&self.api.gateway_internal_url),
+        );
+        if self.skills.library.refresh_interval_secs < 300 {
+            c.err(
+                "skills.library.refresh_interval_secs",
+                "must be at least 300 (LIBRARY_REFRESH_INTERVAL has a 5 minute floor)",
+            );
+        }
+        if self.skills.library.bytes_per_agent == 0
+            || self.skills.library.bytes_per_agent > 1024 * 1024
+        {
+            c.err(
+                "skills.library.bytes_per_agent",
+                "must be between 1 and 1048576 (an operator may only lower LIBRARY_BYTES_PER_AGENT)",
+            );
+        }
         if self.plugins.dir.is_empty() {
             c.err("plugins.dir", "must not be empty");
         }
@@ -525,6 +548,8 @@ impl RawConfig {
             gateway_allowed_private: self.gateway.allowed_private.clone(),
             gateway_proxy_operator_cert: self.gateway.proxy_tls.cert_file.is_some(),
             hookhost_url: self.api.hookhost_url.clone(),
+            gateway_internal_url: self.api.gateway_internal_url.clone(),
+            skills_library: self.skills.library.clone(),
             plugins: self.plugins.clone(),
             retention: self.retention.clone(),
             attachments: self.attachments.clone(),

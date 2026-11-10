@@ -223,6 +223,28 @@ pub async fn owns_any_workspace<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (P4-GSL) `can_use` on at least one workspace of the org: an active org owner/admin, or an
+/// active member with a workspace binding in the org. Suspended or non-members: `false`.
+pub async fn uses_any_workspace<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    org: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM org_members m
+             WHERE m.org_id = $1 AND m.user_id = $2 AND m.status = 'active'
+               AND (m.role IN ('owner','admin')
+                    OR EXISTS (SELECT 1 FROM workspace_access a
+                               JOIN workspaces w ON w.id = a.workspace_id
+                               WHERE w.org_id = $1 AND a.user_id = $2)))",
+    )
+    .bind(org)
+    .bind(user)
+    .fetch_one(exec)
+    .await?)
+}
+
 /// Org of a workspace regardless of caller (for key confinement checks).
 pub async fn workspace_org<'e, E: PgExecutor<'e>>(
     exec: E,

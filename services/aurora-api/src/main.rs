@@ -322,6 +322,8 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
     aurora_api::domains::connectors::inbox::spawn(state.clone());
     aurora_api::domains::channels::cards::fanout::spawn(state.clone());
     aurora_api::domains::channels::deprovision::spawn(state.clone());
+    // (P4-GSL) git skill library refresh (lease per library; proposals only) and its retention.
+    aurora_api::domains::skill_libraries::refresh::spawn(state.clone());
     aurora_api::domains::plugins::scan::spawn(state.clone());
     aurora_api::domains::plugins::registry::spawn_initial(state.clone());
     let internal =

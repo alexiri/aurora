@@ -145,6 +145,9 @@ enum G {
     /// Org-scope credential metadata (I-27 amendment): org owner/admin, or an org member who
     /// is `can_own` on a workspace of the org (so org secrets/connections can be granted).
     OrgCred,
+    /// (phase 4, P4-GSL) `can_use` on at least one workspace of the org (org owners/admins
+    /// included): the skill-library browse audience. A member with no workspace binding is 403.
+    UseAny,
     /// `can_use`, but only with an API key: sessions get 403 `forbidden` before the workspace
     /// is looked at (`POST /v1/agents/{agent}/conversations` creates `api` conversations).
     WsUseKeyOnly,
@@ -524,6 +527,54 @@ const ROWS: &[Row] = &[
     r("DELETE", "/v1/skills/{id}", G::Auth, false),
     r("PUT", "/v1/skills/{id}/files/{path}", G::Auth, false),
     r("DELETE", "/v1/skills/{id}/files/{path}", G::Auth, false),
+    // (phase 4, P4-GSL) git skill libraries: management by org owner/admin, browse by anyone who
+    // can use a workspace of the org; the update review follows the skill's tier authority
+    // (unknown owner scope here: authentication only) and approve/reject/detach are session-only
+    r("GET", "/v1/orgs/{org}/skill-libraries", G::UseAny, false),
+    r("POST", "/v1/orgs/{org}/skill-libraries", G::Admin, false),
+    r("GET", "/v1/skill-libraries/{id}", G::Auth, false),
+    r("PATCH", "/v1/skill-libraries/{id}", G::Auth, false),
+    r("DELETE", "/v1/skill-libraries/{id}", G::Auth, false),
+    r("POST", "/v1/skill-libraries/{id}/refresh", G::Auth, false),
+    r("GET", "/v1/skill-libraries/{id}/skills", G::Auth, false),
+    r(
+        "GET",
+        "/v1/skill-libraries/{id}/skills/{path}",
+        G::Auth,
+        false,
+    ),
+    r("GET", "/v1/skills/{id}/library", G::Auth, false),
+    r(
+        "POST",
+        "/v1/skills/{id}/library/updates/{uid}/approve",
+        G::Auth,
+        true,
+    ),
+    r(
+        "POST",
+        "/v1/skills/{id}/library/updates/{uid}/reject",
+        G::Auth,
+        true,
+    ),
+    r("POST", "/v1/skills/{id}/library/detach", G::Auth, true),
+    r(
+        "GET",
+        "/v1/orgs/{org}/skill-library-updates",
+        G::Admin,
+        false,
+    ),
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/skill-library-updates",
+        G::WsOwn,
+        false,
+    ),
+    r(
+        "GET",
+        "/v1/agents/{agent}/skill-library-updates",
+        G::WsUse,
+        false,
+    ),
     r("GET", "/v1/agents/{agent}/sandbox", G::WsUse, false),
     r("POST", "/v1/agents/{agent}/restart", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/models", G::WsUse, false),
@@ -704,6 +755,21 @@ fn want(g: G, so: bool, p: P) -> Want {
                 Allow
             } else {
                 Deny(&[401, 403, 404], None)
+            }
+        }
+        G::UseAny => {
+            if p.is_ws_key() {
+                return Deny(&[403], Some("forbidden"));
+            }
+            match org_role(p) {
+                Some((role, true)) => {
+                    if role != "member" || ws_access(p) != WsAccess::None {
+                        Allow
+                    } else {
+                        Deny(&[403], Some("forbidden"))
+                    }
+                }
+                _ => Deny(&[404], None),
             }
         }
         G::Member | G::Admin | G::Owner | G::OrgCred => {
@@ -974,6 +1040,12 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             "/v1/agents/{agent}/skills" | "/v1/orgs/{org}/skills" | "/v1/workspaces/{ws}/skills",
         ) => {
             json!({"name": "s", "description": "d", "body": "b"})
+        }
+        ("POST", "/v1/orgs/{org}/skill-libraries") => {
+            json!({"label": "matrix", "connection_id": Uuid::now_v7(), "repo": "a/b"})
+        }
+        ("POST", "/v1/skills/{id}/library/updates/{uid}/approve") => {
+            json!({"content_sha256": "0".repeat(64)})
         }
         ("POST", "/v1/agents/{agent}/webhooks") => json!({"name": "w", "instructions": "i"}),
         ("PUT", "/v1/agents/{agent}/byo") => {

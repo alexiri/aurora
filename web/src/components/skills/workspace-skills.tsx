@@ -32,7 +32,7 @@ export function WorkspaceSkills() {
           agents on their next home sync.
         </Notice>
       </div>
-      <SkillsEditor scope={{ kind: "workspace", id: wsId }} readOnly={!canOwn} />
+      <SkillsEditor scope={{ kind: "workspace", id: wsId }} readOnly={!canOwn} orgId={workspace.data.org_id} />
     </div>
   );
 }

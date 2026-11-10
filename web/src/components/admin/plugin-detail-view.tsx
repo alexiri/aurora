@@ -163,6 +163,17 @@ export function PluginReview({ plugin }: { plugin: PluginPackage }) {
           <dd className="break-all font-mono text-xs text-ink-2">{plugin.digest}</dd>
           <dt className="text-muted">Apps</dt>
           <dd className="text-ink">{plugin.apps.map((a) => a.name).join(", ") || "None"}</dd>
+          {plugin.apps.some((a) => a.library_host) ? (
+            <>
+              <dt className="text-muted">Skill library</dt>
+              <dd className="text-ink">
+                {plugin.apps
+                  .filter((a) => a.library_host)
+                  .map((a) => `${a.name}: can serve a skill library, reads repository files from ${a.library_host}`)
+                  .join("; ")}
+              </dd>
+            </>
+          ) : null}
         </dl>
       </Card>
 

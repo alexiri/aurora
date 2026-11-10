@@ -5,8 +5,10 @@ use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-const COLS: &str = "id, org_id, agent_id, workspace_id, name, description, body, enabled, \
-                    created_by_kind, created_at, updated_at";
+pub(crate) const COLS: &str = "id, org_id, agent_id, workspace_id, name, description, body, \
+                    enabled, created_by_kind, created_at, updated_at, library_id, library_label, \
+                    library_repo, library_path, library_commit_sha, library_blobs, \
+                    library_content_sha256, library_pinned_at, library_pinned_by_user_id";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SkillRow {
@@ -23,6 +25,18 @@ pub struct SkillRow {
     pub created_by_kind: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// (phase 4, P4-GSL) non-null => added from a git skill library: pinned and **read-only**.
+    pub library_id: Option<Uuid>,
+    /// Provenance snapshot; survives library deletion and detach ("was from <repo>@<sha>").
+    pub library_label: Option<String>,
+    pub library_repo: Option<String>,
+    pub library_path: Option<String>,
+    pub library_commit_sha: Option<String>,
+    /// `{ "<relative path>": "<blob id>" }` of `SKILL.md` and every file.
+    pub library_blobs: Option<serde_json::Value>,
+    pub library_content_sha256: Option<Vec<u8>>,
+    pub library_pinned_at: Option<DateTime<Utc>>,
+    pub library_pinned_by_user_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

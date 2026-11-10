@@ -79,6 +79,8 @@ pub struct AppState {
     pub connect: Arc<crate::domains::connect::Env>,
     /// Card requests from inbox processing (BE-073).
     pub card_requests: Arc<dyn crate::domains::channels::card_requests::CardRequests>,
+    /// (phase 4, P4-GSL) git skill library: the gateway client and the browse cache.
+    pub library: Arc<crate::domains::skill_libraries::LibraryEnv>,
     /// SSE keepalive interval.
     pub sse_keepalive: std::time::Duration,
     /// How often open SSE streams re-validate their principal (besides revocation NOTIFYs).
@@ -155,6 +157,12 @@ impl AppState {
             )?,
         );
         let counters = Arc::new(web::counters::ApiCounters::build(&config.counters, &pool)?);
+        let library = Arc::new(crate::domains::skill_libraries::LibraryEnv::new(Arc::new(
+            crate::domains::skill_libraries::gateway::HttpGateway::new(
+                &config.gateway_internal_url,
+                &config.internal_ring,
+            )?,
+        )));
         Ok(Self {
             pool,
             config: Arc::new(config),
@@ -176,6 +184,7 @@ impl AppState {
             oidc,
             connect,
             card_requests,
+            library,
             sse_keepalive: aurora_core::limits::SSE_KEEPALIVE,
             stream_recheck: crate::http::auth::STREAM_RECHECK,
         })
@@ -241,6 +250,16 @@ impl AppState {
         self
     }
 
+    /// Replace the library gateway client (tests: a fake that reads a fake git host).
+    #[must_use]
+    pub fn with_library_gateway(
+        mut self,
+        gw: Arc<dyn crate::domains::skill_libraries::gateway::LibraryGateway>,
+    ) -> Self {
+        self.library = Arc::new(crate::domains::skill_libraries::LibraryEnv::new(gw));
+        self
+    }
+
     /// Replace the mailer (tests).
     #[must_use]
     pub fn with_mailer(mut self, mailer: Arc<dyn Mailer>) -> Self {
@@ -276,6 +295,7 @@ pub fn v1_router() -> OpenApiRouter<AppState> {
         .merge(domains::hosted::router())
         .merge(domains::memory::router())
         .merge(domains::skills::router())
+        .merge(domains::skill_libraries::router())
         .merge(domains::webhooks::router())
         .merge(domains::schedules::router())
         .merge(domains::automations::router())

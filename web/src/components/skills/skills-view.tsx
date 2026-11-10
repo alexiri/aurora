@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Field, inputClass } from "@/components/ui/field";
 import { Notice } from "@/components/ui/notice";
 import { errorMessage } from "@/lib/api/errors";
+import type { BudgetTier } from "@/lib/api/skill-libraries";
+import { AddFromLibrary, LibraryBadge, LibraryManagedNotice, LibrarySkillActions, PendingUpdatesNotice } from "./library";
 import {
   SKILL_BODY_MAX,
   SKILL_DESCRIPTION_MAX,
@@ -44,7 +46,7 @@ export function TierBadge({ tier }: { tier: SkillTier }) {
  * Editable list + editor for one tier (agent, workspace or organization). `readOnly` is the member view of a
  * workspace tier: the list and every skill open, nothing can be changed (writes are `can_own`, the API enforces it).
  */
-export function SkillsEditor({ scope, readOnly = false }: { scope: SkillScope; readOnly?: boolean }) {
+export function SkillsEditor({ scope, readOnly = false, orgId }: { scope: SkillScope; readOnly?: boolean; orgId?: string }) {
   const agentList = useAgentSkills(scope.kind === "agent" ? scope.id : "");
   const wsList = useWorkspaceSkills(scope.kind === "workspace" ? scope.id : undefined);
   const orgList = useOrgSkills(scope.kind === "organization" ? scope.id : undefined);
@@ -53,37 +55,48 @@ export function SkillsEditor({ scope, readOnly = false }: { scope: SkillScope; r
   const [creating, setCreating] = useState(false);
   const items = list.data?.items ?? [];
   const current = items.find((s) => s.id === selected);
+  const tier: BudgetTier = scope.kind === "organization" ? "org" : scope.kind;
+  // Library-sourced content of this tier counts toward its budget (docs/10 §Git skill library).
+  const libraryItems = items.filter((s) => s.source && !s.source.detached);
+  const usage = { bytes: libraryItems.reduce((n, s) => n + s.total_size, 0), count: libraryItems.length };
 
   return (
     <div className="space-y-4">
       {readOnly ? (
         <Notice role="status">You can read these skills. Only workspace owners can change them.</Notice>
       ) : (
-        <div className="flex justify-end">
+        <div className="flex flex-wrap justify-end gap-2">
+          <AddFromLibrary scope={scope} orgId={orgId} tier={tier} usage={usage} onAdded={(id) => { setCreating(false); setSelected(id); }} />
           <Button type="button" onClick={() => { setCreating(true); setSelected(null); }}>New skill</Button>
         </div>
       )}
+      <PendingUpdatesNotice scope={scope} enabled={!readOnly && libraryItems.length > 0} />
       {list.isPending ? <Loading /> : null}
       {list.isError ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : null}
       {list.data && items.length === 0 && !creating ? <EmptyState title="No skills yet" /> : null}
       <div className="grid gap-6 md:grid-cols-[16rem_1fr]">
-        <ul aria-label="Skills" className="space-y-1">
+        <ul aria-label="Skills" className="min-w-0 space-y-1">
           {items.map((s) => (
-            <li key={s.id}>
+            <li key={s.id} className="min-w-0">
               <button
                 type="button"
                 aria-current={selected === s.id}
-                className="w-full rounded-control px-3 py-2 text-left text-sm text-ink hover:bg-subtle aria-[current=true]:bg-subtle aria-[current=true]:font-semibold"
+                className="block w-full min-w-0 overflow-hidden rounded-control px-3 py-2 text-left text-sm text-ink hover:bg-subtle aria-[current=true]:bg-subtle aria-[current=true]:font-semibold"
                 onClick={() => { setSelected(s.id); setCreating(false); }}
               >
                 <span className="font-mono">{s.name}</span>
                 {!s.enabled ? <span className="ml-1 text-xs text-muted">(disabled)</span> : null}
                 <span className="block truncate text-xs font-normal text-ink-2">{s.description}</span>
+                {s.source ? (
+                  <span className="mt-1 flex flex-wrap gap-1">
+                    <LibraryBadge source={s.source} />
+                  </span>
+                ) : null}
               </button>
             </li>
           ))}
         </ul>
-        <div>
+        <div className="min-w-0">
           {creating ? <CreateSkill scope={scope} onDone={(id) => { setCreating(false); setSelected(id); }} /> : null}
           {!creating && current ? (
             <SkillEditor key={`${current.id}:${current.updated_at}`} scope={scope} skill={current} readOnly={readOnly} onDeleted={() => setSelected(null)} />
@@ -176,9 +189,17 @@ function SkillEditor({ scope, skill, readOnly = false, onDeleted }: { scope: Ski
   const [confirmDel, setConfirmDel] = useState(false);
   const bodyOver = body.length > SKILL_BODY_MAX;
   const failed = update.error ?? del.error;
+  // (P4-GSL) A library skill is pinned and read-only: only enable/disable, detach and remove are offered.
+  const managed = !!skill.source && !skill.source.detached;
+  const contentReadOnly = readOnly || managed;
+  const tier = skill.tier as BudgetTier;
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (managed) {
+      update.mutate({ enabled });
+      return;
+    }
     if (bodyOver || !description.trim() || description.length > SKILL_DESCRIPTION_MAX) return;
     update.mutate({ description, body, enabled });
   }
@@ -186,15 +207,22 @@ function SkillEditor({ scope, skill, readOnly = false, onDeleted }: { scope: Ski
   return (
     <div className="space-y-6">
       <OverriddenIn skill={skill} />
+      {managed ? <LibraryManagedNotice /> : null}
+      {skill.source?.detached ? (
+        <p className="flex flex-wrap items-center gap-2">
+          <LibraryBadge source={skill.source} />
+        </p>
+      ) : null}
+      {managed ? <LibrarySkillActions skill={skill} tier={tier} canDecide={!readOnly} /> : null}
       <form onSubmit={submit} noValidate className="space-y-4 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
         <Field id="sk-name" label="Name" hint="The name cannot be changed.">
           <input id="sk-name" className={inputClass} value={skill.name} readOnly />
         </Field>
         <Field id="sk-desc" label="Description" error={description.length > SKILL_DESCRIPTION_MAX ? `At most ${SKILL_DESCRIPTION_MAX} characters.` : undefined}>
-          <input id="sk-desc" className={inputClass} value={description} readOnly={readOnly} onChange={(e) => setDescription(e.target.value)} />
+          <input id="sk-desc" className={inputClass} value={description} readOnly={contentReadOnly} onChange={(e) => setDescription(e.target.value)} />
         </Field>
         <Field id="sk-body" label="SKILL.md">
-          <textarea id="sk-body" className={`${inputClass} font-mono`} rows={10} value={body} readOnly={readOnly} onChange={(e) => setBody(e.target.value)} />
+          <textarea id="sk-body" className={`${inputClass} font-mono`} rows={10} value={body} readOnly={contentReadOnly} onChange={(e) => setBody(e.target.value)} />
         </Field>
         <SizeMeter label="Body" used={body.length} max={SKILL_BODY_MAX} />
         <label className="flex items-center gap-2 text-sm font-medium text-ink">
@@ -206,16 +234,16 @@ function SkillEditor({ scope, skill, readOnly = false, onDeleted }: { scope: Ski
             <Button type="submit" size="lg" disabled={bodyOver || update.isPending}>Save</Button>
             {confirmDel ? (
               <>
-                <Button type="button" variant="danger" onClick={() => void del.mutateAsync(skill.id).then(onDeleted)}>Confirm delete</Button>
+                <Button type="button" variant="danger" onClick={() => void del.mutateAsync(skill.id).then(onDeleted)}>{managed ? "Confirm remove" : "Confirm delete"}</Button>
                 <Button type="button" variant="ghost" onClick={() => setConfirmDel(false)}>Cancel</Button>
               </>
             ) : (
-              <Button type="button" variant="danger" onClick={() => setConfirmDel(true)}>Delete</Button>
+              <Button type="button" variant="danger" onClick={() => setConfirmDel(true)}>{managed ? "Remove" : "Delete"}</Button>
             )}
           </div>
         )}
       </form>
-      <SkillFiles scope={scope} skill={skill} readOnly={readOnly} />
+      <SkillFiles scope={scope} skill={skill} readOnly={contentReadOnly} />
     </div>
   );
 }

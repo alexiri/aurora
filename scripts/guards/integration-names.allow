@@ -7,5 +7,11 @@
 # (no entries yet; add e.g.)
 # ^crates/aurora-llm/.*:known_llm_hosts
 
+# (P4-GSL) The fake git host of the test kit emulates the two built-in git hosts' API shapes (docs/18
+# §Git skill library); it is test support, never shipped, and the core code stays host-neutral.
+^crates/aurora-testkit/src/git_host\.rs$:.*
+# (P4-GSL) A sample `Link` header in a unit test of the host-neutral pagination parser.
+^crates/aurora-registry/src/library\.rs$:gitlab\.example
+
 # Bundled top-10k common-password list (I-11) is data, not integration code.
 ^services/aurora-api/data/common-passwords\.txt$:.*

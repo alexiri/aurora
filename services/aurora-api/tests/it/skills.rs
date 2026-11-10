@@ -4,6 +4,8 @@
 use crate::common::*;
 use http::Method;
 
+#[path = "skills_library.rs"]
+mod library_tier;
 #[path = "skills_workspace.rs"]
 mod workspace_tier;
 use serde_json::{Value, json};

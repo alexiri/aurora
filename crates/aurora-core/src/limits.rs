@@ -101,6 +101,27 @@ pub const SKILL_NAME_MAX: usize = 64;
 pub const SKILL_DESCRIPTION_MAX: usize = 500;
 pub const SKILL_BODY_MAX: usize = 24_000;
 pub const SKILL_TOTAL_MAX: usize = 32_000;
+// Git skill library (phase 4, P4-GSL, D-148, D-149; docs/02 §Limits).
+pub const LIBRARIES_PER_ORG: usize = 10;
+/// Library-sourced bytes (body + files, binary as base64 length) and skill counts per tier.
+pub const LIBRARY_BYTES_PER_AGENT: usize = MIB;
+pub const LIBRARY_SKILLS_PER_AGENT: usize = 25;
+pub const LIBRARY_BYTES_PER_WORKSPACE: usize = 2 * MIB;
+pub const LIBRARY_SKILLS_PER_WORKSPACE: usize = 50;
+pub const LIBRARY_BYTES_PER_ORG: usize = 4 * MIB;
+pub const LIBRARY_SKILLS_PER_ORG: usize = 100;
+pub const LIBRARY_FILE_MAX: usize = 64 * KIB;
+pub const LIBRARY_TREE_MAX: usize = 20_000;
+pub const LIBRARY_BROWSE_MAX: usize = 200;
+/// Open proposed updates per organization.
+pub const LIBRARY_PENDING_BYTES_PER_ORG: usize = 4 * MIB;
+pub const LIBRARY_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
+pub const LIBRARY_REFRESH_INTERVAL_MIN: Duration = Duration::from_secs(5 * 60);
+pub const LIBRARY_LEASE: Duration = Duration::from_secs(5 * 60);
+pub const LIBRARY_REFRESH_CONCURRENCY: usize = 4;
+pub const LIBRARY_CHECK_NOW_INTERVAL: Duration = Duration::from_secs(60);
+pub const LIBRARY_BROWSE_CACHE: Duration = Duration::from_secs(5 * 60);
+pub const LIBRARY_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 pub const ATTACH_IN_FILE_MAX: u64 = 10 * MIB as u64;
 /// per message.
 pub const ATTACH_IN_COUNT: u32 = 10;

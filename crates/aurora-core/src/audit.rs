@@ -84,6 +84,14 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "workspace_access.set",
     // (P4-ONB-1, D-140) the instance admin saves the new-user placement
     "placement.update",
+    // Skill library (P4-GSL, D-148; emitted as written)
+    "skill.library.add",
+    "skill.library.detach",
+    "skill.library.update_apply",
+    "skill.library.update_reject",
+    "skill_library.create",
+    "skill_library.delete",
+    "skill_library.update",
     // Freeze
     "agent.freeze",
     "agent.unfreeze",

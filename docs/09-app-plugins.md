@@ -484,9 +484,13 @@ them; ids in the errors are `library_*`):
 
 - `request_host` is **exactly** one of the app's exact `hosts[]` entries (no wildcard, no
   `rewrite_host`; for an instance-bound app the `{instance}` host, `§Instance-bound hosts`), over
-  https. Every `path` starts with `/` and may contain only the placeholders `{repo}`,
-  `{repo|urlencode}`, `{ref}`, `{sha}`, `{blob}` and a literal query; `{repo}` is substituted only
-  after it matched `repo_pattern`; `{ref}` only after matching the ref grammar `[A-Za-z0-9._/-]{1,200}`
+  https, and the host rule that covers the request path must have an `inject` stage
+  (`library_no_credential`). Every `path` starts with `/` and may contain only the placeholders `{repo}`,
+  `{repo|urlencode}`, `{ref}`, `{ref|urlencode}` (D-154), `{sha}`, `{blob}` and a literal query
+  (`page` is never templated: the core adds it for paginated trees); each step must use its own
+  placeholders (`resolve_ref`: repo and ref, `list_tree`: repo and sha, `get_blob`: repo and blob);
+  `{repo}` is substituted only after it matched `repo_pattern` (and the hard grammar: no empty, `.` or
+  `..` segment); an optional per-step `method` may only be `GET` (`library_method`); `{ref}` only after matching the ref grammar `[A-Za-z0-9._/-]{1,200}`
   with no `..`, no leading `-`, no `//`; `{sha}` and `{blob}` only after matching `[0-9a-f]{40,64}`.
   Nothing else (no free-form path or query) can reach the request line.
 - Only `GET`. No request body, no header templates, no redirects followed. The response must be JSON
@@ -598,7 +602,7 @@ if any of:
   tool's own first example against the earlier tools); a group wildcard carrying `params`; a
   `params` tool missing any of the required fixtures (`§3.4 tools`);
 - (phase 4, P4-GSL) `library` violating the rules of `§3.4 library` (`library_host_not_exact`,
-  `library_path_placeholder`, `library_repo_pattern`, `library_json_path`, `library_method`,
+  `library_no_credential`, `library_path_placeholder`, `library_repo_pattern`, `library_json_path`, `library_method`,
   unknown keys or non-conforming values), or `library` on an app without a credential that can
   authenticate requests to `request_host`;
 - `env` or stub paths violating the rules above.

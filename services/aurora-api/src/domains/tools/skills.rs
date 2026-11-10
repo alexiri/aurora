@@ -43,7 +43,24 @@ fn summary(v: &SkillView) -> Value {
         "description": v.row.description, "enabled": v.row.enabled,
         "files": v.files.iter().map(|f| json!({"path": f.path, "size": f.size,
             "executable": f.executable})).collect::<Vec<_>>(),
-        "total_size": v.total_size})
+        "total_size": v.total_size,
+        // (phase 4, P4-GSL) a library skill is pinned and read-only; people change it.
+        "source": crate::domains::skills::dto::source_of(&v.row, v.update_pending)
+            .map(|s| json!({"kind": s.kind, "repo": s.repo, "path": s.path,
+                "commit_sha": s.commit_sha, "detached": s.detached}))})
+}
+
+/// `library_skill_readonly`: only people change what a library pinned (docs/10 §Git skill
+/// library). The same code as the API's 409.
+fn library_readonly(v: &SkillView) -> Result<(), ToolError> {
+    if v.row.library_id.is_some() {
+        return Err(ToolError::Failed(
+            "library_skill_readonly: this skill is managed by a skill library; ask a person to \
+             detach it or update it from the library"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 fn name_schema() -> Value {
@@ -307,6 +324,7 @@ impl PlatformTool for Update {
     ) -> Result<Vec<ToolContent>, ToolError> {
         let a: UpdateArgs = parse(args)?;
         let cur = own_skill(ctx, &a.name).await?;
+        library_readonly(&cur)?;
         let p = Patch {
             description: a.description.as_deref(),
             body: a.body.as_deref(),
@@ -343,6 +361,7 @@ impl PlatformTool for Delete {
     ) -> Result<Vec<ToolContent>, ToolError> {
         let a: NameArgs = parse(args)?;
         let cur = own_skill(ctx, &a.name).await?;
+        library_readonly(&cur)?;
         service::delete(&ctx.agent.pool, cur.row.id)
             .await
             .map_err(fail)?;

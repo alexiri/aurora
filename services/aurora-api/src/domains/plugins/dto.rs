@@ -27,6 +27,10 @@ pub struct PluginViolation {
 pub struct PluginAppRef {
     pub app_id: String,
     pub name: String,
+    /// (phase 4, P4-GSL, D-149) "Can serve a skill library: reads repository files from
+    /// `<library_host>`": the app declares a `library` block (shown in the permissions review).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub library_host: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Default)]
@@ -149,6 +153,10 @@ fn widening(w: &Widening) -> PluginWidening {
         Widening::Context(c) => ("context", c.clone()),
         Widening::HostClaim(k) => ("host_claim", k.clone()),
         Widening::Zone(z) => ("zone", z.clone()),
+        Widening::Library { app, host } => (
+            "library",
+            format!("{app} can serve a skill library: reads repository files from {host}"),
+        ),
     };
     PluginWidening {
         kind: kind.to_owned(),
@@ -171,6 +179,7 @@ impl PluginPackage {
                 .map(|a| PluginAppRef {
                     app_id: a.about.id.clone(),
                     name: a.about.name.clone(),
+                    library_host: a.library.as_ref().map(|l| l.request_host.clone()),
                 })
                 .collect(),
             host_claims: manifest
