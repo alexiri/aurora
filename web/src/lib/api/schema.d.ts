@@ -3697,6 +3697,8 @@ export interface components {
         AdminOverview: {
             /** @description Connector hosts seen within 24 hours. */
             connector_hosts: components["schemas"]["ConnectorHostInfo"][];
+            /** @description (phase 4, P4-CNT, C-402) the rate-limit counter backend of this API replica. */
+            counters: components["schemas"]["CountersInfo"];
         };
         /** @description `GET /admin/storage` (API_CONTRACTS C-172). */
         AdminStorage: {
@@ -4570,6 +4572,16 @@ export interface components {
             /** Format: uuid */
             origin_conversation_id?: string | null;
             title?: string | null;
+        };
+        /** @description `counters` of `GET /v1/admin/overview` (C-402). */
+        CountersInfo: {
+            /** @description `memory` | `postgres` | `redis`. */
+            backend: string;
+            /**
+             * @description `local` (the `memory` backend, or the API limiter kept per replica), `shared`, or
+             *     `fallback` (a class is counting per replica because the backend is unreachable).
+             */
+            state: string;
         };
         CreateAgentRequest: {
             brief?: string | null;

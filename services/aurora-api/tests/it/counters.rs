@@ -348,11 +348,15 @@ async fn postgres_backend_from_configuration_shares_the_limit() {
         limits(c);
         c.counters.backend = aurora_config::CounterBackend::Postgres;
         c.counters.api_shared = true;
+        // This test proves sharing, not the timeout fallback (covered by the `*_store_is_down`
+        // tests): under full-suite load a Postgres round trip can exceed the 50 ms default, and
+        // the `local` fallback then (correctly) counts per replica. Use the 2 s maximum.
+        c.counters.timeout = Duration::from_millis(2000);
     };
     let h = Harness::with_config(mk).await;
     let b_state = AppState::new(h.db.pool().clone(), (*h.state.config).clone());
     let b = test_router(b_state);
-    // Let the dedicated pools open their first connection (a cold handshake exceeds 50 ms).
+    // Let the dedicated pools open their first connection.
     tokio::time::sleep(Duration::from_millis(500)).await;
     let org = h.org().await;
     let user = h.user("pg@x.io", false).await;
