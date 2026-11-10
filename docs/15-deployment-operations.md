@@ -86,6 +86,8 @@ one new entry without activating it.
 | `connector_host.api_url` | `http://127.0.0.1:4101` | connector-host | (phase 4, P4-MCON) the API the host registers with; the token comes from `AURORA_CONNECTOR_HOST_TOKEN` (`auh_`) |
 | `connector_host.listen` / `connector_host.ops_port` | `0.0.0.0:4110` / `4192` | connector-host | (phase 4, P4-MCON) platform callbacks (`/connectors/<id>/…`) / health and metrics |
 | `connector_host.test_types` | `false` | connector-host | (phase 4, P4-MCON) also announce the `fake` type (development and e2e only; startup warns) |
+| `skills.library.enabled` | `true` | api | (phase 4, P4-GSL) kill-switch of the git skill library; invisible until an org admin connects a repository; no new infrastructure (`§Git skill library`) |
+| `skills.library.refresh_interval_secs`, `skills.library.bytes_per_agent` | 900 (≥ 300), 1 MiB (lower only) | api | (phase 4, P4-GSL) `LIBRARY_REFRESH_INTERVAL`, `LIBRARY_BYTES_PER_AGENT` (`02 §Limits`) |
 | `previews.enabled` | `false` | api, relay | (phase 4, P4-PRV-1) master switch for port previews; **off unless configured**; when `true` the API refuses to start without a valid `previews.domain` (`§Port previews`) |
 | `previews.domain` | — | api, relay | (phase 4, P4-PRV-1) the DNS suffix of preview hostnames, e.g. `preview.example.org`; needs a wildcard DNS record and a wildcard TLS certificate; must not be, contain or sit under the dashboard host (startup validation, `§Port previews`) |
 | `previews.session_ttl_secs`, `previews.session_idle_secs`, `previews.bytes_per_share_day` | 28800, 3600, 5 GiB | api, relay | (phase 4, P4-PRV-2) lower only for the first two (`02 §Limits`) |
@@ -878,3 +880,34 @@ share id, outcome and byte counts; never paths with query strings, headers, cook
 **Upgrade and rollback.** The relay and the preview columns are additive: an older API ignores them, an
 older runner reports no `previews` capability. Rolling back removes the relay Deployment; shares stay in
 the database inert. Preview traffic is not part of the request log.
+
+## Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
+
+Optional by use: nothing to deploy, no new Service, Secret or NetworkPolicy. Requirements: the gateway
+can reach the git host's API **as it already does for agents** (the host is already one of the app's
+claimed hosts; the gateway's egress policy covers it), the API can reach the gateway's internal
+port 4103 (already true), and the **git-hosting package** (the built-in GitHub or GitLab package, at
+the release that adds the `library` block, re-approved by an instance admin like any package update,
+`09 §10`) is installed and approved. To use it an **org owner/admin** (1) connects the git host as an
+**org-scoped** app connection with a **read-only** credential (a fine-grained token limited to the
+skills repository is ideal; GitHub: *Contents: read*; GitLab: *read_repository*), then (2) Skills →
+Libraries → *Connect a repository*. Disable with `skills.library.enabled: false` (stored skills keep
+working; the dashboard hides the feature and the refresh job stops).
+
+- **What leaves the cluster**: `GET`s of repository metadata and the files of skills people added or
+  browsed, from the git host's API, through the gateway. **What is stored**: only skills added to
+  agents, workspaces or the org (content, commit sha, blob ids) and open proposed updates (bounded,
+  `02 §Limits`). Nothing is cloned.
+- **Rate limits of the host**: a library with added skills costs one `resolve_ref` call per
+  `LIBRARY_REFRESH_INTERVAL` (15 min) while unchanged, plus a tree and changed files after a push;
+  browsing costs a tree and up to 200 file reads (cached 5 minutes). Self-hosted instances apply
+  their own limits; raise the interval with `skills.library.refresh_interval_secs`.
+- **Operations**: the Libraries page shows each library's status and last error (revoked token, repository
+  moved, host unreachable). A library in `error` leaves agents untouched. Metrics:
+  `aurora_skill_library_refresh_total{result}` (`unchanged`, `proposed`, `error`),
+  `aurora_skill_library_pending_updates`, `aurora_skill_library_refresh_duration_seconds`,
+  `aurora_gateway_library_fetch_total{step,status}`. Alert on sustained `result="error"` and on pending
+  updates older than a week (nobody is reviewing: agents keep running the pinned skills, which is safe
+  but stale).
+- **Upgrade and rollback**: additive tables and columns; rolling the API back leaves the tables and the
+  pinned skills (which are ordinary skill rows) in place and the library features disappear.

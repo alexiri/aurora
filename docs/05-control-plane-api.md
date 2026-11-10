@@ -356,6 +356,8 @@ claim-based and safe to run everywhere.
 | SCIM token expiry (phase 4, P4-GRP-2): a notice to the org owners and an audit row 14 days and 1 day before a token expires; expired tokens are simply dead (read-time check) | daily | singleton |
 | Counter pruning (phase 4, P4-CNT, `postgres` backend only): delete dead `rate_limit_windows` / `rate_limit_buckets` rows | every `COUNTER_PRUNE_INTERVAL` (60 s) | `SKIP LOCKED` batches |
 | Blob store probe (phase 4, P4-S3, `s3` backend only): `HeadBucket` + versioning/encryption state, sets `aurora_blob_store_up` | every 30 s | per replica |
+| Skill library refresh (phase 4, P4-GSL, `10 §Skills`): libraries with at least one added skill and `next_refresh_at <= now()` and `status = active` are claimed with `FOR UPDATE SKIP LOCKED` and a per-library lease (`LIBRARY_LEASE` 5 min, `refresh_lease_until`/`lease_owner`), at most `LIBRARY_REFRESH_CONCURRENCY` (4) per replica; resolve → compare head → tree → blob comparison → proposed updates through the gateway's library fetch (`06 §Library fetch`); errors back off 15 min → 1 h → 6 h; never writes skill content (only `skill_library_updates`, `skill_libraries`) and never bumps a home-sync generation | every 60 s | claims (lease) |
+| Skill library retention (phase 4, P4-GSL): prune decided `skill_library_updates` older than 90 days; expire leases; mark libraries whose connection vanished `error` | daily | singleton |
 | Preview housekeeping (phase 4, P4-PRV-1/2): delete expired `preview_sessions`, `preview_grant_uses` and `preview_stream_grants`; clear stale `sandboxes.preview_wake_at`/`preview_start_requested_at`; count shares per org for `aurora_preview_shares` | every 60 s | idempotent (`SKIP LOCKED` batches) |
 | Request-log partition maintenance and retention | daily | singleton |
 | Retention pruning (inbox/ops/cards > `CHANNEL_LEDGER_RETENTION`, used action tokens, expired email/CLI tokens, sessions, expired context credentials) | daily | singleton |
@@ -712,6 +714,28 @@ the share lifecycle: `11 §Port previews`.
 | GET/POST `/v1/agents/{agent}/webhooks`; GET/PATCH/DELETE `/v1/webhooks/{id}`; POST `…/rotate`; GET `…/deliveries` | S/K | rotate returns new URL once; (phase 2, RFE-021) same `creator`/`anchor` fields as schedules |
 | POST `/v1/hooks/{token}` | P | webhook receive |
 | GET `/v1/agents/{agent}/links`; PUT `/v1/agent-links/{id}/policy`; GET `/v1/agents/{agent}/peer-tasks` | S/K | |
+
+### Skill libraries (phase 4, P4-GSL, D-148, D-149; C-570..C-579)
+
+404 `skill_libraries_disabled` while `skills.library.enabled` is false. Authorization per row;
+tier authority = agent `can_use`, workspace `can_own`, org owner/admin (`04 §Permission matrix`).
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET/POST `/v1/orgs/{org}/skill-libraries` | S/K | list (org owner/admin; others get `{ id, label }` of active libraries for the browse picker) / create `{ label, connection_id, repo, ref?, path? }` (org owner/admin) → 201 `SkillLibrary { id, label, app_id, connection: { id, label, status }, repo, ref, path, status, last_head_sha, last_refresh_at, last_error, skill_counts: { agent, workspace, org }, pending_updates }`; 422 `library_unreachable`, `connection_not_org_scoped`, `app_without_library`, `invalid_request` (repo/ref/path), 409 `library_exists`, 409 `library_limit`; audit `skill_library.create` |
+| GET/PATCH/DELETE `/v1/skill-libraries/{id}` | S/K | org owner/admin; PATCH `{ label?, status?: "active"\|"paused", connection_id?, ref?, path? }` (changing repo is delete + create; changing ref/path/connection re-resolves and never touches stored skills); DELETE detaches every skill of the library (`10 §Skills`) and audits the count; audit `skill_library.update`/`delete` |
+| POST `/v1/skill-libraries/{id}/refresh` | S/K | "Check now": org owner/admin; 202; 429 `library_check_too_soon` within `LIBRARY_CHECK_NOW_INTERVAL` |
+| GET `/v1/skill-libraries/{id}/skills?q=&cursor=` | S/K | browse the current head live (`10 §Skills`): `{ commit_sha, items: [{ path, name, description, valid, reason?, size, files, added: [{ tier, id }] }] }`; org members who can use any workspace of the org; 502 `library_unavailable` with the sanitized reason; never stores anything; `Cache-Control: no-store` |
+| GET `/v1/skill-libraries/{id}/skills/{path}?commit_sha=` | S/K | one skill's full content at a commit (what an add would store, and the diff base for updates); same audience; same validation result |
+| POST `/v1/agents/{agent}/skills`, `/v1/workspaces/{ws}/skills`, `/v1/orgs/{org}/skills` | S/K | (existing routes) body may be `{ from_library: { library_id, path, commit_sha } }` instead of `name/description/body/files`; the commit sha is **required** and fetched exactly; 422 `library_skill_invalid`, `library_budget_exceeded`, 409 `skill_exists`; audit `skill.library.add` (critical) |
+| PATCH/PUT/DELETE `/v1/skills/{id}` (+ `/files/{path}`) | S/K | for a library skill: body, description, files → 409 `library_skill_readonly`; `enabled` and DELETE as usual (tier authority) |
+| GET `/v1/skills/{id}/library` | S/K | `{ library: { id, label, repo, path }, commit_sha, pinned_at, pinned_by, update: null \| { id, kind, commit_sha, created_at, diff, content_sha256, over_budget } }`; the diff is the whole stored-vs-proposed content, not a summary; readable by whoever can read the skill |
+| POST `/v1/skills/{id}/library/updates/{uid}/approve` `{ content_sha256 }` | S | tier authority; 409 `update_superseded`, 422 `library_skill_invalid`, 422 `library_budget_exceeded`; audit `skill.library.update_apply` (critical); bumps the home-sync generation of the affected agents |
+| POST `/v1/skills/{id}/library/updates/{uid}/reject`; POST `/v1/skills/{id}/library/detach` | S | tier authority; audits `skill.library.update_reject`, `skill.library.detach` (critical) |
+| GET `/v1/orgs/{org}/skill-library-updates`, `/v1/workspaces/{ws}/skill-library-updates`, `/v1/agents/{agent}/skill-library-updates` | S/K | pending proposals visible to the caller's authority at that scope (org: org owner/admin sees all of the org; workspace: `can_own`; agent: `can_use`), with `{ skill, library, kind, created_at }` — the dashboard badge and the Skills pages' "Update available" |
+
+Items of every skill route gain `source: null | { kind: "library", library_id|null, label, repo, path, commit_sha, pinned_at, detached: bool, update_pending: bool }`;
+`GET /v1/agents/{agent}/skills/effective` shows it per skill. The pages are paginated like every list.
 
 ### Channels (management)
 | Method & path | Auth | Purpose |

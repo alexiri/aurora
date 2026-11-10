@@ -521,6 +521,9 @@ the frozen payload.
 | Switch **Port previews** on or off for the org (`settings.previews_enabled`, default off) (phase 4, P4-PRV-1) | org `owner`/`admin` (`org.previews.update`, security-critical) |
 | Create, pause/resume, change the start command of, delete a preview share; list the agent's shares; start the app now (phase 4, P4-PRV-1) | `can_use` of the agent's workspace, session or API key; **never an agent tool**; BYO agents have none; frozen agent: 423 |
 | Open a preview in the browser (phase 4, P4-PRV-2) | a **live dashboard session** of a user for whom `can_use(workspace)` holds, re-checked at least every `PREVIEW_AUTH_CACHE` (15 s); never an API key, never an agent credential, no other visibility (`04 §Preview access`) |
+| Create, edit, pause, delete a **skill library**; "Check now"; read library settings and status (phase 4, P4-GSL) | org `owner`/`admin`; the connection must be org-scoped |
+| Browse a skill library's catalogue and read one skill at a commit (phase 4, P4-GSL) | any user who `can_use` a workspace of the org (names, descriptions and content an agent could be told; nothing is stored) |
+| Add a library skill to an agent / a workspace / the org; approve, reject a proposed library update; detach; remove (phase 4, P4-GSL) | the **tier's write authority**, unchanged from manual skills (SEC-56): agent `can_use`, workspace `can_own`, org `owner`/`admin`; **never an agent tool**; session or API key for adds, **session only** for approve/reject/detach |
 | Plugins, trusted keys, host claims, connectors, runners | instance admin |
 
 Org admins/owners can therefore always repair a workspace; members of a shared
@@ -1061,6 +1064,8 @@ strings are the ones the API already used and are listed in `SECURITY_CRITICAL_A
 | Plugins and registry | `plugin.approve\|reject\|disable\|enable\|uninstall`, `trusted_key.add\|remove`, `host_claim.decide` |
 | Approval decisions | `approval.decide`, `approval.batch_decide`, `action_approval.decide`, `reach.decide`, `agent_link.decide` (whatever the door: dashboard, API, channel click) |
 | Roles and membership | `org_member.add\|role_change\|suspend\|reactivate\|remove`, `org.transfer_ownership`, `invitation.create\|accept\|cancel`, `workspace_access.put\|delete`, `user.instance_admin_grant\|revoke`, `user.disable\|enable`, `user.delete` |
+| Previews (phase 4, P4-PRV-1) | `preview.share.create\|update\|delete`, `org.previews.update` (emitted as written; `11 §Port previews`) |
+| Skill library (phase 4, P4-GSL) | `skill_library.create\|update\|delete`, `skill.library.add`, `skill.library.update_apply`, `skill.library.update_reject`, `skill.library.detach` (emitted as written; the proposal row `skill.library.update_proposed` is a best-effort system row; `10 §Skills`) |
 | Freeze (RFE-006) | `agent.freeze\|unfreeze`, `workspace.freeze\|unfreeze`, `org.freeze\|unfreeze` |
 | Groups (phase 4, P4-GRP-1) | `group.create\|update\|delete`, `group_member.add\|remove`, `group_access.set\|remove` (emitted as written; `§Groups`) |
 | SCIM (phase 4, P4-GRP-2) | `scim_token.create\|revoke`, `scim.update`; membership and group changes made by the IdP are the ordinary `member.add\|update\|remove` and `group*` rows with `metadata.via = "scim"` (`§SCIM`) |

@@ -320,6 +320,13 @@ overridden by the named configuration key (`15`).
 | `PREVIEW_BYTES_PER_SHARE_DAY` | (phase 4, P4-PRV-2) 5 GiB per share per UTC day (429 `preview_quota`) | `previews.bytes_per_share_day` | 16 |
 | `PREVIEW_API_RATE` | (phase 4, P4-PRV-2) 100 relay-plane requests/s per relay replica, burst 200 | — | 16 |
 | `PREVIEW_GRANT_RATE` | (phase 4, P4-PRV-2) 30 grant redemptions per minute per client address (and 10 per minute per share) at the relay | — | 04 |
+| `LIBRARIES_PER_ORG` | (phase 4, P4-GSL) 10 skill libraries | — | 10, 05 |
+| `LIBRARY_BYTES_PER_AGENT` / `_SKILLS_PER_AGENT` | (phase 4, P4-GSL) 1 MiB / 25 library-sourced skills at the agent tier (workspace tier 2 MiB / 50, org tier 4 MiB / 100: `LIBRARY_BYTES_PER_WORKSPACE`, `LIBRARY_SKILLS_PER_WORKSPACE`, `LIBRARY_BYTES_PER_ORG`, `LIBRARY_SKILLS_PER_ORG`) | `skills.library.bytes_per_agent` (lower only) | 10 |
+| `LIBRARY_FILE_MAX` / `LIBRARY_TREE_MAX` / `LIBRARY_BROWSE_MAX` | (phase 4, P4-GSL) 64 KiB per file / 20 000 tree entries (a truncated or longer tree is `library_tree_too_large`: narrow `path`) / 200 listed skills | — | 09, 10 |
+| `LIBRARY_PENDING_BYTES_PER_ORG` | (phase 4, P4-GSL) 4 MiB of open proposed updates per org | — | 10 |
+| `LIBRARY_REFRESH_INTERVAL` / `LIBRARY_LEASE` / `LIBRARY_REFRESH_CONCURRENCY` | (phase 4, P4-GSL) 15 min (minimum 5 min) per library / 5 min lease / 4 refreshes per API replica | `skills.library.refresh_interval_secs` (≥ 300) | 05, 10 |
+| `LIBRARY_CHECK_NOW_INTERVAL` | (phase 4, P4-GSL) 60 s per library | — | 05 |
+| `LIBRARY_FETCH_TIMEOUT` / `LIBRARY_FETCH_RATE` | (phase 4, P4-GSL) 20 s per fetch / 20 per second per gateway, 5 per second per org | — | 06 |
 | `API_STREAMS_PER_PRINCIPAL` | (phase 2, RFE-017) 20 concurrent SSE connections + long-polls | — | 05 |
 | `DELTA_COALESCE` | (phase 1, RFE-016) 100 ms or 2 000 chars per turn per delta | `events.delta_coalesce_ms` (100–500) | 05 |
 | `LONG_POLL_MAX` | 30 s | — | 05 |

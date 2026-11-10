@@ -499,6 +499,15 @@ again" and "Show the getting-started guide again".
   automatically by verified email"** (default off; shown only when the
   connector offers `email_verified`), with the trust warning of `13 §5.9`;
   toggling it needs a confirm dialog.
+- **Skill libraries** (`/o/<org>/skills/libraries`, phase 4, P4-GSL, D-148; org owners/admins; a tab of
+  the org Skills page): a table (label, repository `owner/name`, ref, path, status chip with the sanitized
+  last error and "Reconnect" link when the connection needs it, last checked, skills in use by tier,
+  pending updates) and **Connect a repository** (dialog: pick an org-scoped connection of an app that can
+  serve a library, repository, optional branch/tag, optional folder; the read-only warning from
+  `required_access`; the creation check's failure shown in words), **Check now**, Pause/Resume, Delete
+  (confirm: "N skills keep their content and become editable skills"). No library exists until an admin
+  creates one; with none, the org Skills page shows an inline "Add a library" call to action only to
+  owners/admins.
 - **Skills**: org skills editor (tier badge "Organization"; phase 3, RFE-020: states that workspace and agent skills with the same name take precedence).
 - **Retention** (phase 2, RFE-010/015): conversation and attachment windows,
   attachment quota with the storage breakdown (by workspace and direction), a
@@ -561,6 +570,20 @@ again" and "Show the getting-started guide again".
   - **Memory** — list, editor with revisions, restore, redact, search; banner
     "Memories in this workspace are written in <Language>".
   - **Skills** — editor with file tree, executable bit, size meter. (phase 3, RFE-020) Lists the agent's **effective** skills with a tier badge (Agent / Workspace / Organization) and, for shadowing, "overrides the Workspace skill of the same name" / "overridden by …"; workspace and org skills open read-only here with a link to where they are edited.
+    (phase 4, P4-GSL, D-148) **Add from library…** (next to New skill, shown only when the org has an
+    active library): a picker of libraries → a searchable list of the library's skills at its current
+    commit (name, description, size, "already added" chips, invalid ones disabled with the reason) → a
+    full preview of exactly what would be stored (`SKILL.md` and files, rendered as text) with the
+    commit sha and the sentence "Pinned to this commit. Changes in the repository are not applied until
+    someone with permission approves them." → **Add** (disabled when over budget, with the numbers).
+    A library skill carries the badge "Library · <repo> · <sha7>", opens **read-only** with the banner
+    "Managed by a skill library; edit it in the repository or detach it" and the actions Enable/Disable,
+    **Detach** (confirm: becomes an editable skill) and Remove; an **Update available** chip opens the
+    review dialog: whole-content diff (no truncation), the new commit sha, kind (changed / removed /
+    invalid), budget impact, **Approve** (the tier's write authority; disabled with the explanation for
+    others, who can still read the diff) and **Reject**. The same flow on the workspace Skills page
+    (`can_own` to add or approve) and the org Skills page (org owners/admins); repository text is
+    shown as data, never as HTML or markdown with links that auto-open.
   - **Schedules**, **Webhooks** (URL shown once on create/rotate; phase 2,
     RFE-021: each item shows its owner — a person or "Workspace" — with
     **Reassign…** (picker of members who can use the workspace; re-enable option
@@ -649,7 +672,7 @@ again" and "Show the getting-started guide again".
     have it (`GET …/grants`), "Remove" per agent (agent-side `DELETE`) and the
     same add picker.
 - **Policy** — workspace rules editor. (phase 3, RFE-023) Its Default Rule control carries the same note ("Does not affect LLM endpoints — see Governance"); simulate shows `default_rule_skipped_llm_host` when the carve-out applied.
-- **Skills** (phase 3, RFE-020) — workspace skills editor (owners; members read-only): same editor as the agent tier, a banner "Applies to every agent in this workspace", and a per-skill list of the agents it reaches and any agent-level skill that overrides it.
+- **Skills** (phase 3, RFE-020; phase 4, P4-GSL: also **Add from library…**, library badges, read-only library skills and the update review, as on the agent Skills tab, with `can_own` as the authority) — workspace skills editor (owners; members read-only): same editor as the agent tier, a banner "Applies to every agent in this workspace", and a per-skill list of the agents it reaches and any agent-level skill that overrides it.
 - **Activity** — request log (decision, rule name, app/tool, conversation
   link), usage.
 - **Policy** also edits the workspace's uncredentialed default and allow-list

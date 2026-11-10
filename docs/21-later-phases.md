@@ -161,6 +161,22 @@ An org connects a repository (through an app connection of a git-hosting
 plugin) as a skill library; only skills added to agents are stored (with commit
 sha); background refresh under a lease; byte budget per agent.
 
+- **Specified (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84).** A library is an org-scoped
+  connection of a git-hosting package plus `repo`/`ref`/`path` (`skill_libraries`); a package opts in with
+  the manifest block `library` (declarative GET templates and JSON paths, `09 §3.4`; the built-in GitHub
+  and GitLab packages are the first), and the **gateway** performs the reads (`POST
+  /internal/v1/library-fetch`, `06`), so the API never holds a token. Browsing stores nothing; **adding**
+  a skill to an agent, workspace or org (the tier's write authority, SEC-56 unchanged) stores it pinned
+  to an exact commit, read-only, within per-tier byte budgets (1 MiB per agent); the refresh job (lease
+  per library, 15 min) only writes **proposed updates**, which a person with the tier's authority approves
+  by quoting the content hash after reading the full diff — no auto-update in phase 4; detach and library
+  deletion keep content. Owning sections: `10 §Skills`, `09 §3.4 library`, `06 §Library fetch`, `03
+  §Planned changes`, `04` (matrix, audit), `05 §Skill libraries` and jobs, `12` (tools), `14`
+  (Skill libraries, Add from library, update review), `15 §Git skill library`, `02 §Limits`, `17` SEC-83/84,
+  `18 §Git skill library`. Not in phase 4: tracking a branch automatically, libraries scoped to a workspace,
+  writing back to the repository, webhooks from the git host, libraries of non-git sources, signed-commit
+  verification.
+
 ## Phase 4 — Groups and SCIM
 
 Directory groups (manual and SCIM 2.0 at `/scim/v2` with hashed bearer

@@ -1465,6 +1465,62 @@ their share, user or dashboard session goes; the `sessions` retention job's dele
 (`11 §Port previews`). The home-sync desired generation (`12 §Sync protocol`) already moves with
 the agent's own generation; a share change bumps `agents.home_sync_generation`.
 
+#### `skill_libraries` (new table; git skill library, phase 4, P4-GSL, D-148, D-149)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (P4-GSL) |
+| org_id | uuid FK→organizations (cascade) | | 4 (P4-GSL) |
+| label | text not null | 1..80, unique per org (`skill_libraries_label_uq`) | 4 (P4-GSL) |
+| connection_id | uuid null FK→app_connections (set null) | **org-scoped** connection (service-enforced at create and at every refresh); set null when the connection is deleted → `status = error`, `last_error = connection_deleted` | 4 (P4-GSL) |
+| app_id | text not null | the git-hosting app (snapshot id) at creation, for the dashboard | 4 (P4-GSL) |
+| repo | text not null | validated against the package's `repo_pattern` | 4 (P4-GSL) |
+| ref | text null | validated ref; null = the repository's default branch | 4 (P4-GSL) |
+| path | text not null default `` | directory holding the skill directories, ≤ 4 segments | 4 (P4-GSL) |
+| status | text not null default `active` CHECK in (`active`,`paused`,`error`,`over_budget`) | `paused` = an admin stopped refreshing | 4 (P4-GSL) |
+| last_head_sha, last_refresh_at, next_refresh_at | text null, timestamptz null, timestamptz | churn columns; `next_refresh_at` includes jitter and error backoff (15 min → 1 h → 6 h) | 4 (P4-GSL) |
+| last_error | text null | sanitized, ≤ 200 chars, never a token or a URL with credentials | 4 (P4-GSL) |
+| refresh_lease_until, lease_owner | timestamptz null, uuid null | the per-library lease of the refresh job (`LIBRARY_LEASE`) | 4 (P4-GSL) |
+| created_by_user_id | uuid null FK→users (set null) | | 4 (P4-GSL) |
+| created_at, updated_at | timestamptz | | 4 (P4-GSL) |
+| indexes | `(org_id)`; `(next_refresh_at) WHERE status = 'active'` | | 4 (P4-GSL) |
+
+#### `skills` (library source columns; phase 4, P4-GSL)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| library_id | uuid null FK→skill_libraries (set null) | non-null ⇒ the skill was added from a library and is **read-only** (`10 §Skills`); set null when the library is deleted (the skill is then detached; the service also nulls `library_blobs` and deletes the pending update in the same transaction) | 4 (P4-GSL) |
+| library_label, library_repo, library_path | text null | provenance snapshot (survives library deletion) | 4 (P4-GSL) |
+| library_commit_sha | text null | the commit the stored content was read from (the pin) | 4 (P4-GSL) |
+| library_blobs | jsonb null | `{ "<relative path>": "<blob id>" }` for `SKILL.md` and every file, used to detect change without refetching | 4 (P4-GSL) |
+| library_content_sha256 | bytea null | SHA-256 of the canonical content (body, then files sorted by path with mode) | 4 (P4-GSL) |
+| library_pinned_at, library_pinned_by_user_id | timestamptz null, uuid null | who added or last approved | 4 (P4-GSL) |
+| CHECK `skills_library_cols` | `library_id IS NULL OR (library_path IS NOT NULL AND library_commit_sha IS NOT NULL AND library_blobs IS NOT NULL AND library_content_sha256 IS NOT NULL)` | | 4 (P4-GSL) |
+
+A skill is **library-sourced and read-only iff `library_id IS NOT NULL`**. A **detach** (a person) and
+a **library deletion** both set `library_id = NULL`, `library_blobs = NULL` and delete the skill's
+pending update, and keep the text provenance columns as an informational "was from <repo>@<sha>" note:
+the skill becomes an ordinary editable skill of its tier. The tiers, uniqueness and indexes of `skills`
+are unchanged (`§skills`); the home-sync generation moves exactly as for any skill change.
+
+#### `skill_library_updates` (new table; proposed updates, phase 4, P4-GSL, D-148)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (P4-GSL) |
+| skill_id | uuid FK→skills (cascade) | at most one `pending` per skill (partial unique index) | 4 (P4-GSL) |
+| library_id | uuid null FK→skill_libraries (set null) | | 4 (P4-GSL) |
+| kind | text CHECK in (`changed`,`removed`,`invalid`) | | 4 (P4-GSL) |
+| status | text CHECK in (`pending`,`applied`,`rejected`,`superseded`) | | 4 (P4-GSL) |
+| commit_sha | text not null | the proposed commit | 4 (P4-GSL) |
+| proposed | jsonb null | for `changed`: `{ body, description, files: [{ path, content_b64, executable }], blobs }` validated; bounded by the skill limits; null for `removed`/`invalid` | 4 (P4-GSL) |
+| content_sha256 | bytea null | what an approval must quote | 4 (P4-GSL) |
+| reason | text null | sanitized validation failure for `invalid` | 4 (P4-GSL) |
+| created_at, decided_at | timestamptz | | 4 (P4-GSL) |
+| decided_by_user_id | uuid null FK→users (set null) | | 4 (P4-GSL) |
+| indexes | unique `(skill_id) WHERE status = 'pending'`; `(library_id)` | | 4 (P4-GSL) |
+
+Decided rows older than 90 days are pruned by the daily retention job (the audit row remains). The
+gateway database role gets nothing on these tables. Deleting an agent, workspace or org deletes its
+skills and, with them, their updates; deleting an org deletes its libraries after their skills.
+
 #### `agents`, `conversations` (harness selection)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

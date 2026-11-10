@@ -573,6 +573,42 @@ done when its tests exist, pass in CI, and the security invariants it touches
   with listening-port chips and error mapping; copy/open (rel attributes); frozen read-only; org
   settings page and confirmation; no horizontal scroll at 390 px, both themes.
 
+### Git skill library (phase 4, P4-GSL, D-148, D-149, SEC-83, SEC-84)
+- **Fake git host** in the test kit (`tests/kit`): serves a GitHub-shaped and a GitLab-shaped API (ref
+  resolution, recursive and paginated trees, blobs, raw files, rate-limit responses, truncated trees, a
+  moving head, renames/deletions, symlink and submodule entries, oversize files, hostile names and
+  descriptions) behind the gateway's guarded resolver (loopback allowed only in the test configuration).
+- **Registry** (`reg/it/library.rs`): the `library` linter matrix of `09 §3.4 library` (non-exact or
+  wildcard host, host not in `hosts[]`, free placeholders, non-GET, JSON path shapes, bad
+  `repo_pattern`, unknown keys), snapshot copy, re-approval when the block changes, the built-in GitHub
+  and GitLab packages validate with their fixtures (resolve, tree incl. pagination, blob; instance-bound
+  GitLab host).
+- **Gateway** (`gw/it/library_fetch.rs`): parameter fuzzing → 400 `library_param`; connection checks (other
+  org, workspace-scoped, disabled, other app, no `library` block) → 409/404; the request is built from the
+  template (the fake host sees exactly one `GET` per step with the injected credential, no agent headers);
+  redirect not followed; size/time caps; OAuth refresh and `reauth_required`; the route needs the internal
+  secret and is not on the proxy listener; no log line or response contains a credential; rate limits.
+- **API** (`api/it/skill_library.rs`, real Postgres, the fake host, a fake gateway client where useful):
+  create/list/patch/delete with the permission matrix (org admin yes, member no, workspace-scoped connection
+  422, limit 409), browse (live, nothing stored, validity and reasons, caching 5 min), **add** at each tier
+  with its authority (agent `can_use`, workspace `can_own`, org admin; agent tool and agent credential
+  refused; the exact requested commit is read even if the head moved), validation (symlink, submodule, big
+  file, bad frontmatter name, reserved name, size limits), uniqueness and shadowing across tiers unchanged,
+  **budgets** per agent/workspace/org at add and approve, **read-only** enforcement through every route and tool,
+  detach and library deletion; **refresh** under the lease (two replicas never refresh one library; lease
+  expiry; backoff; unchanged head costs one call; changed blobs → one proposal; superseding; deletion →
+  `removed`; invalid → `invalid`; over-budget; connection revoked/deleted/`reauth_required`; package without
+  `library`; interval floor) with the invariant checks of SEC-83 (no change to `skills`, `skill_files`, any
+  home-sync generation or the sync parts until approval); **approve** (session only; hash quoted; race with
+  a newer proposal → 409 `update_superseded`; re-validation; audit rows critical; generation bump for exactly
+  the affected agents), reject remembered, `skill.library.update_proposed` best-effort.
+- **Supervisor/projection** (`sup`, `api` + `fake` runner): library skills are projected exactly like manual
+  skills (read-only modes, manifest pruning, tier precedence); a pending proposal changes nothing in the home.
+- **Dashboard** (`web/tests`): libraries page and connect dialog (errors in words, read-only warning), Add from
+  library flow (preview of the exact stored content, over-budget disabled), badge and read-only banner, detach and
+  remove confirms, update review (full diff, disabled approve for non-authority with explanation), repository text
+  rendered as data (an HTML/markdown/URL payload is inert), no horizontal scroll at 390 px, both themes.
+
 ### API rate limiting (phase 2, RFE-017)
 - Bucket semantics per class (burst then steady refill), a request must pass
   general + class + org buckets and a refused request consumes none of the others;

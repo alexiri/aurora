@@ -11,7 +11,7 @@ implementation repo and checked in (CI fails on drift).
 | W1 | Proxy protocol | agent → gateway :4102 | `Proxy-Authorization` gateway credential; (phase 1, RFE-002) carried inside a TLS session — TLS-only listener | `06` |
 | W2 | Management API | browser/CLI/SDK → API `/v1` | session / API key | `05` |
 | W3 | Gateway signals | API → gateways (`NOTIFY`), gateways → DB | DB roles | `05`, `06` |
-| W4 | Gateway internal | API/monitoring → gateway :4103 | internal secret (ring from phase 2, `08 §4`) | `06` |
+| W4 | Gateway internal | API/monitoring → gateway :4103 | internal secret (ring from phase 2, `08 §4`); (phase 4, P4-GSL) adds `POST /internal/v1/library-fetch` | `06`, `06 §Library fetch` |
 | W5 | Runner plane | runner → API `/v1/runner` | `aur_` + replica | this doc |
 | W6 | Supervisor channel | supervisor → runner :4105 (WebSocket) | bootstrap token / HMAC session | this doc |
 | W7 | Platform tools | harness → MCP bridge → supervisor → runner → API | stamped identity | this doc, `12` |
