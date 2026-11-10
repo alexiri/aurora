@@ -238,6 +238,15 @@
       "properties": {
         "spec": {
           "$ref": "#/$defs/SandboxSpec"
+        },
+        "start_timeout_secs": {
+          "description": "(FIX-025, D-158, C-580) Bound on the whole start (provisioning, capacity wait, image\npull, container start) the runner must respect; absent from an older API: the runner's\nown default.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [

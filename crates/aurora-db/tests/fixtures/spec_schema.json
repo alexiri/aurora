@@ -675,6 +675,18 @@
       "started_at",
       "workspace_id"
     ],
+    "sandbox_start_failures": [
+      "agent_id",
+      "boot_id",
+      "code",
+      "elapsed_secs",
+      "events",
+      "id",
+      "message",
+      "phase",
+      "runner_id",
+      "sandbox_id"
+    ],
     "sandboxes": [
       "agent_id",
       "boot_id",
@@ -695,7 +707,13 @@
       "resource_profile",
       "restart_requested_at",
       "runner_id",
+      "running_at",
+      "start_attempt_at",
+      "start_detail",
+      "start_events",
       "start_failures",
+      "start_phase",
+      "start_progress_at",
       "state",
       "stop_reason",
       "stop_requested_at"

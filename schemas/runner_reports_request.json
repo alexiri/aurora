@@ -511,6 +511,13 @@
             "null"
           ]
         },
+        "events": {
+          "description": "(FIX-025, C-580) The substrate's latest warning events for this boot (Kubernetes pod\nWarning events), newest first, ≤ `MAX_STATUS_EVENTS` × `MAX_STATUS_EVENT_CHARS`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "message": {
           "type": [
             "string",

@@ -1046,7 +1046,6 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | phase | text null | the phase the attempt failed in |
 | events | jsonb not null default `'[]'` | the pod's Warning events |
 | elapsed_secs | int null | seconds the attempt ran before it failed |
-| created_at | timestamptz not null default now() | rows older than 30 days are pruned on insert |
 | index | (runner_id, created_at desc); (created_at) | the admin list (`C-586`); pruning |
 
 ### `runtime_intervals` — *no FKs*
