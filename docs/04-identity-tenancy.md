@@ -596,8 +596,9 @@ use workspace *Infra*", maintained in one place. A **group** is a named, flat se
 an organization's members (no nesting) that can hold workspace access and, optionally,
 an org role. Tables: `03 §Planned changes` (`groups`, `group_members`,
 `group_workspace_access`). Groups are **manual** (created and filled in the dashboard or
-API, this section) or **SCIM** (created and filled by the IdP, `§SCIM`); everything else
-is identical. Nothing changes for an organization that has no groups: the access law
+API, this section), **IdP-linked** (created in the dashboard, membership synced from a
+sign-in claim, *IdP-linked groups* below, D-156) or **SCIM** (created and filled by the IdP,
+`§SCIM`); everything else is identical. Nothing changes for an organization that has no groups: the access law
 returns the phase 0–3 answers and no new row is read on a path that finds none.
 
 **Membership.** A group lists users who already have an `org_members` row of the group's
@@ -702,6 +703,47 @@ bindings; deleting a user or removing an org member deletes their memberships; o
 deletion deletes the org's groups after their children (the foreign key is `restrict`).
 There is no nesting, no import and no export in phase 4; JIT (`§OIDC` step 4) assigns
 org membership and workspace bindings only, never groups.
+
+### IdP-linked groups (phase 4, P4-GRP-1, D-156)
+
+Many IdPs already maintain the groups an organization cares about (CERN: e-groups). An
+**IdP-linked group** is an Aurora group whose membership the IdP decides, so nobody
+maintains the list twice.
+
+- **Link.** An org owner/admin creates a group with `source = idp` and names one
+  **provider id** and one **claim value** (`idp_provider`, `idp_value`; exact,
+  case-sensitive match, ≤ 256 chars). The provider's claim path is configured per provider
+  as `group_claim` (and `group_claim_source`: `id_token` (default) or `userinfo`, with the
+  P4-IDP-1 rules: a userinfo answer counts only if its `sub` equals the ID token's) in
+  `auth.oidc_providers[]` (`15`). For CERN SSO the recommended claim is `cern_roles` (an
+  application role the owner assigns to e-groups in the Application Portal; CERN expands
+  nested e-groups), or `groups` once CERN has enabled that claim for the application
+  (ServiceNow request; CERN discourages it as the default). One value links at most one
+  group per org (unique `(org_id, idp_provider, idp_value)`).
+- **Sync.** At every sign-in through that provider, in the sign-in transaction after the
+  P4-IDP-1 role sync, the user's memberships in that provider's IdP-linked groups of each
+  org they are an **active member** of are set to exactly the groups whose value the
+  validated claim contains: added if present, removed if absent (an absent claim removes
+  them all). Only rows with `group_members.source = idp` of that provider are touched;
+  values that link no group are ignored and stored nowhere. A group never creates or
+  reactivates an org membership (above): a user who is not a member of the org gains
+  nothing from the claim, and admission stays with invitations, JIT, D-143 role claims,
+  placement and SCIM.
+- **Read-only.** Members of an IdP-linked group cannot be added or removed by hand, by
+  API or by SCIM (409 `managed_by_idp`); the dashboard shows "Members come from your
+  sign-in provider (claim value `…`)" and each member's last sync time. Name, description,
+  workspace bindings, org-role mapping and policy use are edited like any group.
+- **Freshness (residual risk, `17`).** Membership changes at the IdP take effect at the
+  person's next sign-in through that provider. Until then an Aurora session keeps the
+  memberships of its last sign-in, bounded by `auth.session_absolute_secs` and the idle
+  limit. An org that needs faster removal shortens those limits; a live query of the IdP
+  (CERN Authorization Service API) is not part of phase 4.
+- **Unlinking.** Changing a group's `source` is not allowed; deleting an IdP-linked group
+  deletes it like any group. Removing `group_claim` from a provider's configuration stops
+  the sync and leaves existing members until an admin deletes the group (startup logs a
+  warning naming the orphaned groups).
+- **Audit.** `group.member_add|remove` with `actor_kind = service`, `actor_label =
+  idp:<provider>`, the claim value, in the sign-in transaction (security-critical).
 
 ## SCIM (phase 4, P4-GRP-2, D-132, D-135, SEC-72, SEC-73)
 

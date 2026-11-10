@@ -1301,7 +1301,8 @@ tables above in the same change (and this section shrinks).
 | org_id | uuid not null FK→organizations (restrict) | unique `(id, org_id)` so child tables can carry a same-org composite foreign key | 4 (P4-GRP-1) |
 | name | citext not null | 1–80 chars, sanitized; unique `(org_id, name)` | 4 (P4-GRP-1) |
 | description | text null | ≤ 280 | 4 (P4-GRP-1) |
-| source | text not null default `manual` CHECK in (`manual`,`scim`) | immutable; `scim` groups are created and filled by the IdP (`04 §SCIM`), their name and membership are read-only in the dashboard | 4 (P4-GRP-1) |
+| source | text not null default `manual` CHECK in (`manual`,`scim`,`idp`) | immutable; `scim` groups are created and filled by the IdP (`04 §SCIM`), their name and membership are read-only in the dashboard; (D-156) `idp` groups are created in the dashboard and their membership is synced from a sign-in claim (`04 §IdP-linked groups`) | 4 (P4-GRP-1) |
+| idp_provider, idp_value | text null, text null (≤ 256) | (D-156) set together iff `source = idp`; unique `(org_id, idp_provider, idp_value)` | 4 (P4-GRP-1) |
 | org_role | text null CHECK in (`admin`,`member`) | the group → org-role mapping; `owner` is not a legal value (`04 §Groups`) | 4 (P4-GRP-1) |
 | revision | bigint not null default 1 | optimistic concurrency (`If-Match`) | 4 (P4-GRP-1) |
 | created_by | uuid null FK→users (set null) | null for SCIM-created groups | 4 (P4-GRP-1) |
@@ -1313,7 +1314,8 @@ tables above in the same change (and this section shrinks).
 | group_id | uuid not null | pk part | 4 (P4-GRP-1) |
 | org_id | uuid not null | denormalized; composite FKs `(group_id, org_id)` → `groups(id, org_id)` (cascade) and `(org_id, user_id)` → `org_members(org_id, user_id)` (cascade): a member must be a member of the group's org, and leaving the org leaves every group | 4 (P4-GRP-1) |
 | user_id | uuid not null FK→users (cascade) | pk part | 4 (P4-GRP-1) |
-| source | text not null default `manual` CHECK in (`manual`,`scim`) | who added the row; equals the group's source (a `manual` group takes only `manual` rows) | 4 (P4-GRP-1) |
+| source | text not null default `manual` CHECK in (`manual`,`scim`,`idp`) | who added the row; equals the group's source (a `manual` group takes only `manual` rows; (D-156) an `idp` group only `idp` rows, written by the sign-in sync) | 4 (P4-GRP-1) |
+| synced_at | timestamptz null | (D-156) `idp` rows: the sign-in that last confirmed the membership | 4 (P4-GRP-1) |
 | added_by | uuid null FK→users (set null) | | 4 (P4-GRP-1) |
 | created_at | timestamptz not null default now() | | 4 (P4-GRP-1) |
 | primary key / index | `(group_id, user_id)` / `(org_id, user_id)` | the index answers "which groups is this user in" (the access law, the gateway) | 4 (P4-GRP-1) |
