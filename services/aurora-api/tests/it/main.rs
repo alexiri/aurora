@@ -2,6 +2,7 @@
 mod action_approvals;
 mod activity;
 mod groups;
+mod groups_idp;
 mod admin;
 mod agent_token_age;
 mod agents;

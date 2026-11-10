@@ -7,6 +7,7 @@ mod common;
 mod credentials;
 mod database;
 mod governance;
+mod groups;
 mod governance_db;
 mod held_closure;
 mod hold;
