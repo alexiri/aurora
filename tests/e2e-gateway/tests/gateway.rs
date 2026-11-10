@@ -586,12 +586,14 @@ async fn s10_sanctioned_only_refuses_agent_supplied_llm_key() {
 }
 
 /// Minimal HTTPS upstream signed by a throwaway CA; returns (addr, ca_pem, seen request heads).
+/// Bound on 127.0.0.2 (P4-HAR, as for e2e-hosted): an address outside a developer shell's
+/// `NO_PROXY=127.0.0.1,localhost,::1`, so the matrix clients in s12 cannot bypass the proxy.
 async fn https_upstream() -> (
     std::net::SocketAddr,
     String,
     std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 ) {
-    https_upstream_for(&["127.0.0.1"]).await
+    https_upstream_for(&["127.0.0.2"]).await
 }
 
 /// As [`https_upstream`], with a leaf certificate valid for `names`.
@@ -625,7 +627,12 @@ async fn https_upstream_for(
     )
     .unwrap();
     let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(cfg));
-    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let bind_ip = names[0]
+        .parse::<std::net::IpAddr>()
+        .map_or("127.0.0.1", |_| "127.0.0.2");
+    let l = tokio::net::TcpListener::bind(format!("{bind_ip}:0"))
+        .await
+        .unwrap();
     let addr = l.local_addr().unwrap();
     let seen = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
     let seen2 = seen.clone();

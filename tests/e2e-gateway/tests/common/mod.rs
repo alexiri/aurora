@@ -103,6 +103,9 @@ api_url = "http://{API_IP}:4101"
 [auth]
 signup_mode = "open"
 org_creation = "anyone"
+# P4-ONB-1 (D-140): on a fresh instance only a listed instance admin may sign in; list the owner
+# so the first sign-in can bootstrap (as e2e-hosted does for placement-admin@e2e.test).
+instance_admins = ["owner@e2e.test"]
 
 [auth.dev_idp]
 enabled = true
@@ -112,7 +115,7 @@ issuer = "{idp_issuer}"
 log_level = "info"
 
 [gateway]
-allowed_private = ["127.0.0.1/32"]
+allowed_private = ["127.0.0.1/32", "127.0.0.2/32"]
 {egress}ca_dir = "{ca}"
 advertised_proxy_url = "https://{GW_A_IP}:4102"
 hookhost_url = "{hh_url}"
