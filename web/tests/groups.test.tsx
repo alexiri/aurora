@@ -39,7 +39,7 @@ const group = (id: string, source: "manual" | "scim" | "idp", extra: Record<stri
   ...extra,
 });
 
-const member = {
+const member: { user: { id: string; email: string; display_name: string }; status: string; source: string; synced_at: string | null; added_at: string } = {
   user: { id: U, email: "ada@example.test", display_name: "Ada" },
   status: "active",
   source: "manual",
@@ -143,7 +143,7 @@ describe("Group detail", () => {
   });
 
   it("a sign-in-linked group is read-only and shows the claim value and last sync", async () => {
-    stub(detail(group(G2, "idp"), [{ ...member, source: "idp", synced_at: now } as typeof member]));
+    stub(detail(group(G2, "idp"), [{ ...member, source: "idp", synced_at: now }]));
     wrap(<GroupDetail orgId={ORG} orgSlug="acme" id={G2} />);
     expect(await screen.findByText(/Members come from your sign-in provider/)).toBeInTheDocument();
     expect(screen.getByText("aurora-platform")).toBeInTheDocument();

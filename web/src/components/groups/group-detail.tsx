@@ -66,7 +66,7 @@ function Details({ g, orgId }: { g: Group; orgId: string }) {
         <Field id="gd-desc" label="Description">
           <input
             id="gd-desc"
-            className={cn(inputClass, "w-96 max-w-full")}
+            className={cn(inputClass, "w-72 max-w-full sm:w-96")}
             value={description}
             maxLength={280}
             onChange={(e) => setDescription(e.target.value)}
@@ -406,7 +406,7 @@ function BindingRow({
         </select>
       </Td>
       <Td className="text-right">
-        <Button variant="outline" size="sm" aria-label={`Unbind ${b.workspace.name}`} onClick={() => setConfirm(true)}>
+        <Button variant="outline" size="sm" aria-label={`Remove access to ${b.workspace.name}`} onClick={() => setConfirm(true)}>
           Remove
         </Button>
         <ConfirmDialog
