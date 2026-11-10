@@ -241,6 +241,20 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         .with_max_timeout(Duration::from_secs(cfg.approvals.max_timeout_secs))
         .with_health(health.clone()),
     );
+    // (P4-CNT, D-119) Shared rule quotas: `memory` (the default) keeps them per replica.
+    let rate =
+        match aurora_db::counters::build_store(&cfg.counters, &pool)? {
+            Some(store) if cfg.counters.gateway_shared => {
+                tracing::info!(
+                    backend = cfg.counters.backend.as_str(),
+                    "shared rate-limit counters"
+                );
+                aurora_gateway::ratelimit::RuleCounters::shared(
+                    aurora_counters::ClassCounters::new(store, "gateway", cfg.counters.gateway),
+                )
+            }
+            _ => aurora_gateway::ratelimit::RuleCounters::local(),
+        };
     let handler = Arc::new(
         PolicyHandler::new(PolicyHandlerParts {
             resolver: policy_resolver,
@@ -250,6 +264,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
             holds: Some(holds.clone()),
             touch_pool: Some(pool.clone()),
         })
+        .with_rule_counters(rate)
         .with_governance(governance)
         .with_health(health.clone())
         .with_tokens(tokens)

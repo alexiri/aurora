@@ -239,7 +239,35 @@ fn read_env_secrets(
             errors,
         ),
         oidc_client_secrets: BTreeMap::new(),
+        redis_username: None,
+        redis_password: None,
     };
+    // (P4-CNT, 08 §4) Redis credentials come from the variables the configuration names; a named
+    // variable that is unset refuses startup.
+    let redis = &raw.ratelimit.counters.redis;
+    for (key, name, slot) in [
+        (
+            "ratelimit.counters.redis.username_env",
+            &redis.username_env,
+            &mut s.redis_username,
+        ),
+        (
+            "ratelimit.counters.redis.password_env",
+            &redis.password_env,
+            &mut s.redis_password,
+        ),
+    ] {
+        let Some(name) = name.as_deref().filter(|n| !n.is_empty()) else {
+            continue;
+        };
+        match read_secret(env, name, errors) {
+            Some(v) => *slot = Some(v),
+            None => errors.push(ConfigError::new(
+                key,
+                format!("environment variable {name} (or {name}_FILE) is not set"),
+            )),
+        }
+    }
     for p in &raw.auth.oidc_providers {
         if p.id.is_empty() || p.client_secret_env.is_empty() {
             continue;

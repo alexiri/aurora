@@ -258,7 +258,18 @@ fn secret(w: &World, name: &str, injection: Value, vref: &SecretRef) -> SecretMe
     }
 }
 
+thread_local! {
+    /// (P4-CNT) shared rule counters for the next `start*` on this thread.
+    static RATE: std::cell::RefCell<Option<aurora_gateway::ratelimit::RuleCounters>> =
+        const { std::cell::RefCell::new(None) };
+    /// (P4-CNT) reuse this world (same agent) for the next `start*`: a second gateway replica.
+    static WORLD: std::cell::RefCell<Option<Arc<World>>> = const { std::cell::RefCell::new(None) };
+}
+
 fn world() -> Arc<World> {
+    if let Some(w) = WORLD.with(|w| w.borrow_mut().take()) {
+        return w;
+    }
     Arc::new(World {
         org: Uuid::now_v7(),
         ws: Uuid::now_v7(),
@@ -332,6 +343,9 @@ async fn start_backed(
     });
     if let Some(n) = body_limit {
         handler = handler.with_condition_body_limit(n);
+    }
+    if let Some(r) = RATE.with(|r| r.borrow_mut().take()) {
+        handler = handler.with_rule_counters(r);
     }
     let handler = Arc::new(handler);
     let gw = ca::generate("gw").unwrap();
@@ -1219,4 +1233,255 @@ async fn sec44_user_block_rule_does_not_match_speakerless_traffic() {
         let r = get_as(&env, token, "/x", "").await;
         assert_eq!(r.status, 200, "{token}: {}", r.body);
     }
+}
+
+// ---- P4-CNT / SEC-62: shared rule quotas ----------------------------------------------------
+
+/// A shared store that can be switched off (a stopped Redis / a broken pool).
+struct SwitchStore {
+    down: std::sync::atomic::AtomicBool,
+    inner: aurora_counters::MemoryStore,
+}
+
+impl SwitchStore {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            down: std::sync::atomic::AtomicBool::new(false),
+            inner: aurora_counters::MemoryStore::new(),
+        })
+    }
+    fn gate(&self) -> Result<(), aurora_counters::CounterError> {
+        if self.down.load(Ordering::Relaxed) {
+            Err(aurora_counters::CounterError::Unavailable("stopped".into()))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[async_trait]
+impl aurora_counters::CounterStore for SwitchStore {
+    fn backend(&self) -> &'static str {
+        "switch"
+    }
+    async fn fixed_window_peek(
+        &self,
+        p: &[aurora_counters::WindowProbe],
+    ) -> Result<Vec<u64>, aurora_counters::CounterError> {
+        self.gate()?;
+        self.inner.fixed_window_peek(p).await
+    }
+    async fn fixed_window_consume(
+        &self,
+        u: &[aurora_counters::WindowUnit],
+    ) -> Result<aurora_counters::Verdict, aurora_counters::CounterError> {
+        self.gate()?;
+        self.inner.fixed_window_consume(u).await
+    }
+    async fn bucket_take(
+        &self,
+        t: &[aurora_counters::BucketTake],
+    ) -> Result<aurora_counters::Verdict, aurora_counters::CounterError> {
+        self.gate()?;
+        self.inner.bucket_take(t).await
+    }
+    async fn health(&self) -> Result<(), aurora_counters::CounterError> {
+        self.gate()
+    }
+}
+
+fn shared_rate(
+    store: &Arc<SwitchStore>,
+    policy: aurora_counters::ClassPolicy,
+) -> aurora_gateway::ratelimit::RuleCounters {
+    let g: Arc<dyn aurora_counters::CounterStore> = Arc::new(aurora_counters::Guarded::new(
+        store.clone(),
+        aurora_counters::BreakerConfig {
+            failures: 3,
+            cooldown: Duration::from_millis(300),
+            timeout: Duration::from_millis(200),
+        },
+    ));
+    aurora_gateway::ratelimit::RuleCounters::shared(aurora_counters::ClassCounters::new(
+        g, "gateway", policy,
+    ))
+}
+
+/// Two gateway replicas (same agent and rule, own handler state) over one store, `count`
+/// requests per minute.
+async fn two_gateways(
+    store: Option<&Arc<SwitchStore>>,
+    policy: aurora_counters::ClassPolicy,
+    count: u32,
+) -> (Env, Env) {
+    let r = rule(
+        "quota",
+        "allow",
+        json!([{"type":"network","host":"127.0.0.1"}]),
+        json!({"rate_limit":{"count":count,"per":"minute"}}),
+    );
+    let rows = |r: &PolicyRuleRow| {
+        let r = r.clone();
+        move |_: &World, _: &SecretRef| {
+            let mut rows = Rows::default();
+            rows.ws.rules.push(r);
+            rows
+        }
+    };
+    if let Some(s) = store {
+        RATE.with(|c| *c.borrow_mut() = Some(shared_rate(s, policy)));
+    }
+    let a = start(rows(&r), no_llm()).await;
+    WORLD.with(|w| *w.borrow_mut() = Some(a.w.clone()));
+    if let Some(s) = store {
+        RATE.with(|c| *c.borrow_mut() = Some(shared_rate(s, policy)));
+    }
+    let b = start(rows(&r), no_llm()).await;
+    (a, b)
+}
+
+#[tokio::test]
+async fn shared_rule_quota_equals_the_limit_not_n_times() {
+    let store = SwitchStore::new();
+    let (a, b) = two_gateways(Some(&store), aurora_counters::ClassPolicy::Local, 3).await;
+    let mut ok = 0;
+    for i in 0..8 {
+        let env = if i % 2 == 0 { &a } else { &b };
+        let r = get(env, "/x", "").await;
+        match r.status {
+            200 => ok += 1,
+            429 => assert_eq!(r.json()["error"]["code"], "rate_limited"),
+            s => panic!("{s}: {}", r.body),
+        }
+    }
+    assert_eq!(ok, 3, "two gateways share one count");
+    // Refused requests still get a request-log row and no counter_fallback.
+    a.log.flush().await;
+    b.log.flush().await;
+    let rows: Vec<_> = a
+        .captured
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .chain(b.captured.0.lock().unwrap().iter())
+        .cloned()
+        .collect();
+    assert_eq!(rows.iter().filter(|r| r.status == 429).count(), 5);
+    assert!(
+        rows.iter()
+            .all(|r| r.error_code.as_deref() != Some("counter_fallback"))
+    );
+}
+
+#[tokio::test]
+async fn memory_default_two_gateways_allow_n_times() {
+    // No shared store: today's per-replica counting (proves the default is unchanged).
+    let (a, b) = two_gateways(None, aurora_counters::ClassPolicy::Local, 2).await;
+    let mut ok = 0;
+    for i in 0..8 {
+        let env = if i % 2 == 0 { &a } else { &b };
+        if get(env, "/x", "").await.status == 200 {
+            ok += 1;
+        }
+    }
+    assert_eq!(ok, 4);
+}
+
+#[tokio::test]
+async fn store_down_local_keeps_the_per_replica_quota_and_logs_the_fallback() {
+    let store = SwitchStore::new();
+    store.down.store(true, Ordering::Relaxed);
+    let (a, _b) = two_gateways(Some(&store), aurora_counters::ClassPolicy::Local, 2).await;
+    let statuses = [
+        get(&a, "/x", "").await.status,
+        get(&a, "/x", "").await.status,
+        get(&a, "/x", "").await.status,
+    ];
+    assert_eq!(statuses, [200, 200, 429], "never unlimited, never a 503");
+    a.log.flush().await;
+    let rows = a.captured.0.lock().unwrap().clone();
+    let allowed: Vec<_> = rows.iter().filter(|r| r.status == 200).collect();
+    assert_eq!(allowed.len(), 2);
+    assert!(
+        allowed
+            .iter()
+            .all(|r| r.error_code.as_deref() == Some("counter_fallback")),
+        "{rows:?}"
+    );
+}
+
+#[tokio::test]
+async fn store_down_closed_refuses_503_counter_unavailable_only_for_rate_limited_rules() {
+    let store = SwitchStore::new();
+    store.down.store(true, Ordering::Relaxed);
+    let (a, _b) = two_gateways(Some(&store), aurora_counters::ClassPolicy::Closed, 2).await;
+    for _ in 0..3 {
+        let r = get(&a, "/x", "").await;
+        assert_eq!(r.status, 503, "{}", r.body);
+        assert_eq!(r.json()["error"]["code"], "counter_unavailable");
+        assert_eq!(r.json()["error"]["details"]["limiter"], "gateway_rule");
+        assert!(
+            r.head.to_lowercase().contains("retry-after: 5"),
+            "{}",
+            r.head
+        );
+    }
+    // The same gateway with a rule that has no rate limit is unaffected.
+    RATE.with(|c| {
+        *c.borrow_mut() = Some(shared_rate(&store, aurora_counters::ClassPolicy::Closed))
+    });
+    let plain = start(
+        |_, _| {
+            let mut rows = Rows::default();
+            rows.ws.rules.push(rule(
+                "plain",
+                "allow",
+                json!([{"type":"network","host":"127.0.0.1"}]),
+                json!({}),
+            ));
+            rows
+        },
+        no_llm(),
+    )
+    .await;
+    assert_eq!(get(&plain, "/x", "").await.status, 200);
+    // Recovery: the store comes back and the shared limit applies again.
+    store.down.store(false, Ordering::Relaxed);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(get(&a, "/x", "").await.status, 200);
+}
+
+#[tokio::test]
+async fn blocked_request_consumes_nothing_from_the_shared_store() {
+    let store = SwitchStore::new();
+    RATE.with(|c| *c.borrow_mut() = Some(shared_rate(&store, aurora_counters::ClassPolicy::Local)));
+    let env = start(
+        |_, _| {
+            let mut rows = Rows::default();
+            // Org block beats the workspace rate-limited allow (stricter wins).
+            rows.org.rules.push(rule(
+                "deny",
+                "block",
+                json!([{"type":"network","host":"127.0.0.1"}]),
+                json!({}),
+            ));
+            rows.ws.rules.push(rule(
+                "quota",
+                "allow",
+                json!([{"type":"network","host":"127.0.0.1"}]),
+                json!({"rate_limit":{"count":1,"per":"minute"}}),
+            ));
+            rows
+        },
+        no_llm(),
+    )
+    .await;
+    for _ in 0..3 {
+        assert_eq!(get(&env, "/x", "").await.status, 403);
+    }
+    assert!(
+        store.inner.keys().is_empty(),
+        "a blocked request consumes nothing"
+    );
 }

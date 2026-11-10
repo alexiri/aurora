@@ -59,6 +59,15 @@ impl RateLimiter {
         self.check_quota(bucket.name(), key, bucket.quota())
     }
 
+    /// Give back the token a shared-store refusal (or a `closed` 503) did not use (P4-CNT).
+    pub fn refund(&self, bucket: Bucket, key: &str) {
+        let cap = f64::from(bucket.quota().capacity);
+        let mut map = self.buckets.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(s) = map.get_mut(&(bucket.name(), key.to_owned())) {
+            s.tokens = (s.tokens + 1.0).min(cap);
+        }
+    }
+
     /// Consume one token with an explicit quota; 429 + `Retry-After` when empty.
     pub fn check_quota(&self, name: &'static str, key: &str, q: Quota) -> Result<(), ApiError> {
         let now = Instant::now();

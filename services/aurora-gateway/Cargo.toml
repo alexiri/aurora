@@ -21,6 +21,7 @@ path = "src/main.rs"
 aurora-core = { workspace = true, features = ["service"] }
 aurora-config = { workspace = true }
 aurora-db = { workspace = true }
+aurora-counters = { workspace = true, features = ["redis"] }
 aurora-crypto = { workspace = true }
 aurora-policy = { workspace = true }
 aurora-sqlclass = { workspace = true }

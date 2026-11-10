@@ -17,6 +17,7 @@ use crate::pipeline::{
     TunnelReport,
 };
 use crate::plaintext::{PlaintextCache, PlaintextError};
+use crate::ratelimit::{Peeked, RuleCounters, Settled};
 use crate::refresh::{RefreshError, TokenManager};
 use crate::reqlog::{RequestLog, Row};
 use crate::resolve::{ResolvedHost, Resolver, SecretCand};
@@ -44,6 +45,8 @@ pub struct PolicyHandler {
     resolver: Arc<Resolver>,
     plaintext: Arc<PlaintextCache>,
     counters: Arc<MemoryCounter>,
+    /// (P4-CNT, D-119) shared rule quotas; per replica (`counters` above) when not configured.
+    rate: RuleCounters,
     log: Arc<RequestLog>,
     external_url: String,
     holds: Option<Arc<Holds>>,
@@ -93,6 +96,9 @@ struct Ctx {
     app_id: Option<String>,
     tool_id: Option<String>,
     connection_id: Option<Uuid>,
+    /// (P4-CNT, D-119) the rate-limit count of this request came from the local fallback because
+    /// the shared counter backend was unreachable: the row carries `counter_fallback`.
+    counter_fallback: bool,
 }
 
 impl Ctx {
@@ -120,7 +126,9 @@ impl Ctx {
             rule_name: self.rule.as_ref().map(|r| r.1.clone()),
             upstream_status: upstream.map(i32::from),
             status: i32::from(status),
-            error_code: error_code.map(str::to_owned),
+            error_code: error_code
+                .map(str::to_owned)
+                .or_else(|| self.counter_fallback.then(|| "counter_fallback".to_owned())),
             injected: self.injected,
             latency_ms: i32::try_from(self.started.elapsed().as_millis()).unwrap_or(i32::MAX),
             bytes_up: 0,
@@ -307,6 +315,7 @@ impl PolicyHandler {
             resolver: p.resolver,
             plaintext: p.plaintext,
             counters: Arc::new(MemoryCounter::new()),
+            rate: RuleCounters::local(),
             log: p.log,
             external_url: p.external_url.trim_end_matches('/').to_owned(),
             holds: p.holds,
@@ -318,6 +327,13 @@ impl PolicyHandler {
             condition_body_limit: CONDITION_BODY_BUFFER,
             health: None,
         }
+    }
+
+    /// (P4-CNT, D-119) Count rule quotas in the shared store of the `gateway` class.
+    #[must_use]
+    pub fn with_rule_counters(mut self, r: RuleCounters) -> Self {
+        self.rate = r;
+        self
     }
 
     /// (RFE-014) Attach the outage state.
@@ -480,7 +496,12 @@ impl PolicyHandler {
         }
     }
 
-    fn apply_hits(&self, d: &Decision) {
+    /// Record the hits in this replica's memory: the `memory` backend and the `local` fallback.
+    /// Under a shared backend the consume already happened ([`RuleCounters::settle`]).
+    fn apply_hits(&self, d: &Decision, pk: &Peeked) {
+        if !pk.is_local() {
+            return;
+        }
         for h in d.rate_limit_hits() {
             self.counters.record(h.rule_key, h.agent, &h.window);
         }
@@ -519,6 +540,7 @@ impl RequestHandler for PolicyHandler {
             app_id: None,
             tool_id: None,
             connection_id: None,
+            counter_fallback: false,
         };
         let rv = match self.resolver.resolve(&identity, &host, port).await {
             Ok(r) => r,
@@ -717,14 +739,25 @@ impl RequestHandler for PolicyHandler {
             connect_time: false,
             host_apps: Vec::new(),
         };
+        // (P4-CNT) With a shared backend the counts are read first (peek) and passed in; the
+        // evaluator stays pure.
+        let pk = self.rate.peek(&rv, identity.agent_id).await;
         let d = evaluate(
             &rv.org_policy,
             &rv.ws_policy,
             &facts,
-            self.counters.as_ref(),
+            pk.counter(&self.counters),
         );
         ctx.secret_id = wsec.map(|c| c.id);
         ctx.rule = d.deciding_rule().map(|r| (r.logical_id, r.name.clone()));
+        // The consume is the authority (all-or-nothing, after an allow / needs-approval verdict;
+        // a held request consumes now, once, and is not charged again on approval).
+        match self.rate.settle(&pk, &d, &self.counters).await {
+            Settled::Refuse(err, decision) => {
+                return Outcome::Respond(self.refuse(ctx, &err, decision));
+            }
+            Settled::Proceed { fallback } => ctx.counter_fallback = fallback,
+        }
         if d.verdict == Verdict::NeedsApproval
             && let Some(holds) = &self.holds
         {
@@ -812,7 +845,7 @@ impl RequestHandler for PolicyHandler {
         {
             return Outcome::Respond(self.refuse(ctx, &err, decision));
         }
-        self.apply_hits(&d);
+        self.apply_hits(&d, &pk);
         // 11. injection (plaintext fetched only now).
         if let Some(Cand::App(conn)) = &winner {
             let Some(m) = &app_match else {
@@ -1262,6 +1295,7 @@ impl RequestHandler for PolicyHandler {
             app_id: None,
             tool_id: None,
             connection_id: None,
+            counter_fallback: false,
         };
         let _ = reason;
         self.log
@@ -1283,6 +1317,7 @@ impl RequestHandler for PolicyHandler {
             app_id: None,
             tool_id: None,
             connection_id: None,
+            counter_fallback: false,
         };
         let rv = match self.resolver.resolve(identity, host, port).await {
             Ok(r) => r,
@@ -1369,17 +1404,25 @@ impl RequestHandler for PolicyHandler {
             self.refuse(ctx, &err, "governance_refused");
             return OpenLaneDecision::Deny(err);
         }
+        let pk = self.rate.peek(&rv, identity.agent_id).await;
         let d = evaluate(
             &rv.org_policy,
             &rv.ws_policy,
             &facts,
-            self.counters.as_ref(),
+            pk.counter(&self.counters),
         );
         let mut ctx = ctx;
         ctx.rule = d.deciding_rule().map(|r| (r.logical_id, r.name.clone()));
         match self.verdict_error(&rv, &d, "CONNECT", "/", host) {
             None => {
-                self.apply_hits(&d);
+                // A CONNECT counts as one request (consumed once, when it is allowed).
+                if let Settled::Refuse(err, decision) =
+                    self.rate.settle(&pk, &d, &self.counters).await
+                {
+                    self.refuse(ctx, &err, decision);
+                    return OpenLaneDecision::Deny(err);
+                }
+                self.apply_hits(&d, &pk);
                 OpenLaneDecision::Allow
             }
             Some((err, decision)) => {
@@ -1439,6 +1482,7 @@ impl RequestHandler for PolicyHandler {
             app_id: None,
             tool_id: None,
             connection_id: None,
+            counter_fallback: false,
         };
         let mut row = ctx.row(200, None, None);
         row.bytes_up = i64::try_from(r.bytes_up).unwrap_or(i64::MAX);
@@ -1600,6 +1644,7 @@ impl DbAuthorizer for DbSession {
             app_id: Some(self.conn.app_id.clone()),
             tool_id: None,
             connection_id: Some(self.conn.id),
+            counter_fallback: false,
         };
         let rv = match h.resolver.resolve(&self.identity, &self.host, 443).await {
             Ok(r) => r,
@@ -1663,8 +1708,25 @@ impl DbAuthorizer for DbSession {
             connect_time: false,
             host_apps: Vec::new(),
         };
-        let d = evaluate(&rv.org_policy, &rv.ws_policy, &facts, h.counters.as_ref());
+        let pk = h.rate.peek(&rv, self.identity.agent_id).await;
+        let d = evaluate(
+            &rv.org_policy,
+            &rv.ws_policy,
+            &facts,
+            pk.counter(&h.counters),
+        );
         ctx.rule = d.deciding_rule().map(|r| (r.logical_id, r.name.clone()));
+        match h.rate.settle(&pk, &d, &h.counters).await {
+            Settled::Refuse(err, decision) => {
+                h.refuse(ctx, &err, decision);
+                return if err.status() == StatusCode::SERVICE_UNAVAILABLE {
+                    DbVerdict::Unavailable(err)
+                } else {
+                    DbVerdict::Deny(err)
+                };
+            }
+            Settled::Proceed { fallback } => ctx.counter_fallback = fallback,
+        }
         if d.verdict == Verdict::NeedsApproval
             && let Some(holds) = &h.holds
         {
@@ -1747,7 +1809,7 @@ impl DbAuthorizer for DbSession {
                 DbVerdict::Deny(err)
             };
         }
-        h.apply_hits(&d);
+        h.apply_hits(&d, &pk);
         h.touch(self.conn.id);
         h.log.record(ctx.row(200, None, None));
         DbVerdict::Allow

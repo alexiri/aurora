@@ -170,9 +170,8 @@ pub async fn start(
     req: StartRequest<'_>,
     session_token: Option<&str>,
 ) -> Result<Started, ApiError> {
-    state
-        .rate_limiter
-        .check(Bucket::OidcStartIp, &client.ip_key())?;
+    crate::http::counters::check_security_bucket(state, Bucket::OidcStartIp, &client.ip_key())
+        .await?;
     let p = provider(state, provider_id)?;
     let return_to = validate_return_to(req.return_to)?;
     let ra = if req.reauth {

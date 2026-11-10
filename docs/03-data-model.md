@@ -504,8 +504,32 @@ Rules compiled from grants and app blocklists; always live (not drafted).
 Partitions are created ahead by the API (next 2 months) and dropped after
 `REQUEST_LOG_RETENTION`.
 
-### `rate_limit_windows` — not used in phase 0
-Reserved name; phase 0 rate limiting is in-memory per gateway replica (`07`). (phase 4, P4-CNT) The shared-counter tables are specified under *Planned changes (later phases)* below and are created only by the phase-4 migration.
+### `rate_limit_windows` (phase 4, P4-CNT, D-119; shared fixed-window counters)
+`UNLOGGED` table (counters are not a system of record: a Postgres crash or a failover to a standby that lacks unlogged data resets windows, which at worst grants one extra window of quota and is listed in `17` residual risks). Used only when `ratelimit.counters.backend = postgres` (`15 §Shared rate-limit counters`); the migration creates it whatever the backend is (empty, no cost).
+
+| Column | Type | Notes |
+|---|---|---|
+| key | text not null | `gw:rl:<rule logical_id>:<agent_id>:<period>`, `api:…` (`06 §Rate limiting`, `05 §Conventions`); ids and keyed hashes only, 1–200 chars |
+| window_start | timestamptz not null | start of the UTC-aligned window, computed by the database (`date_bin(period, clock_timestamp(), 'epoch')`) |
+| count | bigint not null | units spent in the window (≥ 0) |
+| expires_at | timestamptz not null | `window_start + period + 1 minute`; rows past it are dead |
+
+Primary key `(key, window_start)`; index `(expires_at)` for pruning.
+
+Atomic consume (one statement per unit, all units of a call in **one transaction** with rows taken in key order, rolled back on the first refusal so the call consumes nothing): `INSERT … ON CONFLICT (key, window_start) DO UPDATE SET count = count + $cost WHERE count + $cost <= $limit RETURNING count`; no returned row means refused. Peek is a plain `SELECT`.
+
+### `rate_limit_buckets` (phase 4, P4-CNT, D-119; shared token buckets of the management-API limiter)
+`UNLOGGED`, same remarks as above. One row per bucket key, GCRA state.
+
+| Column | Type | Notes |
+|---|---|---|
+| key | text pk | `api:general:user:<id>`, `api:class:<name>:key:<id>`, `api:org:<id>`, `api:ip:<hash>` (`05 §Conventions`); ids and keyed hashes only, 1–200 chars |
+| tat | timestamptz not null | theoretical arrival time of the next unit; a take is allowed when `max(tat, now) + emission_interval − now ≤ burst × emission_interval` (all of a call's buckets locked `FOR UPDATE` in key order inside one transaction and updated only if every bucket allows) |
+| expires_at | timestamptz not null | `tat` plus 60 s; idle buckets are pruned |
+
+Index `(expires_at)` for pruning.
+
+Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR UPDATE SKIP LOCKED`, batches of 5 000 rows, only rows with `expires_at < now()`) deletes dead rows from both tables. The gateway database role has `SELECT, INSERT, UPDATE` on `rate_limit_windows` (and nothing on `rate_limit_buckets`: the gateway keeps only rule counters); it never deletes. Neither table holds an e-mail address, an IP address or a secret (`05 §Conventions`).
 
 ### `action_approvals`
 | Column | Type | Notes |
@@ -1215,7 +1239,7 @@ the gateway reads the hold's `status`; FIX-016); `INSERT` on
 credentials_expires_at, status, status_reason, reauth_required_at,
 last_used_at, updated_at, credential_keys)` on `app_connections` (`updated_at` is set by credential
 rotation and `reauth_required`, FIX-016; `credential_keys` by every reseal, RFE-022); `UPDATE (last_used_at, origin)` on `secrets`; `UPDATE (last_used_at)` on
-`gateway_credentials`;
+`gateway_credentials`; (phase 4, P4-CNT) `SELECT, INSERT, UPDATE` on `rate_limit_windows` (never `DELETE`, nothing on `rate_limit_buckets`);
 `EXECUTE` on `pg_advisory_lock` family; `LISTEN` is implicit.
 
 ---
@@ -1229,32 +1253,6 @@ phase-0 schema: the tables above are machine-checked against the migrations
 headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
-
-#### `rate_limit_windows` (shared fixed-window counters; the name reserved in §9)
-`UNLOGGED` table (counters are not a system of record: a Postgres crash or a failover to a standby that lacks unlogged data resets windows, which at worst grants one extra window of quota and is listed in `17` residual risks). Used only when `ratelimit.counters.backend = postgres` (`15 §Shared rate-limit counters`).
-
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| key | text not null | `gw:rl:<rule logical_id>:<agent_id>:<period>`, `api:…` (`06 §Rate limiting`, `05 §Conventions`); ids and keyed hashes only, ≤ 200 chars | 4 (P4-CNT) |
-| window_start | timestamptz not null | start of the UTC-aligned window, computed by the database (`date_bin(period, clock_timestamp(), 'epoch')`) | 4 (P4-CNT) |
-| count | bigint not null | units spent in the window | 4 (P4-CNT) |
-| expires_at | timestamptz not null | `window_start + period + 1 minute`; rows past it are dead | 4 (P4-CNT) |
-| primary key | `(key, window_start)` | | 4 (P4-CNT) |
-| index | `(expires_at)` | pruning | 4 (P4-CNT) |
-
-Atomic consume (one statement per rule, all rules of a request in **one transaction** with rows taken in key order, rolled back on the first refusal so the request consumes nothing): `INSERT … ON CONFLICT (key, window_start) DO UPDATE SET count = count + $cost WHERE count + $cost <= $limit RETURNING count`; no returned row means refused. Peek is a plain `SELECT`.
-
-#### `rate_limit_buckets` (shared token buckets of the management-API limiter)
-`UNLOGGED`, same remarks as above. One row per bucket key, GCRA state.
-
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| key | text pk | `api:general:user:<id>`, `api:class:<name>:key:<id>`, `api:org:<id>`, `api:ip:<hash>` (`05 §Conventions`); ids and keyed hashes only | 4 (P4-CNT) |
-| tat | timestamptz not null | theoretical arrival time of the next unit; a request is allowed when `max(tat, now) + emission_interval − now ≤ burst × emission_interval` (all of a request's buckets locked `FOR UPDATE` in key order inside one transaction and updated only if every bucket allows) | 4 (P4-CNT) |
-| expires_at | timestamptz not null | `tat` plus a margin; idle buckets are pruned | 4 (P4-CNT) |
-| index | `(expires_at)` | pruning | 4 (P4-CNT) |
-
-Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR UPDATE SKIP LOCKED`, batches of 5 000 rows, only rows with `expires_at < now()`) deletes dead rows from both tables. The gateway database role gains `SELECT, INSERT, UPDATE` on `rate_limit_windows` (and nothing on `rate_limit_buckets`: the gateway keeps only rule counters); it never deletes. Neither table holds an e-mail address, an IP address or a secret (`05 §Conventions`). The `redis` and `memory` backends need no table; the migration creates the two tables regardless of the configured backend (empty, no cost).
 
 #### `attachments` (S3 blob backend)
 | Planned column | Type | Notes | Phase |

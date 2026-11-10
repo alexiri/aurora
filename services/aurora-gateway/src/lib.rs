@@ -25,6 +25,7 @@ pub mod plaintext;
 pub mod proxy;
 pub mod proxy_protocol;
 pub mod proxy_tls;
+pub mod ratelimit;
 pub mod refresh;
 pub mod reqlog;
 pub mod resolve;

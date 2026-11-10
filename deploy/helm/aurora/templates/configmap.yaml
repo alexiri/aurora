@@ -38,6 +38,31 @@
 {{- $_ := set $auth "dev_idp" (dict "enabled" true "issuer" (default (printf "%s%s" (trimSuffix "/" .Values.externalUrl) .Values.devIdp.pathPrefix) .Values.devIdp.issuer) "internal_url" (printf "http://%s-dev-idp:4107%s" $full .Values.devIdp.pathPrefix)) -}}
 {{- $_ := set $cfg "auth" $auth -}}
 {{- end -}}
+{{- /* (P4-CNT, D-119) shared rate-limit counters: rendered only when a shared backend is chosen,
+       so the default produces the same manifests as before. */ -}}
+{{- $cn := .Values.counters | default dict -}}
+{{- $cnBackend := default "memory" $cn.backend -}}
+{{- if not (has $cnBackend (list "memory" "postgres" "redis")) }}{{ fail "counters.backend must be memory, postgres or redis" }}{{ end -}}
+{{- $cnOnU := default (dict) $cn.onUnavailable -}}
+{{- range $c := list "security" "management" "gateway" }}
+{{- $v := default "local" (get $cnOnU $c) -}}
+{{- if not (has $v (list "local" "closed")) }}{{ fail (printf "counters.onUnavailable.%s must be local or closed (there is no open: a counter outage must never remove a limit)" $c) }}{{ end -}}
+{{- end -}}
+{{- if ne $cnBackend "memory" }}
+{{- $cnRedis := default (dict) $cn.redis -}}
+{{- $ctr := dict "backend" $cnBackend "api" (default "shared" $cn.api) "gateway" (default "shared" $cn.gateway) "timeout_ms" (default 50 $cn.timeoutMs) "on_unavailable" (dict "security" (default "local" $cnOnU.security) "management" (default "local" $cnOnU.management) "gateway" (default "local" $cnOnU.gateway)) "postgres" (dict "pool_size" (default 4 (default (dict) $cn.postgres).poolSize)) -}}
+{{- if eq $cnBackend "redis" }}
+{{- if not $cnRedis.address }}{{ fail "counters.redis.address is required when counters.backend is redis (rediss://host:port)" }}{{ end -}}
+{{- if contains "@" $cnRedis.address }}{{ fail "counters.redis.address must not carry credentials: put them in counters.redis.existingSecret" }}{{ end -}}
+{{- $rd := dict "address" $cnRedis.address "allow_plaintext" (default false $cnRedis.allowPlaintext) "db" (default 0 $cnRedis.db) "key_prefix" (default "aurora:rl:" $cnRedis.keyPrefix) -}}
+{{- if $cnRedis.existingSecret }}{{ $_ := set $rd "username_env" "AURORA_COUNTERS_REDIS_USERNAME" }}{{ $_ := set $rd "password_env" "AURORA_COUNTERS_REDIS_PASSWORD" }}{{ end -}}
+{{- with $cnRedis.caFile }}{{ $_ := set $rd "ca_file" . }}{{ end -}}
+{{- $_ := set $ctr "redis" $rd -}}
+{{- end -}}
+{{- $rl := default (dict) $cfg.ratelimit -}}
+{{- $_ := set $rl "counters" (merge $ctr (default (dict) $rl.counters)) -}}
+{{- $_ := set $cfg "ratelimit" $rl -}}
+{{- end -}}
 {{- /* Vault store: api and gateway each get their own config (their own Vault role). */ -}}
 {{- $gwCfg := deepCopy $cfg -}}
 {{- if .Values.vault.enabled }}

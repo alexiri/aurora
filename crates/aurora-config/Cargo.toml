@@ -17,3 +17,4 @@ base64 = { workspace = true }
 uuid = { workspace = true }
 aurora-core = { workspace = true }
 aurora-crypto = { workspace = true }
+aurora-counters = { workspace = true }

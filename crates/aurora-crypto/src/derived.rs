@@ -15,15 +15,19 @@ pub enum Purpose {
     ActionToken,
     AvatarKey,
     LinkState,
+    /// (phase 4, P4-CNT, D-119) Keyed hash of e-mail addresses and client IPs in shared
+    /// rate-limit counter keys (docs/08 §4).
+    RatelimitKey,
 }
 
 impl Purpose {
-    pub const ALL: [Purpose; 5] = [
+    pub const ALL: [Purpose; 6] = [
         Purpose::OauthState,
         Purpose::OidcState,
         Purpose::ActionToken,
         Purpose::AvatarKey,
         Purpose::LinkState,
+        Purpose::RatelimitKey,
     ];
 
     pub fn name(self) -> &'static str {
@@ -33,6 +37,7 @@ impl Purpose {
             Purpose::ActionToken => "action-token",
             Purpose::AvatarKey => "avatar-key",
             Purpose::LinkState => "link-state",
+            Purpose::RatelimitKey => "ratelimit_key",
         }
     }
 
@@ -58,7 +63,7 @@ pub struct DerivedKeys {
 
 struct RingKeys {
     id: String,
-    keys: [Secret<[u8; 32]>; 5],
+    keys: [Secret<[u8; 32]>; 6],
 }
 
 impl std::fmt::Debug for DerivedKeys {
@@ -80,7 +85,7 @@ fn derive(root: &[u8; 32], purpose: Purpose) -> Result<Secret<[u8; 32]>> {
 }
 
 fn derive_all(id: &str, root: &[u8; 32]) -> Result<RingKeys> {
-    let [a, b, c, d, e] = Purpose::ALL;
+    let [a, b, c, d, e, f] = Purpose::ALL;
     Ok(RingKeys {
         id: id.to_owned(),
         keys: [
@@ -89,6 +94,7 @@ fn derive_all(id: &str, root: &[u8; 32]) -> Result<RingKeys> {
             derive(root, c)?,
             derive(root, d)?,
             derive(root, e)?,
+            derive(root, f)?,
         ],
     })
 }
@@ -174,6 +180,20 @@ impl DerivedKeys {
             Self::key_of(&self.ring[self.active], purpose),
         );
         hmac::sign(&key, data).as_ref().to_vec()
+    }
+
+    /// (P4-CNT, SEC-62) `HMAC-SHA256(hkdf("ratelimit_key"), value)` truncated to 128 bits, hex:
+    /// the form in which an e-mail address or client IP enters a shared counter key. Uses the
+    /// active signing key, so every replica derives the same hash.
+    pub fn ratelimit_hash(&self, value: &str) -> String {
+        let tag = self.sign(Purpose::RatelimitKey, value.as_bytes());
+        tag.iter()
+            .take(16)
+            .fold(String::with_capacity(32), |mut s, b| {
+                use std::fmt::Write;
+                let _ = write!(s, "{b:02x}");
+                s
+            })
     }
 
     /// Constant-time verification against the key `id` only (false if `id` is outside the ring).

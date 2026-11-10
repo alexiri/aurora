@@ -399,6 +399,17 @@ impl Limiter {
         Ok(())
     }
 
+    /// Give back the tokens of `charges` (P4-CNT): the shared store refused (the local
+    /// pre-filter then did not spend them) or a `closed` class refused with 503.
+    pub fn refund(&self, charges: &[Charge]) {
+        let mut g = self.lock();
+        for c in charges {
+            if let Some(s) = g.buckets.get_mut(&c.key) {
+                s.tokens = (s.tokens + 1.0).min(f64::from(c.spec.burst));
+            }
+        }
+    }
+
     /// Reserve a stream slot for `principal`; `None` when at the cap.
     pub fn acquire_stream(self: &Arc<Self>, principal: &str) -> Option<StreamGuard> {
         let mut g = self.lock();
@@ -612,11 +623,18 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
             } else {
                 None
             };
-            if let Some(c) = charge
-                && let Err(r) = limiter.take(&[c])
-            {
-                record(&r);
-                return r.into_response();
+            if let Some(c) = charge {
+                let charges = [c];
+                if let Err(r) = limiter.take(&charges) {
+                    record(&r);
+                    return r.into_response();
+                }
+                // (P4-CNT) unauthenticated and rejected-bearer limits are the `security` class.
+                if let Some(cl) = state.counters.security()
+                    && let Err(e) = crate::http::counters::take_shared(&state, cl, &charges).await
+                {
+                    return shared_refusal(e);
+                }
             }
             next.run(req).await
         }
@@ -667,12 +685,30 @@ pub async fn middleware(State(state): State<AppState>, req: Request, next: Next)
                 record(&r);
                 return r.into_response(); // `guard` drops here, releasing the slot
             }
+            // (P4-CNT) authenticated buckets are the `management` class.
+            if let Some(cl) = state.counters.management()
+                && let Err(e) = crate::http::counters::take_shared(&state, cl, &charges).await
+            {
+                return shared_refusal(e);
+            }
             let res = next.run(req).await;
             match guard {
                 Some(g) if res.status().is_success() => hold_until_dropped(res, g),
                 _ => res,
             }
         }
+    }
+}
+
+/// The answer for a refusal by the shared store: 429 from the blocking bucket, or the 503 of a
+/// `closed` class (never a 429: a client must not mistake an outage for its own rate).
+fn shared_refusal(e: Result<Refusal, ApiError>) -> Response {
+    match e {
+        Ok(r) => {
+            record(&r);
+            r.into_response()
+        }
+        Err(e) => e.into_response(),
     }
 }
 

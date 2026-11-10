@@ -50,6 +50,8 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     /// Management-API limiter (phase 2, RFE-017).
     pub api_limiter: Arc<web::apilimit::Limiter>,
+    /// (phase 4, P4-CNT, D-119) shared rate-limit counters (all classes local under `memory`).
+    pub counters: Arc<web::counters::ApiCounters>,
     pub session_cache: Arc<AuthCache>,
     pub net: Arc<NetPolicy>,
     pub mailer: Arc<dyn Mailer>,
@@ -152,11 +154,13 @@ impl AppState {
                 &pool,
             )?,
         );
+        let counters = Arc::new(web::counters::ApiCounters::build(&config.counters, &pool)?);
         Ok(Self {
             pool,
             config: Arc::new(config),
             rate_limiter: Arc::new(RateLimiter::new()),
             api_limiter,
+            counters,
             session_cache: Arc::new(AuthCache::default()),
             net,
             mailer,
@@ -181,6 +185,13 @@ impl AppState {
     #[allow(clippy::expect_used)]
     pub fn new(pool: PgPool, config: ApiConfig) -> Self {
         Self::try_new(pool, config).expect("valid secrets/llm configuration")
+    }
+
+    /// Replace the shared counters (tests: a shared in-process store, fault injection).
+    #[must_use]
+    pub fn with_counters(mut self, counters: web::counters::ApiCounters) -> Self {
+        self.counters = Arc::new(counters);
+        self
     }
 
     /// Replace the secret vault (tests: preloaded memory store).
