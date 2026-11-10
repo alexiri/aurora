@@ -307,6 +307,19 @@ function AdminNavList({ pathname }: { pathname: string }) {
   );
 }
 
+/** FIX-026: instance admins reach the admin pages from every page, not only the account menu. */
+export function InstanceAdminLink({ pathname }: { pathname: string }) {
+  const me = useMe();
+  if (!me.data?.user.is_instance_admin || pathname.startsWith("/admin")) return null;
+  return (
+    <nav aria-label="Instance administration">
+      <ul>
+        <NavItem href="/admin/users" label="Instance admin" icon={ShieldIcon} active={false} />
+      </ul>
+    </nav>
+  );
+}
+
 function SidebarContent({
   orgSlug,
   wsSlug,
@@ -343,6 +356,7 @@ function SidebarContent({
         ) : null}
       </div>
       <div className="space-y-2 border-t border-line pt-3">
+        <InstanceAdminLink pathname={pathname} />
         <ThemeSwitch />
         <UserMenu />
       </div>

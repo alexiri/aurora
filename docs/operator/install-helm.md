@@ -670,6 +670,11 @@ kubectl -n aurora get pods
 kubectl -n aurora exec deploy/aurora-api -- /usr/local/bin/aurora-api bootstrap-admin --email you@example.org
 ```
 
+**Becoming an instance admin** (needed for Admin › Connectors, Plugins, Users, …): either list your address
+in `config.auth.instance_admins` (applied at every sign-in: sign out and in again after `helm upgrade`), or run
+`bootstrap-admin` below, or map an IdP role to `instance_admin: true` (`sign-in.md`). Instance admins see an
+**Instance admin** item in the sidebar (and in the account menu).
+
 All sign-in is OIDC (phase 1, RFE-004): configure at least one provider under `config.auth.oidc_providers`
 (`docs/04 §OIDC`), or the API refuses to start (`no_oidc_provider`). `bootstrap-admin` **pre-provisions** an
 instance administrator with a verified e-mail and no credential, and prints the sign-in URL
