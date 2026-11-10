@@ -19,6 +19,7 @@ hookhost_url = "http://127.0.0.1:4104"
 [api]
 # The API runs on the host, so reach the hook host on localhost (not the compose alias).
 hookhost_url = "http://127.0.0.1:4104"
+gateway_internal_url = "http://127.0.0.1:4103"
 
 [hookhost]
 api_internal_url = "http://127.0.0.1:4111"

@@ -258,7 +258,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
     let handler = Arc::new(
         PolicyHandler::new(PolicyHandlerParts {
             resolver: policy_resolver,
-            plaintext,
+            plaintext: plaintext.clone(),
             log: reqlog.clone(),
             external_url: cfg.external_url.clone(),
             holds: Some(holds.clone()),
@@ -267,7 +267,7 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         .with_rule_counters(rate)
         .with_governance(governance)
         .with_health(health.clone())
-        .with_tokens(tokens)
+        .with_tokens(tokens.clone())
         .with_summarizer(summarizer)
         .with_condition_body_limit(cfg.gateway.condition_body_bytes as usize),
     );
@@ -300,10 +300,6 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         hub: hub.clone(),
         reqlog: Some(reqlog.clone()),
     };
-    let internal = aurora_gateway::status::readyz_router(outage.clone())
-        .merge(aurora_gateway::status::router_with(ring, Some(outage)))
-        .fallback_service(service::ops_router(metrics, Vec::new()))
-        .layer(axum::middleware::from_fn(service::trace_context));
     let ca = Arc::new(Ca::load(Path::new(&cfg.gateway.ca_dir))?);
     let bind = cfg.server.bind.as_str();
     let internal_bind = cfg.internal_bind.as_str();
@@ -334,6 +330,34 @@ async fn serve(cfg: GatewayConfig) -> Result<(), Box<dyn std::error::Error>> {
         Some(p) => Some(std::fs::read(p)?),
         None => None,
     };
+    // (phase 4, P4-GSL, D-149) The skill-library fetch route on the internal port: its own guarded
+    // client (same destination guard and egress proxy as agent requests), the internal secret.
+    let library = Arc::new(aurora_gateway::library_fetch::LibraryFetch {
+        ring: ring.clone(),
+        snapshots: snapshots.clone(),
+        pool: pool.clone(),
+        tokens: tokens.clone(),
+        plaintext: plaintext.clone(),
+        upstream: Arc::new(aurora_gateway::upstream::Upstream::new(
+            guard.clone(),
+            cfg.gateway
+                .egress_proxy
+                .as_deref()
+                .map(aurora_gateway::upstream::EgressProxy::parse)
+                .transpose()?,
+            extra_ca_pem.as_deref(),
+            aurora_gateway::library_fetch::FETCH_TIMEOUT,
+        )?),
+        external_url: cfg.external_url.clone(),
+        scheme: aurora_gateway::pipeline::Scheme::Https,
+        port: 443,
+        limiter: aurora_gateway::library_fetch::Limiter::default(),
+    });
+    let internal = aurora_gateway::status::readyz_router(outage.clone())
+        .merge(aurora_gateway::status::router_with(ring, Some(outage)))
+        .merge(aurora_gateway::library_fetch::router(library))
+        .fallback_service(service::ops_router(metrics, Vec::new()))
+        .layer(axum::middleware::from_fn(service::trace_context));
     // (phase 1, RFE-002) The proxy listener is TLS-only; startup fails (naming the key) when the
     // certificate cannot be established.
     let proxy_tls = match (

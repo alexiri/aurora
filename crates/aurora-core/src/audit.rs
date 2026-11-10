@@ -82,6 +82,14 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "user.delete",
     "workspace_access.remove",
     "workspace_access.set",
+    // Skill library (P4-GSL, D-148; emitted as written)
+    "skill.library.add",
+    "skill.library.detach",
+    "skill.library.update_apply",
+    "skill.library.update_reject",
+    "skill_library.create",
+    "skill_library.delete",
+    "skill_library.update",
     // Freeze
     "agent.freeze",
     "agent.unfreeze",

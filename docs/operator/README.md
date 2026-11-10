@@ -38,6 +38,7 @@ public origin, so the full URL is `https://<your-host>/v1/admin/runners`.
 | [vault.md](vault.md) | The HashiCorp Vault secret store (phase 3): Vault-side setup (KV v2, `max_versions`, policies, auth), `secrets.stores[]`, Helm values, org-id `reference_scopes`, outage behaviour, `aurora-api secrets migrate` and rollback |
 | [outage-and-alerts.md](outage-and-alerts.md) | Gateway behaviour during a Postgres outage (phase 3, RFE-014): `readyz` states (`?strict=true`), what is served from cache and for how long, refusal codes, recovery, the alert rules and a recovery check |
 | [freeze.md](freeze.md) | The emergency freeze of an agent, workspace or organization |
+| [skill-libraries.md](skill-libraries.md) | Git skill libraries (phase 4, P4-GSL): connecting a repository, `skills.library.*`, `api.gateway_internal_url`, what is read and stored, the review of proposed updates, metrics and audit |
 
 ## Phase 1 and 2 topics
 

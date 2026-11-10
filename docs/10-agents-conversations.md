@@ -643,8 +643,9 @@ org tier org owner/admin** (`04 §Permission matrix`), so SEC-56 holds unchanged
 widen who may put instructions in front of a whole workspace or org. Validation is the manual
 skills' (`name`, `SKILL_BODY_MAX`, `SKILL_TOTAL_MAX`, file rules, executable bit from file mode
 `100755`) plus library rules: **symlinks (mode `120000`), submodules (`160000`) and non-regular
-entries are refused**, a file larger than `LIBRARY_FILE_MAX` (64 KiB) is refused, `SKILL.md`
-frontmatter must parse and its `name` (if present) must equal the directory name; failures are 422
+entries are refused**, a file larger than `LIBRARY_FILE_MAX` (64 KiB) is refused, a skill directory of more than 50 files is refused (D-154),
+`SKILL.md` frontmatter must parse (a single-line `description`) and its `name` (if present) must equal the
+directory name; control, bidi and zero-width characters are removed from repository text before it is stored; failures are 422
 `library_skill_invalid` with the reason and nothing is stored. Names stay unique per tier (409
 `skill_exists`), precedence agent > workspace > org and the disabled/shadow rules are unchanged: the
 effective set, projection and wire format (`16`) do not know about libraries.

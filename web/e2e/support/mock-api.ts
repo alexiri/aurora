@@ -45,6 +45,8 @@ const apps = PACKAGES.map((p) => ({
     custom_only: p.id === "indico",
     block_untooled: p.id === "indico" || p.id === "aws-keys" || p.id === "aws-role",
   },
+  // (P4-GSL) the built-in GitHub and GitLab packages declare a `library` block.
+  serves_library: p.id === "github" || p.id === "gitlab",
 }));
 
 const connection = (n: number, appId: string, label: string) => ({
@@ -139,7 +141,8 @@ export async function mockApi(page: Page) {
       const pkg = PACKAGES.find((x) => x.id === p.split("/")[4]) ?? PACKAGES[3];
       return json({
         id: id(70), package_id: pkg.id, version: "1.0.0", contract: 1, digest: "sha256:0000", publisher: "aurora", source: "builtin", status: "approved",
-        created_at: now, signer: { kind: "builtin", name: "Aurora" }, apps: [{ app_id: pkg.id, name: pkg.name }], host_claims: [], violations: [], widenings: [], impact: null,
+        created_at: now, signer: { kind: "builtin", name: "Aurora" },
+        apps: [{ app_id: pkg.id, name: pkg.name, ...(pkg.id === "github" ? { library_host: "api.github.com" } : {}) }], host_claims: [], violations: [], widenings: [], impact: null,
         permissions: { hooks: [], context: [], egress: { "api.github.com": ["GET"] } },
       });
     }
@@ -208,6 +211,7 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "org-policy", path: "/o/acme/policy" },
   { name: "org-settings", path: "/o/acme/settings" },
   { name: "org-skills", path: "/o/acme/skills" },
+  { name: "org-skill-libraries", path: "/o/acme/skills/libraries" },
   { name: "org-storage", path: "/o/acme/storage" },
   { name: "ws-overview", path: "/o/acme/w/main" },
   { name: "ws-activity", path: "/o/acme/w/main/activity" },

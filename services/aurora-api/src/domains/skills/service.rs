@@ -20,6 +20,17 @@ pub struct SkillView {
     pub row: SkillRow,
     pub files: Vec<FileMeta>,
     pub total_size: usize,
+    /// (phase 4, P4-GSL) a library skill with an open proposed update.
+    pub update_pending: bool,
+}
+
+/// 409 `library_skill_readonly`: library skills change only by a person's approval of a proposed
+/// update (docs/10 §Git skill library).
+pub fn readonly() -> ApiError {
+    ApiError::conflict(
+        "library_skill_readonly",
+        "This skill is managed by a skill library and is read-only. Detach it to edit it.",
+    )
 }
 
 pub struct NewSkill<'a> {
@@ -117,7 +128,7 @@ pub fn validate_path(path: &str) -> Result<(), ApiError> {
 }
 
 /// Characters for text, base64 length for binary content.
-fn content_size(c: &[u8]) -> usize {
+pub(crate) fn content_size(c: &[u8]) -> usize {
     match std::str::from_utf8(c) {
         Ok(s) => s.chars().count(),
         Err(_) => base64::engine::general_purpose::STANDARD.encode(c).len(),
@@ -164,7 +175,7 @@ fn rank(r: &SkillRow) -> u8 {
 
 /// Bumps the sync generation of the agent (agent tier), of the workspace (workspace tier,
 /// reaching only its agents) or of every agent in the org.
-async fn bump(conn: &mut PgConnection, s: &SkillRow) -> Result<(), DbError> {
+pub(crate) async fn bump(conn: &mut PgConnection, s: &SkillRow) -> Result<(), DbError> {
     match (s.agent_id, s.workspace_id) {
         (Some(a), _) => repo::bump_agent(conn, a).await,
         (None, Some(w)) => repo::bump_workspace(conn, w).await,
@@ -270,7 +281,11 @@ pub async fn dto(pool: &PgPool, v: SkillView) -> Result<super::dto::Skill, ApiEr
     Ok(s)
 }
 
-fn views(rows: Vec<SkillRow>, files: Vec<repo::FileRow>) -> Vec<SkillView> {
+fn views(
+    rows: Vec<SkillRow>,
+    files: Vec<repo::FileRow>,
+    pending: &std::collections::HashSet<Uuid>,
+) -> Vec<SkillView> {
     rows.into_iter()
         .map(|row| {
             let mine: Vec<&repo::FileRow> = files.iter().filter(|f| f.skill_id == row.id).collect();
@@ -284,6 +299,7 @@ fn views(rows: Vec<SkillRow>, files: Vec<repo::FileRow>) -> Vec<SkillView> {
                 .collect();
             let total_size = row.body.chars().count() + metas.iter().map(|m| m.size).sum::<usize>();
             SkillView {
+                update_pending: pending.contains(&row.id),
                 row,
                 files: metas,
                 total_size,
@@ -292,9 +308,32 @@ fn views(rows: Vec<SkillRow>, files: Vec<repo::FileRow>) -> Vec<SkillView> {
         .collect()
 }
 
-async fn view(conn: &mut PgConnection, row: SkillRow) -> Result<SkillView, ApiError> {
+/// Ids of the library skills (among `rows`) that have an open proposed update.
+async fn pending_of(
+    conn: &mut PgConnection,
+    rows: &[SkillRow],
+) -> Result<std::collections::HashSet<Uuid>, ApiError> {
+    let ids: Vec<Uuid> = rows
+        .iter()
+        .filter(|r| r.library_id.is_some())
+        .map(|r| r.id)
+        .collect();
+    if ids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    Ok(
+        aurora_db::repo::skill_libraries::pending_updates_of(conn, &ids)
+            .await?
+            .into_iter()
+            .map(|u| u.skill_id)
+            .collect(),
+    )
+}
+
+pub(crate) async fn view(conn: &mut PgConnection, row: SkillRow) -> Result<SkillView, ApiError> {
     let files = repo::files(conn, &[row.id]).await?;
-    Ok(views(vec![row], files).remove(0))
+    let pending = pending_of(conn, std::slice::from_ref(&row)).await?;
+    Ok(views(vec![row], files, &pending).remove(0))
 }
 
 async fn view_many(
@@ -303,7 +342,8 @@ async fn view_many(
 ) -> Result<Vec<SkillView>, ApiError> {
     let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
     let files = repo::files(conn, &ids).await?;
-    Ok(views(rows, files))
+    let pending = pending_of(conn, &rows).await?;
+    Ok(views(rows, files, &pending))
 }
 
 pub async fn list_agent(pool: &PgPool, agent: Uuid) -> Result<Vec<SkillView>, ApiError> {
@@ -412,6 +452,10 @@ pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView,
     let cur = repo::get_for_update(&mut tx, id)
         .await?
         .ok_or_else(not_found)?;
+    // (P4-GSL) enable/disable stays allowed; the content changes only by an approved update.
+    if cur.library_id.is_some() && (p.description.is_some() || p.body.is_some()) {
+        return Err(readonly());
+    }
     let body = p.body.unwrap_or(&cur.body);
     if p.body.is_some() {
         let files = repo::files(&mut tx, &[id]).await?;
@@ -454,6 +498,9 @@ pub async fn put_file(
     let cur = repo::get_for_update(&mut tx, id)
         .await?
         .ok_or_else(not_found)?;
+    if cur.library_id.is_some() {
+        return Err(readonly());
+    }
     let mut files = repo::files(&mut tx, &[id]).await?;
     files.retain(|f| f.path != path);
     files.push(repo::FileRow {
@@ -477,6 +524,9 @@ pub async fn delete_file(pool: &PgPool, id: Uuid, path: &str) -> Result<(), ApiE
     let cur = repo::get_for_update(&mut tx, id)
         .await?
         .ok_or_else(not_found)?;
+    if cur.library_id.is_some() {
+        return Err(readonly());
+    }
     if !repo::delete_file(&mut tx, id, path).await? {
         return Err(ApiError::not_found("Skill file not found."));
     }

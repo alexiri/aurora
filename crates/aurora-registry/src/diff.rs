@@ -20,6 +20,12 @@ pub enum Widening {
     HostClaim(String),
     /// New zone used by `tenant`, `rewrite_host` or a templated `token_url`.
     Zone(String),
+    /// (P4-GSL, D-149) a new or changed `library` block on this app id: "can serve a skill
+    /// library: reads repository files from <request_host>".
+    Library {
+        app: String,
+        host: String,
+    },
 }
 
 fn zones(m: &Manifest) -> BTreeSet<String> {
@@ -90,6 +96,21 @@ pub fn widens(old: &Manifest, new: &Manifest) -> Vec<Widening> {
             .cloned()
             .map(Widening::Zone),
     );
+    for a in &new.apps {
+        let Some(lib) = &a.library else { continue };
+        let same = old
+            .apps
+            .iter()
+            .find(|o| o.about.id == a.about.id)
+            .and_then(|o| o.library.as_ref())
+            .is_some_and(|o| o == lib);
+        if !same {
+            out.push(Widening::Library {
+                app: a.about.id.clone(),
+                host: lib.request_host.clone(),
+            });
+        }
+    }
     out.sort();
     out.dedup();
     out

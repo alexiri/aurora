@@ -10,6 +10,7 @@ mod governance;
 mod governance_db;
 mod held_closure;
 mod hold;
+mod library_fetch;
 mod listener_binds;
 mod open_lane;
 mod outage;

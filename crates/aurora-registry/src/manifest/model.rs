@@ -163,6 +163,108 @@ pub struct App {
     pub database: Option<Database>,
     #[serde(default)]
     pub grants: Grants,
+    /// (phase 4, P4-GSL, D-148, D-149) "this app is a git host that can serve a skill library":
+    /// data-only `GET` templates (09 §3.4 `library`); absent = the app cannot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<Library>,
+}
+
+/// `apps[].library` (phase 4, P4-GSL, D-149, SEC-84): three `GET` templates, a repository
+/// grammar and JSON-path extractors. Never names a credential or a header.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Library {
+    /// What an admin may type as the repository (anchored regular expression).
+    pub repo_pattern: String,
+    /// Exactly one of the app's exact `hosts[]` entries (`{instance}` for instance-bound apps).
+    pub request_host: String,
+    pub resolve_ref: LibraryResolve,
+    pub list_tree: LibraryTree,
+    pub get_blob: LibraryBlob,
+    #[serde(default)]
+    pub required_access: LibraryAccess,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LibraryAccess {
+    #[default]
+    Read,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LibraryResolve {
+    /// `{ref}` (or `{ref|urlencode}`) → a response carrying the commit sha.
+    pub path: String,
+    /// Used when no ref is set: the default branch is read from this response.
+    pub default_path: String,
+    /// JSON path of the commit sha in the `path` response.
+    pub sha: String,
+    /// JSON path of the default branch name in the `default_path` response.
+    pub default_branch: String,
+    /// Only `GET` is accepted (`library_method`); absent = `GET`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LibraryPaginate {
+    #[default]
+    None,
+    LinkHeader,
+    PageParam,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LibraryTreeFields {
+    pub path: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub mode: String,
+    pub blob: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LibraryTree {
+    /// `{sha}` → the recursive tree of one commit.
+    pub path: String,
+    /// JSON path of the entries array.
+    pub entries: String,
+    pub fields: LibraryTreeFields,
+    /// The `type` value that marks a regular file entry (`blob`).
+    pub file_type: String,
+    /// JSON path of the "listing is incomplete" flag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub truncated: Option<String>,
+    #[serde(default)]
+    pub paginate: LibraryPaginate,
+    /// Upper bound of pages for `link_header` / `page_param`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_pages: Option<u32>,
+    /// Only `GET` is accepted (`library_method`); absent = `GET`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LibraryBlob {
+    /// `{blob}` → one file.
+    pub path: String,
+    /// JSON path of the content (absent for a `raw` endpoint).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// `raw` or `base64` (literal), or a JSON path of the response's own encoding field.
+    pub encoding: String,
+    /// Only `GET` is accepted (`library_method`); absent = `GET`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

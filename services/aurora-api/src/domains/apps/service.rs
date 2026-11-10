@@ -102,6 +102,7 @@ pub async fn summary(state: &AppState, a: &AppEntry, p: &PackageEntry, av: &Avai
         connection_count: av.count(&a.app_id),
         has_dark_icon: assets::has_dark_icon(state, &p.digest).await,
         app_restrictions: a.grants.into(),
+        serves_library: a.library.is_some(),
     }
 }
 
@@ -283,6 +284,7 @@ pub async fn detail(
         connection_count: sm.connection_count,
         has_dark_icon: sm.has_dark_icon,
         app_restrictions: sm.app_restrictions,
+        serves_library: sm.serves_library,
         api_docs: a.about.api_docs.clone(),
         connect_note: a.about.connect_note.as_ref().map(|n| ConnectNote {
             text: n.text.clone(),

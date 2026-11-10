@@ -71,6 +71,8 @@ pub struct RawConfig {
     pub retention: RetentionSection,
     pub attachments: AttachmentsSection,
     pub ratelimit: RatelimitSection,
+    /// (phase 4, P4-GSL) git skill library switches and limits.
+    pub skills: SkillsSection,
     pub telemetry: TelemetrySection,
     #[serde(skip)]
     pub env_secrets: EnvSecrets,
@@ -441,11 +443,45 @@ impl Default for HostedSection {
 #[serde(default, deny_unknown_fields)]
 pub struct ApiSection {
     pub hookhost_url: String,
+    /// (phase 4, P4-GSL, D-154) The gateway's internal listener (4103) as the API reaches it for
+    /// `POST /internal/v1/library-fetch` (docs/06 §Library fetch); the internal secret ring
+    /// authenticates the call.
+    pub gateway_internal_url: String,
 }
 impl Default for ApiSection {
     fn default() -> Self {
         Self {
             hookhost_url: "http://aurora-hookhost:4104".into(),
+            gateway_internal_url: "http://aurora-gateway:4103".into(),
+        }
+    }
+}
+
+/// `[skills]` (phase 4, P4-GSL).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SkillsSection {
+    pub library: SkillsLibrarySection,
+}
+
+/// `[skills.library]` (phase 4, P4-GSL, D-149; docs/15 §Git skill library).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SkillsLibrarySection {
+    /// Kill-switch: `false` hides the feature and stops the refresh job; stored skills keep
+    /// working.
+    pub enabled: bool,
+    /// `LIBRARY_REFRESH_INTERVAL` in seconds (at least 300).
+    pub refresh_interval_secs: u64,
+    /// `LIBRARY_BYTES_PER_AGENT` (an operator may only lower it).
+    pub bytes_per_agent: u64,
+}
+impl Default for SkillsLibrarySection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            refresh_interval_secs: 900,
+            bytes_per_agent: 1024 * 1024,
         }
     }
 }

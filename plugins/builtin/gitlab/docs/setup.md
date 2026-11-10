@@ -52,6 +52,14 @@ If the GitLab has a private address, the operator must allow it with `gateway.al
 (and the gateway's network policy) before registration and requests can reach it.
 Deleting an instance disables its connections and removes its OAuth clients.
 
+## Skill libraries
+
+This package can serve a **skill library**: an organization owner or admin connects a project
+(Skills, Skill libraries) through an **organization-level** connection, and people add skills from it
+to an agent, a workspace or the organization. Aurora reads the project's files from the GitLab REST
+API with `GET` requests only. Use a token with the `read_repository` scope. A push never changes what
+agents are told: a person reviews and approves the change.
+
 ## Limits
 
 - Requests to other GitLab hosts, such as `registry.gitlab.com`, are not covered.

@@ -16,9 +16,9 @@ use sha2::{Digest, Sha256};
 use crate::claims::{ConflictGroup, claim_key, claims, conflict_groups, static_host};
 use crate::manifest::{
     About, Agent, Approval, BodyFormat, ClientAuth, ClientField, Connect, CredentialDecl, Database,
-    Finalize, Grants, Hook, HostRule, INSTANCE_HOST, Inject, Instances, Intercept, Manifest,
-    MetadataDecl, Passthrough, RewriteHost, Tenant, Token, Tools, Transform, UrlOrTemplate, de_opt,
-    de_vec,
+    Finalize, Grants, Hook, HostRule, INSTANCE_HOST, Inject, Instances, Intercept, Library,
+    Manifest, MetadataDecl, Passthrough, RewriteHost, Tenant, Token, Tools, Transform,
+    UrlOrTemplate, de_opt, de_vec,
 };
 
 pub const FORMAT: u32 = 1;
@@ -120,6 +120,9 @@ pub struct AppEntry {
     /// (P4-GRANTS, D-123) copied from the manifest; absent in older snapshots = both false.
     #[serde(default)]
     pub grants: Grants,
+    /// (P4-GSL, D-149) the app's git-library templates; absent = cannot serve a library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<Library>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -351,6 +354,7 @@ pub fn compile(
                 agent: a.agent.clone(),
                 database: a.database.clone(),
                 grants: a.grants,
+                library: a.library.clone(),
             });
             for r in &a.hosts {
                 if r.matcher.host == INSTANCE_HOST {

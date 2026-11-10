@@ -1,6 +1,7 @@
 //! Validation rules (09 §6): in-manifest rules ([`manifest`]) and full package
 //! rules ([`package`]). `hooks.wasm` world-shape checks: [`hooks_component`].
 mod hooks_component;
+mod library_rules;
 mod package_rules;
 mod params_rules;
 mod wildcard;
@@ -269,6 +270,7 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
         };
         app_rules(&mut cx, &clients, &mut used_hooks);
         params_rules::app_rules(app, &format!("/apps/{i}"), &mut cx.out);
+        library_rules::app_rules(app, &format!("/apps/{i}"), &mut cx.out);
         out.append(&mut cx.out);
     }
 

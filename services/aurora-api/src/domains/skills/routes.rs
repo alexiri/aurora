@@ -26,7 +26,11 @@ pub fn router() -> OpenApiRouter<AppState> {
 }
 
 /// Agent skills need `can_use` on the agent's workspace.
-async fn visible_agent(c: &Caller, s: &AppState, id: Uuid) -> Result<agents::AgentRow, ApiError> {
+pub(super) async fn visible_agent(
+    c: &Caller,
+    s: &AppState,
+    id: Uuid,
+) -> Result<agents::AgentRow, ApiError> {
     let row = agents::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
@@ -51,7 +55,12 @@ async fn workspace_auth(c: &Caller, s: &AppState, ws: Uuid, write: bool) -> Resu
 
 /// Agent skills follow the agent's workspace; workspace skills: `can_use` reads, `can_own`
 /// writes; org skills: any active member reads, owner/admin writes.
-async fn authorize(c: &Caller, s: &AppState, sk: &SkillRow, write: bool) -> Result<(), ApiError> {
+pub(super) async fn authorize(
+    c: &Caller,
+    s: &AppState,
+    sk: &SkillRow,
+    write: bool,
+) -> Result<(), ApiError> {
     if let Some(ws) = sk.workspace_id {
         return workspace_auth(c, s, ws, write).await;
     }
@@ -127,15 +136,21 @@ async fn create_agent_skill(
     Json(req): Json<CreateSkillRequest>,
 ) -> Result<(StatusCode, Json<Skill>), ApiError> {
     let a = visible_agent(&c, &s, agent).await?;
-    let n = NewSkill {
-        name: &req.name,
-        description: &req.description,
-        body: &req.body,
-        enabled: req.enabled.unwrap_or(true),
-    };
+    req.check_exclusive()?;
     let owner = Owner {
         agent: Some(agent),
         workspace: None,
+    };
+    if let Some(from) = &req.from_library {
+        let v = super::library::add(&s, &c, a.org_id, owner, Some(a.workspace_id), from).await?;
+        return Ok((StatusCode::CREATED, Json(v.into())));
+    }
+    let (name, description, body) = req.manual()?;
+    let n = NewSkill {
+        name,
+        description,
+        body,
+        enabled: req.enabled.unwrap_or(true),
     };
     let v = service::create(&s.pool, a.org_id, owner, &n, "user").await?;
     record(&c, &s, &v.row, "skill.create", Some(a.workspace_id));
@@ -171,10 +186,16 @@ async fn create_org_skill(
     Json(req): Json<CreateSkillRequest>,
 ) -> Result<(StatusCode, Json<Skill>), ApiError> {
     c.org(&s, org).await?.require_admin()?;
+    req.check_exclusive()?;
+    if let Some(from) = &req.from_library {
+        let v = super::library::add(&s, &c, org, Owner::default(), None, from).await?;
+        return Ok((StatusCode::CREATED, Json(v.into())));
+    }
+    let (name, description, body) = req.manual()?;
     let n = NewSkill {
-        name: &req.name,
-        description: &req.description,
-        body: &req.body,
+        name,
+        description,
+        body,
         enabled: req.enabled.unwrap_or(true),
     };
     let v = service::create(&s.pool, org, Owner::default(), &n, "user").await?;
@@ -216,15 +237,21 @@ async fn create_workspace_skill(
         .await?
         .ok_or_else(|| ApiError::not_found("Workspace not found."))?
         .org_id;
-    let n = NewSkill {
-        name: &req.name,
-        description: &req.description,
-        body: &req.body,
-        enabled: req.enabled.unwrap_or(true),
-    };
+    req.check_exclusive()?;
     let owner = Owner {
         agent: None,
         workspace: Some(ws),
+    };
+    if let Some(from) = &req.from_library {
+        let v = super::library::add(&s, &c, org, owner, Some(ws), from).await?;
+        return Ok((StatusCode::CREATED, Json(service::dto(&s.pool, v).await?)));
+    }
+    let (name, description, body) = req.manual()?;
+    let n = NewSkill {
+        name,
+        description,
+        body,
+        enabled: req.enabled.unwrap_or(true),
     };
     let v = service::create(&s.pool, org, owner, &n, "user").await?;
     record(&c, &s, &v.row, "skill.create", Some(ws));

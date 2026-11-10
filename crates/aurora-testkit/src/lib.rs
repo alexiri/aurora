@@ -16,6 +16,7 @@ use sqlx::PgConnection;
 use sqlx::PgPool;
 use tokio::sync::OnceCell;
 
+pub mod git_host;
 pub mod oauth;
 pub mod oidc;
 

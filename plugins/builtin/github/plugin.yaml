@@ -1,6 +1,6 @@
 package:
   id: github
-  version: 1.0.1
+  version: 1.1.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -92,6 +92,26 @@ apps:
       - match: { host: github.com }
         inject:
           - basic: { user: x-access-token, password: "{credentials.access_token}" }
+    library:
+      repo_pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"
+      request_host: api.github.com
+      resolve_ref:
+        path: "/repos/{repo}/commits/{ref}"
+        default_path: "/repos/{repo}"
+        sha: "$.sha"
+        default_branch: "$.default_branch"
+      list_tree:
+        path: "/repos/{repo}/git/trees/{sha}?recursive=1"
+        entries: "$.tree[*]"
+        fields: { path: "$.path", type: "$.type", mode: "$.mode", blob: "$.sha", size: "$.size" }
+        file_type: blob
+        truncated: "$.truncated"
+        paginate: none
+      get_blob:
+        path: "/repos/{repo}/git/blobs/{blob}"
+        content: "$.content"
+        encoding: "$.encoding"
+      required_access: read
     token:
       kind: oauth2_refresh
       client: github
@@ -271,6 +291,26 @@ apps:
       - match: { host: "{instance}" }
         inject:
           - basic: { user: x-access-token, password: "{credentials.access_token}" }
+    library:
+      repo_pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"
+      request_host: "{instance}"
+      resolve_ref:
+        path: "/api/v3/repos/{repo}/commits/{ref}"
+        default_path: "/api/v3/repos/{repo}"
+        sha: "$.sha"
+        default_branch: "$.default_branch"
+      list_tree:
+        path: "/api/v3/repos/{repo}/git/trees/{sha}?recursive=1"
+        entries: "$.tree[*]"
+        fields: { path: "$.path", type: "$.type", mode: "$.mode", blob: "$.sha", size: "$.size" }
+        file_type: blob
+        truncated: "$.truncated"
+        paginate: none
+      get_blob:
+        path: "/api/v3/repos/{repo}/git/blobs/{blob}"
+        content: "$.content"
+        encoding: "$.encoding"
+      required_access: read
     token:
       kind: oauth2_refresh
       client: github-ghes

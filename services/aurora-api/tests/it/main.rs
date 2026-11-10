@@ -65,6 +65,7 @@ mod sandbox_env;
 mod schedules;
 mod secrets;
 mod secrets_migrate;
+mod skill_library;
 mod skills;
 mod sse_revocation;
 mod tenancy;

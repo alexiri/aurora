@@ -64,6 +64,14 @@ commenting, creating and merging pull requests, creating, changing or deleting r
 creating branches and tags, GraphQL mutations, and `git push`. The approval shows the repository,
 the item and, for JSON requests, the title or message.
 
+## Skill libraries
+
+This package can serve a **skill library**: an organization owner or admin connects a repository
+(Skills, Skill libraries) through an **organization-level** connection, and people add skills from it
+to an agent, a workspace or the organization. Aurora reads the repository's files from the GitHub
+API with `GET` requests only. Use a fine-grained token limited to the skills repository with
+*Contents: read*. A push never changes what agents are told: a person reviews and approves the change.
+
 ## Limits
 
 - GraphQL: queries are read tools; any mutation is a write tool.

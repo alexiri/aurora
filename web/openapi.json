@@ -5182,6 +5182,67 @@
         ]
       }
     },
+    "/v1/agents/{agent}/skill-library-updates": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Pending proposed updates of an agent's own skills (`can_use`).",
+        "operationId": "listAgentSkillLibraryUpdates",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingLibraryUpdates"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/skills": {
       "get": {
         "tags": [
@@ -12671,6 +12732,227 @@
         ]
       }
     },
+    "/v1/orgs/{org}/skill-libraries": {
+      "get": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "List the organization's libraries: owners/admins get everything; other people who can use a\nworkspace get `id`, `label` and `status` of the active ones (the browse picker).",
+        "operationId": "listSkillLibraries",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_SkillLibrary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "Connect a repository as a skill library (org owner/admin).",
+        "operationId": "createSkillLibrary",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSkillLibraryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillLibrary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/skill-library-updates": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Pending proposed updates of the organization-tier skills (org owner/admin).",
+        "operationId": "listOrgSkillLibraryUpdates",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingLibraryUpdates"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/orgs/{org}/skills": {
       "get": {
         "tags": [
@@ -14541,6 +14823,479 @@
         ]
       }
     },
+    "/v1/skill-libraries/{id}": {
+      "get": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "Read one library (org owner/admin).",
+        "operationId": "getSkillLibrary",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Library id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillLibrary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "Delete the library; every skill added from it is detached and keeps its content.",
+        "operationId": "deleteSkillLibrary",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Library id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "Rename, pause or resume, or change connection, ref or path (re-resolves; stored skills are\nnever touched).",
+        "operationId": "updateSkillLibrary",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Library id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchSkillLibraryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillLibrary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/skill-libraries/{id}/refresh": {
+      "post": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "\"Check now\": refresh soon (at most once per minute per library).",
+        "operationId": "refreshSkillLibrary",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Library id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Queued"
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/skill-libraries/{id}/skills": {
+      "get": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "Browse the library's current head live (nothing is stored; cached for 5 minutes).",
+        "operationId": "browseSkillLibrary",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Library id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive filter on name and description.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryCatalogue"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/skill-libraries/{id}/skills/{path}": {
+      "get": {
+        "tags": [
+          "skill-libraries"
+        ],
+        "summary": "One skill's full content at a commit: exactly what an add would store (and the diff base).",
+        "operationId": "getSkillLibrarySkill",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Library id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "description": "The skill's directory name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "commit_sha",
+            "in": "query",
+            "description": "The commit to read; default the current head.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibrarySkillContent"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/skills/{id}": {
       "get": {
         "tags": [
@@ -14904,6 +15659,294 @@
           },
           {
             "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/skills/{id}/library": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "The library link of a skill, its pin and any open proposed update with the whole diff.",
+        "operationId": "getSkillLibraryInfo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Skill id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillLibraryInfo"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/skills/{id}/library/detach": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Detach: the skill becomes an ordinary editable skill (the one-way fork).",
+        "operationId": "detachSkillFromLibrary",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Skill id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Skill"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/skills/{id}/library/updates/{uid}/approve": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Approve: applies exactly the quoted content, re-validated, in one transaction.",
+        "operationId": "approveSkillLibraryUpdate",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Skill id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Update id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveLibraryUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Skill"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/skills/{id}/library/updates/{uid}/reject": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Reject: that repository state is not proposed again; a later change is.",
+        "operationId": "rejectSkillLibraryUpdate",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Skill id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "description": "Update id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Rejected"
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
           }
         ]
       }
@@ -18201,6 +19244,67 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/skill-library-updates": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Pending proposed updates of a workspace's skills (`can_own`).",
+        "operationId": "listWorkspaceSkillLibraryUpdates",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingLibraryUpdates"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/skills": {
       "get": {
         "tags": [
@@ -19304,6 +20408,7 @@
           "connection_count",
           "has_dark_icon",
           "app_restrictions",
+          "serves_library",
           "connect",
           "tools",
           "hosts",
@@ -19415,6 +20520,10 @@
           },
           "package_version": {
             "type": "string"
+          },
+          "serves_library": {
+            "type": "boolean",
+            "description": "(phase 4, P4-GSL) as on `AppSummary`."
           },
           "tools": {
             "type": "array",
@@ -19582,7 +20691,8 @@
           "available",
           "connection_count",
           "has_dark_icon",
-          "app_restrictions"
+          "app_restrictions",
+          "serves_library"
         ],
         "properties": {
           "app_id": {
@@ -19619,6 +20729,10 @@
           },
           "package_version": {
             "type": "string"
+          },
+          "serves_library": {
+            "type": "boolean",
+            "description": "(phase 4, P4-GSL, D-149) the app declares a `library` block: it can serve a git skill\nlibrary (the dashboard offers its org-scoped connections when connecting a repository)."
           }
         }
       },
@@ -19975,6 +21089,18 @@
           "manifest_digest": {
             "type": "string",
             "description": "Digest of exactly the manifest being approved (`manifest_digest` of the connector)."
+          }
+        }
+      },
+      "ApproveLibraryUpdateRequest": {
+        "type": "object",
+        "required": [
+          "content_sha256"
+        ],
+        "properties": {
+          "content_sha256": {
+            "type": "string",
+            "description": "The proposal's `content_sha256`: the content the person reviewed."
           }
         }
       },
@@ -21111,6 +22237,27 @@
         ],
         "description": "A connection grant seen from the connection (FIX-020, C-504)."
       },
+      "ConnectionRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "`active`, `reauth_required`, `disabled`, …"
+          }
+        }
+      },
       "ConnectorAdmin": {
         "type": "object",
         "required": [
@@ -22200,20 +23347,59 @@
         },
         "additionalProperties": false
       },
-      "CreateSkillRequest": {
+      "CreateSkillLibraryRequest": {
         "type": "object",
         "required": [
-          "name",
-          "description",
-          "body"
+          "label",
+          "connection_id",
+          "repo"
         ],
         "properties": {
+          "connection_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "An **org-scoped**, active connection of an app that declares a `library` block."
+          },
+          "label": {
+            "type": "string",
+            "description": "1 to 80 characters, unique in the organization."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Directory that holds the skill directories (at most 4 segments); default the root."
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Branch, tag or commit; default the repository's default branch."
+          },
+          "repo": {
+            "type": "string",
+            "description": "`owner/name` (the package's `repo_pattern`)."
+          }
+        }
+      },
+      "CreateSkillRequest": {
+        "type": "object",
+        "properties": {
           "body": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required unless `from_library` is given."
           },
           "description": {
-            "type": "string",
-            "description": "Single line, at most 500 characters."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Single line, at most 500 characters. Required unless `from_library` is given."
           },
           "enabled": {
             "type": [
@@ -22221,9 +23407,23 @@
               "null"
             ]
           },
+          "from_library": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FromLibrary",
+                "description": "(phase 4, P4-GSL, D-148) Add a skill from a git skill library instead of a body: the\nserver reads exactly that commit and stores the skill pinned and read-only. Excludes\n`name`, `description` and `body`."
+              }
+            ]
+          },
           "name": {
-            "type": "string",
-            "description": "Immutable kebab-case directory name, at most 64 characters; `aurora-*` is reserved."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Immutable kebab-case directory name, at most 64 characters; `aurora-*` is reserved.\nRequired unless `from_library` is given."
           }
         }
       },
@@ -23147,6 +24347,31 @@
                 "description": "The flag of the scope the call acted on: set after `freeze`, `null` after `unfreeze`."
               }
             ]
+          }
+        }
+      },
+      "FromLibrary": {
+        "type": "object",
+        "description": "Which library skill to add (`10 §Git skill library`).",
+        "required": [
+          "library_id",
+          "path"
+        ],
+        "properties": {
+          "commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The commit the person saw in browse. Required: a later push is never fetched silently."
+          },
+          "library_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string",
+            "description": "The skill's directory name under the library path, as browse lists it."
           }
         }
       },
@@ -24234,6 +25459,370 @@
           },
           "usable": {
             "type": "boolean"
+          }
+        }
+      },
+      "LibraryCatalogue": {
+        "type": "object",
+        "required": [
+          "commit_sha",
+          "items",
+          "truncated"
+        ],
+        "properties": {
+          "commit_sha": {
+            "type": "string",
+            "description": "The commit the listing was read at: quote it when adding."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibrarySkillItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "More than `LIBRARY_BROWSE_MAX` skills: the listing is cut; narrow the folder."
+          }
+        }
+      },
+      "LibraryDiff": {
+        "type": "object",
+        "description": "The whole stored-versus-proposed content: never a summary and never truncated.",
+        "required": [
+          "description",
+          "body",
+          "files"
+        ],
+        "properties": {
+          "body": {
+            "$ref": "#/components/schemas/LibraryTextChange"
+          },
+          "description": {
+            "$ref": "#/components/schemas/LibraryTextChange"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryFileChange"
+            }
+          }
+        }
+      },
+      "LibraryFile": {
+        "type": "object",
+        "required": [
+          "path",
+          "size",
+          "executable",
+          "binary"
+        ],
+        "properties": {
+          "binary": {
+            "type": "boolean"
+          },
+          "content": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Text content (UTF-8 files); null for binary files."
+          },
+          "content_b64": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base64 content of a binary file."
+          },
+          "executable": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "LibraryFileChange": {
+        "type": "object",
+        "required": [
+          "path",
+          "change",
+          "binary"
+        ],
+        "properties": {
+          "binary": {
+            "type": "boolean",
+            "description": "Binary files are compared by content but not shown."
+          },
+          "change": {
+            "type": "string",
+            "description": "`added` | `removed` | `modified` | `unchanged`."
+          },
+          "new": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "new_executable": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "old": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "old_executable": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "LibraryRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "repo",
+          "path"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          }
+        }
+      },
+      "LibrarySkillContent": {
+        "type": "object",
+        "description": "One skill at one commit: exactly what an add would store.",
+        "required": [
+          "commit_sha",
+          "path",
+          "name",
+          "valid",
+          "files",
+          "size"
+        ],
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit_sha": {
+            "type": "string"
+          },
+          "content_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Lowercase hex SHA-256 of the canonical content."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryFile"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size": {
+            "type": "integer",
+            "description": "Characters of body and files (binary as base64 length): the budget unit.",
+            "minimum": 0
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        }
+      },
+      "LibrarySkillItem": {
+        "type": "object",
+        "required": [
+          "path",
+          "name",
+          "valid",
+          "size",
+          "files",
+          "added"
+        ],
+        "properties": {
+          "added": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibrarySkillPlacement"
+            },
+            "description": "Where this library's version of the skill is already added."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "The skill's directory name under the library path."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why an invalid skill cannot be added (sanitized fixed texts)."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Characters of body and files (an estimate before the files are read).",
+            "minimum": 0
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        }
+      },
+      "LibrarySkillPlacement": {
+        "type": "object",
+        "description": "Where a library skill is already added (the same `{ id, tier }` shape as the skills' `TierRef`).",
+        "required": [
+          "tier",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tier": {
+            "type": "string"
+          }
+        }
+      },
+      "LibraryTextChange": {
+        "type": "object",
+        "required": [
+          "old",
+          "new",
+          "changed"
+        ],
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "new": {
+            "type": "string"
+          },
+          "old": {
+            "type": "string"
+          }
+        }
+      },
+      "LibraryUpdateView": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "commit_sha",
+          "created_at",
+          "content_sha256",
+          "over_budget"
+        ],
+        "properties": {
+          "commit_sha": {
+            "type": "string"
+          },
+          "content_sha256": {
+            "type": "string",
+            "description": "What an approval must quote (lowercase hex SHA-256 of the proposed content)."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "diff": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LibraryDiff"
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`changed` | `removed` | `invalid`."
+          },
+          "over_budget": {
+            "type": "boolean",
+            "description": "Approving would exceed the tier's library budget."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why an `invalid` proposal cannot be applied (repository text: untrusted)."
           }
         }
       },
@@ -28311,6 +29900,17 @@
                   "type": "string",
                   "description": "`agent` | `workspace` | `organization` (kept for compatibility, D-107)."
                 },
+                "source": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SkillSource",
+                      "description": "(phase 4, P4-GSL) where a library skill came from; null for an ordinary skill."
+                    }
+                  ]
+                },
                 "tier": {
                   "type": "string",
                   "description": "`agent` | `workspace` | `org`."
@@ -28330,6 +29930,124 @@
                     "null"
                   ],
                   "format": "uuid"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_SkillLibrary": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A skill library. Org owners/admins see every field; other members who can use a workspace of\nthe org get `id`, `label` and `status` of the active libraries (the browse picker).",
+              "required": [
+                "id",
+                "label",
+                "status"
+              ],
+              "properties": {
+                "app_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "connection": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectionRef",
+                      "description": "Null when the connection was deleted."
+                    }
+                  ]
+                },
+                "created_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "last_error": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Sanitized, at most 200 characters; never a token or a URL with credentials."
+                },
+                "last_head_sha": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "last_refresh_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pending_updates": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int64"
+                },
+                "ref": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "repo": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "skill_counts": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SkillCounts"
+                    }
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "description": "`active` | `paused` | `error` | `over_budget`."
                 }
               }
             }
@@ -29052,6 +30770,44 @@
         },
         "additionalProperties": false
       },
+      "PatchSkillLibraryRequest": {
+        "type": "object",
+        "properties": {
+          "connection_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` is not distinguishable from absent; send an empty string to clear the ref."
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`active` | `paused`."
+          }
+        }
+      },
       "PatchWorkspaceRequest": {
         "type": "object",
         "properties": {
@@ -29194,6 +30950,89 @@
           }
         }
       },
+      "PendingLibrarySkill": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "tier"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tier": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "PendingLibraryUpdate": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "created_at",
+          "skill"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "library": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PendingUpdateLibrary"
+              }
+            ]
+          },
+          "skill": {
+            "$ref": "#/components/schemas/PendingLibrarySkill"
+          }
+        }
+      },
+      "PendingLibraryUpdates": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingLibraryUpdate"
+            }
+          }
+        }
+      },
       "PendingList": {
         "type": "object",
         "required": [
@@ -29205,6 +31044,24 @@
             "items": {
               "$ref": "#/components/schemas/Approval"
             }
+          }
+        }
+      },
+      "PendingUpdateLibrary": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -29238,6 +31095,13 @@
         "properties": {
           "app_id": {
             "type": "string"
+          },
+          "library_host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(phase 4, P4-GSL, D-149) \"Can serve a skill library: reads repository files from\n`<library_host>`\": the app declares a `library` block (shown in the permissions review)."
           },
           "name": {
             "type": "string"
@@ -31992,6 +33856,17 @@
             "type": "string",
             "description": "`agent` | `workspace` | `organization` (kept for compatibility, D-107)."
           },
+          "source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SkillSource",
+                "description": "(phase 4, P4-GSL) where a library skill came from; null for an ordinary skill."
+              }
+            ]
+          },
           "tier": {
             "type": "string",
             "description": "`agent` | `workspace` | `org`."
@@ -32014,6 +33889,28 @@
           }
         }
       },
+      "SkillCounts": {
+        "type": "object",
+        "required": [
+          "agent",
+          "workspace",
+          "org"
+        ],
+        "properties": {
+          "agent": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "org": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "workspace": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "SkillFile": {
         "type": "object",
         "required": [
@@ -32032,6 +33929,218 @@
             "type": "integer",
             "description": "Characters for text, base64 length for binary content.",
             "minimum": 0
+          }
+        }
+      },
+      "SkillLibrary": {
+        "type": "object",
+        "description": "A skill library. Org owners/admins see every field; other members who can use a workspace of\nthe org get `id`, `label` and `status` of the active libraries (the browse picker).",
+        "required": [
+          "id",
+          "label",
+          "status"
+        ],
+        "properties": {
+          "app_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "connection": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ConnectionRef",
+                "description": "Null when the connection was deleted."
+              }
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sanitized, at most 200 characters; never a token or a URL with credentials."
+          },
+          "last_head_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_refresh_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pending_updates": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skill_counts": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SkillCounts"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "`active` | `paused` | `error` | `over_budget`."
+          }
+        }
+      },
+      "SkillLibraryInfo": {
+        "type": "object",
+        "required": [
+          "commit_sha",
+          "detached"
+        ],
+        "properties": {
+          "commit_sha": {
+            "type": "string"
+          },
+          "detached": {
+            "type": "boolean",
+            "description": "The library link is gone (detach or library deletion)."
+          },
+          "library": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LibraryRef"
+              }
+            ]
+          },
+          "pinned_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "pinned_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "update": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LibraryUpdateView"
+              }
+            ]
+          }
+        }
+      },
+      "SkillSource": {
+        "type": "object",
+        "description": "Provenance of a skill added from a git skill library (`10 §Git skill library`). Repository\ntext: untrusted, shown as data.",
+        "required": [
+          "kind",
+          "detached",
+          "update_pending"
+        ],
+        "properties": {
+          "commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "detached": {
+            "type": "boolean",
+            "description": "The library link is gone (detach or library deletion): an ordinary editable skill."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Always `library`."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "library_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Null once the skill was detached or its library deleted."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pinned_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "repo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "update_pending": {
+            "type": "boolean"
           }
         }
       },

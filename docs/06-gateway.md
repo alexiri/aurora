@@ -28,8 +28,10 @@ refresh and host guard (`08 §8`) stay in one place. The internal listener (4103
 `POST /internal/v1/library-fetch`, with the same internal-secret auth and the same reachability
 (API replicas only, never a sandbox, SEC-09):
 
-`{ org_id, connection_id, step: "resolve_ref"|"list_tree"|"get_blob", params: { repo, ref?, sha?, blob? }, max_bytes }`
-→ `200 { status, headers: { link? }, body (≤ max_bytes) }` or `{ error }`.
+`{ org_id, connection_id, step: "resolve_ref"|"list_tree"|"get_blob", params: { repo, ref?, sha?, blob?, page? }, max_bytes }`
+→ `200 { status, headers: { link?, retry-after? }, encoding: "base64", body (≤ max_bytes, base64) }` or `{ error }`
+(D-154: `status` is the git host's status, passed through as data; `body` is base64 because a blob may be binary;
+`page` is an integer 2–200 added to the template's query for a paginated tree; unknown request keys are refused).
 
 The gateway **builds the request itself** from the active snapshot's `apps[].library` block of the
 connection's app (`09 §3.4 library`): it validates every parameter against the block's patterns

@@ -75,6 +75,20 @@ export const ERROR_MESSAGES: Record<string, string> = {
   too_many_attachments: "Too many attachments on one message. Remove some and try again.",
   payload_too_large: "That file is too large.",
   instance_admin_required: "This requires an instance administrator.",
+  // Git skill library (phase 4, P4-GSL). Codes that carry a reason from the git host
+  // (`library_unreachable`, `library_unavailable`, `library_skill_invalid`, `library_budget_exceeded`)
+  // are shown with the server's message.
+  library_exists: "A library with this label already exists in this organization.",
+  library_limit: "This organization has reached its limit of connected libraries.",
+  library_check_too_soon: "This library was checked a moment ago. Try again in a minute.",
+  library_paused: "Resume the library before checking it.",
+  library_skill_readonly: "This skill is managed by a skill library. Detach it to edit it.",
+  update_superseded: "This update changed or was decided in the meantime. Reload and review it again.",
+  connection_not_org_scoped: "A skill library needs an organization-level connection, not a workspace one.",
+  app_without_library: "This connection's app cannot serve a skill library.",
+  commit_required: "Reload the library list so the page knows which commit you are adding.",
+  library_tree_too_large: "This repository is too large to list. Connect a narrower folder.",
+  skill_libraries_disabled: "Skill libraries are turned off on this instance.",
 };
 
 export function errorMessage(err: unknown): string {

@@ -675,6 +675,25 @@ pub async fn app_connection_by_id(
     .await?)
 }
 
+/// One connection by id **within the named organization**, whatever its scope or status (the
+/// skill-library fetch route, P4-GSL, D-149): the caller refuses workspace-scoped and non-active
+/// rows. A connection of another organization is `None`.
+pub async fn app_connection_in_org(
+    pool: &sqlx::PgPool,
+    org_id: Uuid,
+    id: Uuid,
+) -> Result<Option<AppConnectionRow>, DbError> {
+    Ok(sqlx::query_as::<_, AppConnectionRow>(
+        "SELECT id, workspace_id, app_id, label, status, credentials_ref, credentials_version, \
+                credentials_expires_at, metadata, tenant_host, instance_id \
+         FROM app_connections WHERE id = $1 AND org_id = $2",
+    )
+    .bind(id)
+    .bind(org_id)
+    .fetch_optional(pool)
+    .await?)
+}
+
 /// `(restricted, available app ids)` for a workspace: `org_app_availability` rows with a
 /// NULL workspace apply to the whole organization.
 pub async fn app_availability(

@@ -1,6 +1,6 @@
 package:
   id: gitlab
-  version: 1.1.1
+  version: 1.2.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -86,6 +86,25 @@ apps:
       - match: { host: "{instance}" }
         inject:
           - basic: { user: oauth2, password: "{credentials.access_token}" }
+    library:
+      repo_pattern: "^[A-Za-z0-9_.-]{1,100}(/[A-Za-z0-9_.-]{1,100}){1,19}$"
+      request_host: "{instance}"
+      resolve_ref:
+        path: "/api/v4/projects/{repo|urlencode}/repository/commits/{ref|urlencode}"
+        default_path: "/api/v4/projects/{repo|urlencode}"
+        sha: "$.id"
+        default_branch: "$.default_branch"
+      list_tree:
+        path: "/api/v4/projects/{repo|urlencode}/repository/tree?recursive=true&per_page=100&ref={sha}"
+        entries: "$[*]"
+        fields: { path: "$.path", type: "$.type", mode: "$.mode", blob: "$.id" }
+        file_type: blob
+        paginate: link_header
+        max_pages: 200
+      get_blob:
+        path: "/api/v4/projects/{repo|urlencode}/repository/blobs/{blob}/raw"
+        encoding: raw
+      required_access: read
     token:
       kind: oauth2_refresh
       client: gitlab

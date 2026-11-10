@@ -1119,6 +1119,52 @@ fn api_ratelimit_defaults_overrides_and_validation() {
     }
 }
 
+// (phase 4, P4-GSL, D-149, D-154) `skills.library.*` and `api.gateway_internal_url`: defaults, the
+// 5-minute refresh floor, "an operator may only lower" the per-agent byte budget, URL validation.
+#[test]
+fn skills_library_defaults_and_startup_refusals() {
+    let api = load_with(BASE, &[]).unwrap().api_config().unwrap();
+    assert!(api.skills_library.enabled);
+    assert_eq!(api.skills_library.refresh_interval_secs, 900);
+    assert_eq!(api.skills_library.bytes_per_agent, 1024 * 1024);
+    assert_eq!(api.gateway_internal_url, "http://aurora-gateway:4103");
+    let ok = load_with(
+        &format!("{BASE}[skills.library]\nenabled = false\nrefresh_interval_secs = 300\nbytes_per_agent = 4096\n[api]\ngateway_internal_url = \"http://127.0.0.1:4103\"\n"),
+        &[],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap();
+    assert!(!ok.skills_library.enabled);
+    assert_eq!(ok.skills_library.refresh_interval_secs, 300);
+    assert_eq!(ok.skills_library.bytes_per_agent, 4096);
+    assert_eq!(ok.gateway_internal_url, "http://127.0.0.1:4103");
+    for (toml, key) in [
+        (
+            "[skills.library]\nrefresh_interval_secs = 299\n",
+            "skills.library.refresh_interval_secs",
+        ),
+        (
+            "[skills.library]\nbytes_per_agent = 1048577\n",
+            "skills.library.bytes_per_agent",
+        ),
+        (
+            "[skills.library]\nbytes_per_agent = 0\n",
+            "skills.library.bytes_per_agent",
+        ),
+        (
+            "[api]\ngateway_internal_url = \"ftp://x\"\n",
+            "api.gateway_internal_url",
+        ),
+        ("[skills.library]\nnope = 1\n", "skills.library.nope"),
+    ] {
+        let e = load_with(&format!("{BASE}{toml}"), &[])
+            .and_then(|r| r.api_config().map(|_| ()))
+            .unwrap_err();
+        assert!(e.to_string().contains(key), "{key}: {e}");
+    }
+}
+
 // (phase 4, P4-CNT, D-119, SEC-62) Startup refusals of `ratelimit.counters.*`, each naming the key;
 // the default is the `memory` backend with every class `local`.
 #[test]
