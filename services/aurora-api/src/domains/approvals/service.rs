@@ -180,8 +180,26 @@ pub async fn pending(s: &AppState, c: &Caller, wait: u32) -> Result<Vec<Approval
         return Ok(rows.into_iter().map(Into::into).collect());
     }
     let deadline = Instant::now() + wait;
+    // (P4-GRP-1, D-130) An `access` change concerning the caller ends the long-poll at once with
+    // what the caller may still decide (nothing, once they lost access): the client re-polls
+    // and is re-authorized.
+    let mut access = s.session_cache.subscribe_access();
     loop {
-        match tokio::time::timeout_at(deadline, rx.recv()).await {
+        let next = tokio::select! {
+            r = tokio::time::timeout_at(deadline, rx.recv()) => r,
+            p = access.recv() => {
+                let relevant = match p {
+                    Ok(p) => p.concerns(c.user_id),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => true,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => false,
+                };
+                if relevant {
+                    return Ok(read().await?.into_iter().map(Into::into).collect());
+                }
+                continue;
+            }
+        };
+        match next {
             Err(_) | Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
                 return Ok(vec![]);
             }

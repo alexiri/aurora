@@ -11,7 +11,12 @@ CREATE TABLE groups (
     org_id      uuid NOT NULL REFERENCES organizations (id) ON DELETE RESTRICT,
     name        citext NOT NULL CHECK (char_length(name) BETWEEN 1 AND 80),
     description text CHECK (char_length(description) <= 280),
-    source      text NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'scim')),
+    source      text NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'scim', 'idp')),
+    -- (D-156) IdP-linked groups: one provider and one claim value, set together iff source = idp.
+    idp_provider text,
+    idp_value   text CHECK (char_length(idp_value) <= 256),
+    CONSTRAINT groups_idp_link_chk CHECK ((source = 'idp') = (idp_provider IS NOT NULL AND idp_value IS NOT NULL)
+                                          AND ((idp_provider IS NULL) = (idp_value IS NULL))),
     -- The group -> org-role mapping. `owner` is not a legal value (SEC-71).
     org_role    text CHECK (org_role IN ('admin', 'member')),
     revision    bigint NOT NULL DEFAULT 1,
@@ -25,12 +30,17 @@ CREATE TABLE groups (
     UNIQUE (org_id, name)
 );
 
+CREATE UNIQUE INDEX groups_idp_link_uq ON groups (org_id, idp_provider, idp_value)
+    WHERE idp_provider IS NOT NULL;
+
 CREATE TABLE group_members (
     group_id   uuid NOT NULL,
     org_id     uuid NOT NULL,
     user_id    uuid NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    source     text NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'scim')),
-    added_by   uuid REFERENCES users (id) ON DELETE SET NULL,
+    source     text NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'scim', 'idp')),
+    -- (D-156) idp rows: the sign-in that last confirmed the membership.
+    synced_at  timestamptz,
+    added_by  uuid REFERENCES users (id) ON DELETE SET NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (group_id, user_id),
     FOREIGN KEY (group_id, org_id, source) REFERENCES groups (id, org_id, source) ON DELETE CASCADE,

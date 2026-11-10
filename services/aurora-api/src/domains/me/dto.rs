@@ -17,8 +17,34 @@ pub struct MeMembership {
     pub org: OrgSummary,
     pub role: OrgRole,
     pub status: MemberStatus,
+    /// (phase 4, P4-GRP-1) The effective org role: the strongest of `role` and the `org_role` of
+    /// the caller's groups, only while the membership is active (`role` stays the direct role).
+    pub effective_role: OrgRole,
+    /// Where the effective role comes from: `direct`, or `group` with the group.
+    pub sources: Vec<MeRoleSource>,
     /// Workspaces the user can use; empty while the membership is suspended.
     pub workspaces: Vec<MeWorkspace>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct MeRoleSource {
+    /// `direct` | `group`.
+    pub kind: String,
+    pub group: Option<MeGroupRef>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct MeGroupRef {
+    pub id: Uuid,
+    pub name: String,
+}
+
+/// A group the caller belongs to (phase 4, P4-GRP-1).
+#[derive(Serialize, ToSchema)]
+pub struct MeGroup {
+    pub id: Uuid,
+    pub name: String,
+    pub org_id: Uuid,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -33,6 +59,8 @@ pub struct Me {
     /// (NAT, load balancer, PROXY protocol). `null` when unknown. Set on `GET`/`PATCH /v1/me`.
     pub client_address: Option<String>,
     pub memberships: Vec<MeMembership>,
+    /// (phase 4, P4-GRP-1) The caller's groups (active memberships only).
+    pub groups: Vec<MeGroup>,
     /// (phase 4, P4-IDP-1, C-513) "Roles from your sign-in": the role values of the last sign-in
     /// and what each granted; `null` when no sign-in read a role claim.
     pub idp_roles: Option<crate::domains::admin::dto::IdpRoles>,

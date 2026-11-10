@@ -172,7 +172,9 @@ owner cannot be demoted or removed).
 | org_id | uuid not null FK→organizations (restrict) | unique `(id, org_id)` and `(id, org_id, source)` so child tables can carry a same-org composite foreign key |
 | name | citext not null CHECK 1–80 chars | sanitized by the API; unique `(org_id, name)` |
 | description | text null CHECK ≤ 280 | |
-| source | text not null default `manual` CHECK in (`manual`,`scim`) | immutable; `scim` groups are created and filled by the IdP (`04 §SCIM`), their name and membership are read-only in the dashboard |
+| source | text not null default `manual` CHECK in (`manual`,`scim`,`idp`) | immutable; `scim` groups are created and filled by the IdP (`04 §SCIM`), their name and membership are read-only in the dashboard; (D-156) `idp` groups are created in the dashboard and their membership is synced from a sign-in claim (`04 §IdP-linked groups`) |
+| idp_provider | text null | (D-156) set together with `idp_value` iff `source = idp` (CHECK); unique `(org_id, idp_provider, idp_value)` |
+| idp_value | text null CHECK ≤ 256 | (D-156) the claim value this group mirrors |
 | org_role | text null CHECK in (`admin`,`member`) | the group → org-role mapping; `owner` is not a legal value (`04 §Groups`) |
 | revision | bigint not null default 1 | optimistic concurrency (`If-Match`) |
 | created_by | uuid null FK→users (set null) | null for SCIM-created groups |
@@ -184,7 +186,8 @@ owner cannot be demoted or removed).
 | group_id | uuid not null | pk part |
 | org_id | uuid not null | denormalized; composite FKs `(group_id, org_id, source)` → `groups(id, org_id, source)` (cascade) and `(org_id, user_id)` → `org_members(org_id, user_id)` (cascade): a member must be a member of the group's org, and leaving the org leaves every group |
 | user_id | uuid not null FK→users (cascade) | pk part |
-| source | text not null default `manual` CHECK in (`manual`,`scim`) | who added the row; equals the group's source (a `manual` group takes only `manual` rows; enforced by the composite foreign key) |
+| source | text not null default `manual` CHECK in (`manual`,`scim`,`idp`) | who added the row; equals the group's source (a `manual` group takes only `manual` rows; (D-156) an `idp` group only `idp` rows, written by the sign-in sync; enforced by the composite foreign key) |
+| synced_at | timestamptz null | (D-156) `idp` rows: the sign-in that last confirmed the membership |
 | added_by | uuid null FK→users (set null) | |
 | index | `(org_id, user_id)`, `(user_id)`; primary key `(group_id, user_id)` | the index answers "which groups is this user in" (the access law, the gateway) |
 

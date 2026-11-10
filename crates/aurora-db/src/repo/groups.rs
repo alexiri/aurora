@@ -28,6 +28,8 @@ pub struct GroupRow {
     pub name: String,
     pub description: Option<String>,
     pub source: String,
+    pub idp_provider: Option<String>,
+    pub idp_value: Option<String>,
     pub org_role: Option<String>,
     pub revision: i64,
     pub created_by: Option<Uuid>,
@@ -38,7 +40,7 @@ pub struct GroupRow {
 }
 
 const SEL: &str = "SELECT g.id, g.org_id, g.name::text AS name, g.description, g.source, \
-    g.org_role, g.revision, g.created_by, g.created_at, g.updated_at, \
+    g.idp_provider, g.idp_value, g.org_role, g.revision, g.created_by, g.created_at, g.updated_at, \
     (SELECT count(*) FROM group_members m WHERE m.group_id = g.id) AS member_count, \
     (SELECT count(*) FROM group_workspace_access b WHERE b.group_id = g.id) AS workspace_count \
     FROM groups g";
@@ -121,12 +123,14 @@ pub async fn insert(
     name: &str,
     description: Option<&str>,
     source: &str,
+    idp_link: Option<(&str, &str)>,
     org_role: Option<&str>,
     created_by: Option<Uuid>,
 ) -> Result<(), DbError> {
     sqlx::query(
-        "INSERT INTO groups (id, org_id, name, description, source, org_role, created_by) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        "INSERT INTO groups (id, org_id, name, description, source, org_role, created_by, \
+                             idp_provider, idp_value) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
     )
     .bind(id)
     .bind(org)
@@ -135,6 +139,8 @@ pub async fn insert(
     .bind(source)
     .bind(org_role)
     .bind(created_by)
+    .bind(idp_link.map(|l| l.0))
+    .bind(idp_link.map(|l| l.1))
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -191,6 +197,8 @@ pub struct MemberRow {
     /// The user's org membership status (`suspended` members stay listed, derive nothing).
     pub status: String,
     pub source: String,
+    /// (D-156) `idp` rows: the sign-in that last confirmed the membership.
+    pub synced_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -203,7 +211,7 @@ pub async fn list_members<'e, E: PgExecutor<'e>>(
     let (t, id) = split(after);
     Ok(sqlx::query_as(
         "SELECT gm.user_id, u.email::text AS email, u.display_name, om.status, gm.source, \
-                gm.created_at \
+                gm.synced_at, gm.created_at \
            FROM group_members gm \
            JOIN users u ON u.id = gm.user_id \
            JOIN org_members om ON om.org_id = gm.org_id AND om.user_id = gm.user_id \
@@ -320,6 +328,120 @@ pub async fn groups_of_user<'e, E: PgExecutor<'e>>(
            JOIN org_members om ON om.org_id = gm.org_id AND om.user_id = gm.user_id \
                 AND om.status = 'active' \
           WHERE gm.user_id = $1 ORDER BY g.name, g.id",
+    )
+    .bind(user)
+    .fetch_all(exec)
+    .await?)
+}
+
+// ---- IdP-linked groups (D-156) ----
+
+/// One membership the sign-in sync changed.
+#[derive(Debug, Clone)]
+pub struct SyncChange {
+    pub group_id: Uuid,
+    pub org_id: Uuid,
+    pub idp_value: String,
+    pub added: bool,
+}
+
+/// Sets `user`'s memberships in `provider`'s IdP-linked groups to exactly the groups whose
+/// `idp_value` is in `values` (the validated claim), only in orgs where the user is an
+/// **active member**: it never creates a membership. Returns the added/removed rows (kept rows
+/// only get `synced_at` refreshed). Rows of other sources and other providers are untouched.
+pub async fn sync_idp_memberships(
+    conn: &mut PgConnection,
+    user: Uuid,
+    provider: &str,
+    values: &[String],
+) -> Result<Vec<SyncChange>, DbError> {
+    let removed: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
+        "DELETE FROM group_members gm USING groups g \
+          WHERE gm.group_id = g.id AND gm.user_id = $1 AND gm.source = 'idp' \
+            AND g.idp_provider = $2 \
+            AND NOT (g.idp_value = ANY($3) AND EXISTS ( \
+                  SELECT 1 FROM org_members om WHERE om.org_id = g.org_id \
+                     AND om.user_id = $1 AND om.status = 'active')) \
+         RETURNING gm.group_id, g.org_id, g.idp_value",
+    )
+    .bind(user)
+    .bind(provider)
+    .bind(values)
+    .fetch_all(&mut *conn)
+    .await?;
+    let upserted: Vec<(Uuid, Uuid, String, bool)> = sqlx::query_as(
+        "INSERT INTO group_members (group_id, org_id, user_id, source, synced_at) \
+         SELECT g.id, g.org_id, $1, 'idp', now() FROM groups g \
+           JOIN org_members om ON om.org_id = g.org_id AND om.user_id = $1 \
+                AND om.status = 'active' \
+          WHERE g.source = 'idp' AND g.idp_provider = $2 AND g.idp_value = ANY($3) \
+         ON CONFLICT (group_id, user_id) DO UPDATE SET synced_at = now() \
+         RETURNING group_id, org_id, \
+                   (SELECT idp_value FROM groups WHERE id = group_id), (xmax = 0)",
+    )
+    .bind(user)
+    .bind(provider)
+    .bind(values)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut out: Vec<SyncChange> = removed
+        .into_iter()
+        .map(|(group_id, org_id, idp_value)| SyncChange {
+            group_id,
+            org_id,
+            idp_value,
+            added: false,
+        })
+        .collect();
+    out.extend(
+        upserted
+            .into_iter()
+            .filter(|u| u.3)
+            .map(|(group_id, org_id, idp_value, _)| SyncChange {
+                group_id,
+                org_id,
+                idp_value,
+                added: true,
+            }),
+    );
+    Ok(out)
+}
+
+/// Does any IdP-linked group name `provider`? (orphan warning at startup.)
+pub async fn idp_linked_providers<'e, E: PgExecutor<'e>>(
+    exec: E,
+) -> Result<Vec<(String, i64)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT idp_provider, count(*) FROM groups WHERE source = 'idp' GROUP BY idp_provider",
+    )
+    .fetch_all(exec)
+    .await?)
+}
+
+/// The caller's active-membership effective org roles (`/v1/me`): `(org, effective role)`, and
+/// the groups with an org-role mapping that contain the user: `(org, group, name, org_role)`.
+pub async fn effective_org_roles<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+) -> Result<Vec<(Uuid, String)>, DbError> {
+    Ok(
+        sqlx::query_as("SELECT org_id, role FROM effective_org_members WHERE user_id = $1")
+            .bind(user)
+            .fetch_all(exec)
+            .await?,
+    )
+}
+
+pub async fn org_role_groups<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+) -> Result<Vec<(Uuid, Uuid, String, String)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT g.org_id, g.id, g.name::text, g.org_role \
+           FROM group_members gm JOIN groups g ON g.id = gm.group_id \
+           JOIN org_members om ON om.org_id = gm.org_id AND om.user_id = gm.user_id \
+                AND om.status = 'active' \
+          WHERE gm.user_id = $1 AND g.org_role IS NOT NULL ORDER BY g.name, g.id",
     )
     .bind(user)
     .fetch_all(exec)
@@ -691,6 +813,65 @@ pub async fn impact(
         });
     }
     Ok(out)
+}
+
+// ---- invalidation (docs/05 §Gateway cache invalidation; delivered on commit) ----
+
+fn map_bus(e: crate::bus::BusError) -> DbError {
+    match e {
+        crate::bus::BusError::Db(e) => e.into(),
+        other => DbError::Other(sqlx::Error::Protocol(other.to_string())),
+    }
+}
+
+/// `aurora_auth_revoked { kind: "access", id, org_id }`: `user = None` means every user of the
+/// org. API replicas re-authorize the open streams and long-polls of that user.
+pub async fn notify_access<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    user: Option<Uuid>,
+) -> Result<(), DbError> {
+    crate::bus::notify(
+        exec,
+        crate::bus::Channel::AuthRevoked,
+        &serde_json::json!({"kind": "access", "id": user, "org_id": org}),
+    )
+    .await
+    .map_err(map_bus)
+}
+
+/// A membership change: gateways drop the cached identities of that speaker (scope `user`) and
+/// open streams are re-authorized.
+pub async fn notify_member_changed(
+    conn: &mut PgConnection,
+    org: Uuid,
+    user: Uuid,
+) -> Result<(), DbError> {
+    super::credentials::notify_gateway_invalidate(&mut *conn, "user", user).await?;
+    notify_access(&mut *conn, org, Some(user)).await
+}
+
+/// Binding change or group deletion: scope `workspace` per affected workspace (`org` above 20),
+/// and every user of the org re-authorizes.
+pub async fn notify_workspaces_changed(
+    conn: &mut PgConnection,
+    org: Uuid,
+    workspaces: &[Uuid],
+) -> Result<(), DbError> {
+    if workspaces.len() > 20 {
+        super::credentials::notify_gateway_invalidate(&mut *conn, "org", org).await?;
+    } else {
+        for w in workspaces {
+            super::credentials::notify_gateway_invalidate(&mut *conn, "workspace", *w).await?;
+        }
+    }
+    notify_access(&mut *conn, org, None).await
+}
+
+/// Org-role mapping change: scope `org` and every user of the org re-authorizes.
+pub async fn notify_org_changed(conn: &mut PgConnection, org: Uuid) -> Result<(), DbError> {
+    super::credentials::notify_gateway_invalidate(&mut *conn, "org", org).await?;
+    notify_access(&mut *conn, org, None).await
 }
 
 // ---- policy authoring ----

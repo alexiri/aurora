@@ -137,6 +137,9 @@ pub struct DevIdp {
     pub role_claim_source: String,
     pub require_role: bool,
     pub role_mappings: Vec<OidcRoleMapping>,
+    /// (P4-GRP-1, D-156) Group claim of the `dev` provider, as for `auth.oidc_providers[]`.
+    pub group_claim: Option<String>,
+    pub group_claim_source: String,
 }
 impl Default for AuthSection {
     fn default() -> Self {
@@ -182,6 +185,12 @@ pub struct OidcProvider {
     /// A sign-in whose claim maps to nothing is refused (`no_mapped_role`, no user row).
     pub require_role: bool,
     pub role_mappings: Vec<OidcRoleMapping>,
+    /// (phase 4, P4-GRP-1, D-156) Dot path into the validated ID token (or userinfo response)
+    /// whose values feed IdP-linked groups, e.g. `cern_roles` or `groups`. Unset = this provider
+    /// feeds no IdP-linked group.
+    pub group_claim: Option<String>,
+    /// `id_token` (default, also when empty) or `userinfo`.
+    pub group_claim_source: String,
 }
 impl Default for OidcProvider {
     fn default() -> Self {
@@ -200,6 +209,8 @@ impl Default for OidcProvider {
             role_claim_source: String::new(),
             require_role: false,
             role_mappings: vec![],
+            group_claim: None,
+            group_claim_source: String::new(),
         }
     }
 }
@@ -235,6 +246,11 @@ impl OidcProvider {
     /// Whether the role claim is read from the userinfo response instead of the ID token.
     pub fn role_claim_from_userinfo(&self) -> bool {
         self.role_claim_source == "userinfo"
+    }
+
+    /// (D-156) Whether the group claim is read from the userinfo response.
+    pub fn group_claim_from_userinfo(&self) -> bool {
+        self.group_claim_source == "userinfo"
     }
 }
 

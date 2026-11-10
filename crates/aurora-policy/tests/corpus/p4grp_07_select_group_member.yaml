@@ -1,0 +1,9 @@
+description: an allow rule naming a group selects the credential for a speaker who is in the group
+workspace:
+  ordered_rules:
+    - {logical_id: 00000000-0000-0000-0000-0000000000a1, name: grp-allow, action: allow, identities: [{kind: group, id: 00000000-0000-0000-0000-0000000000d1}], targets: [{type: app_connections, app_id: gh, scope: any}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001, speaker_user_id: 00000000-0000-0000-0000-000000000002, speaker_group_ids: [00000000-0000-0000-0000-0000000000d1]}}
+select:
+  candidates:
+    - {type: connection, id: 00000000-0000-0000-0000-0000000000c1, app_id: gh, scope: workspace}
+  expect: [00000000-0000-0000-0000-0000000000c1]

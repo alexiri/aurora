@@ -1,0 +1,6 @@
+description: a group identity does not match a speaker who is in another group
+workspace:
+  ordered_rules:
+    - {logical_id: 00000000-0000-0000-0000-0000000000a1, name: for-group, action: block, identities: [{kind: group, id: 00000000-0000-0000-0000-0000000000d1}]}
+facts: {host: api.example.com, port: 443, path: /v1/x, method: GET, identity: {agent_id: 00000000-0000-0000-0000-000000000001, speaker_user_id: 00000000-0000-0000-0000-000000000003, speaker_group_ids: [00000000-0000-0000-0000-0000000000d2]}}
+expect: {verdict: allow}

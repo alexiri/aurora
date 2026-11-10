@@ -232,54 +232,73 @@ pub async fn effective_access<'e, E: PgExecutor<'e>>(
                 org_role: OrgRole::parse(&org_role)?,
                 effective_ws_role: WorkspaceRole::parse(&ws_role)?,
             };
-            let mut sources = Vec::new();
-            if OrgRole::parse(&direct_org).is_some_and(OrgRole::is_admin) {
-                sources.push(AccessSource {
-                    kind: AccessSourceKind::OrgRole,
-                    group: None,
-                    value: None,
-                });
-            }
-            if direct_ws.is_some() {
-                if let Some(v) = idp_source {
-                    sources.push(AccessSource {
-                        kind: AccessSourceKind::IdpClaim,
-                        group: None,
-                        value: Some(v),
-                    });
-                }
-                if base_role.is_some() || sources.iter().all(|s| s.kind != AccessSourceKind::IdpClaim)
-                {
-                    sources.push(AccessSource {
-                        kind: AccessSourceKind::Direct,
-                        group: None,
-                        value: None,
-                    });
-                }
-            }
-            for g in groups.as_array().into_iter().flatten() {
-                let id = g
-                    .get("group")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| Uuid::parse_str(s).ok());
-                if g.get("org_role").and_then(|v| v.as_str()) == Some("admin") {
-                    sources.push(AccessSource {
-                        kind: AccessSourceKind::OrgRoleViaGroup,
-                        group: id,
-                        value: None,
-                    });
-                }
-                if g.get("ws_role").is_some_and(|v| !v.is_null()) {
-                    sources.push(AccessSource {
-                        kind: AccessSourceKind::Group,
-                        group: id,
-                        value: None,
-                    });
-                }
-            }
+            let sources = build_sources(
+                &direct_org,
+                direct_ws.as_deref(),
+                idp_source,
+                base_role.as_deref(),
+                &groups,
+            );
             Some(EffectiveAccess { auth, sources })
         },
     ))
+}
+
+/// The explanation of an effective role (informational; never an input to a decision).
+/// `groups` is the jsonb array `[{group, org_role, ws_role}]` of the user's contributing groups.
+pub fn build_sources(
+    direct_org: &str,
+    direct_ws: Option<&str>,
+    idp_source: Option<String>,
+    base_role: Option<&str>,
+    groups: &serde_json::Value,
+) -> Vec<AccessSource> {
+    let mut sources = Vec::new();
+    if OrgRole::parse(direct_org).is_some_and(OrgRole::is_admin) {
+        sources.push(AccessSource {
+            kind: AccessSourceKind::OrgRole,
+            group: None,
+            value: None,
+        });
+    }
+    if direct_ws.is_some() {
+        let claim = idp_source.is_some();
+        if let Some(v) = idp_source {
+            sources.push(AccessSource {
+                kind: AccessSourceKind::IdpClaim,
+                group: None,
+                value: Some(v),
+            });
+        }
+        if base_role.is_some() || !claim {
+            sources.push(AccessSource {
+                kind: AccessSourceKind::Direct,
+                group: None,
+                value: None,
+            });
+        }
+    }
+    for g in groups.as_array().into_iter().flatten() {
+        let id = g
+            .get("group")
+            .and_then(|v| v.as_str())
+            .and_then(|s| Uuid::parse_str(s).ok());
+        if g.get("org_role").and_then(|v| v.as_str()) == Some("admin") {
+            sources.push(AccessSource {
+                kind: AccessSourceKind::OrgRoleViaGroup,
+                group: id,
+                value: None,
+            });
+        }
+        if g.get("ws_role").is_some_and(|v| !v.is_null()) {
+            sources.push(AccessSource {
+                kind: AccessSourceKind::Group,
+                group: id,
+                value: None,
+            });
+        }
+    }
+    sources
 }
 
 /// Access-law resolution. `None` = workspace missing or caller has no access.

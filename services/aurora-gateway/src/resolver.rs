@@ -515,6 +515,13 @@ impl DbCredentialResolver {
             }
             _ => None,
         };
+        // (P4-GRP-1, D-131) The speaker's group ids come with the speaker: none without one.
+        let speaker_group_ids = match speaker_user_id {
+            Some(u) => repo::speaker_group_ids(&self.pool, row.org_id, u)
+                .await
+                .map_err(unavailable)?,
+            None => Vec::new(),
+        };
         let expires_in = row.expires_in_secs;
         let byo = (row.agent_kind == "byo" && kind != CredentialKind::Boot).then(|| {
             // Unparsable stored values fail closed inside the governance library.
@@ -544,6 +551,7 @@ impl DbCredentialResolver {
                 turn_id: row.turn_id,
                 context_label: row.context_label,
                 speaker_user_id,
+                speaker_group_ids,
                 capabilities: row.capabilities,
                 byo,
             },

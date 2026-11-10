@@ -16,9 +16,31 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
         .ok_or_else(|| ApiError::unauthenticated("Authentication required."))?;
     let rows = account::memberships(&state.pool, user_id).await?;
     let ws = account::usable_workspaces(&state.pool, user_id).await?;
+    let eff = aurora_db::repo::groups::effective_org_roles(&state.pool, user_id).await?;
+    let mapped = aurora_db::repo::groups::org_role_groups(&state.pool, user_id).await?;
+    let groups = aurora_db::repo::groups::groups_of_user(&state.pool, user_id)
+        .await?
+        .into_iter()
+        .map(|(id, name, org_id)| MeGroup { id, name, org_id })
+        .collect();
     let memberships = rows
         .into_iter()
         .map(|m| {
+            let effective_role = eff
+                .iter()
+                .find(|(o, _)| *o == m.org_id)
+                .map_or_else(|| parse_org_role(&m.role), |(_, r)| parse_org_role(r));
+            let mut sources = vec![MeRoleSource {
+                kind: "direct".into(),
+                group: None,
+            }];
+            sources.extend(mapped.iter().filter(|g| g.0 == m.org_id).map(|g| MeRoleSource {
+                kind: "group".into(),
+                group: Some(MeGroupRef {
+                    id: g.1,
+                    name: g.2.clone(),
+                }),
+            }));
             let workspaces = ws
                 .iter()
                 .filter(|w| w.org_id == m.org_id)
@@ -37,6 +59,8 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
                 },
                 role: parse_org_role(&m.role),
                 status: parse_status(&m.status),
+                effective_role,
+                sources,
                 workspaces,
             }
         })
@@ -46,6 +70,7 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
         .await?
         .map(Into::into);
     Ok(Me {
+        groups,
         idp_roles,
         default_org_id: user.default_org_id,
         approval_email,

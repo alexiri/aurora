@@ -94,6 +94,7 @@ impl CredentialResolver for Static {
             turn_id: None,
             context_label: (token == BYO_CONTEXT).then(|| "aurora run: make test".to_owned()),
             speaker_user_id: speaker,
+            speaker_group_ids: Vec::new(),
             capabilities: if boot { vec!["browser".into()] } else { vec![] },
             byo,
         }))

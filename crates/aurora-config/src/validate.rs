@@ -487,6 +487,8 @@ impl RawConfig {
                 role_claim_source: auth.dev_idp.role_claim_source.clone(),
                 require_role: auth.dev_idp.require_role,
                 role_mappings: auth.dev_idp.role_mappings.clone(),
+                group_claim: auth.dev_idp.group_claim.clone(),
+                group_claim_source: auth.dev_idp.group_claim_source.clone(),
                 ..OidcProvider::default()
             });
             oidc_client_secrets.insert(
@@ -1628,6 +1630,21 @@ fn check_role_mappings(c: &mut Ctx, prefix: &str, p: &OidcProvider) {
     if !matches!(p.role_claim_source.as_str(), "" | "id_token" | "userinfo") {
         c.err(k("role_claim_source"), "must be id_token or userinfo");
     }
+    // (P4-GRP-1, D-156) `group_claim` follows the same path and source rules.
+    if let Some(gc) = &p.group_claim
+        && (gc.is_empty()
+            || gc.len() > 200
+            || gc.split('.').any(str::is_empty)
+            || gc.contains(char::is_whitespace))
+    {
+        c.err(
+            k("group_claim"),
+            "must be a dot path such as `cern_roles` or `groups`",
+        );
+    }
+    if !matches!(p.group_claim_source.as_str(), "" | "id_token" | "userinfo") {
+        c.err(k("group_claim_source"), "must be id_token or userinfo");
+    }
     if !p.role_mappings.is_empty() && p.role_claim.is_none() {
         c.err(k("role_claim"), "required when role_mappings is set");
     }
@@ -1707,6 +1724,8 @@ fn check_dev_idp(c: &mut Ctx, d: &DevIdp, providers: &[OidcProvider], external_u
         role_claim_source: d.role_claim_source.clone(),
         require_role: d.require_role,
         role_mappings: d.role_mappings.clone(),
+        group_claim: d.group_claim.clone(),
+        group_claim_source: d.group_claim_source.clone(),
         ..OidcProvider::default()
     };
     check_role_mappings(c, "auth.dev_idp", &as_provider);

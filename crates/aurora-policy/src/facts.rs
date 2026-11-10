@@ -67,6 +67,10 @@ pub struct RequestIdentity {
     /// never match (07 §Rule anatomy).
     #[serde(default)]
     pub speaker_user_id: Option<Uuid>,
+    /// (phase 4, P4-GRP-1, D-131) The ids of the speaker's groups of the agent's org (the
+    /// principal set is `{agent_id} ∪ speaker_group_ids`). Empty without a speaker.
+    #[serde(default)]
+    pub speaker_group_ids: Vec<Uuid>,
 }
 
 /// Classification tags declared by the matched tool (inputs only).

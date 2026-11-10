@@ -272,4 +272,13 @@ pub struct Effective {
     pub credentials: Vec<EffectiveCredential>,
     /// Per tool of every granted connection.
     pub tools: Vec<EffectiveTool>,
+    /// (phase 4, P4-GRP-1, D-131) The selected speaker's current groups, evaluated as
+    /// principals; empty for `speaker=none`.
+    pub speaker_groups: Vec<SpeakerGroup>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SpeakerGroup {
+    pub id: Uuid,
+    pub name: String,
 }

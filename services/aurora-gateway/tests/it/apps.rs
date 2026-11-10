@@ -62,6 +62,7 @@ impl CredentialResolver for Static {
             turn_id: None,
             context_label: None,
             speaker_user_id: None,
+            speaker_group_ids: Vec::new(),
             capabilities: vec![],
             byo: None,
         }))
@@ -1183,6 +1184,7 @@ async fn refresh_targets(
         turn_id: None,
         context_label: None,
         speaker_user_id: None,
+            speaker_group_ids: Vec::new(),
         capabilities: vec![],
         byo: None,
     };

@@ -264,6 +264,7 @@ fn facts_identity(i: &Ident) -> RequestIdentity {
     RequestIdentity {
         agent_id: i.agent_id,
         speaker_user_id: i.speaker_user_id,
+        speaker_group_ids: i.speaker_group_ids.clone(),
     }
 }
 

@@ -393,6 +393,7 @@
       "group_id",
       "org_id",
       "source",
+      "synced_at",
       "user_id"
     ],
     "group_workspace_access": [
@@ -406,6 +407,8 @@
       "created_by",
       "description",
       "id",
+      "idp_provider",
+      "idp_value",
       "name",
       "org_id",
       "org_role",
