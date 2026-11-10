@@ -61,6 +61,9 @@ permissions are never auto-activated on first sight, unlike `builtin`).
   digests; for every addon version newer than the newest ingested one, download + verify + ingest
   as above. Errors (unreachable, parse, bad signature, digest mismatch) mark the source
   `check_failed_at` + reason and change nothing else — last known state keeps serving.
+  The poll path is shared: a **manual check** (the buttons below) runs exactly this path with
+  `trigger = manual` (vs `scheduled`) in the `addon_source.check` audit row, lease-protected so a
+  manual click during a scheduled run does not double-fetch.
 - An addon version **removed upstream** never affects installed packages; the source view lists it
   as "removed upstream".
 - An addon requiring a newer core (`min_core`) is listed but not ingestable until the instance
@@ -94,6 +97,17 @@ active; otherwise packages stay but update checking stops, stated in the confirm
 gains a **Source** column and **Update available** badges with a "what changed" pointer to the
 source's manifest entry.
 
+**Manual check buttons.**
+- **Admin → Plugins → "Check for updates"** — forces a check of every addon source at once
+  (sequential or fan-out with the shared per-source lease; per-source outcome surfaces in the
+  result: updated / up to date / failed + reason). Visible only when at least one addon source is
+  registered. `POST /v1/admin/addon-sources/check-all`, audited per source.
+- **Admin → Addon sources → row "Check now"** — the same shared check path for one source.
+
+Both buttons disable while their check runs and then refresh the badges/list; the check is
+synchronous (sources are few and the fetch is small) — a hanging source fails on its timeout and
+reports `check_failed`, never blocks the others.
+
 ### Public format documentation
 
 New **`docs/22-addon-repos.md`**: the repo manifest contract (fields, types, limits, versioning and
@@ -105,8 +119,9 @@ admin UI's Add dialog ("format documentation").
 
 ## Interfaces
 
-- Contracts **C-590..C-609**: admin source CRUD + check-now, source detail (manifest summary, key
-  fingerprint, addons with installed/available versions), plugins list provenance + update badges.
+- Contracts **C-590..C-609**: admin source CRUD, **check-now (one source) and check-all**,
+  source detail (manifest summary, key fingerprint, addons with installed/available versions),
+  plugins list provenance + update badges.
 - Decision **D-159** records: trust model (key in manifest, TOFU at registration, re-confirm on
   change), never-auto-activate for addon updates, the interval enum + default `1d`, limits.
 - `docs/03 §Planned changes` (`addon_sources` table), `docs/05` routes, `docs/09 §10` source row,
@@ -118,8 +133,8 @@ admin UI's Add dialog ("format documentation").
 - Rust: ingestion (happy, bad signature, digest mismatch, oversized, key change), poll state
   machine (unchanged, new versions, removed upstream, unreachable, `never`), trusted_keys
   composition, permission-matrix rows, audit coverage.
-- Web: source list/add/check/remove, update badges, key-change re-confirm; vitest + Playwright
-  stage-4 suites.
+- Web: source list/add/check/check-all/remove, update badges, key-change re-confirm; vitest +
+  Playwright stage-4 suites.
 - E2E: a fixture addon repo (local HTTPS server) end to end: register → approve → use an app →
   publish a new version → poll → update badge → update.
 - Guards, OpenAPI + `schema.d.ts` regeneration.
