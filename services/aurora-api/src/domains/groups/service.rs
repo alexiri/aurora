@@ -90,7 +90,14 @@ fn limit(code: &str, msg: &str) -> ApiError {
 /// is not an active member of (the existence of a group is not disclosed).
 pub async fn load(s: &AppState, c: &Caller, id: Uuid) -> Result<(GroupRow, crate::http::auth::OrgAuth), ApiError> {
     let g = repo::get(&s.pool, id).await?.ok_or_else(group_not_found)?;
-    let auth = c.org(s, g.org_id).await.map_err(|_| group_not_found())?;
+    // A workspace key is 403 on organization routes; an outsider gets 404 (no disclosure).
+    let auth = c.org(s, g.org_id).await.map_err(|e| {
+        if e.status() == axum::http::StatusCode::FORBIDDEN {
+            e
+        } else {
+            group_not_found()
+        }
+    })?;
     Ok((g, auth))
 }
 

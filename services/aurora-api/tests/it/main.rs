@@ -1,6 +1,7 @@
 //! Single integration-test binary for this crate (OPS-016): one link instead of one per file.
 mod action_approvals;
 mod activity;
+mod groups;
 mod admin;
 mod agent_token_age;
 mod agents;

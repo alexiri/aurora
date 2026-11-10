@@ -235,6 +235,54 @@ const EXEMPT: &[(&str, &str, &str)] = &[
         "/v1/agents/{agent}/token",
         "runner/agent token minting, not a user principal",
     ),
+    // (P4-GRP-1) Routes addressed by a group's own id: a group of another org or an org the
+    // caller is not in answers 404 for everyone, so a seeded group is needed to see the matrix.
+    // `api/it/groups.rs::permission_matrix_per_route` runs every principal against a real one.
+    (
+        "GET",
+        "/v1/groups/{id}",
+        "by group id; matrix proven in groups.rs with a seeded group",
+    ),
+    (
+        "PATCH",
+        "/v1/groups/{id}",
+        "by group id; matrix proven in groups.rs with a seeded group",
+    ),
+    (
+        "DELETE",
+        "/v1/groups/{id}",
+        "by group id; matrix proven in groups.rs with a seeded group",
+    ),
+    (
+        "GET",
+        "/v1/groups/{id}/members",
+        "by group id; matrix proven in groups.rs with a seeded group",
+    ),
+    (
+        "PUT",
+        "/v1/groups/{id}/members/{user}",
+        "by group id; matrix proven in groups.rs with a seeded group",
+    ),
+    (
+        "DELETE",
+        "/v1/groups/{id}/members/{user}",
+        "by group id; matrix proven in groups.rs with a seeded group",
+    ),
+    (
+        "POST",
+        "/v1/groups/{id}/members:batch",
+        "by group id; matrix proven in groups.rs with a seeded group",
+    ),
+    (
+        "GET",
+        "/v1/groups/{id}/workspaces",
+        "by group id; matrix proven in groups.rs with a seeded group",
+    ),
+    (
+        "GET",
+        "/v1/groups/{id}/impact",
+        "by group id; matrix proven in groups.rs with a seeded group",
+    ),
 ];
 
 /// Route table. `p` is the OpenAPI path template (placeholder names are normalized).
@@ -279,6 +327,13 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/admin/storage", G::Inst, false),
     // (P4-IDP-1, C-511) read-only role mapping table
     r("GET", "/v1/admin/identity", G::Inst, false),
+    // (P4-GRP-1, C-460..C-469, SEC-71) directory groups: the org-addressed and the
+    // workspace-addressed routes; the by-group-id routes need a seeded group and are proven in
+    // `groups.rs` (see EXEMPT).
+    r("GET", "/v1/orgs/{org}/groups", G::OrgCred, false),
+    r("POST", "/v1/orgs/{org}/groups", G::Admin, false),
+    r("PUT", "/v1/workspaces/{ws}/access/groups/{group}", G::WsOwn, false),
+    r("DELETE", "/v1/workspaces/{ws}/access/groups/{group}", G::WsOwn, false),
     // (P4-ONB-1, C-520..C-522, SEC-79) new-user placement
     r("GET", "/v1/admin/placement", G::Inst, false),
     r("PUT", "/v1/admin/placement", G::Inst, false),
@@ -952,6 +1007,8 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             | "/v1/admin/orgs/{org}/freeze",
         ) => json!({"reason": "matrix"}),
         ("POST", "/v1/orgs") => json!({"name": "Matrix second org"}),
+        ("POST", "/v1/orgs/{org}/groups") => json!({"name": "matrix group"}),
+        ("PUT", "/v1/workspaces/{ws}/access/groups/{group}") => json!({"role": "member"}),
         ("POST", "/v1/admin/runners") => json!({"name": "matrix-runner"}),
         ("POST", "/v1/admin/trusted-keys") => {
             json!({"publisher": "x", "name": "x", "public_key": "x"})
