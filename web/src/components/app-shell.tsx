@@ -288,6 +288,7 @@ const ADMIN_LINKS: { href: string; label: string; icon: IconType }[] = [
   { href: "/admin/placement", label: "Sign-up & placement", icon: UsersIcon },
   { href: "/admin/plugins", label: "Plugins", icon: PlugIcon },
   { href: "/admin/connectors", label: "Connectors", icon: LinkIcon },
+  { href: "/admin/runners", label: "Runners", icon: ServerIcon },
   { href: "/admin/storage", label: "Storage", icon: ServerIcon },
   { href: "/admin/host-claims", label: "Host claims", icon: ServerIcon },
   { href: "/admin/instances", label: "Instances", icon: ServerIcon },

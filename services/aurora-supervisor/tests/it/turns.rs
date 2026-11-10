@@ -491,7 +491,20 @@ fn boot_refusal_is_a_failed_sandbox_status_with_the_reason_code() {
     assert_eq!(v["kind"], "sandbox.status");
     assert_eq!(v["body"]["state"], "failed");
     assert_eq!(v["body"]["reason_code"], "harness_unsupported");
-    assert_eq!(v["body"]["message"], "nocodex");
+    // (FIX-025) one line: a newline becomes a space.
+    assert_eq!(v["body"]["message"], "no codex");
+    // (FIX-025, C-585) a boot step failing before `ready` uses the same frame, credentials masked.
+    let f = aurora_supervisor::supervisor::boot_refusal(
+        "supervisor_boot_failed",
+        "the supervisor could not start its gateway proxies: bind 127.0.0.1:3128 failed token=s3cr3t",
+    );
+    let v = serde_json::to_value(&f).unwrap();
+    assert_eq!(v["body"]["reason_code"], "supervisor_boot_failed");
+    let m = v["body"]["message"].as_str().unwrap();
+    assert!(
+        m.contains("bind 127.0.0.1:3128") && !m.contains("s3cr3t"),
+        "{m}"
+    );
     for id in ["gemini", "", "claude_code"] {
         let e = aurora_supervisor::adapters::adapter_for(id).err().unwrap();
         assert_eq!(e.code, "harness_unsupported", "{id}");

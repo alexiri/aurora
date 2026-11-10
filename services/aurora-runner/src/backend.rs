@@ -44,6 +44,20 @@ pub enum BackendError {
     Capacity(String),
     #[error("wake capacity wait expired")]
     WakeCapacityTimeout,
+    /// (FIX-025, C-581) The substrate refused to create the container (Kubernetes admission:
+    /// quota, LimitRange, Pod Security, RBAC, validation), with the API server's message.
+    #[error("{0}")]
+    Refused(String),
+    /// (FIX-025, C-581) The container ended while starting (exit code, last state reason).
+    #[error("{0}")]
+    Terminated(String),
+    /// (FIX-025, D-158) The whole start exceeded its bound; the message names the last phase.
+    #[error("{0}")]
+    StartTimeout(String),
+    /// (FIX-025, C-581) The home volume claim cannot be bound (no matching PersistentVolume, no
+    /// or an unknown storage class); waiting does not help.
+    #[error("{0}")]
+    HomeVolumeUnbound(String),
     #[error("{0}")]
     Other(String),
 }
@@ -54,18 +68,28 @@ impl BackendError {
         match self {
             Self::ImageUnavailable(_) => "image_unavailable",
             Self::Capacity(_) | Self::WakeCapacityTimeout => "at_capacity",
+            Self::Refused(_) => "pod_refused",
+            Self::Terminated(_) => "pod_failed",
+            Self::StartTimeout(_) => "sandbox_start_failed",
+            Self::HomeVolumeUnbound(_) => "home_volume_unbound",
             Self::Other(_) => "agent_start_failed",
         }
     }
 
-    /// Message safe to put on the wire: control characters removed, bounded.
+    /// Message safe to put on the wire: one line, bounded, credentials masked (FIX-025).
     pub fn sanitized_message(&self) -> String {
-        self.to_string()
-            .chars()
-            .filter(|c| !c.is_control())
-            .take(500)
-            .collect()
+        aurora_core::sanitize::reason(&self.to_string(), 500)
     }
+}
+
+/// (FIX-025) Bound and sanitise substrate warning events for a `sandbox.status` (C-580).
+pub fn bound_events(events: impl IntoIterator<Item = String>) -> Vec<String> {
+    events
+        .into_iter()
+        .map(|e| aurora_core::sanitize::reason(&e, aurora_protocol::runner::MAX_STATUS_EVENT_CHARS))
+        .filter(|e| !e.is_empty())
+        .take(aurora_protocol::runner::MAX_STATUS_EVENTS)
+        .collect()
 }
 
 /// Opaque substrate handle of a running container.
@@ -80,9 +104,12 @@ pub struct StartRequest {
     pub spec: SandboxSpec,
 }
 
-/// Lets a backend report a held wake (`waiting_for_capacity`).
+/// Lets a backend report a held wake (`waiting_for_capacity`) and (FIX-025) start progress.
 pub trait HoldCallback: Send + Sync {
     fn on_hold(&self);
+    /// (FIX-025, C-580) Current start phase (`provisioning`, `scheduling`, `pulling`,
+    /// `creating`, `pending`, …) and a one-line detail; the executor rate-limits the reports.
+    fn progress(&self, _phase: &str, _detail: &str) {}
 }
 
 /// State of a sandbox's container as read from the substrate.
@@ -149,6 +176,16 @@ pub trait Backend: Send + Sync {
         req: &StartRequest,
         hold: &dyn HoldCallback,
     ) -> Result<ContainerRef, BackendError>;
+    /// (FIX-025, C-580) The substrate's latest warning events for this boot, newest first
+    /// (Kubernetes: the pod's `Warning` events). Unbounded here; the executor bounds them.
+    async fn start_events(&self, _req: &StartRequest) -> Vec<String> {
+        Vec::new()
+    }
+    /// (FIX-025) Where the sandbox's supervisor must connect (`host (ip):port`), for the
+    /// `supervisor_unreachable` hint. `None` when the backend cannot tell.
+    async fn supervisor_endpoint(&self) -> Option<String> {
+        None
+    }
     /// Removes the container, keeps the home.
     async fn stop(&self, container: &ContainerRef, grace: Duration) -> Result<(), BackendError>;
     async fn inspect(&self, sandbox_id: Uuid) -> Result<Option<Observation>, BackendError>;

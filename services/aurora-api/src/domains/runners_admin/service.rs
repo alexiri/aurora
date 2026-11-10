@@ -60,6 +60,38 @@ pub async fn list(s: &AppState) -> Result<RunnerList, ApiError> {
     Ok(RunnerList { items })
 }
 
+/// (FIX-025, C-586) The runner's recent start failures (Admin › Runners).
+pub async fn start_failures(s: &AppState, id: Uuid) -> Result<RunnerStartFailures, ApiError> {
+    if runners::get(&s.pool, id).await?.is_none() {
+        return Err(ApiError::not_found("Runner not found."));
+    }
+    let rows = runners::recent_start_failures(&s.pool, id, 50).await?;
+    Ok(RunnerStartFailures {
+        items: rows
+            .into_iter()
+            .map(|r| RunnerStartFailure {
+                id: r.id,
+                sandbox_id: r.sandbox_id,
+                agent_id: r.agent_id,
+                code: r.code,
+                message: r.message,
+                phase: r.phase,
+                events: r
+                    .events
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|e| e.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                elapsed_secs: r.elapsed_secs,
+                created_at: r.created_at,
+            })
+            .collect(),
+    })
+}
+
 /// Security-critical audit event of a runner change (RFE-008): committed with the change.
 fn event(actor: &crate::audit::AuditActor, action: &str, id: Uuid) -> crate::audit::AuditEvent {
     crate::audit::AuditEvent::new(actor.clone(), action, crate::audit::Outcome::Success)

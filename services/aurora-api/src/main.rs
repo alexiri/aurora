@@ -319,6 +319,8 @@ async fn serve(cfg: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
         quota_mail,
     );
     aurora_api::domains::approvals::notify::spawn(state.clone());
+    // (FIX-025, D-158) No turn waits forever for a sandbox, runner connected or not.
+    aurora_api::domains::hosted::readiness::spawn(state.clone());
     aurora_api::domains::connectors::inbox::spawn(state.clone());
     aurora_api::domains::channels::cards::fanout::spawn(state.clone());
     aurora_api::domains::channels::deprovision::spawn(state.clone());

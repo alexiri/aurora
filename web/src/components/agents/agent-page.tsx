@@ -37,7 +37,18 @@ function SandboxPill({ agentId }: { agentId: string }) {
   if (!q.data) return null;
   const s = q.data.state;
   const tone = s === "running" ? "accent" : s === "failed" ? "danger" : s === "starting" || s === "stopping" ? "pending" : "neutral";
-  return <StatusDot tone={tone}>Sandbox {s}</StatusDot>;
+  // (FIX-025, D-158) A failed start is never shown as "starting" forever: the pill says failed and
+  // carries the reason as the title (tooltip); the Computer tab holds the full detail.
+  const title =
+    s === "failed" && (q.data.failure_message || q.data.failure_code)
+      ? `${q.data.failure_message ?? ""}${q.data.failure_code ? ` (${q.data.failure_code})` : ""}`.trim()
+      : undefined;
+  const label = s === "starting" ? "Sandbox starting" : `Sandbox ${s}`;
+  return (
+    <StatusDot tone={tone} title={title}>
+      {label}
+    </StatusDot>
+  );
 }
 
 export function AgentPage() {

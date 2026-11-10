@@ -196,6 +196,52 @@ const ERROR_COPY: Record<string, ErrorCopy> = {
   turn_finished: { message: "That turn has already finished." },
   sandbox_failed: { message: "The agent's computer failed to start.", link: { label: "Open Computer tab", path: "computer" } },
   start_failed: { message: "The agent's computer failed to start.", link: { label: "Open Computer tab", path: "computer" } },
+  // (FIX-025, D-158) Sandbox start failures: the server message carries the specific reason.
+  sandbox_start_failed: {
+    message: "The agent's computer did not start in time.",
+    link: { label: "Open Computer tab", path: "computer" },
+    showServerMessage: true,
+  },
+  supervisor_unreachable: {
+    message: "The agent's computer started but could not reach Aurora.",
+    link: { label: "Open Computer tab", path: "computer" },
+    showServerMessage: true,
+  },
+  supervisor_boot_failed: {
+    message: "The agent's computer started but its agent runtime did not boot.",
+    link: { label: "Open Computer tab", path: "computer" },
+    showServerMessage: true,
+  },
+  runner_unavailable: {
+    message: "No runner is connected, so the agent's computer cannot start.",
+    link: { label: "Open Computer tab", path: "computer" },
+    showServerMessage: true,
+  },
+  pod_refused: {
+    message: "The cluster refused to create the agent's computer.",
+    link: { label: "Open Computer tab", path: "computer" },
+    showServerMessage: true,
+  },
+  pod_failed: {
+    message: "The agent's computer ended while it was starting.",
+    link: { label: "Open Computer tab", path: "computer" },
+    showServerMessage: true,
+  },
+  home_volume_unbound: {
+    message: "The agent's computer's home volume could not be attached.",
+    link: { label: "Open Computer tab", path: "computer" },
+    showServerMessage: true,
+  },
+  image_unavailable: {
+    message: "The agent's computer's image could not be pulled.",
+    link: { label: "Open Computer tab", path: "computer" },
+    showServerMessage: true,
+  },
+  harness_unsupported: {
+    message: "The agent's computer image does not support this agent's harness.",
+    link: { label: "Open Computer tab", path: "computer" },
+    showServerMessage: true,
+  },
 };
 
 /** Known code → copy (+ deep link); unknown → generic. */

@@ -426,6 +426,9 @@ pub struct HostedSection {
     pub background_cap_secs: u64,
     pub turn_ceiling_secs: u64,
     pub turn_stall_secs: u64,
+    /// (FIX-025, D-158) End-to-end bound from "a turn needs a sandbox" to "the supervisor is
+    /// ready" (the runner's capacity wait counts inside it). 60–1800, default 300.
+    pub sandbox_ready_timeout_secs: u64,
 }
 impl Default for HostedSection {
     fn default() -> Self {
@@ -439,6 +442,7 @@ impl Default for HostedSection {
             background_cap_secs: 12 * 3600,
             turn_ceiling_secs: 6 * 3600,
             turn_stall_secs: 10 * 60,
+            sandbox_ready_timeout_secs: 300,
         }
     }
 }

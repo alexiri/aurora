@@ -29,6 +29,8 @@ pub const CONTAINER_NAME: &str = "sandbox";
 /// Hostnames the boot document uses for the platform services (`11 §The boot document`).
 pub const GATEWAY_HOST: &str = "aurora-gateway";
 pub const RUNNER_HOST: &str = "aurora-runner";
+/// The runner's supervisor port the sandbox connects to (decision I-07).
+pub const SUPERVISOR_PORT: u16 = 4105;
 const TMP_SIZE: &str = "512Mi";
 const RUN_SIZE: &str = "16Mi";
 const DNS_LABEL_MAX: usize = 63;

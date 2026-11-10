@@ -487,6 +487,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/runners/{id}/start-failures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent start failures of a runner (instance administrators; FIX-025, C-586). */
+        get: operations["adminRunnerStartFailures"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/runners/{id}/token": {
         parameters: {
             query?: never;
@@ -7933,6 +7950,33 @@ export interface components {
         RunnerList: {
             items: components["schemas"]["RunnerSummary"][];
         };
+        /** @description (FIX-025, C-586) A start failure a runner reported or the API's readiness deadline recorded. */
+        RunnerStartFailure: {
+            /** Format: uuid */
+            agent_id: string;
+            /** @description The failure code (`10 §Failure semantics`; e.g. `supervisor_unreachable`). */
+            code: string;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: int32
+             * @description Seconds the attempt ran before it failed.
+             */
+            elapsed_secs?: number | null;
+            /** @description Warning events of the pod / home claim, newest first. */
+            events: string[];
+            /** Format: uuid */
+            id: string;
+            /** @description Human reason, sanitised (never a secret). */
+            message: string;
+            /** @description The start attempt's last phase. */
+            phase?: string | null;
+            /** Format: uuid */
+            sandbox_id: string;
+        };
+        RunnerStartFailures: {
+            items: components["schemas"]["RunnerStartFailure"][];
+        };
         RunnerSummary: {
             backend?: string | null;
             /** @description Declared capabilities (opaque JSON), `null` until the first registration. */
@@ -7975,6 +8019,28 @@ export interface components {
             started_at?: string | null;
             state: string;
         };
+        /** @description (FIX-025, C-584) One start attempt of the agent's computer (Computer tab). */
+        SandboxStartAttempt: {
+            /** @description The phase's detail as the runner reported it (sanitised; e.g. the scheduler's message). */
+            detail?: string | null;
+            /** @description Warning events of the pod and the home claim, newest first. */
+            events: string[];
+            /**
+             * @description Last phase the runner reported (`claimed`, `waiting_capacity`, `provisioning`,
+             *     `scheduling`, `creating`, `booting`, `ready`…).
+             */
+            phase?: string | null;
+            /**
+             * Format: date-time
+             * @description When the runner last reported progress.
+             */
+            progress_at?: string | null;
+            /**
+             * Format: date-time
+             * @description When the API claimed the start (the attempt's clock origin).
+             */
+            started_at: string;
+        };
         SandboxView: {
             /** Format: uuid */
             agent_id: string;
@@ -7989,6 +8055,7 @@ export interface components {
             restart_to_update: boolean;
             /** Format: uuid */
             runner_id?: string | null;
+            start_attempt?: null | components["schemas"]["SandboxStartAttempt"];
             /** Format: date-time */
             started_at?: string | null;
             /** @description unprovisioned | starting | running | stopping | stopped | failed */
@@ -10268,6 +10335,44 @@ export interface operations {
                 };
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminRunnerStartFailures: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Runner id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerStartFailures"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

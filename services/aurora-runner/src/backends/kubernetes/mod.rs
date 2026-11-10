@@ -13,7 +13,7 @@ use aurora_protocol::runner::{
     HarnessId, HomeDurability, Observed, Range, ResourceRanges, RunnerCapabilities,
 };
 use chrono::{DateTime, Utc};
-use k8s_openapi::api::core::v1::{PersistentVolumeClaim, Pod, Secret, Service, Toleration};
+use k8s_openapi::api::core::v1::{Event, PersistentVolumeClaim, Pod, Secret, Service, Toleration};
 use kube::api::{DeleteParams, ListParams, PostParams};
 use kube::{Api, Client, ResourceExt};
 use uuid::Uuid;
@@ -29,7 +29,7 @@ pub use objects::{
     PodConfig, boot_labels, boot_secret, boot_short, container_env, home_pvc, is_dns_label,
     pod_name, pod_spec, sanitize_dns, secret_name,
 };
-pub use status::{PodState, classify};
+pub use status::{PodState, classify, pending_progress, waits_for_unbound_pvc};
 
 use objects::{LABEL_CREATED, LABEL_POD};
 
@@ -152,6 +152,25 @@ fn is_quota(e: &kube::Error) -> bool {
     matches!(e, kube::Error::Api(s) if s.code == 403 && s.message.contains("exceeded quota"))
 }
 
+/// (FIX-025, C-581) A create the API server refused at admission or validation (Pod Security,
+/// LimitRange, quota other than the capacity case, RBAC, invalid spec) becomes `Refused` with the
+/// server's own message; anything else stays `Other`.
+fn refused(what: &str, e: kube::Error) -> BackendError {
+    match &e {
+        kube::Error::Api(s) if matches!(s.code, 400 | 401 | 403 | 422) => {
+            BackendError::Refused(format!(
+                "the Kubernetes API refused to create the {what} ({} {}): {}",
+                s.code, s.reason, s.message
+            ))
+        }
+        _ => other(e),
+    }
+}
+
+/// Hint appended to `home_volume_unbound`.
+const STORAGE_CLASS_HINT: &str = "set runner.k8s.storageClass (Helm runner.k8s.storageClass) to an \
+    existing StorageClass or mark one as the cluster default";
+
 /// `Ok(())` for success or "already gone".
 fn ignore_missing<T>(r: Result<T, kube::Error>) -> Result<(), BackendError> {
     match r {
@@ -265,6 +284,79 @@ impl KubernetesBackend {
     fn services(&self) -> Api<Service> {
         Api::namespaced(self.client.clone(), &self.s.core_namespace)
     }
+    fn events(&self) -> Api<Event> {
+        Api::namespaced(self.client.clone(), &self.s.namespace)
+    }
+
+    /// (FIX-025, C-580) `Warning` events of one object in the sandbox namespace, newest first, as
+    /// `Reason: message`. A listing error (e.g. RBAC without `events`) yields none: diagnostics
+    /// never fail a start.
+    async fn warning_events(&self, kind: &str, name: &str) -> Vec<String> {
+        let fields = format!("involvedObject.kind={kind},involvedObject.name={name},type=Warning");
+        let list = match self
+            .events()
+            .list(&ListParams::default().fields(&fields))
+            .await
+        {
+            Ok(l) => l.items,
+            Err(e) => {
+                tracing::debug!(error = %e, kind, name, "cannot list events");
+                return Vec::new();
+            }
+        };
+        let mut items: Vec<(i64, String)> = list
+            .into_iter()
+            .filter(|e| e.type_.as_deref().is_none_or(|t| t == "Warning"))
+            .map(|e| {
+                let at = e
+                    .last_timestamp
+                    .as_ref()
+                    .map(|t| t.0.as_second())
+                    .or_else(|| e.event_time.as_ref().map(|t| t.0.as_second()))
+                    .or_else(|| {
+                        e.metadata
+                            .creation_timestamp
+                            .as_ref()
+                            .map(|t| t.0.as_second())
+                    })
+                    .unwrap_or(0);
+                let reason = e.reason.unwrap_or_default();
+                let msg = e.message.unwrap_or_default();
+                (at, format!("{reason}: {msg}"))
+            })
+            .collect();
+        items.sort_by_key(|a| std::cmp::Reverse(a.0));
+        let mut out: Vec<String> = Vec::new();
+        for (_, line) in items {
+            if !out.contains(&line) {
+                out.push(line);
+            }
+        }
+        out
+    }
+
+    /// (FIX-025) The home PVC is unbound and will not bind by waiting: `Some(reason)`.
+    /// A Pending claim with a `FailedBinding` or `ProvisioningFailed` warning qualifies; one still
+    /// provisioning (no warning yet) does not.
+    async fn unbound_home(&self, home: &str) -> Option<String> {
+        let pvc = self.pvcs().get_opt(home).await.ok().flatten()?;
+        let pending = pvc
+            .status
+            .as_ref()
+            .and_then(|s| s.phase.as_deref())
+            .is_none_or(|p| p == "Pending");
+        if !pending {
+            return None;
+        }
+        let ev = self
+            .warning_events("PersistentVolumeClaim", home)
+            .await
+            .into_iter()
+            .find(|e| e.starts_with("FailedBinding:") || e.starts_with("ProvisioningFailed:"))?;
+        Some(format!(
+            "the sandbox home volume `{home}` cannot be bound: {ev}; {STORAGE_CLASS_HINT}"
+        ))
+    }
 
     async fn cluster_ip(&self, name: &str) -> Result<String, BackendError> {
         let svc = self.services().get(name).await.map_err(|e| {
@@ -356,6 +448,55 @@ impl KubernetesBackend {
         }
     }
 
+    /// (FIX-025) A PVC's storage class is immutable. When the operator configured
+    /// `runner.k8s.storageClass` after a home claim was created without it (or with another one)
+    /// and that claim **never bound** (phase `Pending`, no volume: it holds no data), the claim
+    /// is deleted and recreated with the configured class. A bound claim is never touched.
+    async fn replace_unbound_home(
+        &self,
+        want: &PersistentVolumeClaim,
+        name: &str,
+    ) -> Result<(), BackendError> {
+        let Some(wanted_class) = self.s.pod.storage_class.as_deref() else {
+            return Ok(());
+        };
+        let Some(have) = self.pvcs().get_opt(name).await.map_err(other)? else {
+            return Ok(());
+        };
+        let spec = have.spec.as_ref();
+        let class = spec.and_then(|s| s.storage_class_name.as_deref());
+        let never_bound = spec.and_then(|s| s.volume_name.as_deref()).is_none()
+            && have
+                .status
+                .as_ref()
+                .and_then(|s| s.phase.as_deref())
+                .is_none_or(|p| p == "Pending");
+        if class == Some(wanted_class) || !never_bound {
+            return Ok(());
+        }
+        tracing::info!(
+            pvc = name,
+            from = class.unwrap_or(""),
+            to = wanted_class,
+            "recreating a never-bound home volume claim with the configured storage class"
+        );
+        ignore_missing(self.pvcs().delete(name, &DeleteParams::default()).await)?;
+        let deadline = tokio::time::Instant::now() + STALE_WAIT;
+        while self.pvcs().get_opt(name).await.map_err(other)?.is_some() {
+            if tokio::time::Instant::now() >= deadline {
+                return Err(other(format!(
+                    "the home volume claim `{name}` is still being deleted"
+                )));
+            }
+            tokio::time::sleep(self.s.poll).await;
+        }
+        self.pvcs()
+            .create(&PostParams::default(), want)
+            .await
+            .map(|_| ())
+            .map_err(|e| refused("home volume claim", e))
+    }
+
     /// Creates the Pod, waiting while the namespace is at its limits.
     async fn create_pod(
         &self,
@@ -377,7 +518,7 @@ impl KubernetesBackend {
                         return Ok(());
                     }
                     Err(e) if is_quota(&e) => cap.blocked(hold, "namespace quota exceeded")?,
-                    Err(e) => return Err(other(e)),
+                    Err(e) => return Err(refused("sandbox pod", e)),
                 }
             }
             tokio::time::sleep(self.s.poll).await;
@@ -388,6 +529,7 @@ impl KubernetesBackend {
     async fn await_running(
         &self,
         name: &str,
+        home: &str,
         hold: &dyn HoldCallback,
         cap: &mut CapacityWait,
     ) -> Result<ContainerRef, BackendError> {
@@ -400,19 +542,44 @@ impl KubernetesBackend {
             };
             match classify(&pod) {
                 PodState::Running => break Ok(()),
-                PodState::ImageError(m) => break Err(BackendError::ImageUnavailable(m)),
+                PodState::ImageError(m) => {
+                    let image = pod
+                        .spec
+                        .as_ref()
+                        .and_then(|s| s.containers.first())
+                        .and_then(|c| c.image.clone())
+                        .unwrap_or_default();
+                    break Err(BackendError::ImageUnavailable(format!("`{image}`: {m}")));
+                }
                 PodState::Terminated(m) => {
-                    break Err(other(format!("pod ended while starting: {m}")));
+                    break Err(BackendError::Terminated(format!(
+                        "the sandbox pod ended while starting: {m}"
+                    )));
+                }
+                // (FIX-025) An unbound home volume is a configuration error, not capacity: fail
+                // fast with the claim's own event once it has one.
+                PodState::Unschedulable(m) if waits_for_unbound_pvc(&m) => {
+                    cap.unblocked();
+                    if let Some(why) = self.unbound_home(home).await {
+                        break Err(BackendError::HomeVolumeUnbound(why));
+                    }
+                    hold.progress("scheduling", &format!("waiting for the home volume: {m}"));
                 }
                 PodState::Unschedulable(m) => {
+                    hold.progress("waiting_capacity", &format!("pod unschedulable: {m}"));
                     if let Err(e) = cap.blocked(hold, &format!("pod unschedulable: {m}")) {
                         break Err(e);
                     }
                 }
                 PodState::Pending => {
                     cap.unblocked();
+                    let (phase, detail) = pending_progress(&pod);
+                    hold.progress(phase, &detail);
                     if started.elapsed() >= self.s.start_timeout {
-                        break Err(other("pod did not start in time"));
+                        break Err(BackendError::StartTimeout(format!(
+                            "the sandbox pod did not start within {} s ({detail})",
+                            self.s.start_timeout.as_secs()
+                        )));
                     }
                 }
             }
@@ -476,8 +643,8 @@ impl Backend for KubernetesBackend {
         let pvc = home_pvc(&self.s.pod, sandbox_id, home_ref, home_gib, Utc::now());
         match self.pvcs().create(&PostParams::default(), &pvc).await {
             Ok(_) => Ok(()),
-            Err(e) if code(&e) == Some(409) => Ok(()),
-            Err(e) => Err(other(e)),
+            Err(e) if code(&e) == Some(409) => self.replace_unbound_home(&pvc, home_ref).await,
+            Err(e) => Err(refused("home volume claim", e)),
         }
     }
 
@@ -513,8 +680,9 @@ impl Backend for KubernetesBackend {
         self.delete_secrets(&sandbox, Some(&keep)).await?;
 
         let mut cap = CapacityWait::new(self.s.capacity_wait);
+        let home = req.spec.home_ref.as_str();
         if let Some(name) = existing {
-            return self.await_running(&name, hold, &mut cap).await;
+            return self.await_running(&name, home, hold, &mut cap).await;
         }
 
         self.provision_home(req.sandbox_id, &req.spec.home_ref, req.spec.home_gib)
@@ -532,7 +700,31 @@ impl Backend for KubernetesBackend {
                 .await;
             return Err(e);
         }
-        self.await_running(&name, hold, &mut cap).await
+        self.await_running(&name, home, hold, &mut cap).await
+    }
+
+    async fn start_events(&self, req: &StartRequest) -> Vec<String> {
+        let pod = pod_name(&objects::handle_for(req), req.boot_id);
+        let mut out = self.warning_events("Pod", &pod).await;
+        for e in self
+            .warning_events("PersistentVolumeClaim", &req.spec.home_ref)
+            .await
+        {
+            if !out.contains(&e) {
+                out.push(e);
+            }
+        }
+        out
+    }
+
+    async fn supervisor_endpoint(&self) -> Option<String> {
+        let ip = self.cluster_ip(&self.s.runner_service).await.ok()?;
+        Some(format!(
+            "{}.{} ({ip}):{}",
+            self.s.runner_service,
+            self.s.core_namespace,
+            objects::SUPERVISOR_PORT
+        ))
     }
 
     async fn stop(&self, container: &ContainerRef, grace: Duration) -> Result<(), BackendError> {

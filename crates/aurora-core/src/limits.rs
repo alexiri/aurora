@@ -150,6 +150,11 @@ pub const PROCESS_TAIL: usize = 4 * KIB;
 pub const WATCH_PATTERN_MAX: usize = 256;
 pub const RUNNER_POLL_WAIT: Duration = Duration::from_secs(25);
 pub const REPLICA_ONLINE_THRESHOLD: Duration = Duration::from_secs(90);
+/// (FIX-025, D-158) A sandbox the runner reported running whose supervisor has not connected
+/// within this fails with `supervisor_unreachable`.
+pub const RUNNER_SUPERVISOR_HELLO: Duration = Duration::from_secs(60);
+/// (FIX-025) How often each API replica runs the sandbox readiness sweep.
+pub const SANDBOX_READINESS_SWEEP: Duration = Duration::from_secs(10);
 /// (P4-MCON) A connector host not seen for this long leaves the catalogue and `host_running`.
 pub const CONNECTOR_HOST_STALE: Duration = Duration::from_secs(90);
 /// (P4-MCON) Connector host rows older than this are pruned.

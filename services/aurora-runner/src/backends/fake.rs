@@ -38,6 +38,7 @@ struct State {
     stop_delay: Duration,
     active: HashMap<Uuid, usize>,
     max_active: HashMap<Uuid, usize>,
+    events: Vec<String>,
 }
 
 pub struct FakeBackend {
@@ -102,6 +103,11 @@ impl FakeBackend {
     /// The next `start` calls the hold callback, then waits `d` before proceeding.
     pub fn hold_next_start(&self, d: Duration) {
         self.with(|s| s.hold_next = Some(d));
+    }
+
+    /// (FIX-025) Warning events `start_events` returns.
+    pub fn set_start_events(&self, events: Vec<String>) {
+        self.with(|s| s.events = events);
     }
 
     /// Simulate a container exiting on its own.
@@ -193,6 +199,7 @@ impl Backend for FakeBackend {
             tokio::time::sleep(d).await;
         }
         if !delay.is_zero() {
+            hold.progress("pending", "fake start in progress");
             tokio::time::sleep(delay).await;
         }
         if let Some(e) = fail {
@@ -227,6 +234,14 @@ impl Backend for FakeBackend {
             );
             Ok(ContainerRef(reference))
         })
+    }
+
+    async fn start_events(&self, _req: &StartRequest) -> Vec<String> {
+        self.with(|s| s.events.clone())
+    }
+
+    async fn supervisor_endpoint(&self) -> Option<String> {
+        Some("fake-runner (127.0.0.1):4105".into())
     }
 
     async fn stop(&self, container: &ContainerRef, _grace: Duration) -> Result<(), BackendError> {

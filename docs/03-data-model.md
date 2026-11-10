@@ -1555,6 +1555,34 @@ their share, user or dashboard session goes; the `sessions` retention job's dele
 (`11 §Port previews`). The home-sync desired generation (`12 §Sync protocol`) already moves with
 the agent's own generation; a share change bumps `agents.home_sync_generation`.
 
+#### `sandboxes` (start diagnostics; phase 4, FIX-025, D-158, C-582)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| start_attempt_at | timestamptz null | when the current (or last) start attempt was claimed; the attempt's clock origin | 4 (FIX-025) |
+| start_phase | text null | the last phase the runner reported (`claimed`, `waiting_capacity`, `provisioning`, `scheduling`, `creating`, `booting`, `ready`) | 4 (FIX-025) |
+| start_detail | text null | the phase's detail as the runner reported it (sanitised) | 4 (FIX-025) |
+| start_events | jsonb not null default `'[]'` | the pod's Warning events (bounded, newest first) | 4 (FIX-025) |
+| start_progress_at | timestamptz null | when the runner last reported progress | 4 (FIX-025) |
+| running_at | timestamptz null | when the runner reported `running` for the current boot | 4 (FIX-025) |
+
+Reset by every new boot. A start failure also writes a `sandbox_start_failures` row (below).
+
+#### `sandbox_start_failures` (new table; per-runner start failures for Admin › Runners; phase 4, FIX-025, D-158, C-587)
+| Planned column | Type | Notes | Phase |
+|---|---|---|---|
+| id | uuid pk | | 4 (FIX-025) |
+| runner_id | uuid null FK→runners (cascade) | null only for a legacy row (the runner is recorded on every write) | 4 (FIX-025) |
+| sandbox_id | uuid not null FK→sandboxes (cascade) | | 4 (FIX-025) |
+| agent_id | uuid not null | denormalized for the admin list | 4 (FIX-025) |
+| boot_id | uuid null | the attempt's boot | 4 (FIX-025) |
+| code | text not null | a start-failure code (`10 §Failure semantics`, C-581) | 4 (FIX-025) |
+| message | text not null | the human reason, sanitised at write time | 4 (FIX-025) |
+| phase | text null | the attempt's last phase | 4 (FIX-025) |
+| events | jsonb not null default `'[]'` | the pod's Warning events | 4 (FIX-025) |
+| elapsed_secs | int null | seconds the attempt ran before it failed | 4 (FIX-025) |
+| created_at | timestamptz not null default now() | rows older than 30 days are pruned on insert | 4 (FIX-025) |
+| indexes | `(runner_id, created_at DESC)` | the admin list (`C-586`) | 4 (FIX-025) |
+
 #### `agents`, `conversations` (harness selection)
 | Planned column | Type | Notes | Phase |
 |---|---|---|---|

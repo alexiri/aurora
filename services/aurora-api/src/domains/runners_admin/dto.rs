@@ -52,3 +52,27 @@ pub struct RunnerWithToken {
     /// `aur_…`, shown once.
     pub token: String,
 }
+
+/// (FIX-025, C-586) A start failure a runner reported or the API's readiness deadline recorded.
+#[derive(Serialize, ToSchema)]
+pub struct RunnerStartFailure {
+    pub id: Uuid,
+    pub sandbox_id: Uuid,
+    pub agent_id: Uuid,
+    /// The failure code (`10 §Failure semantics`; e.g. `supervisor_unreachable`).
+    pub code: String,
+    /// Human reason, sanitised (never a secret).
+    pub message: String,
+    /// The start attempt's last phase.
+    pub phase: Option<String>,
+    /// Warning events of the pod / home claim, newest first.
+    pub events: Vec<String>,
+    /// Seconds the attempt ran before it failed.
+    pub elapsed_secs: Option<i32>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct RunnerStartFailures {
+    pub items: Vec<RunnerStartFailure>,
+}

@@ -11,7 +11,7 @@ use aurora_protocol::runner::{
 };
 use aurora_runner::api::{ApiClient, RetryPolicy};
 use aurora_runner::backend::{
-    BackendError, LABEL_INSTALLATION, LABEL_RUNNER, ManagedObject, ObjectKind,
+    Backend, BackendError, LABEL_INSTALLATION, LABEL_RUNNER, ManagedObject, ObjectKind,
 };
 use aurora_runner::backends::fake::FakeBackend;
 use aurora_runner::executor::{Executor, ExecutorSettings};
@@ -57,6 +57,7 @@ fn settings(url: &str) -> RunnerSettings {
             max_concurrency: 4,
             shutdown_flush: Duration::from_millis(100),
             image: None,
+            ..ExecutorSettings::default()
         },
         drain_timeout: Duration::from_secs(5),
         min_empty_poll: Duration::from_millis(20),
@@ -96,6 +97,7 @@ fn start_item(sandbox: Uuid, boot: Uuid) -> WorkItem {
                 },
                 labels: Default::default(),
             },
+            start_timeout_secs: None,
         }),
     }
 }
@@ -181,7 +183,8 @@ async fn mount_full(
         .await;
 }
 
-async fn posted_reports(server: &MockServer) -> Vec<aurora_protocol::runner::Report> {
+/// Every posted report, `starting` progress reports included (FIX-025).
+async fn all_reports(server: &MockServer) -> Vec<aurora_protocol::runner::Report> {
     server
         .received_requests()
         .await
@@ -192,6 +195,17 @@ async fn posted_reports(server: &MockServer) -> Vec<aurora_protocol::runner::Rep
             serde_json::from_slice::<ReportsRequest>(&r.body)
                 .unwrap()
                 .reports
+        })
+        .collect()
+}
+
+/// Posted reports without the `starting` progress heartbeats (FIX-025, C-580).
+async fn posted_reports(server: &MockServer) -> Vec<aurora_protocol::runner::Report> {
+    all_reports(server)
+        .await
+        .into_iter()
+        .filter(|r| {
+            !matches!(&r.body, ReportBody::SandboxStatus(s) if s.state == SandboxState::Starting)
         })
         .collect()
 }
@@ -331,6 +345,165 @@ async fn failed_start_maps_reason_codes_and_hold_is_reported() {
     }
     tx.send(true).unwrap();
     task.await.unwrap().unwrap();
+}
+
+fn start_item_bounded(sandbox: Uuid, boot: Uuid, secs: u32) -> WorkItem {
+    let mut item = start_item(sandbox, boot);
+    if let WorkItemBody::SandboxStart(s) = &mut item.body {
+        s.start_timeout_secs = Some(secs);
+    }
+    item
+}
+
+/// (FIX-025, D-158) A start that takes longer than the old 300 s API lease keeps the lease alive:
+/// while it runs the runner sends `starting` progress reports (phase + detail) at least every
+/// `progress_every`, all for the same boot, then `running` with the supervisor endpoint.
+#[tokio::test]
+async fn slow_start_sends_lease_renewing_progress_until_running() {
+    let server = MockServer::start().await;
+    let (sandbox, boot) = (Uuid::new_v4(), Uuid::new_v4());
+    mount_basics(
+        &server,
+        Uuid::new_v4(),
+        ReportStatus::Applied,
+        vec![vec![start_item_bounded(sandbox, boot, 30)]],
+    )
+    .await;
+    let backend = Arc::new(FakeBackend::new(4));
+    backend.set_delays(Duration::from_millis(900), Duration::ZERO);
+    let mut st = settings(&server.uri());
+    st.executor.progress_every = Duration::from_millis(100);
+    let (tx, rx) = watch::channel(false);
+    let task = tokio::spawn(Runner::new(st, backend, Arc::new(StubHub::default())).run(rx));
+    wait_reports(&server, 1).await;
+    let all = all_reports(&server).await;
+    let progress: Vec<_> = all
+        .iter()
+        .filter_map(|r| match &r.body {
+            ReportBody::SandboxStatus(s) if s.state == SandboxState::Starting => Some((
+                r.boot_id,
+                s.reason_code.as_ref().map(|c| c.as_str().to_owned()),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        progress.len() >= 5,
+        "heartbeats while starting: {progress:?}"
+    );
+    assert!(progress.iter().all(|(b, _)| *b == boot));
+    let phases: Vec<_> = progress.iter().filter_map(|(_, p)| p.clone()).collect();
+    assert_eq!(phases.first().map(String::as_str), Some("queued"));
+    assert!(phases.iter().any(|p| p == "pending"), "{phases:?}");
+    match &posted_reports(&server).await[0].body {
+        ReportBody::SandboxStatus(s) => {
+            assert_eq!(s.state, SandboxState::Running);
+            assert!(s.message.as_deref().unwrap().contains(":4105"));
+        }
+        _ => panic!(),
+    }
+    tx.send(true).unwrap();
+    task.await.unwrap().unwrap();
+}
+
+/// (FIX-025, D-158) A start past its bound fails with `sandbox_start_failed`, naming the last
+/// phase, carries the substrate's warning events (bounded, credentials masked), and leaves no
+/// container behind.
+#[tokio::test]
+async fn start_past_its_bound_fails_with_the_last_phase_and_events() {
+    let server = MockServer::start().await;
+    let (sandbox, boot) = (Uuid::new_v4(), Uuid::new_v4());
+    mount_basics(
+        &server,
+        Uuid::new_v4(),
+        ReportStatus::Applied,
+        vec![vec![start_item_bounded(sandbox, boot, 1)]],
+    )
+    .await;
+    let backend = Arc::new(FakeBackend::new(4));
+    backend.set_delays(Duration::from_secs(5), Duration::ZERO);
+    let mut events: Vec<String> = (0..8).map(|i| format!("FailedMount {i}")).collect();
+    events[0] = format!(
+        "Failed to pull https://u:hunter2@reg.example/x {}",
+        "y".repeat(400)
+    );
+    backend.set_start_events(events);
+    let (tx, rx) = watch::channel(false);
+    let task = tokio::spawn(
+        Runner::new(
+            settings(&server.uri()),
+            backend.clone(),
+            Arc::new(StubHub::default()),
+        )
+        .run(rx),
+    );
+    let reports = wait_reports(&server, 1).await;
+    match &reports[0].body {
+        ReportBody::SandboxStatus(s) => {
+            assert_eq!(s.state, SandboxState::Failed);
+            assert_eq!(
+                s.reason_code.as_ref().unwrap().as_str(),
+                "sandbox_start_failed"
+            );
+            let m = s.message.as_deref().unwrap();
+            assert!(m.contains("within 1 s") && m.contains("pending"), "{m}");
+            assert_eq!(s.events.len(), aurora_protocol::runner::MAX_STATUS_EVENTS);
+            assert!(
+                s.events
+                    .iter()
+                    .all(|e| e.chars().count() <= aurora_protocol::runner::MAX_STATUS_EVENT_CHARS)
+            );
+            assert!(!s.events[0].contains("hunter2"));
+        }
+        _ => panic!(),
+    }
+    assert!(backend.inspect(sandbox).await.unwrap().is_none());
+    tx.send(true).unwrap();
+    task.await.unwrap().unwrap();
+}
+
+/// (FIX-025, C-581) Refused pod creation and a pod that ended while starting map to their codes.
+#[tokio::test]
+async fn refused_and_terminated_starts_map_to_their_reason_codes() {
+    for (err, code) in [
+        (
+            BackendError::Refused(
+                "pod creation refused (403 Forbidden): violates PodSecurity".into(),
+            ),
+            "pod_refused",
+        ),
+        (
+            BackendError::Terminated("pod ended while starting: exit code 1 (Error)".into()),
+            "pod_failed",
+        ),
+    ] {
+        let server = MockServer::start().await;
+        let (sandbox, boot) = (Uuid::new_v4(), Uuid::new_v4());
+        mount_basics(
+            &server,
+            Uuid::new_v4(),
+            ReportStatus::Applied,
+            vec![vec![start_item(sandbox, boot)]],
+        )
+        .await;
+        let backend = Arc::new(FakeBackend::new(4));
+        backend.fail_next_start(err);
+        let (tx, rx) = watch::channel(false);
+        let task = tokio::spawn(
+            Runner::new(
+                settings(&server.uri()),
+                backend,
+                Arc::new(StubHub::default()),
+            )
+            .run(rx),
+        );
+        let reports = wait_reports(&server, 1).await;
+        assert!(matches!(&reports[0].body,
+            ReportBody::SandboxStatus(s) if s.state == SandboxState::Failed
+                && s.reason_code.as_ref().map(|c| c.as_str()) == Some(code)));
+        tx.send(true).unwrap();
+        task.await.unwrap().unwrap();
+    }
 }
 
 #[tokio::test]

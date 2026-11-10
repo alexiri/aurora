@@ -2185,6 +2185,64 @@
         ]
       }
     },
+    "/v1/admin/runners/{id}/start-failures": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Recent start failures of a runner (instance administrators; FIX-025, C-586).",
+        "operationId": "adminRunnerStartFailures",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Runner id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerStartFailures"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/runners/{id}/token": {
       "post": {
         "tags": [
@@ -33416,6 +33474,81 @@
           }
         }
       },
+      "RunnerStartFailure": {
+        "type": "object",
+        "description": "(FIX-025, C-586) A start failure a runner reported or the API's readiness deadline recorded.",
+        "required": [
+          "id",
+          "sandbox_id",
+          "agent_id",
+          "code",
+          "message",
+          "events",
+          "created_at"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "code": {
+            "type": "string",
+            "description": "The failure code (`10 §Failure semantics`; e.g. `supervisor_unreachable`)."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "elapsed_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Seconds the attempt ran before it failed."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Warning events of the pod / home claim, newest first."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human reason, sanitised (never a secret)."
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The start attempt's last phase."
+          },
+          "sandbox_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "RunnerStartFailures": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunnerStartFailure"
+            }
+          }
+        }
+      },
       "RunnerSummary": {
         "type": "object",
         "required": [
@@ -33554,6 +33687,50 @@
           }
         }
       },
+      "SandboxStartAttempt": {
+        "type": "object",
+        "description": "(FIX-025, C-584) One start attempt of the agent's computer (Computer tab).",
+        "required": [
+          "started_at",
+          "events"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The phase's detail as the runner reported it (sanitised; e.g. the scheduler's message)."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Warning events of the pod and the home claim, newest first."
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last phase the runner reported (`claimed`, `waiting_capacity`, `provisioning`,\n`scheduling`, `creating`, `booting`, `ready`…)."
+          },
+          "progress_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the runner last reported progress."
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the API claimed the start (the attempt's clock origin)."
+          }
+        }
+      },
       "SandboxView": {
         "type": "object",
         "required": [
@@ -33621,6 +33798,17 @@
               "null"
             ],
             "format": "uuid"
+          },
+          "start_attempt": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SandboxStartAttempt",
+                "description": "(FIX-025, C-584) The last start attempt, when there was one: when it was claimed, its last\nreported phase and detail, the pod's Warning events (bounded) and the runner's last\nprogress report. Reset by every new boot."
+              }
+            ]
           },
           "started_at": {
             "type": [

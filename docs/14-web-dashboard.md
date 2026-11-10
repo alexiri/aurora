@@ -230,6 +230,11 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
 - **Agent page**: header with a 44 px avatar, then name, `@handle`,
   kind/default badges and a sandbox-state pill on one wrapping line, with the
   header actions (Freeze) on the right; an underline tab strip below it.
+  (FIX-025, D-158) The pill never sits on "Sandbox starting" forever: while
+  starting it says "Sandbox starting" (with the live phase on the Computer
+  tab); on a failed start it reads "Sandbox failed" with the sanitised reason
+  (message and code) as the pill's tooltip, and the Computer tab holds the
+  full start attempt.
 - **Agent chat** (D-102, task P2-UI-5; mock-ups `Agent.html`, `AgentDark.html`,
   `AgentPhone.html`). The chat is a messaging layout. It is not a stack of
   cards, banners and button rows.
@@ -616,7 +621,14 @@ again" and "Show the getting-started guide again".
     because…" shows "Preview in use". No horizontal scroll at 390 px (rows collapse to cards, the
     URL wraps), both themes, tokens and primitives only.
   - **Computer** — sandbox state, "awake because…" reasons, processes,
-    restart; BYO agents instead show **Connect** (token regenerate, container
+    restart; (FIX-025, D-158, C-584) a **Last start attempt** section when the
+    sandbox has one: when it started, the last phase and detail the runner
+    reported (`claimed`, `waiting_capacity`, `provisioning`, `scheduling`,
+    `creating`, `booting`…), the elapsed time to the runner's last progress
+    report and the pod's Warning events (bounded, newest first) — so a start
+    that failed or hung is explained without kubectl. The failed state's
+    notice shows the human reason (`failure_message`) beside the code.
+    BYO agents instead show **Connect** (token regenerate, container
     config, `aurora run` snippet, CA download). (phase 2, RFE-025) The Connect
     tab shows the effective BYO posture (phase 3, RFE-013: the token's **expiry** and **last used** time, a "Stale" / "Expiring" badge, and a Regenerate call to action; agent lists carry the same badges for owners) and, when set, its source ('Disabled by
     organization'); regenerate is hidden for non-owners under `owners_only`; a
@@ -703,7 +715,12 @@ approved version; reject/disable/uninstall with orphan warnings), **Host
 claims** (conflicts and winners), **Trusted keys**, **Connectors** (provision,
 token rotation, manifest approval with capability/setup-field diff; (phase 4, P4-MCON) see
 below), **Runners**
-(provision, token, replicas, capacity), **Instances** (instance-wide app instances, D-74), **OAuth clients** (instance-level).
+(provision, token, replicas, capacity; FIX-025, D-158, C-586: each runner has a
+**Start failures** section listing the recent failures (30 days) with the time,
+code (`10 §Failure semantics`), sanitised human reason, the start attempt's last
+phase, the elapsed seconds and the pod's Warning events — so a production
+"Sandbox starting forever" incident is diagnosed from the dashboard, with the
+kubectl commands as the fallback in `15`/operator docs), **Instances** (instance-wide app instances, D-74), **OAuth clients** (instance-level).
 (phase 4, P4-PRV-2) a **Previews** line when `previews.enabled`: relay replicas
 (`GET /v1/admin/relays`), the domain, share count and a "no relay seen" warning.
 (phase 4, P4-ONB-1, D-140) **Sign-up & placement** (`04 §New-user placement`): sign-up

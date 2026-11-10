@@ -16,6 +16,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_runners, create_runner))
         .routes(routes!(delete_runner))
         .routes(routes!(rotate_runner_token))
+        .routes(routes!(runner_start_failures))
 }
 
 /// List runners with replicas and capacity (instance administrators).
@@ -72,4 +73,18 @@ async fn rotate_runner_token(
 ) -> Result<Json<RunnerWithToken>, ApiError> {
     let out = service::rotate(&s, id, &AuditActor::instance_admin(&c)).await?;
     Ok(Json(out))
+}
+
+/// Recent start failures of a runner (instance administrators; FIX-025, C-586).
+#[utoipa::path(get, path = "/admin/runners/{id}/start-failures", operation_id = "adminRunnerStartFailures", tag = "admin",
+    params(("id" = Uuid, Path, description = "Runner id")),
+    responses((status = 200, body = RunnerStartFailures), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn runner_start_failures(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<RunnerStartFailures>, ApiError> {
+    Ok(Json(service::start_failures(&s, id).await?))
 }

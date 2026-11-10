@@ -257,6 +257,22 @@ Sandbox states: `unprovisioned → starting → running → stopping → stopped
  sends `ready` (harness capabilities) → API emits the full home sync → turns
  dispatch once `home_applied_generation >= desired`.
 
+### Start readiness deadline (FIX-025, D-158, C-580)
+
+The whole path from step 1 to the `ready` of step 4 is bounded by
+`hosted.sandbox_ready_timeout_secs` (60–1800, default 300, `15`): the runner's
+capacity wait counts inside it. The API's readiness sweep (10 s interval,
+`services/aurora-api/src/domains/hosted/readiness.rs`) fails the attempt at the
+deadline with the code that names where it stopped (`10 §Failure semantics`):
+`runner_unavailable`, `pod_refused`, `pod_failed`, `home_volume_unbound`,
+`image_unavailable`, `supervisor_unreachable`, `supervisor_boot_failed`. Each
+failure ends the queued turns with a human, sanitised reason, shows on the
+Computer tab (`C-584`) and is recorded for Admin › Runners (C-586). Every
+attempt stamps `start_attempt_at` / `start_phase` / `start_detail` /
+`start_progress_at` as the runner reports progress; a new boot resets them.
+Automatic retries stop after 3 failures (`start_failures`); a message sent
+after the last failure retries once the backoff has passed.
+
 ### Keep-awake (single definition)
 
 A running sandbox is **kept awake** if any of:

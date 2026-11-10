@@ -49,9 +49,29 @@ pub struct SandboxView {
     pub keep_awake_reasons: Vec<String>,
     pub failure_code: Option<String>,
     pub failure_message: Option<String>,
+    /// (FIX-025, C-584) The last start attempt, when there was one: when it was claimed, its last
+    /// reported phase and detail, the pod's Warning events (bounded) and the runner's last
+    /// progress report. Reset by every new boot.
+    pub start_attempt: Option<SandboxStartAttempt>,
     pub processes: Vec<SandboxProcess>,
     pub ports: Vec<SandboxPort>,
     pub restart_to_update: bool,
+}
+
+/// (FIX-025, C-584) One start attempt of the agent's computer (Computer tab).
+#[derive(Serialize, ToSchema)]
+pub struct SandboxStartAttempt {
+    /// When the API claimed the start (the attempt's clock origin).
+    pub started_at: DateTime<Utc>,
+    /// Last phase the runner reported (`claimed`, `waiting_capacity`, `provisioning`,
+    /// `scheduling`, `creating`, `booting`, `ready`…).
+    pub phase: Option<String>,
+    /// The phase's detail as the runner reported it (sanitised; e.g. the scheduler's message).
+    pub detail: Option<String>,
+    /// Warning events of the pod and the home claim, newest first.
+    pub events: Vec<String>,
+    /// When the runner last reported progress.
+    pub progress_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, ToSchema)]

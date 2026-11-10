@@ -133,14 +133,10 @@ pub fn boot_refusal(reason_code: &str, message: &str) -> SupervisorToRunner {
         state: aurora_protocol::runner::SandboxState::Failed,
         container_ref: None,
         reason_code: Some(code(reason_code)),
-        message: Some(
-            message
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(500)
-                .collect(),
-        ),
+        // (FIX-025) one line, bounded, credentials masked.
+        message: Some(aurora_core::sanitize::reason(message, 500)),
         observed: None,
+        events: Vec::new(),
     })
 }
 
