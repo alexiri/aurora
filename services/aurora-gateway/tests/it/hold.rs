@@ -498,13 +498,15 @@ async fn status_of(pool: &sqlx::PgPool, id: Uuid) -> String {
 }
 
 pub(crate) async fn wait_status(pool: &sqlx::PgPool, id: Uuid, want: &str) {
+    let mut last = String::new();
     for _ in 0..100 {
-        if status_of(pool, id).await == want {
+        last = status_of(pool, id).await;
+        if last == want {
             return;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    panic!("status never became {want}");
+    panic!("status never became {want} (last seen: {last})");
 }
 
 #[tokio::test]

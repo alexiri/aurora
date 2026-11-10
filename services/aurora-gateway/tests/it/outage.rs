@@ -64,6 +64,10 @@ enum Mode {
     /// Established connections stay open but stop delivering in both directions (a dead TCP
     /// path that never closes); new connections stall.
     Blackhole,
+    /// A slow reconnect after a dirty loss: data on connections made before this mode is
+    /// swallowed (closes still pass), and each *new* connection is held this long before it is
+    /// connected through.
+    Delay(Duration),
 }
 
 /// Copies `r` to `w`; while the proxy is in `Blackhole` the bytes are read and discarded.
@@ -71,6 +75,7 @@ async fn pump(
     mut r: tokio::net::tcp::OwnedReadHalf,
     mut w: tokio::net::tcp::OwnedWriteHalf,
     st: Arc<FaultState>,
+    swallow_in_delay: bool,
 ) {
     let mut buf = vec![0u8; 16 * 1024];
     loop {
@@ -81,7 +86,8 @@ async fn pump(
             let _ = w.shutdown().await;
             return;
         }
-        if *st.mode.lock().unwrap() == Mode::Blackhole {
+        let mode = *st.mode.lock().unwrap();
+        if mode == Mode::Blackhole || (swallow_in_delay && matches!(mode, Mode::Delay(_))) {
             continue;
         }
         if w.write_all(&buf[..n]).await.is_err() {
@@ -132,11 +138,21 @@ impl Fault {
                         let _c = c;
                         std::future::pending::<()>().await;
                     }),
-                    Mode::Pass => tokio::spawn(async move {
+                    Mode::Pass | Mode::Delay(_) => tokio::spawn(async move {
+                        if let Mode::Delay(d) = mode {
+                            tokio::time::sleep(d).await;
+                        }
                         if let Ok(s) = TcpStream::connect(st.target).await {
                             let (cr, cw) = c.into_split();
                             let (sr, sw) = s.into_split();
-                            tokio::join!(pump(cr, sw, st.clone()), pump(sr, cw, st.clone()));
+                            // Connections made before a `Delay` swallow data while it lasts (so a
+                            // terminated backend's FATAL message never reaches the client, only
+                            // the close does); connections made during it are forwarded.
+                            let old = !matches!(mode, Mode::Delay(_));
+                            tokio::join!(
+                                pump(cr, sw, st.clone(), old),
+                                pump(sr, cw, st.clone(), old)
+                            );
                         }
                     }),
                 };
@@ -621,6 +637,10 @@ async fn start(o: Opts) -> Gw {
     g
 }
 
+/// `/stream` requests that reached the upstream (only `open_streams_survive_an_outage` makes
+/// them): the gateway has admitted and forwarded the request, so the stream is in flight.
+static STREAMS_STARTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 async fn upstream(
     req: Request<Incoming>,
 ) -> Result<
@@ -634,6 +654,7 @@ async fn upstream(
 > {
     use futures::StreamExt;
     if req.uri().path() == "/stream" {
+        STREAMS_STARTED.fetch_add(1, Ordering::SeqCst);
         let s = futures::stream::unfold(0u8, |i| async move {
             if i >= 5 {
                 return None;
@@ -1238,7 +1259,13 @@ async fn open_streams_survive_an_outage() {
     let g = Arc::new(start(Opts::default()).await);
     let g2 = g.clone();
     let t = tokio::spawn(async move { get(&g2, "/stream").await });
-    // Mid-stream.
+    // Mid-stream: wait until the request is admitted and streaming (not a fixed sleep: under
+    // load the identity lookup can still be in flight, and an outage then rightly refuses it),
+    // then let a chunk or two go by.
+    until("the stream to start", || {
+        STREAMS_STARTED.load(Ordering::SeqCst) > 0
+    })
+    .await;
     tokio::time::sleep(Duration::from_millis(500)).await;
     g.fault.set(Mode::Drop);
     let r = t.await.unwrap();
@@ -1647,6 +1674,96 @@ async fn listen_only_loss_keeps_caches_does_not_flap_within_the_grace_and_flushe
     .await;
 }
 
+/// SEC-54 / D-108 regression: a LISTEN connection that is lost while the reconnect is slow is
+/// always *seen* as lost by the hub (cancel-safe: the hub owns reconnection, sqlx's
+/// `eager_reconnect` is off), however the heartbeat ticks interleave. With eager reconnect the
+/// reconnect was awaited inside `try_recv`, a tick cancelled it, and the loss went unreported
+/// until two heartbeats were missed (or for ever, if the silent reconnect succeeded): no
+/// `listener_down`, no flush after resubscribing, no reconnect metric. The reconnect here takes
+/// 2.5 s against a 1 s heartbeat, so the ticks deterministically cancel an eager reconnect; the
+/// plain-loss path must report the loss well before a heartbeat-based detection (3 periods).
+/// (The reconnect *metric* is asserted by `metrics_and_the_state_change_log_line`, which owns
+/// the process-wide recorder.)
+#[tokio::test]
+async fn a_terminated_listener_is_seen_lost_even_when_the_reconnect_outlasts_the_heartbeat() {
+    let _s = SERIAL.read().await;
+    let g = start(Opts {
+        id_ttl: Duration::from_secs(30),
+        host_ttl: Duration::from_secs(30),
+        heartbeat: Duration::from_secs(1),
+        grace: Duration::from_millis(600),
+        ..Opts::default()
+    })
+    .await;
+    let rec = Arc::new(Rec::default());
+    *rec.hub.lock().unwrap() = Some(g.hub.clone());
+    g.hub.register(rec.clone());
+    assert_eq!(get(&g, "/plain").await.status, 200);
+    until("the listener", || {
+        g.hub.is_subscribed() && g.health.listener_connected()
+    })
+    .await;
+    rec.events.lock().unwrap().clear();
+
+    g.lfault.set(Mode::Delay(Duration::from_millis(2500)));
+    let t = std::time::Instant::now();
+    sqlx::query(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+         WHERE datname = current_database() AND query LIKE 'LISTEN%'",
+    )
+    .execute(g.db.pool())
+    .await
+    .unwrap();
+    // The loss is reported as a loss, not found later by missed heartbeats (about 2 s).
+    until("the loss to be reported", || !g.hub.is_connected()).await;
+    assert!(
+        t.elapsed() < Duration::from_millis(1500),
+        "loss reported only after {:?}",
+        t.elapsed()
+    );
+    assert!(!g.health.listener_connected());
+    assert!(
+        !g.hub.is_subscribed(),
+        "not subscribed while the reconnect is pending"
+    );
+
+    // An invalidation sent in the gap is missed, and honoured by the flush after resubscribing.
+    sqlx::query("UPDATE gateway_credentials SET revoked_at = now() WHERE agent_id = $1")
+        .bind(g.w.agent)
+        .execute(g.db.pool())
+        .await
+        .unwrap();
+    notify_agent(g.db.pool(), g.w.agent).await;
+    until("degraded after the grace", || {
+        g.health.state() == State::Degraded
+    })
+    .await;
+    let (st, body) = internal(&g, "/readyz", false).await;
+    assert_eq!((st, &body["reason"]), (200, &json!("listener_down")));
+
+    g.lfault.set(Mode::Pass);
+    until("the hub to reconnect", || {
+        g.hub.is_subscribed() && g.health.listener_connected()
+    })
+    .await;
+    until("ready", || g.health.state() == State::Ready).await;
+    assert!(
+        rec.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| e == "flush(subscribed=true)"),
+        "flushed after resubscribing: {:?}",
+        rec.events.lock().unwrap()
+    );
+    let r = get(&g, "/plain").await;
+    assert_eq!(
+        r.status, 407,
+        "the revocation sent in the gap is effective: {}",
+        r.body
+    );
+}
+
 /// A silently dead LISTEN path (the TCP connection stays open but delivers nothing) is detected
 /// by the heartbeat; a freeze sent during the gap is honoured by the flush after the reconnect
 /// and closes the live tunnel.
@@ -1819,11 +1936,17 @@ async fn metrics_and_the_state_change_log_line() {
     // Register the `gateway.state_change` callsite before the capturing subscriber exists. A
     // callsite first reached by *another* thread (a test outside this lock that trips a state
     // change) while the capturing subscriber is the only dispatcher is registered from that
-    // thread's own (absent) subscriber and stays disabled for ours; `set_default` below rebuilds
-    // the interest of every callsite that is already registered.
-    let warm = Health::new(|| true);
-    warm.report_db_error();
-    assert_eq!(warm.state(), State::Degraded);
+    // thread's own (absent) subscriber and stays disabled for ours; installing a dispatcher
+    // rebuilds the interest of every callsite that is already registered, over *all* registered
+    // dispatchers. With no dispatcher at all `tracing::warn!` short-circuits on the global max
+    // level and never registers its callsite, so the warm-up needs a (throwaway) dispatcher to
+    // register it for real; the capturing subscriber installed afterwards then rebuilds it.
+    {
+        let _warm_dispatch = tracing::subscriber::set_default(Capture(Captured::default()));
+        let warm = Health::new(|| true);
+        warm.report_db_error();
+        assert_eq!(warm.state(), State::Degraded);
+    }
     // This is the only test of the binary that installs the process-wide recorder.
     let handle = aurora_core::service::install_metrics("gateway-outage-test")
         .expect("the test process owns the metrics recorder");
