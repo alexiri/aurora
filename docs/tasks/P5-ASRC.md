@@ -78,10 +78,15 @@ permissions are never auto-activated on first sight, unlike `builtin`).
 
 ### Security posture (SEC-86, next free)
 
-- Manifest and package fetches: **https only**, no redirects, host must not be an IP literal or
+- Manifest and package fetches: **https only**, host must not be an IP literal or
   loopback/link-local, timeouts, manifest ≤ 1 MiB, package ≤ `PACKAGE_MAX` (20 MiB), digest
   checked before parse, fetches count against the API's existing outbound guard (`08 §Destination
-  guard`).
+  guard`). Redirects: the manifest URL is fetched without redirects (it is expected to be a raw
+  file), but **package URLs follow at most one redirect** (302 → the release/CDN host, e.g.
+  `github.com/…/releases/download/…` → `objects.githubusercontent.com`), still https, still
+  same-host-class (public), never to an IP literal or loopback — GitHub release assets and similar
+  CDNs redirect by design. The redirect target is not re-fetched through the outbound guard's
+  destination policy beyond that check; the digest check remains the integrity anchor.
 - A package that fails signature, digest or linter is stored as `invalid` with the reason; nothing
   partial survives.
 - The signature always verifies against the **manifest-published key** (via the `trusted_keys` row)
@@ -113,7 +118,11 @@ reports `check_failed`, never blocks the others.
 New **`docs/22-addon-repos.md`**: the repo manifest contract (fields, types, limits, versioning and
 compatibility rules), how signing works (ed25519, the existing `aurora-sig-v1` package signature —
 reference `09 §2`, do not restate), how `aurora plugin build` / `aurora plugin sign` produce the
-archives, which `plugin.yaml` fields matter for addons, update/polling semantics from the
+archives, **where archives are published and how the CI does it** (release assets in the addon
+repo's own GitHub releases — the recommended shape; a worked `release.yml` sketch covering
+build + verify on push, sign + publish on `v*` tags, secret handling, the no-overwrite rule, and
+why Actions run artifacts cannot serve as the manifest's `package` URL), which `plugin.yaml`
+fields matter for addons, update/polling semantics from the
 publisher's perspective, and a minimal worked example. Linked from `09 §10` (sources table) and the
 admin UI's Add dialog ("format documentation").
 

@@ -12,8 +12,9 @@ task.
 Create in `aurora-addons-cern`:
 
 - **`aurora-addons.yaml`** — the P5-ASRC repo manifest: repo info, `publisher: cern` (id
-  `[a-z][a-z0-9_-]{1,47}`), the repo's **ed25519 signing key** (a dedicated key for this repo,
-  private key kept by the owner, never committed), and the two addon entries below.
+  `[a-z][a-z0-9_-]{1,47}`), the repo's **ed25519 signing key** (a dedicated key for this repo;
+  the private half lives in a GitHub Actions secret in the `release` environment and the owner's
+  local copy — never committed), and the two addon entries below.
 - `README.md` — what this repo is, how to register it in Aurora, contact.
 - `plugins/cern-phonebook/` and `plugins/cern-maps/` — the two packages (layout per
   `plugins/builtin/README.md`: `plugin.yaml`, `assets/icon.png` (+ dark), `docs/setup.md`,
@@ -22,8 +23,36 @@ Create in `aurora-addons-cern`:
 Tooling: build and sign with the existing CLI (`aurora plugin build`, `aurora plugin sign`,
 key via `aurora plugin keygen`/`sign`), fixture-run with `aurora plugin test`. A small
 `scripts/release.sh` rebuilds both packages and regenerates the manifest (versions, sha256, size).
-CI (GitHub Actions) on push: build, fixture-run, verify signatures, regen + commit the manifest if
-drifted.
+
+### CI and publishing
+
+GitHub Actions, two jobs in one `release.yml` workflow, sharing `scripts/release.sh`:
+
+- **On every push (and pull request) to `main` — build + verify, no publishing:** build both
+  packages, `aurora plugin test` fixture runs, verify each signature against the manifest's public
+  key, regen the manifest and fail on drift (diff only; **no auto-commit** — the manifest is
+  regenerated and committed by the owner locally as part of `scripts/release.sh`, keeping every
+  manifest change reviewed like any other edit). Builds on pull requests run unsigned.
+- **On a `v*` tag — publish:** the same build + verify, then sign with the repo private key from
+  the `AURORA_CERN_SIGNING_KEY` Actions secret (environment `release`, restricted to tags) and
+  create a GitHub **Release** for the tag holding the two signed `.aurora-plugin` archives as
+  release assets. The release body lists addon ids, versions, sha256 digests and sizes (generated
+  from the manifest).
+- The manifest's version URLs point at the **release-asset download URLs**
+  (`https://github.com/alexiri/aurora-addons-cern/releases/download/v<version>/<id>-<version>.aurora-plugin`,
+  one release per addon version tag) — stable, public, anonymous-https URLs that Aurora's addon
+  ingestion can fetch. **Actions run artifacts are not a substitute**: their download URLs need an
+  authenticated API call, so they cannot serve as the manifest's `package` URL. Run artifacts may
+  still be uploaded on non-tag builds for convenience (never referenced by the manifest).
+- Digest discipline: the sha256 in a manifest version entry is computed from the exact archive the
+  release asset carries (built in the same job that publishes it), so a poll of the source can
+  never see a manifest digest that disagrees with the downloadable archive. Re-running the publish
+  for an existing tag **fails** instead of overwriting (release and assets already exist) — a
+  version is immutable once published; fixes go out as a new version.
+- Secret handling mirrors `docs/ops/builtin-plugin-signing.md`: the key reaches the signer as a
+  0600 file in `$RUNNER_TEMP`, passed as a secret (never an argument), deleted `if: always()`;
+  missing secret (fork, PR) = signing skipped with a warning, build still green, nothing published.
+  The signing key is this repo's own — the Aurora project key never signs addons.
 
 ## Part B — CERN Phonebook (`cern-phonebook`)
 
@@ -126,6 +155,10 @@ fixtures for unknown `search_id` and oversized responses.
 
 - Package level: `aurora plugin test` fixture suites for both packages; `check-builtin.sh`-style
   local checks (icons, setup guides, no stray files).
+- CI: a dry run of the workflow (build + verify, no tag) locally (`act` or step-by-step); on the
+  first real run, check the release exists with both assets, the asset URLs in the manifest
+  resolve, an Aurora instance registers the source and ingests both packages, and a re-tag attempt
+  fails instead of overwriting.
 - E2E (kind): register `aurora-addons-cern` as an addon source → approve both packages → connect →
   agent answers "What is X's e-mail and where do they sit?" and "How do I get from building 513 to
   the main auditorium, and how long does it take?" through the gateway.
