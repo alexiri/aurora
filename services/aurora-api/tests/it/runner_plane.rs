@@ -771,6 +771,325 @@ async fn slow_start_is_never_reclaimed_and_its_failure_reaches_the_turn() {
     assert_eq!(events.as_array().unwrap().len(), 1);
 }
 
+async fn post_reports(r: &Rig, rep: Uuid, reports: Value) -> Value {
+    let (s, v) = r
+        .call(
+            Some(rep),
+            "/v1/runner/reports",
+            Some(json!({ "reports": reports })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    v
+}
+
+async fn turn_error(r: &Rig, turn: Uuid) -> (String, Option<String>, Option<String>) {
+    sqlx::query_as("SELECT status, error_code, error_message FROM turns WHERE id = $1")
+        .bind(turn)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap()
+}
+
+async fn sweep(r: &Rig) -> aurora_api::domains::hosted::readiness::Swept {
+    aurora_api::domains::hosted::readiness::sweep_once(&r.h.state)
+        .await
+        .unwrap()
+}
+
+/// (FIX-025, C-583) The pod runs but the supervisor never connects (egress to runner:4105 blocked,
+/// e.g. Cilium): after `RUNNER_SUPERVISOR_HELLO` the turn fails with `supervisor_unreachable`,
+/// the runner address and the NetworkPolicy hint; the sandbox is stopped and ends `failed` with the
+/// backoff; the failure is recorded for admins.
+#[tokio::test]
+async fn supervisor_that_never_connects_fails_the_turn_as_supervisor_unreachable() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("mute").await;
+    let turn = r.turn(agent).await;
+    let w = r.work(rep, 0).await;
+    let item = first(&w, "sandbox.start");
+    let (sb, boot) = (
+        item["sandbox_id"].as_str().unwrap().to_owned(),
+        item["boot_id"].as_str().unwrap().to_owned(),
+    );
+    post_reports(&r, rep, json!([{"report_id": Uuid::now_v7(), "kind": "sandbox.status",
+        "sandbox_id": sb, "boot_id": boot, "state": "running", "container_ref": "p1",
+        "message": "waiting for the supervisor to connect to the runner at aurora-runner.aurora (10.0.0.9):4105"}]))
+    .await;
+    // Not yet overdue: nothing happens.
+    assert_eq!(sweep(&r).await.unreachable, 0);
+    sqlx::query(
+        "UPDATE sandboxes SET running_at = now() - interval '61 seconds' WHERE id = $1::uuid",
+    )
+    .bind(&sb)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(sweep(&r).await.unreachable, 1);
+    let (status, code, msg) = turn_error(&r, turn).await;
+    assert_eq!(status, "failed");
+    assert_eq!(code.as_deref(), Some("supervisor_unreachable"));
+    let msg = msg.unwrap();
+    assert!(
+        msg.contains("aurora-runner.aurora (10.0.0.9):4105"),
+        "{msg}"
+    );
+    assert!(msg.contains("networkPolicy.cilium.enabled"), "{msg}");
+    // The chat shows it as an error event.
+    let ev: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM transcript_events WHERE turn_id = $1 AND type = 'error'
+           AND payload->>'code' = 'supervisor_unreachable'",
+    )
+    .bind(turn)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(ev, 1);
+    assert_eq!(r.sandbox_state(&sb).await, "stopping");
+    // The runner is told to stop it; the stop lands in `failed` with the backoff.
+    let w = r.work(rep, 0).await;
+    let stop = first(&w, "sandbox.stop");
+    assert_eq!(stop["reason"], "failure");
+    post_reports(
+        &r,
+        rep,
+        json!([{"report_id": Uuid::now_v7(), "kind": "sandbox.status",
+        "sandbox_id": sb, "boot_id": boot, "state": "stopped"}]),
+    )
+    .await;
+    let (state, code, backoff): (String, Option<String>, bool) = sqlx::query_as(
+        "SELECT state, failure_code, lifecycle_lease_until > now() FROM sandboxes WHERE id = $1::uuid",
+    )
+    .bind(&sb)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        (state.as_str(), code.as_deref(), backoff),
+        ("failed", Some("supervisor_unreachable"), true)
+    );
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM sandbox_start_failures WHERE sandbox_id = $1::uuid AND code = 'supervisor_unreachable'",
+    )
+    .bind(&sb)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+}
+
+/// (FIX-025, C-582) No runner connected: the readiness deadline fails the turn with
+/// `runner_unavailable` (the arms never run without a poll); a turn not yet due is untouched, and
+/// the failed turn's joining follow-up is promoted (kept), not lost.
+#[tokio::test]
+async fn readiness_deadline_without_a_runner_is_runner_unavailable_and_keeps_followups() {
+    let r = rig().await;
+    let agent = r.agent("lonely").await;
+    let turn = r.turn(agent).await;
+    let conv: Uuid = sqlx::query_scalar("SELECT conversation_id FROM turns WHERE id = $1")
+        .bind(turn)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    let fu = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO turns (id, conversation_id, agent_id, role, status, parent_turn_id, door, speaker_kind, speaker_label, text)
+         VALUES ($1,$2,$3,'followup','joining',$4,'{}','system','s','and also')",
+    )
+    .bind(fu)
+    .bind(conv)
+    .bind(agent)
+    .bind(turn)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(sweep(&r).await.turns_failed, 0, "not yet due");
+    sqlx::query("UPDATE turns SET created_at = now() - interval '301 seconds' WHERE id = $1")
+        .bind(turn)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(sweep(&r).await.turns_failed, 1);
+    let (status, code, msg) = turn_error(&r, turn).await;
+    assert_eq!(
+        (status.as_str(), code.as_deref()),
+        ("failed", Some("runner_unavailable"))
+    );
+    assert!(msg.unwrap().contains("No runner is connected"));
+    let promoted: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM turns WHERE conversation_id = $1 AND role = 'turn' AND status = 'queued' AND text = 'and also'",
+    )
+    .bind(conv)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(promoted, 1, "the follow-up stays queued as the next turn");
+    // Idempotent: a second sweep does nothing more.
+    assert_eq!(sweep(&r).await, Default::default());
+}
+
+/// (FIX-025, C-582) A start still in flight at the deadline is given up with its last phase,
+/// stopped, and its other queued turns fail with the same reason.
+#[tokio::test]
+async fn start_in_flight_at_the_deadline_is_given_up_with_its_last_phase() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("pulling").await;
+    let t1 = r.turn(agent).await;
+    let t2 = r.turn(agent).await;
+    let w = r.work(rep, 0).await;
+    let item = first(&w, "sandbox.start");
+    let (sb, boot) = (
+        item["sandbox_id"].as_str().unwrap().to_owned(),
+        item["boot_id"].as_str().unwrap().to_owned(),
+    );
+    post_reports(
+        &r,
+        rep,
+        json!([{"report_id": Uuid::now_v7(), "kind": "sandbox.status",
+        "sandbox_id": sb, "boot_id": boot, "state": "starting", "reason_code": "creating",
+        "message": "ContainerCreating"}]),
+    )
+    .await;
+    sqlx::query("UPDATE turns SET created_at = now() - interval '301 seconds' WHERE id = $1")
+        .bind(t1)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    sweep(&r).await;
+    for t in [t1, t2] {
+        let (status, code, msg) = turn_error(&r, t).await;
+        assert_eq!(
+            (status.as_str(), code.as_deref()),
+            ("failed", Some("sandbox_start_failed"))
+        );
+        assert!(
+            msg.unwrap()
+                .contains("last phase: creating: ContainerCreating")
+        );
+    }
+    assert_eq!(r.sandbox_state(&sb).await, "stopping");
+    // A late `running` from the runner for that boot is fenced; the stop goes out.
+    let v = post_reports(
+        &r,
+        rep,
+        json!([{"report_id": Uuid::now_v7(), "kind": "sandbox.status",
+        "sandbox_id": sb, "boot_id": boot, "state": "running", "container_ref": "p1"}]),
+    )
+    .await;
+    assert_eq!(v["results"][0]["status"], "fenced");
+    first(&r.work(rep, 0).await, "sandbox.stop");
+}
+
+/// (FIX-025, coordinator) An upgraded deployment with a sandbox already stuck after many failed
+/// starts (start_failures above the threshold, `last_engaged_at` never written): automatic retries
+/// stay stopped, an overdue turn says so and until when, and the next message starts it again
+/// without any manual database edit.
+#[tokio::test]
+async fn sandbox_stuck_after_many_failures_recovers_on_the_next_message() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("daneel").await;
+    r.turn(agent).await;
+    let w = r.work(rep, 0).await;
+    let item = first(&w, "sandbox.start");
+    let (sb, boot) = (
+        item["sandbox_id"].as_str().unwrap().to_owned(),
+        item["boot_id"].as_str().unwrap().to_owned(),
+    );
+    post_reports(
+        &r,
+        rep,
+        json!([{"report_id": Uuid::now_v7(), "kind": "sandbox.status",
+        "sandbox_id": sb, "boot_id": boot, "state": "failed", "reason_code": "at_capacity",
+        "message": "wake capacity wait expired"}]),
+    )
+    .await;
+    // The state the owner's Daneel is in: many failures, backoff long over, never engaged.
+    sqlx::query(
+        "UPDATE sandboxes SET start_failures = 6, last_engaged_at = NULL,
+             lifecycle_lease_until = now() - interval '1 hour', updated_at = now() - interval '2 hours'
+         WHERE id = $1::uuid",
+    )
+    .bind(&sb)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    // A turn queued before the last failure (as on the cluster) does not restart it automatically…
+    let old = r.turn(agent).await;
+    sqlx::query("UPDATE turns SET created_at = now() - interval '3 hours' WHERE id = $1")
+        .bind(old)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert!(
+        !r.work(rep, 0).await["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["kind"] == "sandbox.start"),
+        "automatic retries stay stopped"
+    );
+    // …and the deadline explains it instead of waiting forever.
+    sweep(&r).await;
+    let (status, code, msg) = turn_error(&r, old).await;
+    assert_eq!(
+        (status.as_str(), code.as_deref()),
+        ("failed", Some("at_capacity"))
+    );
+    assert!(
+        msg.unwrap()
+            .contains("Automatic retries stopped after 6 failed starts")
+    );
+    // The next message starts it again.
+    r.turn(agent).await;
+    let w = r.work(rep, 0).await;
+    let again = first(&w, "sandbox.start");
+    assert_eq!(again["sandbox_id"].as_str().unwrap(), sb);
+    assert_ne!(again["boot_id"].as_str().unwrap(), boot);
+}
+
+/// (FIX-025, C-582) An overdue turn during the failure backoff names the backoff and its end.
+#[tokio::test]
+async fn overdue_turn_in_backoff_says_until_when() {
+    let r = rig().await;
+    let rep = r.register("runner-a", 4).await;
+    let agent = r.agent("backoff").await;
+    r.turn(agent).await;
+    let w = r.work(rep, 0).await;
+    let item = first(&w, "sandbox.start");
+    let (sb, boot) = (
+        item["sandbox_id"].as_str().unwrap().to_owned(),
+        item["boot_id"].as_str().unwrap().to_owned(),
+    );
+    post_reports(
+        &r,
+        rep,
+        json!([{"report_id": Uuid::now_v7(), "kind": "sandbox.status",
+        "sandbox_id": sb, "boot_id": boot, "state": "failed", "reason_code": "image_unavailable",
+        "message": "image unavailable: `reg/x:1`: ErrImagePull"}]),
+    )
+    .await;
+    let t = r.turn(agent).await;
+    sqlx::query("UPDATE turns SET created_at = now() - interval '301 seconds' WHERE id = $1")
+        .bind(t)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    sweep(&r).await;
+    let (status, code, msg) = turn_error(&r, t).await;
+    assert_eq!(
+        (status.as_str(), code.as_deref()),
+        ("failed", Some("image_unavailable"))
+    );
+    let msg = msg.unwrap();
+    assert!(
+        msg.contains("ErrImagePull") && msg.contains("next start attempt is allowed after"),
+        "{msg}"
+    );
+}
+
 /// (FIX-025) Without progress (the runner is gone), an expired lease is still re-driven.
 #[tokio::test]
 async fn silent_start_lease_still_expires_and_is_redriven() {

@@ -61,6 +61,74 @@ pub async fn record_harness(
         > 0)
 }
 
+/// (FIX-025, D-158, C-582) A queued hosted turn whose sandbox is not ready after the readiness
+/// deadline, with everything needed to explain why.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OverdueTurn {
+    pub turn_id: Uuid,
+    pub conversation_id: Uuid,
+    pub agent_id: Uuid,
+    pub sandbox_id: Option<Uuid>,
+    pub state: Option<String>,
+    pub boot_id: Option<Uuid>,
+    pub runner_name: Option<String>,
+    /// The sandbox's runner has a live replica.
+    pub runner_live: bool,
+    /// Any runner has a live replica.
+    pub any_runner_live: bool,
+    pub bootstrap_used: bool,
+    pub channel_held: bool,
+    pub harness_ready: bool,
+    pub home_synced: bool,
+    pub start_phase: Option<String>,
+    pub start_detail: Option<String>,
+    pub failure_code: Option<String>,
+    pub failure_message: Option<String>,
+    pub lease_until: Option<chrono::DateTime<chrono::Utc>>,
+    pub start_failures: i32,
+    pub attempt_secs: Option<f64>,
+}
+
+/// (FIX-025, C-582) Queued hosted turns waiting longer than `secs` (since queued or revived) for
+/// a ready sandbox; frozen agents are left to the freeze sweep. No row locks are taken: the caller
+/// takes the conversation lock and `lifecycle::fail` is fenced.
+pub async fn overdue_turns(
+    conn: &mut PgConnection,
+    secs: f64,
+    online_secs: f64,
+    limit: i64,
+) -> Result<Vec<OverdueTurn>, DbError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT t.id AS turn_id, t.conversation_id, t.agent_id,
+            s.id AS sandbox_id, s.state, s.boot_id, r.name AS runner_name,
+            EXISTS (SELECT 1 FROM runner_replicas rr WHERE rr.runner_id = s.runner_id
+                AND rr.retired_at IS NULL
+                AND rr.last_seen_at > now() - make_interval(secs => $2)) AS runner_live,
+            EXISTS (SELECT 1 FROM runner_replicas rr WHERE rr.retired_at IS NULL
+                AND rr.last_seen_at > now() - make_interval(secs => $2)) AS any_runner_live,
+            coalesce(s.bootstrap_used_at IS NOT NULL, false) AS bootstrap_used,
+            coalesce(s.channel_replica_id IS NOT NULL, false) AS channel_held,
+            coalesce(s.resource_profile ? 'harness', false) AS harness_ready,
+            coalesce(s.home_applied_generation >= {DESIRED}, false) AS home_synced,
+            s.start_phase, s.start_detail, s.failure_code, s.failure_message,
+            s.lifecycle_lease_until AS lease_until, coalesce(s.start_failures, 0) AS start_failures,
+            extract(epoch from now() - s.start_attempt_at)::float8 AS attempt_secs
+         FROM turns t JOIN agents a ON a.id = t.agent_id JOIN workspaces w ON w.id = a.workspace_id
+           LEFT JOIN sandboxes s ON s.agent_id = t.agent_id
+           LEFT JOIN runners r ON r.id = s.runner_id
+         WHERE t.role = 'turn' AND t.status = 'queued' AND a.kind = 'hosted'
+           AND coalesce(t.revived_at, t.created_at) < now() - make_interval(secs => $1)
+           AND NOT {frozen}
+         ORDER BY t.created_at LIMIT $3",
+        frozen = super::freeze::frozen_agent_sql("t.agent_id"),
+    ))
+    .bind(secs)
+    .bind(online_secs)
+    .bind(limit)
+    .fetch_all(conn)
+    .await?)
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct HomeSyncClaim {
     pub sandbox_id: Uuid,
@@ -641,6 +709,13 @@ pub struct SandboxViewRow {
     pub failure_code: Option<String>,
     pub failure_message: Option<String>,
     pub listening_ports: Vec<i32>,
+    /// (FIX-025, C-584) The last start attempt: when it was claimed, its phase, detail, the pod's
+    /// Warning events and the runner's last progress report (Computer tab).
+    pub start_attempt_at: Option<DateTime<Utc>>,
+    pub start_phase: Option<String>,
+    pub start_detail: Option<String>,
+    pub start_events: serde_json::Value,
+    pub start_progress_at: Option<DateTime<Utc>>,
     pub active_turn: bool,
     pub busy_process: bool,
     pub armed_watch: bool,
@@ -718,6 +793,7 @@ pub async fn sandbox_view(
         "SELECT s.id, s.state, s.boot_id, s.runner_id,
             (SELECT ri.started_at FROM runtime_intervals ri WHERE ri.boot_id = s.boot_id) AS started_at,
             s.failure_code, s.failure_message, s.listening_ports,
+            s.start_attempt_at, s.start_phase, s.start_detail, s.start_events, s.start_progress_at,
             EXISTS (SELECT 1 FROM turns t WHERE t.agent_id = s.agent_id AND (
                 (t.role = 'turn' AND t.status IN ('queued','dispatched','running'))
                 OR (t.role = 'followup' AND t.status = 'joining'))) AS active_turn,

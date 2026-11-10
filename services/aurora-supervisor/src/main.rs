@@ -67,6 +67,19 @@ async fn main() -> ExitCode {
     }
 }
 
+/// Sends `sandbox.status failed <code>` over a short-lived channel (the bootstrap token is still
+/// unused: nothing connected yet), then lets it flush and close (D-153, FIX-025).
+async fn report_boot_failure(doc: &BootDocument, code: &str, message: &str) {
+    let chan = channel::spawn(ChannelConfig::new(
+        &doc.runner_url,
+        doc.bootstrap_token.clone(),
+    ));
+    let _ = chan.sender.send(boot_refusal(code, message)).await;
+    // Dropping the sender lets the channel task flush and close.
+    drop(chan.sender);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), chan.task).await;
+}
+
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let raw = boot::read_boot_env()?;
     boot::make_non_dumpable()?;
@@ -84,47 +97,55 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Ok(a) => a,
         Err(e) => {
             tracing::error!(harness = %doc.harness.id, code = %e.code, error = %e.message, "boot refused");
-            let chan = channel::spawn(ChannelConfig::new(
-                &doc.runner_url,
-                doc.bootstrap_token.clone(),
-            ));
-            let _ = chan.sender.send(boot_refusal(&e.code, &e.message)).await;
-            // Dropping the sender lets the channel task flush and close.
-            drop(chan.sender);
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(10), chan.task).await;
+            report_boot_failure(&doc, &e.code, &e.message).await;
             return Err(format!("{}: {}", e.code, e.message).into());
         }
     };
 
     let lo = IpAddr::V4(Ipv4Addr::LOCALHOST);
     let boot_token = doc.gateway.boot_token.expose().to_owned();
-    let upstream = GatewayUpstream::new(
-        doc.gateway.proxy.clone(),
-        &doc.ca_pem,
-        &doc.gateway.verify_name(),
-    )?;
-    let _machine = spawn_proxy(
-        SocketAddr::new(lo, MACHINE_PROXY_PORT),
-        upstream.clone(),
-        Credential::new("x", boot_token.clone()),
-        ProxyMode::Mitm,
-    )
-    .await?;
-    // (RFE-003) The open proxy exists only for a sandbox booted with the `browser`
-    // capability; otherwise nothing listens on 3129 (the gateway also refuses the lane).
-    let _open = if doc.has_capability("browser") {
-        Some(
-            spawn_proxy(
-                SocketAddr::new(lo, OPEN_PROXY_PORT),
-                upstream.clone(),
-                Credential::new("open", boot_token.clone()),
-                ProxyMode::ConnectOnly,
-            )
-            .await?,
+    // (FIX-025, C-585) A boot step that fails before the channel exists is reported to the runner
+    // as `sandbox.status failed supervisor_boot_failed` with the error, instead of a silent exit.
+    let proxies = async {
+        let upstream = GatewayUpstream::new(
+            doc.gateway.proxy.clone(),
+            &doc.ca_pem,
+            &doc.gateway.verify_name(),
+        )?;
+        let machine = spawn_proxy(
+            SocketAddr::new(lo, MACHINE_PROXY_PORT),
+            upstream.clone(),
+            Credential::new("x", boot_token.clone()),
+            ProxyMode::Mitm,
         )
-    } else {
-        tracing::info!("no browser capability: open proxy not started");
-        None
+        .await?;
+        // (RFE-003) The open proxy exists only for a sandbox booted with the `browser`
+        // capability; otherwise nothing listens on 3129 (the gateway also refuses the lane).
+        let open = if doc.has_capability("browser") {
+            Some(
+                spawn_proxy(
+                    SocketAddr::new(lo, OPEN_PROXY_PORT),
+                    upstream.clone(),
+                    Credential::new("open", boot_token.clone()),
+                    ProxyMode::ConnectOnly,
+                )
+                .await?,
+            )
+        } else {
+            tracing::info!("no browser capability: open proxy not started");
+            None
+        };
+        Ok::<_, Box<dyn std::error::Error>>((upstream, machine, open))
+    }
+    .await;
+    let (upstream, _machine, _open) = match proxies {
+        Ok(p) => p,
+        Err(e) => {
+            let msg = format!("the supervisor could not start its gateway proxies: {e}");
+            tracing::error!(error = %msg, "boot failed");
+            report_boot_failure(&doc, "supervisor_boot_failed", &msg).await;
+            return Err(msg.into());
+        }
     };
 
     let chan = channel::spawn(ChannelConfig::new(

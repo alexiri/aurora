@@ -39,6 +39,38 @@ pub struct RunnerStats {
     pub running: i64,
 }
 
+/// (FIX-025, C-586) A recent start failure of one runner, for the admin view.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct StartFailureRow {
+    pub id: Uuid,
+    pub sandbox_id: Uuid,
+    pub agent_id: Uuid,
+    pub code: String,
+    pub message: String,
+    pub phase: Option<String>,
+    pub events: serde_json::Value,
+    pub elapsed_secs: Option<i32>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// (FIX-025, C-586) Recent start failures of one runner (newest first, ≤ `limit`), for
+/// `GET /v1/admin/runners/{id}/start-failures`. Messages are sanitised at write time.
+pub async fn recent_start_failures<'e, E: PgExecutor<'e>>(
+    exec: E,
+    runner: Uuid,
+    limit: i64,
+) -> Result<Vec<StartFailureRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, sandbox_id, agent_id, code, message, phase, events, elapsed_secs, created_at
+         FROM sandbox_start_failures WHERE runner_id = $1
+         ORDER BY created_at DESC LIMIT $2",
+    )
+    .bind(runner)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
 pub async fn insert<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,

@@ -402,6 +402,64 @@ const RUNNER_PHASES: [&str; 8] = [
     "starting",
 ];
 
+/// (FIX-025, C-583) Running sandboxes whose supervisor never connected (`bootstrap_used_at`
+/// unset) within `secs` of the runner's `running` report: `(sandbox, boot, start_detail)`.
+pub async fn hello_overdue(
+    conn: &mut PgConnection,
+    secs: f64,
+    limit: i64,
+) -> Result<Vec<(Uuid, Uuid, Option<String>)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, boot_id, start_detail FROM sandboxes
+         WHERE state = 'running' AND bootstrap_used_at IS NULL AND boot_id IS NOT NULL
+           AND running_at < now() - make_interval(secs => $1)
+         ORDER BY running_at LIMIT $2",
+    )
+    .bind(secs)
+    .bind(limit)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// (FIX-025, D-158) The API gives up on the current start attempt of `boot`: the sandbox moves to
+/// `stopping` (reason `failure`, lease cleared so arm 2 sends the stop at the next poll) with the
+/// failure recorded; the `stopped` report then lands it in `failed` with the backoff. Fenced on
+/// state `starting`/`running` and the boot; `false` when nothing changed.
+pub async fn fail_attempt(
+    conn: &mut PgConnection,
+    sandbox: Uuid,
+    boot: Uuid,
+    code: &str,
+    message: &str,
+) -> Result<bool, DbError> {
+    let n = sqlx::query(
+        "UPDATE sandboxes SET state = 'stopping', stop_reason = 'failure',
+             failure_code = $3, failure_message = $4, start_failures = start_failures + 1,
+             lifecycle_lease_until = NULL, updated_at = now()
+         WHERE id = $1 AND boot_id = $2 AND state IN ('starting','running')",
+    )
+    .bind(sandbox)
+    .bind(boot)
+    .bind(code)
+    .bind(message)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    if n == 0 {
+        return Ok(false);
+    }
+    record_start_failure(
+        conn,
+        sandbox,
+        Some(boot),
+        code,
+        message,
+        &serde_json::json!([]),
+    )
+    .await?;
+    Ok(true)
+}
+
 fn events_json(events: &[String]) -> serde_json::Value {
     serde_json::Value::from(events.to_vec())
 }
@@ -562,12 +620,19 @@ pub async fn apply_status(
             if state == "failed" {
                 return Ok((Applied::Fenced, vec![]));
             }
+            // (FIX-025, D-158) A stop the API ordered because the start failed (readiness
+            // deadline, supervisor never connected) ends in `failed` with the start backoff.
+            let failed_start = stop_reason.as_deref() == Some("failure");
             sqlx::query(
-                "UPDATE sandboxes SET state='stopped', lifecycle_lease_until=NULL, channel_replica_id=NULL,
+                "UPDATE sandboxes SET state = CASE WHEN $2 THEN 'failed' ELSE 'stopped' END,
+                     lifecycle_lease_until = CASE WHEN $2 THEN now() + make_interval(secs => $3) END,
+                     channel_replica_id=NULL,
                      listening_ports='{}', container_ref=NULL, stop_requested_at=NULL,
                      restart_requested_at=NULL, updated_at=now() WHERE id=$1",
             )
             .bind(sandbox)
+            .bind(failed_start)
+            .bind(backoff_secs(failures))
             .execute(&mut *conn)
             .await?;
             end_boot(

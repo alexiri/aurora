@@ -325,7 +325,7 @@ impl KubernetesBackend {
                 (at, format!("{reason}: {msg}"))
             })
             .collect();
-        items.sort_by(|a, b| b.0.cmp(&a.0));
+        items.sort_by_key(|a| std::cmp::Reverse(a.0));
         let mut out: Vec<String> = Vec::new();
         for (_, line) in items {
             if !out.contains(&line) {

@@ -3,7 +3,7 @@
 
 use super::dto::{
     DefaultModel, HarnessList, HarnessView, KeyReadiness, ModelOption, ModelOptions,
-    ModelReadiness, SandboxPort, SandboxProcess, SandboxView,
+    ModelReadiness, SandboxPort, SandboxProcess, SandboxStartAttempt, SandboxView,
 };
 use super::{lifecycle, model};
 use crate::app::AppState;
@@ -95,6 +95,7 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
             keep_awake_reasons: vec![],
             failure_code: None,
             failure_message: None,
+            start_attempt: None,
             processes: vec![],
             ports: vec![],
             restart_to_update: false,
@@ -166,6 +167,21 @@ async fn view(s: &AppState, a: &AgentRow) -> Result<SandboxView, ApiError> {
         keep_awake_reasons: reasons,
         failure_code: r.failure_code,
         failure_message: r.failure_message,
+        start_attempt: r.start_attempt_at.map(|started_at| SandboxStartAttempt {
+            started_at,
+            phase: r.start_phase,
+            detail: r.start_detail,
+            events: r
+                .start_events
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|e| e.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            progress_at: r.start_progress_at,
+        }),
         processes: processes
             .into_iter()
             .map(|p| SandboxProcess {

@@ -152,6 +152,64 @@ fingerprint that the API does not know, once they are older than `orphan_grace_s
 error aborts the sweep with no deletions. Set `runner.orphan_reap = "log_only"` to log instead
 of deleting (docs/11 §Reconcile and orphan reaping).
 
+## Troubleshooting: a turn is stuck on "Sandbox starting" (FIX-025, D-158)
+
+A turn that needs a sandbox is bounded end to end by `hosted.sandbox_ready_timeout_secs`
+(default 300 s): if the sandbox is not ready in time, the turn fails with a code naming
+where the start stopped, the agent header pill says **Sandbox failed** with the reason, and
+the Computer tab shows **Last start attempt** (phase, detail, elapsed, the pod's Warning
+events). Admin › Runners lists each runner's recent start failures. You should not need
+kubectl for the first diagnosis; the commands below are the fallback.
+
+**What the failure codes mean** (the chat error block, the pill tooltip and the admin page
+all show the same reason):
+
+| Code | Meaning | First thing to check |
+| --- | --- | --- |
+| `runner_unavailable` | No runner claimed the start | Admin › Runners: is any runner live? Is the runner's token valid, can it reach the API? |
+| `pod_refused` | The cluster refused pod creation | `kubectl -n <sandboxes ns> describe pod …` / the runner's log: quota, admission, image pull secret? |
+| `pod_failed` | The pod ended while it was starting | Pod Warning events (Computer tab / admin page): crash loop, OOM? |
+| `home_volume_unbound` | The home PVC never bound | `kubectl get pvc -n <ns>`: storage class, capacity? |
+| `image_unavailable` | The image pull failed | The image exists and the pull secret is attached to the runner? |
+| `supervisor_unreachable` | The pod is Running but its supervisor never connected to the runner on :4105 within 60 s (`RUNNER_SUPERVISOR_HELLO`) | Network egress from the sandboxes namespace to the runner (see below) |
+| `supervisor_boot_failed` | The supervisor connected but the boot never finished | The runner's log; harness supported by the image (`12 §Harness selection`)? |
+| `harness_unsupported` | The supervisor refused the boot document's harness | The sandbox image contains the harness (`15 §Hosted`)? |
+
+**`supervisor_unreachable` is the case that used to hang forever** (the owner's production
+incident): the pod looks healthy, but the supervisor inside cannot dial the runner's
+sandbox-channel port `4105`. The failure message names the runner endpoint, e.g.
+"The agent's computer started, but its supervisor could not reach the runner at
+`aurora-runner.aurora` (10.0.0.9):4105 within 60 s."
+
+With Cilium as the CNI, the chart's `networkPolicy.cilium.enabled=true` renders
+**CiliumNetworkPolicies**; the sandboxes-namespace rules match by pod identity (namespace
+and pod labels), which Cilium handles natively, so the egress path sandbox → runner:4105
+needs no extra policy. Prove the path from a pod in the sandboxes namespace:
+
+```sh
+kubectl -n <sandboxes ns> exec <sandbox pod> -- sh -c 'nc -zv -w3 aurora-runner.<release-ns> 4105'
+# blocked → the turn fails supervisor_unreachable within the deadline (default 300 s)
+```
+
+Start attempts are recorded per runner (`sandbox_start_failures`, 30 days) and shown on
+Admin › Runners:
+
+```sh
+curl -H "Authorization: Bearer <session>" https://aurora.example.org/v1/admin/runners/<runner-id>/start-failures
+```
+
+kubectl fallback (the API already shows these in the Computer tab and the admin page):
+
+```sh
+kubectl -n <sandboxes ns> get pods -l org.aurora/sandbox=<agent-id>
+kubectl -n <sandboxes ns> describe pod <pod> | sed -n '/Events:/,$p'
+kubectl -n <release ns> logs deploy/aurora-runner --tail=200
+```
+
+Automatic retries stop after 3 consecutive failures; a new message retries once the
+backoff has passed. `hosted.sandbox_ready_timeout_secs` also bounds a slow image pull —
+raise it (max 1800) if pulls legitimately take minutes.
+
 ## Sizing
 
 From docs/15: runner hosts need `max_sandboxes × sandbox memory + 1 GiB`. A held-awake

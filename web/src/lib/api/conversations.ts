@@ -19,6 +19,13 @@ export type TranscriptEvent = Omit<components["schemas"]["TranscriptEvent"], "pa
 export type SendResult = components["schemas"]["MessageAccepted"];
 
 // Not in the generated schema yet (wrapper routes below).
+export interface SandboxStartAttempt {
+  started_at: string;
+  phase: string | null;
+  detail: string | null;
+  events: string[];
+  progress_at: string | null;
+}
 export interface SandboxView {
   agent_id: string;
   state: "unprovisioned" | "starting" | "running" | "stopping" | "stopped" | "failed";
@@ -29,6 +36,7 @@ export interface SandboxView {
   keep_awake_reasons: string[];
   failure_code: string | null;
   failure_message: string | null;
+  start_attempt: SandboxStartAttempt | null;
   processes: { id: string; name: string; state: string; busy: boolean; started_at: string | null }[];
   ports: { port: number; protocol: string }[];
   restart_to_update: boolean;

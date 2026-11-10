@@ -6,6 +6,7 @@ pub mod dto;
 pub mod home;
 pub mod lifecycle;
 pub mod model;
+pub mod readiness;
 pub mod reports;
 mod routes;
 
