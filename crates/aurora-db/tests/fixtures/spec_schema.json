@@ -396,6 +396,18 @@
       "winner_app_id",
       "winner_package_id"
     ],
+    "instance_placement": [
+      "default_org_id",
+      "default_org_role",
+      "mode",
+      "name_template",
+      "personal_enabled",
+      "personal_role",
+      "shared_workspaces",
+      "singleton",
+      "starter_grants",
+      "updated_by"
+    ],
     "invitations": [
       "accepted_by",
       "approver_workspace_ids",
@@ -923,6 +935,7 @@
       "memory_language",
       "name",
       "org_id",
+      "personal_owner_user_id",
       "slug",
       "timezone"
     ]

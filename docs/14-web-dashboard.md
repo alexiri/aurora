@@ -711,7 +711,12 @@ mode shown read-only (config); placement mode; default org (pick or create); sha
 workspaces with roles; personal workspace on/off, role, name template with a live
 preview for the admin's own token and for a typed sample ("bobj" → workspace `bobj`);
 starter grants (org LLM keys, secrets, connections); the list of personal orgs from
-before. (phase 4, P4-IDP-1, D-139) **Identity** (read-only): per OIDC provider the role
+before. One form built from the shared field, segmented and notice primitives; a warning
+while per-user organizations are active; the shared-workspace and credential pickers list
+the chosen organization's own workspaces (never personal ones) and org-level credentials
+(`API_CONTRACTS` C-528); a fresh instance preselects `shared_org` *Users* with personal
+workspaces and sends nothing until saved. The sign-in page shows "This instance is being
+set up — try again shortly" for `?error=instance_setup_pending`. (phase 4, P4-IDP-1, D-139) **Identity** (read-only): per OIDC provider the role
 claim path and the mapping table from the Helm values, and per user (Users page) the last
 synced claim values and what they granted. (phase 4, P4-ONB-2) **Setup** (`§Onboarding`).
 

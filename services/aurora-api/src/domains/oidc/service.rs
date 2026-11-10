@@ -3,7 +3,7 @@ use super::roles;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::auth::service::{self as auth, Client, normalize_email};
-use crate::domains::{invitations, tenancy};
+use crate::domains::{invitations, placement, tenancy};
 use crate::http::ratelimit::Bucket;
 use aurora_config::{OidcProvider, SignupMode};
 use aurora_core::{ApiError, FieldError, ids};
@@ -19,6 +19,7 @@ use openidconnect::{
     AuthorizationCode, ClientId, ClientSecret, CsrfToken, LoginHint, Nonce, OAuth2TokenResponse,
     PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
+use placement::service::OpenPlan;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
@@ -292,6 +293,9 @@ struct Verified {
     /// (P4-IDP-1) Role values read from the validated token (or userinfo); empty when the provider
     /// has no `role_claim` or the claim is absent.
     role_values: Vec<String>,
+    /// (P4-ONB-1) The validated ID-token payload, the only source of workspace-name template
+    /// variables (SEC-79); `Null` when it could not be read.
+    claims: serde_json::Value,
 }
 
 /// The claims object of the **already verified** ID token (its payload segment).
@@ -348,6 +352,7 @@ async fn exchange(
     let email_verified =
         claims.email_verified() == Some(true) || domain_in(&p.trusted_email_domains, &email);
     let sub = claims.subject().as_str().to_owned();
+    let payload = verified_payload(id_token);
     // SEC-78: only this provider's validated token (or its userinfo, fetched with this flow's
     // access token and bound to the same `sub`) is ever read for roles.
     let role_values = match p.role_claim.as_deref() {
@@ -368,12 +373,14 @@ async fn exchange(
                 vec![]
             }
         }
-        Some(path) => verified_payload(id_token)
-            .map(|pl| roles::extract_values(&p.id, &pl, path))
+        Some(path) => payload
+            .as_ref()
+            .map(|pl| roles::extract_values(&p.id, pl, path))
             .unwrap_or_default(),
     };
     Ok(Verified {
         role_values,
+        claims: payload.unwrap_or(serde_json::Value::Null),
         sub,
         email,
         email_verified,
@@ -588,6 +595,23 @@ async fn sign_in(
     // Precedence: invitation (in `create_user`) → role claims → provider `jit` → placement.
     roles::sync(&mut tx, state, p, &mut user, &v.role_values, &desired).await?;
     apply_jit(&mut tx, p, &mut user).await?;
+    // (P4-ONB-1, D-140) placement last: the default organization, shared workspaces and the
+    // user's personal workspace, found by user id only.
+    placement::service::apply_signin(
+        &mut tx,
+        state,
+        &mut user,
+        created,
+        &placement::service::SignInClaims {
+            email: &v.email,
+            claims: &v.claims,
+        },
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("oidc: placement: {e:?}");
+        Fail("oidc_failed")
+    })?;
 
     user = users::record_login(&mut *tx, user.id).await?;
     let token = auth::issue_session(&mut tx, state, user.id, client)
@@ -626,8 +650,22 @@ async fn create_user(
     // D-143: the provider's own role mapping admits a new user when the validated claim maps to
     // at least one actual grant (all other sign-in checks have already passed).
     let claimed = desired.grants_anything();
+    // (P4-ONB-1, D-140) What `open` does with a new user depends on the saved placement. On a
+    // fresh instance nothing is saved yet: only instance admins sign in until it is.
+    let open_plan = if state.config.signup_mode == SignupMode::Open {
+        let privileged = listed || desired.admin.is_some();
+        let plan = placement::service::open_plan(&mut *tx, privileged).await?;
+        if plan == OpenPlan::SetupPending {
+            return Err(Fail("instance_setup_pending"));
+        }
+        Some(plan)
+    } else {
+        None
+    };
     let allowed = match state.config.signup_mode {
-        SignupMode::Open => true,
+        SignupMode::Open => {
+            open_plan != Some(OpenPlan::Closed) || jit_org.is_some() || invited || claimed
+        }
         SignupMode::SsoJit => jit_org.is_some() || invited || claimed,
         SignupMode::InviteOnly => listed || invited || claimed,
     };
@@ -681,7 +719,7 @@ async fn create_user(
             Fail("oidc_failed")
         })?;
     }
-    if state.config.signup_mode == SignupMode::Open {
+    if open_plan == Some(OpenPlan::OwnOrg) {
         let short: String = name.chars().take(74).collect();
         let org = tenancy::service::create_organization(
             tx,
@@ -697,7 +735,8 @@ async fn create_user(
         })?;
         users::set_default_org(&mut *tx, user.id, org.org.id).await?;
     } else {
-        // `invite_only` / `sso_jit`: a pending invitation is accepted as part of the sign-in.
+        // Every case but "own organization": a pending invitation is accepted as part of the
+        // sign-in.
         invitations::service::accept_pending_for_email(tx, &user)
             .await
             .map_err(|e| {

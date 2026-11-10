@@ -81,6 +81,8 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "user.delete",
     "workspace_access.remove",
     "workspace_access.set",
+    // (P4-ONB-1, D-140) the instance admin saves the new-user placement
+    "placement.update",
     // Freeze
     "agent.freeze",
     "agent.unfreeze",

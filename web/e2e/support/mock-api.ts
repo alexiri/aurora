@@ -127,6 +127,22 @@ export async function mockApi(page: Page) {
         tables: [{ table: "events", bytes: 4_800_000 }],
       });
     }
+    // P4-ONB-1: Admin › Sign-up & placement (a saved shared-org placement with a starter grant).
+    if (p === "/v1/admin/placement") {
+      return json({
+        saved: true, signup_mode: "open", mode: "shared_org", default_org: { id: id(1), slug: "users", name: "Users" }, default_org_role: "member",
+        shared_workspaces: [{ workspace_id: id(2), slug: "main", name: "Main workspace", role: "member" }],
+        personal_workspace: { enabled: true, role: "owner", name_template: "{preferred_username}|{email_local}" },
+        starter_grants: [{ kind: "secret", id: id(300), name: "org-llm-key", detail: "llm" }],
+        personal_orgs: { count: 1, items: [{ org_id: id(301), slug: "ada-s-org", name: "Ada's org", owner_email: "ada@example.test", created_at: now }] },
+        warnings: ["per_user_orgs_active"], updated_at: now, updated_by: id(99),
+      });
+    }
+    if (p === "/v1/admin/placement/preview") return json({ name: "bobj", slug: "bobj", used: 0, unresolved: [] });
+    if (p === "/v1/admin/placement/choices") {
+      return json({ workspaces: [{ id: id(2), slug: "main", name: "Main workspace" }], secrets: [{ id: id(300), name: "org-llm-key", kind: "llm" }], connections: [] });
+    }
+    if (p === "/v1/admin/orgs") return json({ items: [{ id: id(1), slug: "users", name: "Users", frozen: null, created_at: now }], next_cursor: null });
     if (p === "/v1/admin/connectors") return json({ items: [mattermostConnector] });
     if (p === "/v1/admin/connector-types") return json({ host_running: true, items: [mattermostType] });
     if (/^\/v1\/connectors\/[^/]+\/icon$/.test(p)) return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
@@ -183,6 +199,7 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "account-delete", path: "/account/delete" },
   { name: "admin-users", path: "/admin/users" },
   { name: "admin-orgs", path: "/admin/orgs" },
+  { name: "admin-placement", path: "/admin/placement" },
   { name: "admin-plugins", path: "/admin/plugins" },
   { name: "admin-plugin-detail", path: "/admin/plugins/github" },
   { name: "admin-connectors", path: "/admin/connectors" },

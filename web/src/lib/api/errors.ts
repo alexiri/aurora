@@ -8,6 +8,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   user_disabled: "This account has been disabled.",
   signup_closed:
     "Sign-up is closed on this instance. Ask an administrator for an invitation, then sign in again.",
+  instance_setup_pending: "This instance is being set up — try again shortly.",
   email_taken: "An account with this email already exists.",
   rate_limited: "Too many requests. Please wait a moment and try again.",
   too_many_streams: "Too many open tabs or streams. Close some and reload.",
