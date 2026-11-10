@@ -27038,6 +27038,10 @@
           "display_name": {
             "type": "string"
           },
+          "groups": {
+            "type": "boolean",
+            "description": "(phase 4, P4-GRP-1, D-156) The provider has a `group_claim`: IdP-linked groups may name\nit. Absent (false) otherwise."
+          },
           "id": {
             "type": "string"
           }

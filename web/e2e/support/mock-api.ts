@@ -106,6 +106,12 @@ export const mattermostConnector = {
   host_status: [{ host_instance: id(501), state: "running", message: null, at: now }],
 };
 
+export const groupFixture = (n: number, source: "manual" | "idp") => ({
+  id: id(n), org_id: id(1), name: source === "idp" ? "CERN platform e-group" : "Platform team", description: "Runs the shared infrastructure",
+  source, idp_provider: source === "idp" ? "corp" : null, idp_value: source === "idp" ? "aurora-platform" : null,
+  org_role: source === "idp" ? "member" : null, member_count: 1, workspace_count: 1, revision: 1, created_at: now,
+});
+
 export const user ={ id: id(99), display_name: "Ada Lovelace", email: "ada@example.test", is_instance_admin: true };
 
 export async function mockApi(page: Page) {
@@ -131,6 +137,21 @@ export async function mockApi(page: Page) {
         orgs: [{ org_id: id(1), slug: "acme", name: "Acme Labs", files: 12, attachment_bytes: 850_000_000, quota_bytes: 1_000_000_000 }],
         tables: [{ table: "events", bytes: 4_800_000 }],
       });
+    }
+    // P4-GRP-1: org Groups (a manual group and a sign-in-linked one).
+    if (p === `/v1/orgs/${id(1)}/groups`) return json({ items: [groupFixture(401, "manual"), groupFixture(402, "idp")], next_cursor: null });
+    const grp = p.match(/^\/v1\/groups\/([^/]+)(\/[a-z]+)?$/);
+    if (grp) {
+      const g = grp[1] === id(402) ? groupFixture(402, "idp") : groupFixture(401, "manual");
+      if (!grp[2]) return json(g);
+      if (grp[2] === "/members") {
+        return json({
+          items: [{ user: { id: id(99), email: "ada@example.test", display_name: "Ada Lovelace" }, status: "active", source: g.source, synced_at: g.source === "idp" ? now : null, added_at: now }],
+          next_cursor: null,
+        });
+      }
+      if (grp[2] === "/workspaces") return json({ items: [{ workspace: { id: id(2), name: "Main workspace", slug: "main" }, role: "member", created_at: now }], next_cursor: null });
+      if (grp[2] === "/impact") return json({ workspaces: [] });
     }
     // P4-ONB-1: Admin › Sign-up & placement (a saved shared-org placement with a starter grant).
     if (p === "/v1/admin/placement") {
@@ -160,7 +181,7 @@ export async function mockApi(page: Page) {
       });
     }
     if (p === "/v1/instance") {
-      return json({ version: "0.1.0", signup_mode: "closed", features: { hosted: true }, setup_errors: [], oidc_providers: [{ id: "corp", display_name: "Corporate SSO" }] });
+      return json({ version: "0.1.0", signup_mode: "closed", features: { hosted: true }, setup_errors: [], oidc_providers: [{ id: "corp", display_name: "Corporate SSO", groups: true }] });
     }
     if (p === "/v1/orgs") return json({ items: [org] });
     if (p === "/v1/resolve") return json({ org, workspace: ws });
@@ -222,6 +243,9 @@ export const ROUTES: { name: string; path: string; admin?: boolean }[] = [
   { name: "org-governance", path: "/o/acme/governance" },
   { name: "org-instances", path: "/o/acme/instances" },
   { name: "org-members", path: "/o/acme/members" },
+  { name: "org-groups", path: "/o/acme/groups" },
+  { name: "org-group-manual", path: `/o/acme/groups/${id(401)}` },
+  { name: "org-group-idp", path: `/o/acme/groups/${id(402)}` },
   { name: "org-policy", path: "/o/acme/policy" },
   { name: "org-settings", path: "/o/acme/settings" },
   { name: "org-skills", path: "/o/acme/skills" },

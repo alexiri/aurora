@@ -180,6 +180,7 @@ const ORG_LINKS: { path: string; label: string; icon: IconType }[] = [
   { path: "policy", label: "Policy", icon: ShieldIcon },
   { path: "skills", label: "Skills", icon: BookIcon },
   { path: "members", label: "Members", icon: UsersIcon },
+  { path: "groups", label: "Groups", icon: UsersIcon },
   { path: "channels", label: "Channels", icon: MessageIcon },
   { path: "instances", label: "Instances", icon: ServerIcon },
   { path: "api-keys", label: "API keys", icon: KeyIcon },
