@@ -681,6 +681,8 @@ claims** (conflicts and winners), **Trusted keys**, **Connectors** (provision,
 token rotation, manifest approval with capability/setup-field diff; (phase 4, P4-MCON) see
 below), **Runners**
 (provision, token, replicas, capacity), **Instances** (instance-wide app instances, D-74), **OAuth clients** (instance-level).
+(phase 4, P4-PRV-2) a **Previews** line when `previews.enabled`: relay replicas
+(`GET /v1/admin/relays`), the domain, share count and a "no relay seen" warning.
 (phase 4, P4-ONB-1, D-140) **Sign-up & placement** (`04 §New-user placement`): sign-up
 mode shown read-only (config); placement mode; default org (pick or create); shared
 workspaces with roles; personal workspace on/off, role, name template with a live

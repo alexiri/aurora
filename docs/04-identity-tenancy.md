@@ -352,7 +352,8 @@ With OIDC-only there must be a way to sign in without a corporate IdP:
 
 - Cookie `aurora_session` = `aus_` token; `HttpOnly`, `SameSite=Lax`,
   `Path=/`, `Secure` when the external URL is https. Stored hashed in
-  `sessions`.
+  `sessions`. (phase 4, P4-PRV-2) It is **host-only: it never has a `Domain`
+  attribute** (an invariant, `§Preview access`), so no other host, preview hostnames included, ever receives it.
 - Idle expiry `SESSION_IDLE`, absolute `SESSION_ABSOLUTE`. Revocation is
   immediate (every request reads the session row; a 30 s in-process cache keyed
   by token hash is allowed, flushed on sign-out by `NOTIFY`).
@@ -815,6 +816,98 @@ SCIM rows have `actor_kind = service`, `actor_label = scim:<token name>`, `sourc
 `metadata.via = "scim"`. The dashboard shows "Directory sync" status (last request, counts,
 last 20 sanitized errors, token expiry, a warning 14 days before expiry).
 
+## Preview access (phase 4, P4-PRV-2, D-146, SEC-81, SEC-85)
+
+How a browser proves, on a preview hostname (`<label>.<previews.domain>`, `11 §Port previews`), that
+a person with a live dashboard session who can use the workspace is asking, **without a
+credential of the dashboard ever reaching a preview** and without a preview ever being able to act
+as the dashboard. Applies only when `previews.enabled`; otherwise none of it exists.
+
+**Origin isolation (the rules that make previews safe to host next to the dashboard).**
+
+1. **Separate origins, enforced at startup** (`15 §Port previews`): `previews.domain` is never the
+   dashboard host or a parent or child of it, of any `auth.trusted_origins` entry, or of the
+   gateway host; and no `auth.trusted_origins` entry may sit under `previews.domain` (a preview
+   origin is never a trusted origin for the CSRF `Origin` check above).
+2. **The session cookie is host-only.** `aurora_session` (and `__Host-aurora_oidc`,
+   `__Host-aurora_oauth`) never carry a `Domain` attribute: that has always been the rule
+   (`§Sessions`) and is now an invariant tested by SEC-81. A browser therefore never sends
+   them to a preview host, whatever the DNS layout. The API never sets a cookie for any host
+   under `previews.domain`, and the relay never sets, reads or forwards `aurora_session`.
+3. **Previews get their own credential**, valid for one preview host only: the cookie
+   `__Host-aurora_preview` (prefix `__Host-`: `Secure`, `Path=/`, **no `Domain`**, so it
+   cannot be set by, or shared with, another preview hostname or a parent domain), `HttpOnly`,
+   `SameSite=Lax`, value `auv_` + 43 characters, stored hashed in `preview_sessions` (`03`), bound
+   to **one share** and **one dashboard session**. It is not accepted anywhere but the relay and
+   the relay **removes it from the `Cookie` header** before forwarding to the app: the app inside
+   the sandbox never sees an Aurora credential of any kind.
+4. **The relay refuses cross-site use of a preview**: it answers 403 `preview_cross_site` to a
+   request whose `Sec-Fetch-Site` is `same-site` or `cross-site` unless it is a top-level
+   navigation (`Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`, method `GET`), so another
+   preview (a sibling under `previews.domain` is *same-site*), the dashboard or any other web page cannot make
+   credentialed subrequests, form posts or fetches to a preview. A WebSocket upgrade must carry
+   an `Origin` equal to the preview's own origin. A request without Fetch Metadata headers is
+   accepted only if it carries no `Origin` or one equal to the preview's own origin
+   (non-browser callers hold the cookie anyway). The relay also strips upstream `Set-Cookie`
+   attributes `Domain` (the cookie is made host-only), and drops upstream cookies named
+   `__Host-aurora_*` or `aurora_*`, so an app cannot toss cookies onto its siblings or shadow the
+   preview credential.
+5. **The dashboard side is tightened, never loosened** (only when `previews.enabled`): a
+   cookie-authenticated API request whose `Sec-Fetch-Site` is `same-site` or `cross-site` is
+   refused with 403 `csrf_rejected` unless it is a top-level `GET` navigation (the existing
+   `Origin` rule for unsafe methods stays), so a page served from a preview cannot read or change
+   anything through the visitor's dashboard session even where the browser would send the cookie
+   (a preview domain that is *same-site* with the dashboard). The API sends no CORS headers (unchanged).
+
+**Authorization flow** (grant exchange; the OAuth `state` pattern, login-CSRF safe):
+
+1. The browser opens `https://<label>.<previews.domain>/<path>`. The relay finds no valid
+   `__Host-aurora_preview`, so it answers (for a top-level `GET`/`HEAD` navigation only; any other
+   request gets 401 `preview_login_required` and no redirect) `302` to
+   `<external_url>/v1/previews/authorize?host=<label>&state=<nonce>`, after setting
+   `__Host-aurora_pstate` (`HttpOnly`, `Secure`, `SameSite=Lax`, `Max-Age=300`, `Path=/`, value `nonce.base64url(path)`,
+   the path limited to 2 KiB, starting with `/` but not `//`, never under `/_aurora/`).
+2. `GET /v1/previews/authorize` is a **session-only** route on the dashboard origin. Without a
+   session it redirects to sign-in with a same-origin `return_to` of itself. With one it checks, in
+   this order and answering the **same 404 page** for every failure (unknown label, previews
+   off, org off, share paused, no access: the existence of a share is never revealed to someone
+   who cannot use its workspace): the label names a share, previews are on for instance and org,
+   the user `can_use(workspace)`, the share is `active`. A frozen agent answers the 423 page. On success it mints a
+   **grant**: AEAD-sealed (`08 §4` key ring, purpose `preview-grant`) `{ jti, share_id, user_id,
+   session_id, nonce, exp = now + PREVIEW_GRANT_TTL (60 s) }`, and redirects to
+   `https://<label>.<previews.domain>/_aurora/grant?g=<grant>` — a URL **constructed from the
+   share's own label**, never from the request (no open redirect, no host injection), https only.
+3. The relay's `/_aurora/grant` requires the `__Host-aurora_pstate` cookie, calls the API
+   (`POST /v1/relay/grants/redeem`, `16 §W17`) with `{ grant, label, nonce }` (`nonce` from the
+   cookie) and the API verifies: seal and expiry, `label` matches the share, `nonce` equal, the
+   grant **unused** (`jti` insert-on-conflict into `preview_grant_uses`, single use), the dashboard
+   session still live, the user still `can_use`. It creates the `preview_sessions` row and returns
+   the `auv_` token **once** (never stored in clear). The relay sets the preview cookie, deletes the
+   state cookie and redirects (`302`) to the stored path. A grant replayed, expired, for another host, or
+   redeemed without the matching state cookie (a *login-CSRF* attempt: an attacker feeding a victim
+   a grant for the attacker's session) fails with 400 `grant_invalid` and no cookie.
+4. Every later request carries only the preview cookie. The relay calls `resolve` with its
+   SHA-256 (never the token); the answer is cached at most `PREVIEW_AUTH_CACHE` (15 s; 5 s for
+   a negative answer). The API recomputes access on each uncached resolve: session row live,
+   not past `PREVIEW_SESSION_TTL` (8 h absolute) or `PREVIEW_SESSION_IDLE` (1 h without use), user
+   still an active member with `can_use`, share active, agent not frozen, previews on. Failing any →
+   `login` (when the session expired but a dashboard session may exist: the flow restarts silently
+   from step 1 and needs no click) or `deny`.
+5. **Revocation**: signing out or revoking the dashboard session deletes that session's preview
+   sessions (cascade); suspending or removing a member, losing `can_use` (including through a
+   group, `§Groups`), deleting the share, pausing it, freezing (`§Freeze`) or turning previews off
+   all end access at the next resolve; **open streams** (WebSockets, long polls) are
+   re-validated by the relay every `PREVIEW_AUTH_CACHE` through `POST /v1/relay/validate` and
+   closed with 4403 when no longer allowed. Worst-case latency 15 s + one round trip.
+6. **API keys, agent credentials, connectors and instance admins as such have no preview access**:
+   only a user session whose user passes `can_use(workspace)`. The preview credential grants
+   nothing on any other route (it is accepted by no route of the API).
+
+**Audit.** `preview.session.create` (first redemption of a session: actor, share, label; best
+effort, not security-critical), `preview.session.revoked` is not written (it is a consequence).
+Denials are metrics only (`aurora_relay_requests_total{outcome}`), never audit rows (volume,
+unauthenticated sources).
+
 ## Freeze (phase 2, RFE-006, D-50)
 
 An emergency, **reversible** switch that stops an agent, every agent of a
@@ -874,6 +967,9 @@ original record, returns 200).
    transaction, *Audit*). Each effectively frozen agent's direct conversations get
    a platform `notice` (`code: "agent_frozen"`), and the dashboard shows a banner
    at the scope.
+   (phase 4, P4-PRV-1/2) **Previews** of an effectively frozen agent answer 423 `frozen`, never
+   wake or start anything, and their open streams close within `PREVIEW_AUTH_CACHE`; the shares
+   and preview sessions are kept (`11 §Port previews`, `§Preview access`).
 7. **Reversal**: unfreezing clears the flags, invalidates the gateway and wakes due
    work. Nothing is replayed: aborted turns stay aborted, schedules resume at
    their next occurrence, sandboxes start on demand.

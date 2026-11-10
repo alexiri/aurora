@@ -750,3 +750,19 @@ Runner plane `/v1/runner/*` and connector plane `/v1/connector/*` are specified
 in `16 §W5` and `13 §Connector contract`. (phase 4, P4-MCON) Connector-host plane
 `/v1/connector-host/*` (`register`, `assignments` long poll, `status`) is specified in
 `13 §3.1` and C-455..C-457.
+
+### Relay plane and preview authorization (phase 4, P4-PRV-2, D-146, D-147; C-550..C-559)
+
+All of it is 404 while `previews.enabled` is false.
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET `/v1/previews/authorize?host=<label>&state=<nonce>` | S (session cookie, browser navigation) | the first hop of the grant exchange (`04 §Preview access`): uniform 404 page for every refusal, 423 page when frozen, otherwise `302` to `https://<label>.<previews.domain>/_aurora/grant?g=<grant>`; never redirects anywhere else; `Cache-Control: no-store`; no CORS |
+| POST `/v1/relay/register`, `/resolve`, `/grants/redeem`, `/streams`, `/validate`, `/report` | `aul_` + replica | the relay plane, `16 §W17` (the API's share/session/stream logic: resolve answers from the same functions as the dashboard's `can_use` and freeze checks, `aurora-db::authz`; **resolve** also sets the wake demand and `preview_start_requested_at`; **report** writes `last_accessed_at` and `preview_active_until`) |
+| POST `/v1/runner/preview-streams/open`, `/closed` | `aur_` + replica | redeem a stream grant, `16 §W17` |
+| GET `/v1/admin/relays` | S (instance admin) | relay replicas seen (`id`, `version`, `last_seen_at`, `streams_open`), shown on Admin → Overview |
+
+Cookie-authenticated API requests with `Sec-Fetch-Site: same-site|cross-site` that are not a top-level
+`GET` navigation are refused 403 `csrf_rejected` while `previews.enabled` (`04 §Preview access`
+rule 5); the `/v1/relay`, `/v1/runner` and `/scim/v2` planes use bearer tokens and are not
+affected.

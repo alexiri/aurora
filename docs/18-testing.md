@@ -531,6 +531,44 @@ done when its tests exist, pass in CI, and the security invariants it touches
 - **Config** (`config` crate): `previews.enabled` without a valid domain refuses to start; domain
   equal to, containing or under the dashboard host, a trusted origin or the gateway host; one label;
   public suffix; upper case; too long.
+- **Browser authorization** (`api/it/preview_auth.rs`, real Postgres; the relay logic is
+  exercised through the relay crate's test harness with the API in process): the full grant
+  exchange (no cookie → state cookie + `302` to `authorize` → `302` to `/_aurora/grant` →
+  cookie → path); matrix of failures with the uniform 404 (unknown label, instance/org off, paused,
+  no access, member of another workspace); grant replay (second redeem 400), expiry, wrong host, tampered
+  seal, wrong user, session revoked in between, missing or mismatched state cookie (login CSRF), a
+  `path` that is `//evil`, absolute or under `/_aurora/`; the redirect target is always `https://<label>.<domain>`
+  (property test with hostile `host`/`state` parameters); cookie attributes of `__Host-aurora_preview`
+  and `__Host-aurora_pstate`; **every Aurora cookie lacks `Domain`**, and a request to a preview
+  host in the browser-level e2e never carries `aurora_session`; revocation: sign-out, session revoke,
+  member suspended/removed, `can_use` lost through a group, share paused/deleted, freeze, org switch off →
+  next resolve denies and open streams close within `PREVIEW_AUTH_CACHE`; preview credential is
+  accepted by no API route; `csrf_rejected` for `Sec-Fetch-Site: same-site` XHR with the session cookie
+  while previews are on (and no change while off); `preview.session.create` audit.
+- **Relay** (`relay` crate tests with a fake runner and fake API): Fetch Metadata matrix (navigation
+  allowed; same-site/cross-site fetch, form post, iframe, image refused), WebSocket `Origin`; header hygiene
+  both ways (cookie stripped, Aurora headers never forwarded, `Host` kept, `X-Forwarded-*` set, hop-by-hop
+  removed, `Set-Cookie` `Domain` removed and `__Host-aurora_*` dropped, cache/robots/HSTS headers); smuggling
+  corpus (CL.TE/TE.CL, duplicate `Content-Length`, line folding, absolute-form, `Host` mismatch, `/_aurora/` traversal);
+  streaming of large bodies without buffering (memory stays flat for a 1 GiB response), range requests,
+  chunked, HTTP keep-alive over one stream, WebSocket echo, server-sent events, slow-loris, idle/lifetime
+  timeouts, per-share/sandbox/user stream limits, daily byte quota; wake wait (parked sandbox → 503 page with
+  refresh after 45 s; success when the port starts in time), start-command exit page, uniform 404/423 pages,
+  resolve cache (15 s) and revalidation closing streams.
+- **Streams** (`run` and `sup` crates, the W6 mock): `stream.open` for an unshared port, a reserved
+  port, with an empty list, after the share was removed → refused; connect only to loopback (a share whose
+  port is bound only on another interface fails, no other address is tried); credit accounting (a sender never
+  exceeds the window, a credit above the window or a data frame without credit closes the stream, 64 concurrent
+  streams × 128 KiB bound), round-robin fairness under a hostile fast stream, binary framing, control frames
+  outside seq/ack (a W6 reconnect ends every stream, nothing is replayed), runner redeems the grant and ignores
+  relay parameters (stolen grant opens only its own share; expired, used, stale boot, stopped sandbox,
+  frozen); an older supervisor answers nothing → `4502`; the stream listener is unreachable from the sandboxes
+  network (kind/e2e and a guard in `scripts/guards`), TLS option.
+- **Helm** (`deploy/helm` render tests, part of the edge-routes guard): with `previews.enabled=false` the chart
+  renders no relay, no wildcard host, no NetworkPolicy change (golden diff against the current render);
+  enabled renders exactly the relay Deployment/Service/PDB, the wildcard host routing only to the relay
+  (Ingress and HTTPRoute), the NetworkPolicies of `15 §Port previews`; `previews.enabled` without a domain or with
+  a domain under the dashboard host fails the render and the API start.
 - **Dashboard** (`web/tests`): tab absent when previews are off/the org has them off/BYO; add dialog
   with listening-port chips and error mapping; copy/open (rel attributes); frozen read-only; org
   settings page and confirmation; no horizontal scroll at 390 px, both themes.

@@ -466,6 +466,16 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   unknown port, a share without a command or a port that is already listening is a no-op.
   A start never carries command text on the wire and never runs while the agent is frozen
   (the share list is empty).
+- **Streams** (P4-PRV-2, `16 §W18`): on `stream.open { stream_id, port, window }` the supervisor
+  accepts only a port of its **share list**, 1024..65535 and not one of its own listeners;
+  connects to `127.0.0.1:<port>` (then `[::1]`) only, 5 s timeout, no proxy, no other address;
+  answers `stream.opened`/`stream.refused`; relays bytes with credit-based flow control (128 KiB
+  windows, 16 KiB chunks, round-robin between streams, control frames first); at most
+  `PREVIEW_STREAMS_PER_SANDBOX` (64) concurrently, more → `refused { limit }`; closes everything on
+  channel loss, `shutdown` or a changed share list that removed the port. Stream bytes never pass
+  through the harness, the gateway or the loopback proxies and are never logged or stored (only
+  counts). With an empty list the supervisor refuses every `stream.open`: that is the state of every
+  sandbox of an instance, org or agent without previews.
 - A preview-started process is an ordinary process: it is *busy* by the usual rule, parks and
   is marked `parked` with the boot, and keeps the sandbox awake only through the ordinary
   background rule; the `preview` keep-awake reason comes from stream activity alone.

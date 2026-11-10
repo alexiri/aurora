@@ -132,6 +132,21 @@ relaunch the share's start command.
   `02 §Limits`, `16 §W5`, `17` SEC-80, `18 §Port previews`. Not in phase 4: public, org-wide or
   link visibility, agent-created shares, non-HTTP protocols as a product (raw TCP bytes are carried,
   but the relay speaks HTTP and WebSocket only), per-person sharing.
+- **Relay — specified (phase 4, P4-PRV-2, D-146, D-147, SEC-81, SEC-82, SEC-85).** `aurora-relay`
+  (stateless; no database or key; port 4112 behind a wildcard edge host, 4193 ops) authenticates the
+  browser with a **per-share `__Host-aurora_preview` cookie** obtained by a sealed, single-use,
+  state-bound grant exchange with the dashboard origin (the dashboard session never reaches a preview;
+  disjoint validated domains; Fetch Metadata and `Origin` checks; dashboard API tightened while previews
+  are on); resolves hostnames and mints single-use stream grants through the API (`/v1/relay`, `aul_`
+  anchor); opens one WebSocket per upstream connection to the runner's stream listener (4108), which
+  multiplexes streams over the supervisor channel with **credit-based flow control** (128 KiB windows,
+  binary frames outside the seq/ack lineage); allow-list at the runner (API binding) and the supervisor
+  (its in-memory share list; loopback dial only); limits, quotas, metrics, Helm and NetworkPolicy. D-138:
+  does not wait for SSH. Owning sections: `04 §Preview access`, `16 §W17/§W18`, `01` (component, trust
+  boundary 13), `05 §Relay plane`, `11 §Port previews`, `12 §Previews`, `15 §Port previews`, `03`, `02 §Limits`,
+  `17` SEC-81/82/85, `18 §Port previews`, `00` (`aul_`, `auv_`, `aux_`). Not in phase 4: public or shareable
+  links, HTTP/2 or HTTP/3 to the app, TCP/SSH tunnelling as a product, request logging or inspection, custom
+  domains per share, a relay outside the cluster network of the API.
 
 ## Phase 4 — Evals
 

@@ -433,6 +433,20 @@ it again. The dashboard's "awake because…" badge says "Preview in use".
 | Member loses access, is suspended, removed, or signs out | stay | that person's preview sessions end (below, `04 §Preview access`) within 15 s |
 | Harness changed, agent moved to another runner | stay | streams closed; the next request resolves the new placement |
 
+**Runner stream listener** (P4-PRV-2, D-147). When `previews.enabled`, each runner replica opens a
+third listener, `runner.stream_bind` (default `server.bind`) port **4108**, that serves only
+`GET /v1/preview-stream` (`16 §W18`); startup warns when its address overlaps the one
+of the sandbox-facing 4105 listener (the same rule as `runner.ops_bind`). It admits a connection only with a valid stream
+grant, which the runner redeems at the API; it holds no secret and never accepts a
+port or sandbox from the caller. It is reachable from the relay and nothing else: the sandboxes
+namespace has no route to it (NetworkPolicy and the `listener_binds`-style guard, SEC-09/SEC-82).
+The runner multiplexes the streams of a sandbox over that sandbox's supervisor channel
+(`16 §W18`), keeps per-stream buffers of at most `PREVIEW_STREAM_WINDOW`, enforces
+`PREVIEW_STREAMS_PER_SANDBOX`, closes every stream of a sandbox when its channel ends, the boot
+changes, or the sandbox stops, and tells the API when a stream closes (accounting only). A runner
+without `previews` support (older version) does not open the listener and registers without the
+capability `previews`; the API places no preview on it (`unavailable`).
+
 **Audit** (`04 §Audit`; security-critical, same transaction): `preview.share.create`,
 `preview.share.update` (pause/resume, start command changed), `preview.share.delete`,
 `org.previews.update`. Not audited per request (volume): access is visible as metrics and
