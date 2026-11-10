@@ -107,6 +107,12 @@ pub async fn apply_gateway_grants(pool: &PgPool, role: &str) -> Result<(), Grant
     ));
     stmts.push(format!("GRANT SELECT (id) ON {s}.gateway_instances TO {r}"));
     stmts.push(format!("GRANT INSERT ON {s}.request_log TO {r}"));
+    // (P4-CNT, D-119) The gateway's rule quotas live in `rate_limit_windows` (backend =
+    // postgres): it reads and upserts, never deletes (the API prunes) and never touches the
+    // API's `rate_limit_buckets`.
+    stmts.push(format!(
+        "GRANT SELECT, INSERT, UPDATE ON {s}.rate_limit_windows TO {r}"
+    ));
     // (FIX-016) `updated_at`: `cas_connection_credentials` (mint/refresh rotation) and
     // `mark_reauth_required` both set it.
     stmts.push(format!(

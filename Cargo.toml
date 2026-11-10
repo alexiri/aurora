@@ -4,6 +4,7 @@ members = [
   "crates/aurora-core",
   "crates/aurora-config",
   "crates/aurora-db",
+  "crates/aurora-counters",
   "crates/aurora-crypto",
   "crates/aurora-secrets",
   "crates/aurora-policy",
@@ -57,6 +58,7 @@ todo = "warn"
 aurora-core = { path = "crates/aurora-core" }
 aurora-config = { path = "crates/aurora-config" }
 aurora-db = { path = "crates/aurora-db" }
+aurora-counters = { path = "crates/aurora-counters" }
 aurora-crypto = { path = "crates/aurora-crypto" }
 aurora-secrets = { path = "crates/aurora-secrets" }
 aurora-policy = { path = "crates/aurora-policy" }

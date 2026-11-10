@@ -100,6 +100,29 @@ database:
   cidrs: []               # e.g. ["10.20.0.0/24"]
   port: 5432
 
+# Shared rate-limit counters (phase 4, P4-CNT, D-119, SEC-62; docs/15 §Shared rate-limit
+# counters). All keys are optional: the default renders exactly the manifests of before (the
+# `memory` backend, per-replica counters, no new infrastructure). The chart does not ship Redis.
+counters:
+  backend: memory          # memory | postgres | redis  -> ratelimit.counters.backend
+  api: shared              # shared | memory: whether the API limiter uses the backend
+  gateway: shared          # shared | memory: whether the gateway rule quotas use it
+  # Behaviour when the backend cannot be reached: local (per-replica counting) or closed (503
+  # counter_unavailable). There is no `open`: any other value fails `helm template` and startup.
+  onUnavailable: {security: local, management: local, gateway: local}
+  timeoutMs: 50
+  postgres: {poolSize: 4}  # dedicated pool of the postgres backend (1-32)
+  redis:
+    address: ""            # rediss://redis.example.org:6379 (TLS; no password in it)
+    allowPlaintext: false  # explicit opt-in for redis:// to a non-loopback host
+    existingSecret: ""     # Secret with keys REDIS_USERNAME and REDIS_PASSWORD (both optional)
+    caFile: ""             # PEM bundle verifying the Redis server (mount it via extraCaBundle)
+    db: 0
+    keyPrefix: "aurora:rl:"
+    # NetworkPolicy peers (podSelector / namespaceSelector / ipBlock entries) that api and
+    # gateway may reach on the Redis port. Default deny stays: no peer, no egress.
+    networkPolicy: {egressTo: []}
+
 # Evaluation-only single-instance Postgres bundled in this chart. NOT for production.
 # Its StatefulSet, Service and PVC are pre-install hook resources, so `helm uninstall`
 # does NOT remove them (and the PVC is never removed). See NOTES.txt for the cleanup command.

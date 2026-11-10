@@ -104,3 +104,31 @@ delta_coalesce_ms = 250
 ```
 
 Verify: open a conversation stream while an agent writes a long answer; deltas arrive about every `delta_coalesce_ms`. To re-measure the `notify` ceiling on your Postgres, run `bash scripts/perf/delta_bus.sh` from a source checkout (release build; the role in `DATABASE_URL` needs `CREATEDB`; it works in a throwaway database it drops again). It prints PASS or WARN against the planning numbers in [docs/15 §Streaming fan-out ceiling](../15-deployment-operations.md), and never fails on a slow machine.
+
+## Shared rate-limit counters
+
+(Phase 4, P4-CNT, D-119, SEC-62.) Normative text: [docs/15 §Shared rate-limit counters](../15-deployment-operations.md). By default every limit above is counted **per replica** (N replicas can allow up to N times the limit) and nothing needs configuring. To make replicas enforce one limit, pick a shared backend. In Helm use `counters.*`; in `aurora.toml` the keys live under `[ratelimit.counters]`.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `backend` | `memory` | `memory` (per replica, no infrastructure), `postgres` (the two `UNLOGGED` tables, a small dedicated pool, no new infrastructure) or `redis` (your own Redis, TLS, no Cluster). Any other value fails startup. |
+| `api`, `gateway` | `shared` | Share the API limiter and/or the gateway rule quotas. `memory` keeps that limiter per replica. |
+| `on_unavailable.security` / `.management` / `.gateway` | `local` | What happens when the backend cannot be reached: `local` counts per replica until it recovers (today's strength), `closed` answers 503 `counter_unavailable` with `retry-after: 5`. **There is no `open`**: it, or any other value, fails startup. `security` = sign-in start/callback, rejected-bearer and unauthenticated per-IP limits; `management` = the authenticated buckets and webhooks; `gateway` = rule quotas. |
+| `timeout_ms` | `50` | Per store call, 10–2000. Three consecutive failures open a breaker for 5 s. |
+| `postgres.pool_size` | `4` | Dedicated pool, 1–32, separate from `database.max_connections`. |
+| `redis.address` | — | `rediss://host[:port]`, no user, password, path or query. `redis://` only for loopback or with `allow_plaintext = true` (startup warning). |
+| `redis.username_env`, `redis.password_env` | unset | **Names** of environment variables (Helm: `counters.redis.existingSecret` with keys `REDIS_USERNAME`, `REDIS_PASSWORD`). Never a value, never in the URL. |
+| `redis.ca_file`, `redis.db`, `redis.key_prefix` | system roots, `0`, `aurora:rl:` | CA bundle, database index, key prefix. |
+
+```toml
+[ratelimit.counters]
+backend = "postgres"
+[ratelimit.counters.on_unavailable]
+security = "closed"
+```
+
+- **Redis**: run it with `maxmemory-policy noeviction` or `volatile-ttl` (an LRU policy evicts live counters and resets limits). Persistence may be off. The ACL needs `EVALSHA`, `SCRIPT LOAD`, `GET`, `PING` on the prefix. With Helm set `counters.redis.networkPolicy.egressTo` so api and gateway may reach it.
+- **Not shared** (stay per replica): the stream cap (20 per caller), CLI device-code polling and `cli_start`/`cli_approve`, BYO admission.
+- **Keys** hold ids and keyed hashes only; e-mail addresses and IPs are hashed with a key derived from the signing key (rotating it restarts the affected windows once).
+- **Switching** `backend` is a rolling restart; usage resets once. A mixed fleet is safe (each replica counts what it sees).
+- **Watch**: `aurora_counters_state{state="fallback"} == 1` for 5 min means limits are per replica again (warning); a rate above 0 of `aurora_counters_fallback_total{policy="closed"}` means requests are being refused (critical). `GET /v1/admin/overview` shows `counters: { backend, state }`. `readyz` is not affected.

@@ -1,0 +1,19 @@
+# helm lint/template case (P4-CNT): shared rate-limit counters on a Redis the operator runs
+# (TLS, credentials from an existing Secret, NetworkPolicy egress to its pods).
+config:
+  auth:
+    oidc_providers:
+      - {id: corp, issuer: "https://idp.example.org", client_id: aurora, client_secret_env: OIDC_SECRET}
+counters:
+  backend: redis
+  gateway: shared
+  api: shared
+  onUnavailable: {security: local, management: local, gateway: closed}
+  redis:
+    address: rediss://redis.cache.svc:6380
+    existingSecret: aurora-redis
+    db: 2
+    networkPolicy:
+      egressTo:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: cache}}
+          podSelector: {matchLabels: {app: redis}}

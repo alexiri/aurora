@@ -565,6 +565,17 @@
       "status",
       "tail"
     ],
+    "rate_limit_buckets": [
+      "expires_at",
+      "key",
+      "tat"
+    ],
+    "rate_limit_windows": [
+      "count",
+      "expires_at",
+      "key",
+      "window_start"
+    ],
     "reach_grants": [
       "agent_id",
       "decided_at",

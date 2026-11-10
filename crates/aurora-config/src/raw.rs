@@ -37,6 +37,9 @@ pub struct EnvSecrets {
     pub bootstrap_connector_host_token: Option<Redacted<String>>,
     /// OIDC client secrets keyed by provider id (from each `client_secret_env`).
     pub oidc_client_secrets: BTreeMap<String, Redacted<String>>,
+    /// (phase 4, P4-CNT) values of `ratelimit.counters.redis.username_env` / `password_env`.
+    pub redis_username: Option<Redacted<String>>,
+    pub redis_password: Option<Redacted<String>>,
 }
 
 /// The whole configuration file, merged with env overrides.
@@ -757,6 +760,96 @@ impl Default for AttachmentsSection {
 #[serde(default, deny_unknown_fields)]
 pub struct RatelimitSection {
     pub api: ApiRateSection,
+    /// (phase 4, P4-CNT, D-119) shared counters.
+    pub counters: CountersSection,
+}
+
+/// `[ratelimit.counters]` (phase 4, P4-CNT, D-119, SEC-62; docs/15). Enum-like values stay
+/// strings and are validated with every error collected.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CountersSection {
+    /// `memory` (default) | `postgres` | `redis`.
+    pub backend: String,
+    /// `shared` | `memory`: whether the API limiter uses the backend.
+    pub api: String,
+    /// `shared` | `memory`: whether the gateway rule quotas use the backend.
+    pub gateway: String,
+    pub on_unavailable: OnUnavailableSection,
+    /// `COUNTER_TIMEOUT` per store call, 10..=2000 ms.
+    pub timeout_ms: u64,
+    pub postgres: CountersPostgresSection,
+    pub redis: CountersRedisSection,
+}
+impl Default for CountersSection {
+    fn default() -> Self {
+        Self {
+            backend: "memory".into(),
+            api: "shared".into(),
+            gateway: "shared".into(),
+            on_unavailable: OnUnavailableSection::default(),
+            timeout_ms: 50,
+            postgres: CountersPostgresSection::default(),
+            redis: CountersRedisSection::default(),
+        }
+    }
+}
+
+/// `local` | `closed` per class; there is no `open` (SEC-62).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OnUnavailableSection {
+    pub security: String,
+    pub management: String,
+    pub gateway: String,
+}
+impl Default for OnUnavailableSection {
+    fn default() -> Self {
+        Self {
+            security: "local".into(),
+            management: "local".into(),
+            gateway: "local".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CountersPostgresSection {
+    /// Dedicated pool size, 1..=32.
+    pub pool_size: u32,
+}
+impl Default for CountersPostgresSection {
+    fn default() -> Self {
+        Self { pool_size: 4 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CountersRedisSection {
+    /// `rediss://host[:port]`; required for the `redis` backend.
+    pub address: Option<String>,
+    pub allow_plaintext: bool,
+    /// Names of the environment variables holding the ACL user / password (never the values).
+    pub username_env: Option<String>,
+    pub password_env: Option<String>,
+    pub ca_file: Option<String>,
+    pub db: i64,
+    pub key_prefix: String,
+}
+impl Default for CountersRedisSection {
+    fn default() -> Self {
+        Self {
+            address: None,
+            allow_plaintext: false,
+            username_env: None,
+            password_env: None,
+            ca_file: None,
+            db: 0,
+            key_prefix: "aurora:rl:".into(),
+        }
+    }
 }
 
 /// `[ratelimit.api]`: management-API token buckets (docs/05 §Conventions).

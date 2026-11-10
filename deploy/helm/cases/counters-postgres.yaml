@@ -1,0 +1,10 @@
+# helm lint/template case (P4-CNT): shared rate-limit counters on Postgres (no new infrastructure),
+# the security class closed.
+config:
+  auth:
+    oidc_providers:
+      - {id: corp, issuer: "https://idp.example.org", client_id: aurora, client_secret_env: OIDC_SECRET}
+counters:
+  backend: postgres
+  onUnavailable: {security: closed, management: local, gateway: local}
+  postgres: {poolSize: 6}

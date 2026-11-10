@@ -18749,7 +18749,8 @@
         "type": "object",
         "description": "`GET /v1/admin/overview` (C-459): this phase reports the connector hosts.",
         "required": [
-          "connector_hosts"
+          "connector_hosts",
+          "counters"
         ],
         "properties": {
           "connector_hosts": {
@@ -18758,6 +18759,10 @@
               "$ref": "#/components/schemas/ConnectorHostInfo"
             },
             "description": "Connector hosts seen within 24 hours."
+          },
+          "counters": {
+            "$ref": "#/components/schemas/CountersInfo",
+            "description": "(phase 4, P4-CNT, C-402) the rate-limit counter backend of this API replica."
           }
         }
       },
@@ -21697,6 +21702,24 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "CountersInfo": {
+        "type": "object",
+        "description": "`counters` of `GET /v1/admin/overview` (C-402).",
+        "required": [
+          "backend",
+          "state"
+        ],
+        "properties": {
+          "backend": {
+            "type": "string",
+            "description": "`memory` | `postgres` | `redis`."
+          },
+          "state": {
+            "type": "string",
+            "description": "`local` (the `memory` backend, or the API limiter kept per replica), `shared`, or\n`fallback` (a class is counting per replica because the backend is unreachable)."
           }
         }
       },

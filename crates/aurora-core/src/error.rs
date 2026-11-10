@@ -136,6 +136,18 @@ impl ApiError {
         self.retry_after_secs
     }
 
+    /// (P4-CNT, D-119) 503 `counter_unavailable` with `retry-after: 5`: a `closed` counter class
+    /// refused because the shared counter backend is unreachable. Never a 429.
+    pub fn counter_unavailable(limiter: &str) -> Self {
+        let mut e = Self::unavailable(
+            "counter_unavailable",
+            "The rate-limit counters are unavailable, so this request was refused. Retry shortly.",
+        )
+        .with_details(serde_json::json!({ "limiter": limiter }));
+        e.retry_after_secs = Some(5);
+        e
+    }
+
     /// 400 `invalid_request` with `details.fields = [{path, message}]`.
     pub fn invalid_request(message: impl Into<String>, fields: Vec<FieldError>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "invalid_request", message)

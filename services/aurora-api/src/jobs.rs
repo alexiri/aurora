@@ -88,6 +88,44 @@ pub async fn maintain_request_log(
     }
 }
 
+/// `COUNTER_PRUNE_INTERVAL`.
+pub const COUNTER_PRUNE_INTERVAL: Duration = Duration::from_secs(60);
+/// `COUNTER_PRUNE_BATCH`.
+pub const COUNTER_PRUNE_BATCH: i64 = 5_000;
+
+/// (phase 4, P4-CNT) One `counters_prune` pass: delete dead rows (`expires_at < now()`) of
+/// `rate_limit_windows` and `rate_limit_buckets`, `FOR UPDATE SKIP LOCKED`, in batches. Safe on
+/// every replica at once. Returns the number of rows deleted.
+pub async fn prune_counters(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let mut total = 0;
+    loop {
+        let n = aurora_db::counters::prune(pool, COUNTER_PRUNE_BATCH).await?;
+        total += n;
+        // A full batch in either table means more may be waiting.
+        if n < u64::try_from(COUNTER_PRUNE_BATCH).unwrap_or(u64::MAX) {
+            break;
+        }
+    }
+    if total > 0 {
+        metrics::counter!("aurora_counters_pruned_total").increment(total);
+    }
+    Ok(total)
+}
+
+/// Run the `counters_prune` arm on this replica every [`COUNTER_PRUNE_INTERVAL`].
+pub fn spawn_counters_prune(pool: PgPool) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(COUNTER_PRUNE_INTERVAL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            if let Err(e) = prune_counters(&pool).await {
+                tracing::warn!(error = %e, "counters prune failed");
+            }
+        }
+    });
+}
+
 /// Start all jobs on the current runtime. Tasks end with the runtime.
 pub fn spawn(
     pool: PgPool,

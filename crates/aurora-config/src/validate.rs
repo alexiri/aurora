@@ -190,12 +190,78 @@ pub struct ApiConfig {
     pub retention: RetentionSection,
     pub attachments: AttachmentsSection,
     pub ratelimit: RatelimitSection,
+    /// (phase 4, P4-CNT) validated shared-counter configuration.
+    pub counters: CountersConfig,
     pub tls: TlsSection,
     pub telemetry: TelemetrySection,
 }
 
+/// Counter backend (`ratelimit.counters.backend`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CounterBackend {
+    Memory,
+    Postgres,
+    Redis,
+}
+
+impl CounterBackend {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::Postgres => "postgres",
+            Self::Redis => "redis",
+        }
+    }
+}
+
+/// Validated Redis settings; the credentials are the values of the named environment variables.
+#[derive(Debug, Clone)]
+pub struct CountersRedisConfig {
+    pub address: String,
+    pub allow_plaintext: bool,
+    pub username: Option<Redacted<String>>,
+    pub password: Option<Redacted<String>>,
+    pub ca_file: Option<String>,
+    pub db: i64,
+    pub key_prefix: String,
+    /// `redis://` to a non-loopback host was opted into: warn at startup.
+    pub plaintext_remote: bool,
+}
+
+/// `ratelimit.counters.*` after validation (phase 4, P4-CNT, D-119, SEC-62).
+#[derive(Debug, Clone)]
+pub struct CountersConfig {
+    pub backend: CounterBackend,
+    /// The API limiter / the gateway rule quotas use the backend (always `false` for `memory`).
+    pub api_shared: bool,
+    pub gateway_shared: bool,
+    pub security: aurora_counters::ClassPolicy,
+    pub management: aurora_counters::ClassPolicy,
+    pub gateway: aurora_counters::ClassPolicy,
+    pub timeout: std::time::Duration,
+    pub pg_pool_size: u32,
+    pub redis: Option<CountersRedisConfig>,
+}
+
+impl Default for CountersConfig {
+    fn default() -> Self {
+        Self {
+            backend: CounterBackend::Memory,
+            api_shared: false,
+            gateway_shared: false,
+            security: aurora_counters::ClassPolicy::Local,
+            management: aurora_counters::ClassPolicy::Local,
+            gateway: aurora_counters::ClassPolicy::Local,
+            timeout: aurora_counters::DEFAULT_TIMEOUT,
+            pg_pool_size: 4,
+            redis: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GatewayConfig {
+    pub counters: CountersConfig,
     pub server: ServerSection,
     pub external_url: String,
     pub database_url: Redacted<String>,
@@ -398,6 +464,7 @@ impl RawConfig {
             }
         }
         check_ratelimit(&mut c, &self.ratelimit.api);
+        let counters = check_counters(&mut c, &self.ratelimit.counters, &self.env_secrets);
         check_common(&mut c, &self.tls, &self.telemetry);
         let advertised_proxy_url = advertised_proxy_url(&self.gateway, external_url.as_deref());
         let sandbox_proxy_url = sandbox_proxy_url(
@@ -462,6 +529,7 @@ impl RawConfig {
             retention: self.retention.clone(),
             attachments: self.attachments.clone(),
             ratelimit: self.ratelimit.clone(),
+            counters,
             tls: self.tls.clone(),
             telemetry: self.telemetry.clone(),
         })
@@ -527,12 +595,14 @@ impl RawConfig {
             c.err("gateway.ca_dir", "must not be empty");
         }
         check_approvals(&mut c, &self.approvals, &self.hosted);
+        let counters = check_counters(&mut c, &self.ratelimit.counters, &self.env_secrets);
         check_common(&mut c, &self.tls, &self.telemetry);
         let advertised_proxy_url = advertised_proxy_url(g, external_url.as_deref());
         let sandbox_proxy_url =
             sandbox_proxy_url(g, self.runner.backend.as_deref(), &advertised_proxy_url);
         c.finish()?;
         Ok(GatewayConfig {
+            counters,
             server: self.server.clone(),
             external_url: external_url.unwrap_or_default(),
             database_url: database_url.unwrap_or_default(),
@@ -1057,6 +1127,97 @@ fn check_ratelimit(c: &mut Ctx, r: &ApiRateSection) {
                 c.err(format!("{key}.{field}"), "must be at least 1");
             }
         }
+    }
+}
+
+/// `ratelimit.counters.*` (phase 4, P4-CNT, D-119, SEC-62): an unknown backend, an `open` (or
+/// any unknown) `on_unavailable` value, a password in the address and a plaintext remote Redis
+/// without `allow_plaintext` each refuse startup, naming the key.
+fn check_counters(c: &mut Ctx, r: &CountersSection, s: &EnvSecrets) -> CountersConfig {
+    const K: &str = "ratelimit.counters";
+    let backend = match r.backend.as_str() {
+        "memory" => CounterBackend::Memory,
+        "postgres" => CounterBackend::Postgres,
+        "redis" => CounterBackend::Redis,
+        other => {
+            c.err(
+                format!("{K}.backend"),
+                format!("unknown backend `{other}` (expected memory, postgres or redis)"),
+            );
+            CounterBackend::Memory
+        }
+    };
+    let shared = |c: &mut Ctx, key: &str, v: &str| match v {
+        "shared" => true,
+        "memory" => false,
+        other => {
+            c.err(
+                format!("{K}.{key}"),
+                format!("`{other}` is not valid (expected shared or memory)"),
+            );
+            false
+        }
+    };
+    let api_shared = shared(c, "api", &r.api) && backend != CounterBackend::Memory;
+    let gateway_shared = shared(c, "gateway", &r.gateway) && backend != CounterBackend::Memory;
+    let policy = |c: &mut Ctx, class: &str, v: &str| {
+        aurora_counters::ClassPolicy::parse(v).unwrap_or_else(|e| {
+            c.err(format!("{K}.on_unavailable.{class}"), e);
+            aurora_counters::ClassPolicy::Local
+        })
+    };
+    let security = policy(c, "security", &r.on_unavailable.security);
+    let management = policy(c, "management", &r.on_unavailable.management);
+    let gateway = policy(c, "gateway", &r.on_unavailable.gateway);
+    if !(10..=2000).contains(&r.timeout_ms) {
+        c.err(format!("{K}.timeout_ms"), "must be between 10 and 2000");
+    }
+    if !(1..=32).contains(&r.postgres.pool_size) {
+        c.err(
+            format!("{K}.postgres.pool_size"),
+            "must be between 1 and 32",
+        );
+    }
+    let rd = &r.redis;
+    if !(0..=65_535).contains(&rd.db) {
+        c.err(format!("{K}.redis.db"), "must be a database index");
+    }
+    if let Err(e) = aurora_counters::address::check_key_prefix(&rd.key_prefix) {
+        c.err(format!("{K}.redis.key_prefix"), e);
+    }
+    let mut redis = None;
+    match (&rd.address, backend) {
+        (None, CounterBackend::Redis) => c.err(
+            format!("{K}.redis.address"),
+            "required when backend = \"redis\"",
+        ),
+        (Some(a), _) => match aurora_counters::address::parse_address(a, rd.allow_plaintext) {
+            Ok(p) => {
+                redis = Some(CountersRedisConfig {
+                    address: a.clone(),
+                    allow_plaintext: rd.allow_plaintext,
+                    username: s.redis_username.clone(),
+                    password: s.redis_password.clone(),
+                    ca_file: rd.ca_file.clone(),
+                    db: rd.db,
+                    key_prefix: rd.key_prefix.clone(),
+                    plaintext_remote: p.plaintext_remote,
+                });
+            }
+            Err(e) => c.err(format!("{K}.redis.address"), e),
+        },
+        (None, _) => {}
+    }
+    CountersConfig {
+        backend,
+        api_shared,
+        gateway_shared,
+        security,
+        management,
+        gateway,
+        timeout: std::time::Duration::from_millis(r.timeout_ms),
+        pg_pool_size: r.postgres.pool_size,
+        redis,
     }
 }
 

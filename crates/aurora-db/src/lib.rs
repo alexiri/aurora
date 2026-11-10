@@ -7,6 +7,7 @@ mod api_error;
 pub mod authz;
 pub mod bus;
 pub mod claim;
+pub mod counters;
 mod error;
 pub mod grants;
 pub mod jobs;

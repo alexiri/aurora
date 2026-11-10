@@ -120,8 +120,8 @@ async fn callback(
 ) -> Result<Response, ApiError> {
     service::provider(&s, &provider)?;
     let client = client(&ip, &headers);
-    s.rate_limiter
-        .check(Bucket::OidcCallbackIp, &client.ip_key())?;
+    crate::http::counters::check_security_bucket(&s, Bucket::OidcCallbackIp, &client.ip_key())
+        .await?;
     let cookie = cookie_value(&headers, OIDC_COOKIE);
     let params = Params {
         code: q.code,

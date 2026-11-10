@@ -64,6 +64,12 @@ pub async fn receive(
         .await?
         .ok_or_else(not_found)?;
 
+    // (P4-CNT, D-119) The shared per-webhook limit (`management` class) refuses a flood before
+    // the body is read; the row-based check in the delivery transaction stays authoritative.
+    if w.enabled {
+        crate::http::counters::check_webhook(&s, w.id, RATE_LIMIT as u64).await?;
+    }
+
     // Read the body outside any lock; disabled hooks never read it.
     let declared = headers
         .get(header::CONTENT_LENGTH)

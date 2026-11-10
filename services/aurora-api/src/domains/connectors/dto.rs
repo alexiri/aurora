@@ -136,6 +136,18 @@ pub struct ConnectorHostInfo {
 pub struct AdminOverview {
     /// Connector hosts seen within 24 hours.
     pub connector_hosts: Vec<ConnectorHostInfo>,
+    /// (phase 4, P4-CNT, C-402) the rate-limit counter backend of this API replica.
+    pub counters: CountersInfo,
+}
+
+/// `counters` of `GET /v1/admin/overview` (C-402).
+#[derive(Serialize, ToSchema)]
+pub struct CountersInfo {
+    /// `memory` | `postgres` | `redis`.
+    pub backend: String,
+    /// `local` (the `memory` backend, or the API limiter kept per replica), `shared`, or
+    /// `fallback` (a class is counting per replica because the backend is unreachable).
+    pub state: String,
 }
 
 #[derive(Deserialize, ToSchema)]

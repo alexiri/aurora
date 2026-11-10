@@ -31,6 +31,7 @@ mod connectors;
 mod connectors_managed;
 mod conversation_lifecycle;
 mod conversations;
+mod counters;
 mod direct_visibility;
 mod foundation;
 mod freeze;

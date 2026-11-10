@@ -1119,6 +1119,121 @@ fn api_ratelimit_defaults_overrides_and_validation() {
     }
 }
 
+// (phase 4, P4-CNT, D-119, SEC-62) Startup refusals of `ratelimit.counters.*`, each naming the key;
+// the default is the `memory` backend with every class `local`.
+#[test]
+fn counters_defaults_and_startup_refusals() {
+    let api = load_with(BASE, &[]).unwrap().api_config().unwrap();
+    let c = &api.counters;
+    assert_eq!(c.backend, CounterBackend::Memory);
+    assert!(
+        !c.api_shared && !c.gateway_shared,
+        "memory: nothing is shared"
+    );
+    assert_eq!(c.security, aurora_counters::ClassPolicy::Local);
+    assert_eq!(c.timeout, std::time::Duration::from_millis(50));
+    let gw = load_with(BASE, &[]).unwrap().gateway_config().unwrap();
+    assert_eq!(gw.counters.backend, CounterBackend::Memory);
+
+    let ok = load_with(
+        &format!("{BASE}[ratelimit.counters]\nbackend = \"postgres\"\n[ratelimit.counters.on_unavailable]\nsecurity = \"closed\"\n"),
+        &[],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap();
+    assert!(ok.counters.api_shared && ok.counters.gateway_shared);
+    assert_eq!(ok.counters.security, aurora_counters::ClassPolicy::Closed);
+
+    for (toml, env, key) in [
+        (
+            "[ratelimit.counters.on_unavailable]\nsecurity = \"open\"\n",
+            vec![],
+            "ratelimit.counters.on_unavailable.security",
+        ),
+        (
+            "[ratelimit.counters.on_unavailable]\nmanagement = \"OPEN\"\n",
+            vec![],
+            "ratelimit.counters.on_unavailable.management",
+        ),
+        (
+            "[ratelimit.counters.on_unavailable]\ngateway = \"whatever\"\n",
+            vec![],
+            "ratelimit.counters.on_unavailable.gateway",
+        ),
+        (
+            "[ratelimit.counters]\nbackend = \"memcached\"\n",
+            vec![],
+            "ratelimit.counters.backend",
+        ),
+        (
+            "[ratelimit.counters]\nbackend = \"redis\"\n",
+            vec![],
+            "ratelimit.counters.redis.address",
+        ),
+        (
+            "[ratelimit.counters]\nbackend = \"redis\"\n[ratelimit.counters.redis]\naddress = \"rediss://user:secret@redis.example.org\"\n",
+            vec![],
+            "ratelimit.counters.redis.address",
+        ),
+        (
+            "[ratelimit.counters]\nbackend = \"redis\"\n[ratelimit.counters.redis]\naddress = \"redis://redis.example.org:6379\"\n",
+            vec![],
+            "ratelimit.counters.redis.address",
+        ),
+        (
+            "[ratelimit.counters]\nbackend = \"redis\"\n[ratelimit.counters.redis]\naddress = \"rediss://r.example.org\"\npassword_env = \"NO_SUCH_REDIS_PW\"\n",
+            vec![],
+            "ratelimit.counters.redis.password_env",
+        ),
+        (
+            "[ratelimit.counters]\ntimeout_ms = 5\n",
+            vec![],
+            "ratelimit.counters.timeout_ms",
+        ),
+        (
+            "[ratelimit.counters.postgres]\npool_size = 0\n",
+            vec![],
+            "ratelimit.counters.postgres.pool_size",
+        ),
+        (
+            "[ratelimit.counters.redis]\nkey_prefix = \"a b\"\n",
+            vec![],
+            "ratelimit.counters.redis.key_prefix",
+        ),
+        (
+            "[ratelimit.counters]\nnope = 1\n",
+            vec![],
+            "ratelimit.counters.nope",
+        ),
+    ] {
+        let _: Vec<(&str, &str)> = env;
+        for svc in ["api", "gateway"] {
+            let r = load_with(&format!("{BASE}{toml}"), &[]).and_then(|r| {
+                if svc == "api" {
+                    r.api_config().map(|_| ())
+                } else {
+                    r.gateway_config().map(|_| ())
+                }
+            });
+            let e = r.unwrap_err();
+            assert!(e.has_key(key), "{svc} {key}: {e}");
+        }
+    }
+    // A plaintext remote Redis is accepted only with the explicit opt-in; credentials come from the
+    // named variables and never appear in Debug output.
+    let raw = load_with(
+        &format!("{BASE}[ratelimit.counters]\nbackend = \"redis\"\n[ratelimit.counters.redis]\naddress = \"redis://redis.svc:6379\"\nallow_plaintext = true\npassword_env = \"CNT_REDIS_PW\"\n"),
+        &[("CNT_REDIS_PW", "s3cret-value")],
+    )
+    .unwrap();
+    let r = raw.api_config().unwrap();
+    let rc = r.counters.redis.as_ref().unwrap();
+    assert!(rc.plaintext_remote);
+    assert_eq!(rc.password.as_ref().unwrap().expose(), "s3cret-value");
+    assert!(!format!("{r:?}").contains("s3cret-value"));
+}
+
 // (phase 1, RFE-002) The proxy listener is TLS-only: no http:// advertised URL, cert/key in pairs.
 #[test]
 fn advertised_proxy_url_must_be_https() {

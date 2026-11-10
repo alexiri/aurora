@@ -174,7 +174,12 @@ pub async fn catalogue(s: &AppState) -> Result<ConnectorTypeList, ApiError> {
 pub async fn overview(s: &AppState) -> Result<AdminOverview, ApiError> {
     let hosts =
         connector_hosts::list_seen(&s.pool, limits::CONNECTOR_HOST_RETAIN.as_secs_f64()).await?;
+    let (backend, state) = s.counters.overview();
     Ok(AdminOverview {
+        counters: CountersInfo {
+            backend: backend.to_owned(),
+            state: state.to_owned(),
+        },
         connector_hosts: hosts
             .into_iter()
             .map(|h| {

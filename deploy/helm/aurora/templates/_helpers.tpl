@@ -315,6 +315,26 @@ spec:
 {{- end }}
 {{- end -}}
 
+{{/* (P4-CNT) Redis credentials of the shared counters: the Secret's keys become the variables
+     the configuration names (counters.redis.existingSecret; never values, never a URL). */}}
+{{- define "aurora.countersEnv" -}}
+{{- if and (eq (default "memory" .Values.counters.backend) "redis") .Values.counters.redis.existingSecret }}
+- name: AURORA_COUNTERS_REDIS_USERNAME
+  valueFrom: {secretKeyRef: {name: {{ .Values.counters.redis.existingSecret | quote }}, key: REDIS_USERNAME, optional: true}}
+- name: AURORA_COUNTERS_REDIS_PASSWORD
+  valueFrom: {secretKeyRef: {name: {{ .Values.counters.redis.existingSecret | quote }}, key: REDIS_PASSWORD, optional: true}}
+{{- end }}
+{{- end -}}
+
+{{/* (P4-CNT) Egress to the Redis of the shared counters (default deny stays: no peer, no egress). */}}
+{{- define "aurora.countersEgress" -}}
+{{- if and (eq (default "memory" .Values.counters.backend) "redis") .Values.counters.redis.networkPolicy.egressTo }}
+- to:
+    {{- toYaml .Values.counters.redis.networkPolicy.egressTo | nindent 4 }}
+  ports: [{protocol: TCP, port: {{ default 6379 (regexFind ":[0-9]+$" (trimSuffix "/" .Values.counters.redis.address) | trimPrefix ":" | atoi) }}}]
+{{- end }}
+{{- end -}}
+
 {{/* Egress to a private Vault (the external-egress rule excludes private ranges). */}}
 {{- define "aurora.vaultEgress" -}}
 {{- if and .Values.vault.enabled .Values.vault.egress.cidrs }}

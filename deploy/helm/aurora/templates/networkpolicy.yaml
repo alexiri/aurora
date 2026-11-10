@@ -65,6 +65,7 @@ spec:
       ports: [{protocol: TCP, port: 4107}]
     {{- end }}
     {{- include "aurora.vaultEgress" . | nindent 4 }}
+    {{- with (include "aurora.countersEgress" .) }}{{ . | nindent 4 }}{{ end }}
     {{- include "aurora.external" . | nindent 4 }}
 {{- if .Values.devIdp.enabled }}
 ---
@@ -127,6 +128,7 @@ spec:
         {{- include "aurora.peer" (dict "root" . "c" "api") | nindent 8 }}
       ports: [{protocol: TCP, port: 4111}]
     {{- include "aurora.vaultEgress" . | nindent 4 }}
+    {{- with (include "aurora.countersEgress" .) }}{{ . | nindent 4 }}{{ end }}
     {{- include "aurora.external" . | nindent 4 }}
     {{- with .Values.networkPolicy.gatewayExtraEgress }}
     {{- toYaml . | nindent 4 }}
