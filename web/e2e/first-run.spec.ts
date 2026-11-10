@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { ensurePlacement } from "./support/placement";
+
 // P2-E2E-1 (decision D-78): the owner's phase-2 exit bar, driven through the dashboard only.
 //   new user signs in -> adds a LiteLLM key -> grants it to the default agent -> says hello -> the answer
 //   comes back from the mock LLM (VidaiMock behind LiteLLM) through the gateway, with the REAL claude-code
@@ -23,8 +25,11 @@ async function signInAs(page: Page, email: string) {
   await page.goto(`/v1/auth/oidc/dev/start?login_hint=${encodeURIComponent(email)}&return_to=%2F`);
 }
 
-test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's answer", async ({ page }) => {
+test("first run: sign in, add a LiteLLM key, grant it, say hello, get the mock's answer", async ({ page, browser, baseURL }) => {
   test.setTimeout(8 * 60_000);
+  // A fresh instance admits only its admins until a placement is saved (P4-ONB-1); the journey
+  // itself stays "a new user signs in and lands in a workspace".
+  await ensurePlacement(browser, baseURL!);
   const email = `first-run-${Date.now().toString(36)}@example.test`;
 
   // 1. A new user signs in and lands in their new organization/workspace.

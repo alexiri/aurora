@@ -227,6 +227,7 @@ idle_stop_secs = {idle}
 [auth]
 signup_mode = "open"
 org_creation = "anyone"
+instance_admins = ["placement-admin@e2e.test"]
 
 [auth.dev_idp]
 enabled = true
@@ -392,6 +393,7 @@ hookhost_url = "http://127.0.0.1:9"
     /// Sign in through the development IdP (open mode: the first sign-in creates the user, org +
     /// workspace + Daneel), flip Daneel to the fake harness. Phase 1 (RFE-004): no password.
     pub async fn signup(&self, email: &str) -> Api {
+        ensure_placement(&format!("http://{}", self.api_addr)).await;
         let http = reqwest::Client::new();
         let cookie = aurora_testkit::oidc::sign_in_over_http(
             &format!("http://{}", self.api_addr),
@@ -427,6 +429,46 @@ hookhost_url = "http://127.0.0.1:9"
     }
 }
 
+/// The e-mail every e2e installation lists in `auth.instance_admins` (podman config below,
+/// `deploy/kind/values-e2e.yaml`) so the journeys can save the placement first.
+pub const PLACEMENT_ADMIN: &str = "placement-admin@e2e.test";
+
+/// P4-ONB-1 (D-140, D-151 g): a fresh `open` instance lets only instance admins sign in until a
+/// placement is saved. Sign in as the listed admin and save `personal_org` (each new user gets
+/// their own organization and workspace, as the journeys expect) unless one is saved already.
+pub async fn ensure_placement(base: &str) {
+    let cookie = aurora_testkit::oidc::sign_in_over_http(base, "dev", PLACEMENT_ADMIN)
+        .await
+        .unwrap_or_else(|e| panic!("sign-in {PLACEMENT_ADMIN}: {e}"));
+    let http = reqwest::Client::new();
+    let get = |m: Method, body: Option<Value>| {
+        let mut r = http
+            .request(m, format!("{base}/v1/admin/placement"))
+            .header("cookie", &cookie)
+            .header("origin", &request_origin())
+            .timeout(Duration::from_secs(40));
+        if let Some(b) = body {
+            r = r.json(&b);
+        }
+        r
+    };
+    let cur: Value = get(Method::GET, None)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    if cur["saved"] == true {
+        return;
+    }
+    let r = get(Method::PUT, Some(json!({"mode": "personal_org"})))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "save placement");
+}
+
 fn secrets_env(db_url: &str) -> Vec<(&'static str, String)> {
     let k = base64::engine::general_purpose::STANDARD.encode([b'a'; 32]);
     let token = env("AURORA_E2EH_TOKEN");
@@ -458,6 +500,7 @@ impl Api {
     /// the fake harness through the agents API.
     pub async fn connect(base: &str, origin: &str, email: &str) -> Api {
         let _ = origin; // phase 1 (RFE-004): sign-in is a browser-style redirect flow, no Origin header
+        ensure_placement(base).await;
         let http = reqwest::Client::new();
         let cookie = aurora_testkit::oidc::sign_in_over_http(base, "dev", email)
             .await

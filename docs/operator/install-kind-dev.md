@@ -108,6 +108,15 @@ AURORA_KIND_CONTEXT=kind-aurora-dev AURORA_KIND_NS=aurora AURORA_KIND_SBX_NS=aur
   cargo test -p aurora-e2e-hosted --test k8s -- --test-threads=1     # the Kubernetes scenarios (chat in a sandbox Pod, park/wake, …)
 ```
 
+**A fresh stack has no placement** (P4-ONB-1, D-140). Under `signup_mode: open` with nothing saved and no
+organization, only instance admins can sign in; everyone else gets `instance_setup_pending` ("This
+instance is being set up — try again shortly"). The dev and e2e values list `placement-admin@e2e.test` in
+`config.auth.instance_admins`, and every journey above first signs in as that user and saves
+`PUT /v1/admin/placement {"mode":"personal_org"}` (once; `web/e2e/support/placement.ts`,
+`ensure_placement` in `tests/e2e-hosted/tests/common/mod.rs`), so the journey itself stays "a new user signs
+in and lands in their own workspace". Use `shared_org` there to try the shared-organization flow. Real
+installs are unchanged: save the placement in Admin › Sign-up & placement before inviting users.
+
 `m1.sh --kind` signs two users in through the dev IdP; the API rate-limits OIDC `start`/`callback` per client IP (20/min), so after several runs restart the API
 (`kubectl --context kind-aurora-dev -n aurora rollout restart deploy/aurora-api`). The first `kind-up` is slow (about 24 min:
 builder image, a cold cargo build, image pulls); later ones reuse the cargo volume and images.
