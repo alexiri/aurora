@@ -81,7 +81,11 @@ async fn idp_group(h: &Harness, org: Uuid, name: &str, provider: &str, value: &s
 }
 
 async fn members(h: &Harness, g: Uuid) -> i64 {
-    count(h, &format!("SELECT count(*) FROM group_members WHERE group_id = '{g}'")).await
+    count(
+        h,
+        &format!("SELECT count(*) FROM group_members WHERE group_id = '{g}'"),
+    )
+    .await
 }
 
 #[tokio::test]
@@ -98,7 +102,14 @@ async fn sec71_d156_membership_is_set_exactly_from_the_validated_claim() {
 
     claims(&idp, json!(["eg-a", "unlinked-value"]));
     sign_in(&h).await;
-    assert_eq!((members(&h, a).await, members(&h, b).await, members(&h, other).await), (1, 0, 0));
+    assert_eq!(
+        (
+            members(&h, a).await,
+            members(&h, b).await,
+            members(&h, other).await
+        ),
+        (1, 0, 0)
+    );
     // switching the claim moves the membership: added if present, removed if absent
     claims(&idp, json!(["eg-b"]));
     sign_in(&h).await;
@@ -131,7 +142,14 @@ async fn sec71_d156_membership_is_set_exactly_from_the_validated_claim() {
         );
     }
     // values that link no group are stored nowhere
-    assert_eq!(count(&h, "SELECT count(*) FROM audit_log WHERE metadata::text LIKE '%unlinked-value%'").await, 0);
+    assert_eq!(
+        count(
+            &h,
+            "SELECT count(*) FROM audit_log WHERE metadata::text LIKE '%unlinked-value%'"
+        )
+        .await,
+        0
+    );
 }
 
 #[tokio::test]
@@ -148,7 +166,13 @@ async fn sec71_d156_the_sync_never_creates_an_org_membership() {
     let u = user_id(&h).await;
     assert_eq!(members(&h, g).await, 0);
     assert_eq!(
-        count(&h, &format!("SELECT count(*) FROM org_members WHERE user_id = '{u}' AND org_id = '{other_org}'")).await,
+        count(
+            &h,
+            &format!(
+                "SELECT count(*) FROM org_members WHERE user_id = '{u}' AND org_id = '{other_org}'"
+            )
+        )
+        .await,
         0,
         "no membership appeared"
     );
@@ -260,7 +284,12 @@ async fn sec71_d156_idp_members_are_read_only_and_creation_validates_the_provide
         let h = &h;
         async move {
             let (s, _, v) = h
-                .send(m, &uri, &[("cookie", ck.as_str()), ("origin", ORIGIN)], body)
+                .send(
+                    m,
+                    &uri,
+                    &[("cookie", ck.as_str()), ("origin", ORIGIN)],
+                    body,
+                )
                 .await;
             (s.as_u16(), v)
         }
@@ -273,7 +302,10 @@ async fn sec71_d156_idp_members_are_read_only_and_creation_validates_the_provide
         Some(json!({"name": "x", "source": "idp", "idp_provider": "nope", "idp_value": "eg-a"})),
     )
     .await;
-    assert_eq!((s, v["error"]["code"].as_str()), (422, Some("idp_provider_not_configured")));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("idp_provider_not_configured"))
+    );
     let (s, _) = call(
         Method::POST,
         groups.clone(),
@@ -298,15 +330,25 @@ async fn sec71_d156_idp_members_are_read_only_and_creation_validates_the_provide
         Some(json!({"name": "dup", "source": "idp", "idp_provider": "mock", "idp_value": "eg-a"})),
     )
     .await;
-    assert_eq!((s, v["error"]["code"].as_str()), (409, Some("group_idp_link_taken")));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("group_idp_link_taken"))
+    );
     // hand edits of members: 409 managed_by_idp, nothing changed
     for (m, uri, body) in [
         (Method::PUT, format!("/v1/groups/{g}/members/{u}"), None),
         (Method::DELETE, format!("/v1/groups/{g}/members/{u}"), None),
-        (Method::POST, format!("/v1/groups/{g}/members:batch"), Some(json!({"add": [u]}))),
+        (
+            Method::POST,
+            format!("/v1/groups/{g}/members:batch"),
+            Some(json!({"add": [u]})),
+        ),
     ] {
         let (s, v) = call(m, uri, body).await;
-        assert_eq!((s, v["error"]["code"].as_str()), (409, Some("managed_by_idp")));
+        assert_eq!(
+            (s, v["error"]["code"].as_str()),
+            (409, Some("managed_by_idp"))
+        );
     }
     assert_eq!(members(&h, g).await, 0);
     // the claim fills it; the list shows `idp` source and the last sync time
@@ -351,17 +393,43 @@ async fn sec71_scim_groups_are_read_only_but_deletable_while_scim_is_off() {
         let h = &h;
         async move {
             let (s, _, v) = h
-                .send(m, &uri, &[("cookie", ck.as_str()), ("origin", ORIGIN)], body)
+                .send(
+                    m,
+                    &uri,
+                    &[("cookie", ck.as_str()), ("origin", ORIGIN)],
+                    body,
+                )
                 .await;
             (s.as_u16(), v)
         }
     };
-    let (s, v) = call(Method::PUT, format!("/v1/groups/{g}/members/{member}"), None).await;
-    assert_eq!((s, v["error"]["code"].as_str()), (409, Some("group_managed_by_scim")));
-    let (s, v) = call(Method::PATCH, format!("/v1/groups/{g}"), Some(json!({"name": "x"}))).await;
-    assert_eq!((s, v["error"]["code"].as_str()), (409, Some("group_managed_by_scim")));
+    let (s, v) = call(
+        Method::PUT,
+        format!("/v1/groups/{g}/members/{member}"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("group_managed_by_scim"))
+    );
+    let (s, v) = call(
+        Method::PATCH,
+        format!("/v1/groups/{g}"),
+        Some(json!({"name": "x"})),
+    )
+    .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("group_managed_by_scim"))
+    );
     // the mapping stays editable
-    let (s, v) = call(Method::PATCH, format!("/v1/groups/{g}"), Some(json!({"org_role": "member"}))).await;
+    let (s, v) = call(
+        Method::PATCH,
+        format!("/v1/groups/{g}"),
+        Some(json!({"org_role": "member"})),
+    )
+    .await;
     assert_eq!(s, 200, "{v}");
     // SCIM enabled for the org: delete is the IdP's
     sqlx::query("UPDATE organizations SET settings = jsonb_set(settings, '{scim}', '{\"enabled\": true}') WHERE id = $1")
@@ -370,7 +438,10 @@ async fn sec71_scim_groups_are_read_only_but_deletable_while_scim_is_off() {
         .await
         .unwrap();
     let (s, v) = call(Method::DELETE, format!("/v1/groups/{g}"), None).await;
-    assert_eq!((s, v["error"]["code"].as_str()), (409, Some("group_managed_by_scim")));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("group_managed_by_scim"))
+    );
     sqlx::query("UPDATE organizations SET settings = '{}' WHERE id = $1")
         .bind(org)
         .execute(h.pool())

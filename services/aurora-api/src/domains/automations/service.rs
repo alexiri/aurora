@@ -275,8 +275,7 @@ pub async fn offboarding(
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
-    let via =
-        aurora_db::repo::groups::via_groups(&mut *conn, org, user, &ws_ids).await?;
+    let via = aurora_db::repo::groups::via_groups(&mut *conn, org, user, &ws_ids).await?;
     for item in out
         .schedules
         .iter_mut()

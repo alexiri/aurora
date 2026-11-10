@@ -34,13 +34,18 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
                 kind: "direct".into(),
                 group: None,
             }];
-            sources.extend(mapped.iter().filter(|g| g.0 == m.org_id).map(|g| MeRoleSource {
-                kind: "group".into(),
-                group: Some(MeGroupRef {
-                    id: g.1,
-                    name: g.2.clone(),
-                }),
-            }));
+            sources.extend(
+                mapped
+                    .iter()
+                    .filter(|g| g.0 == m.org_id)
+                    .map(|g| MeRoleSource {
+                        kind: "group".into(),
+                        group: Some(MeGroupRef {
+                            id: g.1,
+                            name: g.2.clone(),
+                        }),
+                    }),
+            );
             let workspaces = ws
                 .iter()
                 .filter(|w| w.org_id == m.org_id)

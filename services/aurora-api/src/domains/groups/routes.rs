@@ -122,15 +122,13 @@ async fn get_group(
     let g = repo::get(&s.pool, id)
         .await?
         .ok_or_else(service::group_not_found)?;
-    c.org_credential_reader(&s, g.org_id)
-        .await
-        .map_err(|e| {
-            if e.status() == StatusCode::FORBIDDEN {
-                e
-            } else {
-                service::group_not_found()
-            }
-        })?;
+    c.org_credential_reader(&s, g.org_id).await.map_err(|e| {
+        if e.status() == StatusCode::FORBIDDEN {
+            e
+        } else {
+            service::group_not_found()
+        }
+    })?;
     Ok(Json(g.into()))
 }
 
@@ -241,7 +239,10 @@ async fn members_batch(
     if req.add.len() > BATCH_MAX || req.remove.len() > BATCH_MAX {
         return Err(ApiError::invalid_request(
             "Invalid request.",
-            vec![FieldError::new("/add", "at most 100 `add` and 100 `remove`")],
+            vec![FieldError::new(
+                "/add",
+                "at most 100 `add` and 100 `remove`",
+            )],
         ));
     }
     Ok(Json(
@@ -284,11 +285,7 @@ async fn group_impact(
     Query(q): Query<ImpactQuery>,
 ) -> Result<Json<GroupImpact>, ApiError> {
     let g = service::load_admin(&s, &c, id).await?;
-    let mut conn = s
-        .pool
-        .acquire()
-        .await
-        .map_err(aurora_db::DbError::from)?;
+    let mut conn = s.pool.acquire().await.map_err(aurora_db::DbError::from)?;
     let rows = repo::impact(&mut conn, &g, q.remove_member).await?;
     Ok(Json(GroupImpact {
         workspaces: rows.into_iter().map(Into::into).collect(),

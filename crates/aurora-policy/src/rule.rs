@@ -10,10 +10,16 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Identity {
-    Agent { id: Uuid },
-    User { id: Uuid },
+    Agent {
+        id: Uuid,
+    },
+    User {
+        id: Uuid,
+    },
     /// (phase 4, P4-GRP-1, D-131, SEC-71) A directory group of the rule's org.
-    Group { id: Uuid },
+    Group {
+        id: Uuid,
+    },
 }
 
 impl Identity {

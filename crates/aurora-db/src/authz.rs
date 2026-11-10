@@ -336,7 +336,10 @@ pub fn combine_roles(
     direct_ws: Option<WorkspaceRole>,
     group_ws_roles: &[WorkspaceRole],
 ) -> (OrgRole, Option<WorkspaceRole>) {
-    let org = group_org_roles.iter().copied().fold(direct_org, OrgRole::max);
+    let org = group_org_roles
+        .iter()
+        .copied()
+        .fold(direct_org, OrgRole::max);
     let ws = if org.is_admin() {
         Some(WorkspaceRole::Owner)
     } else {

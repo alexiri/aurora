@@ -332,8 +332,18 @@ const ROWS: &[Row] = &[
     // `groups.rs` (see EXEMPT).
     r("GET", "/v1/orgs/{org}/groups", G::OrgCred, false),
     r("POST", "/v1/orgs/{org}/groups", G::Admin, false),
-    r("PUT", "/v1/workspaces/{ws}/access/groups/{group}", G::WsOwn, false),
-    r("DELETE", "/v1/workspaces/{ws}/access/groups/{group}", G::WsOwn, false),
+    r(
+        "PUT",
+        "/v1/workspaces/{ws}/access/groups/{group}",
+        G::WsOwn,
+        false,
+    ),
+    r(
+        "DELETE",
+        "/v1/workspaces/{ws}/access/groups/{group}",
+        G::WsOwn,
+        false,
+    ),
     // (P4-ONB-1, C-520..C-522, SEC-79) new-user placement
     r("GET", "/v1/admin/placement", G::Inst, false),
     r("PUT", "/v1/admin/placement", G::Inst, false),

@@ -167,8 +167,7 @@ fn check_shape(req: &mut DraftRequest, scope: Scope, e: &mut Errs) {
         if r.identities.len() > MAX_LIST {
             e.add(format!("{rp}/identities"), "too many identities");
         }
-        if r
-            .identities
+        if r.identities
             .iter()
             .filter(|i| matches!(i, Identity::Group { .. }))
             .count()
@@ -358,10 +357,11 @@ async fn check_scope(
         })
         .collect();
     if !unknown.is_empty() {
-        return Err(
-            ApiError::unprocessable("unknown_identity", "A group identity is not in this scope.")
-                .with_details(json!({ "fields": unknown })),
-        );
+        return Err(ApiError::unprocessable(
+            "unknown_identity",
+            "A group identity is not in this scope.",
+        )
+        .with_details(json!({ "fields": unknown })));
     }
     let cred_ok = |rows: Vec<(Uuid, Option<Uuid>)>| -> HashMap<Uuid, Option<Uuid>> {
         rows.into_iter().collect()

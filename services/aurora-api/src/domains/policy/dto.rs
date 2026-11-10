@@ -9,11 +9,17 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Identity {
-    Agent { id: Uuid },
-    User { id: Uuid },
+    Agent {
+        id: Uuid,
+    },
+    User {
+        id: Uuid,
+    },
     /// (phase 4, P4-GRP-1, D-131) A directory group of the scope's org; matches only a speaker
     /// who is in the group.
-    Group { id: Uuid },
+    Group {
+        id: Uuid,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

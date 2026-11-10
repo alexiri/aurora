@@ -88,7 +88,11 @@ fn limit(code: &str, msg: &str) -> ApiError {
 
 /// The group, readable by the caller's org: 404 for a group of another org or an org the caller
 /// is not an active member of (the existence of a group is not disclosed).
-pub async fn load(s: &AppState, c: &Caller, id: Uuid) -> Result<(GroupRow, crate::http::auth::OrgAuth), ApiError> {
+pub async fn load(
+    s: &AppState,
+    c: &Caller,
+    id: Uuid,
+) -> Result<(GroupRow, crate::http::auth::OrgAuth), ApiError> {
     let g = repo::get(&s.pool, id).await?.ok_or_else(group_not_found)?;
     // A workspace key is 403 on organization routes; an outsider gets 404 (no disclosure).
     let auth = c.org(s, g.org_id).await.map_err(|e| {
@@ -134,7 +138,10 @@ pub async fn create(
     let link: Option<(String, String)> = match source {
         "manual" => {
             if req.idp_provider.is_some() || req.idp_value.is_some() {
-                return Err(bad("/source", "idp_provider and idp_value need source `idp`"));
+                return Err(bad(
+                    "/source",
+                    "idp_provider and idp_value need source `idp`",
+                ));
             }
             None
         }
@@ -208,10 +215,9 @@ fn name_or_link_taken(e: DbError) -> ApiError {
             "group_idp_link_taken",
             "Another group already mirrors that claim value.",
         ),
-        _ if matches!(e, DbError::UniqueViolation { .. }) => ApiError::conflict(
-            "group_name_taken",
-            "A group with that name already exists.",
-        ),
+        _ if matches!(e, DbError::UniqueViolation { .. }) => {
+            ApiError::conflict("group_name_taken", "A group with that name already exists.")
+        }
         _ => e.into(),
     }
 }
@@ -435,12 +441,16 @@ pub async fn put_binding(
 ) -> Result<(), ApiError> {
     let a = c.workspace(s, ws).await?;
     crate::http::auth::require_own(&a)?;
-    let g = repo::get(&s.pool, group).await?.ok_or_else(group_not_found)?;
+    let g = repo::get(&s.pool, group)
+        .await?
+        .ok_or_else(group_not_found)?;
     if g.org_id != a.org_id {
         return Err(group_not_found());
     }
     let mut tx = audit::begin(s).await?;
-    repo::lock(&mut tx, group).await?.ok_or_else(group_not_found)?;
+    repo::lock(&mut tx, group)
+        .await?
+        .ok_or_else(group_not_found)?;
     let prev = repo::binding_role(&mut *tx, group, ws).await?;
     if prev.is_none() && repo::binding_count(&mut *tx, group).await? >= GROUP_BINDINGS_PER_GROUP {
         return Err(limit(

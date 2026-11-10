@@ -42,12 +42,19 @@ async fn user(pool: &PgPool, org: Uuid, role: &str) -> Uuid {
 }
 
 async fn world(pool: &PgPool) -> W {
-    let (org, ws, hosted, byo) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
-    sqlx::query("INSERT INTO organizations (id, slug, name, external_id) VALUES ($1,'o','O','ext')")
-        .bind(org)
-        .execute(pool)
-        .await
-        .unwrap();
+    let (org, ws, hosted, byo) = (
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+    );
+    sqlx::query(
+        "INSERT INTO organizations (id, slug, name, external_id) VALUES ($1,'o','O','ext')",
+    )
+    .bind(org)
+    .execute(pool)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO workspaces (id, org_id, slug, name) VALUES ($1,$2,'w','W')")
         .bind(ws)
         .bind(org)
@@ -186,11 +193,13 @@ async fn identity_carries_the_speakers_group_ids_and_none_without_a_speaker() {
     member(p, g2, w.org, w.bob).await;
     // a group of another org: never in the set
     let other = Uuid::now_v7();
-    sqlx::query("INSERT INTO organizations (id, slug, name, external_id) VALUES ($1,'o2','O2','ext2')")
-        .bind(other)
-        .execute(p)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO organizations (id, slug, name, external_id) VALUES ($1,'o2','O2','ext2')",
+    )
+    .bind(other)
+    .execute(p)
+    .await
+    .unwrap();
     group(p, other, "foreign", None).await;
     cred(p, w.hosted, "auc_alice", "context", Some(w.alice)).await;
     cred(p, w.hosted, "auc_bob", "context", Some(w.bob)).await;
@@ -224,12 +233,14 @@ async fn user_invalidation_re_resolves_the_group_set_mid_turn() {
     let db = TestDb::new().await;
     let p = db.pool();
     let w = world(p).await;
-    sqlx::query("INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,'member')")
-        .bind(w.ws)
-        .bind(w.alice)
-        .execute(p)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,'member')",
+    )
+    .bind(w.ws)
+    .bind(w.alice)
+    .execute(p)
+    .await
+    .unwrap();
     let g = group(p, w.org, "g", None).await;
     cred(p, w.hosted, "auc_alice", "context", Some(w.alice)).await;
     let r = live(p).await;
@@ -237,16 +248,32 @@ async fn user_invalidation_re_resolves_the_group_set_mid_turn() {
     // member added: the cached identity is dropped by the `user` scope and the next request
     // carries the group
     member(p, g, w.org, w.alice).await;
-    ping(p, Channel::GatewayInvalidate, json!({"scope": "user", "id": w.alice})).await;
-    assert!(until(&r, "auc_alice", |i| i.speaker_group_ids == vec![g]).await, "added");
+    ping(
+        p,
+        Channel::GatewayInvalidate,
+        json!({"scope": "user", "id": w.alice}),
+    )
+    .await;
+    assert!(
+        until(&r, "auc_alice", |i| i.speaker_group_ids == vec![g]).await,
+        "added"
+    );
     // member removed: the group rule stops matching
     sqlx::query("DELETE FROM group_members WHERE user_id = $1")
         .bind(w.alice)
         .execute(p)
         .await
         .unwrap();
-    ping(p, Channel::GatewayInvalidate, json!({"scope": "user", "id": w.alice})).await;
-    assert!(until(&r, "auc_alice", |i| i.speaker_group_ids.is_empty()).await, "removed");
+    ping(
+        p,
+        Channel::GatewayInvalidate,
+        json!({"scope": "user", "id": w.alice}),
+    )
+    .await;
+    assert!(
+        until(&r, "auc_alice", |i| i.speaker_group_ids.is_empty()).await,
+        "removed"
+    );
 }
 
 #[tokio::test]
@@ -263,9 +290,16 @@ async fn workspace_and_org_invalidations_refresh_binding_and_mapping_changes() {
     assert_eq!((id.speaker_user_id, id.speaker_group_ids.len()), (None, 0));
     // a binding gives the group's members `can_use`: workspace scope
     bind(p, g, w.ws, w.org, "member").await;
-    ping(p, Channel::GatewayInvalidate, json!({"scope": "workspace", "id": w.ws})).await;
+    ping(
+        p,
+        Channel::GatewayInvalidate,
+        json!({"scope": "workspace", "id": w.ws}),
+    )
+    .await;
     assert!(
-        until(&r, "auc_alice", |i| i.speaker_user_id == Some(w.alice) && i.speaker_group_ids == vec![g]).await,
+        until(&r, "auc_alice", |i| i.speaker_user_id == Some(w.alice)
+            && i.speaker_group_ids == vec![g])
+        .await,
         "binding"
     );
     // removing the binding withdraws it
@@ -273,17 +307,33 @@ async fn workspace_and_org_invalidations_refresh_binding_and_mapping_changes() {
         .execute(p)
         .await
         .unwrap();
-    ping(p, Channel::GatewayInvalidate, json!({"scope": "workspace", "id": w.ws})).await;
-    assert!(until(&r, "auc_alice", |i| i.speaker_user_id.is_none() && i.speaker_group_ids.is_empty()).await);
+    ping(
+        p,
+        Channel::GatewayInvalidate,
+        json!({"scope": "workspace", "id": w.ws}),
+    )
+    .await;
+    assert!(
+        until(&r, "auc_alice", |i| i.speaker_user_id.is_none()
+            && i.speaker_group_ids.is_empty())
+        .await
+    );
     // an `admin` org-role mapping gives `can_use` on every workspace: org scope
     sqlx::query("UPDATE groups SET org_role = 'admin' WHERE id = $1")
         .bind(g)
         .execute(p)
         .await
         .unwrap();
-    ping(p, Channel::GatewayInvalidate, json!({"scope": "org", "id": w.org})).await;
+    ping(
+        p,
+        Channel::GatewayInvalidate,
+        json!({"scope": "org", "id": w.org}),
+    )
+    .await;
     assert!(
-        until(&r, "auc_alice", |i| i.speaker_user_id == Some(w.alice) && i.speaker_group_ids == vec![g]).await,
+        until(&r, "auc_alice", |i| i.speaker_user_id == Some(w.alice)
+            && i.speaker_group_ids == vec![g])
+        .await,
         "mapping"
     );
     // a suspended member derives nothing
@@ -292,8 +342,17 @@ async fn workspace_and_org_invalidations_refresh_binding_and_mapping_changes() {
         .execute(p)
         .await
         .unwrap();
-    ping(p, Channel::GatewayInvalidate, json!({"scope": "org", "id": w.org})).await;
-    assert!(until(&r, "auc_alice", |i| i.speaker_user_id.is_none() && i.speaker_group_ids.is_empty()).await);
+    ping(
+        p,
+        Channel::GatewayInvalidate,
+        json!({"scope": "org", "id": w.org}),
+    )
+    .await;
+    assert!(
+        until(&r, "auc_alice", |i| i.speaker_user_id.is_none()
+            && i.speaker_group_ids.is_empty())
+        .await
+    );
 }
 
 #[tokio::test]
@@ -301,19 +360,33 @@ async fn a_request_already_in_the_pipeline_keeps_the_identity_it_started_with() 
     let db = TestDb::new().await;
     let p = db.pool();
     let w = world(p).await;
-    sqlx::query("INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,'member')")
-        .bind(w.ws)
-        .bind(w.alice)
-        .execute(p)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,'member')",
+    )
+    .bind(w.ws)
+    .bind(w.alice)
+    .execute(p)
+    .await
+    .unwrap();
     let g = group(p, w.org, "g", None).await;
     member(p, g, w.org, w.alice).await;
     cred(p, w.hosted, "auc_alice", "context", Some(w.alice)).await;
     let r = live(p).await;
     let in_flight = resolve(&r, "auc_alice").await;
-    sqlx::query("DELETE FROM group_members").execute(p).await.unwrap();
-    ping(p, Channel::GatewayInvalidate, json!({"scope": "user", "id": w.alice})).await;
+    sqlx::query("DELETE FROM group_members")
+        .execute(p)
+        .await
+        .unwrap();
+    ping(
+        p,
+        Channel::GatewayInvalidate,
+        json!({"scope": "user", "id": w.alice}),
+    )
+    .await;
     assert!(until(&r, "auc_alice", |i| i.speaker_group_ids.is_empty()).await);
-    assert_eq!(in_flight.speaker_group_ids, vec![g], "the owned identity is unchanged");
+    assert_eq!(
+        in_flight.speaker_group_ids,
+        vec![g],
+        "the owned identity is unchanged"
+    );
 }

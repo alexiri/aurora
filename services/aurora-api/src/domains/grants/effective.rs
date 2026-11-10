@@ -70,15 +70,13 @@ async fn compute_inner(
         .iter()
         .copied()
         .filter(|r| {
-            r.identities
-                .iter()
-                .any(|i| {
-                    matches!(
-                        i,
-                        aurora_policy::rule::Identity::User { .. }
-                            | aurora_policy::rule::Identity::Group { .. }
-                    )
-                })
+            r.identities.iter().any(|i| {
+                matches!(
+                    i,
+                    aurora_policy::rule::Identity::User { .. }
+                        | aurora_policy::rule::Identity::Group { .. }
+                )
+            })
         })
         .collect();
     let secrets = gateway::active_secrets(&state.pool, agent.org_id, agent.workspace_id).await?;

@@ -7,8 +7,8 @@
 //! stores nothing for values that link no group. An absent claim removes every membership.
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use aurora_config::OidcProvider;
-use aurora_db::repo::groups as repo;
 use aurora_db::DbError;
+use aurora_db::repo::groups as repo;
 use serde_json::json;
 use uuid::Uuid;
 

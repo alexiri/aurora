@@ -573,13 +573,9 @@ async fn list_access(
         Some("groups") => {
             let bindings = aurora_db::repo::groups::workspace_bindings(&s.pool, ws).await?;
             let dp = Pagination::new(q.limit, q.derived_cursor.as_deref())?;
-            let drows = aurora_db::repo::groups::derived_members(
-                &s.pool,
-                ws,
-                after(&dp),
-                dp.fetch(),
-            )
-            .await?;
+            let drows =
+                aurora_db::repo::groups::derived_members(&s.pool, ws, after(&dp), dp.fetch())
+                    .await?;
             let ids: Vec<Uuid> = drows
                 .iter()
                 .flat_map(|r| r.sources.iter().filter_map(|x| x.group))

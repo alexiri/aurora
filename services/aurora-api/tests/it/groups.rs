@@ -79,13 +79,7 @@ async fn fx() -> Fx {
 }
 
 impl Fx {
-    async fn call(
-        &self,
-        w: &Who,
-        m: Method,
-        uri: &str,
-        body: Option<Value>,
-    ) -> (u16, Value) {
+    async fn call(&self, w: &Who, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
         let (s, _, v) = self
             .h
             .send(
@@ -150,7 +144,10 @@ impl Fx {
     }
 
     async fn n(&self, sql: &str) -> i64 {
-        sqlx::query_scalar(sql).fetch_one(self.h.pool()).await.unwrap()
+        sqlx::query_scalar(sql)
+            .fetch_one(self.h.pool())
+            .await
+            .unwrap()
     }
 }
 
@@ -165,7 +162,12 @@ async fn crud_names_errors_and_optimistic_concurrency() {
     let f = fx().await;
     let uri = format!("/v1/orgs/{}/groups", f.org);
     let (s, v) = f
-        .call(&f.admin, Method::POST, &uri, Some(json!({"name": "  Platform  ", "description": "d"})))
+        .call(
+            &f.admin,
+            Method::POST,
+            &uri,
+            Some(json!({"name": "  Platform  ", "description": "d"})),
+        )
         .await;
     assert_eq!(s, 201, "{v}");
     assert_eq!(v["name"], "Platform");
@@ -175,56 +177,101 @@ async fn crud_names_errors_and_optimistic_concurrency() {
     let g = v["id"].as_str().unwrap().to_owned();
     // names are unique per org, case-insensitively
     let (s, v) = f
-        .call(&f.admin, Method::POST, &uri, Some(json!({"name": "platform"})))
+        .call(
+            &f.admin,
+            Method::POST,
+            &uri,
+            Some(json!({"name": "platform"})),
+        )
         .await;
     assert_eq!((s, code(&v)), (409, "group_name_taken"));
     for bad in ["", "   ", &"x".repeat(81), "a\u{0}b"] {
-        let (s, _) = f.call(&f.admin, Method::POST, &uri, Some(json!({"name": bad}))).await;
+        let (s, _) = f
+            .call(&f.admin, Method::POST, &uri, Some(json!({"name": bad})))
+            .await;
         assert_eq!(s, 400, "{bad:?}");
     }
     // `owner` can never be mapped; neither can an unknown role (SEC-71)
     for r in ["owner", "root"] {
         let (s, v) = f
-            .call(&f.admin, Method::POST, &uri, Some(json!({"name": "m", "org_role": r})))
+            .call(
+                &f.admin,
+                Method::POST,
+                &uri,
+                Some(json!({"name": "m", "org_role": r})),
+            )
             .await;
         assert_eq!((s, code(&v)), (422, "group_org_role_invalid"), "{r}");
     }
     let (s, v) = f
-        .call(&f.admin, Method::POST, &uri, Some(json!({"name": "s", "source": "scim"})))
+        .call(
+            &f.admin,
+            Method::POST,
+            &uri,
+            Some(json!({"name": "s", "source": "scim"})),
+        )
         .await;
     assert_eq!(s, 400, "{v}");
 
     // PATCH: stale revision, If-Match, mapping change audited with `change`
     let one = format!("/v1/groups/{g}");
     let (s, v) = f
-        .call(&f.admin, Method::PATCH, &one, Some(json!({"name": "Platform team", "revision": 1})))
+        .call(
+            &f.admin,
+            Method::PATCH,
+            &one,
+            Some(json!({"name": "Platform team", "revision": 1})),
+        )
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["revision"], 2);
     let (s, v) = f
-        .call(&f.admin, Method::PATCH, &one, Some(json!({"name": "again", "revision": 1})))
-        .await;
-    assert_eq!((s, code(&v)), (409, "stale_revision"));
-    let (s, _, v) = f
-        .h
-        .send(
+        .call(
+            &f.admin,
             Method::PATCH,
             &one,
-            &[("cookie", f.admin.cookie.as_str()), ("origin", ORIGIN), ("if-match", "\"1\"")],
+            Some(json!({"name": "again", "revision": 1})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "stale_revision"));
+    let (s, _, v) =
+        f.h.send(
+            Method::PATCH,
+            &one,
+            &[
+                ("cookie", f.admin.cookie.as_str()),
+                ("origin", ORIGIN),
+                ("if-match", "\"1\""),
+            ],
             Some(json!({"description": null})),
         )
         .await;
     assert_eq!((s.as_u16(), code(&v)), (409, "stale_revision"));
     let (s, v) = f
-        .call(&f.admin, Method::PATCH, &one, Some(json!({"org_role": "owner"})))
+        .call(
+            &f.admin,
+            Method::PATCH,
+            &one,
+            Some(json!({"org_role": "owner"})),
+        )
         .await;
     assert_eq!((s, code(&v)), (422, "group_org_role_invalid"));
     let (s, v) = f
-        .call(&f.admin, Method::PATCH, &one, Some(json!({"org_role": "member"})))
+        .call(
+            &f.admin,
+            Method::PATCH,
+            &one,
+            Some(json!({"org_role": "member"})),
+        )
         .await;
     assert_eq!(s, 200, "{v}");
     let (s, v) = f
-        .call(&f.admin, Method::PATCH, &one, Some(json!({"org_role": "admin"})))
+        .call(
+            &f.admin,
+            Method::PATCH,
+            &one,
+            Some(json!({"org_role": "admin"})),
+        )
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["org_role"], "admin");
@@ -237,10 +284,14 @@ async fn crud_names_errors_and_optimistic_concurrency() {
     .unwrap();
     assert_eq!(meta["change"]["org_role"], "member → admin");
     // list filters
-    let (s, v) = f.call(&f.admin, Method::GET, &format!("{uri}?q=PLAT"), None).await;
+    let (s, v) = f
+        .call(&f.admin, Method::GET, &format!("{uri}?q=PLAT"), None)
+        .await;
     assert_eq!(s, 200);
     assert_eq!(v["items"].as_array().unwrap().len(), 1);
-    let (_, v) = f.call(&f.admin, Method::GET, &format!("{uri}?source=idp"), None).await;
+    let (_, v) = f
+        .call(&f.admin, Method::GET, &format!("{uri}?source=idp"), None)
+        .await;
     assert_eq!(v["items"].as_array().unwrap().len(), 0);
     // delete
     let (s, _) = f.call(&f.admin, Method::DELETE, &one, None).await;
@@ -261,7 +312,12 @@ async fn group_and_user_limits() {
     .await
     .unwrap();
     let (s, v) = f
-        .call(&f.owner, Method::POST, &format!("/v1/orgs/{}/groups", f.org), Some(json!({"name": "one too many"})))
+        .call(
+            &f.owner,
+            Method::POST,
+            &format!("/v1/orgs/{}/groups", f.org),
+            Some(json!({"name": "one too many"})),
+        )
         .await;
     assert_eq!((s, code(&v)), (422, "group_limit_reached"));
     // GROUPS_PER_USER: the plain member is already in 100 groups
@@ -297,12 +353,32 @@ async fn permission_matrix_per_route() {
     let routes: Vec<(Method, String, Option<Value>, &str)> = vec![
         // (method, uri, body, who may: "admin" = org owner/admin, "reader" = + workspace owner)
         (Method::GET, org_groups.clone(), None, "reader"),
-        (Method::POST, org_groups.clone(), Some(json!({"name": "x"})), "admin"),
+        (
+            Method::POST,
+            org_groups.clone(),
+            Some(json!({"name": "x"})),
+            "admin",
+        ),
         (Method::GET, gu.clone(), None, "reader"),
-        (Method::PATCH, gu.clone(), Some(json!({"description": "d"})), "admin"),
+        (
+            Method::PATCH,
+            gu.clone(),
+            Some(json!({"description": "d"})),
+            "admin",
+        ),
         (Method::GET, format!("{gu}/members"), None, "admin"),
-        (Method::PUT, format!("{gu}/members/{}", f.member.id), None, "admin"),
-        (Method::DELETE, format!("{gu}/members/{}", f.member.id), None, "admin"),
+        (
+            Method::PUT,
+            format!("{gu}/members/{}", f.member.id),
+            None,
+            "admin",
+        ),
+        (
+            Method::DELETE,
+            format!("{gu}/members/{}", f.member.id),
+            None,
+            "admin",
+        ),
         (
             Method::POST,
             format!("{gu}/members:batch"),
@@ -337,11 +413,20 @@ async fn permission_matrix_per_route() {
             }
         }
         // workspace keys cannot use organization routes; an org key answers like its owner
-        let (s, _) = f.as_key(&f.owner.ws_key, m.clone(), uri, body.clone()).await;
+        let (s, _) = f
+            .as_key(&f.owner.ws_key, m.clone(), uri, body.clone())
+            .await;
         assert_eq!(s, 403, "{m} {uri} ws key");
-        let (s, v) = f.as_key(&f.owner.org_key, m.clone(), uri, body.clone()).await;
-        assert!(s < 300 || s == 409, "{m} {uri} org key of the owner: {s} {v}");
-        let (s, _) = f.as_key(&f.member.org_key, m.clone(), uri, body.clone()).await;
+        let (s, v) = f
+            .as_key(&f.owner.org_key, m.clone(), uri, body.clone())
+            .await;
+        assert!(
+            s < 300 || s == 409,
+            "{m} {uri} org key of the owner: {s} {v}"
+        );
+        let (s, _) = f
+            .as_key(&f.member.org_key, m.clone(), uri, body.clone())
+            .await;
         assert_eq!(s, 403, "{m} {uri} org key of a member");
     }
     // anonymous: 401
@@ -350,11 +435,15 @@ async fn permission_matrix_per_route() {
     // binding a group: `can_own` of the workspace, not org membership alone
     let bind_uri = format!("/v1/workspaces/{}/access/groups/{g}", f.ws);
     for w in [&f.member, &f.plain] {
-        let (s, v) = f.call(w, Method::PUT, &bind_uri, Some(json!({"role": "member"}))).await;
+        let (s, v) = f
+            .call(w, Method::PUT, &bind_uri, Some(json!({"role": "member"})))
+            .await;
         assert!(s == 403 || s == 404, "{s} {v}");
     }
     for w in [&f.wsowner, &f.admin] {
-        let (s, v) = f.call(w, Method::PUT, &bind_uri, Some(json!({"role": "member"}))).await;
+        let (s, v) = f
+            .call(w, Method::PUT, &bind_uri, Some(json!({"role": "member"})))
+            .await;
         assert_eq!(s, 200, "{v}");
     }
     // the groups of another org are 404, never 403
@@ -377,7 +466,11 @@ async fn membership_never_creates_a_membership_and_is_idempotent() {
     let (s, v) = f.add(g, Uuid::now_v7()).await;
     assert_eq!((s, code(&v)), (422, "not_an_org_member"));
     assert_eq!(
-        f.n(&format!("SELECT count(*) FROM org_members WHERE user_id = '{}' AND org_id = '{}'", f.outsider.id, f.org)).await,
+        f.n(&format!(
+            "SELECT count(*) FROM org_members WHERE user_id = '{}' AND org_id = '{}'",
+            f.outsider.id, f.org
+        ))
+        .await,
         0
     );
     let (s, v) = f.add(g, f.plain.id).await;
@@ -388,7 +481,8 @@ async fn membership_never_creates_a_membership_and_is_idempotent() {
     assert_eq!(v["added"].as_array().unwrap().len(), 0, "idempotent");
     // one audit row only for the change that happened
     assert_eq!(
-        f.n("SELECT count(*) FROM audit_log WHERE action = 'group_member.add'").await,
+        f.n("SELECT count(*) FROM audit_log WHERE action = 'group_member.add'")
+            .await,
         1
     );
     // batch: one transaction, one audit row per change, atomic on error
@@ -402,7 +496,10 @@ async fn membership_never_creates_a_membership_and_is_idempotent() {
         .await;
     assert_eq!((s, code(&v)), (422, "not_an_org_member"));
     assert_eq!(
-        f.n(&format!("SELECT count(*) FROM group_members WHERE group_id = '{g}'")).await,
+        f.n(&format!(
+            "SELECT count(*) FROM group_members WHERE group_id = '{g}'"
+        ))
+        .await,
         1,
         "nothing applied"
     );
@@ -423,17 +520,32 @@ async fn membership_never_creates_a_membership_and_is_idempotent() {
     );
     let too_many: Vec<Uuid> = (0..101).map(|_| Uuid::now_v7()).collect();
     let (s, _) = f
-        .call(&f.owner, Method::POST, &format!("/v1/groups/{g}/members:batch"), Some(json!({"add": too_many})))
+        .call(
+            &f.owner,
+            Method::POST,
+            &format!("/v1/groups/{g}/members:batch"),
+            Some(json!({"add": too_many})),
+        )
         .await;
     assert_eq!(s, 400);
     // delete is idempotent
     let (s, _) = f
-        .call(&f.owner, Method::DELETE, &format!("/v1/groups/{g}/members/{}", f.plain.id), None)
+        .call(
+            &f.owner,
+            Method::DELETE,
+            &format!("/v1/groups/{g}/members/{}", f.plain.id),
+            None,
+        )
         .await;
     assert_eq!(s, 204);
     // members listing
     let (s, v) = f
-        .call(&f.owner, Method::GET, &format!("/v1/groups/{g}/members"), None)
+        .call(
+            &f.owner,
+            Method::GET,
+            &format!("/v1/groups/{g}/members"),
+            None,
+        )
         .await;
     assert_eq!(s, 200);
     assert_eq!(v["items"].as_array().unwrap().len(), 2);
@@ -451,35 +563,61 @@ async fn group_access_is_effective_on_the_next_request_and_for_keys() {
     assert_eq!(f.ws_status(&f.plain).await, 404);
     let (_, key) = f.h.api_key(f.plain.id, f.org, Some(f.ws), false).await;
     let key = bearer(&key);
-    let (s, _) = f.as_key(&key, Method::GET, &format!("/v1/workspaces/{}", f.ws), None).await;
+    let (s, _) = f
+        .as_key(&key, Method::GET, &format!("/v1/workspaces/{}", f.ws), None)
+        .await;
     assert_eq!(s, 404);
     assert_eq!(f.add(g, f.plain.id).await.0, 200);
     assert_eq!(f.ws_status(&f.plain).await, 200, "added: next request");
-    let (s, _) = f.as_key(&key, Method::GET, &format!("/v1/workspaces/{}", f.ws), None).await;
-    assert_eq!(s, 200, "the key owner's group change reaches the key's next request");
+    let (s, _) = f
+        .as_key(&key, Method::GET, &format!("/v1/workspaces/{}", f.ws), None)
+        .await;
+    assert_eq!(
+        s, 200,
+        "the key owner's group change reaches the key's next request"
+    );
     // a member (not an owner) of the workspace through the group cannot manage it
     let (s, v) = f
-        .call(&f.plain, Method::GET, &format!("/v1/workspaces/{}/access", f.ws), None)
+        .call(
+            &f.plain,
+            Method::GET,
+            &format!("/v1/workspaces/{}/access", f.ws),
+            None,
+        )
         .await;
     assert_eq!((s, code(&v)), (403, "forbidden"));
     // raise the group to owner: can_own through the group
     assert_eq!(f.bind(g, "owner").await.0, 200);
     let (s, _) = f
-        .call(&f.plain, Method::GET, &format!("/v1/workspaces/{}/access", f.ws), None)
+        .call(
+            &f.plain,
+            Method::GET,
+            &format!("/v1/workspaces/{}/access", f.ws),
+            None,
+        )
         .await;
     assert_eq!(s, 200);
     // /v1/me shows the workspace and the group
-    let (_, me) = f.h.get("/v1/me", &[("cookie", f.plain.cookie.as_str())]).await;
+    let (_, me) =
+        f.h.get("/v1/me", &[("cookie", f.plain.cookie.as_str())])
+            .await;
     assert_eq!(me["groups"][0]["name"], "infra");
     assert_eq!(me["memberships"][0]["workspaces"][0]["my_role"], "owner");
     assert_eq!(me["memberships"][0]["role"], "member");
     // removed: the next request is 404 again
     let (s, _) = f
-        .call(&f.owner, Method::DELETE, &format!("/v1/groups/{g}/members/{}", f.plain.id), None)
+        .call(
+            &f.owner,
+            Method::DELETE,
+            &format!("/v1/groups/{g}/members/{}", f.plain.id),
+            None,
+        )
         .await;
     assert_eq!(s, 204);
     assert_eq!(f.ws_status(&f.plain).await, 404);
-    let (s, _) = f.as_key(&key, Method::GET, &format!("/v1/workspaces/{}", f.ws), None).await;
+    let (s, _) = f
+        .as_key(&key, Method::GET, &format!("/v1/workspaces/{}", f.ws), None)
+        .await;
     assert_eq!(s, 404);
 }
 
@@ -491,17 +629,29 @@ async fn org_role_mapping_and_effective_role_in_me() {
     // an effective admin may manage groups and owns every workspace
     assert_eq!(f.ws_status(&f.plain).await, 200);
     let (s, _) = f
-        .call(&f.plain, Method::GET, &format!("/v1/orgs/{}/groups", f.org), None)
+        .call(
+            &f.plain,
+            Method::GET,
+            &format!("/v1/orgs/{}/groups", f.org),
+            None,
+        )
         .await;
     assert_eq!(s, 200);
-    let (_, me) = f.h.get("/v1/me", &[("cookie", f.plain.cookie.as_str())]).await;
+    let (_, me) =
+        f.h.get("/v1/me", &[("cookie", f.plain.cookie.as_str())])
+            .await;
     let m = &me["memberships"][0];
     assert_eq!(m["role"], "member", "`role` stays the direct role");
     assert_eq!(m["effective_role"], "admin");
     assert_eq!(m["sources"][1]["kind"], "group");
     // clearing the mapping takes it away on the next request
     let (s, v) = f
-        .call(&f.owner, Method::PATCH, &format!("/v1/groups/{g}"), Some(json!({"org_role": null})))
+        .call(
+            &f.owner,
+            Method::PATCH,
+            &format!("/v1/groups/{g}"),
+            Some(json!({"org_role": null})),
+        )
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(f.ws_status(&f.plain).await, 404);
@@ -528,7 +678,12 @@ async fn workspace_access_expand_groups_and_derived_members() {
     assert_eq!(s, 200);
     assert!(v.get("group_bindings").is_none() && v.get("derived_members").is_none());
     let (s, v) = f
-        .call(&f.wsowner, Method::GET, &format!("{base}?expand=groups"), None)
+        .call(
+            &f.wsowner,
+            Method::GET,
+            &format!("{base}?expand=groups"),
+            None,
+        )
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["group_bindings"][0]["group"]["name"], "infra");
@@ -536,33 +691,65 @@ async fn workspace_access_expand_groups_and_derived_members() {
     assert_eq!(v["group_bindings"][0]["role"], "approver");
     let derived = v["derived_members"]["items"].as_array().unwrap();
     // plain (group only), member (direct member + group approver → approver), owner/admin (org role)
-    let by = |id: Uuid| derived.iter().find(|d| d["user"]["id"] == id.to_string()).cloned();
+    let by = |id: Uuid| {
+        derived
+            .iter()
+            .find(|d| d["user"]["id"] == id.to_string())
+            .cloned()
+    };
     let p = by(f.plain.id).expect("plain");
     assert_eq!(p["role"], "approver");
     assert_eq!(p["sources"][0]["kind"], "group");
     let m = by(f.member.id).expect("member");
     assert_eq!(m["role"], "approver");
-    let kinds: Vec<_> = m["sources"].as_array().unwrap().iter().map(|s| s["kind"].as_str().unwrap().to_owned()).collect();
-    assert!(kinds.contains(&"direct".to_owned()) && kinds.contains(&"group".to_owned()), "{kinds:?}");
+    let kinds: Vec<_> = m["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["kind"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(
+        kinds.contains(&"direct".to_owned()) && kinds.contains(&"group".to_owned()),
+        "{kinds:?}"
+    );
     assert!(by(f.owner.id).is_some_and(|d| d["sources"][0]["kind"] == "org_role"));
-    assert!(by(f.wsowner.id).is_none(), "direct-only people are not derived members");
+    assert!(
+        by(f.wsowner.id).is_none(),
+        "direct-only people are not derived members"
+    );
     // a plain member of the workspace cannot read it
     let (s, _) = f
-        .call(&f.member, Method::GET, &format!("{base}?expand=groups"), None)
+        .call(
+            &f.member,
+            Method::GET,
+            &format!("{base}?expand=groups"),
+            None,
+        )
         .await;
     assert_eq!(s, 403);
     // unbind is idempotent
     let (s, _) = f
-        .call(&f.wsowner, Method::DELETE, &format!("{base}/groups/{g}"), None)
+        .call(
+            &f.wsowner,
+            Method::DELETE,
+            &format!("{base}/groups/{g}"),
+            None,
+        )
         .await;
     assert_eq!(s, 204);
     let (s, _) = f
-        .call(&f.wsowner, Method::DELETE, &format!("{base}/groups/{g}"), None)
+        .call(
+            &f.wsowner,
+            Method::DELETE,
+            &format!("{base}/groups/{g}"),
+            None,
+        )
         .await;
     assert_eq!(s, 204);
     assert_eq!(f.ws_status(&f.plain).await, 404);
     assert_eq!(
-        f.n("SELECT count(*) FROM audit_log WHERE action = 'group_access.remove'").await,
+        f.n("SELECT count(*) FROM audit_log WHERE action = 'group_access.remove'")
+            .await,
         1
     );
 }
@@ -571,13 +758,11 @@ async fn workspace_access_expand_groups_and_derived_members() {
 async fn a_group_binds_only_workspaces_of_its_own_org() {
     let f = fx().await;
     let g = f.create("mine", json!({})).await;
-    let other_ws: Uuid = sqlx::query_scalar(
-        "SELECT id FROM workspaces WHERE org_id <> $1 LIMIT 1",
-    )
-    .bind(f.org)
-    .fetch_one(f.h.pool())
-    .await
-    .unwrap();
+    let other_ws: Uuid = sqlx::query_scalar("SELECT id FROM workspaces WHERE org_id <> $1 LIMIT 1")
+        .bind(f.org)
+        .fetch_one(f.h.pool())
+        .await
+        .unwrap();
     // the outsider owns nothing there either; give them an owner binding and try the cross-org bind
     f.h.bind_ws(other_ws, f.outsider.id, "owner").await;
     let (s, _) = f
@@ -600,7 +785,12 @@ async fn impact_view_counts_users_that_would_lose_access() {
     f.add(g, f.plain.id).await;
     f.add(g, f.member.id).await; // keeps a direct binding: loses nothing
     let (s, v) = f
-        .call(&f.owner, Method::GET, &format!("/v1/groups/{g}/impact"), None)
+        .call(
+            &f.owner,
+            Method::GET,
+            &format!("/v1/groups/{g}/impact"),
+            None,
+        )
         .await;
     assert_eq!(s, 200, "{v}");
     let w = &v["workspaces"][0];
@@ -611,12 +801,26 @@ async fn impact_view_counts_users_that_would_lose_access() {
     sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) VALUES ($1,$2,$3,'bot','Bot','byo','medium','')")
         .bind(agent).bind(f.org).bind(f.ws).execute(f.h.pool()).await.unwrap();
     let (s, v) = f
-        .call(&f.owner, Method::GET, &format!("/v1/groups/{g}/impact?remove_member={}", f.member.id), None)
+        .call(
+            &f.owner,
+            Method::GET,
+            &format!("/v1/groups/{g}/impact?remove_member={}", f.member.id),
+            None,
+        )
         .await;
     assert_eq!(s, 200, "{v}");
-    assert_eq!(v["workspaces"].as_array().unwrap().len(), 0, "nothing lost for the direct member");
+    assert_eq!(
+        v["workspaces"].as_array().unwrap().len(),
+        0,
+        "nothing lost for the direct member"
+    );
     let (_, v) = f
-        .call(&f.owner, Method::GET, &format!("/v1/groups/{g}/impact?remove_member={}", f.plain.id), None)
+        .call(
+            &f.owner,
+            Method::GET,
+            &format!("/v1/groups/{g}/impact?remove_member={}", f.plain.id),
+            None,
+        )
         .await;
     assert_eq!(v["workspaces"][0]["total"], 1);
     let _ = agent;
@@ -625,7 +829,12 @@ async fn impact_view_counts_users_that_would_lose_access() {
     f.bind(g2, "member").await;
     f.add(g2, f.plain.id).await;
     let (_, v) = f
-        .call(&f.owner, Method::GET, &format!("/v1/groups/{g}/impact"), None)
+        .call(
+            &f.owner,
+            Method::GET,
+            &format!("/v1/groups/{g}/impact"),
+            None,
+        )
         .await;
     assert_eq!(v["workspaces"].as_array().unwrap().len(), 0);
 }
@@ -689,26 +898,41 @@ async fn policy_group_identity_authoring_and_warnings() {
         .execute(f.h.pool())
         .await
         .unwrap();
-    let (s, v) = f.call(&f.wsowner, Method::PUT, &draft, Some(rule(other_group))).await;
+    let (s, v) = f
+        .call(&f.wsowner, Method::PUT, &draft, Some(rule(other_group)))
+        .await;
     assert_eq!((s, code(&v)), (422, "unknown_identity"), "{v}");
-    let (s, v) = f.call(&f.wsowner, Method::PUT, &draft, Some(rule(Uuid::now_v7()))).await;
+    let (s, v) = f
+        .call(&f.wsowner, Method::PUT, &draft, Some(rule(Uuid::now_v7())))
+        .await;
     assert_eq!((s, code(&v)), (422, "unknown_identity"));
     let (s, v) = f.call(&f.wsowner, Method::PUT, &draft, Some(rule(g))).await;
     assert_eq!(s, 200, "{v}");
     // RULE_GROUP_IDENTITIES_MAX
     let mut many = rule(g);
     many["revision"] = json!(1);
-    many["rules"][0]["identities"] = json!((0..21).map(|_| json!({"kind":"group","id":g})).collect::<Vec<_>>());
+    many["rules"][0]["identities"] = json!(
+        (0..21)
+            .map(|_| json!({"kind":"group","id":g}))
+            .collect::<Vec<_>>()
+    );
     let (s, _) = f.call(&f.wsowner, Method::PUT, &draft, Some(many)).await;
     assert_eq!(s, 422);
     // warnings: needs speaker + empty group, then a removed group
     let w = format!("/v1/workspaces/{}/policy/warnings", f.ws);
     let (_, v) = f.call(&f.wsowner, Method::GET, &w, None).await;
-    let codes: Vec<&str> = v["items"].as_array().unwrap().iter().map(|i| i["code"].as_str().unwrap()).collect();
+    let codes: Vec<&str> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["code"].as_str().unwrap())
+        .collect();
     assert!(codes.contains(&"group_rule_needs_speaker"), "{codes:?}");
     assert!(codes.contains(&"group_rule_empty"), "{codes:?}");
     // deleting the group does NOT rewrite the rule; the author is told
-    let (s, _) = f.call(&f.owner, Method::DELETE, &format!("/v1/groups/{g}"), None).await;
+    let (s, _) = f
+        .call(&f.owner, Method::DELETE, &format!("/v1/groups/{g}"), None)
+        .await;
     assert_eq!(s, 204);
     let stored: Value = sqlx::query_scalar(
         "SELECT r.identities FROM policy_rules r JOIN policy_generations g ON g.id = r.generation_id \
@@ -739,14 +963,30 @@ async fn every_group_route_writes_its_critical_row_and_fails_closed() {
     f.add(g, f.plain.id).await;
     f.bind(g, "member").await;
     let (s, _) = f
-        .call(&f.owner, Method::PATCH, &format!("/v1/groups/{g}"), Some(json!({"name": "b"})))
+        .call(
+            &f.owner,
+            Method::PATCH,
+            &format!("/v1/groups/{g}"),
+            Some(json!({"name": "b"})),
+        )
         .await;
     assert_eq!(s, 200);
-    f.call(&f.wsowner, Method::DELETE, &format!("/v1/workspaces/{}/access/groups/{g}", f.ws), None)
+    f.call(
+        &f.wsowner,
+        Method::DELETE,
+        &format!("/v1/workspaces/{}/access/groups/{g}", f.ws),
+        None,
+    )
+    .await;
+    f.call(
+        &f.owner,
+        Method::DELETE,
+        &format!("/v1/groups/{g}/members/{}", f.plain.id),
+        None,
+    )
+    .await;
+    f.call(&f.owner, Method::DELETE, &format!("/v1/groups/{g}"), None)
         .await;
-    f.call(&f.owner, Method::DELETE, &format!("/v1/groups/{g}/members/{}", f.plain.id), None)
-        .await;
-    f.call(&f.owner, Method::DELETE, &format!("/v1/groups/{g}"), None).await;
     for a in [
         "group.create",
         "group.update",
@@ -778,12 +1018,23 @@ async fn every_group_route_writes_its_critical_row_and_fails_closed() {
     assert_eq!((s, code(&v)), (503, "audit_unavailable"));
     assert_eq!(f.n("SELECT count(*) FROM group_workspace_access").await, 0);
     let (s, v) = f
-        .call(&f.owner, Method::POST, &format!("/v1/orgs/{}/groups", f.org), Some(json!({"name": "d"})))
+        .call(
+            &f.owner,
+            Method::POST,
+            &format!("/v1/orgs/{}/groups", f.org),
+            Some(json!({"name": "d"})),
+        )
         .await;
     assert_eq!((s, code(&v)), (503, "audit_unavailable"));
-    let (s, v) = f.call(&f.owner, Method::DELETE, &format!("/v1/groups/{g2}"), None).await;
+    let (s, v) = f
+        .call(&f.owner, Method::DELETE, &format!("/v1/groups/{g2}"), None)
+        .await;
     assert_eq!((s, code(&v)), (503, "audit_unavailable"));
-    assert_eq!(f.n("SELECT count(*) FROM groups").await, 1, "the delete did not happen");
+    assert_eq!(
+        f.n("SELECT count(*) FROM groups").await,
+        1,
+        "the delete did not happen"
+    );
 }
 
 // ---------------------------------------------------------------- streams
@@ -836,20 +1087,43 @@ async fn access_notification_closes_the_removed_users_stream_only() {
     let g = f.create("infra", json!({})).await;
     f.bind(g, "member").await;
     f.add(g, f.plain.id).await;
-    let app = test_router(f.h.state.clone().with_stream_recheck(Duration::from_secs(3600)));
+    let app = test_router(
+        f.h.state
+            .clone()
+            .with_stream_recheck(Duration::from_secs(3600)),
+    );
     let uri = format!("/v1/conversations/{conv}/stream");
     let mut removed = open(&f, &app, &uri, &f.plain).await;
     let mut direct = open(&f, &app, &uri, &f.member).await;
-    assert!(drain(&mut removed, Duration::from_millis(300)).await.is_none());
-    f.call(&f.owner, Method::DELETE, &format!("/v1/groups/{g}/members/{}", f.plain.id), None)
-        .await;
+    assert!(
+        drain(&mut removed, Duration::from_millis(300))
+            .await
+            .is_none()
+    );
+    f.call(
+        &f.owner,
+        Method::DELETE,
+        &format!("/v1/groups/{g}/members/{}", f.plain.id),
+        None,
+    )
+    .await;
     // what the aurora_auth_revoked listener does on NOTIFY
-    f.h.state.session_cache.invalidate(&json!({"kind": "access", "id": f.plain.id, "org_id": f.org}));
-    let text = drain(&mut removed, Duration::from_secs(5)).await.expect("closed");
+    f.h.state
+        .session_cache
+        .invalidate(&json!({"kind": "access", "id": f.plain.id, "org_id": f.org}));
+    let text = drain(&mut removed, Duration::from_secs(5))
+        .await
+        .expect("closed");
     assert!(text.contains("event: access.changed"), "{text}");
     // an org-wide ping leaves the still-authorized stream untouched
-    f.h.state.session_cache.invalidate(&json!({"kind": "access", "id": null, "org_id": f.org}));
-    assert!(drain(&mut direct, Duration::from_millis(500)).await.is_none());
+    f.h.state
+        .session_cache
+        .invalidate(&json!({"kind": "access", "id": null, "org_id": f.org}));
+    assert!(
+        drain(&mut direct, Duration::from_millis(500))
+            .await
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -886,5 +1160,8 @@ async fn access_notification_ends_the_removed_users_long_poll() {
     let ((s, v, took), ()) = tokio::join!(poll, kick);
     assert_eq!(s, 200);
     assert_eq!(v["items"].as_array().unwrap().len(), 0);
-    assert!(took < Duration::from_secs(10), "returned at once, not after the wait: {took:?}");
+    assert!(
+        took < Duration::from_secs(10),
+        "returned at once, not after the wait: {took:?}"
+    );
 }

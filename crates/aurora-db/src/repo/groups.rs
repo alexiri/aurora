@@ -256,13 +256,13 @@ pub async fn groups_of_user_count<'e, E: PgExecutor<'e>>(
     org: Uuid,
     user: Uuid,
 ) -> Result<i64, DbError> {
-    Ok(sqlx::query_scalar(
-        "SELECT count(*) FROM group_members WHERE org_id = $1 AND user_id = $2",
+    Ok(
+        sqlx::query_scalar("SELECT count(*) FROM group_members WHERE org_id = $1 AND user_id = $2")
+            .bind(org)
+            .bind(user)
+            .fetch_one(exec)
+            .await?,
     )
-    .bind(org)
-    .bind(user)
-    .fetch_one(exec)
-    .await?)
 }
 
 /// Adds a member. Returns whether a row was inserted (idempotent). A user who is not a member
@@ -545,15 +545,15 @@ pub async fn bind(
 }
 
 pub async fn unbind(conn: &mut PgConnection, group: Uuid, ws: Uuid) -> Result<bool, DbError> {
-    Ok(sqlx::query(
-        "DELETE FROM group_workspace_access WHERE group_id = $1 AND workspace_id = $2",
+    Ok(
+        sqlx::query("DELETE FROM group_workspace_access WHERE group_id = $1 AND workspace_id = $2")
+            .bind(group)
+            .bind(ws)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected()
+            > 0,
     )
-    .bind(group)
-    .bind(ws)
-    .execute(&mut *conn)
-    .await?
-    .rows_affected()
-        > 0)
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

@@ -117,7 +117,10 @@ async fn no_groups_gives_the_phase_0_to_3_answers(pool: PgPool) {
     bind(&pool, f.ws, bound, "approver").await;
     assert_eq!(role(&pool, owner, f.ws).await, Some(WorkspaceRole::Owner));
     assert_eq!(role(&pool, plain, f.ws).await, None);
-    assert_eq!(role(&pool, bound, f.ws).await, Some(WorkspaceRole::Approver));
+    assert_eq!(
+        role(&pool, bound, f.ws).await,
+        Some(WorkspaceRole::Approver)
+    );
     assert!(!can_use(&pool, plain, f.ws).await.unwrap());
     assert!(can_approve(&pool, bound, f.ws).await.unwrap());
     assert!(!can_own(&pool, bound, f.ws).await.unwrap());
@@ -201,10 +204,7 @@ async fn org_role_mapping_admin_owns_everywhere_and_survives_direct_demotion(poo
         .execute(&pool)
         .await
         .unwrap_err();
-    assert!(matches!(
-        DbError::from(err),
-        DbError::CheckViolation { .. }
-    ));
+    assert!(matches!(DbError::from(err), DbError::CheckViolation { .. }));
     // member mapping gives nothing beyond the direct role
     sqlx::query("UPDATE groups SET org_role = 'member' WHERE id = $1")
         .bind(g)
@@ -238,7 +238,10 @@ async fn suspended_member_derives_nothing_from_any_group(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(role(&pool, u, f.ws).await, None);
-    assert_eq!(authz::effective_org_role(&pool, u, f.org).await.unwrap(), None);
+    assert_eq!(
+        authz::effective_org_role(&pool, u, f.org).await.unwrap(),
+        None
+    );
     // still listed in the group
     assert!(groups::is_member(&pool, g, u).await.unwrap());
     assert!(!workspace_has_active_owner(&pool, f.ws).await.unwrap());
@@ -252,7 +255,10 @@ async fn a_group_never_makes_a_non_member_a_member(pool: PgPool) {
     let g = group(&pool, f.org, "g", None).await;
     // the composite foreign key to org_members refuses the insert
     let err = add(&pool, g, f.org, stranger).await.unwrap_err();
-    assert!(matches!(err, DbError::ForeignKeyViolation { .. }), "{err:?}");
+    assert!(
+        matches!(err, DbError::ForeignKeyViolation { .. }),
+        "{err:?}"
+    );
     // and a user with no membership at all
     let nobody = user(&pool).await;
     assert!(matches!(
@@ -286,18 +292,29 @@ async fn same_org_composite_foreign_keys(pool: PgPool) {
     let other_ws = workspace(&pool, other).await;
     let g = group(&pool, f.org, "g", None).await;
     // a group cannot bind another org's workspace
-    let err = gbind(&pool, g, other_ws, f.org, "member").await.unwrap_err();
-    assert!(matches!(err, DbError::ForeignKeyViolation { .. }), "{err:?}");
+    let err = gbind(&pool, g, other_ws, f.org, "member")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, DbError::ForeignKeyViolation { .. }),
+        "{err:?}"
+    );
     // nor claim another org as its own on a binding of its own workspace
     let err = gbind(&pool, g, f.ws, other, "member").await.unwrap_err();
-    assert!(matches!(err, DbError::ForeignKeyViolation { .. }), "{err:?}");
+    assert!(
+        matches!(err, DbError::ForeignKeyViolation { .. }),
+        "{err:?}"
+    );
     // a manual group takes only manual members; an idp group only idp members
     let u = member(&pool, f.org, "member").await;
     let mut c = pool.acquire().await.unwrap();
     let err = groups::add_member(&mut c, g, f.org, u, "idp", None)
         .await
         .unwrap_err();
-    assert!(matches!(err, DbError::ForeignKeyViolation { .. }), "{err:?}");
+    assert!(
+        matches!(err, DbError::ForeignKeyViolation { .. }),
+        "{err:?}"
+    );
 }
 
 #[sqlx::test(migrator = "aurora_db::MIGRATOR")]
@@ -333,8 +350,16 @@ async fn approve_see_conversation_and_fire_time_for_group_only_access(pool: PgPo
     .execute(&pool)
     .await
     .unwrap();
-    assert!(authz::can_see_conversation_id(&pool, ws_owner, conv).await.unwrap());
-    assert!(!authz::can_see_conversation_id(&pool, approver, conv).await.unwrap());
+    assert!(
+        authz::can_see_conversation_id(&pool, ws_owner, conv)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !authz::can_see_conversation_id(&pool, approver, conv)
+            .await
+            .unwrap()
+    );
 
     // fire-time authority of a creator whose only access came through a group
     let mut c = pool.acquire().await.unwrap();
@@ -377,7 +402,11 @@ async fn sources_explain_the_result(pool: PgPool) {
     .await
     .unwrap();
     let e = effective_access(&pool, u, f.ws).await.unwrap().unwrap();
-    assert!(e.sources.iter().any(|s| s.kind == AccessSourceKind::IdpClaim));
+    assert!(
+        e.sources
+            .iter()
+            .any(|s| s.kind == AccessSourceKind::IdpClaim)
+    );
 }
 
 #[sqlx::test(migrator = "aurora_db::MIGRATOR")]
@@ -392,9 +421,19 @@ async fn idp_sync_sets_exactly_the_claim_and_never_creates_a_membership(pool: Pg
         async move {
             let mut c = pool.acquire().await.unwrap();
             let id = Uuid::now_v7();
-            groups::insert(&mut c, id, org, &name, None, "idp", Some((&prov, &val)), None, None)
-                .await
-                .unwrap();
+            groups::insert(
+                &mut c,
+                id,
+                org,
+                &name,
+                None,
+                "idp",
+                Some((&prov, &val)),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
             id
         }
     };
@@ -429,7 +468,9 @@ async fn idp_sync_sets_exactly_the_claim_and_never_creates_a_membership(pool: Pg
         .unwrap();
     assert!(!groups::is_member(&pool, a, u).await.unwrap());
     assert!(groups::is_member(&pool, b, u).await.unwrap());
-    groups::sync_idp_memberships(&mut c, u, "cern", &[]).await.unwrap();
+    groups::sync_idp_memberships(&mut c, u, "cern", &[])
+        .await
+        .unwrap();
     assert_eq!(groups::member_ids(&pool, b).await.unwrap().len(), 0);
     // a suspended member is removed (derives nothing, is not synced in)
     sqlx::query("UPDATE org_members SET status = 'suspended' WHERE user_id = $1")
@@ -450,6 +491,8 @@ async fn manual_rows_are_untouched_by_the_idp_sync(pool: PgPool) {
     let manual = group(&pool, f.org, "manual", None).await;
     add(&pool, manual, f.org, u).await.unwrap();
     let mut c = pool.acquire().await.unwrap();
-    groups::sync_idp_memberships(&mut c, u, "cern", &[]).await.unwrap();
+    groups::sync_idp_memberships(&mut c, u, "cern", &[])
+        .await
+        .unwrap();
     assert!(groups::is_member(&pool, manual, u).await.unwrap());
 }
